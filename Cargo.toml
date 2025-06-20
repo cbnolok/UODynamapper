@@ -1,0 +1,26 @@
+# Cargo.toml
+[package]
+name = "dynamapper"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.16", features = ["dynamic_linking", "file_watcher"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+image = "0.25"
+
+# Enable a small amount of optimization in debug mode for our crate.
+[profile.dev]
+opt-level = 1
+# Incremental compilation. The project is fairly small, for now we don't need it.
+incremental = false
+# Additional safety checks (including arithmetic overflow).
+debug-assertions = true
+
+# Settings for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3 # Enable high optimizations (2 is not that faster in compile times than 3)
+debug = false # Disable generation of debug info
+# Incremental compilation. The deps are seldomly compiled, generating additional data and files to
+#   allow incremental compilation is a waste.
+incremental = true # false

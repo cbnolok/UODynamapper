@@ -1,0 +1,12 @@
+#[target.'cfg(target_family = "windows")']
+#[target.'*']
+#rustflags = ["-C embed-bitcode=no"]
+
+[build]
+incremental=true
+
+# To set a custom build path and directory, you might want to use:
+#   * cargo --target-dir build
+#   * Add, like here, [build] -> target-dir = "..." to $HOME or %USERPROFILE% /.cargo/config.toml
+# See: https://doc.rust-lang.org/cargo/reference/config.html
+#target-dir = "target"
