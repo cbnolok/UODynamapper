@@ -1,6 +1,8 @@
 //! GPU texture array + LRU eviction. Now uses `get_tile_image()` instead
 //! of reading PNG files from disk.
 
+#![allow(dead_code)]
+
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
@@ -26,16 +28,16 @@ struct Entry {
 
 #[derive(Resource)]
 pub struct TileCache {
-    pub image:       Handle<Image>,
-    map:             HashMap<u16, Entry>,   // art_id → entry
-    free_layers:     Vec<u32>,
-    lru:             VecDeque<u16>,         // queue of art_ids
+    pub image_handle:   Handle<Image>,
+    map:                HashMap<u16, Entry>,   // art_id → entry
+    free_layers:        Vec<u32>,
+    lru:                VecDeque<u16>,         // queue of art_ids
 }
 
 impl TileCache {
-    pub fn new(image: Handle<Image>) -> Self {
+    pub fn new(image_handle: Handle<Image>) -> Self {
         Self {
-            image,
+            image_handle,
             map: HashMap::default(),
             free_layers: (0..MAX_TILE_LAYERS).rev().collect(),
             lru: VecDeque::default(),
@@ -95,11 +97,10 @@ impl TileCache {
         {
             let slice      = (TILE_PX * TILE_PX * 4) as usize;  // TODO: why multiply by 4?
             let offset     = layer as usize * slice;
-            let array_img = images.get_mut(&self.image).unwrap(); // fresh &mut borrow
-            let mut array_img_data = array_img.data.as_ref().unwrap().clone();
-            
-            array_img_data[offset..offset + slice]
-                     .copy_from_slice(&tile_bytes);
+            let array_img = images.get_mut(&self.image_handle).unwrap();
+            if let Some(data) = &mut array_img.data {
+                data[offset..offset + slice].copy_from_slice(&tile_bytes)
+            };
         } // `array_img` borrow ends here
     
         // -----------------------------------------------------------------

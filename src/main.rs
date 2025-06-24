@@ -1,4 +1,5 @@
 //! Boots Bevy, installs cache and chunk systems, sets light direction.
+#![allow(unused_parens)]
 
 mod tile_cache;
 mod chunk_mesh;
@@ -8,14 +9,31 @@ mod worldmap_base_mesh;
 use bevy::{
     color, pbr::ExtendedMaterial, prelude::*
 };
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use tile_cache::*;
 use chunk_mesh::*;
 use worldmap_base_mesh::*;
 
 fn main() {
+    // Install the custom own log subscriber (must come BEFORE Bevy app launch!)
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_ansi(true) // colored output like Bevy default
+                .with_level(true)
+                .with_target(true)
+                // Use chrono for timestamp, format with NO milliseconds
+                .with_timer(fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%s".into()))
+                .compact() // Looks a lot like Bevy default (use .pretty() for multiline pretty logs)
+        )
+        .with(EnvFilter::from_default_env())
+        .init();
+
     App::new()
-        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_plugins(DefaultPlugins.build()
+            .disable::<bevy::log::LogPlugin>()
+            .set(ImagePlugin::default_nearest()))
         .insert_resource(LightDir(Vec3::new(-0.4, 1.0, 0.3).normalize()))
         // embed the WGSL in the asset system:
         //.add_systems(Startup, |mut app: ResMut<App>| {
