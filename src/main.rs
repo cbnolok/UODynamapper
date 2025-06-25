@@ -34,7 +34,7 @@ fn main() {
         .add_plugins(DefaultPlugins.build()
             .disable::<bevy::log::LogPlugin>()
             .set(ImagePlugin::default_nearest()))
-        .insert_resource(LightDir(Vec3::new(-0.4, 1.0, 0.3).normalize()))
+        .insert_resource(LightDir(Vec3::new(-1.0, 1.5, -1.0).normalize()))
         // embed the WGSL in the asset system:
         //.add_systems(Startup, |mut app: ResMut<App>| {
         //    load_internal_asset!(app, TERRAIN_SHADER_HANDLE, "terrain.wgsl", TERRAIN_SHADER);
@@ -95,8 +95,8 @@ fn setup_cache(
 
 // Spawn a 3×3 grid of placeholder chunks.
 fn spawn_chunks(mut commands: Commands) {
-    for gx in -1..=1 {
-        for gy in -1..=1 {
+    for gx in 0..=2 {
+        for gy in 0..=2 {
             commands.spawn((
                 MapMeshChunk { gx, gy },
                 Transform::default(),
@@ -120,7 +120,7 @@ fn build_debug_obj(
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material_handle),
-        Transform::from_xyz(8.0, 0.5, 8.0),
+        Transform::from_xyz(16.0, 1.0, 16.0),
         GlobalTransform::default(),
     ));
 }

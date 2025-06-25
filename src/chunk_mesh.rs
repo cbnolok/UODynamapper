@@ -17,13 +17,16 @@ pub struct UOMapTile {
     height: u16, // in UO it's i8 
 }
 
+pub const DUMMY_MAP_SIZE_X: usize = 4096;
+pub const DUMMY_MAP_SIZE_Y: usize = 7120;
+
 pub const CHUNK_TILE_NUM_1D: usize = 16;
 pub const CHUNK_TILE_NUM_TOTAL: usize = CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D;
 
 #[derive(Component)]
 pub struct MapMeshChunk {
-    pub gx: i32,
-    pub gy: i32,
+    pub gx: u32,
+    pub gy: u32,
 }
 
 // -- Custom Material Definition --------------------------------------------
@@ -147,9 +150,9 @@ pub fn build_visible_chunks(
     let cam_pos = cam_q.single().unwrap().translation;
 
     // Demo heights: Replace with your actual per-tile map data
-    let mut dummy_tile_heights = [[0.0f32; CHUNK_TILE_NUM_1D + 1]; CHUNK_TILE_NUM_1D + 1];
-    for ty in 0..CHUNK_TILE_NUM_1D {
-        for tx in 0..CHUNK_TILE_NUM_1D {
+    let mut dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X + 1]; DUMMY_MAP_SIZE_Y + 1];
+    for ty in 0..DUMMY_MAP_SIZE_Y {
+        for tx in 0..DUMMY_MAP_SIZE_X {
             dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
         }
     }
@@ -189,14 +192,14 @@ pub fn build_visible_chunks(
         // Define positions of each vertex.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let x = vx as f32; // <<--- now from 0 to CHUNK_SIZE local
-                let z = vy as f32;
+                let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
+                let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
                 //let h = get_vertex_height(&dummy_tile_heights, chunk_data.gx, chunk_data.gy, vx, vy);
-                let h = dummy_tile_heights[vy][vx]; // direct lookup, not averaging!
+                let h = dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
                 heights[vy * grid_w + vx] = h;
 
                 verts.push(TerrainVertexAttrs {
-                    pos: [x, h, z],
+                    pos: [vx as f32, h, vy as f32],
                     uv: [vx as f32 / (CHUNK_TILE_NUM_1D as f32), vy as f32 / (CHUNK_TILE_NUM_1D as f32)],
                     norm: [0.0, 1.0, 0.0], // placeholder, they will be calculated after
                 });
@@ -206,11 +209,22 @@ pub fn build_visible_chunks(
         // Calculate Smooth Normals: finite difference using derived vertex heights
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let center = heights[vy * grid_w + vx];
-                let left   = if vx > 0          { heights[vy * grid_w + (vx - 1)] } else { center };
-                let right  = if vx + 1 < grid_w { heights[vy * grid_w + (vx + 1)] } else { center };
-                let down   = if vy > 0          { heights[(vy - 1) * grid_w + vx] } else { center };
-                let up     = if vy + 1 < grid_h { heights[(vy + 1) * grid_w + vx] } else { center };
+                let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
+                let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
+                let center = dummy_tile_heights[world_ty][world_tx];
+
+                /*
+                Each chunk computes normals only from heights inside its own chunk, so edge normals miss out on what’s just over the border in the global heightgrid.
+                As a result, normals on shared edges are not identical on both sides, even though the vertex positions are.
+                → Lighting (dot product with light_dir) gives different brightness per chunk = visible “lighting seam”
+                 */
+                // let center = heights[vy * grid_w + vx];
+
+                let left   = if world_tx > 0                      { dummy_tile_heights[world_ty][world_tx - 1] } else { center };
+                let right  = if world_tx + 1 < DUMMY_MAP_SIZE_X   { dummy_tile_heights[world_ty][world_tx + 1] } else { center };
+                let down   = if world_ty > 0                      { dummy_tile_heights[world_ty - 1][world_tx] } else { center };
+                let up     = if world_ty + 1 < DUMMY_MAP_SIZE_Y   { dummy_tile_heights[world_ty + 1][world_tx] } else { center };        
+
                 let dx = (right - left) * 0.5;
                 let dz = (up - down) * 0.5;
                 let normal = Vec3::new(-dx, 1.0, -dz).normalize();

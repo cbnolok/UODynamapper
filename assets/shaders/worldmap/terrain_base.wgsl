@@ -135,9 +135,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tex_color = textureSample(atlas, atlas_sampler, in.uv, u32(layer));
 
     // Small ambient factor.
-    let ao = 1.0; //0.2;
+    let ao = 1.0; //0.3;
     let lambert = in.uv_b.x;  // Lambert calculated in the vertex shader.
-    let brightness = lambert * 0.6 + ao * 0.4;
+    //let brightness = lambert * 0.6 + ao * 0.4;
+    let brightness = lambert * 0.7 + ao * 0.3;
 
     // Final lit color (Gouraud: modulate by interpolated lighting).
     //out.color = vec4<f32>(f32(layer) / f32(MAX_TILE_LAYERS), 0.0, 0.0, 1.0); // debug
@@ -145,6 +146,20 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let lit = out.color.rgb * brightness;
     out.color = vec4<f32>(lit, out.color.a);
     return out;
+
+    /*
+    // Filters:
+
+    // Desaturation
+    let avg = (lit.r + lit.g + lit.b) / 3.0;
+    let saturation = 0.66; // tweak for taste
+    let uo_lit = mix(vec3<f32>(avg, avg, avg), lit, saturation); 
+    out.color = vec4<f32>(uo_lit, tex_color.a);
+    
+    // Fog
+    let fog = 0.02 * in.world_position.z; // fake simple fog, tweak for taste
+    out.color = mix(out.color, vec4<f32>(0.6,0.7,1.0,1.0), clamp(fog,0.0,0.5));
+    */
 
     //let lit = tex_color.rgb * brightness;
     //out.color = vec4<f32>(lit, tex_color.a);
