@@ -11,8 +11,8 @@ use bevy::{
 };
 use bytemuck::Zeroable;
 
-use crate::constants;
-use crate::{texture_cache::terrain::cache::*, util_lib::array::*};
+use super::constants;
+use super::{texture_cache::terrain::cache::*, util_lib::array::*};
 
 #[derive(Clone, Copy, Default)]
 pub struct UOMapTile {
@@ -28,7 +28,7 @@ pub const CHUNK_TILE_NUM_1D: usize = 16;
 pub const CHUNK_TILE_NUM_TOTAL: usize = CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D;
 
 #[derive(Component)]
-pub struct TerrainMeshChunk {
+pub struct TCMesh {
     pub gx: u32,
     pub gy: u32,
 }
@@ -51,7 +51,7 @@ const TERRAIN_SHADER_PATH: &str = "shaders/worldmap/terrain_base.wgsl";
 // In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
-type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>;
+pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>;
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
 pub struct TerrainMaterialExtension {
@@ -137,11 +137,11 @@ pub fn build_visible_terrain_chunks(
     mut cache: ResMut<TextureCache>,
     mut images: ResMut<Assets<Image>>,
     cam_q: Query<&Transform, With<Camera3d>>,
-    chunk_q: Query<(Entity, &TerrainMeshChunk, Option<&Mesh3d>)>,
+    chunk_q: Query<(Entity, &TCMesh, Option<&Mesh3d>)>,
 ) {
     let cam_pos = cam_q.single().unwrap().translation;
 
-    // Demo heights: Replace with your actual per-tile map data
+    // TODO: Demo heights: Replace with the actual per-tile map data
     let mut map_dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X + 1]; DUMMY_MAP_SIZE_Y + 1];
     for ty in 0..DUMMY_MAP_SIZE_Y {
         for tx in 0..DUMMY_MAP_SIZE_X {
