@@ -115,7 +115,7 @@ features = [
 [profile.dev]
 opt-level = 1
 # Incremental compilation. The project is fairly small, for now we don't need it.
-incremental = false
+incremental = true
 # Additional safety checks (including arithmetic overflow).
 debug-assertions = true
 

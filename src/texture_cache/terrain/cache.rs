@@ -1,4 +1,4 @@
-//! GPU texture array + LRU eviction. Now uses `get_tile_image()` instead
+//! GPU texture array + LRU eviction.
 //! of reading PNG files from disk.
 
 #![allow(dead_code)]
@@ -7,39 +7,35 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
+use bevy::prelude::*;
+use super::texarray;
 
-use bevy::{
-    prelude::*,
-    image::{ImageSampler, ImageSamplerDescriptor},
-    render::render_resource::{
-        AddressMode, Extent3d, FilterMode, TextureDimension, TextureFormat, TextureUsages
-    },
-};
+pub const TILE_PX: u32                  = 44;
+pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
 
-pub const TILE_PX: u32         = 44;
-pub const MAX_TILE_LAYERS: u32 = 2_048;
-const EVICT_AFTER: Duration    = Duration::from_secs(300);
+const CACHE_EVICT_AFTER: Duration    = Duration::from_secs(300);
+
 
 #[derive(Clone)]
-struct Entry {
+struct TextureEntry {
     layer:        u32,
     last_touch:   Instant,
 }
 
 #[derive(Resource)]
-pub struct TileCache {
+pub struct TextureCache {
     pub image_handle:   Handle<Image>,
-    map:                HashMap<u16, Entry>,   // art_id → entry
+    map:                HashMap<u16, TextureEntry>,   // art_id → entry
     free_layers:        Vec<u32>,
     lru:                VecDeque<u16>,         // queue of art_ids
 }
 
-impl TileCache {
+impl TextureCache {
     pub fn new(image_handle: Handle<Image>) -> Self {
         Self {
             image_handle,
             map: HashMap::default(),
-            free_layers: (0..MAX_TILE_LAYERS).rev().collect(),
+            free_layers: (0..TEXARRAY_MAX_TILE_LAYERS).rev().collect(),
             lru: VecDeque::default(),
         }
     }
@@ -68,7 +64,7 @@ impl TileCache {
             let victim_id = loop {
                 let oldest = self.lru.pop_front().unwrap();
                 let still  = self.map.get(&oldest).unwrap();
-                if Instant::now() - still.last_touch >= EVICT_AFTER {
+                if Instant::now() - still.last_touch >= CACHE_EVICT_AFTER {
                     break oldest;
                 }
                 self.lru.push_back(oldest);
@@ -81,7 +77,7 @@ impl TileCache {
         // 3. Load (or generate) the source tile FIRST
         //    – this needs a &mut Assets<Image> because it may create assets
         // -----------------------------------------------------------------
-        let tile_handle = crate::util::get_tile_image(art_id, commands, images);
+        let tile_handle = texarray::get_tile_image(art_id, commands, images);
     
         // Grab the bytes we are going to copy, then drop the borrow
         let tile_bytes: Vec<u8> = {
@@ -108,42 +104,11 @@ impl TileCache {
         // -----------------------------------------------------------------
         self.map.insert(
             art_id,
-            Entry { layer, last_touch: Instant::now() },
+            TextureEntry { layer, last_touch: Instant::now() },
         );
         self.lru.push_back(art_id);
     
         layer
     }
-}
-
-/// Helper that builds the empty texture array on startup.
-pub fn create_gpu_array(
-    images: &mut Assets<Image>,
-    //render_device: &RenderDevice,
-) -> Handle<Image> {
-    let mut array = Image {
-        data: Some(vec![0u8; (TILE_PX * TILE_PX * 4 * MAX_TILE_LAYERS) as usize]),
-        texture_descriptor: bevy::render::render_resource::TextureDescriptor {
-            label: Some("tile_array"),
-            size: Extent3d { width: TILE_PX, height: TILE_PX, depth_or_array_layers: MAX_TILE_LAYERS },
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb,
-            mip_level_count: 1,
-            sample_count: 1,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        },
-        sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: AddressMode::ClampToEdge.into(),
-            address_mode_v: AddressMode::ClampToEdge.into(),
-            mag_filter: FilterMode::Nearest.into(),
-            min_filter: FilterMode::Nearest.into(),
-            mipmap_filter: FilterMode::Nearest.into(),
-            ..default()
-        }),
-        ..default()
-    };
-    array.reinterpret_size(array.texture_descriptor.size);
-    images.add(array)
 }
 

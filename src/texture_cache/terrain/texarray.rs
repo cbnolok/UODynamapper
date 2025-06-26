@@ -1,16 +1,52 @@
-//! Misc helpers – **edit this file only** when you hook real art assets.
-
-use bevy::prelude::*;
-use bevy::render::{       
-    render_asset::RenderAssetUsages,
-    render_resource::{Extent3d, TextureDimension, TextureFormat},
-    //texture::{ImageSampler, ImageType},
+use bevy::{
+    prelude::*,
+    asset::RenderAssetUsages,
+    image::{ImageSampler, ImageSamplerDescriptor},
+    render::render_resource::{
+        AddressMode, Extent3d, FilterMode, TextureDimension, TextureFormat, TextureUsages
+    }
 };
+
+pub const TILE_PX: u32                  = 44;
+pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
+
+// ------------
+
+/// Helper that builds the empty texture array on startup.
+pub fn create_gpu_array(
+    images: &mut Assets<Image>,
+    //render_device: &RenderDevice,
+) -> Handle<Image> {
+    let mut array = Image {
+        data: Some(vec![0u8; (TILE_PX * TILE_PX * 4 * TEXARRAY_MAX_TILE_LAYERS) as usize]),
+        texture_descriptor: bevy::render::render_resource::TextureDescriptor {
+            label: Some("tile_array"),
+            size: Extent3d { width: TILE_PX, height: TILE_PX, depth_or_array_layers: TEXARRAY_MAX_TILE_LAYERS },
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            mip_level_count: 1,
+            sample_count: 1,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: AddressMode::ClampToEdge.into(),
+            address_mode_v: AddressMode::ClampToEdge.into(),
+            mag_filter: FilterMode::Nearest.into(),
+            min_filter: FilterMode::Nearest.into(),
+            mipmap_filter: FilterMode::Nearest.into(),
+            ..default()
+        }),
+        ..default()
+    };
+    array.reinterpret_size(array.texture_descriptor.size);
+    images.add(array)
+}
 
 /// TEMP stub: synthesises a 44×44 checkerboard.
 /// Replace with your disk / MUL-reader code that returns a Bevy `Image`
 /// containing RGBA8-SRGB data of exactly 44×44 pixels.
-pub(crate) fn get_tile_image(
+pub fn get_tile_image(
     art_id: u16,
     _commands: &mut Commands,
     images: &mut ResMut<Assets<Image>>,
@@ -88,3 +124,6 @@ pub(crate) fn get_tile_image(
     
     handle
 }
+
+
+// -------------

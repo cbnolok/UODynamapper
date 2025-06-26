@@ -1,20 +1,24 @@
+#![allow(dead_code)]
+
 use bevy::{
-    pbr::{ExtendedMaterial, MaterialExtension}, prelude::*, render::{
+    pbr::{ExtendedMaterial, MaterialExtension},
+    prelude::*,
+    render::{
         mesh::{Indices, PrimitiveTopology},
         render_asset::RenderAssetUsages,
         render_resource::{AsBindGroup, ShaderRef, ShaderType},
-    }
+    },
 };
 use bytemuck::Zeroable;
 
-use crate::tile_cache::*;
-
+use crate::constants;
+use crate::{texture_cache::terrain::cache::*, util_lib::array::*};
 
 #[derive(Clone, Copy, Default)]
-pub struct UOMapTile { 
-    art_id: u16, 
-    hue: u16, 
-    height: u16, // in UO it's i8 
+pub struct UOMapTile {
+    art_id: u16,
+    hue: u16,
+    height: u16, // in UO it's i8
 }
 
 pub const DUMMY_MAP_SIZE_X: usize = 4096;
@@ -24,7 +28,7 @@ pub const CHUNK_TILE_NUM_1D: usize = 16;
 pub const CHUNK_TILE_NUM_TOTAL: usize = CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D;
 
 #[derive(Component)]
-pub struct MapMeshChunk {
+pub struct TerrainMeshChunk {
     pub gx: u32,
     pub gy: u32,
 }
@@ -45,20 +49,22 @@ const TERRAIN_SHADER_PATH: &str = "shaders/worldmap/terrain_base.wgsl";
 //  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
 
 // In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
-// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”: 
+// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
+
+type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>;
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
-pub struct TerrainMaterial {    
-    #[texture(100, dimension="2d_array")]
+pub struct TerrainMaterialExtension {
+    #[texture(100, dimension = "2d_array")]
     #[sampler(101)]
     pub tex_array: Handle<Image>,
 
     // ← This produces group(2), binding(2) as a 16-byte UBO
-    #[uniform(102, min_binding_size=16)]
+    #[uniform(102, min_binding_size = 16)]
     pub uniforms: TerrainUniforms,
 }
 
-impl MaterialExtension for TerrainMaterial {
+impl MaterialExtension for TerrainMaterialExtension {
     fn vertex_shader() -> ShaderRef {
         TERRAIN_SHADER_PATH.into()
     }
@@ -66,7 +72,6 @@ impl MaterialExtension for TerrainMaterial {
         TERRAIN_SHADER_PATH.into()
     }
 }
-
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
@@ -76,47 +81,34 @@ pub struct TerrainUniforms {
     pub chunk_origin: Vec2,
     _pad2: Vec2,
     pub layers: [UVec4; CHUNK_TILE_NUM_TOTAL_VEC4],
-    pub hues:   [UVec4; CHUNK_TILE_NUM_TOTAL_VEC4],
+    pub hues: [UVec4; CHUNK_TILE_NUM_TOTAL_VEC4],
 }
 
 // -- 0)  --------------------------------------------
 
-
-/// Get the tile layer value from a packed [UVec4] array.
-/// `layers`: The `[UVec4; N]` array of packed tile indices.
-/// `idx`: The overall linear tile index (0..tile_count).
-fn uvec4_elem_get_mut(vec: &mut [UVec4], idx: usize) -> &mut u32 {
-    let block = idx / 4;
-    let offset = idx % 4;
-    &mut vec[block][offset]
-}
-
-/*
-fn uvec4_elem_get_ref(vec: & [UVec4], idx: usize) -> & u32 {
-    let block = idx / 4;
-    let offset = idx % 4;
-    & vec[block][offset]
-}
-*/
-
-//fn get_1d_array_index_as_2d REF <'a, T> (arr: &'a [T], tx: usize, ty: usize) -> &'a T {
-//    & arr[ty * CHUNK_SIZE + tx]
-//}
-fn get_1d_array_index_as_2d (tx: usize, ty: usize) -> usize {
-    ty * CHUNK_TILE_NUM_1D + tx
-}
-
 // Dummy function for tile heights (replace with your own)
 // g x/y: grid x/y
 // t x/y: tile x/y
-fn get_tile_height(tile_heights: &[[f32; CHUNK_TILE_NUM_1D]], gx: i32, gy: i32, tx: usize, ty: usize) -> f32 {
+fn get_tile_height(
+    tile_heights: &[[f32; CHUNK_TILE_NUM_1D]],
+    _gx: i32,
+    _gy: i32,
+    tx: usize,
+    ty: usize,
+) -> f32 {
     tile_heights[ty][tx]
 }
 
 // Find vertex/corner height by averaging up to four tiles.
 // g x/y: grid x/y
 // v x/y: vert x/y
-fn get_vertex_height(tile_heights: &[[f32; CHUNK_TILE_NUM_1D]], gx: i32, gy: i32, vx: usize, vy: usize) -> f32 {
+fn get_vertex_height(
+    tile_heights: &[[f32; CHUNK_TILE_NUM_1D]],
+    gx: i32,
+    gy: i32,
+    vx: usize,
+    vy: usize,
+) -> f32 {
     let mut sum = 0.0;
     let mut count = 0;
     for dy in 0..2 {
@@ -138,22 +130,22 @@ fn get_vertex_height(tile_heights: &[[f32; CHUNK_TILE_NUM_1D]], gx: i32, gy: i32
     }
 }
 
-pub fn build_visible_chunks(
-    mut commands:           Commands,
-    mut meshes:             ResMut<Assets<Mesh>>,
-    mut materials_terrain:  ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
-    mut cache:              ResMut<TileCache>,
-    mut images:             ResMut<Assets<Image>>,
-    cam_q:                  Query<&Transform, With<Camera3d>>,
-    chunk_q:                Query<(Entity, &MapMeshChunk, Option<&Mesh3d>)>,
+pub fn build_visible_terrain_chunks(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials_terrain: ResMut<Assets<TerrainMaterial>>,
+    mut cache: ResMut<TextureCache>,
+    mut images: ResMut<Assets<Image>>,
+    cam_q: Query<&Transform, With<Camera3d>>,
+    chunk_q: Query<(Entity, &TerrainMeshChunk, Option<&Mesh3d>)>,
 ) {
     let cam_pos = cam_q.single().unwrap().translation;
 
     // Demo heights: Replace with your actual per-tile map data
-    let mut dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X + 1]; DUMMY_MAP_SIZE_Y + 1];
+    let mut map_dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X + 1]; DUMMY_MAP_SIZE_Y + 1];
     for ty in 0..DUMMY_MAP_SIZE_Y {
         for tx in 0..DUMMY_MAP_SIZE_X {
-            dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
+            map_dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
         }
     }
 
@@ -179,12 +171,12 @@ pub fn build_visible_chunks(
         // --- Generate tile grid in local space: [0, CHUNK_SIZE] on X/Z ---
         let grid_w = CHUNK_TILE_NUM_1D + 1;
         let grid_h = CHUNK_TILE_NUM_1D + 1;
-        let max_arr_idx: usize = (grid_w * grid_h);
+        //let max_arr_idx: usize = (grid_w * grid_h);
 
-        let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
+        //let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
         let mut mat_ext_uniforms = TerrainUniforms::zeroed();
         mat_ext_uniforms.chunk_origin = Vec2::new(chunk_world_x, chunk_world_z);
-        mat_ext_uniforms.light_dir = Vec3::Y;
+        mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
         let mut verts = Vec::with_capacity(grid_w * grid_h);
         let mut heights = vec![0.0f32; grid_w * grid_h];
@@ -195,23 +187,26 @@ pub fn build_visible_chunks(
                 let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
                 let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
                 //let h = get_vertex_height(&dummy_tile_heights, chunk_data.gx, chunk_data.gy, vx, vy);
-                let h = dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
+                let h = map_dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
                 heights[vy * grid_w + vx] = h;
 
                 verts.push(TerrainVertexAttrs {
                     pos: [vx as f32, h, vy as f32],
-                    uv: [vx as f32 / (CHUNK_TILE_NUM_1D as f32), vy as f32 / (CHUNK_TILE_NUM_1D as f32)],
+                    uv: [
+                        vx as f32 / (CHUNK_TILE_NUM_1D as f32),
+                        vy as f32 / (CHUNK_TILE_NUM_1D as f32),
+                    ],
                     norm: [0.0, 1.0, 0.0], // placeholder, they will be calculated after
                 });
             }
         }
 
-        // Calculate Smooth Normals: finite difference using derived vertex heights
+        // Calculate Smooth Normals: finite difference using derived vertex heights.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
                 let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
                 let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
-                let center = dummy_tile_heights[world_ty][world_tx];
+                let center = map_dummy_tile_heights[world_ty][world_tx];
 
                 /*
                 Each chunk computes normals only from heights inside its own chunk, so edge normals miss out on what’s just over the border in the global heightgrid.
@@ -220,10 +215,26 @@ pub fn build_visible_chunks(
                  */
                 // let center = heights[vy * grid_w + vx];
 
-                let left   = if world_tx > 0                      { dummy_tile_heights[world_ty][world_tx - 1] } else { center };
-                let right  = if world_tx + 1 < DUMMY_MAP_SIZE_X   { dummy_tile_heights[world_ty][world_tx + 1] } else { center };
-                let down   = if world_ty > 0                      { dummy_tile_heights[world_ty - 1][world_tx] } else { center };
-                let up     = if world_ty + 1 < DUMMY_MAP_SIZE_Y   { dummy_tile_heights[world_ty + 1][world_tx] } else { center };        
+                let left = if world_tx > 0 {
+                    map_dummy_tile_heights[world_ty][world_tx - 1]
+                } else {
+                    center
+                };
+                let right = if world_tx + 1 < DUMMY_MAP_SIZE_X {
+                    map_dummy_tile_heights[world_ty][world_tx + 1]
+                } else {
+                    center
+                };
+                let down = if world_ty > 0 {
+                    map_dummy_tile_heights[world_ty - 1][world_tx]
+                } else {
+                    center
+                };
+                let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y {
+                    map_dummy_tile_heights[world_ty + 1][world_tx]
+                } else {
+                    center
+                };
 
                 let dx = (right - left) * 0.5;
                 let dz = (up - down) * 0.5;
@@ -232,7 +243,7 @@ pub fn build_visible_chunks(
             }
         }
 
-        // Build triangle indices (tiles reference vertices)
+        // Build triangle indices (tiles reference vertices).
         let mut idxs = Vec::with_capacity(CHUNK_TILE_NUM_TOTAL * 6);
         for ty in 0..CHUNK_TILE_NUM_1D {
             for tx in 0..CHUNK_TILE_NUM_1D {
@@ -240,19 +251,21 @@ pub fn build_visible_chunks(
                 let i1 = ty * grid_w + (tx + 1);
                 let i2 = (ty + 1) * grid_w + (tx + 1);
                 let i3 = (ty + 1) * grid_w + tx;
-                 // Vertex winding order: counter-clockwise.
-                idxs.extend([i0 as u32, i2 as u32, i1 as u32,  i0 as u32, i3 as u32, i2 as u32]);
+                // Vertex winding order: counter-clockwise -> normals will point up.
+                idxs.extend([
+                    i0 as u32, i2 as u32, i1 as u32, i0 as u32, i3 as u32, i2 as u32,
+                ]);
 
-                // We pass tile data (read from the MUL files) as a uniform buffer to the wgsl shader. 
-                // ***** your real tile lookup goes here *****
+                // We pass tile data (read from the MUL files) as a uniform buffer to the wgsl shader.
+                // ***** TODO: real tile lookup goes here *****
                 let tile = UOMapTile {
                     art_id: ((tx + ty * CHUNK_TILE_NUM_1D) & 0x7FF) as u16, // temp, dummy
-                    hue:    0,
-                    height: ((tx+ty)&1) as u16      // temp, dummy
+                    hue: 0,
+                    height: ((tx + ty) & 1) as u16, // temp, dummy
                 };
                 // Get the layer (index) of the texture array housing this texture (map tile art).
                 let layer = cache.layer_of(tile.art_id, &mut commands, &mut images);
-                // set uo_tile_data[layer] = tile.
+                // TODO: set uo_tile_data[layer] = tile.
 
                 // Per-tile (in the chunk) data. I actually might not need this.
                 //let mut td = &mut uo_tile_data[get_tile_array_index(tx, ty)];
@@ -260,29 +273,41 @@ pub fn build_visible_chunks(
                 // Update values of the uniform buffer. This is per-chunk data (per mesh draw call).
                 // We need to store the data not in a simple vector, but in a vector of 4D vectors, in order to meet
                 // the 16-byte field alignment requisite.
-                
+
                 /*
-                // We need to access the right layer, so start by picking the right 4D array: 
+                // We need to access the right layer, so start by picking the right 4D array:
                 let mut layers_u4_arr_ref = &mut mat_ext_uniforms.layers[get_1d_array_index_as_2d(tx, ty)];
                 // Now get the correct one among the 4 elements.
                 let mut layer_ref = uvec4_elem_get_mut(layers_u4_arr_ref, get_1d_array_index_as_2d(tx, ty));
                 */
-                let layer_ref = uvec4_elem_get_mut(&mut mat_ext_uniforms.layers, get_1d_array_index_as_2d(tx, ty));
+                let layer_ref = uvec4_elem_get_mut(
+                    &mut mat_ext_uniforms.layers,
+                    get_1d_array_index_as_2d(CHUNK_TILE_NUM_1D, tx, ty),
+                );
                 *layer_ref = layer;
             }
         }
 
-        // Build Bevy mesh (local space [0,CHUNK_SIZE])
+        // Build Bevy mesh (local space [0,CHUNK_SIZE]).
         let chunk_mesh_handle: Handle<Mesh> = {
             let mut mesh = Mesh::new(
                 PrimitiveTopology::TriangleList,
                 RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
             );
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts.iter().map(|v| v.pos).collect::<Vec<_>>());
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL,   verts.iter().map(|v| v.norm).collect::<Vec<_>>());
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0,     verts.iter().map(|v| v.uv).collect::<Vec<_>>());
-            
-            // Inject custom data in unused fields of the pipeline:
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_POSITION,
+                verts.iter().map(|v| v.pos).collect::<Vec<_>>(),
+            );
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_NORMAL,
+                verts.iter().map(|v| v.norm).collect::<Vec<_>>(),
+            );
+            mesh.insert_attribute(
+                Mesh::ATTRIBUTE_UV_0,
+                verts.iter().map(|v| v.uv).collect::<Vec<_>>(),
+            );
+
+            // Add dummy data to unused fields, to be used internally by us in the shader:
             // We'll use this field (second pair of UV coords) to pass shading data from the vertex to the fragment shader.
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.0, 0.0]; verts.len()]);
 
@@ -295,10 +320,10 @@ pub fn build_visible_chunks(
                 base: StandardMaterial {
                     ..Default::default()
                 },
-                extension: TerrainMaterial {
+                extension: TerrainMaterialExtension {
                     tex_array: cache.image_handle.clone(),
-                    uniforms: mat_ext_uniforms
-                }
+                    uniforms: mat_ext_uniforms,
+                },
             };
             materials_terrain.add(mat)
         };
@@ -311,7 +336,10 @@ pub fn build_visible_chunks(
             GlobalTransform::default(),
         ));
 
-        println!("Spawned chunk at: gx={}, gy={}", chunk_data.gx, chunk_data.gy);
+        println!(
+            "Spawned chunk at: gx={}, gy={}",
+            chunk_data.gx, chunk_data.gy
+        );
     }
 }
 
@@ -320,10 +348,12 @@ trait _Arrayable {
     fn to_array(&self) -> [f32; 3];
 }
 impl _Arrayable for Vec3 {
-    fn to_array(&self) -> [f32; 3] { [self.x, self.y, self.z] }
-
+    fn to_array(&self) -> [f32; 3] {
+        [self.x, self.y, self.z]
+    }
 }
 
+// Base mesh attributes that we need to provide.
 #[derive(Clone, Copy)]
 struct TerrainVertexAttrs {
     pos: [f32; 3],
