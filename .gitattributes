@@ -1,0 +1,5 @@
+* text eol=crlf
+
+# Don't check for trailing whitespace at the end of lines.
+*.md -whitespace=blank-at-eol
+#*.md filter=space-removal-at-eol
