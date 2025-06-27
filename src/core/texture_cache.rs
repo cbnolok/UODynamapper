@@ -5,9 +5,9 @@ use bevy::prelude::*;
 pub struct TextureCachePlugin;
 impl Plugin for TextureCachePlugin
 {
-    /// Allocate GPU texture array and TileCache.
+    /// Allocate GPU texture array and Tile Caches.
     fn build(&self, app: &mut App) {
-        app.add_plugins(terrain::TerrainCachePlugin);                                         
-    }    
+        app.add_plugins(terrain::TerrainCachePlugin);
+    }
 }
 

@@ -8,8 +8,8 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin
 {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, sys_spawn_player_entity);                                         
-    }    
+        app.add_systems(Startup, sys_spawn_player_entity);
+    }
 }
 
 pub fn sys_spawn_player_entity(
@@ -26,6 +26,7 @@ pub fn sys_spawn_player_entity(
     });
     let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
 
+    println!("Spawning player at pos {}.", player_start_pos);
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material_handle),

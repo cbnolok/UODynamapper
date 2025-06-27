@@ -6,8 +6,8 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin
 {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, sys_setup_cam);                                         
-    }    
+        app.add_systems(Startup, sys_setup_cam);
+    }
 }
 
 
@@ -22,7 +22,7 @@ pub fn sys_setup_cam(
     //------------------------------------
     // World light
     //------------------------------------
-    
+
     // We won't use a world light source, we'll bake the light from the material and the shader.
     // We use it now just to light the "player" cube.
     /*
@@ -46,6 +46,7 @@ pub fn sys_setup_cam(
 
     // Camera position: 30 units above & 30 units back
     let cam_pos = Vec3::new(center.x, 30.0, center.z + 30.0);
+    //let cam_pos = Vec3::new(center.x + 5.0, 10.0, center.z + 5.0);
 
     commands.spawn((
         Camera3d::default(), // Marker component for 3D cameras
