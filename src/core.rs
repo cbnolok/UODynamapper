@@ -3,18 +3,17 @@
 #![allow(unused_parens)]
 */
 pub mod texture_cache;
-pub mod terrain_chunk_mesh;
-pub mod camera;
 pub mod constants;
-pub mod player;
+pub mod render;
 pub mod util_lib;
-pub mod worldmap_base_mesh;
 
+use std::process::ExitCode;
 use bevy::prelude::*;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-pub fn run_bevy_app() -> AppExit {
+pub fn run_bevy_app() -> ExitCode {
     // Install the custom own log subscriber (must come BEFORE Bevy app launch!)
+    //  to change the default Bevy log format.
     tracing_subscriber::registry()
         .with(
             fmt::layer()
@@ -28,27 +27,23 @@ pub fn run_bevy_app() -> AppExit {
         .with(EnvFilter::from_default_env())
         .init();
 
-    App::new()
+    let result = App::new()
+        //.insert_resource(WindowDescriptor {
+        //    title: "UODynamapper".to_string(),
+        //    ..Default::default()
+        //    })
         .add_plugins(DefaultPlugins.build()
             .disable::<bevy::log::LogPlugin>()
             .set(ImagePlugin::default_nearest()))
-        .add_plugins(MaterialPlugin::<terrain_chunk_mesh::TerrainMaterial>::default())   // ← registers Assets<TerrainMaterial>, TODO: do this in a separate startup system
-        .add_plugins(texture_cache::TextureCachePlugin)
-        .add_systems(Startup, (camera::setup_cam, spawn_worldmap_chunks, player::spawn_player_entity))
-        .add_systems(Update, (terrain_chunk_mesh::build_visible_terrain_chunks,))
-        .run()
-}
+        .add_plugins((
+            render::RenderPlugin,
+            texture_cache::TextureCachePlugin,
+        ))
+        .run();
 
-// Spawn a 3×3 grid of placeholder chunks.
-fn spawn_worldmap_chunks(mut commands: Commands) {
-    // TODO: pass player position.
-    for gx in 0..=2 {
-        for gy in 0..=2 {
-            commands.spawn((
-                terrain_chunk_mesh::TCMesh { gx, gy },
-                Transform::default(),
-                GlobalTransform::default(),
-            ));
-        }
+    match result {
+        AppExit::Success => ExitCode::SUCCESS,
+        AppExit::Error(value) => ExitCode::from(value.get()),
     }
 }
+

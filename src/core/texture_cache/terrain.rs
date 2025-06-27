@@ -9,14 +9,14 @@ impl Plugin for TerrainCachePlugin
 {
     /// Allocate GPU texture array and TileCache.
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_terrain_cache);
+        app.add_systems(Startup, sys_setup_terrain_cache);
     }    
 }
 
-pub fn setup_terrain_cache(
+pub fn sys_setup_terrain_cache(
     mut cmd: Commands,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let handle = texarray::create_gpu_array(&mut images); //, &rd);
+    let handle = texarray::create_gpu_texture_array("terrain_cache", &mut images); //, &rd);
     cmd.insert_resource(cache::TextureCache::new(handle));
 }

@@ -13,14 +13,15 @@ pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
 // ------------
 
 /// Helper that builds the empty texture array on startup.
-pub fn create_gpu_array(
+pub fn create_gpu_texture_array(
+    label: &'static str,
     images: &mut Assets<Image>,
     //render_device: &RenderDevice,
 ) -> Handle<Image> {
     let mut array = Image {
         data: Some(vec![0u8; (TILE_PX * TILE_PX * 4 * TEXARRAY_MAX_TILE_LAYERS) as usize]),
         texture_descriptor: bevy::render::render_resource::TextureDescriptor {
-            label: Some("tile_array"),
+            label: Some(label),
             size: Extent3d { width: TILE_PX, height: TILE_PX, depth_or_array_layers: TEXARRAY_MAX_TILE_LAYERS },
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8UnormSrgb,

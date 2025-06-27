@@ -1,5 +1,7 @@
+use std::process::ExitCode;
+
 pub mod core;
 
-fn main() {
-    core::run_bevy_app();
+fn main() -> ExitCode {
+    core::run_bevy_app()
 }

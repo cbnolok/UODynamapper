@@ -1,6 +1,24 @@
 use bevy::prelude::*;
 
-pub fn setup_cam(mut commands: Commands) {
+use crate::core::render::scene::{SceneStartupData};
+
+pub struct CameraPlugin;
+impl Plugin for CameraPlugin
+{
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, sys_setup_cam);                                         
+    }    
+}
+
+
+pub fn sys_setup_cam(
+    mut commands: Commands,
+    scene_startup_data_res: Option<Res<SceneStartupData>>,
+    //scene_update_data_res: Option<Res<SceneUpdateData>>,
+) {
+    let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
+    //let chunk_draw_range = scene_update_data_res.unwrap().chunk_draw_range;
+
     //------------------------------------
     // World light
     //------------------------------------
@@ -24,7 +42,7 @@ pub fn setup_cam(mut commands: Commands) {
     //------------------------------------
 
     // Center of the chunk/grid
-    let center = Vec3::new(32.0, 0.0, 32.0);
+    let center = player_start_pos;
 
     // Camera position: 30 units above & 30 units back
     let cam_pos = Vec3::new(center.x, 30.0, center.z + 30.0);

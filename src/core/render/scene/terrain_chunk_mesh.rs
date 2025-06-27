@@ -10,10 +10,24 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
+use crate::core::{constants, texture_cache::terrain::cache::*, util_lib::array::*};
+use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
 
-use super::constants;
-use super::{texture_cache::terrain::cache::*, util_lib::array::*};
 
+pub struct TerrainChunkMeshPlugin;
+impl Plugin for TerrainChunkMeshPlugin
+{
+    fn build(&self, app: &mut App) {
+        app
+            .add_plugins(MaterialPlugin::<TerrainMaterial>::default())   // ← register Assets<TerrainMaterial>
+            .add_systems(Update, sys_build_visible_terrain_chunks);
+    }
+}
+
+
+// -------------------------------------------
+
+// TODO: move to another file, or use uocf one.
 #[derive(Clone, Copy, Default)]
 pub struct UOMapTile {
     art_id: u16,
@@ -21,11 +35,8 @@ pub struct UOMapTile {
     height: u16, // in UO it's i8
 }
 
-pub const DUMMY_MAP_SIZE_X: usize = 4096;
-pub const DUMMY_MAP_SIZE_Y: usize = 7120;
-
-pub const CHUNK_TILE_NUM_1D: usize = 16;
-pub const CHUNK_TILE_NUM_TOTAL: usize = CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D;
+pub const CHUNK_TILE_NUM_1D: u32 = 16;
+pub const CHUNK_TILE_NUM_TOTAL: usize = (CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D) as usize;
 
 #[derive(Component)]
 pub struct TCMesh {
@@ -38,18 +49,8 @@ pub struct TCMesh {
 const CHUNK_TILE_NUM_TOTAL_VEC4: usize = (CHUNK_TILE_NUM_TOTAL as usize + 3) / 4;
 const TERRAIN_SHADER_PATH: &str = "shaders/worldmap/terrain_base.wgsl";
 
-// -- Define uniforms to be used in the shader. Rust side.
-// Uniform Buffer Size Limitations:
-//    Most GPUs limit uniform buffers to 64KB (sometimes less!).
-//    u32[2048] is 8192 bytes, twice is 16KB—OK, but you need to watch out if you want to add lots of fields.
 
-// Uniform buffer layouts:
-//  Most APIs demand 16-byte alignment per field.
-//  For a field to be valid in a uniform buffer, each element of an array must be treated as a “vec4” (i.e., 16 bytes each), not simply a u32 (or f32)!
-//  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
-
-// In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
-// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
+// -- Define data and uniforms to be used in the shader. Rust side.
 
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>;
 
@@ -73,6 +74,20 @@ impl MaterialExtension for TerrainMaterialExtension {
     }
 }
 
+// Uniform buffer -> just a fancy name for a struct that is passed to the shader, has
+//  global scope and is passed per draw call (so for each chunk mesh).
+// Uniform Buffer Size Limitations:
+//    Most GPUs limit uniform buffers to 64KB (sometimes less!).
+//    u32[2048] is 8192 bytes, twice is 16KB—OK, but you need to watch out if you want to add lots of fields.
+
+// Uniform buffer layouts:
+//  Most APIs demand 16-byte alignment per field.
+//  For a field to be valid in a uniform buffer, each element of an array must be treated as a “vec4” (i.e., 16 bytes each), not simply a u32 (or f32)!
+//  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
+
+// In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
+// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
+
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
 pub struct TerrainUniforms {
@@ -84,30 +99,30 @@ pub struct TerrainUniforms {
     pub hues: [UVec4; CHUNK_TILE_NUM_TOTAL_VEC4],
 }
 
-// -- 0)  --------------------------------------------
+// -- Helpers for building the mesh  ---------------------------
 
 // Dummy function for tile heights (replace with your own)
 // g x/y: grid x/y
 // t x/y: tile x/y
 fn get_tile_height(
-    tile_heights: &[[f32; CHUNK_TILE_NUM_1D]],
+    tile_heights: &[[f32; CHUNK_TILE_NUM_1D as usize]],
     _gx: i32,
     _gy: i32,
-    tx: usize,
-    ty: usize,
+    tx: u32,
+    ty: u32,
 ) -> f32 {
-    tile_heights[ty][tx]
+    tile_heights[ty as usize][tx as usize]
 }
 
-// Find vertex/corner height by averaging up to four tiles.
+/// Find vertex/corner height by averaging up to four tiles.
 // g x/y: grid x/y
 // v x/y: vert x/y
 fn get_vertex_height(
-    tile_heights: &[[f32; CHUNK_TILE_NUM_1D]],
+    tile_heights: &[[f32; CHUNK_TILE_NUM_1D as usize]],
     gx: i32,
     gy: i32,
-    vx: usize,
-    vy: usize,
+    vx: u32,
+    vy: u32,
 ) -> f32 {
     let mut sum = 0.0;
     let mut count = 0;
@@ -130,7 +145,9 @@ fn get_vertex_height(
     }
 }
 
-pub fn build_visible_terrain_chunks(
+/// Build a custom mesh which is a tile grid with the same shape of
+///   a map.mul chunk (CHUNK_TILE_NUM_1D x CHUNK_TILE_NUM_1D).
+pub fn sys_build_visible_terrain_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials_terrain: ResMut<Assets<TerrainMaterial>>,
@@ -142,9 +159,9 @@ pub fn build_visible_terrain_chunks(
     let cam_pos = cam_q.single().unwrap().translation;
 
     // TODO: Demo heights: Replace with the actual per-tile map data
-    let mut map_dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X + 1]; DUMMY_MAP_SIZE_Y + 1];
-    for ty in 0..DUMMY_MAP_SIZE_Y {
-        for tx in 0..DUMMY_MAP_SIZE_X {
+    let mut map_dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X as usize + 1]; DUMMY_MAP_SIZE_Y as usize+ 1];
+    for ty in 0..DUMMY_MAP_SIZE_Y as usize {
+        for tx in 0..DUMMY_MAP_SIZE_X as usize {
             map_dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
         }
     }
@@ -164,13 +181,15 @@ pub fn build_visible_terrain_chunks(
             0.0,
             chunk_world_z + CHUNK_TILE_NUM_1D as f32 / 2.0,
         );
-        if cam_pos.distance(center) > 80.0 {
+        if cam_pos.distance(center) > 80.0 {    // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this?
+            println!("cam pos {}", cam_pos);
+            println!("center {}", center);
             continue;
         }
 
         // --- Generate tile grid in local space: [0, CHUNK_SIZE] on X/Z ---
-        let grid_w = CHUNK_TILE_NUM_1D + 1;
-        let grid_h = CHUNK_TILE_NUM_1D + 1;
+        let grid_w: usize = CHUNK_TILE_NUM_1D as usize + 1;
+        let grid_h: usize = CHUNK_TILE_NUM_1D as usize + 1;
         //let max_arr_idx: usize = (grid_w * grid_h);
 
         //let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
@@ -184,8 +203,8 @@ pub fn build_visible_terrain_chunks(
         // Define positions of each vertex.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
-                let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
+                let world_tx = (chunk_data.gx * CHUNK_TILE_NUM_1D) as usize + vx;
+                let world_ty = (chunk_data.gy * CHUNK_TILE_NUM_1D) as usize + vy;
                 //let h = get_vertex_height(&dummy_tile_heights, chunk_data.gx, chunk_data.gy, vx, vy);
                 let h = map_dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
                 heights[vy * grid_w + vx] = h;
@@ -204,8 +223,8 @@ pub fn build_visible_terrain_chunks(
         // Calculate Smooth Normals: finite difference using derived vertex heights.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let world_tx = chunk_data.gx as usize * CHUNK_TILE_NUM_1D + vx;
-                let world_ty = chunk_data.gy as usize * CHUNK_TILE_NUM_1D + vy;
+                let world_tx = (chunk_data.gx * CHUNK_TILE_NUM_1D) as usize + vx;
+                let world_ty = (chunk_data.gy * CHUNK_TILE_NUM_1D) as usize + vy;
                 let center = map_dummy_tile_heights[world_ty][world_tx];
 
                 /*
@@ -220,7 +239,7 @@ pub fn build_visible_terrain_chunks(
                 } else {
                     center
                 };
-                let right = if world_tx + 1 < DUMMY_MAP_SIZE_X {
+                let right = if world_tx + 1 < DUMMY_MAP_SIZE_X as usize{
                     map_dummy_tile_heights[world_ty][world_tx + 1]
                 } else {
                     center
@@ -230,7 +249,7 @@ pub fn build_visible_terrain_chunks(
                 } else {
                     center
                 };
-                let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y {
+                let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y as usize{
                     map_dummy_tile_heights[world_ty + 1][world_tx]
                 } else {
                     center
@@ -245,8 +264,8 @@ pub fn build_visible_terrain_chunks(
 
         // Build triangle indices (tiles reference vertices).
         let mut idxs = Vec::with_capacity(CHUNK_TILE_NUM_TOTAL * 6);
-        for ty in 0..CHUNK_TILE_NUM_1D {
-            for tx in 0..CHUNK_TILE_NUM_1D {
+        for ty in 0..CHUNK_TILE_NUM_1D as usize {
+            for tx in 0..CHUNK_TILE_NUM_1D as usize {
                 let i0 = ty * grid_w + tx;
                 let i1 = ty * grid_w + (tx + 1);
                 let i2 = (ty + 1) * grid_w + (tx + 1);
@@ -259,7 +278,7 @@ pub fn build_visible_terrain_chunks(
                 // We pass tile data (read from the MUL files) as a uniform buffer to the wgsl shader.
                 // ***** TODO: real tile lookup goes here *****
                 let tile = UOMapTile {
-                    art_id: ((tx + ty * CHUNK_TILE_NUM_1D) & 0x7FF) as u16, // temp, dummy
+                    art_id: ((tx + ty * CHUNK_TILE_NUM_1D as usize) & 0x7FF) as u16, // temp, dummy
                     hue: 0,
                     height: ((tx + ty) & 1) as u16, // temp, dummy
                 };
@@ -282,7 +301,7 @@ pub fn build_visible_terrain_chunks(
                 */
                 let layer_ref = uvec4_elem_get_mut(
                     &mut mat_ext_uniforms.layers,
-                    get_1d_array_index_as_2d(CHUNK_TILE_NUM_1D, tx, ty),
+                    get_1d_array_index_as_2d(CHUNK_TILE_NUM_1D as usize, tx as usize, ty as usize),
                 );
                 *layer_ref = layer;
             }
@@ -337,7 +356,7 @@ pub fn build_visible_terrain_chunks(
         ));
 
         println!(
-            "Spawned chunk at: gx={}, gy={}",
+            "Rendered chunk at: gx={}, gy={}",
             chunk_data.gx, chunk_data.gy
         );
     }
