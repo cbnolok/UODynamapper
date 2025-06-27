@@ -6,12 +6,22 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
+byteorder = "1.5.0"
+color-eyre = "0.6.5"
+config = { version = "0.15.11", default-features = false, features = ["toml"] }
+#eyre = "0.6.12"
 image = "0.25"
+pad = "0.1.6"
+paris = { version = "1.5.15", features = ["macros", "no_logger"] } # log formatting
+regex = { version = "1.11.1", default-features = false, features = ["std", "unicode"] }
+#serde, miniserde, nanoserde
+#serde_derive
+strum = "0.27.1"
+strum_macros = "0.27.1"
 tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
 
 [dependencies.bevy]
 version = "0.16.1"
-# Disable the default features if there are any that you do not want
 default-features = false
 features = [
   # Parts of Bevy:
@@ -85,7 +95,7 @@ features = [
   # Development features
   "dynamic_linking",     # Dynamic linking for faster compile-times
   "asset_processor",     # Enable asset processing support
-  "bevy_debug_stepping", # Enable stepping through ECS systems for debugging
+  #"bevy_debug_stepping", # Enable stepping through ECS systems for debugging
   "bevy_dev_tools",      # Extra dev functionality (like FPS overlay)
   "bevy_remote",         # Enable BRP (Bevy Remote Protocol) for integration with editors and external dev tools
   "file_watcher",        # Asset hot-reloading
@@ -107,7 +117,7 @@ features = [
   "dds",  # DDS (DirectX) format for GPU textures, alternative to KTX2
   "ico",  # ICO image format (Windows icons)
   "jpeg", # JPEG lossy format for photos
-  "shader_format_spirv", # SPIR-V shader support
+  #"shader_format_spirv", # SPIR-V shader support
   "shader_format_wesl",  # WESL (Extended WGSL) shader support
 ]
 
