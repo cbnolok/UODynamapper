@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
-use super::{scene::SceneStartupData};
+use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
+use super::scene::SceneStartupData;
 
 #[derive(Component)]
 struct PlayerCamera;
@@ -8,9 +9,14 @@ impl PlayerCamera {
     const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
 }
 
-pub struct CameraPlugin;
+pub struct CameraPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(CameraPlugin);
+
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.add_systems(Startup, sys_setup_cam);
     }
 }
@@ -26,6 +32,8 @@ pub fn sys_setup_cam(
     //    (Without<Player>, With<PlayerCamera>),
     //>,
 ) {
+    log_system_add_startup::<CameraPlugin>(fname!());
+
     let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
     //let chunk_draw_range = scene_update_data_res.unwrap().chunk_draw_range;
 

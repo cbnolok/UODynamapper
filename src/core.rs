@@ -5,7 +5,6 @@
 pub mod texture_cache;
 pub mod constants;
 pub mod render;
-pub mod util_lib;
 
 use std::process::ExitCode;
 use bevy::prelude::*;
@@ -36,8 +35,8 @@ pub fn run_bevy_app() -> ExitCode {
             .disable::<bevy::log::LogPlugin>()
             .set(ImagePlugin::default_nearest()))
         .add_plugins((
-            render::RenderPlugin,
-            texture_cache::TextureCachePlugin,
+            render::RenderPlugin                { registered_by: "CorePlugin" },
+            texture_cache::TextureCachePlugin   { registered_by: "CorePlugin" },
         ))
         .run();
 

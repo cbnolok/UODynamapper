@@ -1,6 +1,4 @@
 use pad::PadStr;
-//use paris_log::{debug, error, info, warn};
-use paris::*;   // logging
 use regex::Regex;
 use std::sync::OnceLock;
 use strum::VariantNames; // For the trait.
@@ -104,12 +102,12 @@ pub fn one(
     );
 
     match severity {
-        Severity::Debug => info!("{full_msg}"), //debug!("{full_msg}"),
-        Severity::Error => error!("{full_msg}"),
-        Severity::Info => info!("{full_msg}"),
-        Severity::Warn => warn!("{full_msg}"),
-        Severity::InternalVerbose1 => info!("{full_msg}"),
-        Severity::InternalVerbose2 => info!("{full_msg}"),
+        Severity::Debug => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
+        Severity::Error => paris::log!("<red><bold><cross></bold></> {full_msg}"),
+        Severity::Info  => paris::log!("<cyan><bold><info></bold></> {full_msg}"),
+        Severity::Warn  => paris::log!("<yellow><bold><warn></bold></> {full_msg}"),
+        Severity::InternalVerbose1 => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
+        Severity::InternalVerbose2 => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
     }
 }
 

@@ -1,19 +1,25 @@
 pub mod dynamic_light;
 pub mod terrain_chunk_mesh;
 
-use terrain_chunk_mesh::CHUNK_TILE_NUM_1D;
 use bevy::prelude::*;
 use std::cmp::{max, min};
+use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
+use terrain_chunk_mesh::CHUNK_TILE_NUM_1D;
 
 pub const DUMMY_MAP_SIZE_X: u32 = 4096;
 pub const DUMMY_MAP_SIZE_Y: u32 = 7120;
 
-pub struct ScenePlugin;
+pub struct ScenePlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(ScenePlugin);
+
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.add_plugins((
-            terrain_chunk_mesh::TerrainChunkMeshPlugin,
-            dynamic_light::PlayerDynamicLightPlugin,
+            terrain_chunk_mesh::TerrainChunkMeshPlugin  { registered_by: "ScenePlugin" },
+            dynamic_light::PlayerDynamicLightPlugin     { registered_by: "ScenePlugin" },
         ))
         .add_systems(Startup, sys_spawn_worldmap_chunks)
         .insert_resource(SceneStartupData {
@@ -48,6 +54,7 @@ pub fn sys_spawn_worldmap_chunks(
     scene_startup_data_res: Option<Res<SceneStartupData>>,
     scene_update_data_res: Option<Res<SceneUpdateData>>,
 ) {
+    log_system_add_startup::<ScenePlugin>(fname!());
     // TODO: check (via screen size and zoom) the amount of chunks to spawn.
     let player_start_pos =  // we need to convert this from tile/world position to chunk coords
         scene_startup_data_res.unwrap().player_start_pos / CHUNK_TILE_NUM_1D as f32;

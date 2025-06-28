@@ -1,0 +1,16 @@
+pub mod array;
+
+#[macro_use]
+pub mod tracked_plugin;
+
+#[macro_export]
+macro_rules! fname {
+    () => {{
+        fn f_() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f_);
+        name.strip_suffix("::f_").unwrap()
+    }}
+}

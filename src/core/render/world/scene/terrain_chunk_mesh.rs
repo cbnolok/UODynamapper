@@ -10,11 +10,16 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use crate::core::{constants, texture_cache::terrain::cache::*, util_lib::array::*};
+use crate::{fname, impl_tracked_plugin, util_lib::{array::*, tracked_plugin::*}};
+use crate::core::{constants, texture_cache::terrain::cache::*};
 use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
 
 
-pub struct TerrainChunkMeshPlugin;
+pub struct TerrainChunkMeshPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(TerrainChunkMeshPlugin);
+
 impl Plugin for TerrainChunkMeshPlugin
 {
     fn build(&self, app: &mut App) {
@@ -156,6 +161,7 @@ pub fn sys_build_visible_terrain_chunks(
     cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &TCMesh, Option<&Mesh3d>)>,
 ) {
+    log_system_add_update::<TerrainChunkMeshPlugin>(fname!());
     let cam_pos = cam_q.single().unwrap().translation;
 
     // TODO: Demo heights: Replace with the actual per-tile map data

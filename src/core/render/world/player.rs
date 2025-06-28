@@ -1,13 +1,18 @@
 use bevy::{color, prelude::*};
+use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
 use super::scene::SceneStartupData;
 
 #[derive(Component)]
 pub struct Player;
 
-pub struct PlayerPlugin;
+pub struct PlayerPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(PlayerPlugin);
 impl Plugin for PlayerPlugin
 {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.add_systems(Startup, sys_spawn_player_entity);
     }
 }
@@ -18,6 +23,8 @@ pub fn sys_spawn_player_entity(
     mut materials:  ResMut<Assets<StandardMaterial>>,
     scene_startup_data_res: Option<Res<SceneStartupData>>,
 ) {
+    log_system_add_startup::<PlayerPlugin>(fname!());
+
     // A cube, to mimic the player position and to have another rendered object to have a visual comparison.
     let mesh_handle = meshes.add(Mesh::from(Cuboid { half_size: Vec3::splat(0.5) }));
     let material_handle = materials.add(StandardMaterial {

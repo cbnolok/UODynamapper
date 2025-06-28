@@ -85,13 +85,13 @@ pub fn get_tile_image(
 
     // ----------------------------------------------------------------
     // Create the Image
-    // ----------------------------------------------------------------       
+    // ----------------------------------------------------------------
     let size = Extent3d {
         width:  TILE_PX,          // your tile width
         height: TILE_PX,          // your tile height
         depth_or_array_layers: 1,
     };
-    
+
     // rgba is a Vec<u8> of length width * height * 4
     let image = Image::new_fill(
         size,
@@ -100,7 +100,7 @@ pub fn get_tile_image(
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(), // keeps the texture in MAIN + RENDER worlds
     );
-    
+
     /*
     // (optional) pick usages / sampler if you need specific values
     image.asset_usage        = RenderAssetUsages::default();
@@ -114,7 +114,7 @@ pub fn get_tile_image(
 
     // 4. Put it in Assets.
     let handle = images.add(image);
-    
+
     /*
     // 5. Spawn a sprite (example).
     commands.spawn(SpriteBundle {
@@ -122,7 +122,7 @@ pub fn get_tile_image(
         ..Default::default()
     });
     */
-    
+
     handle
 }
 

@@ -1,4 +1,4 @@
-* text eol=crlf
+* text eol=lf
 
 # Don't check for trailing whitespace at the end of lines.
 *.md -whitespace=blank-at-eol

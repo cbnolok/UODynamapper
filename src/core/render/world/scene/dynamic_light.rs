@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
 use super::SceneStartupData;
 
 #[derive(Component)]
@@ -6,9 +7,14 @@ pub struct PlayerDynamicLight {
     camera_player_rel_pos: Vec3,
 }
 
-pub struct PlayerDynamicLightPlugin;
+pub struct PlayerDynamicLightPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(PlayerDynamicLightPlugin);
+
 impl Plugin for PlayerDynamicLightPlugin {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.add_systems(Startup, sys_spawn_dynamic_light);
     }
 }
@@ -18,6 +24,7 @@ pub fn sys_spawn_dynamic_light(
     //camera_q: Query<&PlayerDynamicLight>,
     scene_startup_data_res: Option<Res<SceneStartupData>>,
 ) {
+    log_system_add_startup::<PlayerDynamicLightPlugin>(fname!());
     // Camera position relative to the player: a little south east and higher than the player.
     let camera_player_rel_pos = Vec3::new(10.0, 50.0, 8.0);
     let light_component = PlayerDynamicLight {
