@@ -30,8 +30,9 @@ pub enum About {
     UoFiles,
 }
 
-type MsgData = (Severity, About);
+//type MsgData = (Severity, About);
 
+#[allow(unused)]
 fn enum_severity_str_vals() -> &'static Regex {
     static ENUM_SEVERITY: OnceLock<Regex> = OnceLock::new();
     ENUM_SEVERITY.get_or_init(|| {
@@ -41,6 +42,7 @@ fn enum_severity_str_vals() -> &'static Regex {
     })
 }
 
+#[allow(unused)]
 fn enum_about_str_vals() -> &'static Regex {
     static ENUM_ABOUT: OnceLock<Regex> = OnceLock::new();
     ENUM_ABOUT.get_or_init(|| {
