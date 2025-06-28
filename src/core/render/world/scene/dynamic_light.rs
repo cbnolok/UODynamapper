@@ -1,5 +1,5 @@
-use crate::core::render::scene::SceneStartupData;
 use bevy::prelude::*;
+use super::SceneStartupData;
 
 #[derive(Component)]
 pub struct PlayerDynamicLight {

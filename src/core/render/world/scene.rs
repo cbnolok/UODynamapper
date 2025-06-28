@@ -1,7 +1,7 @@
 pub mod dynamic_light;
 pub mod terrain_chunk_mesh;
 
-use crate::core::render::scene::terrain_chunk_mesh::CHUNK_TILE_NUM_1D;
+use terrain_chunk_mesh::CHUNK_TILE_NUM_1D;
 use bevy::prelude::*;
 use std::cmp::{max, min};
 

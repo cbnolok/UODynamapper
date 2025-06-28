@@ -1,5 +1,5 @@
 use bevy::{color, prelude::*};
-use crate::core::render::scene::SceneStartupData;
+use super::scene::SceneStartupData;
 
 #[derive(Component)]
 pub struct Player;
