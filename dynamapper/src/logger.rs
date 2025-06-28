@@ -1,8 +1,8 @@
 use pad::PadStr;
 use regex::Regex;
-use std::sync::OnceLock;
 use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames}; // For the derive macros.
+use std::sync::OnceLock;
 
 #[derive(Display, EnumString, VariantNames, PartialEq)]
 pub enum Severity {

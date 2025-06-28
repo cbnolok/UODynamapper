@@ -1,10 +1,8 @@
-//! Boots Bevy, installs cache and chunk systems, sets light direction.
-/*
-#![allow(unused_parens)]
-*/
-pub mod texture_cache;
-pub mod constants;
-pub mod render;
+mod app_states;
+mod constants;
+mod render;
+mod texture_cache;
+mod uo_files;
 
 use std::process::ExitCode;
 use bevy::prelude::*;

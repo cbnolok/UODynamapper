@@ -1,0 +1,123 @@
+# Cargo.toml
+[package]
+name = "dynamapper"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+uocf = { path = "../uocf" }
+bytemuck = { version = "1.14", features = ["derive"] }
+color-eyre = { version = "0.6.5", default-features = false, features = [
+    "track-caller",
+] }
+config = { version = "0.15.11", default-features = false, features = ["toml"] }
+pad = "0.1.6"
+paris = { version = "1.5.15", features = ["macros", "no_logger"] } # log formatting
+regex = { version = "1.11.1", default-features = false, features = ["std", "unicode"] }
+#serde, miniserde, nanoserde
+#serde_derive
+strum = "0.27.1"
+strum_macros = "0.27.1"
+tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
+
+[dependencies.bevy]
+version = "0.16.1"
+default-features = false
+features = [
+  # Parts of Bevy:
+  #"animation",                   # Enable animation for everything that supports it
+  "bevy_asset",                  # Asset management
+  #"bevy_audio",                  # Audio support
+  "bevy_color",                  # Color management
+  "bevy_core_pipeline",          # Bevy's GPU rendering architecture
+  "bevy_gilrs",                  # Gamepad/controller support
+  "bevy_gizmos",                 # Gizmos (drawing debug lines and shapes)
+  "bevy_image",                  # Image support
+  "bevy_input_focus",            # Input focusing system for UI
+  "bevy_log",                    # Logging to console
+  "bevy_mesh_picking_backend",   # 3D mesh picking (selection by cursor)
+  "bevy_pbr",                    # 3D rendering and Physically Based Shading
+  "bevy_picking",                # Picking (selection of objects by cursor)
+  "bevy_render",                 # GPU support (based on `wgpu`)
+  "bevy_scene",                  # ECS Scenes
+  #"bevy_sprite",                 # 2D rendering (sprites, meshes, text)
+  #"bevy_sprite_picking_backend", # 2D sprite picking (selection by cursor)
+  "bevy_state",                  # App state management
+  "bevy_text",                   # Text rendering
+  "bevy_ui",                     # UI toolkit
+  "bevy_ui_picking_backend",     # UI node picking (selection by cursor)
+  "bevy_window",                 # Window management
+  "bevy_winit",                  # Cross-platform window management support
+
+  # Low-level tunables
+  "std",            # Use the Rust standard library (important!)
+  "async_executor", # Enable the Async Executor (Bevy task pools)
+  "multi_threaded", # Enable CPU multithreading
+  "sysinfo_plugin", # Support CPU and RAM usage diagnostics
+  #"custom_cursor",  # Support custom cursors
+
+  # Platform-Specific
+  "x11",                   # Linux: Support X11 windowing system
+  #"android_shared_stdcxx", # Android: use shared C++ library
+  #"android-game-activity", # Android: use GameActivity instead of NativeActivity
+
+  # Built-in Data
+  "default_font",       # Built-in default font for UI (Fira Mono)
+  #"smaa_luts",          # Support SMAA antialiasing
+  "tonemapping_luts",   # Support different camera Tonemapping modes (enables KTX2+zstd)
+
+  # Asset File Format Support
+  #"bevy_gltf", # GLTF 3D asset support
+  "png",       # PNG image format for simple 2D images
+  #"hdr",       # HDR image format
+  "ktx2",      # KTX2 format for GPU texture data
+  "zstd",      # ZSTD compression support in KTX2 files
+  #"vorbis",    # Audio: OGG Vorbis
+
+
+  # Platform-Specific
+  #"wayland",                  # Linux: Support Wayland windowing system
+  #"accesskit_unix",           # UNIX-like: AccessKit Accessibility Framework support
+  #"android-native-activity",  # Android: Use NativeActivity instead of GameActivity
+  #"spirv_shader_passthrough", # Vulkan: allow direct loading of SPIR-V shader blobs without validation
+  "webgpu",                   # Web: use the faster, modern, experimental WebGPU API instead of WebGL2
+  #"statically-linked-dxc",    # Windows: embed the DirectX Shader Compiler into your game binary
+  #"web",                      # Web platform integration
+
+  # Graphics/rendering features (may cause issues on old/weak GPUs)
+  #"experimental_pbr_pcss", # PCSS shadow filtering
+  #"meshlet",               # Meshlet / virtual geometry rendering (like Unreal's Nanite)
+  #"pbr_anisotropy_texture", # Support Anisotropy Map texture
+  #"pbr_multi_layer_material_textures", # Support multi-layer textures
+  #"pbr_specular_textures",  # Support specular map textures
+  #"pbr_transmission_textures", # Support textures for light transimssion (translucency)
+
+  # Development features
+  "dynamic_linking",     # Dynamic linking for faster compile-times
+  "asset_processor",     # Enable asset processing support
+  #"bevy_debug_stepping", # Enable stepping through ECS systems for debugging
+  "bevy_dev_tools",      # Extra dev functionality (like FPS overlay)
+  "bevy_remote",         # Enable BRP (Bevy Remote Protocol) for integration with editors and external dev tools
+  "file_watcher",        # Asset hot-reloading
+  "meshlet_processor",   # Asset processor to convert meshes into meshlet format
+  "glam_assert",         # Math validation / debug assertions
+  "debug_glam_assert",   # Math validation / debug assertions
+  "embedded_watcher",    # Hot-reloading for Bevy's internal/builtin assets
+  "configurable_error_handler",
+  #"trace",               # Enable tracing
+  #"trace_chrome",        # Enable tracing using the Chrome backend
+  #"trace_tracy",         # Enable tracing using Tracy
+  #"trace_tracy_memory",  # Enable memory tracking for Tracy
+  #"track_location",      # Enable location tracking
+  #"detailed_trace",      # Extra verbose tracing
+
+  # Asset File Format Support
+  "basis-universal", # Basis Universal GPU texture compression format
+  "bmp",  # Uncompressed BMP image format
+  "dds",  # DDS (DirectX) format for GPU textures, alternative to KTX2
+  "ico",  # ICO image format (Windows icons)
+  "jpeg", # JPEG lossy format for photos
+  #"shader_format_spirv", # SPIR-V shader support
+  "shader_format_wesl",  # WESL (Extended WGSL) shader support
+]
+

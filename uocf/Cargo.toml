@@ -1,0 +1,17 @@
+# Cargo.toml
+[package]
+name = "uocf"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+byteorder = "1.5.0"
+color-eyre = { version = "0.6.5", default-features = false, features = [
+    "track-caller",
+] }
+derive-new = "0.7.0"
+glam = { version = "0.30.4", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "dds",
+] }

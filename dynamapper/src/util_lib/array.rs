@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::math::prelude::*;
 
 /// Get the tile layer value from a packed [UVec4] array.
 pub fn uvec4_elem_get_mut(vec: &mut [UVec4], idx: usize) -> &mut u32 {

@@ -3,11 +3,11 @@
 
 #![allow(dead_code)]
 
+use bevy::prelude::*;
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use bevy::prelude::*;
 use super::texarray;
 
 pub const TILE_PX: u32                  = 44;
@@ -54,7 +54,7 @@ impl TextureCache {
             e.last_touch = Instant::now();
             return e.layer;
         }
-    
+
         // -----------------------------------------------------------------
         // 2. Pick a texture-array layer (free or by eviction)
         // -----------------------------------------------------------------
@@ -72,13 +72,13 @@ impl TextureCache {
             let victim_entry = self.map.remove(&victim_id).unwrap();
             victim_entry.layer
         };
-    
+
         // -----------------------------------------------------------------
         // 3. Load (or generate) the source tile FIRST
         //    – this needs a &mut Assets<Image> because it may create assets
         // -----------------------------------------------------------------
         let tile_handle = texarray::get_tile_image(art_id, commands, images);
-    
+
         // Grab the bytes we are going to copy, then drop the borrow
         let tile_bytes: Vec<u8> = {
             let tile_img = images.get(&tile_handle).unwrap();   // immutable borrow
@@ -86,7 +86,7 @@ impl TextureCache {
             assert_eq!(tile_img.texture_descriptor.size.height, TILE_PX);
             tile_img.data.as_ref().unwrap().clone()
         };
-    
+
         // -----------------------------------------------------------------
         // 4. Now obtain a *mutable* borrow to the array texture and copy
         // -----------------------------------------------------------------
@@ -98,7 +98,7 @@ impl TextureCache {
                 data[offset..offset + slice].copy_from_slice(&tile_bytes)
             };
         } // `array_img` borrow ends here
-    
+
         // -----------------------------------------------------------------
         // 5. Book-keeping
         // -----------------------------------------------------------------
@@ -107,7 +107,7 @@ impl TextureCache {
             TextureEntry { layer, last_touch: Instant::now() },
         );
         self.lru.push_back(art_id);
-    
+
         layer
     }
 }
