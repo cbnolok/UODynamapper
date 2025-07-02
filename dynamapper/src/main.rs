@@ -1,7 +1,8 @@
 use std::process::ExitCode;
 
-mod core;
-mod logger;
+pub mod core;
+pub mod logger;
+mod prelude;
 
 #[macro_use]
 pub mod util_lib;

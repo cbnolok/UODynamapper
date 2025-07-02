@@ -1,9 +1,10 @@
 pub mod dynamic_light;
 pub mod terrain_chunk_mesh;
 
+use crate::core::system_sets::*;
+use crate::prelude::*;
 use bevy::prelude::*;
 use std::cmp::{max, min};
-use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
 use terrain_chunk_mesh::CHUNK_TILE_NUM_1D;
 
 pub const DUMMY_MAP_SIZE_X: u32 = 4096;
@@ -18,10 +19,13 @@ impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_plugins((
-            terrain_chunk_mesh::TerrainChunkMeshPlugin  { registered_by: "ScenePlugin" },
-            dynamic_light::PlayerDynamicLightPlugin     { registered_by: "ScenePlugin" },
+            terrain_chunk_mesh::TerrainChunkMeshPlugin {
+                registered_by: "ScenePlugin",
+            },
+            dynamic_light::PlayerDynamicLightPlugin {
+                registered_by: "ScenePlugin",
+            },
         ))
-        .add_systems(Startup, sys_spawn_worldmap_chunks)
         .insert_resource(SceneStartupData {
             player_start_pos: Vec3 {
                 x: 24.0,
@@ -31,7 +35,11 @@ impl Plugin for ScenePlugin {
         })
         .insert_resource(SceneUpdateData {
             chunk_draw_range: 2, // In 'chunk units'
-        });
+        })
+        .add_systems(
+            OnEnter(AppState::SetupScene),
+            sys_spawn_worldmap_chunks.in_set(StartupSysSet::SetupScene),
+        );
     }
 }
 
@@ -77,7 +85,12 @@ pub fn sys_spawn_worldmap_chunks(
                 GlobalTransform::default(),
             ));
 
-            println!("Spawned chunk at: gx={}, gy={}", gx, gy);
+            logger::one(
+                None,
+                LogSev::Debug,
+                LogAbout::RenderWorldLand,
+                format!("Spawned chunk at: gx={gx}, gy={gy}.").as_str(),
+            );
         }
     }
 }

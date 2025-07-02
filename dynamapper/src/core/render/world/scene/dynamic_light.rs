@@ -1,6 +1,7 @@
-use bevy::prelude::*;
-use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
 use super::SceneStartupData;
+use crate::core::system_sets::*;
+use crate::prelude::*;
+use bevy::prelude::*;
 
 #[derive(Component)]
 pub struct PlayerDynamicLight {
@@ -15,7 +16,10 @@ impl_tracked_plugin!(PlayerDynamicLightPlugin);
 impl Plugin for PlayerDynamicLightPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(Startup, sys_spawn_dynamic_light);
+        app.add_systems(
+            OnEnter(AppState::SetupScene),
+            sys_spawn_dynamic_light.in_set(StartupSysSet::SetupScene),
+        );
     }
 }
 
@@ -35,7 +39,13 @@ pub fn sys_spawn_dynamic_light(
     let camera_pos = light_component.camera_player_rel_pos + player_start_pos;
 
     // Set up a directional light (sun)
-    println!("Spawning directional light at {}, looking at {}.", camera_pos, player_start_pos);
+    logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::Camera,
+        format!("Spawning directional (\"dynamic\") light at {camera_pos}, looking at {player_start_pos}.")
+            .as_str(),
+    );
     commands.spawn((
         DirectionalLight {
             shadows_enabled: false, // Disable shadows if not needed

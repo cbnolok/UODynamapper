@@ -10,8 +10,11 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use crate::{fname, impl_tracked_plugin, util_lib::{array::*, tracked_plugin::*}};
-use crate::core::{constants, texture_cache::terrain::cache::*};
+use crate::prelude::*;
+use crate::{
+    util_lib::array::*,
+    core::{constants, texture_cache::terrain::cache::*},
+};
 use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
 
 
@@ -25,7 +28,7 @@ impl Plugin for TerrainChunkMeshPlugin
     fn build(&self, app: &mut App) {
         app
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())   // ← register Assets<TerrainMaterial>
-            .add_systems(Update, sys_build_visible_terrain_chunks);
+            .add_systems(Update, sys_build_visible_terrain_chunks.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -188,8 +191,8 @@ pub fn sys_build_visible_terrain_chunks(
             chunk_world_z + CHUNK_TILE_NUM_1D as f32 / 2.0,
         );
         if cam_pos.distance(center) > 80.0 {    // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this?
-            println!("cam pos {}", cam_pos);
-            println!("center {}", center);
+            //println!("cam pos {}", cam_pos);
+            //println!("center {}", center);
             continue;
         }
 
@@ -361,9 +364,12 @@ pub fn sys_build_visible_terrain_chunks(
             GlobalTransform::default(),
         ));
 
-        println!(
-            "Rendered chunk at: gx={}, gy={}",
-            chunk_data.gx, chunk_data.gy
+        logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::RenderWorldLand,
+        format!("Rendered chunk at: gx={}, gy={}.", chunk_data.gx, chunk_data.gy)
+            .as_str(),
         );
     }
 }

@@ -1,5 +1,6 @@
 use bevy::{color, prelude::*};
-use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
+use crate::prelude::*;
+use crate::core::system_sets::*;
 use super::scene::SceneStartupData;
 
 #[derive(Component)]
@@ -13,7 +14,11 @@ impl Plugin for PlayerPlugin
 {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(Startup, sys_spawn_player_entity);
+        app.add_systems(
+            OnEnter(AppState::SetupScene),
+            sys_spawn_player_entity
+                .in_set(StartupSysSet::SetupScene)
+        );
     }
 }
 
@@ -33,7 +38,13 @@ pub fn sys_spawn_player_entity(
     });
     let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
 
-    println!("Spawning player at pos {}.", player_start_pos);
+    logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::Player,
+        format!("Spawning player at pos {player_start_pos}.")
+            .as_str(),
+    );
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material_handle),

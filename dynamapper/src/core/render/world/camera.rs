@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
-use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};
+use crate::prelude::*;
+use crate::core::system_sets::*;
 use super::scene::SceneStartupData;
 
 #[derive(Component)]
@@ -17,7 +18,11 @@ impl_tracked_plugin!(CameraPlugin);
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(Startup, sys_setup_cam);
+        app.add_systems(
+            OnEnter(AppState::SetupScene),
+            sys_setup_cam
+                .in_set(StartupSysSet::SetupScene)
+        );
     }
 }
 

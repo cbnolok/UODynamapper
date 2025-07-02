@@ -351,7 +351,7 @@ impl MapPlane {
             chunk_blocks_to_read_seq_count = 1;
             if blocks_to_load.len() - blocks_read > 1 {
                 // Given the list of blocks to load, how many of them can i load sequentially?
-                //  (in order to execute the minimum amount of file read instructions)
+                //  (in order to execute the minimum amount of file read operations)
                 let mut block_pos: &MapBlockRelPos;
                 let mut block_pos_prev: &MapBlockRelPos;
                 'count_sequential_blocks: loop {

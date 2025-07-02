@@ -1,11 +1,11 @@
 #![allow(unused)]
 
-use crate::logger;
-use crate::{/*fname,*/ impl_tracked_plugin, util_lib::tracked_plugin::*};
+use crate::prelude::*;
 use bevy::prelude::*;
 use uocf::geo::{land_texture_2d, map};
 use uocf::tiledata;
 use uocf::eyre_imports; eyre_imports!();
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -15,10 +15,10 @@ pub struct UoInterfaceSettings {
 
 #[derive(Resource)]
 pub struct UoFileData {
-    pub settings: RwLock<UoInterfaceSettings>,
+    pub settings:   RwLock<UoInterfaceSettings>,
     pub map_planes: RwLock<Vec<map::MapPlane>>,
-    pub tiledata: RwLock<tiledata::TileData>,
-    pub texmap_2d: RwLock<land_texture_2d::TexMap2D>,
+    pub tiledata:   RwLock<tiledata::TileData>,
+    pub texmap_2d:  RwLock<land_texture_2d::TexMap2D>,
 }
 
 pub struct UoFilesPlugin {
@@ -28,23 +28,26 @@ impl_tracked_plugin!(UoFilesPlugin);
 impl Plugin for UoFilesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(Startup, sys_setup_uo_data);
+        app.add_systems(OnEnter(AppState::LoadStartupFiles), sys_setup_uo_data);
     }
 }
 
-pub fn sys_setup_uo_data(mut commands: Commands) {
-    let lg = |text| logger::one(None, logger::Severity::Info, logger::About::UoFiles, text);
-
+pub fn sys_setup_uo_data(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    let lg = |text| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
     let uo_path: PathBuf = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy".into();
 
-    println!();
     lg("Start loading UO Data.");
-    println!();
+    // TODO: inject a logger function to uocf crate calls.
 
     lg("Loading map plane 0 structure (map0)...");
     let map_plane =
         map::MapPlane::init(uo_path.join("map0.mul"), 0)
             .expect("Initialize map plane");
+    let mut map_planes = Vec::<map::MapPlane>::new();
+    map_planes.push(map_plane);
 
     // Test map loading.
     /*
@@ -74,9 +77,6 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
 
     lg("Done loading UO Data.");
 
-    let mut map_planes = Vec::<map::MapPlane>::new();
-    map_planes.push(map_plane);
-
     let data = UoFileData {
         settings: RwLock::new(UoInterfaceSettings {
             base_folder: uo_path,
@@ -86,5 +86,7 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
         texmap_2d: RwLock::new(texmap_2d),
     };
 
+    log_appstate_change("SetupScene");
     commands.insert_resource(data);
+    next_state.set(AppState::SetupScene);
 }
