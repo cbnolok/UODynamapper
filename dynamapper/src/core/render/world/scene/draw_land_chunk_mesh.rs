@@ -1,5 +1,11 @@
 #![allow(dead_code)]
 
+use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
+use crate::prelude::*;
+use crate::{
+    core::{constants, texture_cache::land::cache::*},
+    util_lib::array::*,
+};
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
@@ -10,28 +16,21 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use crate::prelude::*;
-use crate::{
-    util_lib::array::*,
-    core::{constants, texture_cache::land::cache::*},
-};
-use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
-
 
 pub struct DrawLandChunkMeshPlugin {
     pub registered_by: &'static str,
 }
 impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 
-impl Plugin for DrawLandChunkMeshPlugin
-{
+impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
-        app
-            .add_plugins(MaterialPlugin::<LandCustomMaterial>::default())   // Register Asset
-            .add_systems(Update, sys_build_visible_land_chunks.run_if(in_state(AppState::InGame)));
+        app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default()) // Register Asset
+            .add_systems(
+                Update,
+                sys_build_visible_land_chunks.run_if(in_state(AppState::InGame)),
+            );
     }
 }
-
 
 // -------------------------------------------
 
@@ -43,8 +42,8 @@ pub struct UOMapTile {
     height: u16, // in UO it's i8
 }
 
-pub const CHUNK_TILE_NUM_1D: u32 = 16;
-pub const CHUNK_TILE_NUM_TOTAL: usize = (CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D) as usize;
+pub const TILE_NUM_PER_CHUNK_1D: u32 = 16;  // It's a square, 16 tiles on X axis, 16 tiles on Y axis.
+pub const TILE_NUM_PER_CHUNK_TOTAL: usize = (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
 
 #[derive(Component)]
 pub struct TCMesh {
@@ -54,9 +53,8 @@ pub struct TCMesh {
 
 // -- Custom Material Definition --------------------------------------------
 
-const CHUNK_TILE_NUM_TOTAL_VEC4: usize = (CHUNK_TILE_NUM_TOTAL as usize + 3) / 4;
+const CHUNK_TILE_NUM_TOTAL_VEC4: usize = (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4;
 const LAND_SHADER_PATH: &str = "shaders/worldmap/land_base.wgsl";
-
 
 // -- Define data and uniforms to be used in the shader. Rust side.
 
@@ -113,7 +111,7 @@ pub struct LandUniforms {
 // g x/y: grid x/y
 // t x/y: tile x/y
 fn get_tile_height(
-    tile_heights: &[[f32; CHUNK_TILE_NUM_1D as usize]],
+    tile_heights: &[[f32; TILE_NUM_PER_CHUNK_1D as usize]],
     _gx: i32,
     _gy: i32,
     tx: u32,
@@ -126,7 +124,7 @@ fn get_tile_height(
 // g x/y: grid x/y
 // v x/y: vert x/y
 fn get_vertex_height(
-    tile_heights: &[[f32; CHUNK_TILE_NUM_1D as usize]],
+    tile_heights: &[[f32; TILE_NUM_PER_CHUNK_1D as usize]],
     gx: i32,
     gy: i32,
     vx: u32,
@@ -139,18 +137,14 @@ fn get_vertex_height(
             let tx = vx.checked_sub(dx);
             let ty = vy.checked_sub(dy);
             if let (Some(tx), Some(ty)) = (tx, ty) {
-                if tx < CHUNK_TILE_NUM_1D && ty < CHUNK_TILE_NUM_1D {
+                if tx < TILE_NUM_PER_CHUNK_1D && ty < TILE_NUM_PER_CHUNK_1D {
                     sum += get_tile_height(tile_heights, gx, gy, tx, ty);
                     count += 1;
                 }
             }
         }
     }
-    if count > 0 {
-        sum / count as f32
-    } else {
-        0.0
-    }
+    if count > 0 { sum / count as f32 } else { 0.0 }
 }
 
 /// Build a custom mesh which is a tile grid with the same shape of
@@ -168,7 +162,8 @@ pub fn sys_build_visible_land_chunks(
     let cam_pos = cam_q.single().unwrap().translation;
 
     // TODO: Demo heights: Replace with the actual per-tile map data
-    let mut map_dummy_tile_heights = vec![[0.0f32; DUMMY_MAP_SIZE_X as usize + 1]; DUMMY_MAP_SIZE_Y as usize+ 1];
+    let mut map_dummy_tile_heights =
+        vec![[0.0f32; DUMMY_MAP_SIZE_X as usize + 1]; DUMMY_MAP_SIZE_Y as usize + 1];
     for ty in 0..DUMMY_MAP_SIZE_Y as usize {
         for tx in 0..DUMMY_MAP_SIZE_X as usize {
             map_dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
@@ -177,33 +172,41 @@ pub fn sys_build_visible_land_chunks(
 
     for (entity, chunk_data, mesh_handle) in chunk_q.iter() {
         if mesh_handle.is_some() {
+            // Chunk already rendered.
             continue;
         }
 
-        // Compute chunk origin in world
-        let chunk_world_x = chunk_data.gx as f32 * CHUNK_TILE_NUM_1D as f32;
-        let chunk_world_z = chunk_data.gy as f32 * CHUNK_TILE_NUM_1D as f32;
+        let chunk_origin_chunk_units_x = chunk_data.gx;
+        let chunk_origin_chunk_units_z = chunk_data.gy;
+
+        // Compute chunk origin in tile/world units
+        let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+        let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
         // For distance culling (uses chunk center in world)
         let center = Vec3::new(
-            chunk_world_x + CHUNK_TILE_NUM_1D as f32 / 2.0,
+            (chunk_origin_tile_units_x + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
             0.0,
-            chunk_world_z + CHUNK_TILE_NUM_1D as f32 / 2.0,
+            (chunk_origin_tile_units_z + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
         );
-        if cam_pos.distance(center) > 80.0 {    // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this?
+        if cam_pos.distance(center) > constants::RENDER_DISTANCE_FROM_PLAYER {
+            // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this?
             //println!("cam pos {}", cam_pos);
             //println!("center {}", center);
             continue;
         }
 
         // --- Generate tile grid in local space: [0, CHUNK_SIZE] on X/Z ---
-        let grid_w: usize = CHUNK_TILE_NUM_1D as usize + 1;
-        let grid_h: usize = CHUNK_TILE_NUM_1D as usize + 1;
+        let grid_w: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
+        let grid_h: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
         //let max_arr_idx: usize = (grid_w * grid_h);
 
         //let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
         let mut mat_ext_uniforms = LandUniforms::zeroed();
-        mat_ext_uniforms.chunk_origin = Vec2::new(chunk_world_x, chunk_world_z);
+        mat_ext_uniforms.chunk_origin = Vec2::new(
+            chunk_origin_tile_units_x as f32,
+            chunk_origin_tile_units_z as f32,
+        );
         mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
         let mut verts = Vec::with_capacity(grid_w * grid_h);
@@ -212,8 +215,8 @@ pub fn sys_build_visible_land_chunks(
         // Define positions of each vertex.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let world_tx = (chunk_data.gx * CHUNK_TILE_NUM_1D) as usize + vx;
-                let world_ty = (chunk_data.gy * CHUNK_TILE_NUM_1D) as usize + vy;
+                let world_tx = chunk_origin_tile_units_x as usize + vx;
+                let world_ty = chunk_origin_tile_units_z as usize + vy;
                 //let h = get_vertex_height(&dummy_tile_heights, chunk_data.gx, chunk_data.gy, vx, vy);
                 let h = map_dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
                 heights[vy * grid_w + vx] = h;
@@ -221,8 +224,8 @@ pub fn sys_build_visible_land_chunks(
                 verts.push(LandVertexAttrs {
                     pos: [vx as f32, h, vy as f32],
                     uv: [
-                        vx as f32 / (CHUNK_TILE_NUM_1D as f32),
-                        vy as f32 / (CHUNK_TILE_NUM_1D as f32),
+                        vx as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
+                        vy as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
                     ],
                     norm: [0.0, 1.0, 0.0], // placeholder, they will be calculated after
                 });
@@ -232,8 +235,8 @@ pub fn sys_build_visible_land_chunks(
         // Calculate Smooth Normals: finite difference using derived vertex heights.
         for vy in 0..grid_h {
             for vx in 0..grid_w {
-                let world_tx = (chunk_data.gx * CHUNK_TILE_NUM_1D) as usize + vx;
-                let world_ty = (chunk_data.gy * CHUNK_TILE_NUM_1D) as usize + vy;
+                let world_tx = chunk_origin_tile_units_x as usize + vx;
+                let world_ty = chunk_origin_tile_units_z as usize + vy;
                 let center = map_dummy_tile_heights[world_ty][world_tx];
 
                 /*
@@ -248,7 +251,7 @@ pub fn sys_build_visible_land_chunks(
                 } else {
                     center
                 };
-                let right = if world_tx + 1 < DUMMY_MAP_SIZE_X as usize{
+                let right = if world_tx + 1 < DUMMY_MAP_SIZE_X as usize {
                     map_dummy_tile_heights[world_ty][world_tx + 1]
                 } else {
                     center
@@ -258,7 +261,7 @@ pub fn sys_build_visible_land_chunks(
                 } else {
                     center
                 };
-                let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y as usize{
+                let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y as usize {
                     map_dummy_tile_heights[world_ty + 1][world_tx]
                 } else {
                     center
@@ -272,9 +275,9 @@ pub fn sys_build_visible_land_chunks(
         }
 
         // Build triangle indices (tiles reference vertices).
-        let mut idxs = Vec::with_capacity(CHUNK_TILE_NUM_TOTAL * 6);
-        for ty in 0..CHUNK_TILE_NUM_1D as usize {
-            for tx in 0..CHUNK_TILE_NUM_1D as usize {
+        let mut idxs = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL * 6);
+        for ty in 0..TILE_NUM_PER_CHUNK_1D as usize {
+            for tx in 0..TILE_NUM_PER_CHUNK_1D as usize {
                 let i0 = ty * grid_w + tx;
                 let i1 = ty * grid_w + (tx + 1);
                 let i2 = (ty + 1) * grid_w + (tx + 1);
@@ -287,7 +290,7 @@ pub fn sys_build_visible_land_chunks(
                 // We pass tile data (read from the MUL files) as a uniform buffer to the wgsl shader.
                 // ***** TODO: real tile lookup goes here *****
                 let tile = UOMapTile {
-                    art_id: ((tx + ty * CHUNK_TILE_NUM_1D as usize) & 0x7FF) as u16, // temp, dummy
+                    art_id: ((tx + ty * TILE_NUM_PER_CHUNK_1D as usize) & 0x7FF) as u16, // temp, dummy
                     hue: 0,
                     height: ((tx + ty) & 1) as u16, // temp, dummy
                 };
@@ -310,7 +313,7 @@ pub fn sys_build_visible_land_chunks(
                 */
                 let layer_ref = uvec4_elem_get_mut(
                     &mut mat_ext_uniforms.layers,
-                    get_1d_array_index_as_2d(CHUNK_TILE_NUM_1D as usize, tx as usize, ty as usize),
+                    get_1d_array_index_as_2d(TILE_NUM_PER_CHUNK_1D as usize, tx as usize, ty as usize),
                 );
                 *layer_ref = layer;
             }
@@ -360,15 +363,25 @@ pub fn sys_build_visible_land_chunks(
         commands.entity(entity).insert((
             Mesh3d(chunk_mesh_handle.clone()),
             MeshMaterial3d(chunk_material_handle.clone()),
-            Transform::from_xyz(chunk_world_x, 0.0, chunk_world_z),
+            Transform::from_xyz(
+                chunk_origin_tile_units_x as f32,
+                0.0,
+                chunk_origin_tile_units_z as f32,
+            ),
             GlobalTransform::default(),
         ));
 
         logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::RenderWorldLand,
-        format!("Rendered chunk at: gx={}, gy={}.", chunk_data.gx, chunk_data.gy)
+            None,
+            LogSev::Debug,
+            LogAbout::RenderWorldLand,
+            format!(
+                "Rendered chunk at: gx={}, gy={}, tx={}, ty={}.",
+                chunk_origin_chunk_units_x,
+                chunk_origin_chunk_units_z,
+                chunk_origin_tile_units_x,
+                chunk_origin_tile_units_z
+            )
             .as_str(),
         );
     }
