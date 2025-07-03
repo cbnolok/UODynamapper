@@ -20,7 +20,7 @@
 }
 
 const TILE_PX: u32         = 44;
-const MAX_TILE_LAYERS: u32 = 2048; 
+const MAX_TILE_LAYERS: u32 = 2048;
 const MAX_TILE_LAYERS_VEC4: u32 = (MAX_TILE_LAYERS + 3) / 4;
 
 const CHUNK_TILE_NUM_1D: u32 = 16;
@@ -55,12 +55,12 @@ struct MeshUniform {
 var<storage, read> Mesh: MeshUniform;
 */
 
-// — Group 2: terrain material, custom uniforms.
-struct TerrainUniforms {
+// — Group 2: land material, custom uniforms.
+struct LandUniforms {
     light_dir: vec3<f32>,    // 12 bytes
     _pad:   f32,             // pad to 16‐byte alignment by adding 4 bytes (f32)
-    chunk_origin: vec2<f32>, 
-    _pad2: vec2<f32>, 
+    chunk_origin: vec2<f32>,
+    _pad2: vec2<f32>,
     layers: array<vec4<u32>, CHUNK_TILE_NUM_TOTAL_VEC4>,
     hues:   array<vec4<u32>, CHUNK_TILE_NUM_TOTAL_VEC4>,
 };
@@ -68,7 +68,7 @@ struct TerrainUniforms {
 @group(2) @binding(100) var atlas: texture_2d_array<f32>;
 @group(2) @binding(101) var atlas_sampler: sampler;
 @group(2) @binding(102)
-var<uniform> terrain: TerrainUniforms;
+var<uniform> land: LandUniforms;
 
 
 @vertex
@@ -80,12 +80,12 @@ fn vertex(
 
     let mesh_world_from_local = mesh_functions::get_world_from_local(in.instance_index);
     var world_from_local = mesh_world_from_local;
-    
+
     out.world_normal = mesh_functions::mesh_normal_local_to_world(in.normal, in.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(in.position, 1.0));
     out.position = view_transformations::position_world_to_clip(out.world_position.xyz);
     out.instance_index = in.instance_index;
-    
+
     /*
     out.uv_b = in.uv_b;
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
@@ -97,11 +97,11 @@ fn vertex(
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(
         in.instance_index, mesh_world_from_local[3]);
     */
-    
+
     // model & viewproj
     //let world_pos = Mesh.model * vec4<f32>(in.position, 1.0);
     //out.clip_pos  = View.view_proj * out.world_position; // world_pos;
-    
+
     // pass UV
     out.uv        = in.uv;
 
@@ -111,7 +111,7 @@ fn vertex(
 
     // Use the unused uv_1 attr to pass this data to the fragment shader
     out.uv_b      = vec2<f32>(
-        max(dot(world_norm, normalize(terrain.light_dir)), 0.0), // Lambert
+        max(dot(world_norm, normalize(land.light_dir)), 0.0), // Lambert
         0.0
     );
     return out;
@@ -122,14 +122,14 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
 
     // Get the layer of the texture in the texture array from our uniform buffer.
-    let local_x = in.world_position.x - terrain.chunk_origin.x;
-    let local_z = in.world_position.z - terrain.chunk_origin.y;
+    let local_x = in.world_position.x - land.chunk_origin.x;
+    let local_z = in.world_position.z - land.chunk_origin.y;
     let tx: u32 = clamp(u32(floor(local_x)), 0u, CHUNK_TILE_NUM_1D-1u);
     let ty: u32 = clamp(u32(floor(local_z)), 0u, CHUNK_TILE_NUM_1D-1u);
     let tile_index: u32 = ty * CHUNK_TILE_NUM_1D + tx;
     let tile_index_1d: u32 = tile_index / CHUNK_TILE_NUM_1D;
     let tile_index_2d: u32 = tile_index % CHUNK_TILE_NUM_1D;
-    let layer: u32 = terrain.layers[tile_index_1d][tile_index_2d];
+    let layer: u32 = land.layers[tile_index_1d][tile_index_2d];
 
     // Sample your texture (skip or replace if untextured):
     let tex_color = textureSample(atlas, atlas_sampler, in.uv, u32(layer));
@@ -153,9 +153,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // Desaturation
     let avg = (lit.r + lit.g + lit.b) / 3.0;
     let saturation = 0.66; // tweak for taste
-    let uo_lit = mix(vec3<f32>(avg, avg, avg), lit, saturation); 
+    let uo_lit = mix(vec3<f32>(avg, avg, avg), lit, saturation);
     out.color = vec4<f32>(uo_lit, tex_color.a);
-    
+
     // Fog
     let fog = 0.02 * in.world_position.z; // fake simple fog, tweak for taste
     out.color = mix(out.color, vec4<f32>(0.6,0.7,1.0,1.0), clamp(fog,0.0,0.5));
@@ -222,18 +222,18 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     */
     let tex_color = textureSample(atlas, atlas_sampler, in.uv, in.layer);
 
-    // Gouraud: modulate by interpolated light.    
+    // Gouraud: modulate by interpolated light.
     // Pure diffuse = albedo * max(dot(normal, light),0) often leaves large black areas.
-    // Even in stylized terrain you usually add a small ambient term:
+    // Even in stylized land you usually add a small ambient term:
     let ao = 0.2;  // ambient factor
     let lambert = in.light;
     //let brightness = lambert * 0.8 + ao * 0.2;
     let brightness = lambert * 0.6 + 0.4;
     let lit = tex_color.rgb * brightness;
-    
+
     // No ambient lighting.
-    //let lit = tex_color.rgb * in.light;    
-    
+    //let lit = tex_color.rgb * in.light;
+
     out.color = vec4<f32>(lit, tex_color.a);
     return out;
 }

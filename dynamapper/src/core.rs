@@ -3,7 +3,7 @@ pub mod constants;
 mod render;
 pub mod system_sets;
 mod texture_cache;
-mod uo_files;
+mod uo_files_loader;
 
 use crate::prelude::*;
 use system_sets::*;
@@ -47,7 +47,7 @@ pub fn run_bevy_app() -> ExitCode {
             texture_cache::TextureCachePlugin {
                 registered_by: "Core",
             },
-            uo_files::UoFilesPlugin {
+            uo_files_loader::UoFilesPlugin {
                 registered_by: "Core",
             },
         ))

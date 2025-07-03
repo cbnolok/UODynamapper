@@ -13,22 +13,22 @@ use bytemuck::Zeroable;
 use crate::prelude::*;
 use crate::{
     util_lib::array::*,
-    core::{constants, texture_cache::terrain::cache::*},
+    core::{constants, texture_cache::land::cache::*},
 };
 use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
 
 
-pub struct TerrainChunkMeshPlugin {
+pub struct DrawLandChunkMeshPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(TerrainChunkMeshPlugin);
+impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 
-impl Plugin for TerrainChunkMeshPlugin
+impl Plugin for DrawLandChunkMeshPlugin
 {
     fn build(&self, app: &mut App) {
         app
-            .add_plugins(MaterialPlugin::<TerrainMaterial>::default())   // ← register Assets<TerrainMaterial>
-            .add_systems(Update, sys_build_visible_terrain_chunks.run_if(in_state(AppState::InGame)));
+            .add_plugins(MaterialPlugin::<LandCustomMaterial>::default())   // Register Asset
+            .add_systems(Update, sys_build_visible_land_chunks.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -55,30 +55,30 @@ pub struct TCMesh {
 // -- Custom Material Definition --------------------------------------------
 
 const CHUNK_TILE_NUM_TOTAL_VEC4: usize = (CHUNK_TILE_NUM_TOTAL as usize + 3) / 4;
-const TERRAIN_SHADER_PATH: &str = "shaders/worldmap/terrain_base.wgsl";
+const LAND_SHADER_PATH: &str = "shaders/worldmap/land_base.wgsl";
 
 
 // -- Define data and uniforms to be used in the shader. Rust side.
 
-pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainMaterialExtension>;
+pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
-pub struct TerrainMaterialExtension {
+pub struct LandMaterialExtension {
     #[texture(100, dimension = "2d_array")]
     #[sampler(101)]
     pub tex_array: Handle<Image>,
 
     // ← This produces group(2), binding(2) as a 16-byte UBO
     #[uniform(102, min_binding_size = 16)]
-    pub uniforms: TerrainUniforms,
+    pub uniforms: LandUniforms,
 }
 
-impl MaterialExtension for TerrainMaterialExtension {
+impl MaterialExtension for LandMaterialExtension {
     fn vertex_shader() -> ShaderRef {
-        TERRAIN_SHADER_PATH.into()
+        LAND_SHADER_PATH.into()
     }
     fn fragment_shader() -> ShaderRef {
-        TERRAIN_SHADER_PATH.into()
+        LAND_SHADER_PATH.into()
     }
 }
 
@@ -98,7 +98,7 @@ impl MaterialExtension for TerrainMaterialExtension {
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
-pub struct TerrainUniforms {
+pub struct LandUniforms {
     pub light_dir: Vec3,
     _pad: f32,
     pub chunk_origin: Vec2,
@@ -155,16 +155,16 @@ fn get_vertex_height(
 
 /// Build a custom mesh which is a tile grid with the same shape of
 ///   a map.mul chunk (CHUNK_TILE_NUM_1D x CHUNK_TILE_NUM_1D).
-pub fn sys_build_visible_terrain_chunks(
+pub fn sys_build_visible_land_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials_terrain: ResMut<Assets<TerrainMaterial>>,
+    mut materials_land: ResMut<Assets<LandCustomMaterial>>,
     mut cache: ResMut<TextureCache>,
     mut images: ResMut<Assets<Image>>,
     cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &TCMesh, Option<&Mesh3d>)>,
 ) {
-    log_system_add_update::<TerrainChunkMeshPlugin>(fname!());
+    log_system_add_update::<DrawLandChunkMeshPlugin>(fname!());
     let cam_pos = cam_q.single().unwrap().translation;
 
     // TODO: Demo heights: Replace with the actual per-tile map data
@@ -202,7 +202,7 @@ pub fn sys_build_visible_terrain_chunks(
         //let max_arr_idx: usize = (grid_w * grid_h);
 
         //let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
-        let mut mat_ext_uniforms = TerrainUniforms::zeroed();
+        let mut mat_ext_uniforms = LandUniforms::zeroed();
         mat_ext_uniforms.chunk_origin = Vec2::new(chunk_world_x, chunk_world_z);
         mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
@@ -218,7 +218,7 @@ pub fn sys_build_visible_terrain_chunks(
                 let h = map_dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
                 heights[vy * grid_w + vx] = h;
 
-                verts.push(TerrainVertexAttrs {
+                verts.push(LandVertexAttrs {
                     pos: [vx as f32, h, vy as f32],
                     uv: [
                         vx as f32 / (CHUNK_TILE_NUM_1D as f32),
@@ -348,12 +348,12 @@ pub fn sys_build_visible_terrain_chunks(
                 base: StandardMaterial {
                     ..Default::default()
                 },
-                extension: TerrainMaterialExtension {
+                extension: LandMaterialExtension {
                     tex_array: cache.image_handle.clone(),
                     uniforms: mat_ext_uniforms,
                 },
             };
-            materials_terrain.add(mat)
+            materials_land.add(mat)
         };
 
         // 💡 Place at correct world position via transform!
@@ -386,7 +386,7 @@ impl _Arrayable for Vec3 {
 
 // Base mesh attributes that we need to provide.
 #[derive(Clone, Copy)]
-struct TerrainVertexAttrs {
+struct LandVertexAttrs {
     pos: [f32; 3],
     uv: [f32; 2],
     norm: [f32; 3],
