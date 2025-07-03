@@ -19,6 +19,8 @@ regex = { version = "1.11.1", default-features = false, features = ["std", "unic
 strum = "0.27.1"
 strum_macros = "0.27.1"
 tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
+guillotiere = "0.6.2"
+lru = "0.15.0"
 
 [dependencies.bevy]
 version = "0.16.1"
