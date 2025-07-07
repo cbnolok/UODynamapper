@@ -21,6 +21,7 @@ strum_macros = "0.27.1"
 tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
 guillotiere = "0.6.2"
 lru = "0.15.0"
+bevy_framepace = "0.19.1"
 
 [dependencies.bevy]
 version = "0.16.1"

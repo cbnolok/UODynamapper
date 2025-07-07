@@ -2,7 +2,7 @@
 use bevy::state::state::States;
 use crate::logger;
 
-#[derive(States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(strum_macros::AsRefStr, States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AppState {
     #[default]
     LoadStartupFiles,

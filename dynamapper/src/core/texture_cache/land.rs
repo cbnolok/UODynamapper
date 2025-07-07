@@ -23,7 +23,7 @@ impl Plugin for LandCachePlugin {
 }
 
 pub fn sys_setup_terrain_cache(mut cmd: Commands, mut images: ResMut<Assets<Image>>) {
-    log_system_add_startup::<LandCachePlugin>(fname!());
+    log_system_add_onenter::<LandCachePlugin>(AppState::SetupScene, fname!());
     let handle = texarray::create_gpu_texture_array("land_cache", &mut images); //, &rd);
     cmd.insert_resource(cache::TextureCache::new(handle));
 }

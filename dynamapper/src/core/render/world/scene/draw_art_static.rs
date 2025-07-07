@@ -45,14 +45,13 @@
 }
 */
 
-
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use guillotiere::{size2, AllocId, AtlasAllocator, Allocation};
+use guillotiere::{AllocId, Allocation, AtlasAllocator, size2};
 use lru::LruCache;
 use std::collections::HashMap;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 const ATLAS_DIM_PX: u32 = 2048;
 const NUM_ATLASES: usize = 2;
@@ -85,8 +84,8 @@ pub struct TileAtlasSet {
 impl TileAtlasSet {
     pub fn new(images: &mut Assets<Image>) -> Self {
         let mut out_handles = [Handle::default(), Handle::default()];
-        let mut out_images: [Image; NUM_ATLASES] =
-            std::array::from_fn(|_| Image::new_fill(
+        let mut out_images: [Image; NUM_ATLASES] = std::array::from_fn(|_| {
+            Image::new_fill(
                 Extent3d {
                     width: ATLAS_DIM_PX,
                     height: ATLAS_DIM_PX,
@@ -95,18 +94,17 @@ impl TileAtlasSet {
                 TextureDimension::D2,
                 &[0, 0, 0, 255], // opaque black
                 TextureFormat::Rgba8UnormSrgb,
-    RenderAssetUsages::RENDER_WORLD
-            ));
+                RenderAssetUsages::RENDER_WORLD,
+            )
+        });
 
         // Insert into asset storage for handles
         for (i, atlas_img) in out_images.iter_mut().enumerate() {
             out_handles[i] = images.add(atlas_img.clone());
         }
 
-        let allocators = [0, 1].map(|_| AtlasAllocator::new(size2(
-            ATLAS_DIM_PX as i32,
-            ATLAS_DIM_PX as i32,
-        )));
+        let allocators =
+            [0, 1].map(|_| AtlasAllocator::new(size2(ATLAS_DIM_PX as i32, ATLAS_DIM_PX as i32)));
 
         let lrus = [0, 1].map(|_| LruCache::unbounded());
         let alloc_lookup = [HashMap::default(), HashMap::default()];
@@ -137,18 +135,18 @@ impl TileAtlasSet {
     ) -> Option<AtlasUVInfo> {
         // Step 1: Already present?
         if let Some(&(atlas_idx, _alloc_id)) = self.tile_map.get(&tile_id) {
-    // Lookup the tile in the atlas' LRU cache to get the allocation rectangle.
-    if let Some(cached) = self.lrus[atlas_idx].get_mut(&tile_id) {
-        cached.last_access = Instant::now();
-        return Some(AtlasUVInfo {
-            atlas_idx,
-            uv_rect: uv_rect_from_guillotiere(&cached.allocation.rectangle),
-        });
-    } else {
-        // This shouldn't happen if the caches are consistent, but handle gracefully.
-        return None;
-    }
-}
+            // Lookup the tile in the atlas' LRU cache to get the allocation rectangle.
+            if let Some(cached) = self.lrus[atlas_idx].get_mut(&tile_id) {
+                cached.last_access = Instant::now();
+                return Some(AtlasUVInfo {
+                    atlas_idx,
+                    uv_rect: uv_rect_from_guillotiere(&cached.allocation.rectangle),
+                });
+            } else {
+                // This shouldn't happen if the caches are consistent, but handle gracefully.
+                return None;
+            }
+        }
 
         // Step 2: Try to allocate space in an atlas
         let req_size = size2(tile_width as i32, tile_height as i32);
@@ -257,7 +255,11 @@ fn uv_rect_from_guillotiere(rect: &guillotiere::Rectangle) -> [f32; 4] {
 }
 
 /// This patches a (possibly non-square!) tile img onto atlas at 'rect'
-fn patch_into_atlas_with_rect(atlas_img: &mut Image, rect: &guillotiere::Rectangle, tile_img: &Image) {
+fn patch_into_atlas_with_rect(
+    atlas_img: &mut Image,
+    rect: &guillotiere::Rectangle,
+    tile_img: &Image,
+) {
     // Assumes tile_img dimensions fit rect exactly! (caller responsibility)
     let width = (rect.max.x - rect.min.x) as u32;
     let height = (rect.max.y - rect.min.y) as u32;

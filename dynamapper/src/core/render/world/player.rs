@@ -4,7 +4,10 @@ use crate::core::system_sets::*;
 use super::scene::SceneStartupData;
 
 #[derive(Component)]
-pub struct Player;
+pub struct Player {
+    current_pos: Vec3,
+    prev_rendered_pos: Vec3
+}
 
 pub struct PlayerPlugin {
     pub registered_by: &'static str,
@@ -28,7 +31,7 @@ pub fn sys_spawn_player_entity(
     mut materials:  ResMut<Assets<StandardMaterial>>,
     scene_startup_data_res: Option<Res<SceneStartupData>>,
 ) {
-    log_system_add_startup::<PlayerPlugin>(fname!());
+    log_system_add_onenter::<PlayerPlugin>(AppState::SetupScene, fname!());
 
     // A cube, to mimic the player position and to have another rendered object to have a visual comparison.
     let mesh_handle = meshes.add(Mesh::from(Cuboid { half_size: Vec3::splat(0.5) }));

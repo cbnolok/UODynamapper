@@ -6,9 +6,14 @@ mod texture_cache;
 mod uo_files_loader;
 
 use crate::prelude::*;
+use bevy::{
+    //ecs::schedule::ExecutorKind,
+    prelude::*,
+    winit::{UpdateMode, WinitSettings},
+};
+use bevy_framepace::FramepacePlugin;
+use std::{process::ExitCode, time::Duration};
 use system_sets::*;
-use bevy::prelude::*;
-use std::process::ExitCode;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn run_bevy_app() -> ExitCode {
@@ -30,16 +35,37 @@ pub fn run_bevy_app() -> ExitCode {
     log_appstate_change("LoadStartupFiles");
 
     let result = App::new()
-        //.insert_resource(WindowDescriptor {
-        //    title: "UODynamapper".to_string(),
-        //    ..Default::default()
-        //    })
+        .insert_resource(WinitSettings {
+            focused_mode: UpdateMode::reactive(Duration::from_secs_f64(1.0 / 244.0)),
+            unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 60.0)), /* 60Hz, */
+        })
         .add_plugins(
             DefaultPlugins
                 .build()
                 .disable::<bevy::log::LogPlugin>()
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "UODynamapper".to_string(),
+                        /*resolution: WindowResolution::new(
+                            settings_ref.window.height,
+                            settings_ref.window.width
+                        ),
+                        resizable: false,*/
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
         )
+        /*
+        .edit_schedule(Update, |schedule| {
+            schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+        })
+        */
+        .add_plugins(FramepacePlugin) // caps at 60 FPS by default
+        //.use(bevy_framepace::FramepaceSettings::default().with_framerate(30.0))
+        .init_state::<AppState>()
+        .insert_state(AppState::LoadStartupFiles)
         .add_plugins((
             render::RenderPlugin {
                 registered_by: "Core",
@@ -50,10 +76,7 @@ pub fn run_bevy_app() -> ExitCode {
             uo_files_loader::UoFilesPlugin {
                 registered_by: "Core",
             },
-        ))
-        .init_state::<AppState>()
-        .insert_state(AppState::LoadStartupFiles)
-        .configure_sets(Startup, (StartupSysSet::SetupScene,))
+        )).configure_sets(Startup, (StartupSysSet::SetupScene,))
         .add_systems(
             OnEnter(AppState::SetupScene),
             advance_state_after_scene_setup

@@ -3,6 +3,7 @@ pub mod draw_land_chunk_mesh;
 
 use crate::core::system_sets::*;
 use crate::prelude::*;
+use crate::core::constants;
 use bevy::prelude::*;
 use std::cmp::{max, min};
 use draw_land_chunk_mesh::TILE_NUM_PER_CHUNK_1D;
@@ -27,11 +28,7 @@ impl Plugin for ScenePlugin {
             },
         ))
         .insert_resource(SceneStartupData {
-            player_start_pos: Vec3 {
-                x: 24.0,
-                y: 0.0,
-                z: 24.0,
-            },
+            player_start_pos: constants::PLAYER_START_P.to_vec3(),
         })
         .insert_resource(SceneUpdateData {
             chunk_draw_range: 2, // In 'chunk units'
@@ -62,20 +59,20 @@ pub fn sys_spawn_worldmap_chunks(
     scene_startup_data_res: Res<SceneStartupData>,
     scene_update_data_res: Res<SceneUpdateData>,
 ) {
-    log_system_add_startup::<ScenePlugin>(fname!());
+    log_system_add_onenter::<ScenePlugin>(AppState::SetupScene, fname!());
     // TODO: check (via screen size and zoom) the amount of chunks to spawn.
-    let player_start_pos =  // we need to convert this from tile/world position to chunk coords
+    let player_start_chunk_coords =  // we need to convert this from tile/world position to chunk coords
         scene_startup_data_res.player_start_pos / TILE_NUM_PER_CHUNK_1D as f32;
     let chunk_draw_range = scene_update_data_res.chunk_draw_range;
-    let chunk_x0 = max(0, (player_start_pos.x as i32) - (chunk_draw_range / 2)) as u32;
-    let chunk_y0 = max(0, (player_start_pos.y as i32) - (chunk_draw_range / 2)) as u32;
+    let chunk_x0 = max(0, (player_start_chunk_coords.x as i32) - (chunk_draw_range / 2)) as u32;
+    let chunk_y0 = max(0, (player_start_chunk_coords.y as i32) - (chunk_draw_range / 2)) as u32;
     let chunk_x1 = min(
         DUMMY_MAP_SIZE_X as i32,
-        (player_start_pos.x as i32) + (chunk_draw_range / 2),
+        (player_start_chunk_coords.x as i32) + (chunk_draw_range / 2),
     ) as u32;
     let chunk_y1 = min(
         DUMMY_MAP_SIZE_Y as i32,
-        (player_start_pos.y as i32) + (chunk_draw_range / 2),
+        (player_start_chunk_coords.y as i32) + (chunk_draw_range / 2),
     ) as u32;
     for gx in chunk_x0..=chunk_x1 {
         for gy in chunk_y0..=chunk_y1 {

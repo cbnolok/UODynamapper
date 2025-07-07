@@ -3,6 +3,7 @@ pub mod array;
 #[macro_use]
 pub mod tracked_plugin;
 
+/// Get the current function name.
 #[macro_export]
 macro_rules! fname {
     () => {{

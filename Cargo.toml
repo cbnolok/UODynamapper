@@ -21,3 +21,10 @@ debug = false # Disable generation of debug info
 #   allow incremental compilation is a waste.
 incremental = true # false
 
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+incremental = false
+debug = false
+

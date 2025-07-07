@@ -1,8 +1,9 @@
+use super::scene::SceneStartupData;
+use crate::core::system_sets::*;
+use crate::prelude::*;
+//use bevy::pbr::ClusterConfig;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
-use crate::prelude::*;
-use crate::core::system_sets::*;
-use super::scene::SceneStartupData;
 
 #[derive(Component)]
 struct PlayerCamera;
@@ -20,8 +21,7 @@ impl Plugin for CameraPlugin {
         log_plugin_build(self);
         app.add_systems(
             OnEnter(AppState::SetupScene),
-            sys_setup_cam
-                .in_set(StartupSysSet::SetupScene)
+            sys_setup_cam.in_set(StartupSysSet::SetupScene),
         );
     }
 }
@@ -37,7 +37,7 @@ pub fn sys_setup_cam(
     //    (Without<Player>, With<PlayerCamera>),
     //>,
 ) {
-    log_system_add_startup::<CameraPlugin>(fname!());
+    log_system_add_onenter::<CameraPlugin>(AppState::SetupScene, fname!());
 
     let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
     //let chunk_draw_range = scene_update_data_res.unwrap().chunk_draw_range;
@@ -86,5 +86,17 @@ pub fn sys_setup_cam(
         }),
         Transform::from_xyz(cam_pos.x, cam_pos.y, cam_pos.z).looking_at(center, Vec3::Y),
         GlobalTransform::default(), // Needed for transforming the camera in world space
+        /*
+        ClusterConfig::FixedZ {
+            // 4096 clusters is the Bevy default
+            // if you don't have many lights, you can reduce this value
+            total: 1024,
+            // Bevy default is 24 Z-slices
+            // For a top-down-view game, 1 is probably optimal.
+            z_slices: 1,
+            dynamic_resizing: true,
+            z_config: Default::default(),
+        },
+        */
     ));
 }
