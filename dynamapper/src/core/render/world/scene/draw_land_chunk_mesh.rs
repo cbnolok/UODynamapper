@@ -1,6 +1,11 @@
 #![allow(dead_code)]
 
+use std::collections::{BTreeMap, HashSet};
+
 use super::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
+use crate::core::render::world::player::Player;
+use crate::core::render::world::scene::SceneActiveMap;
+use crate::core::uo_files_loader::UoFileData;
 use crate::prelude::*;
 use crate::{
     core::{constants, texture_cache::land::cache::*},
@@ -16,6 +21,7 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
+use uocf::geo::map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos};
 
 pub struct DrawLandChunkMeshPlugin {
     pub registered_by: &'static str,
@@ -25,10 +31,7 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default()) // Register Asset
-            .add_systems(
-                Update,
-                sys_draw_spawned_land_chunks.run_if(in_state(AppState::InGame)),
-            );
+            .add_systems(Update, sys_draw_spawned_land_chunks.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -42,12 +45,12 @@ pub struct UOMapTile {
     height: u16, // in UO it's i8
 }
 
-pub const TILE_NUM_PER_CHUNK_1D: u32 = 16; // It's a square, 16 tiles on X axis, 16 tiles on Y axis.
-pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
-    (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
+pub const TILE_NUM_PER_CHUNK_1D: u32 = 8; // It's a square, 8 tiles on X axis, 8 tiles on Y axis.
+pub const TILE_NUM_PER_CHUNK_TOTAL: usize = (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
 
 #[derive(Component)]
 pub struct TCMesh {
+    pub map: u32,
     pub gx: u32,
     pub gy: u32,
 }
@@ -150,11 +153,12 @@ fn get_vertex_height(
 
 // ----
 
-    struct LandChunkConstructionData {
-        entity: Entity,
-        chunk_origin_chunk_units_x: u32,
-        chunk_origin_chunk_units_z: u32,
-    }
+#[derive(Eq, Hash, PartialEq)]
+struct LandChunkConstructionData {
+    entity: Option<Entity>,
+    chunk_origin_chunk_units_x: u32,
+    chunk_origin_chunk_units_z: u32,
+}
 
 // -----
 
@@ -166,80 +170,134 @@ pub fn sys_draw_spawned_land_chunks(
     mut materials_land: ResMut<Assets<LandCustomMaterial>>,
     mut cache: ResMut<TextureCache>,
     mut images: ResMut<Assets<Image>>,
+    uo_data: Res<UoFileData>,
+    active_map: Res<SceneActiveMap>,
+    player_q: Query<&mut Player>,
     cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &TCMesh, Option<&Mesh3d>)>,
 ) {
     log_system_add_update::<DrawLandChunkMeshPlugin>(fname!());
+
+    // Extract data from queries.
+    let player_entity = player_q.single().expect("More than 1 players!");
     let cam_pos = cam_q.single().unwrap().translation;
 
-    // TODO: Demo heights: Replace with the actual per-tile map data
-    let mut map_dummy_tile_heights =
-        vec![[0.0f32; DUMMY_MAP_SIZE_X as usize + 1]; DUMMY_MAP_SIZE_Y as usize + 1];
-    for ty in 0..DUMMY_MAP_SIZE_Y as usize {
-        for tx in 0..DUMMY_MAP_SIZE_X as usize {
-            map_dummy_tile_heights[ty][tx] = if (tx + ty) % 2 == 0 { 0.0 } else { 1.0 };
-        }
-    }
-
-    let mut chunks_to_spawn = Vec::<LandChunkConstructionData>::new();
-
+    // Get the "render world" spawned chunk meshes we have to render.
+    // A map chunk in the render world has the same size of a UO map block (8x8).
+    //let mut chunks_to_spawn = Vec::<LandChunkConstructionData>::new();
+    let mut chunks_to_spawn = HashSet::<LandChunkConstructionData>::new();
     for (entity, chunk_data, mesh_handle) in chunk_q.iter() {
         if mesh_handle.is_some() {
-            // Chunk already rendered.
-            continue;
+            continue; // Chunk already rendered.
         }
 
         let chunk_origin_chunk_units_x = chunk_data.gx;
         let chunk_origin_chunk_units_z = chunk_data.gy;
-
         if false == is_chunk_in_draw_range(cam_pos, chunk_origin_chunk_units_x, chunk_origin_chunk_units_z) {
-            continue;
+            continue; // Can't see this chunk, do not render it.
         }
 
-        chunks_to_spawn.push(LandChunkConstructionData {
-            entity,
+        chunks_to_spawn.insert(LandChunkConstructionData {
+            entity: Some(entity),
             chunk_origin_chunk_units_x,
             chunk_origin_chunk_units_z,
         });
+
+        const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0), (0,  0), (1,  0),
+            (-1,  1), (0,  1), (1,  1),
+        ];
+
+        // Load neighboring blocks
+        for (dx, dy) in NEIGHBOR_OFFSETS.iter() {
+            let nx: i32 = *dx + i32::try_from(chunk_origin_chunk_units_x).expect("X > i32::MAX?");
+            let ny: i32 = *dy + i32::try_from(chunk_origin_chunk_units_z).expect("Y > i32::MAX?");
+
+            // Only process if within bounds
+            if nx >= 0 && nx < active_map.width as i32 && ny >= 0 && ny < active_map.height as i32 {
+                chunks_to_spawn.insert(LandChunkConstructionData {
+                    entity: None,
+                    chunk_origin_chunk_units_x: nx as u32,
+                    chunk_origin_chunk_units_z: ny as u32,
+                });
+            }
+        }
     }
 
-    // Fetch the map data.
-    // Draw each chunk with the map data we passed.
+    // Get the UO map block coords.
+    let player_map_plane: u8 = player_entity.current_pos.expect("Player position not yet set?!").m;
+    let blocks_to_draw_coords_unique: HashSet<MapBlockRelPos> = chunks_to_spawn
+        .iter()
+        .map(|construction_data: &LandChunkConstructionData| MapBlockRelPos {
+            x: construction_data.chunk_origin_chunk_units_x,
+            y: construction_data.chunk_origin_chunk_units_z,
+        })
+        .collect();
+    let blocks_to_draw_coords_vec = blocks_to_draw_coords_unique.iter().cloned().collect();
+
+    // Fetch map data (blocks to draw + neighbors).
+    //let mut blocks_to_draw_data = Vec::<uo_lib_map::MapBlock>::new();
+    let mut blocks_data = BTreeMap::<MapBlockRelPos, MapBlock>::new();
+    {
+        // Create a new scope because uo_data is protected by a RwLock (conceptually it's a mutex).
+        let mut uo_data_map_planes_lock = uo_data.map_planes.write().unwrap();
+        let uo_data_map_plane = &mut uo_data_map_planes_lock.as_mut_slice()[player_map_plane as usize];
+
+        // println!("Load blocks: {blocks_to_draw_coords_vec:#?}");
+
+        // Ensure that uncached map blocks are loaded.
+        uo_data_map_plane
+            .load_blocks(&blocks_to_draw_coords_vec)
+            .expect("Can't load the map blocks.");
+
+        for block_coords in blocks_to_draw_coords_vec {
+            let block_ref = uo_data_map_plane
+                .block(block_coords)
+                .expect("Requested map block is uncached?");
+            println!("Adding block {block_coords:?}");
+            let unique = blocks_data.insert(block_coords, block_ref.clone()).is_none();
+            if !unique {
+                panic!("Adding again the same key?");
+            }
+        }
+    }
+
+    // Draw each chunk with the map data.
     for chunk_data in chunks_to_spawn {
+        if chunk_data.entity.is_none() {
+            continue;
+        }
         draw_land_chunk(
             &mut commands,
             &mut meshes,
             &mut materials_land,
             &mut cache,
             &mut images,
-            &map_dummy_tile_heights,
-            chunk_data,
+            &chunk_data,
+            &blocks_data,
         );
     }
 }
 
-fn is_chunk_in_draw_range(
-    cam_pos: Vec3,
-    chunk_origin_chunk_units_x: u32,
-    chunk_origin_chunk_units_z: u32,
-) -> bool {
-        // Compute chunk origin in tile/world units
-        let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-        let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+fn is_chunk_in_draw_range(cam_pos: Vec3, chunk_origin_chunk_units_x: u32, chunk_origin_chunk_units_z: u32) -> bool {
+    // Compute chunk origin in tile/world units
+    let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
-        // For distance culling (uses chunk center in world)
-        let center = Vec3::new(
-            (chunk_origin_tile_units_x + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
-            0.0,
-            (chunk_origin_tile_units_z + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
-        );
-        if cam_pos.distance(center) > constants::RENDER_DISTANCE_FROM_PLAYER {
-            // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this? Apply the same logic to the chunk spawning?
-            //println!("cam pos {}", cam_pos);
-            //println!("center {}", center);
-            return false;
-        }
-        return true;
+    // For distance culling (uses chunk center in world)
+    let center = Vec3::new(
+        (chunk_origin_tile_units_x + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+        0.0,
+        (chunk_origin_tile_units_z + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+    );
+    if cam_pos.distance(center) > constants::RENDER_DISTANCE_FROM_PLAYER {
+        // TODO: adjust this dynamically accounting for zoom, window size, etc. Use a function to calc this? Apply the same logic to the chunk spawning?
+        //println!("cam pos {}", cam_pos);
+        //println!("center {}", center);
+        return false;
+    }
+    return true;
 }
 
 fn draw_land_chunk(
@@ -248,23 +306,43 @@ fn draw_land_chunk(
     materials_land: &mut ResMut<Assets<LandCustomMaterial>>,
     cache: &mut ResMut<TextureCache>,
     images: &mut ResMut<Assets<Image>>,
-    map_dummy_tile_heights: &Vec<[f32; 4097]>,
-    chunk_data: LandChunkConstructionData,
+    chunk_data: &LandChunkConstructionData,
+    blocks_data: &BTreeMap<MapBlockRelPos, MapBlock>,
 ) {
     // Compute chunk origin in tile/world units
-    let chunk_origin_tile_units_x = chunk_data.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_tile_units_z = chunk_data.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+    let current_chunk_origin_world_tile_units_x = chunk_data.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let current_chunk_origin_world_tile_units_z = chunk_data.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
-    // --- Generate tile grid in local space: [0, CHUNK_SIZE] on X/Z ---
-    let grid_w: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
-    let grid_h: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
-    //let max_arr_idx: usize = (grid_w * grid_h);
+    // To retrieve cell data from the cached blocks data.
+    #[track_caller]
+    fn get_cell(blocks_data: &BTreeMap<MapBlockRelPos, MapBlock>, world_tile_x: usize, world_tile_z: usize) -> &MapCell {
+        // From world_x/z, get the in-chunk relative coords, if necessary change the chunk id.
 
-    //let mut uo_tile_data = vec![UOMapTile::default(); max_arr_idx];
+        let chunk_rel_coords = MapBlockRelPos {
+            x: world_tile_x as u32 / TILE_NUM_PER_CHUNK_1D,
+            y: world_tile_z as u32 / TILE_NUM_PER_CHUNK_1D,
+        };
+        let tile_rel_coords = MapCellRelPos {
+            x: world_tile_x as u32 % TILE_NUM_PER_CHUNK_1D,
+            y: world_tile_z as u32 % TILE_NUM_PER_CHUNK_1D,
+        };
+        println!("Requesting tile at x,y={world_tile_x},{world_tile_z} -> {chunk_rel_coords:?}, {tile_rel_coords:?}");
+        blocks_data
+            .get(&chunk_rel_coords)
+            .expect("Requested uncached map block?")
+            .cell(tile_rel_coords.x, tile_rel_coords.y)
+            .map_err(|err_str| format!("Error: {err_str}."))
+            .unwrap()
+    }
+
+    // --- Generate mesh for the tile grid (in local space: [0, CHUNK_SIZE] on X/Z) ---
+    let grid_w: usize = TILE_NUM_PER_CHUNK_1D as usize; // + 1;
+    let grid_h: usize = TILE_NUM_PER_CHUNK_1D as usize; // + 1;
+
     let mut mat_ext_uniforms = LandUniforms::zeroed();
     mat_ext_uniforms.chunk_origin = Vec2::new(
-        chunk_origin_tile_units_x as f32,
-        chunk_origin_tile_units_z as f32,
+        current_chunk_origin_world_tile_units_x as f32,
+        current_chunk_origin_world_tile_units_z as f32,
     );
     mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
@@ -274,14 +352,13 @@ fn draw_land_chunk(
     // Define positions of each vertex.
     for vy in 0..grid_h {
         for vx in 0..grid_w {
-            let world_tx = chunk_origin_tile_units_x as usize + vx;
-            let world_ty = chunk_origin_tile_units_z as usize + vy;
-            //let h = get_vertex_height(&dummy_tile_heights, chunk_data.gx, chunk_data.gy, vx, vy);
-            let h = map_dummy_tile_heights[world_ty][world_tx]; // direct lookup, not averaging!
-            heights[vy * grid_w + vx] = h;
+            let world_tx = current_chunk_origin_world_tile_units_x as usize + vx;
+            let world_tz = current_chunk_origin_world_tile_units_z as usize + vy;
+            let tile_h = get_cell(blocks_data, world_tx, world_tz).z as f32;
+            heights[vy * grid_w + vx] = tile_h;
 
             verts.push(LandVertexAttrs {
-                pos: [vx as f32, h, vy as f32],
+                pos: [vx as f32, tile_h, vy as f32],
                 uv: [
                     vx as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
                     vy as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
@@ -294,9 +371,9 @@ fn draw_land_chunk(
     // Calculate Smooth Normals: finite difference using derived vertex heights.
     for vy in 0..grid_h {
         for vx in 0..grid_w {
-            let world_tx = chunk_origin_tile_units_x as usize + vx;
-            let world_ty = chunk_origin_tile_units_z as usize + vy;
-            let center = map_dummy_tile_heights[world_ty][world_tx];
+            let world_tx = current_chunk_origin_world_tile_units_x as usize + vx;
+            let world_tz = current_chunk_origin_world_tile_units_z as usize + vy;
+            let center = get_cell(blocks_data, world_tx, world_tz).z as f32;
 
             /*
             Each chunk computes normals only from heights inside its own chunk, so edge normals miss out on what’s just over the border in the global heightgrid.
@@ -306,22 +383,22 @@ fn draw_land_chunk(
             // let center = heights[vy * grid_w + vx];
 
             let left = if world_tx > 0 {
-                map_dummy_tile_heights[world_ty][world_tx - 1]
+                get_cell(blocks_data, world_tx - 1, world_tz).z as f32
             } else {
                 center
             };
             let right = if world_tx + 1 < DUMMY_MAP_SIZE_X as usize {
-                map_dummy_tile_heights[world_ty][world_tx + 1]
+                get_cell(blocks_data, world_tx + 1, world_tz).z as f32
             } else {
                 center
             };
-            let down = if world_ty > 0 {
-                map_dummy_tile_heights[world_ty - 1][world_tx]
+            let down = if world_tz > 0 {
+                get_cell(blocks_data, world_tx, world_tz - 1).z as f32
             } else {
                 center
             };
-            let up = if world_ty + 1 < DUMMY_MAP_SIZE_Y as usize {
-                map_dummy_tile_heights[world_ty + 1][world_tx]
+            let up = if world_tz + 1 < DUMMY_MAP_SIZE_Y as usize {
+                get_cell(blocks_data, world_tx, world_tz + 1).z as f32
             } else {
                 center
             };
@@ -342,9 +419,7 @@ fn draw_land_chunk(
             let i2 = (ty + 1) * grid_w + (tx + 1);
             let i3 = (ty + 1) * grid_w + tx;
             // Vertex winding order: counter-clockwise -> normals will point up.
-            idxs.extend([
-                i0 as u32, i2 as u32, i1 as u32, i0 as u32, i3 as u32, i2 as u32,
-            ]);
+            idxs.extend([i0 as u32, i2 as u32, i1 as u32, i0 as u32, i3 as u32, i2 as u32]);
 
             // We pass tile data (read from the MUL files) as a uniform buffer to the wgsl shader.
             // ***** TODO: real tile lookup goes here *****
@@ -388,14 +463,8 @@ fn draw_land_chunk(
             Mesh::ATTRIBUTE_POSITION,
             verts.iter().map(|v| v.pos).collect::<Vec<_>>(),
         );
-        mesh.insert_attribute(
-            Mesh::ATTRIBUTE_NORMAL,
-            verts.iter().map(|v| v.norm).collect::<Vec<_>>(),
-        );
-        mesh.insert_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            verts.iter().map(|v| v.uv).collect::<Vec<_>>(),
-        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, verts.iter().map(|v| v.norm).collect::<Vec<_>>());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, verts.iter().map(|v| v.uv).collect::<Vec<_>>());
 
         // Add dummy data to unused fields, to be used internally by us in the shader:
         // We'll use this field (second pair of UV coords) to pass shading data from the vertex to the fragment shader.
@@ -407,9 +476,7 @@ fn draw_land_chunk(
 
     let chunk_material_handle = {
         let mat = ExtendedMaterial {
-            base: StandardMaterial {
-                ..Default::default()
-            },
+            base: StandardMaterial { ..Default::default() },
             extension: LandMaterialExtension {
                 tex_array: cache.image_handle.clone(),
                 uniforms: mat_ext_uniforms,
@@ -419,13 +486,13 @@ fn draw_land_chunk(
     };
 
     // 💡 Place at correct world position via transform!
-    commands.entity(chunk_data.entity).insert((
+    commands.entity(chunk_data.entity.unwrap()).insert((
         Mesh3d(chunk_mesh_handle.clone()),
         MeshMaterial3d(chunk_material_handle.clone()),
         Transform::from_xyz(
-            chunk_origin_tile_units_x as f32,
+            current_chunk_origin_world_tile_units_x as f32,
             0.0,
-            chunk_origin_tile_units_z as f32,
+            current_chunk_origin_world_tile_units_z as f32,
         ),
         GlobalTransform::default(),
     ));
@@ -438,8 +505,8 @@ fn draw_land_chunk(
             "Rendered chunk at: gx={}, gy={}, tx={}, ty={}.",
             chunk_data.chunk_origin_chunk_units_x,
             chunk_data.chunk_origin_chunk_units_z,
-            chunk_origin_tile_units_x,
-            chunk_origin_tile_units_z
+            current_chunk_origin_world_tile_units_x,
+            current_chunk_origin_world_tile_units_z
         )
         .as_str(),
     );

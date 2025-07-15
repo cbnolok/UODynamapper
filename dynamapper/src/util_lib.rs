@@ -1,4 +1,7 @@
 pub mod array;
+pub mod math;
+//pub mod rect;
+pub mod uo_coords;
 
 #[macro_use]
 pub mod tracked_plugin;

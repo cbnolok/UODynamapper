@@ -4,6 +4,7 @@ mod render;
 pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
+mod maps;
 
 use crate::prelude::*;
 use bevy::{

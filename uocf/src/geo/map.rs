@@ -127,11 +127,17 @@ pub struct MapPlane {
 impl MapPlane {
     pub const EXTRA_BLOCKS_TO_CACHE_PER_SIDE: u32 = 8;
 
-    pub fn block(&self, x: u32, y: u32) -> Option<&MapBlock> {
-        self.cached_blocks.get(&MapBlockRelPos { x, y })
+    //pub fn block(&self, x: u32, y: u32) -> Option<&MapBlock> {
+    //    self.cached_blocks.get(&MapBlockRelPos { x, y })
+    //}
+    pub fn block(&self, pos: MapBlockRelPos) -> Option<&MapBlock> {
+        self.cached_blocks.get(&pos)
     }
-    pub fn block_as_mut(&mut self, x: u32, y: u32) -> Option<&mut MapBlock> {
-        self.cached_blocks.get_mut(&MapBlockRelPos { x, y })
+    //pub fn block_as_mut(&mut self, x: u32, y: u32) -> Option<&mut MapBlock> {
+    //    self.cached_blocks.get_mut(&MapBlockRelPos { x, y })
+    //}
+    pub fn block_as_mut(&mut self, pos: MapBlockRelPos) -> Option<&mut MapBlock> {
+        self.cached_blocks.get_mut(&pos)
     }
 }
 
@@ -151,16 +157,16 @@ impl MapCellCoords {
 }
 
 // Position of a block relative to the parent map plane.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MapBlockRelPos {
     pub x: u32,
     pub y: u32,
 }
 // Position of a cell relative to the parent block.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MapCellRelPos {
-    x: u32,
-    y: u32,
+    pub x: u32,
+    pub y: u32,
 }
 
 // Size of a map plane, expressed in cells/tiles.
@@ -296,8 +302,8 @@ impl MapPlane {
             MapCell::coords_of_parent_block_y(map_rect_to_show.y0 + map_rect_to_show.height)
                 + Self::EXTRA_BLOCKS_TO_CACHE_PER_SIDE;
 
-        //println!("MapRect to load: {:?}", map_rect_to_show);
-        //println!("Blocks requested (+extra for cache): (X:{block_x_start},Y:{block_y_start}) to (X:{block_x_end},Y:{block_y_end})");
+        println!("MapRect to load: {:?}", map_rect_to_show);
+        println!("Blocks requested (+extra for cache): (X:{block_x_start},Y:{block_y_start}) to (X:{block_x_end},Y:{block_y_end})");
         let mut ret: Vec<MapBlockRelPos> = Vec::with_capacity(
             ((block_x_end - block_x_start) * (block_y_end - block_y_start)) as usize,
         );
@@ -307,24 +313,28 @@ impl MapPlane {
                 let p = MapBlockRelPos { x, y };
                 if !self.cached_blocks.contains_key(&p) {
                     ret.push(p);
-                    //println!("Block {:?} marked to be LOADED", p);
-                } /*else {
+                    println!("Block {:?} marked to be LOADED", p);
+                } else {
                     println!("Already in CACHE: Block {:?}", p);
-                }*/
+                }
             }
         }
         ret
     }
 
-    pub fn load_blocks(&mut self, blocks_to_load: Vec<MapBlockRelPos>) -> eyre::Result<()> {
+    pub fn load_blocks(&mut self, blocks_to_load: &Vec<MapBlockRelPos>) -> eyre::Result<()> {
         const MAP_FILE_MAX_SEQ_BLOCKS: usize = 10_000; // Cap of blocks to be read sequentially.
         const MAP_FILE_MAX_CHUNK_SIZE: usize = MapBlock::PACKED_SIZE * MAP_FILE_MAX_SEQ_BLOCKS;
-        assert!(!blocks_to_load.is_empty());
+
+        if blocks_to_load.is_empty() {
+            //println!("Received empty load request (no blocks).");
+            return Ok(());
+        }
 
         // First, check if we lack some block in our cache.
         if !self.cached_blocks.is_empty() {
             let mut missing_key = false;
-            for block_pos in &blocks_to_load {
+            for block_pos in blocks_to_load {
                 if !self.cached_blocks.contains_key(block_pos) {
                     missing_key = true;
                     break;
@@ -380,12 +390,16 @@ impl MapPlane {
 
             // Read the current chunk of blocks.
             let block_to_seek = blocks_to_load[blocks_read];
+            //let max_blocks = self.size_blocks.width * self.size_blocks.height;
+            if block_to_seek.x >= self.size_blocks.width || block_to_seek.y >= self.size_blocks.height {
+                Err(eyre!("Requested map block out of bounds {block_to_seek:?}.".to_owned()))?;
+            }
+
             let block_idx = MapBlock::idx_from_coords(&block_to_seek, self.size_blocks.height);
+            let off = (MapBlock::PACKED_SIZE * block_idx as usize) as u64;
             map_file_mul_handle
-                .seek(SeekFrom::Start(
-                    (MapBlock::PACKED_SIZE * block_idx as usize) as u64,
-                ))
-                .wrap_err("Map file seek to block")?;
+                .seek(SeekFrom::Start(off))
+                .wrap_err(format!("Failed to seek to {off} for block {block_idx}."))?;
 
             blocks_buffer.resize(chunk_blocks_to_read_seq_count * MapBlock::PACKED_SIZE, 0);
             let read_result = map_file_mul_handle
@@ -403,7 +417,8 @@ impl MapPlane {
             'block_store: for block_pos in chunk_slice_to_loop.iter() {
                 if self.cached_blocks.contains_key(block_pos) {
                     rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))
-                        .unwrap();
+                        .wrap_err(format!("Failed to seek after already cached block {:?}.", block_pos))?;
+                    blocks_read += 1;
                     continue 'block_store;
                 }
 
@@ -414,7 +429,7 @@ impl MapPlane {
                     .read_u32::<LittleEndian>()
                     .wrap_err("Read map block: header")?;
 
-                //println!("READING BLOCK {:?}. Header: {_block_header}", block_pos);
+                println!("READING BLOCK {:?}. Header: {_block_header}", block_pos);
                 // Cells inside the block; stored sequentially left to right, then top to bottom.
                 for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
                     for x_cell in 0..MapBlock::CELLS_PER_ROW {
@@ -423,7 +438,7 @@ impl MapPlane {
                             .read_u16::<LittleEndian>()
                             .wrap_err("Read map block: cell: id")?;
                         new_cell.z = rdr.read_i8().wrap_err("Read map block: cell: z")?;
-                        //println!("Reading CELL {x_cell},{y_cell}. ID: 0x{:.X}, Z: {}", new_cell.id, new_cell.z);
+                        println!("Reading CELL {x_cell},{y_cell}. ID: 0x{:.X}, Z: {}", new_cell.id, new_cell.z);
                     }
                 }
                 new_block.internal_coords = block_pos.clone();
@@ -431,6 +446,8 @@ impl MapPlane {
                 blocks_read += 1;
             }
         }
+
+        println!("Done reading block.");
 
         Ok(())
     }

@@ -96,7 +96,7 @@ features = [
   #"pbr_transmission_textures", # Support textures for light transimssion (translucency)
 
   # Development features
-  "dynamic_linking",     # Dynamic linking for faster compile-times
+  #"dynamic_linking",     # Dynamic linking for faster compile-times
   "asset_processor",     # Enable asset processing support
   #"bevy_debug_stepping", # Enable stepping through ECS systems for debugging
   "bevy_dev_tools",      # Extra dev functionality (like FPS overlay)

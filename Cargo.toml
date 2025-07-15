@@ -7,7 +7,7 @@ members = [
 
 # Enable a small amount of optimization in debug mode for our crate.
 [profile.dev]
-opt-level = 1
+opt-level = 0
 # Incremental compilation. The project is fairly small, for now we don't need it.
 incremental = true
 # Additional safety checks (including arithmetic overflow).

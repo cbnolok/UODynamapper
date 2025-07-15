@@ -1,3 +1,5 @@
+// Each art tile has to be its own entity.
+
 /*
     // Load the ground textures in our UO Data Cache.
     logger::one(

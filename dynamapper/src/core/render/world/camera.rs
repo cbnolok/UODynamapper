@@ -65,7 +65,7 @@ pub fn sys_setup_cam(
     //------------------------------------
 
     // Center of the chunk/grid
-    let center = player_start_pos;
+    let center = player_start_pos.to_bevy_vec3_ignore_map();
 
     // Non-UO Camera position: 30 units above & 30 units back
     //let cam_pos = Vec3::new(center.x, 30.0, center.z + 30.0);
@@ -75,7 +75,7 @@ pub fn sys_setup_cam(
         Camera3d::default(), // Marker component for 3D cameras
         Projection::Orthographic(OrthographicProjection {
             // Military/oblique (used in UO):
-            scale: 20.0, //4.55,
+            scale: 40.0, //4.55,
             scaling_mode: ScalingMode::Fixed {
                 width: 1.65,
                 height: 1.0 / 2.0_f32.sqrt(),
@@ -86,6 +86,7 @@ pub fn sys_setup_cam(
         }),
         Transform::from_xyz(cam_pos.x, cam_pos.y, cam_pos.z).looking_at(center, Vec3::Y),
         GlobalTransform::default(), // Needed for transforming the camera in world space
+        // If we ever have render/draw complexity and we need to reduce overhead this can be an option (save on light calculations):
         /*
         ClusterConfig::FixedZ {
             // 4096 clusters is the Bevy default

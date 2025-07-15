@@ -77,6 +77,7 @@ pub fn sys_setup_uo_data(
 
     lg("Done loading UO Data.");
 
+    // TODO: move each UoFileData element in its own Bevy Resource.
     let data = UoFileData {
         settings: RwLock::new(UoInterfaceSettings {
             base_folder: uo_path,

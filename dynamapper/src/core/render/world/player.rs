@@ -1,57 +1,63 @@
-use bevy::{color, prelude::*};
-use crate::prelude::*;
-use crate::core::system_sets::*;
 use super::scene::SceneStartupData;
+use crate::core::system_sets::*;
+use crate::prelude::*;
+use bevy::{color, prelude::*};
 
 #[derive(Component)]
 pub struct Player {
-    current_pos: Vec3,
-    prev_rendered_pos: Vec3
+    pub current_pos: Option<UOVec4>,
+    pub prev_rendered_pos: Option<UOVec4>,
 }
 
 pub struct PlayerPlugin {
     pub registered_by: &'static str,
 }
 impl_tracked_plugin!(PlayerPlugin);
-impl Plugin for PlayerPlugin
-{
+impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
             OnEnter(AppState::SetupScene),
-            sys_spawn_player_entity
-                .in_set(StartupSysSet::SetupScene)
+            sys_spawn_player_entity.in_set(StartupSysSet::SetupScene),
         );
     }
 }
 
 pub fn sys_spawn_player_entity(
-    mut commands:   Commands,
-    mut meshes:     ResMut<Assets<Mesh>>,
-    mut materials:  ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     scene_startup_data_res: Option<Res<SceneStartupData>>,
 ) {
     log_system_add_onenter::<PlayerPlugin>(AppState::SetupScene, fname!());
 
     // A cube, to mimic the player position and to have another rendered object to have a visual comparison.
-    let mesh_handle = meshes.add(Mesh::from(Cuboid { half_size: Vec3::splat(0.5) }));
+    let mesh_handle = meshes.add(Mesh::from(Cuboid {
+        half_size: Vec3::splat(0.5),
+    }));
     let material_handle = materials.add(StandardMaterial {
         base_color: Color::Srgba(color::palettes::basic::GREEN),
         ..default()
     });
-    let player_start_pos = scene_startup_data_res.unwrap().player_start_pos;
 
-    logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::Player,
-        format!("Spawning player at pos {player_start_pos}.")
-            .as_str(),
-    );
+    let player_start_pos_uo = scene_startup_data_res.unwrap().player_start_pos;
+    let player_start_pos = player_start_pos_uo.to_bevy_vec3_ignore_map();
+
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material_handle),
         Transform::from_xyz(player_start_pos.x, player_start_pos.y + 2.0, player_start_pos.z),
         GlobalTransform::default(),
+        Player {
+            current_pos: Some(player_start_pos_uo),
+            prev_rendered_pos: None,
+        },
     ));
+
+    logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::Player,
+        format!("Spawned player at pos {player_start_pos}.").as_str(),
+    );
 }
