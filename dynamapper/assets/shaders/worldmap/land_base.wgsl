@@ -127,9 +127,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tx: u32 = clamp(u32(floor(local_x)), 0u, CHUNK_TILE_NUM_1D-1u);
     let ty: u32 = clamp(u32(floor(local_z)), 0u, CHUNK_TILE_NUM_1D-1u);
     let tile_index: u32 = ty * CHUNK_TILE_NUM_1D + tx;
-    let tile_index_1d: u32 = tile_index / CHUNK_TILE_NUM_1D;
-    let tile_index_2d: u32 = tile_index % CHUNK_TILE_NUM_1D;
-    let layer: u32 = land.layers[tile_index_1d][tile_index_2d];
+    let tile_index_chunk: u32 = tile_index / CHUNK_TILE_NUM_1D;
+    let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
+    let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
 
     // Sample your texture (skip or replace if untextured):
     let tex_color = textureSample(atlas, atlas_sampler, in.uv, u32(layer));
@@ -140,12 +140,11 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     //let brightness = lambert * 0.6 + ao * 0.4;
     let brightness = lambert * 0.7 + ao * 0.3;
 
-    // Final lit color (Gouraud: modulate by interpolated lighting).
     //out.color = vec4<f32>(f32(layer) / f32(MAX_TILE_LAYERS), 0.0, 0.0, 1.0); // debug
-    out.color = vec4<f32>(in.world_position.y * 0.05, 0.5, 0.0, 1.0); // debug
-    let lit = out.color.rgb * brightness;
-    out.color = vec4<f32>(lit, out.color.a);
-    return out;
+    //out.color = vec4<f32>(in.world_position.y * 0.05, 0.5, 0.0, 1.0); // debug
+    //let lit = out.color.rgb * brightness;
+    //out.color = vec4<f32>(lit, out.color.a);
+    //return out;
 
     /*
     // Filters:
@@ -161,9 +160,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     out.color = mix(out.color, vec4<f32>(0.6,0.7,1.0,1.0), clamp(fog,0.0,0.5));
     */
 
-    //let lit = tex_color.rgb * brightness;
-    //out.color = vec4<f32>(lit, tex_color.a);
-    //return out;
+    // Final lit color (Gouraud: modulate by interpolated lighting).
+    let lit = tex_color.rgb * brightness;
+    out.color = vec4<f32>(lit, tex_color.a);
+    return out;
 }
 
 /*

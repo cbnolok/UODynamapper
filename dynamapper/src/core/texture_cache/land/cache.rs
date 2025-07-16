@@ -8,9 +8,11 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-use super::texarray;
+use crate::core::uo_files_loader::UoFileData;
 
-pub const TILE_PX: u32                  = 44;
+use super::texture_array;
+
+pub const LAND_TEX_SIZE_SMALL: u32 = uocf::geo::land_texture_2d::TextureSize::SMALL_X;
 pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
 
 const CACHE_EVICT_AFTER: Duration    = Duration::from_secs(300);
@@ -23,14 +25,14 @@ struct TextureEntry {
 }
 
 #[derive(Resource)]
-pub struct TextureCache {
+pub struct LandTextureCache {
     pub image_handle:   Handle<Image>,
     map:                HashMap<u16, TextureEntry>,   // art_id → entry
     free_layers:        Vec<u32>,
     lru:                VecDeque<u16>,         // queue of art_ids
 }
 
-impl TextureCache {
+impl LandTextureCache {
     pub fn new(image_handle: Handle<Image>) -> Self {
         Self {
             image_handle,
@@ -43,9 +45,10 @@ impl TextureCache {
     /// Ensure `art_id` is resident and return its layer index.
     pub fn layer_of(
         &mut self,
-        art_id: u16,
         commands: &mut Commands,
         images: &mut ResMut<Assets<Image>>,
+        uo_data: &Res<UoFileData>,
+        art_id: u16,
     ) -> u32 {
         // -----------------------------------------------------------------
         // 1. Fast-path: already resident?
@@ -77,13 +80,13 @@ impl TextureCache {
         // 3. Load (or generate) the source tile FIRST
         //    – this needs a &mut Assets<Image> because it may create assets
         // -----------------------------------------------------------------
-        let tile_handle = texarray::get_tile_image(art_id, commands, images);
+        let tile_handle = texture_array::get_texmap_image(art_id, commands, images, &uo_data);
 
         // Grab the bytes we are going to copy, then drop the borrow
         let tile_bytes: Vec<u8> = {
             let tile_img = images.get(&tile_handle).unwrap();   // immutable borrow
-            assert_eq!(tile_img.texture_descriptor.size.width,  TILE_PX);
-            assert_eq!(tile_img.texture_descriptor.size.height, TILE_PX);
+            assert_eq!(tile_img.texture_descriptor.size.width,  LAND_TEX_SIZE_SMALL);
+            assert_eq!(tile_img.texture_descriptor.size.height, LAND_TEX_SIZE_SMALL);
             tile_img.data.as_ref().unwrap().clone()
         };
 
@@ -91,7 +94,7 @@ impl TextureCache {
         // 4. Now obtain a *mutable* borrow to the array texture and copy
         // -----------------------------------------------------------------
         {
-            let slice      = (TILE_PX * TILE_PX * 4) as usize;  // TODO: why multiply by 4?
+            let slice      = (LAND_TEX_SIZE_SMALL * LAND_TEX_SIZE_SMALL * 4) as usize;  // TODO: why multiply by 4?
             let offset     = layer as usize * slice;
             let array_img = images.get_mut(&self.image_handle).unwrap();
             if let Some(data) = &mut array_img.data {

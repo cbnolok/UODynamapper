@@ -1,5 +1,6 @@
 pub mod array;
 pub mod math;
+pub mod image;
 //pub mod rect;
 pub mod uo_coords;
 

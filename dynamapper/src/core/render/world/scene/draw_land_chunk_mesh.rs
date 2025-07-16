@@ -168,7 +168,7 @@ pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials_land: ResMut<Assets<LandCustomMaterial>>,
-    mut cache: ResMut<TextureCache>,
+    mut cache: ResMut<LandTextureCache>,
     mut images: ResMut<Assets<Image>>,
     uo_data: Res<UoFileData>,
     active_map: Res<SceneActiveMap>,
@@ -274,6 +274,7 @@ pub fn sys_draw_spawned_land_chunks(
             &mut materials_land,
             &mut cache,
             &mut images,
+            &uo_data,
             &chunk_data,
             &blocks_data,
         );
@@ -304,8 +305,9 @@ fn draw_land_chunk(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials_land: &mut ResMut<Assets<LandCustomMaterial>>,
-    cache: &mut ResMut<TextureCache>,
+    land_texture_cache: &mut ResMut<LandTextureCache>,
     images: &mut ResMut<Assets<Image>>,
+    uo_data: &Res<UoFileData>,
     chunk_data: &LandChunkConstructionData,
     blocks_data: &BTreeMap<MapBlockRelPos, MapBlock>,
 ) {
@@ -326,7 +328,7 @@ fn draw_land_chunk(
             x: world_tile_x as u32 % TILE_NUM_PER_CHUNK_1D,
             y: world_tile_z as u32 % TILE_NUM_PER_CHUNK_1D,
         };
-        println!("Requesting tile at x,y={world_tile_x},{world_tile_z} -> {chunk_rel_coords:?}, {tile_rel_coords:?}");
+        //println!("Requesting tile at x,y={world_tile_x},{world_tile_z} -> {chunk_rel_coords:?}, {tile_rel_coords:?}");
         blocks_data
             .get(&chunk_rel_coords)
             .expect("Requested uncached map block?")
@@ -429,7 +431,7 @@ fn draw_land_chunk(
                 height: ((tx + ty) & 1) as u16, // temp, dummy
             };
             // Get the layer (index) of the texture array housing this texture (map tile art).
-            let layer = cache.layer_of(tile.art_id, commands, images);
+            let layer = land_texture_cache.layer_of(commands, images, uo_data, tile.art_id);
             // TODO: set uo_tile_data[layer] = tile.
 
             // Per-tile (in the chunk) data. I actually might not need this.
@@ -478,7 +480,7 @@ fn draw_land_chunk(
         let mat = ExtendedMaterial {
             base: StandardMaterial { ..Default::default() },
             extension: LandMaterialExtension {
-                tex_array: cache.image_handle.clone(),
+                tex_array: land_texture_cache.image_handle.clone(),
                 uniforms: mat_ext_uniforms,
             },
         };

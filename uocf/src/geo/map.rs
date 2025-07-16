@@ -302,8 +302,8 @@ impl MapPlane {
             MapCell::coords_of_parent_block_y(map_rect_to_show.y0 + map_rect_to_show.height)
                 + Self::EXTRA_BLOCKS_TO_CACHE_PER_SIDE;
 
-        println!("MapRect to load: {:?}", map_rect_to_show);
-        println!("Blocks requested (+extra for cache): (X:{block_x_start},Y:{block_y_start}) to (X:{block_x_end},Y:{block_y_end})");
+        //println!("MapRect to load: {:?}", map_rect_to_show);
+        //println!("Blocks requested (+extra for cache): (X:{block_x_start},Y:{block_y_start}) to (X:{block_x_end},Y:{block_y_end})");
         let mut ret: Vec<MapBlockRelPos> = Vec::with_capacity(
             ((block_x_end - block_x_start) * (block_y_end - block_y_start)) as usize,
         );
@@ -313,9 +313,9 @@ impl MapPlane {
                 let p = MapBlockRelPos { x, y };
                 if !self.cached_blocks.contains_key(&p) {
                     ret.push(p);
-                    println!("Block {:?} marked to be LOADED", p);
+                    //println!("Block {:?} marked to be LOADED", p);
                 } else {
-                    println!("Already in CACHE: Block {:?}", p);
+                    //println!("Already in CACHE: Block {:?}", p);
                 }
             }
         }

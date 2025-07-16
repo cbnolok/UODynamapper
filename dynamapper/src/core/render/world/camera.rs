@@ -75,7 +75,7 @@ pub fn sys_setup_cam(
         Camera3d::default(), // Marker component for 3D cameras
         Projection::Orthographic(OrthographicProjection {
             // Military/oblique (used in UO):
-            scale: 40.0, //4.55,
+            scale: 30.0, //4.55,
             scaling_mode: ScalingMode::Fixed {
                 width: 1.65,
                 height: 1.0 / 2.0_f32.sqrt(),
