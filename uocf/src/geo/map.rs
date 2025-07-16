@@ -429,7 +429,7 @@ impl MapPlane {
                     .read_u32::<LittleEndian>()
                     .wrap_err("Read map block: header")?;
 
-                println!("READING BLOCK {:?}. Header: {_block_header}", block_pos);
+                //println!("READING BLOCK {:?}. Header: {_block_header}", block_pos);
                 // Cells inside the block; stored sequentially left to right, then top to bottom.
                 for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
                     for x_cell in 0..MapBlock::CELLS_PER_ROW {
@@ -438,7 +438,7 @@ impl MapPlane {
                             .read_u16::<LittleEndian>()
                             .wrap_err("Read map block: cell: id")?;
                         new_cell.z = rdr.read_i8().wrap_err("Read map block: cell: z")?;
-                        println!("Reading CELL {x_cell},{y_cell}. ID: 0x{:.X}, Z: {}", new_cell.id, new_cell.z);
+                        //println!("Reading CELL {x_cell},{y_cell}. ID: 0x{:.X}, Z: {}", new_cell.id, new_cell.z);
                     }
                 }
                 new_block.internal_coords = block_pos.clone();
@@ -447,7 +447,7 @@ impl MapPlane {
             }
         }
 
-        println!("Done reading block.");
+        //println!("Done reading block.");
 
         Ok(())
     }

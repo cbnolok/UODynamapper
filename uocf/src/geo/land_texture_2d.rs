@@ -4,6 +4,7 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{prelude::*, Cursor, SeekFrom};
 use std::path::PathBuf;
@@ -92,7 +93,7 @@ impl Texture2DElement {
 
 #[derive(Debug)]
 pub struct TexMap2D {
-    file_data: Vec<Texture2DElement>,
+    file_data: Vec<Texture2DElement> //HashMap<u32, Texture2DElement>,
 }
 
 impl TexMap2D {
@@ -107,6 +108,7 @@ impl TexMap2D {
             ));*/
             return None;
         }
+        //println!("Requested element {element_index} from texmap.mul.");
         let element = &self.file_data[element_index];
         if !element.valid {
             /*return Err(eyre!(
@@ -142,8 +144,10 @@ impl TexMap2D {
         let texidx = generic_index::IndexFile::load(texmap_idx_file_path)?;
 
         /* Read whole texidx.mul to get texmap index data */
+        const TEXMAP_MAX_ID: u32 = 0x1388;
         let mut texmap = TexMap2D {
-            file_data: vec![Texture2DElement::default(); texidx.element_count()],
+            //file_data: vec![Texture2DElement::default(); texidx.element_count()],
+            file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
         };
 
         let mut texmap_file_rdr = {
@@ -156,10 +160,10 @@ impl TexMap2D {
 
         // Loop on each entry of texidx
         let mut i_idx_valid: usize = 0;
-        for i_idx_raw in 0..texidx.element_count() {
+        for i_idx_raw in 0..TEXMAP_MAX_ID { // 0..texidx.element_count() {
             // Fill texmap
             let cur_idx_elem = texidx
-                .element(i_idx_raw)
+                .element(i_idx_raw as usize)
                 .expect("Reading lookup value for element {i_idx}");
 
             let tex_lookup = match cur_idx_elem.lookup() {
@@ -196,7 +200,7 @@ impl TexMap2D {
                 }
             };
 
-            let cur_texture = &mut texmap.file_data[i_idx_valid];
+            let cur_texture = &mut texmap.file_data[i_idx_raw as usize];
             cur_texture.id = i_idx_raw as u32; //i_idx_valid as u32;
             cur_texture.size = tex_size_type.clone();
 

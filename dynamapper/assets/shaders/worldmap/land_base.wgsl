@@ -86,22 +86,6 @@ fn vertex(
     out.position = view_transformations::position_world_to_clip(out.world_position.xyz);
     out.instance_index = in.instance_index;
 
-    /*
-    out.uv_b = in.uv_b;
-    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
-        world_from_local,
-        in.tangent,
-        in.instance_index
-    );
-    out.color = in.color;
-    out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(
-        in.instance_index, mesh_world_from_local[3]);
-    */
-
-    // model & viewproj
-    //let world_pos = Mesh.model * vec4<f32>(in.position, 1.0);
-    //out.clip_pos  = View.view_proj * out.world_position; // world_pos;
-
     // pass UV
     out.uv        = in.uv;
 

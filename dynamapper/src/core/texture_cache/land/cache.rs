@@ -54,9 +54,11 @@ impl LandTextureCache {
         // 1. Fast-path: already resident?
         // -----------------------------------------------------------------
         if let Some(e) = self.map.get_mut(&art_id) {
+            //println!("LandTextureCache: id {art_id} already cached in layer {}.", e.layer);
             e.last_touch = Instant::now();
             return e.layer;
         }
+        //println!("LandTextureCache: id {art_id} not cached, inserting it.");
 
         // -----------------------------------------------------------------
         // 2. Pick a texture-array layer (free or by eviction)
