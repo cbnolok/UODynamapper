@@ -1,16 +1,15 @@
 pub mod app_states;
 pub mod constants;
+mod maps;
 mod render;
 pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
-mod maps;
 
 use crate::prelude::*;
 use bevy::{
     //ecs::schedule::ExecutorKind,
-    prelude::*,
-    winit::{UpdateMode, WinitSettings},
+    prelude::*, window::WindowResolution, winit::{UpdateMode, WinitSettings}
 };
 use bevy_framepace::FramepacePlugin;
 use std::{process::ExitCode, time::Duration};
@@ -45,18 +44,26 @@ pub fn run_bevy_app() -> ExitCode {
                 .build()
                 .disable::<bevy::log::LogPlugin>()
                 .set(ImagePlugin::default_linear())
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "UODynamapper".to_string(),
-                        /*resolution: WindowResolution::new(
-                            settings_ref.window.height,
-                            settings_ref.window.width
-                        ),
-                        resizable: false,*/
+                .set(
+                    // core.rs, main.rs or in your App builder:
+                    WindowPlugin {
+                        primary_window: Some(Window {
+                            title: "UODynamapper".to_string(),
+                            resizable: true,
+                            // Force 1:1 aspect for virtual rendering (game world)
+                            // UO requires 'virtual' 44×44 diamonds, so...
+                            resolution: WindowResolution::new(1320.0, 924.0), // (44*30)x(44*21), etc
+                            resize_constraints: WindowResizeConstraints {
+                                min_width: 44.0 * 10.0,
+                                min_height: 44.0 * 10.0,
+                                ..Default::default()
+                            },
+                            // Let window freely resize, but camera+scene SYSTEMS keep virtual grid and diamonds fixed.
+                            ..Default::default()
+                        }),
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                })
+                    },
+                ),
         )
         /*
         .edit_schedule(Update, |schedule| {
@@ -68,20 +75,14 @@ pub fn run_bevy_app() -> ExitCode {
         .init_state::<AppState>()
         .insert_state(AppState::LoadStartupFiles)
         .add_plugins((
-            render::RenderPlugin {
-                registered_by: "Core",
-            },
-            texture_cache::TextureCachePlugin {
-                registered_by: "Core",
-            },
-            uo_files_loader::UoFilesPlugin {
-                registered_by: "Core",
-            },
-        )).configure_sets(Startup, (StartupSysSet::SetupScene,))
+            render::RenderPlugin { registered_by: "Core" },
+            texture_cache::TextureCachePlugin { registered_by: "Core" },
+            uo_files_loader::UoFilesPlugin { registered_by: "Core" },
+        ))
+        .configure_sets(Startup, (StartupSysSet::SetupScene,))
         .add_systems(
             OnEnter(AppState::SetupScene),
-            advance_state_after_scene_setup
-                .after(StartupSysSet::SetupScene),
+            advance_state_after_scene_setup.after(StartupSysSet::SetupScene),
         )
         .run();
 

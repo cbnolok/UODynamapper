@@ -140,12 +140,14 @@ impl LandChunkMeshBufferPool {
 /// How many tiles per chunk row/column (chunks are square)?
 pub const TILE_NUM_PER_CHUNK_1D: u32 = 8;
 /// How many tiles in one chunk total?
-pub const TILE_NUM_PER_CHUNK_TOTAL: usize = (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
+pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
+    (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
 
 /// Tag component: Marks entities which are chunk meshes, allows queries for those entities.
 #[derive(Component)]
 pub struct TCMesh {
-    pub map: u32,
+    #[allow(unused)]
+    pub parent_map: u32,
     pub gx: u32, // chunk grid coordinates
     pub gy: u32,
 }
@@ -277,7 +279,10 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
-    let player_map_plane = player_entity.current_pos.expect("Player position not yet set?!").m;
+    let player_map_plane = player_entity
+        .current_pos
+        .expect("Player position not yet set?!")
+        .m;
     let blocks_to_draw: HashSet<MapBlockRelPos> = spawn_targets
         .iter()
         .map(|d| MapBlockRelPos {
@@ -291,7 +296,8 @@ pub fn sys_draw_spawned_land_chunks(
     {
         // This lock only needed during the block loading from disk/memory.
         let mut uo_data_map_planes_lock = uo_data.map_planes.write().unwrap();
-        let uo_data_map_plane = &mut uo_data_map_planes_lock.as_mut_slice()[player_map_plane as usize];
+        let uo_data_map_plane =
+            &mut uo_data_map_planes_lock.as_mut_slice()[player_map_plane as usize];
         uo_data_map_plane
             .load_blocks(&blocks_vec)
             .expect("Can't load map blocks");
@@ -299,7 +305,9 @@ pub fn sys_draw_spawned_land_chunks(
             let block_ref = uo_data_map_plane
                 .block(block_coords)
                 .expect("Requested map block is uncached?");
-            let unique = blocks_data.insert(block_coords, block_ref.clone()).is_none();
+            let unique = blocks_data
+                .insert(block_coords, block_ref.clone())
+                .is_none();
             if !unique {
                 panic!("Adding again the same key?");
             }
@@ -339,7 +347,11 @@ pub fn sys_draw_spawned_land_chunks(
 }
 
 /// Helper: Is a chunk in the draw distance from the camera/player?
-fn is_chunk_in_draw_range(cam_pos: Vec3, chunk_origin_chunk_units_x: u32, chunk_origin_chunk_units_z: u32) -> bool {
+fn is_chunk_in_draw_range(
+    cam_pos: Vec3,
+    chunk_origin_chunk_units_x: u32,
+    chunk_origin_chunk_units_z: u32,
+) -> bool {
     let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
     let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
     let center = Vec3::new(
@@ -504,13 +516,18 @@ fn draw_land_chunk(
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, meshbufs.positions.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, meshbufs.normals.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, meshbufs.uvs.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.0, 0.0]; meshbufs.positions.len()]);
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_1,
+            vec![[0.0, 0.0]; meshbufs.positions.len()],
+        );
         mesh.insert_indices(Indices::U32(meshbufs.indices.clone()));
         meshes.add(mesh)
     };
     let chunk_material_handle = {
         let mat = ExtendedMaterial {
-            base: StandardMaterial { ..Default::default() },
+            base: StandardMaterial {
+                ..Default::default()
+            },
             extension: LandMaterialExtension {
                 tex_array: land_texture_cache.image_handle.clone(),
                 uniforms: mat_ext_uniforms,
@@ -596,12 +613,20 @@ impl MeshBuildPerfHistory {
     }
     /// Highest mesh-building time (ms) observed in window (all history).
     pub fn peak(&self) -> f32 {
-        self.buckets.iter().take(self.count).copied().fold(0.0, f32::max)
+        self.buckets
+            .iter()
+            .take(self.count)
+            .copied()
+            .fold(0.0, f32::max)
     }
 }
 
 /// Print key diagnostics to stdout at a throttled interval (every 2 seconds by default).
-fn print_render_stats(mut timer: Local<Option<Timer>>, time: Res<Time>, diag: Res<LandChunkMeshDiagnostics>) {
+fn print_render_stats(
+    mut timer: Local<Option<Timer>>,
+    time: Res<Time>,
+    diag: Res<LandChunkMeshDiagnostics>,
+) {
     let timer = timer.get_or_insert_with(|| Timer::from_seconds(2.0, TimerMode::Repeating));
     timer.tick(time.delta());
     if timer.finished() {

@@ -115,15 +115,16 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
     let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
 
-    // Sample your texture (skip or replace if untextured):
+    // Sample the land tile texture:
     let tex_color = textureSample(atlas, atlas_sampler, in.uv, u32(layer));
 
-    // Small ambient factor.
+    // Ambient light factor.
     let ao = 1.0; //0.3;
     let lambert = in.uv_b.x;  // Lambert calculated in the vertex shader.
     //let brightness = lambert * 0.6 + ao * 0.4;
     let brightness = lambert * 0.7 + ao * 0.3;
 
+    // Debug:
     //out.color = vec4<f32>(f32(layer) / f32(MAX_TILE_LAYERS), 0.0, 0.0, 1.0); // debug
     //out.color = vec4<f32>(in.world_position.y * 0.05, 0.5, 0.0, 1.0); // debug
     //let lit = out.color.rgb * brightness;
@@ -144,10 +145,13 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     out.color = mix(out.color, vec4<f32>(0.6,0.7,1.0,1.0), clamp(fog,0.0,0.5));
     */
 
-    // Final lit color (Gouraud: modulate by interpolated lighting).
-    let lit = tex_color.rgb * brightness;
-    out.color = vec4<f32>(lit, tex_color.a);
+    out.color = vec4<f32>(tex_color.rgb, tex_color.a);
     return out;
+
+    // Final lit color (Gouraud: modulate by interpolated lighting).
+    //let lit = tex_color.rgb * brightness;
+    //out.color = vec4<f32>(lit, tex_color.a);
+    //return out;
 }
 
 /*
