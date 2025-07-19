@@ -1,4 +1,4 @@
-#![allow(unused_parens)]
+#![allow(unused_parens, unused)]
 
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
@@ -45,7 +45,7 @@ impl Plugin for DrawLandChunkMeshPlugin {
                 Update,
                 (
                     sys_draw_spawned_land_chunks.run_if(in_state(AppState::InGame)),
-                    print_render_stats,
+                    //print_render_stats,
                 ),
             );
     }
@@ -347,6 +347,7 @@ pub fn sys_draw_spawned_land_chunks(
 }
 
 /// Helper: Is a chunk in the draw distance from the camera/player?
+/// TODO: unify
 fn is_chunk_in_draw_range(
     cam_pos: Vec3,
     chunk_origin_chunk_units_x: u32,
@@ -426,8 +427,8 @@ fn draw_land_chunk(
             heights[vy * GRID_W + vx] = tile_h;
             meshbufs.positions[vy * GRID_W + vx] = [vx as f32, tile_h, vy as f32];
             meshbufs.uvs[vy * GRID_W + vx] = [
-                vx as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
-                vy as f32 / (TILE_NUM_PER_CHUNK_1D as f32),
+                vx as f32 / (GRID_W as f32),
+                vy as f32 / (GRID_H as f32),
             ];
         }
     }

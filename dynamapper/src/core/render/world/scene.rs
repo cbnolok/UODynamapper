@@ -2,7 +2,7 @@ pub mod draw_land_chunk_mesh;
 pub mod dynamic_light;
 
 use crate::core::constants;
-use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, TILE_PIXEL_SIZE};
+use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -31,7 +31,6 @@ impl Plugin for ScenePlugin {
                 registered_by: "ScenePlugin",
             },
         ))
-        .insert_resource(RenderZoom::default())
         .insert_resource(SceneStartupData {
             player_start_pos: constants::PLAYER_START_P,
         })
@@ -167,7 +166,7 @@ pub fn sys_spawn_worldmap_chunks_to_render(
         zoom,
         scene_active_map.width,
         scene_active_map.height,
-        TILE_PIXEL_SIZE,
+        UO_TILE_PIXEL_SIZE,
         TILE_NUM_PER_CHUNK_1D,
         2, // padding tiles (tune as desired)
     );
@@ -216,7 +215,7 @@ pub fn sys_update_worldmap_chunks_to_render(
         zoom,
         scene_active_map.width,
         scene_active_map.height,
-        TILE_PIXEL_SIZE,
+        UO_TILE_PIXEL_SIZE,
         TILE_NUM_PER_CHUNK_1D,
         2, // padding tiles (tune as needed, or make configurable)
     );
