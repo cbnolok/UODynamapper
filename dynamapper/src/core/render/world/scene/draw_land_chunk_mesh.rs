@@ -404,8 +404,8 @@ fn draw_land_chunk(
             .unwrap()
     }
 
-    const GRID_W: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
-    const GRID_H: usize = TILE_NUM_PER_CHUNK_1D as usize + 1;
+    const GRID_W: u32 = TILE_NUM_PER_CHUNK_1D + 1;
+    const GRID_H: u32 = TILE_NUM_PER_CHUNK_1D + 1;
 
     // --------- Setup chunk-specific uniforms ---------
     // For shading, lighting, texturing. Synchronized with shader struct.
@@ -413,83 +413,119 @@ fn draw_land_chunk(
     mat_ext_uniforms.chunk_origin = Vec2::new(chunk_origin_x as f32, chunk_origin_z as f32);
     mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
-    // --------- MESH DATA GENERATION --------
-    let mut meshbufs = pool.alloc(diag); // Efficient: pulls from pool, avoids reallocations
+    // --------- MESH DATA GENERATION (fixed UVs, per-tile quads) --------
+    let mut meshbufs = pool.alloc(diag);
+    meshbufs.positions.clear();
+    meshbufs.normals.clear();
+    meshbufs.uvs.clear();
+    meshbufs.indices.clear();
 
-    // Step 1: Setup vertex positions and uvs (directly derived from tile coordinates/grid).
-    // Also record grid of heights for later normal calculations.
-    let mut heights = vec![0.0f32; GRID_W * GRID_H];
+    // Also record grid of heights for normal calculation (original logic)
+    let mut heights = vec![0.0f32; (GRID_W * GRID_H) as usize];
     for vy in 0..GRID_H {
         for vx in 0..GRID_W {
-            let world_tx = chunk_origin_x as usize + vx;
-            let world_tz = chunk_origin_z as usize + vy;
-            let tile_h = get_cell(blocks_data_ref, world_tx, world_tz).z as f32;
-            heights[vy * GRID_W + vx] = tile_h;
-            meshbufs.positions[vy * GRID_W + vx] = [vx as f32, tile_h, vy as f32];
-            meshbufs.uvs[vy * GRID_W + vx] = [
-                vx as f32 / (GRID_W as f32),
-                vy as f32 / (GRID_H as f32),
-            ];
+            let world_tx = chunk_origin_x as usize + vx as usize;
+            let world_tz = chunk_origin_z as usize + vy as usize;
+            heights[(vy * GRID_W + vx) as usize] =
+                get_cell(blocks_data_ref, world_tx, world_tz).z as f32;
         }
     }
 
-    // Step 2: Compute normals, which give each vertex its "facing" for lighting.
-    // (Surface normal is vector perpendicular to the tile at that point.)
-    for vy in 0..GRID_H {
-        for vx in 0..GRID_W {
-            // Each normal is computed using finite differences of elevation in both X/Z.
-            let world_tx = chunk_origin_x as usize + vx;
-            let world_tz = chunk_origin_z as usize + vy;
-            let center = get_cell(blocks_data_ref, world_tx, world_tz).z as f32;
-            let left = if world_tx > 0 {
-                get_cell(blocks_data_ref, world_tx - 1, world_tz).z as f32
-            } else {
-                center
+    for ty in 0..TILE_NUM_PER_CHUNK_1D {
+        for tx in 0..TILE_NUM_PER_CHUNK_1D {
+            // Four corners per tile quad
+            let vx = tx;
+            let vy = ty;
+            let vx1 = tx + 1;
+            let vy1 = ty + 1;
+
+            let world_tx0 = chunk_origin_x + vx;
+            let world_tz0 = chunk_origin_z + vy;
+            let world_tx1 = chunk_origin_x + vx1;
+            let world_tz1 = chunk_origin_z + vy1;
+
+            // Heights at four corners
+            let h00 = heights[((vy * GRID_W) + vx) as usize];
+            let h10 = heights[((vy * GRID_W) + vx1) as usize];
+            let h11 = heights[((vy1 * GRID_W) + vx1) as usize];
+            let h01 = heights[((vy1 * GRID_W) + vx) as usize];
+
+            // Normals at four corners (copying original normal logic)
+            let get_norm = |wx: u32, wz: u32| {
+                let center = get_cell(blocks_data_ref, wx as usize, wz as usize).z as f32;
+                let left = if wx > 0 {
+                    get_cell(blocks_data_ref, (wx - 1) as usize, wz as usize).z as f32
+                } else {
+                    center
+                };
+                let right = if wx + 1 < DUMMY_MAP_SIZE_X {
+                    get_cell(
+                        blocks_data_ref,
+                        (wx + 1) as usize,
+                        wz as usize,
+                    )
+                    .z as f32
+                } else {
+                    center
+                };
+                let down = if wz > 0 {
+                    get_cell(blocks_data_ref, wx as usize, (wz - 1) as usize).z as f32
+                } else {
+                    center
+                };
+                let up = if wz + 1 < DUMMY_MAP_SIZE_Y {
+                    get_cell(
+                        blocks_data_ref,
+                        wx as usize,
+                        (wz + 1) as usize,
+                    )
+                    .z as f32
+                } else {
+                    center
+                };
+                let dx = (right - left) * 0.5;
+                let dz = (up - down) * 0.5;
+                Vec3::new(-dx, 1.0, -dz).normalize().to_array()
             };
-            let right = if world_tx + 1 < DUMMY_MAP_SIZE_X as usize {
-                get_cell(blocks_data_ref, world_tx + 1, world_tz).z as f32
-            } else {
-                center
-            };
-            let down = if world_tz > 0 {
-                get_cell(blocks_data_ref, world_tx, world_tz - 1).z as f32
-            } else {
-                center
-            };
-            let up = if world_tz + 1 < DUMMY_MAP_SIZE_Y as usize {
-                get_cell(blocks_data_ref, world_tx, world_tz + 1).z as f32
-            } else {
-                center
-            };
-            let dx = (right - left) * 0.5;
-            let dz = (up - down) * 0.5;
-            let normal = Vec3::new(-dx, 1.0, -dz).normalize();
-            meshbufs.normals[vy * GRID_W + vx] = normal.to_array();
+
+            let base = meshbufs.positions.len() as u32;
+
+            // Top-left (0,0)
+            meshbufs.positions.push([vx as f32, h00, vy as f32]);
+            meshbufs.uvs.push([0.0, 0.0]);
+            meshbufs.normals.push(get_norm(world_tx0, world_tz0));
+            // Top-right (1,0)
+            meshbufs.positions.push([vx1 as f32, h10, vy as f32]);
+            meshbufs.uvs.push([1.0, 0.0]);
+            meshbufs.normals.push(get_norm(world_tx1, world_tz0));
+            // Bottom-right (1,1)
+            meshbufs.positions.push([vx1 as f32, h11, vy1 as f32]);
+            meshbufs.uvs.push([1.0, 1.0]);
+            meshbufs.normals.push(get_norm(world_tx1, world_tz1));
+            // Bottom-left (0,1)
+            meshbufs.positions.push([vx as f32, h01, vy1 as f32]);
+            meshbufs.uvs.push([0.0, 1.0]);
+            meshbufs.normals.push(get_norm(world_tx0, world_tz1));
+
+            // Two triangles for this quad
+            meshbufs.indices.extend_from_slice(&[
+                base + 0, base + 2, base + 1,
+                base + 0, base + 3, base + 2,
+            ]);
         }
     }
 
-    // Step 3: Build the triangles (indices).
-    // Each quad (tile) uses two triangles (6 indices).
-    let mut idxs_written = 0;
+    // --------- Shader uniforms for texture layer (by tile) --------
+    mat_ext_uniforms.chunk_origin = Vec2::new(chunk_origin_x as f32, chunk_origin_z as f32);
+    mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
+
     for ty in 0..TILE_NUM_PER_CHUNK_1D as usize {
         for tx in 0..TILE_NUM_PER_CHUNK_1D as usize {
-            let i0 = ty * GRID_W + tx;
-            let i1 = ty * GRID_W + (tx + 1);
-            let i2 = (ty + 1) * GRID_W + (tx + 1);
-            let i3 = (ty + 1) * GRID_W + tx;
-            meshbufs.indices[idxs_written + 0] = i0 as u32;
-            meshbufs.indices[idxs_written + 1] = i2 as u32;
-            meshbufs.indices[idxs_written + 2] = i1 as u32;
-            meshbufs.indices[idxs_written + 3] = i0 as u32;
-            meshbufs.indices[idxs_written + 4] = i3 as u32;
-            meshbufs.indices[idxs_written + 5] = i2 as u32;
-            idxs_written += 6;
-
-            // --- Shader uniforms for texture layer (by tile) ---
             let world_x = chunk_origin_x as usize + tx;
             let world_y = chunk_origin_z as usize + ty;
             let tile_ref = get_cell(blocks_data_ref, world_x, world_y);
 
+            // Each quad (tile) uses two triangles (6 indices).
             // Get the layer (index) of the texture array housing this texture (map tile art).
             let layer = land_texture_cache.layer_of(commands, images, uo_data, tile_ref.id);
 
@@ -501,7 +537,7 @@ fn draw_land_chunk(
 
             let layer_ref = uvec4_elem_get_mut(
                 &mut mat_ext_uniforms.layers,
-                get_1d_array_index_as_2d(TILE_NUM_PER_CHUNK_1D as usize, tx as usize, ty as usize),
+                get_1d_array_index_as_2d(TILE_NUM_PER_CHUNK_1D as usize, tx, ty),
             );
             *layer_ref = layer;
         }
@@ -513,10 +549,10 @@ fn draw_land_chunk(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         );
-
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, meshbufs.positions.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, meshbufs.normals.clone());
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, meshbufs.uvs.clone());
+        // Add fake data for UV_1 as before
         mesh.insert_attribute(
             Mesh::ATTRIBUTE_UV_1,
             vec![[0.0, 0.0]; meshbufs.positions.len()],
@@ -524,6 +560,7 @@ fn draw_land_chunk(
         mesh.insert_indices(Indices::U32(meshbufs.indices.clone()));
         meshes.add(mesh)
     };
+
     let chunk_material_handle = {
         let mat = ExtendedMaterial {
             base: StandardMaterial {
@@ -536,6 +573,7 @@ fn draw_land_chunk(
         };
         materials_land.add(mat)
     };
+
     // Step 5: Attach or update the Bevy entity with mesh/material/transform.
     commands.entity(chunk_data.entity.unwrap()).insert((
         Mesh3d(chunk_mesh_handle.clone()),
@@ -544,6 +582,7 @@ fn draw_land_chunk(
         Transform::from_xyz(chunk_origin_x as f32, 0.0, chunk_origin_z as f32),
         GlobalTransform::default(),
     ));
+
     // Step 6: Return buffer to pool or drop, allowing efficient reuse and memory management.
     pool.free(meshbufs, diag);
 }

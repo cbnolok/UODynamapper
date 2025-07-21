@@ -10,7 +10,7 @@ use crate::{core::uo_files_loader::UoFileData, prelude::*, util_lib::image::*};
 pub const LAND_TEX_SIZE_SMALL: u32 = uocf::geo::land_texture_2d::TextureSize::SMALL_X;
 pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
 
-pub const TEXTURE_UNUSED: u32 = 0x007F; // NODRAW
+pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
 // ------------
 
@@ -80,13 +80,13 @@ pub fn get_texmap_image(
         }
     */
 
-    // Ensure we load once and store a nodraw texture, for errors.
-    static NODRAW_TEXTURE: OnceLock<Handle<Image>> = OnceLock::new();
-    let _ = NODRAW_TEXTURE.set({
+    // Ensure we load once and store an UNUSED texture, for errors.
+    static UNUSED_TEXTURE: OnceLock<Handle<Image>> = OnceLock::new();
+    let _ = UNUSED_TEXTURE.set({
         let texmap_lock = uo_data.texmap_2d.read().expect("Can't acquire texmap data lock.");
         let texture_ref = &texmap_lock
-            .element(TEXTURE_UNUSED as usize)
-            .expect("Can't get NODRAW land texture?");
+            .element(TEXTURE_UNUSED_ID as usize)
+            .expect("Can't get UNUSED land texture?");
         let img = image_from_rgba8(texture_ref.size_x(), texture_ref.size_y(), &texture_ref.pixel_data);
         images.add(img)
     });
@@ -117,14 +117,14 @@ pub fn get_texmap_image(
             None,
             logger::LogSev::Warn,
             logger::LogAbout::RenderWorldLand,
-            &format!("Requested non-small texture id={art_id}, using NODRAW."),
+            &format!("Requested non-small texture id={art_id}, using UNUSED."),
         );
         use_nodraw = true;
     }
 
     let handle = {
         if use_nodraw {
-            NODRAW_TEXTURE.get().unwrap().clone()
+            UNUSED_TEXTURE.get().unwrap().clone()
         } else {
             // Create the bevy::Image from raw pixel data and
             let img = image_from_rgba8(tex_width, tex_height, &tex_rgba.unwrap());

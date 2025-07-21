@@ -2052,6 +2052,7 @@ dependencies = [
  "color-eyre",
  "config",
  "guillotiere",
+ "image",
  "lru",
  "pad",
  "paris",

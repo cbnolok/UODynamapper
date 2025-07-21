@@ -22,6 +22,7 @@ tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", 
 guillotiere = "0.6.2"
 lru = "0.15.0"
 bevy_framepace = "0.19.1"
+image = {version = "0.25.6", default-features = false, features = ["bmp", "png", "dds"]}
 
 [dependencies.bevy]
 version = "0.16.1"

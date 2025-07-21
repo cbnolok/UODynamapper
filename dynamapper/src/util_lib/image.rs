@@ -17,5 +17,6 @@ pub fn image_from_rgba8(width: u32, height: u32, rgba_buffer_ref: &Vec<u8>) -> I
         RenderAssetUsages::default(), // keeps the texture in MAIN + RENDER worlds
     );
     img.sampler = bevy::image::ImageSampler::linear();
+    //img.clone().try_into_dynamic().unwrap().save("test_img.png").unwrap();
     img
 }
