@@ -12,6 +12,7 @@ use draw_land_chunk_mesh::TILE_NUM_PER_CHUNK_1D;
 pub const DUMMY_MAP_SIZE_X: u32 = 4096;
 pub const DUMMY_MAP_SIZE_Y: u32 = 7120;
 
+
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
 pub struct ScenePlugin {
@@ -46,7 +47,7 @@ impl Plugin for ScenePlugin {
         )
         .add_systems(
             Update,
-            sys_update_worldmap_chunks_to_render.run_if(in_state(AppState::InGame)),
+            sys_update_worldmap_chunks_to_render.in_set(SceneRenderSysSet::SyncLandChunks).run_if(in_state(AppState::InGame)),
         );
     }
 }

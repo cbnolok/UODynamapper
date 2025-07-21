@@ -112,7 +112,7 @@ features = [
   #"trace_chrome",        # Enable tracing using the Chrome backend
   #"trace_tracy",         # Enable tracing using Tracy
   #"trace_tracy_memory",  # Enable memory tracking for Tracy
-  #"track_location",      # Enable location tracking
+  "track_location",      # Enable location tracking
   #"detailed_trace",      # Extra verbose tracing
 
   # Asset File Format Support

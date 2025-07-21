@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 pub enum LogSev {
     Debug,
     DebugVerbose,
+    Diagnostics,
     Error,
     Info,
     Warn,
@@ -113,6 +114,7 @@ pub fn one(
     match severity {
         LogSev::Debug => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
         LogSev::DebugVerbose => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
+        LogSev::Diagnostics => paris::log!("<dark-green><bold><info></bold></> {full_msg}"),
         LogSev::Error => paris::log!("<red><bold><cross></bold></> {full_msg}"),
         LogSev::Info => paris::log!("<cyan><bold><info></bold></> {full_msg}"),
         LogSev::Warn => paris::log!("<yellow><bold><warn></bold></> {full_msg}"),

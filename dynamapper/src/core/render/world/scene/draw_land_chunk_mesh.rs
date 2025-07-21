@@ -14,7 +14,10 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::time::Instant;
 use uocf::geo::map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos};
 
-use crate::core::render::world::scene::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
+use crate::core::{
+    render::world::scene::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y},
+    system_sets::SceneRenderSysSet,
+};
 use crate::{
     core::render::world::player::Player,
     core::render::world::scene::SceneActiveMap,
@@ -44,7 +47,10 @@ impl Plugin for DrawLandChunkMeshPlugin {
             .add_systems(
                 Update,
                 (
-                    sys_draw_spawned_land_chunks.run_if(in_state(AppState::InGame)),
+                    sys_draw_spawned_land_chunks
+                        .in_set(SceneRenderSysSet::RenderLandChunks)
+                        .after(SceneRenderSysSet::SyncLandChunks)
+                        .run_if(in_state(AppState::InGame)),
                     //print_render_stats,
                 ),
             );
@@ -317,9 +323,17 @@ pub fn sys_draw_spawned_land_chunks(
     // Step 4: For every chunk that corresponds to a current entity (not filler neighbors), build the mesh.
     let build_time_start = Instant::now();
     for chunk_data in spawn_targets {
-        if chunk_data.entity.is_none() {
+        let entity = chunk_data.entity;
+        if entity.is_none() {
             continue;
         }
+        if commands.get_entity(entity.unwrap()).is_err() {
+            println!(
+                "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'."
+            );
+            continue;
+        }
+
         draw_land_chunk(
             &mut commands,
             &mut meshes,
@@ -380,8 +394,8 @@ fn draw_land_chunk(
     let chunk_origin_x = chunk_data.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
     let chunk_origin_z = chunk_data.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
-    // Inline: Helper to fetch cell from block/block coordinates. Always panics on OOB for safety.
-    #[inline]
+    // Helper to fetch cell from block/block coordinates. Always panics on OOB for safety.
+    //#[inline]
     #[track_caller]
     fn get_cell<'a>(
         blocks_data: &'a BTreeMap<MapBlockRelPos, MapBlock>,
@@ -428,6 +442,18 @@ fn draw_land_chunk(
             let world_tz = chunk_origin_z as usize + vy as usize;
             heights[(vy * GRID_W + vx) as usize] =
                 get_cell(blocks_data_ref, world_tx, world_tz).z as f32;
+
+            /*
+            // Debug:
+            for i in 0..9 {
+                let x = i % 3;
+                let y = i / 3;
+                let world_tx = chunk_origin_x as usize + x;
+                let world_tz = chunk_origin_z as usize + y;
+                dbg!(x, y, heights[y * GRID_W as usize + x]);
+                dbg!(get_cell(blocks_data_ref, world_tx, world_tz).z);
+            }
+            */
         }
     }
 
@@ -459,12 +485,7 @@ fn draw_land_chunk(
                     center
                 };
                 let right = if wx + 1 < DUMMY_MAP_SIZE_X {
-                    get_cell(
-                        blocks_data_ref,
-                        (wx + 1) as usize,
-                        wz as usize,
-                    )
-                    .z as f32
+                    get_cell(blocks_data_ref, (wx + 1) as usize, wz as usize).z as f32
                 } else {
                     center
                 };
@@ -474,12 +495,7 @@ fn draw_land_chunk(
                     center
                 };
                 let up = if wz + 1 < DUMMY_MAP_SIZE_Y {
-                    get_cell(
-                        blocks_data_ref,
-                        wx as usize,
-                        (wz + 1) as usize,
-                    )
-                    .z as f32
+                    get_cell(blocks_data_ref, wx as usize, (wz + 1) as usize).z as f32
                 } else {
                     center
                 };
@@ -509,8 +525,12 @@ fn draw_land_chunk(
 
             // Two triangles for this quad
             meshbufs.indices.extend_from_slice(&[
-                base + 0, base + 2, base + 1,
-                base + 0, base + 3, base + 2,
+                base + 0,
+                base + 2,
+                base + 1,
+                base + 0,
+                base + 3,
+                base + 2,
             ]);
         }
     }
@@ -575,13 +595,23 @@ fn draw_land_chunk(
     };
 
     // Step 5: Attach or update the Bevy entity with mesh/material/transform.
-    commands.entity(chunk_data.entity.unwrap()).insert((
-        Mesh3d(chunk_mesh_handle.clone()),
-        MeshMaterial3d(chunk_material_handle.clone()),
-        // 💡 Place at correct world position via transform!
-        Transform::from_xyz(chunk_origin_x as f32, 0.0, chunk_origin_z as f32),
-        GlobalTransform::default(),
-    ));
+    let entity = chunk_data.entity;
+    if entity.is_none() {
+        println!("'None' entity passed to draw_land_chunk? Skipping.");
+    } else {
+        let entity = entity.unwrap();
+        if commands.get_entity(entity).is_err() {
+            println!("Skipping drawing of invalid/unspawned entity at stage 'draw_land_chunk'.");
+        } else {
+            commands.entity(entity).insert((
+                Mesh3d(chunk_mesh_handle.clone()),
+                MeshMaterial3d(chunk_material_handle.clone()),
+                // 💡 Place at correct world position via transform!
+                Transform::from_xyz(chunk_origin_x as f32, 0.0, chunk_origin_z as f32),
+                GlobalTransform::default(),
+            ));
+        }
+    }
 
     // Step 6: Return buffer to pool or drop, allowing efficient reuse and memory management.
     pool.free(meshbufs, diag);
@@ -607,16 +637,21 @@ pub struct LandChunkMeshDiagnostics {
 }
 impl LandChunkMeshDiagnostics {
     pub fn log(&self) {
-        println!(
-            // ChunksOnScreen: actual rendered chunk mesh count this frame.
-            "[LandMeshDiag] ChunksOnScreen: {} | Pool avail: {} | Allocs: {} (peak {}) | Mesh ms (avg/latest/peak): {:.1}/{:.1}/{:.1}",
-            self.chunks_on_screen,
-            self.pool_in_positions,
-            self.mesh_allocs,
-            self.alloc_high_water,
-            self.build_avg,
-            self.build_last,
-            self.build_peak,
+        logger::one(
+            None,
+            LogSev::Diagnostics,
+            LogAbout::RenderWorldLand,
+            &format!(
+                // ChunksOnScreen: actual rendered chunk mesh count this frame.
+                "[LandMeshDiag] ChunksOnScreen: {} | Pool avail: {} | Allocs: {} (peak {}) | Mesh ms (avg/latest/peak): {:.1}/{:.1}/{:.1}",
+                self.chunks_on_screen,
+                self.pool_in_positions,
+                self.mesh_allocs,
+                self.alloc_high_water,
+                self.build_avg,
+                self.build_last,
+                self.build_peak,
+            ),
         );
     }
 }
