@@ -75,7 +75,7 @@ pub fn sys_setup_cam(
     // How many world units can fit horizontally & vertically?
     let ortho_width = window_width / TILE_SIZE_FACTOR;
     let ortho_height = window_height / TILE_SIZE_FACTOR;
-    println!("Ortographic camera width={ortho_width}, height={ortho_height}");
+    //println!("Ortographic camera width={ortho_width}, height={ortho_height}");
 
     // Find player start position for focus (if needed).
     let player_start_pos = scene_startup_data_res

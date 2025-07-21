@@ -10,202 +10,37 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use uocf::geo::map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos};
 
-use crate::core::{
-    render::world::scene::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y},
-    system_sets::SceneRenderSysSet,
-};
+use super::{TCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
 use crate::{
-    core::render::world::player::Player,
-    core::render::world::scene::SceneActiveMap,
+    core::render::world::{player::Player, scene::SceneActiveMap},
     core::uo_files_loader::UoFileData,
     core::{constants, texture_cache::land::cache::*},
     prelude::*,
     util_lib::array::*,
 };
+use crate::core::render::world::scene::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
+use super::TILE_NUM_PER_CHUNK_1D;
+
 
 // ==================================================================================
-//                      PLUGIN AND RESOURCE REGISTRATION
+//                               HELPER TRAITS / UTILS
 // ==================================================================================
 
-/// Register the chunk renderer plugin into your app.
-/// Establishes material, buffer pool, diagnostics, and the draw system.
-pub struct DrawLandChunkMeshPlugin {
-    pub registered_by: &'static str,
+// Allow easy [f32; 3] conversion from glam::Vec3 (for shaders/Bevy mesh attributes).
+trait _Arrayable {
+    fn to_array(&self) -> [f32; 3];
 }
-impl_tracked_plugin!(DrawLandChunkMeshPlugin);
-
-impl Plugin for DrawLandChunkMeshPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default())
-            .insert_resource(LandChunkMeshBufferPool::with_capacity(60)) // Preallocate 60 chunk buffers.
-            .insert_resource(LandChunkMeshDiagnostics::default()) // Performance/statistics resource.
-            .insert_resource(MeshBuildPerfHistory::new(64)) // Mesh build time history.
-            .add_systems(
-                Update,
-                (
-                    sys_draw_spawned_land_chunks
-                        .in_set(SceneRenderSysSet::RenderLandChunks)
-                        .after(SceneRenderSysSet::SyncLandChunks)
-                        .run_if(in_state(AppState::InGame)),
-                    //print_render_stats,
-                ),
-            );
+impl _Arrayable for Vec3 {
+    fn to_array(&self) -> [f32; 3] {
+        [self.x, self.y, self.z]
     }
 }
 
 // ==================================================================================
-//                                MESH BUFFER POOL
-// ==================================================================================
-
-/// Pool to minimize dynamic allocations for chunk mesh vertex buffers.
-/// Allocates [at most] `capacity` buffers up front, then dynamically allocates "spillover" as needed.
-/// Buffers obtained from pool should be returned immediately after use.
-/// Buffers that weren't pre-pooled are simply dropped instead of being recycled.
-pub struct MeshBuffers {
-    pub positions: Vec<[f32; 3]>, // Each vertex position (x, y, z)
-    pub normals: Vec<[f32; 3]>,   // Per-vertex surface normal (affects lighting)
-    pub uvs: Vec<[f32; 2]>,       // Per-vertex texture coordinate
-    pub indices: Vec<u32>,        // Indices composing triangles from positions
-    pool_alloc: bool,             // true if from pool, false if dynamically allocated
-}
-
-#[derive(Resource)]
-pub struct LandChunkMeshBufferPool {
-    pool: VecDeque<MeshBuffers>, // The available pooled buffers (up to fixed size)
-    used: usize,                 // Count of currently checked out buffers
-    allocs: usize,               // Running total of allocations (for diagnostics)
-    high_water: usize,           // Max number of concurrent checked-out at once (diagnostics)
-    #[allow(unused)]
-    capacity: usize, // Pool capacity
-}
-
-impl LandChunkMeshBufferPool {
-    /// Initialize the pool with a given fixed capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
-        let buffer_template = || MeshBuffers {
-            positions: vec![[0.0; 3]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-            normals: vec![[0.0; 3]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-            uvs: vec![[0.0; 2]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-            indices: vec![0u32; (TILE_NUM_PER_CHUNK_TOTAL * 6)],
-            pool_alloc: true,
-        };
-        let mut pool = VecDeque::with_capacity(capacity);
-        for _ in 0..capacity {
-            pool.push_back(buffer_template());
-        }
-        Self {
-            pool,
-            used: 0,
-            allocs: 0,
-            high_water: 0,
-            capacity,
-        }
-    }
-    /// Allocate a mesh buffer, using the pool if not empty, otherwise dynamically.
-    pub fn alloc(&mut self, diag: &mut LandChunkMeshDiagnostics) -> MeshBuffers {
-        let buffers = self.pool.pop_front().unwrap_or_else(|| {
-            // Dynamic: rare unless view frustum is huge or a bug causes leaks
-            MeshBuffers {
-                positions: vec![[0.0; 3]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-                normals: vec![[0.0; 3]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-                uvs: vec![[0.0; 2]; (TILE_NUM_PER_CHUNK_1D as usize + 1).pow(2)],
-                indices: vec![0u32; (TILE_NUM_PER_CHUNK_TOTAL * 6)],
-                pool_alloc: false,
-            }
-        });
-        self.used += 1;
-        self.allocs += 1;
-        self.high_water = self.high_water.max(self.used);
-        diag.mesh_allocs = self.allocs;
-        diag.alloc_high_water = self.high_water;
-        buffers
-    }
-    /// Return a mesh buffer to the pool if compatible, otherwise drop it (let Rust reclaim).
-    pub fn free(&mut self, buffers: MeshBuffers, diag: &mut LandChunkMeshDiagnostics) {
-        if buffers.pool_alloc {
-            self.pool.push_back(buffers);
-        }
-        if self.used > 0 {
-            self.used -= 1;
-        }
-        diag.pool_in_positions = self.pool.len();
-        diag.pool_in_normals = self.pool.len();
-        diag.pool_in_uvs = self.pool.len();
-        diag.pool_in_indices = self.pool.len();
-    }
-}
-
-// ==================================================================================
-//                               CONSTANTS & STRUCTS
-// ==================================================================================
-
-/// How many tiles per chunk row/column (chunks are square)?
-pub const TILE_NUM_PER_CHUNK_1D: u32 = 8;
-/// How many tiles in one chunk total?
-pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
-    (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
-
-/// Tag component: Marks entities which are chunk meshes, allows queries for those entities.
-#[derive(Component)]
-pub struct TCMesh {
-    #[allow(unused)]
-    pub parent_map: u32,
-    pub gx: u32, // chunk grid coordinates
-    pub gy: u32,
-}
-
-// ------------- Land material/shader data -------------
-// Uniform buffer -> just a fancy name for a struct that is passed to the shader, has
-//  global scope and is passed per draw call (so for each chunk mesh).
-// Uniform Buffer Size Limitations:
-//    Most GPUs limit uniform buffers to 64KB (sometimes less!).
-//    u32[2048] is 8192 bytes, twice is 16KB—OK, but you need to watch out if you want to add lots of fields.
-
-// Uniform buffer layouts:
-//  Most APIs demand 16-byte alignment per field.
-//  For a field to be valid in a uniform buffer, each element of an array must be treated as a “vec4” (i.e., 16 bytes each), not simply a u32 (or f32)!
-//  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
-
-// In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
-// UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
-
-/// Each chunk mesh gets a shader material generated per-chunk, with this struct as its extension.
-///
-/// See comments above LandUniforms for why uniforms are aligned the way they are.
-#[repr(C, align(16))]
-#[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
-pub struct LandUniforms {
-    pub light_dir: Vec3,
-    _pad: f32,
-    pub chunk_origin: Vec2,
-    _pad2: Vec2,
-    pub layers: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
-    pub hues: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
-}
-
-pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
-
-#[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
-pub struct LandMaterialExtension {
-    #[texture(100, dimension = "2d_array")]
-    #[sampler(101)]
-    pub tex_array: Handle<Image>,
-    #[uniform(102, min_binding_size = 16)]
-    pub uniforms: LandUniforms,
-}
-
-impl MaterialExtension for LandMaterialExtension {
-    fn vertex_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
-    }
-    fn fragment_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
-    }
-}
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 struct LandChunkConstructionData {
@@ -214,9 +49,22 @@ struct LandChunkConstructionData {
     chunk_origin_chunk_units_z: u32,
 }
 
-// ==================================================================================
-//                             MAIN RENDER SYSTEM
-// ==================================================================================
+/// Helper: Is a chunk in the draw distance from the camera/player?
+/// TODO: unify
+fn is_chunk_in_draw_range(
+    cam_pos: Vec3,
+    chunk_origin_chunk_units_x: u32,
+    chunk_origin_chunk_units_z: u32,
+) -> bool {
+    let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * super::TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * super::TILE_NUM_PER_CHUNK_1D;
+    let center = Vec3::new(
+        (chunk_origin_tile_units_x + super::TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+        0.0,
+        (chunk_origin_tile_units_z + super::TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+    );
+    cam_pos.distance(center) <= constants::RENDER_DISTANCE_FROM_PLAYER
+}
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 /// Highly commented for clarity:
@@ -327,6 +175,7 @@ pub fn sys_draw_spawned_land_chunks(
         if entity.is_none() {
             continue;
         }
+        // Paranoid check, shouldn't ever happen.
         if commands.get_entity(entity.unwrap()).is_err() {
             println!(
                 "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'."
@@ -358,23 +207,6 @@ pub fn sys_draw_spawned_land_chunks(
     // OLD: diag.num_chunks = blocks_data.len();
     // NEW: Accurately track # of chunks on screen for diagnostics.
     diag.chunks_on_screen = visible_chunk_q.iter().count();
-}
-
-/// Helper: Is a chunk in the draw distance from the camera/player?
-/// TODO: unify
-fn is_chunk_in_draw_range(
-    cam_pos: Vec3,
-    chunk_origin_chunk_units_x: u32,
-    chunk_origin_chunk_units_z: u32,
-) -> bool {
-    let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
-    let center = Vec3::new(
-        (chunk_origin_tile_units_x + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
-        0.0,
-        (chunk_origin_tile_units_z + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
-    );
-    cam_pos.distance(center) <= constants::RENDER_DISTANCE_FROM_PLAYER
 }
 
 /// Build mesh, attributes and assign to chunk entity.
@@ -596,6 +428,7 @@ fn draw_land_chunk(
 
     // Step 5: Attach or update the Bevy entity with mesh/material/transform.
     let entity = chunk_data.entity;
+    // Paranoid checks, shouldn't ever happen.
     if entity.is_none() {
         println!("'None' entity passed to draw_land_chunk? Skipping.");
     } else {
@@ -615,110 +448,4 @@ fn draw_land_chunk(
 
     // Step 6: Return buffer to pool or drop, allowing efficient reuse and memory management.
     pool.free(meshbufs, diag);
-}
-
-// ==================================================================================
-//                               DIAGNOSTICS / LOGGING
-// ==================================================================================
-
-// Contains full performance and memory resource tracking fields for debugging and profiling.
-#[derive(Resource, Default)]
-pub struct LandChunkMeshDiagnostics {
-    pub mesh_allocs: usize,
-    pub alloc_high_water: usize,
-    pub build_avg: f32,
-    pub build_last: f32,
-    pub build_peak: f32,
-    pub pool_in_positions: usize,
-    pub pool_in_normals: usize,
-    pub pool_in_uvs: usize,
-    pub pool_in_indices: usize,
-    pub chunks_on_screen: usize, // Number of rendered chunk meshes (diagnostic log field)
-}
-impl LandChunkMeshDiagnostics {
-    pub fn log(&self) {
-        logger::one(
-            None,
-            LogSev::Diagnostics,
-            LogAbout::RenderWorldLand,
-            &format!(
-                // ChunksOnScreen: actual rendered chunk mesh count this frame.
-                "[LandMeshDiag] ChunksOnScreen: {} | Pool avail: {} | Allocs: {} (peak {}) | Mesh ms (avg/latest/peak): {:.1}/{:.1}/{:.1}",
-                self.chunks_on_screen,
-                self.pool_in_positions,
-                self.mesh_allocs,
-                self.alloc_high_water,
-                self.build_avg,
-                self.build_last,
-                self.build_peak,
-            ),
-        );
-    }
-}
-
-/// Simple circular buffer for logging history of mesh build times.
-/// This is great for understanding steady-state vs. peak/burst mesh gen.
-#[derive(Resource)]
-pub struct MeshBuildPerfHistory {
-    buckets: Vec<f32>,
-    pos: usize,
-    count: usize,
-}
-impl MeshBuildPerfHistory {
-    pub fn new(size: usize) -> Self {
-        Self {
-            buckets: vec![0.0; size],
-            pos: 0,
-            count: 0,
-        }
-    }
-    pub fn push(&mut self, val: f32) {
-        self.buckets[self.pos] = val;
-        self.pos = (self.pos + 1) % self.buckets.len();
-        if self.count < self.buckets.len() {
-            self.count += 1;
-        }
-    }
-    pub fn avg(&self) -> f32 {
-        if self.count == 0 {
-            0.0
-        } else {
-            self.buckets.iter().take(self.count).sum::<f32>() / (self.count as f32)
-        }
-    }
-    /// Highest mesh-building time (ms) observed in window (all history).
-    pub fn peak(&self) -> f32 {
-        self.buckets
-            .iter()
-            .take(self.count)
-            .copied()
-            .fold(0.0, f32::max)
-    }
-}
-
-/// Print key diagnostics to stdout at a throttled interval (every 2 seconds by default).
-fn print_render_stats(
-    mut timer: Local<Option<Timer>>,
-    time: Res<Time>,
-    diag: Res<LandChunkMeshDiagnostics>,
-) {
-    let timer = timer.get_or_insert_with(|| Timer::from_seconds(2.0, TimerMode::Repeating));
-    timer.tick(time.delta());
-    if timer.finished() {
-        diag.log();
-    }
-}
-
-// ==================================================================================
-//                               HELPER TRAITS / UTILS
-// ==================================================================================
-
-// Allow easy [f32; 3] conversion from glam::Vec3 (for shaders/Bevy mesh attributes).
-trait _Arrayable {
-    fn to_array(&self) -> [f32; 3];
-}
-impl _Arrayable for Vec3 {
-    fn to_array(&self) -> [f32; 3] {
-        [self.x, self.y, self.z]
-    }
 }

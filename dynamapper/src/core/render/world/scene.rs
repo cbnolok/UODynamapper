@@ -1,5 +1,5 @@
-pub mod draw_land_chunk_mesh;
 pub mod dynamic_light;
+pub mod land;
 
 use crate::core::constants;
 use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
@@ -7,11 +7,10 @@ use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
-use draw_land_chunk_mesh::TILE_NUM_PER_CHUNK_1D;
+use land::TILE_NUM_PER_CHUNK_1D;
 
 pub const DUMMY_MAP_SIZE_X: u32 = 4096;
 pub const DUMMY_MAP_SIZE_Y: u32 = 7120;
-
 
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
@@ -25,7 +24,7 @@ impl Plugin for ScenePlugin {
         log_plugin_build(self);
 
         app.add_plugins((
-            draw_land_chunk_mesh::DrawLandChunkMeshPlugin {
+            land::DrawLandChunkMeshPlugin {
                 registered_by: "ScenePlugin",
             },
             dynamic_light::PlayerDynamicLightPlugin {
@@ -47,7 +46,9 @@ impl Plugin for ScenePlugin {
         )
         .add_systems(
             Update,
-            sys_update_worldmap_chunks_to_render.in_set(SceneRenderSysSet::SyncLandChunks).run_if(in_state(AppState::InGame)),
+            sys_update_worldmap_chunks_to_render
+                .in_set(SceneRenderSysSet::SyncLandChunks)
+                .run_if(in_state(AppState::InGame)),
         );
     }
 }
@@ -140,7 +141,7 @@ pub fn sys_spawn_worldmap_chunks_to_render(
     scene_startup_data_res: Res<SceneStartupData>,
     scene_active_map: Res<SceneActiveMap>,
     mut plane_state: ResMut<ScenePlaneState>,
-    existing_chunks_q: Query<Entity, With<draw_land_chunk_mesh::TCMesh>>,
+    existing_chunks_q: Query<Entity, With<land::TCMesh>>,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
 ) {
@@ -174,7 +175,7 @@ pub fn sys_spawn_worldmap_chunks_to_render(
 
     for &(gx, gy) in visible_chunks.iter() {
         commands.spawn((
-            draw_land_chunk_mesh::TCMesh {
+            land::TCMesh {
                 parent_map: scene_active_map.id,
                 gx,
                 gy,
@@ -192,7 +193,7 @@ pub fn sys_update_worldmap_chunks_to_render(
     mut commands: Commands,
     player_q: Query<&Transform, With<Player>>,
     scene_active_map: Res<SceneActiveMap>,
-    existing_chunks_q: Query<(Entity, &draw_land_chunk_mesh::TCMesh)>,
+    existing_chunks_q: Query<(Entity, &land::TCMesh)>,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
     mut plane_state: ResMut<ScenePlaneState>,
@@ -229,7 +230,7 @@ pub fn sys_update_worldmap_chunks_to_render(
         }
         for &(gx, gy) in required_chunks.iter() {
             commands.spawn((
-                draw_land_chunk_mesh::TCMesh {
+                land::TCMesh {
                     parent_map: new_map_id,
                     gx,
                     gy,
@@ -256,7 +257,7 @@ pub fn sys_update_worldmap_chunks_to_render(
     for coords in required_chunks.difference(&currently_spawned) {
         let (gx, gy) = *coords;
         commands.spawn((
-            draw_land_chunk_mesh::TCMesh {
+            land::TCMesh {
                 parent_map: new_map_id,
                 gx,
                 gy,
