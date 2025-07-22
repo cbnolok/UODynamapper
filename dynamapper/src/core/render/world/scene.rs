@@ -2,6 +2,7 @@ pub mod dynamic_light;
 pub mod land;
 
 use crate::core::constants;
+use crate::core::render::world::WorldGeoData;
 use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
@@ -9,8 +10,15 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use land::TILE_NUM_PER_CHUNK_1D;
 
-pub const DUMMY_MAP_SIZE_X: u32 = 4096;
-pub const DUMMY_MAP_SIZE_Y: u32 = 7120;
+#[derive(Resource)]
+pub struct SceneStartupData {
+    pub player_start_pos: UOVec4,
+}
+
+#[derive(Resource)]
+pub struct SceneStateData {
+    pub map_id: u32,
+}
 
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
@@ -22,6 +30,7 @@ impl_tracked_plugin!(ScenePlugin);
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
+        let player_start_pos = constants::PLAYER_START_P;
 
         app.add_plugins((
             land::DrawLandChunkMeshPlugin {
@@ -31,18 +40,13 @@ impl Plugin for ScenePlugin {
                 registered_by: "ScenePlugin",
             },
         ))
-        .insert_resource(SceneStartupData {
-            player_start_pos: constants::PLAYER_START_P,
+        .insert_resource(SceneStartupData { player_start_pos })
+        .insert_resource(SceneStateData {
+            map_id: player_start_pos.m.into(),
         })
-        .insert_resource(SceneActiveMap {
-            id: constants::PLAYER_START_P.m.into(),
-            width: DUMMY_MAP_SIZE_X,
-            height: DUMMY_MAP_SIZE_Y,
-        })
-        .insert_resource(ScenePlaneState::default())
         .add_systems(
-            OnEnter(AppState::SetupScene),
-            sys_spawn_worldmap_chunks_to_render.in_set(StartupSysSet::SetupScene),
+            OnEnter(AppState::SetupSceneStage2),
+            sys_setup_worldmap_chunks_to_render.in_set(StartupSysSet::SetupScene),
         )
         .add_systems(
             Update,
@@ -51,23 +55,6 @@ impl Plugin for ScenePlugin {
                 .run_if(in_state(AppState::InGame)),
         );
     }
-}
-
-#[derive(Resource)]
-pub struct SceneStartupData {
-    pub player_start_pos: UOVec4,
-}
-
-#[derive(Resource)]
-pub struct SceneActiveMap {
-    pub id: u32,
-    pub width: u32,
-    pub height: u32,
-}
-/// Tracks the last map ID seen for detecting map switches.
-#[derive(Resource, Default)]
-pub struct ScenePlaneState {
-    pub last_seen_map_id: Option<u32>,
 }
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
@@ -136,16 +123,17 @@ pub fn compute_visible_chunks(
     set
 }
 
-pub fn sys_spawn_worldmap_chunks_to_render(
+pub fn sys_setup_worldmap_chunks_to_render(
     mut commands: Commands,
+    world_geo_data_res: Res<WorldGeoData>,
+    render_zoom_res: Res<RenderZoom>,
     scene_startup_data_res: Res<SceneStartupData>,
-    scene_active_map: Res<SceneActiveMap>,
-    mut plane_state: ResMut<ScenePlaneState>,
-    existing_chunks_q: Query<Entity, With<land::TCMesh>>,
+    scene_state_data_res: ResMut<SceneStateData>,
     windows: Query<&Window>,
-    render_zoom: Res<RenderZoom>,
+    mut player_q: Query<&mut Player>,
+    existing_chunks_q: Query<Entity, With<land::LCMesh>>,
 ) {
-    log_system_add_onenter::<ScenePlugin>(AppState::SetupScene, fname!());
+    log_system_add_onenter::<ScenePlugin>(AppState::SetupSceneStage2, fname!());
 
     // Always clear out anything previously spawned!
     for entity in existing_chunks_q.iter() {
@@ -153,12 +141,23 @@ pub fn sys_spawn_worldmap_chunks_to_render(
     }
 
     let window = windows.single().unwrap();
-    let zoom = render_zoom.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let zoom = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let current_map_id = scene_state_data_res.map_id;
+    let map_plane_metadata = world_geo_data_res
+        .maps
+        .get(&current_map_id)
+        .expect(&format!(
+            "Requested metadata for uncached map {current_map_id}"
+        ));
 
     // Player start position (centered focus)
     let player_pos = scene_startup_data_res
         .player_start_pos
         .to_bevy_vec3_ignore_map();
+
+    let mut player_instance = player_q.single_mut().expect("More than 1 players?");
+    player_instance.current_pos = Some(scene_startup_data_res.player_start_pos);
+    player_instance.prev_rendered_pos = Some(scene_startup_data_res.player_start_pos);
 
     // Compute set of visible chunks at this config:
     let visible_chunks = compute_visible_chunks(
@@ -166,8 +165,8 @@ pub fn sys_spawn_worldmap_chunks_to_render(
         window.physical_width() as f32,
         window.physical_height() as f32,
         zoom,
-        scene_active_map.width,
-        scene_active_map.height,
+        map_plane_metadata.width,
+        map_plane_metadata.height,
         UO_TILE_PIXEL_SIZE,
         TILE_NUM_PER_CHUNK_1D,
         2, // padding tiles (tune as desired)
@@ -175,48 +174,61 @@ pub fn sys_spawn_worldmap_chunks_to_render(
 
     for &(gx, gy) in visible_chunks.iter() {
         commands.spawn((
-            land::TCMesh {
-                parent_map: scene_active_map.id,
+            land::LCMesh {
+                parent_map_id: current_map_id,
                 gx,
                 gy,
             },
             Transform::default(),
             GlobalTransform::default(),
         ));
-        log_chunk_spawn(gx, gy, scene_active_map.id);
+        log_chunk_spawn(gx, gy, current_map_id);
     }
-
-    plane_state.last_seen_map_id = Some(scene_active_map.id);
 }
 
 pub fn sys_update_worldmap_chunks_to_render(
     mut commands: Commands,
-    player_q: Query<&Transform, With<Player>>,
-    scene_active_map: Res<SceneActiveMap>,
-    existing_chunks_q: Query<(Entity, &land::TCMesh)>,
-    windows: Query<&Window>,
-    render_zoom: Res<RenderZoom>,
-    mut plane_state: ResMut<ScenePlaneState>,
+    world_geo_data_res: Res<WorldGeoData>,
+    render_zoom_res: Res<RenderZoom>,
+    mut scene_state_data_res: ResMut<SceneStateData>,
+    windows_q: Query<&Window>,
+    mut player_q: Query<(&mut Player, &Transform)>,
+    existing_chunks_q: Query<(Entity, &land::LCMesh)>,
 ) {
-    let player_pos = if let Ok(p) = player_q.single() {
-        p.translation
-    } else {
+    let (mut player_instance, player_transform) =
+        player_q.single_mut().expect("More than 1 players?");
+    let player_pos = player_instance.current_pos;
+    if player_pos.is_none() {
         return;
-    };
-    let new_map_id = scene_active_map.id;
-    let map_switch = plane_state.last_seen_map_id != Some(new_map_id);
+    }
+    let player_pos = player_pos.unwrap();
+    let player_pos_translation = player_transform.translation;
 
-    let window = windows.single().unwrap();
-    let zoom = render_zoom.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let new_map_id = player_pos.m as u32;
+    let map_switch = {
+        let old_map_id = player_instance.prev_rendered_pos;
+        old_map_id.is_none() || (new_map_id != old_map_id.unwrap().m as u32)
+    };
+
+    // TODO: move the rendered player position to another system, when we'll render more stuff (not only the land chunks).
+    player_instance.prev_rendered_pos = Some(player_pos);
+
+    let window = windows_q.single().unwrap();
+    let zoom = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    //let current_map_id = scene_state_data_res.map_id;
+    let new_map_plane_metadata = world_geo_data_res
+        .maps
+        .get(&new_map_id)
+        .expect(&format!("Requested metadata for uncached map {new_map_id}"));
 
     // Compute correct visible chunk set
     let required_chunks = compute_visible_chunks(
-        player_pos,
+        player_pos_translation,
         window.physical_width() as f32,
         window.physical_height() as f32,
         zoom,
-        scene_active_map.width,
-        scene_active_map.height,
+        new_map_plane_metadata.width,
+        new_map_plane_metadata.height,
         UO_TILE_PIXEL_SIZE,
         TILE_NUM_PER_CHUNK_1D,
         2, // padding tiles (tune as needed, or make configurable)
@@ -224,23 +236,30 @@ pub fn sys_update_worldmap_chunks_to_render(
 
     // If map plane changes, brute-force despawn all and respawn
     if map_switch {
+        logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::RenderWorldLand,
+            "Detected Map Plane change: despawn previously rendered land chunks and spawn new ones.",
+        );
+
         for (entity, tcmesh) in existing_chunks_q.iter() {
             commands.entity(entity).despawn();
-            log_chunk_despawn(tcmesh.gx, tcmesh.gy, scene_active_map.id);
+            log_chunk_despawn(tcmesh.gx, tcmesh.gy, new_map_id);
         }
         for &(gx, gy) in required_chunks.iter() {
             commands.spawn((
-                land::TCMesh {
-                    parent_map: new_map_id,
+                land::LCMesh {
+                    parent_map_id: new_map_id,
                     gx,
                     gy,
                 },
                 Transform::default(),
                 GlobalTransform::default(),
             ));
-            log_chunk_spawn(gx, gy, scene_active_map.id);
+            log_chunk_spawn(gx, gy, new_map_id);
         }
-        plane_state.last_seen_map_id = Some(new_map_id);
+        scene_state_data_res.map_id = new_map_id;
         return;
     }
 
@@ -257,8 +276,8 @@ pub fn sys_update_worldmap_chunks_to_render(
     for coords in required_chunks.difference(&currently_spawned) {
         let (gx, gy) = *coords;
         commands.spawn((
-            land::TCMesh {
-                parent_map: new_map_id,
+            land::LCMesh {
+                parent_map_id: new_map_id,
                 gx,
                 gy,
             },

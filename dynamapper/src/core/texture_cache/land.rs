@@ -15,7 +15,7 @@ impl Plugin for LandCachePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupScene),
+            OnEnter(AppState::SetupSceneStage1),
             sys_setup_terrain_cache
                 .in_set(StartupSysSet::SetupScene)
         );
@@ -23,7 +23,7 @@ impl Plugin for LandCachePlugin {
 }
 
 pub fn sys_setup_terrain_cache(mut cmd: Commands, mut images: ResMut<Assets<Image>>) {
-    log_system_add_onenter::<LandCachePlugin>(AppState::SetupScene, fname!());
+    log_system_add_onenter::<LandCachePlugin>(AppState::SetupSceneStage1, fname!());
     let handle = texture_array::create_gpu_texture_array("land_cache", &mut images); //, &rd);
     cmd.insert_resource(cache::LandTextureCache::new(handle));
 }

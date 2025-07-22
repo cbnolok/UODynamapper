@@ -19,9 +19,9 @@ pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
 
 /// Tag component: Marks entities which are chunk meshes, allows queries for those entities.
 #[derive(Component)]
-pub struct TCMesh {
+pub struct LCMesh {
     #[allow(unused)]
-    pub parent_map: u32,
+    pub parent_map_id: u32,
     pub gx: u32, // chunk grid coordinates
     pub gy: u32,
 }

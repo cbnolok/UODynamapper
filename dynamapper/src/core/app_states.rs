@@ -6,7 +6,10 @@ use crate::logger;
 pub enum AppState {
     #[default]
     LoadStartupFiles,
-    SetupScene,
+    /// Setup player, allocate gpu textures (land).
+    SetupSceneStage1,
+    /// Setup land.
+    SetupSceneStage2,
     InGame,
     Stop,
 }

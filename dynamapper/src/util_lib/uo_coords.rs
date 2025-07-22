@@ -1,6 +1,6 @@
 use bevy::prelude::Vec3;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UOVec3 {
     pub x: u16,
     pub y: u16,
@@ -17,7 +17,7 @@ impl UOVec3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UOVec4 {
     pub x: u16,
     pub y: u16,

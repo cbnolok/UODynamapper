@@ -3,8 +3,29 @@ use bevy::{
     prelude::*,
     render::render_resource::{AsBindGroup, ShaderRef, ShaderType},
 };
+use super::TILE_NUM_PER_CHUNK_TOTAL;
 
 // ------------- Land material/shader data -------------
+pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
+
+#[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
+pub struct LandMaterialExtension {
+    #[texture(100, dimension = "2d_array")]
+    #[sampler(101)]
+    pub tex_array: Handle<Image>,
+    #[uniform(102, min_binding_size = 16)]
+    pub uniforms: LandUniforms,
+}
+
+impl MaterialExtension for LandMaterialExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/worldmap/land_base.wgsl".into()
+    }
+    fn fragment_shader() -> ShaderRef {
+        "shaders/worldmap/land_base.wgsl".into()
+    }
+}
+
 // Uniform buffer -> just a fancy name for a struct that is passed to the shader, has
 //  global scope and is passed per draw call (so for each chunk mesh).
 // Uniform Buffer Size Limitations:
@@ -29,27 +50,7 @@ pub struct LandUniforms {
     _pad: f32,
     pub chunk_origin: Vec2,
     _pad2: Vec2,
-    pub layers: [UVec4; (super::TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
-    pub hues: [UVec4; (super::TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
-}
-
-pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
-
-#[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
-pub struct LandMaterialExtension {
-    #[texture(100, dimension = "2d_array")]
-    #[sampler(101)]
-    pub tex_array: Handle<Image>,
-    #[uniform(102, min_binding_size = 16)]
-    pub uniforms: LandUniforms,
-}
-
-impl MaterialExtension for LandMaterialExtension {
-    fn vertex_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
-    }
-    fn fragment_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
-    }
+    pub layers: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
+    pub hues: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
 }
 

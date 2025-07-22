@@ -96,18 +96,26 @@ pub fn run_bevy_app() -> ExitCode {
     */
     .add_plugins(FramepacePlugin) // caps at 60 FPS by default
     //.use(bevy_framepace::FramepaceSettings::default().with_framerate(30.0))
-    .init_state::<AppState>()
-    .insert_state(AppState::LoadStartupFiles)
     .add_plugins((
         render::RenderPlugin { registered_by: "Core" },
         texture_cache::TextureCachePlugin { registered_by: "Core" },
         uo_files_loader::UoFilesPlugin { registered_by: "Core" },
     ))
-    .configure_sets(Startup, (StartupSysSet::SetupScene,))
+    .init_state::<AppState>()
+    .insert_state(AppState::LoadStartupFiles)
+    .configure_sets(Startup, StartupSysSet::SetupScene)
     .add_systems(
-        OnEnter(AppState::SetupScene),
-        advance_state_after_scene_setup.after(StartupSysSet::SetupScene),
-    )
+        OnEnter(AppState::LoadStartupFiles),
+        advance_state_after_load_startup_files.after(StartupSysSet::LoadStartupFiles),
+        )
+    .add_systems(
+        OnEnter(AppState::SetupSceneStage1),
+        advance_state_after_scene_setup_stage_1.after(StartupSysSet::SetupScene),
+        )
+    .add_systems(
+        OnEnter(AppState::SetupSceneStage2),
+        advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupScene),
+        )
     .run();
 
     match result {
@@ -116,7 +124,17 @@ pub fn run_bevy_app() -> ExitCode {
     }
 }
 
-fn advance_state_after_scene_setup(mut next_state: ResMut<NextState<AppState>>) {
+fn advance_state_after_load_startup_files(mut next_state: ResMut<NextState<AppState>>) {
+    log_appstate_change("SetupSceneStage1");
+    next_state.set(AppState::SetupSceneStage1);
+}
+
+fn advance_state_after_scene_setup_stage_1(mut next_state: ResMut<NextState<AppState>>) {
+    log_appstate_change("SetupSceneStage2");
+    next_state.set(AppState::SetupSceneStage2);
+}
+
+fn advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {
     log_appstate_change("InGame");
     next_state.set(AppState::InGame);
 }

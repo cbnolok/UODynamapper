@@ -1,3 +1,4 @@
+#[allow(unused)]
 use bevy::prelude::*;
 use crate::prelude::*;
 
@@ -25,7 +26,7 @@ impl LandChunkMeshDiagnostics {
             LogAbout::RenderWorldLand,
             &format!(
                 // ChunksOnScreen: actual rendered chunk mesh count this frame.
-                "[LandMeshDiag] ChunksOnScreen: {} | Pool avail: {} | Allocs: {} (peak {}) | Mesh ms (avg/latest/peak): {:.1}/{:.1}/{:.1}",
+                "ChunksOnScreen: {} | Pool avail: {} | Allocs: {} (peak {}) | Mesh ms (avg/latest/peak): {:.1}/{:.1}/{:.1}",
                 self.chunks_on_screen,
                 self.pool_in_positions,
                 self.mesh_allocs,

@@ -51,7 +51,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupScene),
+            OnEnter(AppState::SetupSceneStage1),
             sys_setup_cam.in_set(StartupSysSet::SetupScene),
         )
         .insert_resource(RenderZoom::default())

@@ -2,9 +2,11 @@
 
 use crate::prelude::*;
 use bevy::prelude::*;
+use uocf::eyre_imports;
 use uocf::geo::{land_texture_2d, map};
 use uocf::tiledata;
-use uocf::eyre_imports; eyre_imports!();
+eyre_imports!();
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -15,10 +17,10 @@ pub struct UoInterfaceSettings {
 
 #[derive(Resource)]
 pub struct UoFileData {
-    pub settings:   RwLock<UoInterfaceSettings>,
-    pub map_planes: RwLock<Vec<map::MapPlane>>,
-    pub tiledata:   RwLock<tiledata::TileData>,
-    pub texmap_2d:  RwLock<land_texture_2d::TexMap2D>,
+    pub settings: RwLock<UoInterfaceSettings>,
+    pub map_planes: RwLock<HashMap<u32, map::MapPlane>>,
+    pub tiledata: RwLock<tiledata::TileData>,
+    pub texmap_2d: RwLock<land_texture_2d::TexMap2D>,
 }
 
 pub struct UoFilesPlugin {
@@ -32,22 +34,23 @@ impl Plugin for UoFilesPlugin {
     }
 }
 
-pub fn sys_setup_uo_data(
-    mut commands: Commands,
-    mut next_state: ResMut<NextState<AppState>>,
-) {
-    let lg = |text| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
-    let uo_path: PathBuf = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy".into();
+pub fn sys_setup_uo_data(mut commands: Commands) {
+    let lg = |text: &str| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
+    let uo_path: PathBuf =
+        "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy".into();
 
     lg("Start loading UO Data.");
     // TODO: inject a logger function to uocf crate calls.
 
-    lg("Loading map plane 0 structure (map0)...");
-    let map_plane =
-        map::MapPlane::init(uo_path.join("map0.mul"), 0)
-            .expect("Initialize map plane");
-    let mut map_planes = Vec::<map::MapPlane>::new();
-    map_planes.push(map_plane);
+    let map_plane_index = 0_u32;
+    lg(&format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)...").as_str());
+    let map_plane = map::MapPlane::init(
+        uo_path.join(&format!("map{map_plane_index}.mul")),
+        map_plane_index,
+    )
+    .expect(&format!("Error initializing map plane {map_plane_index}"));
+    let mut map_planes = HashMap::<u32, map::MapPlane>::new();
+    map_planes.insert(map_plane_index, map_plane);
 
     // Test map loading.
     /*
@@ -64,16 +67,12 @@ pub fn sys_setup_uo_data(
     */
 
     lg("Loading Tiledata");
-    let tiledata =
-        tiledata::TileData::load(uo_path.join("tiledata.mul"))
-            .expect("Load tiledata");
+    let tiledata = tiledata::TileData::load(uo_path.join("tiledata.mul")).expect("Load tiledata");
 
     lg("Loading Texmaps...");
     let texmap_2d =
-        land_texture_2d::TexMap2D::load(
-            uo_path.join("texmaps.mul"),
-            uo_path.join("texidx.mul"))
-                .expect("Load texmap");
+        land_texture_2d::TexMap2D::load(uo_path.join("texmaps.mul"), uo_path.join("texidx.mul"))
+            .expect("Load texmap");
 
     lg("Done loading UO Data.");
 
@@ -89,5 +88,4 @@ pub fn sys_setup_uo_data(
 
     log_appstate_change("SetupScene");
     commands.insert_resource(data);
-    next_state.set(AppState::SetupScene);
 }

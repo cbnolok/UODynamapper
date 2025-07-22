@@ -14,17 +14,15 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use uocf::geo::map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos};
 
-use super::{TCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
+use super::TILE_NUM_PER_CHUNK_1D;
+use super::{LCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
 use crate::{
-    core::render::world::{player::Player, scene::SceneActiveMap},
-    core::uo_files_loader::UoFileData,
-    core::{constants, texture_cache::land::cache::*},
+    core::{
+        constants, maps::MapPlaneMetadata, render::world::{player::Player, scene::SceneStateData, WorldGeoData}, texture_cache::land::cache::*, uo_files_loader::UoFileData
+    },
     prelude::*,
     util_lib::array::*,
 };
-use crate::core::render::world::scene::{DUMMY_MAP_SIZE_X, DUMMY_MAP_SIZE_Y};
-use super::TILE_NUM_PER_CHUNK_1D;
-
 
 // ==================================================================================
 //                               HELPER TRAITS / UTILS
@@ -56,40 +54,45 @@ fn is_chunk_in_draw_range(
     chunk_origin_chunk_units_x: u32,
     chunk_origin_chunk_units_z: u32,
 ) -> bool {
-    let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * super::TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * super::TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_x = chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_z = chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
     let center = Vec3::new(
-        (chunk_origin_tile_units_x + super::TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+        (chunk_origin_tile_units_x + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
         0.0,
-        (chunk_origin_tile_units_z + super::TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
+        (chunk_origin_tile_units_z + TILE_NUM_PER_CHUNK_1D) as f32 / 2.0,
     );
-    cam_pos.distance(center) <= constants::RENDER_DISTANCE_FROM_PLAYER
+    cam_pos.distance(center) <= constants::MAX_RENDER_DISTANCE_FROM_PLAYER
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 /// Highly commented for clarity:
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials_land: ResMut<Assets<LandCustomMaterial>>,
-    mut cache: ResMut<LandTextureCache>,
-    mut images: ResMut<Assets<Image>>,
+    mut pool_r: ResMut<LandChunkMeshBufferPool>,
+    mut diag_r: ResMut<LandChunkMeshDiagnostics>,
+    mut hist_r: ResMut<MeshBuildPerfHistory>,
+    mut meshes_r: ResMut<Assets<Mesh>>,
+    mut materials_land_r: ResMut<Assets<LandCustomMaterial>>,
+    mut cache_r: ResMut<LandTextureCache>,
+    mut images_r: ResMut<Assets<Image>>,
     uo_data: Res<UoFileData>,
-    active_map: Res<SceneActiveMap>,
-    player_q: Query<&mut Player>,
+    world_geo_data_r: Res<WorldGeoData>,
+    scene_state_data_r: Res<SceneStateData>,
+    player_q: Query<&Player>,
     cam_q: Query<&Transform, With<Camera3d>>,
-    chunk_q: Query<(Entity, &TCMesh, Option<&Mesh3d>)>,
-    visible_chunk_q: Query<(&TCMesh, &Mesh3d)>, // <-- Added for diagnostics: live chunk meshes
-    mut pool: ResMut<LandChunkMeshBufferPool>,
-    mut diag: ResMut<LandChunkMeshDiagnostics>,
-    mut hist: ResMut<MeshBuildPerfHistory>,
+    chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
+    visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
 ) {
     // Step 1: Get camera/player state.
     let cam_pos = cam_q.single().unwrap().translation;
     let player_entity = player_q.single().expect("More than 1 player!");
+    let current_map_id = scene_state_data_r.map_id;
+    let map_plane_metadata = world_geo_data_r.maps.get(&current_map_id).expect(&format!(
+        "Requested metadata for uncached map {current_map_id}"
+    ));
 
     // Step 2: Compute which chunk positions are needed for this frame.
-    // Chunks that need to be spawned include currently visible, and direct neighbors (to hide seams between loaded chunks).
+    // Chunks that need to be spawned include currently visible, and direct neighbors.
     let mut spawn_targets = HashSet::<LandChunkConstructionData>::new();
     for (entity, chunk_data, mesh_handle) in chunk_q.iter() {
         // Optimization: Only process chunks not already meshed, avoid duplicate work.
@@ -109,6 +112,7 @@ pub fn sys_draw_spawned_land_chunks(
 
         // Also include all direct neighbors (to avoid mesh seams).
         const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
+            // x,y
             (-1, -1),
             (0, -1),
             (1, -1),
@@ -122,7 +126,11 @@ pub fn sys_draw_spawned_land_chunks(
         for (dx, dy) in NEIGHBOR_OFFSETS {
             let nx = *dx + chunk_origin_x as i32;
             let ny = *dy + chunk_origin_z as i32;
-            if nx >= 0 && nx < active_map.width as i32 && ny >= 0 && ny < active_map.height as i32 {
+            if nx >= 0
+                && nx < map_plane_metadata.width as i32
+                && ny >= 0
+                && ny < map_plane_metadata.height as i32
+            {
                 spawn_targets.insert(LandChunkConstructionData {
                     entity: None,
                     chunk_origin_chunk_units_x: nx as u32,
@@ -133,10 +141,6 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
-    let player_map_plane = player_entity
-        .current_pos
-        .expect("Player position not yet set?!")
-        .m;
     let blocks_to_draw: HashSet<MapBlockRelPos> = spawn_targets
         .iter()
         .map(|d| MapBlockRelPos {
@@ -150,8 +154,9 @@ pub fn sys_draw_spawned_land_chunks(
     {
         // This lock only needed during the block loading from disk/memory.
         let mut uo_data_map_planes_lock = uo_data.map_planes.write().unwrap();
-        let uo_data_map_plane =
-            &mut uo_data_map_planes_lock.as_mut_slice()[player_map_plane as usize];
+        let uo_data_map_plane = uo_data_map_planes_lock
+            .get_mut(&current_map_id)
+            .expect("Requested map plane metadata is uncached?");
         uo_data_map_plane
             .load_blocks(&blocks_vec)
             .expect("Can't load map blocks");
@@ -185,46 +190,48 @@ pub fn sys_draw_spawned_land_chunks(
 
         draw_land_chunk(
             &mut commands,
-            &mut meshes,
-            &mut materials_land,
-            &mut cache,
-            &mut images,
+            &mut pool_r,
+            &mut diag_r,
+            &mut meshes_r,
+            &mut materials_land_r,
+            &mut cache_r,
+            &mut images_r,
             &uo_data,
+            &map_plane_metadata,
             &chunk_data,
             &blocks_data,
-            &mut pool,
-            &mut diag,
         );
     }
-    let build_ms = build_time_start.elapsed().as_secs_f32() * 1000.0;
-    hist.push(build_ms);
+    let build_ms = build_time_start.elapsed().as_secs_f32() * 1000.0; // TODO: be more precise?
+    hist_r.push(build_ms);
 
     // Step 5: Diagnostics
-    diag.build_last = build_ms;
-    diag.build_avg = hist.avg();
-    diag.build_peak = hist.peak();
+    diag_r.build_last = build_ms;
+    diag_r.build_avg = hist_r.avg();
+    diag_r.build_peak = hist_r.peak();
 
     // OLD: diag.num_chunks = blocks_data.len();
     // NEW: Accurately track # of chunks on screen for diagnostics.
-    diag.chunks_on_screen = visible_chunk_q.iter().count();
+    diag_r.chunks_on_screen = visible_chunk_q.iter().count();
 }
 
 /// Build mesh, attributes and assign to chunk entity.
 /// Comments explain everything for unfamiliar devs.
 fn draw_land_chunk(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials_land: &mut ResMut<Assets<LandCustomMaterial>>,
-    land_texture_cache: &mut ResMut<LandTextureCache>,
-    images: &mut ResMut<Assets<Image>>,
-    uo_data: &Res<UoFileData>,
-    chunk_data: &LandChunkConstructionData,
+    pool_ref: &mut LandChunkMeshBufferPool,
+    diag_ref: &mut LandChunkMeshDiagnostics,
+    meshes_rref: &mut ResMut<Assets<Mesh>>,
+    materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
+    land_texture_cache_rref: &mut ResMut<LandTextureCache>,
+    images_rref: &mut ResMut<Assets<Image>>,
+    uo_data_rref: &Res<UoFileData>,
+    map_plane_metadata_ref: &MapPlaneMetadata,
+    chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
-    pool: &mut LandChunkMeshBufferPool,
-    diag: &mut LandChunkMeshDiagnostics,
 ) {
-    let chunk_origin_x = chunk_data.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_z = chunk_data.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_x = chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_z = chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
     // Helper to fetch cell from block/block coordinates. Always panics on OOB for safety.
     //#[inline]
@@ -260,7 +267,7 @@ fn draw_land_chunk(
     mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
     // --------- MESH DATA GENERATION (fixed UVs, per-tile quads) --------
-    let mut meshbufs = pool.alloc(diag);
+    let mut meshbufs = pool_ref.alloc(diag_ref);
     meshbufs.positions.clear();
     meshbufs.normals.clear();
     meshbufs.uvs.clear();
@@ -308,7 +315,7 @@ fn draw_land_chunk(
             let h11 = heights[((vy1 * GRID_W) + vx1) as usize];
             let h01 = heights[((vy1 * GRID_W) + vx) as usize];
 
-            // Normals at four corners (copying original normal logic)
+            // Normals at four corners
             let get_norm = |wx: u32, wz: u32| {
                 let center = get_cell(blocks_data_ref, wx as usize, wz as usize).z as f32;
                 let left = if wx > 0 {
@@ -316,7 +323,7 @@ fn draw_land_chunk(
                 } else {
                     center
                 };
-                let right = if wx + 1 < DUMMY_MAP_SIZE_X {
+                let right = if wx + 1 < map_plane_metadata_ref.width {
                     get_cell(blocks_data_ref, (wx + 1) as usize, wz as usize).z as f32
                 } else {
                     center
@@ -326,7 +333,7 @@ fn draw_land_chunk(
                 } else {
                     center
                 };
-                let up = if wz + 1 < DUMMY_MAP_SIZE_Y {
+                let up = if wz + 1 < map_plane_metadata_ref.height {
                     get_cell(blocks_data_ref, wx as usize, (wz + 1) as usize).z as f32
                 } else {
                     center
@@ -379,7 +386,8 @@ fn draw_land_chunk(
 
             // Each quad (tile) uses two triangles (6 indices).
             // Get the layer (index) of the texture array housing this texture (map tile art).
-            let layer = land_texture_cache.layer_of(commands, images, uo_data, tile_ref.id);
+            let layer =
+                land_texture_cache_rref.layer_of(commands, images_rref, uo_data_rref, tile_ref.id);
 
             // Update values of the uniform buffer. This is per-chunk data (per mesh draw call).
             // We need to store the data not in a simple vector, but in a vector of 4D vectors, in order to meet
@@ -410,7 +418,7 @@ fn draw_land_chunk(
             vec![[0.0, 0.0]; meshbufs.positions.len()],
         );
         mesh.insert_indices(Indices::U32(meshbufs.indices.clone()));
-        meshes.add(mesh)
+        meshes_rref.add(mesh)
     };
 
     let chunk_material_handle = {
@@ -419,15 +427,15 @@ fn draw_land_chunk(
                 ..Default::default()
             },
             extension: LandMaterialExtension {
-                tex_array: land_texture_cache.image_handle.clone(),
+                tex_array: land_texture_cache_rref.image_handle.clone(),
                 uniforms: mat_ext_uniforms,
             },
         };
-        materials_land.add(mat)
+        materials_land_rref.add(mat)
     };
 
     // Step 5: Attach or update the Bevy entity with mesh/material/transform.
-    let entity = chunk_data.entity;
+    let entity = chunk_data_ref.entity;
     // Paranoid checks, shouldn't ever happen.
     if entity.is_none() {
         println!("'None' entity passed to draw_land_chunk? Skipping.");
@@ -447,5 +455,5 @@ fn draw_land_chunk(
     }
 
     // Step 6: Return buffer to pool or drop, allowing efficient reuse and memory management.
-    pool.free(meshbufs, diag);
+    pool_ref.free(meshbufs, diag_ref);
 }
