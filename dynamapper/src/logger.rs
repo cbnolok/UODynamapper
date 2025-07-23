@@ -1,9 +1,10 @@
 use pad::PadStr;
 use regex::Regex;
 use strum::VariantNames; // For the trait.
-use strum_macros::{Display, EnumString, VariantNames}; // For the derive macros.
+use strum_macros::{Display, EnumString, VariantNames};
+use time::OffsetDateTime; // For the derive macros.
 //use std::io::Write; // for flush().
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::SystemTime};
 
 // Event severity.
 #[derive(Display, EnumString, VariantNames, PartialEq)]
@@ -91,6 +92,14 @@ pub fn one(
         show_caller_location_override = Some(true);
     }
 
+    let system_time: OffsetDateTime = SystemTime::now().into();
+    let time_str = format!(
+        "{:0<2}:{:0<2}:{:0<2}",
+        system_time.hour(),
+        system_time.minute(),
+        system_time.second()
+    );
+
     let mut location_str = String::new();
     if show_caller_location_override == Some(true) {
         let caller_location = std::panic::Location::caller();
@@ -109,14 +118,16 @@ pub fn one(
     }
 
     let about_msg = format!("[{about}]").pad_to_width(18); //.pad(18, ' ', pad::Alignment::Middle, true)
-    let full_msg = format!("<d>{{ {location_str} }}</d> <b>{about_msg}</b> {msg}");
+    let sev_symbol: &'static str = match severity {
+        LogSev::Debug => "<bright-magenta><bold><info></bold></>",
+        LogSev::DebugVerbose => "<bright-magenta><bold><info></bold></>",
+        LogSev::Diagnostics => "<dark-green><bold><info></bold></>",
+        LogSev::Error => "<red><bold><cross></bold></>",
+        LogSev::Info => "<cyan><bold><info></bold></>",
+        LogSev::Warn => "<bright-yellow><bold><warn></bold></>",
+    };
 
-    match severity {
-        LogSev::Debug => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
-        LogSev::DebugVerbose => paris::log!("<bright-magenta><bold><info></bold></> {full_msg}"),
-        LogSev::Diagnostics => paris::log!("<dark-green><bold><info></bold></> {full_msg}"),
-        LogSev::Error => paris::log!("<red><bold><cross></bold></> {full_msg}"),
-        LogSev::Info => paris::log!("<cyan><bold><info></bold></> {full_msg}"),
-        LogSev::Warn => paris::log!("<yellow><bold><warn></bold></> {full_msg}"),
-    }
+    let full_msg = format!("<d>{time_str} {{ {location_str} }}</d> <b>{about_msg}</b> {sev_symbol} {msg}");
+
+    paris::log!("{full_msg}")
 }
