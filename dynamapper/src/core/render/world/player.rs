@@ -46,7 +46,7 @@ pub fn sys_spawn_player_entity(
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material_handle),
-        Transform::from_xyz(player_start_pos.x, player_start_pos.y + 2.0, player_start_pos.z),
+        Transform::from_xyz(player_start_pos.x, player_start_pos.y, player_start_pos.z),
         GlobalTransform::default(),
         Player {
             current_pos: Some(player_start_pos_uo),

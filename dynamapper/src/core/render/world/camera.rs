@@ -17,15 +17,20 @@ const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.79;
 
 /// Factor to correct the rendered tile size to our desired size.
 /// Due to the orthographic projection, pixel size is not 1:1 but it will be distorted.
-const TILE_SIZE_FACTOR: f32 = {
+pub const TILE_SIZE_FACTOR: f32 = {
     // Using ORTHO_WIDTH_SCALE_FACTOR, the tiles are rendered bigger than desired.
     const MEASURED_TILE_PIXEL_SIZE: f32 = 62.0;
     // The pixel width and height of a diamond tile at neutral zoom (UO standard).
     const DESIRED_TILE_PIXEL_SIZE: f32 = UO_TILE_PIXEL_SIZE;
-    // Calculate correction factor to scale down the rendered size via the projection settings.
-    const SCALE_FACTOR: f32 = MEASURED_TILE_PIXEL_SIZE / DESIRED_TILE_PIXEL_SIZE;
-    DESIRED_TILE_PIXEL_SIZE / SCALE_FACTOR
+    MEASURED_TILE_PIXEL_SIZE / DESIRED_TILE_PIXEL_SIZE
 };
+
+const ORTHO_SIZE_FACTOR: f32 = {
+    const DESIRED_TILE_PIXEL_SIZE: f32 = UO_TILE_PIXEL_SIZE;
+    // Calculate correction factor to scale down the rendered size via the projection settings.
+    DESIRED_TILE_PIXEL_SIZE / TILE_SIZE_FACTOR
+};
+
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct RenderZoom(pub f32);
@@ -37,7 +42,7 @@ impl Default for RenderZoom {
 }
 
 #[derive(Component, Clone, Copy, Debug, Default)]
-struct PlayerCamera;
+pub struct PlayerCamera;
 impl PlayerCamera {
     const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
 }
@@ -73,8 +78,8 @@ pub fn sys_setup_cam(
 
     // Compute the orthographic width/height (world units) so that visible tiles fill the window at tile size/zoom.
     // How many world units can fit horizontally & vertically?
-    let ortho_width = window_width / TILE_SIZE_FACTOR;
-    let ortho_height = window_height / TILE_SIZE_FACTOR;
+    let ortho_width = window_width / ORTHO_SIZE_FACTOR;
+    let ortho_height = window_height / ORTHO_SIZE_FACTOR;
     //println!("Ortographic camera width={ortho_width}, height={ortho_height}");
 
     // Find player start position for focus (if needed).
@@ -133,8 +138,8 @@ pub fn sys_update_camera_projection_to_view(
 
     // Compute the orthographic width/height (world units) so that visible tiles fill the window at tile size/zoom.
     // How many world units can fit horizontally & vertically?
-    let ortho_width = window_width / TILE_SIZE_FACTOR;
-    let ortho_height = window_height / TILE_SIZE_FACTOR;
+    let ortho_width = window_width / ORTHO_SIZE_FACTOR;
+    let ortho_height = window_height / ORTHO_SIZE_FACTOR;
 
     let mut proj = camera_q.single_mut().unwrap();
     if let Projection::Orthographic(ref mut ortho) = *proj {

@@ -43,8 +43,8 @@ pub fn run_bevy_app() -> ExitCode {
 
     let result = App::new()
     .insert_resource(WinitSettings {
-        focused_mode: UpdateMode::reactive(Duration::from_secs_f64(1.0 / 244.0)),
-        unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 60.0)), /* 60Hz, */
+        focused_mode: UpdateMode::reactive(Duration::from_secs_f64(1.0 / 60.0)),    // 60.0 Hz
+        unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 30.0)), // 30.0 Hz
     })
     .add_plugins(
         DefaultPlugins

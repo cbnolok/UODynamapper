@@ -18,7 +18,11 @@ use super::TILE_NUM_PER_CHUNK_1D;
 use super::{LCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
 use crate::{
     core::{
-        constants, maps::MapPlaneMetadata, render::world::{player::Player, scene::SceneStateData, WorldGeoData}, texture_cache::land::cache::*, uo_files_loader::UoFileData
+        constants,
+        maps::MapPlaneMetadata,
+        render::world::{WorldGeoData, player::Player, scene::SceneStateData},
+        texture_cache::land::cache::*,
+        uo_files_loader::UoFileData,
     },
     prelude::*,
     util_lib::array::*,
@@ -48,7 +52,7 @@ struct LandChunkConstructionData {
 }
 
 /// Helper: Is a chunk in the draw distance from the camera/player?
-/// TODO: unify
+/*
 fn is_chunk_in_draw_range(
     cam_pos: Vec3,
     chunk_origin_chunk_units_x: u32,
@@ -63,6 +67,7 @@ fn is_chunk_in_draw_range(
     );
     cam_pos.distance(center) <= constants::MAX_RENDER_DISTANCE_FROM_PLAYER
 }
+*/
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 /// Highly commented for clarity:
@@ -101,9 +106,9 @@ pub fn sys_draw_spawned_land_chunks(
         }
         let chunk_origin_x = chunk_data.gx;
         let chunk_origin_z = chunk_data.gy;
-        if !is_chunk_in_draw_range(cam_pos, chunk_origin_x, chunk_origin_z) {
-            continue;
-        }
+        //if !is_chunk_in_draw_range(cam_pos, chunk_origin_x, chunk_origin_z) {
+        //    continue;
+        //}
         spawn_targets.insert(LandChunkConstructionData {
             entity: Some(entity),
             chunk_origin_chunk_units_x: chunk_origin_x,
@@ -230,8 +235,10 @@ fn draw_land_chunk(
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
 ) {
-    let chunk_origin_x = chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_z = chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_x =
+        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_z =
+        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
 
     // Helper to fetch cell from block/block coordinates. Always panics on OOB for safety.
     //#[inline]
@@ -263,7 +270,10 @@ fn draw_land_chunk(
     // --------- Setup chunk-specific uniforms ---------
     // For shading, lighting, texturing. Synchronized with shader struct.
     let mut mat_ext_uniforms = LandUniforms::zeroed();
-    mat_ext_uniforms.chunk_origin = Vec2::new(chunk_origin_x as f32, chunk_origin_z as f32);
+    mat_ext_uniforms.chunk_origin = Vec2::new(
+        chunk_origin_tile_units_x as f32,
+        chunk_origin_tile_units_z as f32,
+    );
     mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
     // --------- MESH DATA GENERATION (fixed UVs, per-tile quads) --------
@@ -277,10 +287,10 @@ fn draw_land_chunk(
     let mut heights = vec![0.0f32; (GRID_W * GRID_H) as usize];
     for vy in 0..GRID_H {
         for vx in 0..GRID_W {
-            let world_tx = chunk_origin_x as usize + vx as usize;
-            let world_tz = chunk_origin_z as usize + vy as usize;
+            let world_tx = chunk_origin_tile_units_x as usize + vx as usize;
+            let world_tz = chunk_origin_tile_units_z as usize + vy as usize;
             heights[(vy * GRID_W + vx) as usize] =
-                get_cell(blocks_data_ref, world_tx, world_tz).z as f32;
+                scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, world_tx, world_tz).z as f32);
 
             /*
             // Debug:
@@ -304,10 +314,10 @@ fn draw_land_chunk(
             let vx1 = tx + 1;
             let vy1 = ty + 1;
 
-            let world_tx0 = chunk_origin_x + vx;
-            let world_tz0 = chunk_origin_z + vy;
-            let world_tx1 = chunk_origin_x + vx1;
-            let world_tz1 = chunk_origin_z + vy1;
+            let world_tx0 = chunk_origin_tile_units_x + vx;
+            let world_tz0 = chunk_origin_tile_units_z + vy;
+            let world_tx1 = chunk_origin_tile_units_x + vx1;
+            let world_tz1 = chunk_origin_tile_units_z + vy1;
 
             // Heights at four corners
             let h00 = heights[((vy * GRID_W) + vx) as usize];
@@ -316,25 +326,28 @@ fn draw_land_chunk(
             let h01 = heights[((vy1 * GRID_W) + vx) as usize];
 
             // Normals at four corners
+            let get_cell_z = |x: u32, z: u32| {
+                scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, x as usize, z as usize).z as f32)
+            };
             let get_norm = |wx: u32, wz: u32| {
-                let center = get_cell(blocks_data_ref, wx as usize, wz as usize).z as f32;
+                let center = get_cell_z(wx, wz);
                 let left = if wx > 0 {
-                    get_cell(blocks_data_ref, (wx - 1) as usize, wz as usize).z as f32
+                    get_cell_z(wx - 1, wz)
                 } else {
                     center
                 };
                 let right = if wx + 1 < map_plane_metadata_ref.width {
-                    get_cell(blocks_data_ref, (wx + 1) as usize, wz as usize).z as f32
+                    get_cell_z(wx + 1, wz)
                 } else {
                     center
                 };
                 let down = if wz > 0 {
-                    get_cell(blocks_data_ref, wx as usize, (wz - 1) as usize).z as f32
+                    get_cell_z(wx, wz - 1)
                 } else {
                     center
                 };
                 let up = if wz + 1 < map_plane_metadata_ref.height {
-                    get_cell(blocks_data_ref, wx as usize, (wz + 1) as usize).z as f32
+                    get_cell_z(wx, wz + 1)
                 } else {
                     center
                 };
@@ -375,13 +388,16 @@ fn draw_land_chunk(
     }
 
     // --------- Shader uniforms for texture layer (by tile) --------
-    mat_ext_uniforms.chunk_origin = Vec2::new(chunk_origin_x as f32, chunk_origin_z as f32);
+    mat_ext_uniforms.chunk_origin = Vec2::new(
+        chunk_origin_tile_units_x as f32,
+        chunk_origin_tile_units_z as f32,
+    );
     mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
 
     for ty in 0..TILE_NUM_PER_CHUNK_1D as usize {
         for tx in 0..TILE_NUM_PER_CHUNK_1D as usize {
-            let world_x = chunk_origin_x as usize + tx;
-            let world_y = chunk_origin_z as usize + ty;
+            let world_x = chunk_origin_tile_units_x as usize + tx;
+            let world_y = chunk_origin_tile_units_z as usize + ty;
             let tile_ref = get_cell(blocks_data_ref, world_x, world_y);
 
             // Each quad (tile) uses two triangles (6 indices).
@@ -447,12 +463,28 @@ fn draw_land_chunk(
             commands.entity(entity).insert((
                 Mesh3d(chunk_mesh_handle.clone()),
                 MeshMaterial3d(chunk_material_handle.clone()),
-                // 💡 Place at correct world position via transform!
-                Transform::from_xyz(chunk_origin_x as f32, 0.0, chunk_origin_z as f32),
+                // Place at correct world position via transform.
+                Transform::from_xyz(
+                    chunk_origin_tile_units_x as f32,
+                    0.0,
+                    chunk_origin_tile_units_z as f32,
+                ),
                 GlobalTransform::default(),
             ));
         }
     }
+
+    logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::RenderWorldLand,
+        &format!(
+            "Rendered new chunk at: \tgx={}\tgy={}\t(map={})",
+            chunk_data_ref.chunk_origin_chunk_units_x,
+            chunk_data_ref.chunk_origin_chunk_units_z,
+            map_plane_metadata_ref.id
+        ),
+    );
 
     // Step 6: Return buffer to pool or drop, allowing efficient reuse and memory management.
     pool_ref.free(meshbufs, diag_ref);

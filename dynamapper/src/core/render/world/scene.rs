@@ -3,7 +3,7 @@ pub mod land;
 
 use crate::core::constants;
 use crate::core::render::world::WorldGeoData;
-use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
+use crate::core::render::world::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM, UO_TILE_PIXEL_SIZE, TILE_SIZE_FACTOR};
 use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -62,7 +62,7 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
-        &format!("Spawned chunk at: gx={gx}, gy={gy} (map={map})"),
+        &format!("Spawned chunk at: \tgx={gx}\tgy={gy}\t(map={map})"),
     );
 }
 
@@ -71,7 +71,7 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
-        &format!("De-spawned chunk at: gx={gx}, gy={gy} (map={map})"),
+        &format!("De-spawned chunk at: \tgx={gx}\tgy={gy}\t(map={map})"),
     );
 }
 
@@ -84,28 +84,28 @@ pub fn compute_visible_chunks(
     zoom: f32,
     map_width: u32,
     map_height: u32,
-    tile_pixel_size: f32,
-    chunk_size: u32, // e.g., TILE_NUM_PER_CHUNK_1D
-    padding: u32,    // tiles to pad on all sides
 ) -> std::collections::HashSet<(u32, u32)> {
-    // Visible tile region (rounded up with padding)
-    let visible_tiles_x = (window_width / (tile_pixel_size * zoom)).ceil() as u32 + padding * 2;
-    let visible_tiles_y = (window_height / (tile_pixel_size * zoom)).ceil() as u32 + padding * 2;
+    let corrected_pixel_size = UO_TILE_PIXEL_SIZE * zoom;
+
+    // Visible tile region (rounded up)
+    let visible_tiles_x = ((window_width / corrected_pixel_size).ceil()) as i32;
+    let visible_tiles_y = ((window_height / corrected_pixel_size).ceil()) as i32;
+
     // Convert player's position to TILE coordinates
     let player_tile_x = player_pos.x as i32;
-    let player_tile_y = player_pos.z as i32; // y is z in Bevy "forward"
+    let player_tile_y = player_pos.z as i32;
 
-    // Compute chunk region to fully cover the visible area, *including all overlapping*
+    // Compute chunk region to fully cover the visible area, including all overlapping
     // Start/end in TILES (not chunks yet)
-    let half_tiles_x = (visible_tiles_x / 2) as i32;
-    let half_tiles_y = (visible_tiles_y / 2) as i32;
-    let tile_x0 = player_tile_x - half_tiles_x;
-    let tile_x1 = player_tile_x + half_tiles_x;
-    let tile_y0 = player_tile_y - half_tiles_y;
-    let tile_y1 = player_tile_y + half_tiles_y;
+
+    let tile_x0 = player_tile_x - visible_tiles_x;
+    let tile_x1 = player_tile_x + (visible_tiles_x / 2);
+    let tile_y0 = player_tile_y - (visible_tiles_y * 3 / 2);
+    let tile_y1 = player_tile_y + (visible_tiles_y / 2);
 
     // Now convert these to chunk indices (and always round DOWN for min, UP for max)
     // so that *any partially overlapping chunk is included*.
+    let chunk_size = TILE_NUM_PER_CHUNK_1D;
     let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
     let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
     let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);
@@ -167,9 +167,6 @@ pub fn sys_setup_worldmap_chunks_to_render(
         zoom,
         map_plane_metadata.width,
         map_plane_metadata.height,
-        UO_TILE_PIXEL_SIZE,
-        TILE_NUM_PER_CHUNK_1D,
-        2, // padding tiles (tune as desired)
     );
 
     for &(gx, gy) in visible_chunks.iter() {
@@ -229,9 +226,6 @@ pub fn sys_update_worldmap_chunks_to_render(
         zoom,
         new_map_plane_metadata.width,
         new_map_plane_metadata.height,
-        UO_TILE_PIXEL_SIZE,
-        TILE_NUM_PER_CHUNK_1D,
-        2, // padding tiles (tune as needed, or make configurable)
     );
 
     // If map plane changes, brute-force despawn all and respawn

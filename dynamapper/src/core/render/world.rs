@@ -19,7 +19,7 @@ impl Default for WorldGeoData {
     fn default() -> Self {
         let mut def = Self {maps: HashMap::new()};
         def.maps.insert(0, MapPlaneMetadata {
-            //id: 0,
+            id: 0,
             width: DUMMY_MAP_SIZE_X,
             height: DUMMY_MAP_SIZE_Y,
         });

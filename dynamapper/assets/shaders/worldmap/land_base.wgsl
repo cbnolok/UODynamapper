@@ -115,7 +115,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
     let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
 
-    // Sample the land tile texture:
+    // Sample the land tile texture.
+    //  We could use textureSample or textureSampleLevel, the latter lets us choose the mip level
+    //  (we want to force 0, even if it wouldn't be necessary because the texture array we create has only 1 level).
     let tex_color = textureSampleLevel(atlas, atlas_sampler, in.uv, u32(layer), 0.0);
 
     // Ambient light factor.

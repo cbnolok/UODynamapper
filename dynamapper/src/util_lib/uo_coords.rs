@@ -1,5 +1,10 @@
 use bevy::prelude::Vec3;
 
+#[inline(always)]
+pub fn scale_uo_z_to_bevy_units(z: f32) -> f32 {
+    z * 0.1 // arbitrary
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UOVec3 {
     pub x: u16,
@@ -13,7 +18,7 @@ impl UOVec3 {
     }
     #[inline(always)]
     pub fn to_vec3(&self) -> Vec3 {
-        Vec3::new(self.x as f32, self.z as f32, self.y as f32)
+        Vec3::new(self.x as f32, scale_uo_z_to_bevy_units(self.z as f32), self.y as f32)
     }
 }
 
@@ -30,10 +35,10 @@ impl UOVec4 {
         Self { x, y, z, m }
     }
     pub fn to_bevy_vec3(&self) -> (Vec3, u8) {
-        (Vec3::new(self.x as f32, self.z as f32, self.y as f32), self.m)
+        (Vec3::new(self.x as f32, scale_uo_z_to_bevy_units(self.z as f32), self.y as f32), self.m)
     }
     pub fn to_bevy_vec3_ignore_map(&self) -> Vec3 {
-        Vec3::new(self.x as f32, self.z as f32, self.y as f32)
+        Vec3::new(self.x as f32, scale_uo_z_to_bevy_units(self.z as f32), self.y as f32)
     }
 }
 

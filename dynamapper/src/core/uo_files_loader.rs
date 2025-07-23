@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
 use uocf::eyre_imports;
@@ -30,7 +31,7 @@ impl_tracked_plugin!(UoFilesPlugin);
 impl Plugin for UoFilesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(OnEnter(AppState::LoadStartupFiles), sys_setup_uo_data);
+        app.add_systems(OnEnter(AppState::LoadStartupFiles), sys_setup_uo_data.in_set(StartupSysSet::LoadStartupFiles));
     }
 }
 
@@ -86,6 +87,5 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
         texmap_2d: RwLock::new(texmap_2d),
     };
 
-    log_appstate_change("SetupScene");
     commands.insert_resource(data);
 }

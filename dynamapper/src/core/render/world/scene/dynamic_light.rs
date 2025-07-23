@@ -35,7 +35,10 @@ pub fn sys_spawn_dynamic_light(
         camera_player_rel_pos,
     };
 
-    let player_start_pos = scene_startup_data_res.unwrap().player_start_pos.to_bevy_vec3_ignore_map();
+    let player_start_pos = scene_startup_data_res
+        .unwrap()
+        .player_start_pos
+        .to_bevy_vec3_ignore_map();
     let camera_pos = light_component.camera_player_rel_pos + player_start_pos;
 
     // Set up a directional light (sun)
@@ -43,7 +46,7 @@ pub fn sys_spawn_dynamic_light(
         None,
         LogSev::Debug,
         LogAbout::Camera,
-        format!("Spawning directional (\"dynamic\") light at {camera_pos}, looking at {player_start_pos}.")
+        format!("Spawning directional (\"dynamic\") light at camera_pos={camera_pos}, looking at player_pos={player_start_pos}.")
             .as_str(),
     );
     commands.spawn((
