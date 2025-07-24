@@ -31,7 +31,6 @@ const ORTHO_SIZE_FACTOR: f32 = {
     DESIRED_TILE_PIXEL_SIZE / TILE_SIZE_FACTOR
 };
 
-
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct RenderZoom(pub f32);
 
@@ -69,7 +68,7 @@ pub fn sys_setup_cam(
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
     // Use any data you need for initial camera placement (e.g. player start position)
-    scene_startup_data_res: Option<Res<SceneStartupData>>,
+    scene_startup_data_res: Res<SceneStartupData>,
 ) {
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width() as f32;
@@ -84,9 +83,8 @@ pub fn sys_setup_cam(
 
     // Find player start position for focus (if needed).
     let player_start_pos = scene_startup_data_res
-        .as_ref()
-        .map(|s| s.player_start_pos.to_bevy_vec3_ignore_map())
-        .unwrap_or(Vec3::ZERO);
+        .player_start_pos
+        .to_bevy_vec3_ignore_map();
 
     // Setup camera with "military"/oblique angle, looking at player start.
     commands.spawn((
@@ -150,4 +148,3 @@ pub fn sys_update_camera_projection_to_view(
         ortho.scale = 1.0 * zoom;
     }
 }
-

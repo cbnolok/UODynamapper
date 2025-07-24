@@ -3,7 +3,7 @@ pub mod land;
 
 use crate::core::constants;
 use crate::core::render::world::WorldGeoData;
-use crate::core::render::world::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM, UO_TILE_PIXEL_SIZE, TILE_SIZE_FACTOR};
+use crate::core::render::world::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM, UO_TILE_PIXEL_SIZE};
 use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -62,7 +62,7 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
-        &format!("Spawned chunk at: \tgx={gx}\tgy={gy}\t(map={map})"),
+        &format!("Spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
     );
 }
 
@@ -71,7 +71,7 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
-        &format!("De-spawned chunk at: \tgx={gx}\tgy={gy}\t(map={map})"),
+        &format!("De-spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
     );
 }
 

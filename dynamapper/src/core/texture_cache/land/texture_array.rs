@@ -117,7 +117,7 @@ pub fn get_texmap_image(
             None,
             logger::LogSev::Warn,
             logger::LogAbout::RenderWorldLand,
-            &format!("Requested non-small texture id={art_id}, using UNUSED."),
+            &format!("Requested non-small texture id={art_id}, falling back to UNUSED."),
         );
         use_nodraw = true;
     }
