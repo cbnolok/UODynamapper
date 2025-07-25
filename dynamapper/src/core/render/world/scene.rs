@@ -1,9 +1,10 @@
 pub mod dynamic_light;
 pub mod land;
+pub mod overlays;
 
 use crate::core::constants;
 use crate::core::render::world::WorldGeoData;
-use crate::core::render::world::camera::{RenderZoom, MAX_ZOOM, MIN_ZOOM, UO_TILE_PIXEL_SIZE};
+use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use crate::core::render::world::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -37,6 +38,9 @@ impl Plugin for ScenePlugin {
                 registered_by: "ScenePlugin",
             },
             dynamic_light::PlayerDynamicLightPlugin {
+                registered_by: "ScenePlugin",
+            },
+            overlays::OverlaysPlugin {
                 registered_by: "ScenePlugin",
             },
         ))
