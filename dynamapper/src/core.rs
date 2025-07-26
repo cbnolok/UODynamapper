@@ -112,9 +112,9 @@ fn custom_render_plugin_settings() -> RenderPlugin {
 
 pub fn run_bevy_app() -> ExitCode {
     // Current working directory.
-    println!("CWD: {:?}", std::env::current_dir().unwrap());
+    debug!("CWD: {:?}", std::env::current_dir().unwrap());
     // Other debug info.
-    //println!("ASSET FOLDER: {:?}", bevy::asset::AssetPlugin::default().file_path);
+    debug!("ASSET FOLDER: {:?}", bevy::asset::AssetPlugin::default().file_path);
 
     let result = App::new()
         .insert_resource(custom_winit_settings())
@@ -124,7 +124,11 @@ pub fn run_bevy_app() -> ExitCode {
                 .set(custom_bevy_log_config())
                 .set(custom_window_plugin_settings())
                 .set(custom_render_plugin_settings())
-                .set(ImagePlugin::default_linear()),
+                .set(ImagePlugin::default_linear())
+                //.set(AssetPlugin {
+                //    watch_for_changes_override: true,
+                //    ..default()
+                //}),
         )
         //.add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
         .insert_resource(custom_wireframe_config())
@@ -145,11 +149,11 @@ pub fn run_bevy_app() -> ExitCode {
             },
         ))
         .init_state::<AppState>()
-        .insert_state(AppState::LoadStartupFiles)
+        .insert_state(AppState::LoadStartupUOFiles)
         .configure_sets(Startup, StartupSysSet::SetupScene)
         .add_systems(
-            OnEnter(AppState::LoadStartupFiles),
-            advance_state_after_load_startup_files.after(StartupSysSet::LoadStartupFiles),
+            OnEnter(AppState::LoadStartupUOFiles),
+            advance_state_after_load_startup_files.after(StartupSysSet::LoadStartupUOFiles),
         )
         .add_systems(
             OnEnter(AppState::SetupSceneStage1),

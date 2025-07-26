@@ -31,7 +31,7 @@ impl_tracked_plugin!(UoFilesPlugin);
 impl Plugin for UoFilesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(OnEnter(AppState::LoadStartupFiles), sys_setup_uo_data.in_set(StartupSysSet::LoadStartupFiles));
+        app.add_systems(OnEnter(AppState::LoadStartupUOFiles), sys_setup_uo_data.in_set(StartupSysSet::LoadStartupUOFiles));
     }
 }
 

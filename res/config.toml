@@ -1,0 +1,25 @@
+[uo_files]
+folder="/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
+
+[input]
+movement_speed_multiplier=7.5 # 100.0
+
+[window]
+height=800.0
+width=600.0
+zoom=1.0
+
+[world]
+start_p=[0,0,0]
+
+[debug]
+map_render_wireframe=false
+
+#[logger]
+#ignore=[
+    # Uses a regex for the match.
+    # [Severity, About]
+    #["Debug",            ".*"],
+    #["InternalVerbose1", ".*"],
+#    ["InternalVerbose2", "*"],
+#]

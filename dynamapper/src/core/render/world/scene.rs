@@ -1,6 +1,5 @@
 pub mod dynamic_light;
 pub mod land;
-pub mod overlays;
 
 use crate::core::constants;
 use crate::core::render::world::WorldGeoData;
@@ -38,9 +37,6 @@ impl Plugin for ScenePlugin {
                 registered_by: "ScenePlugin",
             },
             dynamic_light::PlayerDynamicLightPlugin {
-                registered_by: "ScenePlugin",
-            },
-            overlays::OverlaysPlugin {
                 registered_by: "ScenePlugin",
             },
         ))

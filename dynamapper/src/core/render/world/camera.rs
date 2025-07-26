@@ -82,7 +82,7 @@ pub fn sys_setup_cam(
     //println!("Ortographic camera width={ortho_width}, height={ortho_height}");
 
     // Find player start position for focus (if needed).
-    let player_start_pos = scene_startup_data_res
+    let player_start_pos: Vec3 = scene_startup_data_res
         .player_start_pos
         .to_bevy_vec3_ignore_map();
 
@@ -104,6 +104,8 @@ pub fn sys_setup_cam(
             .looking_at(player_start_pos, Vec3::Y),
         GlobalTransform::default(),
     ));
+
+    logger::one(None, LogSev::Debug, LogAbout::Camera, "Spawned.");
 }
 
 //------------------------------------
