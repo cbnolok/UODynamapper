@@ -13,8 +13,8 @@ impl Plugin for OverlaysPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupSceneStage2),
-            setup_overlay_player_position.in_set(StartupSysSet::SetupScene),
+            Startup,
+            setup_overlay_player_position.in_set(StartupSysSet::SetupSceneStage2),
         )
         .add_systems(
             Update,

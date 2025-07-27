@@ -1,4 +1,3 @@
-use super::SceneStartupData;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -17,8 +16,8 @@ impl Plugin for PlayerDynamicLightPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupSceneStage2),
-            sys_spawn_dynamic_light.in_set(StartupSysSet::SetupScene),
+            Startup,
+            sys_spawn_dynamic_light.in_set(StartupSysSet::SetupSceneStage2),
         );
     }
 }
@@ -26,18 +25,16 @@ impl Plugin for PlayerDynamicLightPlugin {
 pub fn sys_spawn_dynamic_light(
     mut commands: Commands,
     //camera_q: Query<&PlayerDynamicLight>,
-    scene_startup_data_res: Option<Res<SceneStartupData>>,
+    settings: Res<Settings>
 ) {
-    log_system_add_onenter::<PlayerDynamicLightPlugin>(AppState::SetupSceneStage2, fname!());
+    log_system_add_startup::<PlayerDynamicLightPlugin>(StartupSysSet::SetupSceneStage2, fname!());
     // Camera position relative to the player: a little south east and higher than the player.
     let camera_player_rel_pos = Vec3::new(10.0, 50.0, 8.0);
     let light_component = PlayerDynamicLight {
         camera_player_rel_pos,
     };
 
-    let player_start_pos = scene_startup_data_res
-        .unwrap()
-        .player_start_pos
+    let player_start_pos = settings.world.start_p
         .to_bevy_vec3_ignore_map();
     let camera_pos = light_component.camera_player_rel_pos + player_start_pos;
 

@@ -1,19 +1,16 @@
 pub mod dynamic_light;
 pub mod land;
 
-use crate::core::constants;
-use crate::core::render::world::WorldGeoData;
-use crate::core::render::world::camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
-use crate::core::render::world::player::Player;
+use crate::core::render::world::{
+    WorldGeoData,
+    camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE},
+    player::Player,
+};
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
+use bevy::window::Window;
 use land::TILE_NUM_PER_CHUNK_1D;
-
-#[derive(Resource)]
-pub struct SceneStartupData {
-    pub player_start_pos: UOVec4,
-}
 
 #[derive(Resource)]
 pub struct SceneStateData {
@@ -30,7 +27,6 @@ impl_tracked_plugin!(ScenePlugin);
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        let player_start_pos = constants::PLAYER_START_P;
 
         app.add_plugins((
             land::DrawLandChunkMeshPlugin {
@@ -40,14 +36,14 @@ impl Plugin for ScenePlugin {
                 registered_by: "ScenePlugin",
             },
         ))
-        .insert_resource(SceneStartupData { player_start_pos })
         .insert_resource(SceneStateData {
-            map_id: player_start_pos.m.into(),
+            map_id: 0xFFFF, // placeholder
         })
-        .add_systems(
-            OnEnter(AppState::SetupSceneStage2),
-            sys_setup_worldmap_chunks_to_render.in_set(StartupSysSet::SetupScene),
-        )
+        //.add_systems(
+        //    Startup,
+        //    sys_spawn_worldmap_chunks_to_render.in_set(StartupSysSet::SetupSceneStage2),
+        //)
+        // TODO: run the system below only when an event is emitted (window resize, etc)
         .add_systems(
             Update,
             sys_update_worldmap_chunks_to_render
@@ -123,64 +119,31 @@ pub fn compute_visible_chunks(
     set
 }
 
-pub fn sys_setup_worldmap_chunks_to_render(
+pub fn sys_spawn_worldmap_chunks_to_render(
     mut commands: Commands,
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,
-    scene_startup_data_res: Res<SceneStartupData>,
     scene_state_data_res: ResMut<SceneStateData>,
-    windows: Query<&Window>,
-    mut player_q: Query<&mut Player>,
-    existing_chunks_q: Query<Entity, With<land::LCMesh>>,
+    windows_q: Query<&Window>,
+    player_q: Query<(&mut Player, &Transform)>,
+    existing_chunks_q: Query<(Entity, &land::LCMesh)>,
 ) {
-    log_system_add_onenter::<ScenePlugin>(AppState::SetupSceneStage2, fname!());
+    //log_system_add_startup::<ScenePlugin>(StartupSysSet::SetupSceneStage2, fname!());
 
     // Always clear out anything previously spawned!
-    for entity in existing_chunks_q.iter() {
+    for (entity, _) in existing_chunks_q.iter() {
         commands.entity(entity).despawn();
     }
 
-    let window = windows.single().unwrap();
-    let zoom = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
-    let current_map_id = scene_state_data_res.map_id;
-    let map_plane_metadata = world_geo_data_res
-        .maps
-        .get(&current_map_id)
-        .expect(&format!(
-            "Requested metadata for uncached map {current_map_id}"
-        ));
-
-    // Player start position (centered focus)
-    let player_pos = scene_startup_data_res
-        .player_start_pos
-        .to_bevy_vec3_ignore_map();
-
-    let mut player_instance = player_q.single_mut().expect("More than 1 players?");
-    player_instance.current_pos = Some(scene_startup_data_res.player_start_pos);
-    player_instance.prev_rendered_pos = Some(scene_startup_data_res.player_start_pos);
-
-    // Compute set of visible chunks at this config:
-    let visible_chunks = compute_visible_chunks(
-        player_pos,
-        window.physical_width() as f32,
-        window.physical_height() as f32,
-        zoom,
-        map_plane_metadata.width,
-        map_plane_metadata.height,
-    );
-
-    for &(gx, gy) in visible_chunks.iter() {
-        commands.spawn((
-            land::LCMesh {
-                parent_map_id: current_map_id,
-                gx,
-                gy,
-            },
-            Transform::default(),
-            GlobalTransform::default(),
-        ));
-        log_chunk_spawn(gx, gy, current_map_id);
-    }
+    sys_update_worldmap_chunks_to_render(
+        commands,
+        world_geo_data_res,
+        render_zoom_res,
+        scene_state_data_res,
+        windows_q,
+        player_q,
+        existing_chunks_q,
+    )
 }
 
 pub fn sys_update_worldmap_chunks_to_render(

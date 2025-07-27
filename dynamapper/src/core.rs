@@ -6,7 +6,7 @@ pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
 
-use crate::prelude::*;
+use crate::{core::app_states::*, settings};
 use bevy::{
     //ecs::schedule::ExecutorKind,
     log::{BoxedLayer, LogPlugin},
@@ -111,10 +111,14 @@ fn custom_render_plugin_settings() -> RenderPlugin {
 }
 
 pub fn run_bevy_app() -> ExitCode {
+    let cwd = std::env::current_dir().unwrap();
+    let assets_folder = cwd.join("assets/");
+
     // Current working directory.
-    debug!("CWD: {:?}", std::env::current_dir().unwrap());
+    println!("CWD: {cwd:?}");
     // Other debug info.
-    debug!("ASSET FOLDER: {:?}", bevy::asset::AssetPlugin::default().file_path);
+    //println!("DEFAULT ASSET DIR: {:?}", bevy::asset::AssetPlugin::default().file_path);
+    println!("Assets folder: {assets_folder:?}");
 
     let result = App::new()
         .insert_resource(custom_winit_settings())
@@ -125,10 +129,11 @@ pub fn run_bevy_app() -> ExitCode {
                 .set(custom_window_plugin_settings())
                 .set(custom_render_plugin_settings())
                 .set(ImagePlugin::default_linear())
-                //.set(AssetPlugin {
-                //    watch_for_changes_override: true,
-                //    ..default()
-                //}),
+                .set(AssetPlugin {
+                    //watch_for_changes_override: true,
+                    file_path: assets_folder.to_str().unwrap().to_string(),
+                    ..default()
+}),
         )
         //.add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
         .insert_resource(custom_wireframe_config())
@@ -141,6 +146,9 @@ pub fn run_bevy_app() -> ExitCode {
             render::RenderPlugin {
                 registered_by: "Core",
             },
+            settings::SettingsPlugin {
+                registered_by: "Core",
+            },
             texture_cache::TextureCachePlugin {
                 registered_by: "Core",
             },
@@ -149,19 +157,30 @@ pub fn run_bevy_app() -> ExitCode {
             },
         ))
         .init_state::<AppState>()
-        .insert_state(AppState::LoadStartupUOFiles)
-        .configure_sets(Startup, StartupSysSet::SetupScene)
-        .add_systems(
-            OnEnter(AppState::LoadStartupUOFiles),
-            advance_state_after_load_startup_files.after(StartupSysSet::LoadStartupUOFiles),
+        .insert_state(AppState::StartupSetup)
+        .configure_sets(
+            Startup,
+            StartupSysSet::LoadStartupUOFiles.after(StartupSysSet::First),
+        )
+        .configure_sets(
+            Startup,
+            StartupSysSet::SetupSceneStage1.after(StartupSysSet::LoadStartupUOFiles),
+        )
+        .configure_sets(
+            Startup,
+            StartupSysSet::SetupSceneStage2.after(StartupSysSet::SetupSceneStage1),
+        )
+        .configure_sets(
+            Startup,
+            StartupSysSet::Done.after(StartupSysSet::SetupSceneStage2),
         )
         .add_systems(
-            OnEnter(AppState::SetupSceneStage1),
-            advance_state_after_scene_setup_stage_1.after(StartupSysSet::SetupScene),
+            PreStartup,
+            advance_state_after_init_core.in_set(StartupSysSet::First),
         )
         .add_systems(
-            OnEnter(AppState::SetupSceneStage2),
-            advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupScene),
+            Startup,
+            advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
         )
         .run();
 
@@ -171,14 +190,8 @@ pub fn run_bevy_app() -> ExitCode {
     }
 }
 
-fn advance_state_after_load_startup_files(mut next_state: ResMut<NextState<AppState>>) {
-    log_appstate_change("SetupSceneStage1");
-    next_state.set(AppState::SetupSceneStage1);
-}
-
-fn advance_state_after_scene_setup_stage_1(mut next_state: ResMut<NextState<AppState>>) {
-    log_appstate_change("SetupSceneStage2");
-    next_state.set(AppState::SetupSceneStage2);
+fn advance_state_after_init_core() {
+    log_appstate_change("StartupSetup");
 }
 
 fn advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {

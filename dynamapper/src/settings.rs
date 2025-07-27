@@ -1,13 +1,17 @@
-use crate::{/*fname,*/ impl_tracked_plugin, util_lib::tracked_plugin::*};
+use std::path::PathBuf;
+
+use crate::util_lib::uo_coords::*;
+use crate::logger::{self, LogAbout, LogSev};
+use crate::{impl_tracked_plugin, util_lib::tracked_plugin::*};
 use bevy::{
-    asset::{AssetLoader, LoadContext, io::Reader},
+    //asset::{AssetLoader, LoadContext, io::Reader},
     prelude::*,
 };
 use serde::Deserialize;
 
 const CONFIG_FILE_NAME: &'static str = "settings.toml";
 
-#[derive(Asset, Clone, Debug, Deserialize, TypePath)]
+#[derive(Asset, Clone, Debug, Deserialize, Resource, TypePath)]
 pub struct Settings {
     pub uo_files: UoFiles,
     pub input: Input,
@@ -36,7 +40,7 @@ pub struct Window {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct World {
-    pub start_p: [i32; 3], // or [f32;3].
+    pub start_p: UOVec4, //[i32; 4], // or [f32;4].
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -51,20 +55,54 @@ impl_tracked_plugin!(SettingsPlugin);
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.init_asset_loader::<SettingsAssetLoader>() // Register custom loader
+        app
             .init_asset::<SettingsAsset>()
-            .add_systems(Startup, sys_load_settings)
-            .add_systems(Update, sys_settings_reloaded);
+            .init_asset::<Settings>()
+            //.init_asset_loader::<SettingsAssetLoader>() // Register custom loader
+            .add_systems(PreStartup, sys_load_settings)
+            //.add_systems(Update, sys_settings_reloaded)
+            ;
     }
 }
 
-// Asset wrapper
+// Wrappers
 #[derive(Asset, TypePath, Debug, Clone)]
 pub struct SettingsAsset(pub Settings);
 
 #[derive(Resource, Clone)]
 pub struct SettingsHandle(pub Handle<Settings>);
 
+// ----
+
+fn sys_load_settings(/*asset_server: Res<AssetServer>,*/ mut commands: Commands) {
+    let settings_with_rel_path: PathBuf = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string() + CONFIG_FILE_NAME);
+
+    let contents = std::fs::read_to_string(&settings_with_rel_path)
+        .expect("Failed to read settings file");
+    let settings: Settings = toml::from_str(&contents)
+        .expect("Failed to parse settings TOML");
+
+    commands.insert_resource(settings);
+
+    logger::one(
+        None,
+        LogSev::Info,
+        LogAbout::Startup,
+        "Loaded settings file.",
+    );
+
+    // TODO: reset window size, read zoom and wireframe value from settings.
+
+    /*
+    // TODO: disable hot reloading for now. We would need every system to fetch the updated settings and react.
+
+    // Ttrack for changes and update it asynchronously.
+    let handle: Handle<Settings> = asset_server.load(CONFIG_FILE_NAME);
+    commands.insert_resource(SettingsHandle(handle));
+    */
+}
+
+/*
 #[derive(Default)]
 pub struct SettingsAssetLoader;
 
@@ -91,12 +129,8 @@ impl AssetLoader for SettingsAssetLoader {
     }
 }
 
-fn sys_load_settings(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let handle: Handle<Settings> = asset_server.load(CONFIG_FILE_NAME);
-    commands.insert_resource(SettingsHandle(handle));
-}
-
 fn sys_settings_reloaded(
+    mut commands: Commands,
     mut events: EventReader<AssetEvent<Settings>>,
     handles: Res<SettingsHandle>,
     assets: Res<Assets<Settings>>,
@@ -106,14 +140,18 @@ fn sys_settings_reloaded(
             AssetEvent::LoadedWithDependencies { id } if id == &handles.0.id() => {
                 if let Some(settings) = assets.get(&handles.0) {
                     println!("Settings loaded (or hot reloaded): {settings:#?}");
+                    commands.insert_resource(settings.clone());
                 }
             }
             AssetEvent::Modified { id } if id == &handles.0.id() => {
                 if let Some(settings) = assets.get(&handles.0) {
                     println!("Settings hot reloaded: {settings:#?}");
+                    commands.insert_resource(settings.clone());
                 }
             }
             _ => {}
         }
     }
 }
+
+*/

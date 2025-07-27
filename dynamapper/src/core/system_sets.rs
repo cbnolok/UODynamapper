@@ -1,13 +1,16 @@
 use bevy::ecs::schedule::SystemSet;
 
 
-#[derive(SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
 pub enum StartupSysSet {
+    First,
     LoadStartupUOFiles,
-    SetupScene,
+    SetupSceneStage1,
+    SetupSceneStage2,
+    Done,
 }
 
-#[derive(SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
 pub enum SceneRenderSysSet {
     SyncLandChunks,
     RenderLandChunks,

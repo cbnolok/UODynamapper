@@ -1,4 +1,5 @@
 use bevy::prelude::Vec3;
+use serde_derive::*;
 
 #[inline(always)]
 pub fn scale_uo_z_to_bevy_units(z: f32) -> f32 {
@@ -22,7 +23,7 @@ impl UOVec3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UOVec4 {
     pub x: u16,
     pub y: u16,

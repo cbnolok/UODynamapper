@@ -1,4 +1,3 @@
-use super::scene::SceneStartupData;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::{color, prelude::*};
@@ -17,8 +16,8 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupSceneStage1),
-            sys_spawn_player_entity.in_set(StartupSysSet::SetupScene),
+            Startup,
+            sys_spawn_player_entity.in_set(StartupSysSet::SetupSceneStage1),
         );
     }
 }
@@ -27,9 +26,9 @@ pub fn sys_spawn_player_entity(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    scene_startup_data_res: Option<Res<SceneStartupData>>,
+    settings: Res<Settings>,
 ) {
-    log_system_add_onenter::<PlayerPlugin>(AppState::SetupSceneStage1, fname!());
+    log_system_add_startup::<PlayerPlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
     // A cube, to mimic the player position and to have another rendered object to have a visual comparison.
     let mesh_handle = meshes.add(Mesh::from(Cuboid {
@@ -40,7 +39,7 @@ pub fn sys_spawn_player_entity(
         ..default()
     });
 
-    let player_start_pos_uo = scene_startup_data_res.unwrap().player_start_pos;
+    let player_start_pos_uo = settings.world.start_p;
     let player_start_pos = player_start_pos_uo.to_bevy_vec3_ignore_map();
 
     commands.spawn((

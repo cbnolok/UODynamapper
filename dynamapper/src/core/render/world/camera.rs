@@ -1,8 +1,8 @@
-use super::scene::SceneStartupData;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
+use bevy::window::Window;
 
 pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 
@@ -55,8 +55,8 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
-            OnEnter(AppState::SetupSceneStage1),
-            sys_setup_cam.in_set(StartupSysSet::SetupScene),
+            Startup,
+            sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
         )
         .insert_resource(RenderZoom::default())
         .add_systems(Update, sys_update_camera_projection_to_view);
@@ -67,8 +67,7 @@ pub fn sys_setup_cam(
     mut commands: Commands,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
-    // Use any data you need for initial camera placement (e.g. player start position)
-    scene_startup_data_res: Res<SceneStartupData>,
+    settings: Res<Settings>,
 ) {
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width() as f32;
@@ -82,9 +81,7 @@ pub fn sys_setup_cam(
     //println!("Ortographic camera width={ortho_width}, height={ortho_height}");
 
     // Find player start position for focus (if needed).
-    let player_start_pos: Vec3 = scene_startup_data_res
-        .player_start_pos
-        .to_bevy_vec3_ignore_map();
+    let player_start_pos: Vec3 = settings.world.start_p.to_bevy_vec3_ignore_map();
 
     // Setup camera with "military"/oblique angle, looking at player start.
     commands.spawn((

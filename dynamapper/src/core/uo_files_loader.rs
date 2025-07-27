@@ -31,7 +31,10 @@ impl_tracked_plugin!(UoFilesPlugin);
 impl Plugin for UoFilesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(OnEnter(AppState::LoadStartupUOFiles), sys_setup_uo_data.in_set(StartupSysSet::LoadStartupUOFiles));
+        app.add_systems(
+            Startup,
+            sys_setup_uo_data.in_set(StartupSysSet::LoadStartupUOFiles),
+        );
     }
 }
 
@@ -44,7 +47,10 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
     // TODO: inject a logger function to uocf crate calls.
 
     let map_plane_index = 0_u32;
-    lg(&format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)...").as_str());
+    lg(
+        &format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)...")
+            .as_str(),
+    );
     let map_plane = map::MapPlane::init(
         uo_path.join(&format!("map{map_plane_index}.mul")),
         map_plane_index,
