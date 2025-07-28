@@ -1,6 +1,4 @@
-pub mod camera;
-pub mod player;
-pub mod scene;
+pub mod land;
 
 use std::collections::HashMap;
 use bevy::prelude::*;
@@ -37,11 +35,9 @@ impl Plugin for WorldPlugin
         log_plugin_build(self);
         app
             .insert_resource(WorldGeoData::default())
-            .add_plugins((
-                camera::CameraPlugin { registered_by: "WorldPlugin" },
-                player::PlayerPlugin { registered_by: "WorldPlugin" },
-                scene::ScenePlugin   { registered_by: "WorldPlugin" },
-            ));
+            .add_plugins(
+                land::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
+            );
     }
 }
 

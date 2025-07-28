@@ -1,5 +1,5 @@
 use crate::{
-    core::{render::world::player::Player, system_sets::StartupSysSet},
+    core::{render::scene::player::Player, system_sets::StartupSysSet},
     prelude::*,
 };
 use bevy::prelude::*;

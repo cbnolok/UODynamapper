@@ -20,7 +20,7 @@ use crate::{
     core::{
         constants,
         maps::MapPlaneMetadata,
-        render::world::{WorldGeoData, player::Player, scene::SceneStateData},
+        render::scene::{player::Player, SceneStateData, world::WorldGeoData},
         texture_cache::land::cache::*,
         uo_files_loader::UoFileData,
     },
@@ -327,9 +327,8 @@ fn draw_land_chunk(
 
     //for ty in 0..TILE_NUM_PER_CHUNK_1D {
     //    for tx in 0..TILE_NUM_PER_CHUNK_1D {
-        for ty in 0..(GRID_H - 1) {
+    for ty in 0..(GRID_H - 1) {
         for tx in 0..(GRID_W - 1) {
-
             // Four corners per tile quad
             let vx = tx;
             let vy = ty;

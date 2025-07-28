@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::core::render::world::camera::RenderZoom;
+use crate::core::render::scene::camera::RenderZoom;
 use crate::logger::{self, LogAbout, LogSev};
 use crate::util_lib::uo_coords::*;
 use crate::{impl_tracked_plugin, util_lib::tracked_plugin::*};

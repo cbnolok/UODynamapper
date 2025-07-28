@@ -1,16 +1,16 @@
+pub mod camera;
 pub mod dynamic_light;
-pub mod land;
+pub mod player;
+pub mod world;
 
-use crate::core::render::world::{
-    WorldGeoData,
-    camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE},
-    player::Player,
-};
+use world::{land, WorldGeoData};
+use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
+use player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::window::Window;
-use land::TILE_NUM_PER_CHUNK_1D;
+use world::land::TILE_NUM_PER_CHUNK_1D;
 
 #[derive(Resource)]
 pub struct SceneStateData {
@@ -29,12 +29,14 @@ impl Plugin for ScenePlugin {
         log_plugin_build(self);
 
         app.add_plugins((
-            land::DrawLandChunkMeshPlugin {
+            world::WorldPlugin {
                 registered_by: "ScenePlugin",
             },
             dynamic_light::PlayerDynamicLightPlugin {
                 registered_by: "ScenePlugin",
             },
+                camera::CameraPlugin { registered_by: "ScenePlugin" },
+                player::PlayerPlugin { registered_by: "ScenePlugin" },
         ))
         .insert_resource(SceneStateData {
             map_id: 0xFFFF, // placeholder
