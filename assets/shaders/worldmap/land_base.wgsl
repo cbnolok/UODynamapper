@@ -111,9 +111,12 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tx: u32 = clamp(u32(floor(local_x)), 0u, CHUNK_TILE_NUM_1D-1u);
     let ty: u32 = clamp(u32(floor(local_z)), 0u, CHUNK_TILE_NUM_1D-1u);
     let tile_index: u32 = ty * CHUNK_TILE_NUM_1D + tx;
-    let tile_index_chunk: u32 = tile_index / CHUNK_TILE_NUM_1D;
-    let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
-    let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
+    //let tile_index_chunk: u32 = tile_index / CHUNK_TILE_NUM_1D;
+    //let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
+    //let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
+    let tile_index_vec: u32 = tile_index / 4;
+    let tile_index_idx: u32 = tile_index % 4;
+    let layer: u32 = land.layers[tile_index_vec][tile_index_idx];
 
     // Sample the land tile texture.
     //  We could use textureSample or textureSampleLevel, the latter lets us choose the mip level
@@ -121,7 +124,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tex_color = textureSampleLevel(atlas, atlas_sampler, in.uv, u32(layer), 0.0);
 
     // Ambient light factor.
-    let ao = 0.25;
+    let ao = 0.425;
     let lambert = in.uv_b.x;  // Lambert calculated in the vertex shader.
     let brightness = lambert * 0.6 + ao * 0.4;
     //let brightness = lambert * 0.7 + ao * 0.3;

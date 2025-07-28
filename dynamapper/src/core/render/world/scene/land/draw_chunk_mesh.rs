@@ -96,64 +96,77 @@ pub fn sys_draw_spawned_land_chunks(
         "Requested metadata for uncached map {current_map_id}"
     ));
 
-    // Step 2: Compute which chunk positions are needed for this frame.
-    // Chunks that need to be spawned include currently visible, and direct neighbors.
-    let mut spawn_targets = HashSet::<LandChunkConstructionData>::new();
+    // Step 1: Collect all primary chunks that need meshing into a HashMap.
+    // This maps coordinates to an entity, ensuring we don't lose the entity reference
+    // and allows for fast lookups.
+    let mut primary_chunks = std::collections::HashMap::new();
     for (entity, chunk_data, mesh_handle) in chunk_q.iter() {
-        // Optimization: Only process chunks not already meshed, avoid duplicate work.
-        if mesh_handle.is_some() {
-            continue;
+        // Process chunks that don't have a mesh yet.
+        if mesh_handle.is_none() {
+            primary_chunks.insert((chunk_data.gx, chunk_data.gy), entity);
         }
-        let chunk_origin_x = chunk_data.gx;
-        let chunk_origin_z = chunk_data.gy;
-        //if !is_chunk_in_draw_range(cam_pos, chunk_origin_x, chunk_origin_z) {
-        //    continue;
-        //}
+    }
+
+    // Step 2: Build the final set of chunks whose data we need to construct.
+    // This includes the primary chunks and their immediate non-primary neighbors
+    // (to get data for mesh stitching).
+    let mut spawn_targets = HashSet::<LandChunkConstructionData>::new();
+
+    #[rustfmt::skip]
+    const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
+        (-1, -1), (0, -1), (1, -1),
+        (-1,  0),          (1,  0), // The primary chunk (0,0) is handled separately.
+        (-1,  1), (0,  1), (1,  1),
+    ];
+
+    // Iterate through the primary chunks. Add them to the target list,
+    // then add any neighbors that are not already primary chunks themselves.
+    for (&(gx, gy), &entity) in primary_chunks.iter() {
+        // Add the primary chunk itself. Its entity is guaranteed to be Some(entity).
         spawn_targets.insert(LandChunkConstructionData {
             entity: Some(entity),
-            chunk_origin_chunk_units_x: chunk_origin_x,
-            chunk_origin_chunk_units_z: chunk_origin_z,
+            chunk_origin_chunk_units_x: gx,
+            chunk_origin_chunk_units_z: gy,
         });
 
-        // Also include all direct neighbors (to avoid mesh seams).
-        const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
-            // x,y
-            (-1, -1),
-            (0, -1),
-            (1, -1),
-            (-1, 0),
-            (0, 0),
-            (1, 0),
-            (-1, 1),
-            (0, 1),
-            (1, 1),
-        ];
+        // Add its valid neighbors that ARE NOT already primary chunks.
+        // This ensures we get their data for seamless mesh generation without
+        // overwriting a primary chunk's entity reference.
         for (dx, dy) in NEIGHBOR_OFFSETS {
-            let nx = *dx + chunk_origin_x as i32;
-            let ny = *dy + chunk_origin_z as i32;
+            let nx = gx as i32 + dx;
+            let ny = gy as i32 + dy;
+
+            // Ensure the neighbor is within map boundaries.
             if nx >= 0
                 && nx < map_plane_metadata.width as i32
                 && ny >= 0
                 && ny < map_plane_metadata.height as i32
             {
-                spawn_targets.insert(LandChunkConstructionData {
-                    entity: None,
-                    chunk_origin_chunk_units_x: nx as u32,
-                    chunk_origin_chunk_units_z: ny as u32,
-                });
+                let neighbor_coords = (nx as u32, ny as u32);
+
+                // If the neighbor is not a primary chunk, we need its data for the mesh.
+                // Since `spawn_targets` is a HashSet, duplicate inserts of the same
+                // neighbor from different primary chunks are handled automatically.
+                if !primary_chunks.contains_key(&neighbor_coords) {
+                    spawn_targets.insert(LandChunkConstructionData {
+                        entity: None, // It's just a neighbor, not a spawned entity.
+                        chunk_origin_chunk_units_x: neighbor_coords.0,
+                        chunk_origin_chunk_units_z: neighbor_coords.1,
+                    });
+                }
             }
         }
     }
 
     // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
-    let blocks_to_draw: HashSet<MapBlockRelPos> = spawn_targets
+    let mut blocks_to_draw: Vec<MapBlockRelPos> = spawn_targets
         .iter()
         .map(|d| MapBlockRelPos {
             x: d.chunk_origin_chunk_units_x,
             y: d.chunk_origin_chunk_units_z,
         })
         .collect();
-    let blocks_vec = blocks_to_draw.iter().cloned().collect::<Vec<_>>();
+    //blocks_to_draw.sort();    // Already done by load_blocks.
 
     let mut blocks_data = BTreeMap::<MapBlockRelPos, MapBlock>::new();
     {
@@ -163,9 +176,9 @@ pub fn sys_draw_spawned_land_chunks(
             .get_mut(&current_map_id)
             .expect("Requested map plane metadata is uncached?");
         uo_data_map_plane
-            .load_blocks(&blocks_vec)
+            .load_blocks(&mut blocks_to_draw)
             .expect("Can't load map blocks");
-        for block_coords in blocks_vec {
+        for block_coords in blocks_to_draw {
             let block_ref = uo_data_map_plane
                 .block(block_coords)
                 .expect("Requested map block is uncached?");
@@ -258,12 +271,18 @@ fn draw_land_chunk(
         };
         blocks_data
             .get(&chunk_rel_coords)
-            .expect("Requested uncached map block?")
+            .expect(&format!(
+                "Requested uncached map block? {chunk_rel_coords:?}."
+            ))
             .cell(tile_rel_coords.x, tile_rel_coords.y)
-            .map_err(|err_str| format!("Error: {err_str}."))
+            .map_err(|err_str| format!("Cell {tile_rel_coords:?} error: {err_str}."))
             .unwrap()
     }
+    let get_cell_z = |x: u32, z: u32| {
+        scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, x as usize, z as usize).z as f32)
+    };
 
+    // Extend to the first row and column of this neighboring block, to avoid seam artifacts.
     const GRID_W: u32 = TILE_NUM_PER_CHUNK_1D + 1;
     const GRID_H: u32 = TILE_NUM_PER_CHUNK_1D + 1;
 
@@ -283,31 +302,34 @@ fn draw_land_chunk(
     meshbufs.uvs.clear();
     meshbufs.indices.clear();
 
-    // Also record grid of heights for normal calculation (original logic)
+    // Also record grid of heights for normal calculation
     let mut heights = vec![0.0f32; (GRID_W * GRID_H) as usize];
-    for vy in 0..GRID_H {
-        for vx in 0..GRID_W {
-            let world_tx = chunk_origin_tile_units_x as usize + vx as usize;
-            let world_tz = chunk_origin_tile_units_z as usize + vy as usize;
-            heights[(vy * GRID_W + vx) as usize] =
-                scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, world_tx, world_tz).z as f32);
+    for vy in 0..GRID_W {
+        for vx in 0..GRID_H {
+            let world_tx = chunk_origin_tile_units_x + vx;
+            let world_tz = chunk_origin_tile_units_z + vy;
+            heights[(vy * GRID_W + vx) as usize] = get_cell_z(world_tx, world_tz);
 
             /*
-            // Debug:
-            for i in 0..9 {
-                let x = i % 3;
-                let y = i / 3;
-                let world_tx = chunk_origin_x as usize + x;
-                let world_tz = chunk_origin_z as usize + y;
-                dbg!(x, y, heights[y * GRID_W as usize + x]);
-                dbg!(get_cell(blocks_data_ref, world_tx, world_tz).z);
-            }
+            // Debug
+            let first_cell_id = get_cell(blocks_data_ref, world_tx as usize, world_tz as usize).id;
+            println!(
+                "Block at gx={}, gy={} has first cell at tx={}, ty={} with ID: {}",
+                chunk_data_ref.chunk_origin_chunk_units_x,
+                chunk_data_ref.chunk_origin_chunk_units_z,
+                world_tx,
+                world_tz,
+                first_cell_id
+            );
             */
         }
     }
 
-    for ty in 0..TILE_NUM_PER_CHUNK_1D {
-        for tx in 0..TILE_NUM_PER_CHUNK_1D {
+    //for ty in 0..TILE_NUM_PER_CHUNK_1D {
+    //    for tx in 0..TILE_NUM_PER_CHUNK_1D {
+        for ty in 0..(GRID_H - 1) {
+        for tx in 0..(GRID_W - 1) {
+
             // Four corners per tile quad
             let vx = tx;
             let vy = ty;
@@ -326,9 +348,6 @@ fn draw_land_chunk(
             let h01 = heights[((vy1 * GRID_W) + vx) as usize];
 
             // Normals at four corners
-            let get_cell_z = |x: u32, z: u32| {
-                scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, x as usize, z as usize).z as f32)
-            };
             let get_norm = |wx: u32, wz: u32| {
                 let center = get_cell_z(wx, wz);
                 let left = if wx > 0 {
@@ -451,27 +470,30 @@ fn draw_land_chunk(
     };
 
     // Step 5: Attach or update the Bevy entity with mesh/material/transform.
-    let entity = chunk_data_ref.entity;
-    // Paranoid checks, shouldn't ever happen.
-    if entity.is_none() {
-        println!("'None' entity passed to draw_land_chunk? Skipping.");
+    let entity = chunk_data_ref
+        .entity
+        .expect("Entity cannot be None at this stage.");
+    let entity_commands = commands.get_entity(entity);
+
+    if entity_commands.is_err() {
+        logger::one(
+            None,
+            LogSev::Error,
+            LogAbout::RenderWorldLand,
+            "Skipping drawing of invalid/unspawned entity at stage 'draw_land_chunk'.",
+        );
     } else {
-        let entity = entity.unwrap();
-        if commands.get_entity(entity).is_err() {
-            println!("Skipping drawing of invalid/unspawned entity at stage 'draw_land_chunk'.");
-        } else {
-            commands.entity(entity).insert((
-                Mesh3d(chunk_mesh_handle.clone()),
-                MeshMaterial3d(chunk_material_handle.clone()),
-                // Place at correct world position via transform.
-                Transform::from_xyz(
-                    chunk_origin_tile_units_x as f32,
-                    0.0,
-                    chunk_origin_tile_units_z as f32,
-                ),
-                GlobalTransform::default(),
-            ));
-        }
+        entity_commands.unwrap().insert((
+            Mesh3d(chunk_mesh_handle.clone()),
+            MeshMaterial3d(chunk_material_handle.clone()),
+            // Place at correct world position via transform.
+            Transform::from_xyz(
+                chunk_origin_tile_units_x as f32,
+                0.0,
+                chunk_origin_tile_units_z as f32,
+            ),
+            GlobalTransform::default(),
+        ));
     }
 
     logger::one(

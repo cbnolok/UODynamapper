@@ -1,5 +1,6 @@
 use crate::core::system_sets::*;
 use crate::prelude::*;
+use crate::util_lib::math::Between;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::window::Window;
@@ -39,6 +40,11 @@ impl Default for RenderZoom {
         RenderZoom(DEFAULT_ZOOM)
     }
 }
+impl RenderZoom {
+    pub fn write_val(&mut self, val: f32) {
+        self.0 = val.clamp(MIN_ZOOM, MAX_ZOOM);
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct PlayerCamera;
@@ -72,7 +78,8 @@ pub fn sys_setup_cam(
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width() as f32;
     let window_height = main_window.resolution.height() as f32 / ORTHO_WIDTH_SCALE_FACTOR;
-    let zoom = render_zoom.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let zoom = render_zoom.0;
+    assert!(zoom.between(MIN_ZOOM, MAX_ZOOM));
 
     // Compute the orthographic width/height (world units) so that visible tiles fill the window at tile size/zoom.
     // How many world units can fit horizontally & vertically?
@@ -131,7 +138,8 @@ pub fn sys_update_camera_projection_to_view(
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width() as f32;
     let window_height = main_window.resolution.height() as f32 / ORTHO_WIDTH_SCALE_FACTOR;
-    let zoom = render_zoom.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let zoom = render_zoom.0;
+    assert!(zoom.between(MIN_ZOOM, MAX_ZOOM));
 
     // Compute the orthographic width/height (world units) so that visible tiles fill the window at tile size/zoom.
     // How many world units can fit horizontally & vertically?

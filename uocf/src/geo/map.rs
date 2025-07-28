@@ -2,11 +2,11 @@
 
 crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
-use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use color_eyre::Section;
+use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{prelude::*, Cursor, SeekFrom};
+use std::io::{Cursor, SeekFrom, prelude::*};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Default)]
@@ -322,7 +322,7 @@ impl MapPlane {
         ret
     }
 
-    pub fn load_blocks(&mut self, blocks_to_load: &Vec<MapBlockRelPos>) -> eyre::Result<()> {
+    pub fn load_blocks(&mut self,   blocks_to_load: &mut Vec<MapBlockRelPos>) -> eyre::Result<()> {
         const MAP_FILE_MAX_SEQ_BLOCKS: usize = 10_000; // Cap of blocks to be read sequentially.
         const MAP_FILE_MAX_CHUNK_SIZE: usize = MapBlock::PACKED_SIZE * MAP_FILE_MAX_SEQ_BLOCKS;
 
@@ -334,7 +334,7 @@ impl MapPlane {
         // First, check if we lack some block in our cache.
         if !self.cached_blocks.is_empty() {
             let mut missing_key = false;
-            for block_pos in blocks_to_load {
+            for block_pos in &*blocks_to_load {
                 if !self.cached_blocks.contains_key(block_pos) {
                     missing_key = true;
                     break;
@@ -353,6 +353,9 @@ impl MapPlane {
             )
         })?;
 
+        // Having it sorted allows us to perform less file reads by acquiring blocks stored sequentially in the map file.
+        blocks_to_load.sort(); // Sort first by x, then by y.
+
         // Start reading blocks.
         let mut blocks_buffer: Vec<u8> = Vec::with_capacity(MAP_FILE_MAX_CHUNK_SIZE);
         let mut blocks_read: usize = 0;
@@ -362,8 +365,6 @@ impl MapPlane {
             if blocks_to_load.len() - blocks_read > 1 {
                 // Given the list of blocks to load, how many of them can i load sequentially?
                 //  (in order to execute the minimum amount of file read operations)
-                let mut block_pos: &MapBlockRelPos;
-                let mut block_pos_prev: &MapBlockRelPos;
                 'count_sequential_blocks: loop {
                     if blocks_to_load.len() == blocks_read + chunk_blocks_to_read_seq_count {
                         // Reached after reading the last chunk
@@ -371,14 +372,24 @@ impl MapPlane {
                     }
 
                     // Blocks are stored sequentially top to bottom, then left to right.
-                    block_pos_prev =
+                    let block_pos_prev: &MapBlockRelPos =
                         &blocks_to_load[blocks_read + chunk_blocks_to_read_seq_count - 1];
-                    block_pos = &blocks_to_load[blocks_read + chunk_blocks_to_read_seq_count];
-
+                    let block_pos: &MapBlockRelPos =
+                        &blocks_to_load[blocks_read + chunk_blocks_to_read_seq_count];
+                    /*
                     if (block_pos.y < block_pos_prev.y || block_pos.x > block_pos_prev.x)
                         || (chunk_blocks_to_read_seq_count >= MAP_FILE_MAX_SEQ_BLOCKS)
                     {
                         // Reached after reading the last block in every chunk (except the last chunk)
+                        break 'count_sequential_blocks;
+                    }
+                    */
+                    let block_idx_prev =
+                        MapBlock::idx_from_coords(block_pos_prev, self.size_blocks.height);
+                    let block_idx = MapBlock::idx_from_coords(block_pos, self.size_blocks.height);
+
+                    if block_idx != block_idx_prev + 1 {
+                        // The blocks are not sequential in the file, so break the chunk.
                         break 'count_sequential_blocks;
                     }
                     chunk_blocks_to_read_seq_count += 1;
@@ -391,8 +402,12 @@ impl MapPlane {
             // Read the current chunk of blocks.
             let block_to_seek = blocks_to_load[blocks_read];
             //let max_blocks = self.size_blocks.width * self.size_blocks.height;
-            if block_to_seek.x >= self.size_blocks.width || block_to_seek.y >= self.size_blocks.height {
-                Err(eyre!("Requested map block out of bounds {block_to_seek:?}.".to_owned()))?;
+            if block_to_seek.x >= self.size_blocks.width
+                || block_to_seek.y >= self.size_blocks.height
+            {
+                Err(eyre!(
+                    "Requested map block out of bounds {block_to_seek:?}.".to_owned()
+                ))?;
             }
 
             let block_idx = MapBlock::idx_from_coords(&block_to_seek, self.size_blocks.height);
@@ -417,7 +432,10 @@ impl MapPlane {
             'block_store: for block_pos in chunk_slice_to_loop.iter() {
                 if self.cached_blocks.contains_key(block_pos) {
                     rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))
-                        .wrap_err(format!("Failed to seek after already cached block {:?}.", block_pos))?;
+                        .wrap_err(format!(
+                            "Failed to seek after already cached block {:?}.",
+                            block_pos
+                        ))?;
                     blocks_read += 1;
                     continue 'block_store;
                 }
