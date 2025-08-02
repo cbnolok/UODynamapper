@@ -76,6 +76,12 @@ pub fn create_gpu_texture_array(
 // 2. Loading an Image for a Specific Art ID and Texture Size
 ////////////////////////////////////////////////////////////////////////////////
 
+const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Small;
+const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
+
+//const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
+//const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C;   // Sea floor
+
 /// Create and preserve a placeholder texture for fallback/error.
 fn get_error_texture(
     texture_size: LandTextureSize,
@@ -162,34 +168,26 @@ pub fn get_texmap_image(
     };
 
     // Validate size and pixel data. If missing or wrong size, fallback to unused placeholder.
-    let mut valid = true;
-    if tex_size_and_rgba.is_none() {
-        local_log_err(&format!("Requested invalid texture {texture_id:#X}. Defaulting to UNUSED."));
-        valid = false;
-    }
+    let (texture_size, texture_rgba_buffer) = match tex_size_and_rgba {
+        Some((size, buffer)) if !buffer.is_empty() => (size, buffer),
+        _ => {
+            if tex_size_and_rgba.is_none() {
+                local_log_err(&format!(
+                    "Requested invalid texture {texture_id:#X}. Defaulting to UNUSED."
+                ));
+            } else {
+                local_log_err(&format!("Texture {texture_id:#X} has invalid pixel data."));
+            }
+            let err_tex: Handle<Image> =
+                get_error_texture(DEFAULT_ERROR_TEXTURE_SIZE, image_assets_resmut, uo_data_res);
+            return (DEFAULT_ERROR_TEXTURE_SIZE, err_tex);
+        }
+    };
 
-    let (texture_size, texture_rgba_buffer) = tex_size_and_rgba.unwrap();
-    if texture_rgba_buffer.is_empty() {
-        local_log_err(&format!("Texture {texture_id:#X} has invalid pixel data."));
-        valid = false;
-    }
-    //if texture_size.is_none() {
-    //    local_log_err(&format!("Texture {texture_id:#X} has invalid size?"));
-    //    valid = false;
-    //}
-
-    if !valid {
-        const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Small;
-        (
-            DEFAULT_ERROR_TEXTURE_SIZE,
-            get_error_texture(DEFAULT_ERROR_TEXTURE_SIZE, image_assets_resmut, uo_data_res),
-        )
-    } else {
-        let (tw, th) = texture_size.dimensions();
-        let img: Image = image_from_rgba8(tw, th, &texture_rgba_buffer);
-        let img_handle: Handle<Image> = image_assets_resmut.add(img);
-        (texture_size, img_handle)
-    }
+    let (tw, th) = texture_size.dimensions();
+    let img: Image = image_from_rgba8(tw, th, &texture_rgba_buffer);
+    let img_handle: Handle<Image> = image_assets_resmut.add(img);
+    (texture_size, img_handle)
 }
 
 /*

@@ -2,7 +2,7 @@
 folder="/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
 
 [input]
-movement_speed_multiplier=7.5 # 100.0 #
+movement_speed_multiplier=1.0 # 100.0
 
 [window]
 height=768.0
@@ -11,6 +11,12 @@ zoom=1.0
 
 [world]
 start_p=[1100,1800,20,0]
+
+#[scene]
+#hide_player=false
+#brightness=20 # 1-25
+#fog=0 # 0-100
+#saturation_factor=1 # 0.0-10.0?
 
 [debug]
 map_render_wireframe=false

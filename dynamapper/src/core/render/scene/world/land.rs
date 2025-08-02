@@ -42,8 +42,8 @@ impl Plugin for DrawLandChunkMeshPlugin {
                 Update,
                 (
                     draw_chunk_mesh::sys_draw_spawned_land_chunks
-                        .in_set(SceneRenderSysSet::RenderLandChunks)
-                        .after(SceneRenderSysSet::SyncLandChunks)
+                        .in_set(SceneRenderLandSysSet::RenderLandChunks)
+                        .after(SceneRenderLandSysSet::SyncLandChunks)
                         .run_if(in_state(AppState::InGame)),
                     //print_render_stats,
                 ),

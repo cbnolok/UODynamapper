@@ -1,3 +1,4 @@
+use crate::core::render::scene::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
@@ -65,11 +66,15 @@ impl Plugin for CameraPlugin {
             sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
         )
         .insert_resource(RenderZoom::default())
-        .add_systems(Update, sys_update_camera_projection_to_view);
+        .add_systems(Update, sys_update_camera_projection_to_view)
+        .add_systems(
+            Update,
+            sys_camera_follow_player.in_set(MovementSysSet::UpdateCamera),
+        );
     }
 }
 
-pub fn sys_setup_cam(
+fn sys_setup_cam(
     mut commands: Commands,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
@@ -103,7 +108,6 @@ pub fn sys_setup_cam(
             },
             ..OrthographicProjection::default_3d()
         }),
-        // UO-military projection: viewed from y+z axis, angled
         Transform::from_translation(player_start_pos + PlayerCamera::BASE_OFFSET_FROM_PLAYER)
             .looking_at(player_start_pos, Vec3::Y),
         GlobalTransform::default(),
@@ -130,7 +134,7 @@ commands.spawn((
 ));
 */
 
-pub fn sys_update_camera_projection_to_view(
+fn sys_update_camera_projection_to_view(
     mut camera_q: Query<&mut Projection, With<Camera3d>>,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
@@ -154,4 +158,17 @@ pub fn sys_update_camera_projection_to_view(
         };
         ortho.scale = 1.0 * zoom;
     }
+}
+
+fn sys_camera_follow_player(
+    mut camera_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
+    player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
+) {
+    let mut camera_transform = camera_q.single_mut().unwrap();
+    let player_transform = player_q.single().unwrap();
+
+    *camera_transform = Transform::from_translation(
+        player_transform.translation.clone() + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+    )
+    .looking_at(player_transform.translation, Vec3::Y);
 }

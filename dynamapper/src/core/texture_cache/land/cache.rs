@@ -17,7 +17,6 @@ const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 #[derive(Clone, Copy, Debug)]
 pub struct LandTextureEntry {
     pub layer: u32,
-    //pub tex_size: LandTextureSize,
     pub last_touch: Instant,
 }
 

@@ -67,10 +67,10 @@ struct LandUniforms {
     tiles: array<TileUniform, CHUNK_TILE_NUM_TOTAL>,
 };
 struct TileUniform {
+    tile_height: u32,
     texture_size: u32,
     texture_layer: u32,
     texture_hue: u32,
-    _pad: u32,
 };
 
 @group(2) @binding(100) var texarray_sampler: sampler;
@@ -136,7 +136,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
 
     // Ambient light factor.
-    let ao = 1.0;
+    let ao = 0.4;
     let lambert = in.uv_b.x;  // Lambert calculated in the vertex shader.
     let brightness = lambert * 0.6 + ao * 0.4;
     //let brightness = lambert * 0.7 + ao * 0.3;

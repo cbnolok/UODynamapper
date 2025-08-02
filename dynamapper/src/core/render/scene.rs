@@ -5,6 +5,7 @@ pub mod world;
 
 use std::collections::HashSet;
 
+use crate::core::maps::MapPlaneMetadata;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -55,7 +56,7 @@ impl Plugin for ScenePlugin {
         .add_systems(
             Update,
             sys_update_worldmap_chunks_to_render
-                .in_set(SceneRenderSysSet::SyncLandChunks)
+                .in_set(SceneRenderLandSysSet::SyncLandChunks)
                 .run_if(in_state(AppState::InGame)),
         );
     }
@@ -184,7 +185,7 @@ pub fn sys_update_worldmap_chunks_to_render(
     let window: &Window = windows_q.single().unwrap();
     let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
     //let current_map_id = scene_state_data_res.map_id;
-    let new_map_plane_metadata = world_geo_data_res
+    let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
         .maps
         .get(&new_map_id)
         .expect(&format!("Requested metadata for uncached map {new_map_id}"));
@@ -208,9 +209,9 @@ pub fn sys_update_worldmap_chunks_to_render(
             "Detected Map Plane change: despawn previously rendered land chunks and spawn new ones.",
         );
 
-        for (entity, tcmesh) in existing_chunks_q.iter() {
+        for (entity, tcm) in existing_chunks_q.iter() {
             commands.entity(entity).despawn();
-            log_chunk_despawn(tcmesh.gx, tcmesh.gy, new_map_id);
+            log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
         }
         for &(gx, gy) in required_chunks.iter() {
             commands.spawn((
@@ -236,6 +237,7 @@ pub fn sys_update_worldmap_chunks_to_render(
             currently_spawned.insert(coords);
         } else {
             commands.entity(entity).despawn();
+            log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
         }
     }
     for coords in required_chunks.difference(&currently_spawned) {
@@ -249,5 +251,6 @@ pub fn sys_update_worldmap_chunks_to_render(
             Transform::default(),
             GlobalTransform::default(),
         ));
+        log_chunk_spawn(gx, gy, new_map_id);
     }
 }

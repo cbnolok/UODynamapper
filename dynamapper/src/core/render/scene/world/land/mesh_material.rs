@@ -44,8 +44,6 @@ impl MaterialExtension for LandMaterialExtension {
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
 /// Each chunk mesh gets a shader material generated per-chunk, with this struct as its extension.
-///
-/// See comments above LandUniforms for why uniforms are aligned the way they are.
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
 pub struct LandUniforms {
@@ -59,8 +57,9 @@ pub struct LandUniforms {
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
 pub struct TileUniform {
+    pub tile_height: u32,
     pub texture_size: u32,  // 0: small, 1: big
     pub layer: u32,
     pub hue: u32,
-    _pad: u32,              // Pad to 16 bytes (WGSL std140 layout)
+    // Ensure to have 16 bytes alignment (WGSL std140 layout), add padding if needed.
 }

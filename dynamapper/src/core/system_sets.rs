@@ -11,8 +11,14 @@ pub enum StartupSysSet {
 }
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
-pub enum SceneRenderSysSet {
+pub enum SceneRenderLandSysSet {
     SyncLandChunks,
     RenderLandChunks,
+}
+
+#[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
+pub enum MovementSysSet {
+    MovementActions,
+    UpdateCamera,
 }
 

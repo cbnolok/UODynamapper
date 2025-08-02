@@ -1,12 +1,17 @@
 pub mod app_states;
 pub mod constants;
+pub mod controls;
 pub mod maps;
 pub mod render;
 pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;
 
-use crate::{core::app_states::*, logger::{self, *}, settings};
+use crate::{
+    core::app_states::*,
+    logger::{self, *},
+    settings,
+};
 use bevy::{
     //ecs::schedule::ExecutorKind,
     log::{BoxedLayer, LogPlugin},
@@ -121,7 +126,7 @@ pub fn run_bevy_app() -> ExitCode {
     println!("Assets folder: {assets_folder:?}");
 
     let settings_data = settings::load_from_file();
-        logger::one(
+    logger::one(
         None,
         LogSev::Info,
         LogAbout::Startup,
@@ -155,6 +160,9 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(FramepacePlugin) // caps at 60 FPS by default
         //.use(bevy_framepace::FramepaceSettings::default().with_framerate(30.0))
         .add_plugins((
+            controls::ControlsPlugin {
+                registered_by: "Core",
+            },
             render::RenderPlugin {
                 registered_by: "Core",
             },
@@ -172,19 +180,16 @@ pub fn run_bevy_app() -> ExitCode {
         .insert_state(AppState::StartupSetup)
         .configure_sets(
             Startup,
-            StartupSysSet::LoadStartupUOFiles.after(StartupSysSet::First),
+            (
+                StartupSysSet::LoadStartupUOFiles.after(StartupSysSet::First),
+                StartupSysSet::SetupSceneStage1.after(StartupSysSet::LoadStartupUOFiles),
+                StartupSysSet::SetupSceneStage2.after(StartupSysSet::SetupSceneStage1),
+                StartupSysSet::Done.after(StartupSysSet::SetupSceneStage2),
+            ),
         )
         .configure_sets(
-            Startup,
-            StartupSysSet::SetupSceneStage1.after(StartupSysSet::LoadStartupUOFiles),
-        )
-        .configure_sets(
-            Startup,
-            StartupSysSet::SetupSceneStage2.after(StartupSysSet::SetupSceneStage1),
-        )
-        .configure_sets(
-            Startup,
-            StartupSysSet::Done.after(StartupSysSet::SetupSceneStage2),
+            Update,
+            MovementSysSet::UpdateCamera.after(MovementSysSet::MovementActions),
         )
         .add_systems(
             PreStartup,
