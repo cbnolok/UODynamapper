@@ -12,7 +12,7 @@ use bevy::{
 use bytemuck::Zeroable;
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
-use uocf::geo::map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos};
+use uocf::geo::{land_texture_2d::LandTextureSize, map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos}};
 
 use super::TILE_NUM_PER_CHUNK_1D;
 use super::{LCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
@@ -420,8 +420,8 @@ fn draw_land_chunk(
 
             // Each quad (tile) uses two triangles (6 indices).
             // Get the layer (index) of the texture array housing this texture (map tile art).
-            let layer =
-                land_texture_cache_rref.layer_of(commands, images_rref, uo_data_rref, tile_ref.id);
+            let (texture_size, layer) =
+                land_texture_cache_rref.get_texture_size_layer(images_rref, uo_data_rref, tile_ref.id, );
 
             // Update values of the uniform buffer. This is per-chunk data (per mesh draw call).
             // We need to store the data not in a simple vector, but in a vector of 4D vectors, in order to meet
@@ -429,11 +429,15 @@ fn draw_land_chunk(
             // We need to access the right layer, so start by picking the right 4D array:
             // Then get the correct one among the 4 elements.
 
-            let layer_ref = uvec4_elem_get_mut(
-                &mut mat_ext_uniforms.layers,
-                get_1d_array_index_as_2d(TILE_NUM_PER_CHUNK_1D as usize, tx, ty),
-            );
-            *layer_ref = layer;
+            let tile_struct_elem_idx: usize = get_1d_array_index_as_2d(TILE_NUM_PER_CHUNK_1D as usize, tx, ty);
+            let tile_uniform: &mut TileUniform = &mut mat_ext_uniforms.tiles[tile_struct_elem_idx];
+            tile_uniform.texture_size = match texture_size {
+                LandTextureSize::Small => 0,
+                LandTextureSize::Big => 1,
+                //_ => unreachable!(),
+            };
+            tile_uniform.layer = layer;
+            tile_uniform.hue = 0;
         }
     }
 
@@ -461,7 +465,8 @@ fn draw_land_chunk(
                 ..Default::default()
             },
             extension: LandMaterialExtension {
-                tex_array: land_texture_cache_rref.image_handle.clone(),
+                texarray_small: land_texture_cache_rref.small.image_handle.clone(),
+                texarray_big: land_texture_cache_rref.big.image_handle.clone(),
                 uniforms: mat_ext_uniforms,
             },
         };

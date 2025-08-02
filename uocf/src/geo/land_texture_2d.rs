@@ -2,51 +2,69 @@
 
 crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
+use getset::Getters;
 use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{prelude::*, Cursor, SeekFrom};
+use std::io::{Cursor, SeekFrom, prelude::*};
 use std::path::PathBuf;
 
 use crate::generic_index;
 use crate::utils::color::*;
 use crate::utils::math::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextureSize {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LandTextureSize {
     Small,
     Big,
 }
-impl Default for TextureSize {
+impl Default for LandTextureSize {
     fn default() -> Self {
         Self::Small
     }
 }
-impl TextureSize {
+impl LandTextureSize {
     pub const SMALL_X: u32 = 64;
     pub const SMALL_Y: u32 = 64;
     pub const BIG_X: u32 = 128;
     pub const BIG_Y: u32 = 128;
+
+    pub fn dimensions(&self) -> (u32, u32) {
+        match self {
+            LandTextureSize::Small => (LandTextureSize::SMALL_X, LandTextureSize::SMALL_Y),
+            LandTextureSize::Big => (LandTextureSize::BIG_X, LandTextureSize::BIG_Y),
+        }
+    }
+    pub fn from_dimensions(width: u32, height: u32) -> Option<Self> {
+        match (width, height) {
+            (Self::SMALL_X, Self::SMALL_Y) => Some(Self::Small),
+            (Self::BIG_X, Self::BIG_Y) => Some(Self::Big),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Getters)]
 pub struct Texture2DElement {
     // Pixel data in TexMap.mul is stored as bgra5551 (u16), but we convert it to argb8888 (u32) before storing it.
     valid: bool,
-    pub id: u32,
-    size: TextureSize,
-    pub pixel_data: Vec<u8>,
+    #[get = "pub"]
+    id: u32,
+    #[get = "pub"]
+    size: LandTextureSize,
+    #[get = "pub"]
+    pixel_data: Vec<u8>,
 }
 impl Texture2DElement {
     pub const TEXTURE_UNUSED: u32 = 0x007F; // NODRAW
     const PIXEL_DATA_CHANNELS: usize = 4; // R, G, B, A
 
     #[must_use]
-    pub fn size_type_x(size: TextureSize) -> u32 {
+    pub fn size_type_x(size: LandTextureSize) -> u32 {
         match size {
-            TextureSize::Small => TextureSize::SMALL_X,
-            TextureSize::Big => TextureSize::BIG_X,
+            LandTextureSize::Small => LandTextureSize::SMALL_X,
+            LandTextureSize::Big => LandTextureSize::BIG_X,
         }
     }
     #[must_use]
@@ -55,10 +73,10 @@ impl Texture2DElement {
     }
 
     #[must_use]
-    pub fn size_type_y(size: TextureSize) -> u32 {
+    pub fn size_type_y(size: LandTextureSize) -> u32 {
         match size {
-            TextureSize::Small => TextureSize::SMALL_Y,
-            TextureSize::Big => TextureSize::BIG_Y,
+            LandTextureSize::Small => LandTextureSize::SMALL_Y,
+            LandTextureSize::Big => LandTextureSize::BIG_Y,
         }
     }
     #[must_use]
@@ -87,13 +105,14 @@ impl Texture2DElement {
                 .ok_or(eyre!("Invalid Texture Data"))?;
         //image::save_buffer("./test.png", &buf, size.0, size.1, image::ColorType::Rgba8);
         let img = DynamicImage::ImageRgba8(img);
+        //Image::from_dynamic
         Ok(img)
     }
 }
 
 #[derive(Debug)]
 pub struct TexMap2D {
-    file_data: Vec<Texture2DElement> //HashMap<u32, Texture2DElement>,
+    file_data: Vec<Texture2DElement>, //HashMap<u32, Texture2DElement>,
 }
 
 impl TexMap2D {
@@ -109,7 +128,7 @@ impl TexMap2D {
             return None;
         }
         //println!("Requested element {element_index} from texmap.mul.");
-        let element = &self.file_data[element_index];
+        let element: &Texture2DElement = &self.file_data[element_index];
         if !element.valid {
             /*return Err(eyre!(
                 "TexMap2d: requested invalid/uninitialized element ({element_index})."
@@ -141,7 +160,7 @@ impl TexMap2D {
         let texmap_file_size = downcast_ceil_usize(texmap_file_metadata.len());
 
         /* Open texidx.mul */
-        let texidx = generic_index::IndexFile::load(texmap_idx_file_path)?;
+        let texidx: generic_index::IndexFile = generic_index::IndexFile::load(texmap_idx_file_path)?;
 
         /* Read whole texidx.mul to get texmap index data */
         const TEXMAP_MAX_ID: u32 = 0x1388;
@@ -150,7 +169,7 @@ impl TexMap2D {
             file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
         };
 
-        let mut texmap_file_rdr = {
+        let mut texmap_file_rdr: Cursor<Vec<u8>> = {
             let mut rdr_buf = vec![0; texmap_file_size];
             texmap_file_handle
                 .read_exact(rdr_buf.as_mut())
@@ -160,9 +179,10 @@ impl TexMap2D {
 
         // Loop on each entry of texidx
         let mut i_idx_valid: usize = 0;
-        for i_idx_raw in 0..TEXMAP_MAX_ID { // 0..texidx.element_count() {
+        for i_idx_raw in 0..TEXMAP_MAX_ID {
+            // 0..texidx.element_count() {
             // Fill texmap
-            let cur_idx_elem = texidx
+            let cur_idx_elem: &generic_index::IndexElement = texidx
                 .element(i_idx_raw as usize)
                 .expect("Reading lookup value for element {i_idx}");
 
@@ -181,15 +201,15 @@ impl TexMap2D {
                 Some(val) => val,
             };
 
-            let tex_size_type = match tex_len {
+            let tex_size_type: LandTextureSize = match tex_len {
                 0x2000 => {
                     // 0x2000 comes from 64*64 pixels = 0x1000. A single pixel is coded with a 16 bit (2 bytes) color value,
                     //  thus 0x1000 * 2 = 0x2000.
-                    TextureSize::Small
+                    LandTextureSize::Small
                 }
                 0x8000 => {
                     // 0x8000 comes from 128*128 pixels * 2.
-                    TextureSize::Big
+                    LandTextureSize::Big
                 }
                 _ => {
                     /*println!(
@@ -200,13 +220,13 @@ impl TexMap2D {
                 }
             };
 
-            let cur_texture = &mut texmap.file_data[i_idx_raw as usize];
+            let cur_texture: &mut Texture2DElement = &mut texmap.file_data[i_idx_raw as usize];
             cur_texture.id = i_idx_raw as u32; //i_idx_valid as u32;
             cur_texture.size = tex_size_type.clone();
 
             let pixel_qty = match tex_size_type {
-                TextureSize::Small => TextureSize::SMALL_X as usize * TextureSize::SMALL_Y as usize,
-                TextureSize::Big => TextureSize::BIG_X as usize * TextureSize::BIG_Y as usize,
+                LandTextureSize::Small => LandTextureSize::SMALL_X as usize * LandTextureSize::SMALL_Y as usize,
+                LandTextureSize::Big => LandTextureSize::BIG_X as usize * LandTextureSize::BIG_Y as usize,
             };
 
             texmap_file_rdr.seek(SeekFrom::Start(tex_lookup as u64))?;

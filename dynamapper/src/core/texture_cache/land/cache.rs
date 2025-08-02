@@ -1,133 +1,152 @@
-//! GPU texture array + LRU eviction.
-//! of reading PNG files from disk.
+//! GPU texture array LRU cache supporting two texture sizes
+//! Each texture_id can be either small or big and is mapped accordingly
 
 #![allow(dead_code)]
 
+use super::texture_array;
 use crate::core::uo_files_loader::UoFileData;
 use bevy::prelude::*;
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
-
-use super::texture_array;
-
-pub const LAND_TEX_SIZE_SMALL: u32 = uocf::geo::land_texture_2d::TextureSize::SMALL_X;
-pub const TEXARRAY_MAX_TILE_LAYERS: u32 = 2_048;
+use uocf::geo::land_texture_2d::LandTextureSize;
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 
-#[derive(Clone)]
-struct TextureEntry {
-    layer: u32,
-    last_touch: Instant,
+#[derive(Clone, Copy, Debug)]
+pub struct LandTextureEntry {
+    pub layer: u32,
+    //pub tex_size: LandTextureSize,
+    pub last_touch: Instant,
+}
+
+/// A single TextureArray data (we use one for each size)
+pub struct LandTextureArrayWrapper {
+    pub image_handle: Handle<Image>,
+    free_layers: Vec<u32>,
+    lru: VecDeque<u16>, // texture_id queue
+}
+impl LandTextureArrayWrapper {
+    fn new(image_handle: Handle<Image>, max_layers: u32) -> Self {
+        Self {
+            image_handle,
+            free_layers: (0..max_layers).rev().collect(),
+            lru: VecDeque::default(),
+        }
+    }
 }
 
 #[derive(Resource)]
 pub struct LandTextureCache {
-    pub image_handle: Handle<Image>,
-    map: HashMap<u16, TextureEntry>, // art_id → entry
-    free_layers: Vec<u32>,
-    lru: VecDeque<u16>, // queue of art_ids
+    pub small: LandTextureArrayWrapper,
+    pub big: LandTextureArrayWrapper,
+    entry_by_id: HashMap<u16, (LandTextureSize, LandTextureEntry)>,
 }
 
 impl LandTextureCache {
-    pub fn new(image_handle: Handle<Image>) -> Self {
+    pub fn new(small_tex_image_handle: Handle<Image>, big_tex_image_handle: Handle<Image>) -> Self {
         Self {
-            image_handle,
-            map: HashMap::default(),
-            free_layers: (0..TEXARRAY_MAX_TILE_LAYERS).rev().collect(),
-            lru: VecDeque::default(),
+            small: LandTextureArrayWrapper::new(
+                small_tex_image_handle,
+                texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
+            ),
+            big: LandTextureArrayWrapper::new(
+                big_tex_image_handle,
+                texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
+            ),
+            entry_by_id: HashMap::default(),
         }
     }
 
-    /// Ensure `art_id` is resident and return its layer index.
-    pub fn layer_of(
+    /// Ensure `texture_id` is resident and return (texture_size, layer)
+    pub fn get_texture_size_layer(
         &mut self,
-        commands: &mut Commands,
-        images: &mut ResMut<Assets<Image>>,
+        images_resmut: &mut ResMut<Assets<Image>>,
         uo_data: &Res<UoFileData>,
-        art_id: u16,
-    ) -> u32 {
-        // -----------------------------------------------------------------
-        // 1. Fast-path: already resident?
-        // -----------------------------------------------------------------
-        if let Some(e) = self.map.get_mut(&art_id) {
-            //println!("LandTextureCache: id {art_id} already cached in layer {}.", e.layer);
-            e.last_touch = Instant::now();
-            return e.layer;
+        texture_id: u16,
+    ) -> (LandTextureSize, u32) {
+        // 1. Fast-path: already resident
+        let e: Option<&mut (LandTextureSize, LandTextureEntry)> = self.entry_by_id.get_mut(&texture_id);
+        if e.is_some() {
+            let e: &mut (LandTextureSize, LandTextureEntry) = e.unwrap();
+            e.1.last_touch = Instant::now();
+            return (e.0, e.1.layer);
         }
-        //println!("LandTextureCache: id {art_id} not cached, inserting it.");
 
-        // -----------------------------------------------------------------
-        // 2. Pick a texture-array layer (free or by eviction)
-        // -----------------------------------------------------------------
-        let layer = if let Some(l) = self.free_layers.pop() {
+        // 2. Get the new texture data and metadata.
+        let (texture_size, tile_handle) =
+            texture_array::get_texmap_image(texture_id, images_resmut, uo_data);
+
+        // 2. Pick a tex array state
+        let array = match texture_size {
+            LandTextureSize::Small => &mut self.small,
+            LandTextureSize::Big => &mut self.big,
+        };
+
+        // 3. Choose or evict a layer
+        let layer = if let Some(l) = array.free_layers.pop() {
             l
         } else {
             let victim_id = loop {
-                let oldest = self.lru.pop_front().unwrap();
-                let still = self.map.get(&oldest).unwrap();
-                if Instant::now() - still.last_touch >= CACHE_EVICT_AFTER {
+                let oldest = array
+                    .lru
+                    .pop_front()
+                    .expect("LRU should not be empty at this stage");
+                let still: &(LandTextureSize, LandTextureEntry) =
+                    self.entry_by_id.get(&oldest).unwrap();
+                if Instant::now() - still.1.last_touch >= CACHE_EVICT_AFTER {
                     break oldest;
                 }
-                self.lru.push_back(oldest);
+                array.lru.push_back(oldest);
             };
-            let victim_entry = self.map.remove(&victim_id).unwrap();
-            victim_entry.layer
+            let victim_entry: (LandTextureSize, LandTextureEntry) =
+                self.entry_by_id.remove(&victim_id).unwrap();
+            victim_entry.1.layer
         };
 
-        // -----------------------------------------------------------------
-        // 3. Load (or generate) the source tile FIRST
-        //    – this needs a &mut Assets<Image> because it may create assets
-        // -----------------------------------------------------------------
-        let tile_handle = texture_array::get_texmap_image(art_id, commands, images, &uo_data);
-
-        // Grab the bytes we are going to copy, then drop the borrow
+        // 4. Upload/copy texture data
+        let (width, height) = texture_size.dimensions();
         let tile_bytes: Vec<u8> = {
-            let tile_img = images.get(&tile_handle).unwrap(); // immutable borrow
-            assert_eq!(tile_img.texture_descriptor.size.width, LAND_TEX_SIZE_SMALL);
-            assert_eq!(tile_img.texture_descriptor.size.height, LAND_TEX_SIZE_SMALL);
+            let tile_img = images_resmut.get(&tile_handle).unwrap();
+            assert_eq!(tile_img.texture_descriptor.size.width, width);
+            assert_eq!(tile_img.texture_descriptor.size.height, height);
             tile_img.data.as_ref().unwrap().clone()
         };
-
-        // -----------------------------------------------------------------
-        // 4. Now obtain a *mutable* borrow to the array texture and copy
-        // -----------------------------------------------------------------
         {
             const BYTES_PER_PIXEL: usize = 4; // RGBA8888
-            const LAYER_BYTE_SIZE: usize = LAND_TEX_SIZE_SMALL.pow(2) as usize * BYTES_PER_PIXEL;
-            let offset = layer as usize * LAYER_BYTE_SIZE;
-            let array_img = images.get_mut(&self.image_handle).unwrap();
+            let layer_byte_size = (width * height) as usize * BYTES_PER_PIXEL;
+            let offset = layer as usize * layer_byte_size;
+            let array_img = images_resmut.get_mut(&array.image_handle).unwrap();
             if let Some(data) = &mut array_img.data {
-                data[offset..offset + LAYER_BYTE_SIZE].copy_from_slice(&tile_bytes);
-            };
-        } // `array_img` borrow ends here
+                data[offset..offset + layer_byte_size].copy_from_slice(&tile_bytes);
+            }
+        }
 
-        /*
-        // Debug:
-        dump_texture_array_layer(
-            images,
-            &self.image_handle,
-            layer,
-            LAND_TEX_SIZE_SMALL,
-            &format!("tex_array_layer{layer}.png"),
+        // 5. Bookkeeping
+        self.entry_by_id.insert(
+            texture_id,
+            (
+                texture_size,
+                LandTextureEntry {
+                    layer,
+                    //texture_size,
+                    last_touch: Instant::now(),
+                },
+            ),
         );
-        */
+        array.lru.push_back(texture_id);
 
-        // -----------------------------------------------------------------
-        // 5. Book-keeping
-        // -----------------------------------------------------------------
-        self.map.insert(
-            art_id,
-            TextureEntry {
-                layer,
-                last_touch: Instant::now(),
-            },
-        );
-        self.lru.push_back(art_id);
+        (texture_size, layer)
+    }
 
-        layer
+    fn free_layer_for_entry(&mut self, texture_size: LandTextureSize, entry: LandTextureEntry) {
+        let array = match texture_size {
+            LandTextureSize::Small => &mut self.small,
+            LandTextureSize::Big => &mut self.big,
+        };
+        array.free_layers.push(entry.layer);
+        // Removal from LRU performed implicitly (by removing the entry entirely or letting it fall off on reset)
     }
 }
 

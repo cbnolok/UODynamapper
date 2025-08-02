@@ -128,8 +128,8 @@ pub fn run_bevy_app() -> ExitCode {
         "Loaded settings file to retrieve app building data.",
     );
 
-    let window_size = (settings_data.window.width, settings_data.window.height);
-    let wireframe_enabled = settings_data.debug.map_render_wireframe;
+    let window_size: (f32, f32) = (settings_data.window.width, settings_data.window.height);
+    let wireframe_enabled: bool = settings_data.debug.map_render_wireframe;
 
     let mut app = App::new();
     let result = app

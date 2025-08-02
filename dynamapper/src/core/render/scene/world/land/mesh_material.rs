@@ -10,10 +10,13 @@ pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExt
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
 pub struct LandMaterialExtension {
-    #[texture(100, dimension = "2d_array")]
-    #[sampler(101)]
-    pub tex_array: Handle<Image>,
-    #[uniform(102, min_binding_size = 16)]
+    #[sampler(100)]
+    //pub tex_sampler: Sampler,
+    #[texture(101, dimension = "2d_array")]
+    pub texarray_small: Handle<Image>,
+    #[texture(102, dimension = "2d_array")]
+    pub texarray_big: Handle<Image>,
+    #[uniform(103, min_binding_size = 16)]
     pub uniforms: LandUniforms,
 }
 
@@ -33,7 +36,7 @@ impl MaterialExtension for LandMaterialExtension {
 //    u32[2048] is 8192 bytes, twice is 16KB—OK, but you need to watch out if you want to add lots of fields.
 
 // Uniform buffer layouts:
-//  Most APIs demand 16-byte alignment per field.
+//  Most APIs demand 16-byte (not bit!) alignment per field.
 //  For a field to be valid in a uniform buffer, each element of an array must be treated as a “vec4” (i.e., 16 bytes each), not simply a u32 (or f32)!
 //  It’s a GPU shader hardware limitation—and applies to both WGSL and to Bevy encase/Buffer.
 
@@ -50,7 +53,14 @@ pub struct LandUniforms {
     _pad: f32,
     pub chunk_origin: Vec2,
     _pad2: Vec2,
-    pub layers: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
-    pub hues: [UVec4; (TILE_NUM_PER_CHUNK_TOTAL as usize + 3) / 4],
+    pub tiles: [TileUniform; TILE_NUM_PER_CHUNK_TOTAL], // array of structs
 }
 
+#[repr(C, align(16))]
+#[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
+pub struct TileUniform {
+    pub texture_size: u32,  // 0: small, 1: big
+    pub layer: u32,
+    pub hue: u32,
+    _pad: u32,              // Pad to 16 bytes (WGSL std140 layout)
+}

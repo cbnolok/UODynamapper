@@ -21,11 +21,14 @@
 
 const TILE_PX: u32         = 44;
 const MAX_TILE_LAYERS: u32 = 2048;
-const MAX_TILE_LAYERS_VEC4: u32 = (MAX_TILE_LAYERS + 3) / 4;
+//const MAX_TILE_LAYERS_VEC4: u32 = (MAX_TILE_LAYERS + 3) / 4;
 
 const CHUNK_TILE_NUM_1D: u32 = 8;
 const CHUNK_TILE_NUM_TOTAL: u32 = CHUNK_TILE_NUM_1D * CHUNK_TILE_NUM_1D;
-const CHUNK_TILE_NUM_TOTAL_VEC4: u32 = (CHUNK_TILE_NUM_TOTAL + 3) / 4;
+//const CHUNK_TILE_NUM_TOTAL_VEC4: u32 = (CHUNK_TILE_NUM_TOTAL + 3) / 4;
+
+const TEX_SIZE_SMALL: u32 = 0;
+const TEX_SIZE_BIG: u32 = 1;
 
 // Uniform buffers:
 // All uniforms (including textures, uniform buffers, etc.) are set per-mesh—in Bevy,
@@ -61,13 +64,19 @@ struct LandUniforms {
     _pad:   f32,             // pad to 16‐byte alignment by adding 4 bytes (f32)
     chunk_origin: vec2<f32>,
     _pad2: vec2<f32>,
-    layers: array<vec4<u32>, CHUNK_TILE_NUM_TOTAL_VEC4>,
-    hues:   array<vec4<u32>, CHUNK_TILE_NUM_TOTAL_VEC4>,
+    tiles: array<TileUniform, CHUNK_TILE_NUM_TOTAL>,
+};
+struct TileUniform {
+    texture_size: u32,
+    texture_layer: u32,
+    texture_hue: u32,
+    _pad: u32,
 };
 
-@group(2) @binding(100) var atlas: texture_2d_array<f32>;
-@group(2) @binding(101) var atlas_sampler: sampler;
-@group(2) @binding(102)
+@group(2) @binding(100) var texarray_sampler: sampler;
+@group(2) @binding(101) var texarray_small: texture_2d_array<f32>;
+@group(2) @binding(102) var texarray_big: texture_2d_array<f32>;
+@group(2) @binding(103)
 var<uniform> land: LandUniforms;
 
 
@@ -87,14 +96,14 @@ fn vertex(
     out.instance_index = in.instance_index;
 
     // pass UV
-    out.uv        = in.uv;
+    out.uv = in.uv;
 
     // Compute Gouraud lighting
     //let world_norm = normalize((Mesh.model * vec4<f32>(in.normal, 0.0)).xyz);
     let world_norm = normalize(out.world_normal); // already in world space
 
     // Use the unused uv_1 attr to pass this data to the fragment shader
-    out.uv_b      = vec2<f32>(
+    out.uv_b = vec2<f32>(
         max(dot(world_norm, normalize(land.light_dir)), 0.0), // Lambert
         0.0
     );
@@ -111,20 +120,23 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let tx: u32 = clamp(u32(floor(local_x)), 0u, CHUNK_TILE_NUM_1D-1u);
     let ty: u32 = clamp(u32(floor(local_z)), 0u, CHUNK_TILE_NUM_1D-1u);
     let tile_index: u32 = ty * CHUNK_TILE_NUM_1D + tx;
-    //let tile_index_chunk: u32 = tile_index / CHUNK_TILE_NUM_1D;
-    //let tile_index_cell: u32 = tile_index % CHUNK_TILE_NUM_1D;
-    //let layer: u32 = land.layers[tile_index_chunk][tile_index_cell];
-    let tile_index_vec: u32 = tile_index / 4;
-    let tile_index_idx: u32 = tile_index % 4;
-    let layer: u32 = land.layers[tile_index_vec][tile_index_idx];
+
+    let texture_size: u32  = land.tiles[tile_index].texture_size;
+    let texture_layer: u32 = land.tiles[tile_index].texture_layer;
+    //let texture_hue: u32   = land.tiles[tile_index].texture_hue;
 
     // Sample the land tile texture.
     //  We could use textureSample or textureSampleLevel, the latter lets us choose the mip level
     //  (we want to force 0, even if it wouldn't be necessary because the texture array we create has only 1 level).
-    let tex_color = textureSampleLevel(atlas, atlas_sampler, in.uv, u32(layer), 0.0);
+    var tex_color: vec4<f32>; // RGBA8888
+    if (texture_size == TEX_SIZE_BIG) {
+        tex_color = textureSampleLevel(texarray_big,   texarray_sampler, in.uv, u32(texture_layer), 0.0);
+    } else {
+        tex_color = textureSampleLevel(texarray_small, texarray_sampler, in.uv, u32(texture_layer), 0.0);
+    }
 
     // Ambient light factor.
-    let ao = 0.425;
+    let ao = 1.0;
     let lambert = in.uv_b.x;  // Lambert calculated in the vertex shader.
     let brightness = lambert * 0.6 + ao * 0.4;
     //let brightness = lambert * 0.7 + ao * 0.3;

@@ -17,7 +17,7 @@ pub const TILE_NUM_PER_CHUNK_1D: u32 = 8;
 pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
     (TILE_NUM_PER_CHUNK_1D * TILE_NUM_PER_CHUNK_1D) as usize;
 
-/// Tag component: Marks entities which are chunk meshes, allows queries for those entities.
+/// Tag component: Marks entities which are Land Chunk Meshes, allows queries for those entities.
 #[derive(Component)]
 pub struct LCMesh {
     #[allow(unused)]
@@ -26,7 +26,6 @@ pub struct LCMesh {
     pub gy: u32,
 }
 
-/// Register the chunk renderer plugin into your app.
 /// Establishes material, buffer pool, diagnostics, and the draw system.
 pub struct DrawLandChunkMeshPlugin {
     pub registered_by: &'static str,

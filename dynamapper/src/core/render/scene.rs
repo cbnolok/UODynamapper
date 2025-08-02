@@ -3,14 +3,16 @@ pub mod dynamic_light;
 pub mod player;
 pub mod world;
 
-use world::{land, WorldGeoData};
-use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
-use player::Player;
+use std::collections::HashSet;
+
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::window::Window;
+use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
+use player::Player;
 use world::land::TILE_NUM_PER_CHUNK_1D;
+use world::{WorldGeoData, land};
 
 #[derive(Resource)]
 pub struct SceneStateData {
@@ -35,8 +37,12 @@ impl Plugin for ScenePlugin {
             dynamic_light::PlayerDynamicLightPlugin {
                 registered_by: "ScenePlugin",
             },
-                camera::CameraPlugin { registered_by: "ScenePlugin" },
-                player::PlayerPlugin { registered_by: "ScenePlugin" },
+            camera::CameraPlugin {
+                registered_by: "ScenePlugin",
+            },
+            player::PlayerPlugin {
+                registered_by: "ScenePlugin",
+            },
         ))
         .insert_resource(SceneStateData {
             map_id: 0xFFFF, // placeholder
@@ -159,24 +165,24 @@ pub fn sys_update_worldmap_chunks_to_render(
 ) {
     let (mut player_instance, player_transform) =
         player_q.single_mut().expect("More than 1 players?");
-    let player_pos = player_instance.current_pos;
+    let player_pos: Option<UOVec4> = player_instance.current_pos;
     if player_pos.is_none() {
         return;
     }
-    let player_pos = player_pos.unwrap();
-    let player_pos_translation = player_transform.translation;
+    let player_pos: UOVec4 = player_pos.unwrap();
+    let player_pos_translation: Vec3 = player_transform.translation;
 
-    let new_map_id = player_pos.m as u32;
-    let map_switch = {
-        let old_map_id = player_instance.prev_rendered_pos;
+    let new_map_id: u32 = player_pos.m as u32;
+    let map_switch: bool = {
+        let old_map_id: Option<UOVec4> = player_instance.prev_rendered_pos;
         old_map_id.is_none() || (new_map_id != old_map_id.unwrap().m as u32)
     };
 
     // TODO: move the rendered player position to another system, when we'll render more stuff (not only the land chunks).
     player_instance.prev_rendered_pos = Some(player_pos);
 
-    let window = windows_q.single().unwrap();
-    let zoom = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
+    let window: &Window = windows_q.single().unwrap();
+    let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
     //let current_map_id = scene_state_data_res.map_id;
     let new_map_plane_metadata = world_geo_data_res
         .maps
@@ -184,7 +190,7 @@ pub fn sys_update_worldmap_chunks_to_render(
         .expect(&format!("Requested metadata for uncached map {new_map_id}"));
 
     // Compute correct visible chunk set
-    let required_chunks = compute_visible_chunks(
+    let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
         player_pos_translation,
         window.physical_width() as f32,
         window.physical_height() as f32,
@@ -223,9 +229,9 @@ pub fn sys_update_worldmap_chunks_to_render(
     }
 
     // Otherwise, incrementally update as before
-    let mut currently_spawned = std::collections::HashSet::with_capacity(required_chunks.len());
+    let mut currently_spawned = HashSet::with_capacity(required_chunks.len());
     for (entity, tcm) in existing_chunks_q.iter() {
-        let coords = (tcm.gx, tcm.gy);
+        let coords: (u32, u32) = (tcm.gx, tcm.gy);
         if required_chunks.contains(&coords) {
             currently_spawned.insert(coords);
         } else {
