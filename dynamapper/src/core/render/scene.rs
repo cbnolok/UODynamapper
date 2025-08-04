@@ -9,7 +9,7 @@ use crate::core::maps::MapPlaneMetadata;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
-use bevy::window::Window;
+use bevy::window::{Window, WindowResized};
 use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use player::Player;
 use world::land::TILE_NUM_PER_CHUNK_1D;
@@ -19,6 +19,9 @@ use world::{WorldGeoData, land};
 pub struct SceneStateData {
     pub map_id: u32,
 }
+
+#[derive(Event, Debug, Clone, PartialEq)]
+pub struct RecomputeVisibleChunksEvent;
 
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
@@ -48,11 +51,14 @@ impl Plugin for ScenePlugin {
         .insert_resource(SceneStateData {
             map_id: 0xFFFF, // placeholder
         })
-        //.add_systems(
-        //    Startup,
-        //    sys_spawn_worldmap_chunks_to_render.in_set(StartupSysSet::SetupSceneStage2),
-        //)
-        // TODO: run the system below only when an event is emitted (window resize, etc)
+        .add_event::<RecomputeVisibleChunksEvent>()
+        .configure_sets(Update, (SceneRenderLandSysSet::SyncLandChunks.after(SceneRenderLandSysSet::ListenSyncRequests),
+    SceneRenderLandSysSet::RenderLandChunks.after(SceneRenderLandSysSet::SyncLandChunks)))
+        .add_systems(
+            Startup,
+            sys_setup_scene.in_set(StartupSysSet::SetupSceneStage2),
+        )
+
         .add_systems(
             Update,
             sys_update_worldmap_chunks_to_render
@@ -60,6 +66,23 @@ impl Plugin for ScenePlugin {
                 .run_if(in_state(AppState::InGame)),
         );
     }
+}
+
+pub fn sys_setup_scene(
+    mut writer: EventWriter<RecomputeVisibleChunksEvent>,
+) {
+/*
+    // Always clear out anything previously spawned!
+    for (entity, _) in existing_chunks_q.iter() {
+        commands.entity(entity).despawn();
+    }
+*/
+    writer.write(RecomputeVisibleChunksEvent{});
+}
+
+pub fn sys_update_scene_on_window_resize(mut resize_events: EventReader<WindowResized>, mut writer: EventWriter<RecomputeVisibleChunksEvent>) {
+    let _event = resize_events.read().last().unwrap();
+    writer.write(RecomputeVisibleChunksEvent{});
 }
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
@@ -82,7 +105,7 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
 
 /// Calculates the set of visible chunk coordinates around the player,
 /// sized so that the window is covered, even after padding, based on window size and zoom.
-pub fn compute_visible_chunks(
+fn compute_visible_chunks(
     player_pos: Vec3,
     window_width: f32,
     window_height: f32,
@@ -128,34 +151,8 @@ pub fn compute_visible_chunks(
     set
 }
 
-pub fn sys_spawn_worldmap_chunks_to_render(
-    mut commands: Commands,
-    world_geo_data_res: Res<WorldGeoData>,
-    render_zoom_res: Res<RenderZoom>,
-    scene_state_data_res: ResMut<SceneStateData>,
-    windows_q: Query<&Window>,
-    player_q: Query<(&mut Player, &Transform)>,
-    existing_chunks_q: Query<(Entity, &land::LCMesh)>,
-) {
-    //log_system_add_startup::<ScenePlugin>(StartupSysSet::SetupSceneStage2, fname!());
-
-    // Always clear out anything previously spawned!
-    for (entity, _) in existing_chunks_q.iter() {
-        commands.entity(entity).despawn();
-    }
-
-    sys_update_worldmap_chunks_to_render(
-        commands,
-        world_geo_data_res,
-        render_zoom_res,
-        scene_state_data_res,
-        windows_q,
-        player_q,
-        existing_chunks_q,
-    )
-}
-
-pub fn sys_update_worldmap_chunks_to_render(
+fn sys_update_worldmap_chunks_to_render(
+    mut _event: EventReader<RecomputeVisibleChunksEvent>,
     mut commands: Commands,
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,

@@ -12,6 +12,7 @@ pub enum StartupSysSet {
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
 pub enum SceneRenderLandSysSet {
+    ListenSyncRequests,
     SyncLandChunks,
     RenderLandChunks,
 }

@@ -63,25 +63,17 @@ fn custom_bevy_log_config() -> LogPlugin {
     }
 }
 
-fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
-    // Wireframes can be configured with this resource. This can be changed at runtime.
-    WireframeConfig {
-        // The global wireframe config enables drawing of wireframes on every mesh,
-        // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
-        // regardless of the global configuration.
-        global: enabled,
-        // Controls the default color of all wireframes. Used as the default color for global wireframes.
-        // Can be changed per mesh using the `WireframeColor` component.
-        default_color: Color::srgb_from_array(
-            bevy::color::palettes::css::BLACK.to_f32_array_no_alpha(),
-        ), //.with_alpha(0.2), // alpha is unsupported, even if we change it
-    }
-}
-
 fn custom_winit_settings() -> WinitSettings {
     WinitSettings {
         focused_mode: UpdateMode::reactive(Duration::from_secs_f64(1.0 / 60.0)), // 60.0 Hz
         unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 30.0)), // 30.0 Hz
+    }
+}
+
+fn custom_threadpool_settings() -> TaskPoolPlugin {
+    TaskPoolPlugin {
+        //task_pool_options: TaskPoolOptions::with_num_threads(3),
+        ..default()
     }
 }
 
@@ -102,6 +94,21 @@ fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
             ..Default::default()
         }),
         ..Default::default()
+    }
+}
+
+fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
+    // Wireframes can be configured with this resource. This can be changed at runtime.
+    WireframeConfig {
+        // The global wireframe config enables drawing of wireframes on every mesh,
+        // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
+        // regardless of the global configuration.
+        global: enabled,
+        // Controls the default color of all wireframes. Used as the default color for global wireframes.
+        // Can be changed per mesh using the `WireframeColor` component.
+        default_color: Color::srgb_from_array(
+            bevy::color::palettes::css::BLACK.to_f32_array_no_alpha(),
+        ), //.with_alpha(0.2), // alpha is unsupported, even if we change it
     }
 }
 
@@ -144,6 +151,7 @@ pub fn run_bevy_app() -> ExitCode {
                 .build()
                 .set(custom_bevy_log_config())
                 .set(custom_window_plugin_settings(window_size))
+                .set(custom_threadpool_settings())
                 .set(custom_render_plugin_settings())
                 .set(ImagePlugin::default_linear())
                 .set(AssetPlugin {
