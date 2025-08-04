@@ -405,8 +405,8 @@ impl MapPlane {
             if block_to_seek.x >= self.size_blocks.width
                 || block_to_seek.y >= self.size_blocks.height
             {
-                Err(eyre!(
-                    "Requested map block out of bounds {block_to_seek:?}.".to_owned()
+                Err(eyre!(format!(
+                    "Requested map block out of bounds {block_to_seek:?}.")
                 ))?;
             }
 

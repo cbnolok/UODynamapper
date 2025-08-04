@@ -172,3 +172,4 @@ fn sys_camera_follow_player(
     )
     .looking_at(player_transform.translation, Vec3::Y);
 }
+

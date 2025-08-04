@@ -58,7 +58,6 @@ struct LandChunkConstructionData {
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
-/// Highly commented for clarity:
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
     mut pool_r: ResMut<LandChunkMeshBufferPool>,
@@ -222,7 +221,6 @@ pub fn sys_draw_spawned_land_chunks(
 }
 
 /// Build mesh, attributes and assign to chunk entity.
-/// Comments explain everything for unfamiliar devs.
 fn draw_land_chunk(
     commands: &mut Commands,
     pool_ref: &mut LandChunkMeshBufferPool,

@@ -12,7 +12,7 @@ use bevy::{
 use std::sync::OnceLock;
 use uocf::geo::land_texture_2d::LandTextureSize;
 
-pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
+//pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
 ////////////////////////////////////////////////////////////////////////////////
 // 1. Texture Array Creation
@@ -76,23 +76,23 @@ pub fn create_gpu_texture_array(
 // 2. Loading an Image for a Specific Art ID and Texture Size
 ////////////////////////////////////////////////////////////////////////////////
 
-const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Small;
-const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
+//const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Small;
+//const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
 
-//const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
-//const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C;   // Sea floor
+const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
+const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C;   // Sea floor
 
 /// Create and preserve a placeholder texture for fallback/error.
 fn get_error_texture(
-    texture_size: LandTextureSize,
+    _texture_size: LandTextureSize,
     image_assets: &mut ResMut<Assets<Image>>,
     uo_data: &Res<UoFileData>,
 ) -> Handle<Image> {
     static UNUSED_SMALL: OnceLock<Handle<Image>> = OnceLock::new();
-    static UNUSED_BIG: OnceLock<Handle<Image>> = OnceLock::new();
+    //static UNUSED_BIG: OnceLock<Handle<Image>> = OnceLock::new();
 
     // Use one placeholder for each canonical size.
-    if texture_size == LandTextureSize::Small {
+    //if texture_size == LandTextureSize::Small {
         UNUSED_SMALL
             .get_or_init(|| {
                 let texmap_lock = uo_data
@@ -100,7 +100,7 @@ fn get_error_texture(
                     .read()
                     .expect("Can't acquire texmap data lock.");
                 let texture_ref = texmap_lock
-                    .element(TEXTURE_UNUSED_ID as usize)
+                    .element(DEFAULT_ERROR_TEXTURE_ID as usize)
                     .expect("No UNUSED land texture?");
                 let img = image_from_rgba8(
                     texture_ref.size_x(),
@@ -110,6 +110,7 @@ fn get_error_texture(
                 image_assets.add(img)
             })
             .clone()
+/*
     } else {
         UNUSED_BIG
             .get_or_init(|| {
@@ -118,7 +119,7 @@ fn get_error_texture(
                     .read()
                     .expect("Can't acquire texmap data lock.");
                 let texture_ref = texmap_lock
-                    .element(TEXTURE_UNUSED_ID as usize)
+                    .element(DEFAULT_ERROR_TEXTURE_ID as usize)
                     .expect("No UNUSED land texture?");
                 let mut img = image_from_rgba8(
                     texture_ref.size_x(),
@@ -142,6 +143,7 @@ fn get_error_texture(
             })
             .clone()
     }
+*/
 }
 
 /// Try to get actual texture for provided texture_id.
@@ -151,8 +153,8 @@ pub fn get_texmap_image(
     image_assets_resmut: &mut ResMut<Assets<Image>>,
     uo_data_res: &Res<UoFileData>,
 ) -> (LandTextureSize, Handle<Image>) {
-    fn local_log_err(msg: &str) {
-        logger::one(None, LogSev::Error, LogAbout::RenderWorldLand, msg);
+    fn local_log_warn(msg: &str) {
+        logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
     }
 
     let tex_size_and_rgba = {
@@ -172,11 +174,11 @@ pub fn get_texmap_image(
         Some((size, buffer)) if !buffer.is_empty() => (size, buffer),
         _ => {
             if tex_size_and_rgba.is_none() {
-                local_log_err(&format!(
+                local_log_warn(&format!(
                     "Requested invalid texture {texture_id:#X}. Defaulting to UNUSED."
                 ));
             } else {
-                local_log_err(&format!("Texture {texture_id:#X} has invalid pixel data."));
+                local_log_warn(&format!("Texture {texture_id:#X} has invalid pixel data."));
             }
             let err_tex: Handle<Image> =
                 get_error_texture(DEFAULT_ERROR_TEXTURE_SIZE, image_assets_resmut, uo_data_res);

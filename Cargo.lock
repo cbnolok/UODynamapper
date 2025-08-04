@@ -2058,6 +2058,7 @@ dependencies = [
  "bevy",
  "bevy_framepace",
  "bytemuck",
+ "chrono",
  "color-eyre",
  "config",
  "getset",

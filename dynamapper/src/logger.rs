@@ -1,10 +1,10 @@
-use pad::PadStr;
+use chrono::Timelike;
+//use pad::PadStr;
 use regex::Regex;
 use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames};
-use time::OffsetDateTime; // For the derive macros.
 //use std::io::Write; // for flush().
-use std::{sync::OnceLock, time::SystemTime};
+use std::sync::OnceLock;
 
 // Event severity.
 #[derive(Display, EnumString, VariantNames, PartialEq)]
@@ -83,42 +83,46 @@ fn can_show_msg(severity: LogSev, about: LogAbout) -> bool {
 
 #[track_caller]
 pub fn one(
-    mut show_caller_location_override: Option<bool>,
+    show_caller_location_override: Option<bool>,
     severity: LogSev,
     about: LogAbout,
     msg: &str,
 ) {
-    if show_caller_location_override == None {
-        // Default, for now.
-        show_caller_location_override = Some(true);
+    use std::fmt::Write;
+    let show_location = show_caller_location_override.unwrap_or(true);
+
+    //let now: OffsetDateTime = SystemTime::now().into(); // not adjusted by time zone
+    let now = chrono::Local::now();
+    let (h, m, s) = (now.hour(), now.minute(), now.second());
+
+    // Format time without allocation
+    let mut full_msg = String::with_capacity(256);
+    write!(full_msg, "<d>{h:02}:{m:02}:{s:02} {{ ").unwrap();
+
+    // Add file:line if enabled
+    if show_location {
+        let caller = std::panic::Location::caller();
+        let loc_str: String = format!("{}:{}", caller.file(), caller.line());
+
+        const PAD_WIDTH: usize = 46;
+        let loc_trimmed: String = if loc_str.len() > PAD_WIDTH {
+            let slice: &str = &loc_str[loc_str.len() - (PAD_WIDTH - 2)..];
+            format!("..{}", slice)
+        } else {
+            loc_str
+        };
+
+        // Right-pad or truncate to PAD_WIDTH
+        write!(full_msg, "{:width$}", loc_trimmed, width = PAD_WIDTH).unwrap();
     }
 
-    let system_time: OffsetDateTime = SystemTime::now().into();
-    let time_str = format!(
-        "{:0<2}:{:0<2}:{:0<2}",
-        system_time.hour(),
-        system_time.minute(),
-        system_time.second()
-    );
+    full_msg.push_str(" }}</d> ");
 
-    let mut location_str = String::new();
-    if show_caller_location_override == Some(true) {
-        let caller_location = std::panic::Location::caller();
-        //location_str = format!("{{{}:{}}}\t", caller_location.file(), caller_location.line());
+    // About tag, pad to fixed width (18)
+    let about_str = format!("[{about}]");
+    write!(full_msg, "<b>{: <18}</b> ", about_str).unwrap();
 
-        let msg = format!("{}:{}", caller_location.file(), caller_location.line());
-
-        let pad_width = 46;
-        let mut cut_left_chr_amount = msg.len().saturating_sub(pad_width);
-        if cut_left_chr_amount != 0 {
-            cut_left_chr_amount += 2;
-            location_str += "..";
-        }
-        location_str += &msg[cut_left_chr_amount..msg.len()];
-        location_str = location_str.with_exact_width(pad_width);
-    }
-
-    let about_msg = format!("[{about}]").pad_to_width(18); //.pad(18, ' ', pad::Alignment::Middle, true)
+    // Severity symbol (static &str)
     let sev_symbol: &'static str = match severity {
         LogSev::Debug => "<bright-magenta><bold><info></bold></>",
         LogSev::DebugVerbose => "<bright-magenta><bold><info></bold></>",
@@ -127,8 +131,17 @@ pub fn one(
         LogSev::Info => "<cyan><bold><info></bold></>",
         LogSev::Warn => "<bright-yellow><bold><warn></bold></>",
     };
+    full_msg.push_str(sev_symbol);
+    full_msg.push(' ');
 
-    let full_msg = format!("<d>{time_str} {{ {location_str} }}</d> <b>{about_msg}</b> {sev_symbol} {msg}");
+    // Style message (only clone/format if needed)
+    match severity {
+        LogSev::Diagnostics => write!(full_msg, "<dark-green>{msg}</>").unwrap(),
+        LogSev::Error => write!(full_msg, "<red><bold>{msg}</></bold>").unwrap(),
+        LogSev::Info => write!(full_msg, "<cyan>{msg}</>").unwrap(),
+        LogSev::Warn => write!(full_msg, "<bright-yellow>{msg}</>").unwrap(),
+        _ => full_msg.push_str(msg),
+    }
 
-    paris::log!("{full_msg}")
+    paris::log!("{full_msg}");
 }

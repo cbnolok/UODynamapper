@@ -7,9 +7,7 @@ edition = "2024"
 [dependencies]
 uocf = { path = "../uocf" }
 bytemuck = { version = "1.14", features = ["derive"] }
-color-eyre = { version = "0.6.5", default-features = false, features = [
-    "track-caller",
-] }
+color-eyre = { version = "0.6.5", default-features = false, features = ["track-caller"] }
 config = { version = "0.15.11", default-features = false, features = ["toml"] }
 pad = "0.1.6"
 paris = { version = "1.5.15", features = ["macros", "no_logger"] } # log formatting
@@ -29,6 +27,7 @@ serde = "1.0.219"
 serde_derive = "1.0.219"
 anyhow = "1.0.98"
 getset = "0.1.6"
+chrono = { version = "0.4.41", default-features = false, features = ["clock", "std"] }
 
 [dependencies.bevy]
 version = "0.16.1"
