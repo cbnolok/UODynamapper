@@ -4,13 +4,11 @@
 #![allow(dead_code)]
 
 use super::texture_array;
-use crate::core::uo_files_loader::UoFileData;
 use bevy::prelude::*;
 use std::{
-    collections::{HashMap, VecDeque},
-    time::{Duration, Instant},
+    collections::{HashMap, VecDeque}, sync::Arc, time::{Duration, Instant}
 };
-use uocf::geo::land_texture_2d::LandTextureSize;
+use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 
@@ -62,7 +60,7 @@ impl LandTextureCache {
     pub fn get_texture_size_layer(
         &mut self,
         images_resmut: &mut ResMut<Assets<Image>>,
-        uo_data: &Res<UoFileData>,
+        texmap_2d: Arc<TexMap2D>,
         texture_id: u16,
     ) -> (LandTextureSize, u32) {
         // 1. Fast-path: already resident
@@ -75,7 +73,7 @@ impl LandTextureCache {
 
         // 2. Get the new texture data and metadata.
         let (texture_size, tile_handle) =
-            texture_array::get_texmap_image(texture_id, images_resmut, uo_data);
+            texture_array::get_texmap_image(texture_id, images_resmut, &texmap_2d);
 
         // 2. Pick a tex array state
         let array = match texture_size {

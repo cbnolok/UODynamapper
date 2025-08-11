@@ -10,10 +10,10 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use std::collections::{BTreeMap, HashSet};
+use std::{collections::{BTreeMap, HashSet}, sync::Arc};
 use std::time::Instant;
 use uocf::geo::{
-    land_texture_2d::LandTextureSize,
+    land_texture_2d::{LandTextureSize, TexMap2D},
     map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos},
 };
 use wide::*;
@@ -24,9 +24,8 @@ use crate::{
     core::{
         constants,
         maps::MapPlaneMetadata,
-        render::scene::{SceneStateData, player::Player, world::WorldGeoData},
-        texture_cache::land::cache::*,
-        uo_files_loader::UoFileData,
+        render::scene::{player::Player, world::WorldGeoData, SceneStateData},
+        texture_cache::land::cache::*, uo_files_loader::{MapPlanesRes, TexMap2DRes},
     },
     prelude::*,
     util_lib::array::*,
@@ -68,7 +67,8 @@ pub fn sys_draw_spawned_land_chunks(
     mut materials_land_r: ResMut<Assets<LandCustomMaterial>>,
     mut cache_r: ResMut<LandTextureCache>,
     mut images_r: ResMut<Assets<Image>>,
-    uo_data: Res<UoFileData>,
+    mut map_planes_r: ResMut<MapPlanesRes>,
+    texmap_2d_r: Res<TexMap2DRes>,
     world_geo_data_r: Res<WorldGeoData>,
     scene_state_data_r: Res<SceneStateData>,
     player_q: Query<&Player>,
@@ -159,8 +159,8 @@ pub fn sys_draw_spawned_land_chunks(
     let mut blocks_data = BTreeMap::<MapBlockRelPos, MapBlock>::new();
     {
         // This lock only needed during the block loading from disk/memory.
-        let mut uo_data_map_planes_lock = uo_data.map_planes.write().unwrap();
-        let uo_data_map_plane = uo_data_map_planes_lock
+        let mut uo_data_map_planes_arc = map_planes_r.0.clone();
+        let mut uo_data_map_plane = uo_data_map_planes_arc
             .get_mut(&current_map_id)
             .expect("Requested map plane metadata is uncached?");
         uo_data_map_plane
@@ -202,7 +202,7 @@ pub fn sys_draw_spawned_land_chunks(
             &mut materials_land_r,
             &mut cache_r,
             &mut images_r,
-            &uo_data,
+            texmap_2d_r.0.clone(),
             &map_plane_metadata,
             &chunk_data,
             &blocks_data,
@@ -222,33 +222,6 @@ pub fn sys_draw_spawned_land_chunks(
 }
 
 /// Build mesh, attributes and assign to chunk entity.
-/// This function is heavily optimized to build land chunk meshes efficiently.
-///
-/// Key Optimizations:
-/// 1.  **Pre-computation of Heights and Normals:** Instead of calculating vertex heights and normals
-///     on-the-fly inside the main loop, we pre-compute them for the entire grid (including
-///     a 1-tile border for seamless stitching) and store them in `heights` and `normals_grid` arrays.
-///     This avoids redundant calculations, especially for normals, where each vertex's normal
-///     was previously computed multiple times for adjacent tiles.
-///
-/// 2.  **SIMD-accelerated Normal Calculation:** The process of calculating normals from the heightmap
-///     is vectorized using the `wide` crate. It processes 4 vertices at a time (`f32x4`),
-///     significantly speeding up the expensive normalization calculations. This is the most
-///     significant optimization.
-///
-/// 3.  **Loop Fusion:** The main loop now iterates over the tiles (`tx`, `ty`) only once. Inside this
-///     single loop, it performs all necessary work for a given tile:
-///     -   Looks up pre-computed heights and normals.
-///     -   Generates vertex positions, UVs, and normals for the tile's quad.
-///     -   Adds indices to the index buffer.
-///     -   Fetches tile metadata (`MapCell`).
-///     -   Updates the shader uniforms with texture information.
-///     This improves data locality and reduces loop overhead compared to the previous multi-loop approach.
-///
-/// 4.  **Efficient Data Access:** By pre-computing data and accessing it from local arrays within a
-///     tight loop, we maximize cache efficiency. The `get_cell` helper is still used, but its calls
-///     are now consolidated into the height/uniform generation phases, reducing overhead from repeated
-///     coordinate calculations and B-tree lookups.
 fn draw_land_chunk(
     commands: &mut Commands,
     pool_ref: &mut LandChunkMeshBufferPool,
@@ -257,7 +230,7 @@ fn draw_land_chunk(
     materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
     land_texture_cache_rref: &mut ResMut<LandTextureCache>,
     images_rref: &mut ResMut<Assets<Image>>,
-    uo_data_rref: &Res<UoFileData>,
+    texmap_2d_r: Arc<TexMap2D>,
     map_plane_metadata_ref: &MapPlaneMetadata,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
@@ -463,7 +436,7 @@ fn draw_land_chunk(
             // Get texture array layer for this tile's artwork.
             let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
                 images_rref,
-                uo_data_rref,
+                texmap_2d_r.clone(),
                 tile_ref.id,
             );
 

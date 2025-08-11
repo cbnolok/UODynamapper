@@ -7,12 +7,15 @@ use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, SeekFrom, prelude::*};
+
 use std::path::PathBuf;
 
 use crate::generic_index;
 use crate::utils::color::*;
 use crate::utils::math::*;
+use wide::*;
+use bytemuck;
+use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LandTextureSize {
@@ -152,12 +155,13 @@ impl TexMap2D {
             .canonicalize()
             .wrap_err_with(|| format!("Check {texmap_file_name} path"))?;
 
-        let mut texmap_file_handle = File::open(&texmap_file_path)
+        let texmap_file_handle = File::open(&texmap_file_path)
             .wrap_err_with(|| format!("Open map textures mul file at '{texmap_file_name}'"))?;
         let texmap_file_metadata = texmap_file_handle
             .metadata()
-            .wrap_err("Get {file_name} metadata")?;
+            .wrap_err_with(|| format!("Get {texmap_file_name} metadata"))?;
         let texmap_file_size = downcast_ceil_usize(texmap_file_metadata.len());
+        let mut texmap_file_rdr = BufReader::new(texmap_file_handle);
 
         /* Open texidx.mul */
         let texidx: generic_index::IndexFile = generic_index::IndexFile::load(texmap_idx_file_path)?;
@@ -167,14 +171,6 @@ impl TexMap2D {
         let mut texmap = TexMap2D {
             //file_data: vec![Texture2DElement::default(); texidx.element_count()],
             file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
-        };
-
-        let mut texmap_file_rdr: Cursor<Vec<u8>> = {
-            let mut rdr_buf = vec![0; texmap_file_size];
-            texmap_file_handle
-                .read_exact(rdr_buf.as_mut())
-                .wrap_err("Read index file")?;
-            Cursor::new(rdr_buf)
         };
 
         // Loop on each entry of texidx
@@ -230,15 +226,37 @@ impl TexMap2D {
             };
 
             texmap_file_rdr.seek(SeekFrom::Start(tex_lookup as u64))?;
-            cur_texture.pixel_data = Vec::with_capacity(pixel_qty);
-            for i_pixel in 0..pixel_qty {
-                let mut pixel_16 = Bgra5551::new_from_val(
-                    texmap_file_rdr
-                        .read_u16::<LittleEndian>()
-                        .wrap_err_with(|| {
-                            format!("Read pixel {i_pixel} data for texture with raw idx {i_idx_raw}, idx in collection {i_idx_valid}")
-                        })?,
-                );
+            let pixel_qty_bytes = pixel_qty * 2; // Each u16 is 2 bytes
+            let mut pixel_data_bytes = vec![0u8; pixel_qty_bytes];
+            texmap_file_rdr.read_exact(&mut pixel_data_bytes)?;
+
+            let pixel_data_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
+
+            cur_texture.pixel_data = Vec::with_capacity(pixel_qty * 4);
+            let (pixel_data_u16_prefix, pixel_data_u16_suffix) = pixel_data_u16.as_chunks::<16>();
+
+            for &chunk_array in pixel_data_u16_prefix {
+                let chunk = u16x16::new(chunk_array); // Convert array to SIMD vector
+
+                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
+                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
+                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
+                let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
+
+                // Now convert u16x16 to [u32; 16]
+                let mut rgba_u32_array = [0u32; 16];
+                for i in 0..16 {
+                    let r_val = r_u16.as_array_ref()[i] as u32;
+                    let g_val = g_u16.as_array_ref()[i] as u32;
+                    let b_val = b_u16.as_array_ref()[i] as u32;
+                    let a_val = a_u16.as_array_ref()[i] as u32;
+                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                }
+                cur_texture.pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+            }
+
+            for &pixel_16_val in pixel_data_u16_suffix {
+                let mut pixel_16 = Bgra5551::new_from_val(pixel_16_val);
                 pixel_16.set_a(1);
                 cur_texture
                     .pixel_data

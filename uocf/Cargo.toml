@@ -16,3 +16,5 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
     "dds",
 ] }
+wide = { version = "0.7.14", features = ["std"] }
+bytemuck = { version = "1.15.0", features = ["derive"] }

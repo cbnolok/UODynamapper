@@ -180,7 +180,7 @@ pub fn run_bevy_app() -> ExitCode {
             texture_cache::TextureCachePlugin {
                 registered_by: "Core",
             },
-            uo_files_loader::UoFilesPlugin {
+            uo_files_loader::UOFilesPlugin {
                 registered_by: "Core",
             },
         ))

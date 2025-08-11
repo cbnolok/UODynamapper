@@ -106,7 +106,7 @@ fn sys_setup_cam(
                 width: ortho_width,
                 height: ortho_height,
             },
-            near: -10.0,
+            near: -1000.0,
             far: 1000.0,
             ..OrthographicProjection::default_3d()
         }),

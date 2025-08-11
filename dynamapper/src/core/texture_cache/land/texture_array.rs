@@ -1,7 +1,6 @@
-//! Robust helpers and constructors for managing land texture arrays of multiple sizes with Bevy.
-//! The cache drives which size is used for a given texture_id, ensuring data consistency.
+#![allow(unused)]
 
-use crate::{core::uo_files_loader::UoFileData, prelude::*, util_lib::image::*};
+use crate::{core::uo_files_loader::TexMap2DRes, prelude::*, util_lib::image::*};
 use bevy::{
     image::{ImageSampler, ImageSamplerDescriptor},
     prelude::*,
@@ -10,7 +9,7 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
-use uocf::geo::land_texture_2d::LandTextureSize;
+use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
@@ -80,70 +79,66 @@ pub fn create_gpu_texture_array(
 //const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
 
 const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
-const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C;   // Sea floor
+const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C; // Sea floor
 
 /// Create and preserve a placeholder texture for fallback/error.
 fn get_error_texture(
     _texture_size: LandTextureSize,
     image_assets: &mut ResMut<Assets<Image>>,
-    uo_data: &Res<UoFileData>,
+    texmap_2d: &TexMap2D,
 ) -> Handle<Image> {
     static UNUSED_SMALL: OnceLock<Handle<Image>> = OnceLock::new();
     //static UNUSED_BIG: OnceLock<Handle<Image>> = OnceLock::new();
 
     // Use one placeholder for each canonical size.
     //if texture_size == LandTextureSize::Small {
-        UNUSED_SMALL
-            .get_or_init(|| {
-                let texmap_lock = uo_data
-                    .texmap_2d
-                    .read()
-                    .expect("Can't acquire texmap data lock.");
-                let texture_ref = texmap_lock
-                    .element(DEFAULT_ERROR_TEXTURE_ID as usize)
-                    .expect("No UNUSED land texture?");
-                let img = image_from_rgba8(
-                    texture_ref.size_x(),
-                    texture_ref.size_y(),
-                    &texture_ref.pixel_data(),
-                );
-                image_assets.add(img)
-            })
-            .clone()
-/*
-    } else {
-        UNUSED_BIG
-            .get_or_init(|| {
-                let texmap_lock = uo_data
-                    .texmap_2d
-                    .read()
-                    .expect("Can't acquire texmap data lock.");
-                let texture_ref = texmap_lock
-                    .element(DEFAULT_ERROR_TEXTURE_ID as usize)
-                    .expect("No UNUSED land texture?");
-                let mut img = image_from_rgba8(
-                    texture_ref.size_x(),
-                    texture_ref.size_y(),
-                    &texture_ref.pixel_data(),
-                );
-                // UNUSED texture is small. Let's scale it up and make it grayscale, to make clear visually that we
-                //  requested an invalid big texture, not a small one.
-                let asset_usage = img.asset_usage;
-                let dynamic_img = img
-                    .try_into_dynamic()
-                    .unwrap()
-                    .resize(
-                        LandTextureSize::BIG_X,
-                        LandTextureSize::BIG_Y,
-                        image::imageops::FilterType::Nearest,
-                    )
-                    .grayscale();
-                img = Image::from_dynamic(dynamic_img, false, asset_usage);
-                image_assets.add(img)
-            })
-            .clone()
-    }
-*/
+    UNUSED_SMALL
+        .get_or_init(|| {
+            let texture_ref = texmap_2d
+                .element(DEFAULT_ERROR_TEXTURE_ID as usize)
+                .expect("No UNUSED land texture?");
+            let img = image_from_rgba8(
+                texture_ref.size_x(),
+                texture_ref.size_y(),
+                &texture_ref.pixel_data(),
+            );
+            image_assets.add(img)
+        })
+        .clone()
+    /*
+        } else {
+            UNUSED_BIG
+                .get_or_init(|| {
+                    let texmap_lock = uo_data
+                        .texmap_2d
+                        .read()
+                        .expect("Can't acquire texmap data lock.");
+                    let texture_ref = texmap_lock
+                        .element(DEFAULT_ERROR_TEXTURE_ID as usize)
+                        .expect("No UNUSED land texture?");
+                    let mut img = image_from_rgba8(
+                        texture_ref.size_x(),
+                        texture_ref.size_y(),
+                        &texture_ref.pixel_data(),
+                    );
+                    // UNUSED texture is small. Let's scale it up and make it grayscale, to make clear visually that we
+                    //  requested an invalid big texture, not a small one.
+                    let asset_usage = img.asset_usage;
+                    let dynamic_img = img
+                        .try_into_dynamic()
+                        .unwrap()
+                        .resize(
+                            LandTextureSize::BIG_X,
+                            LandTextureSize::BIG_Y,
+                            image::imageops::FilterType::Nearest,
+                        )
+                        .grayscale();
+                    img = Image::from_dynamic(dynamic_img, false, asset_usage);
+                    image_assets.add(img)
+                })
+                .clone()
+        }
+    */
 }
 
 /// Try to get actual texture for provided texture_id.
@@ -151,19 +146,14 @@ fn get_error_texture(
 pub fn get_texmap_image(
     texture_id: u16,
     image_assets_resmut: &mut ResMut<Assets<Image>>,
-    uo_data_res: &Res<UoFileData>,
+    texmap_2d_res: &TexMap2D,
 ) -> (LandTextureSize, Handle<Image>) {
     fn local_log_warn(msg: &str) {
         logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
     }
 
     let tex_size_and_rgba = {
-        let texmap_lock = uo_data_res
-            .texmap_2d
-            .read()
-            .expect("Can't acquire texmap data lock.");
-
-        match texmap_lock.element(texture_id as usize) {
+        match texmap_2d_res.element(texture_id as usize) {
             Some(tex_ref) => Some((tex_ref.size().clone(), tex_ref.pixel_data().clone())),
             None => None,
         }
@@ -180,8 +170,11 @@ pub fn get_texmap_image(
             } else {
                 local_log_warn(&format!("Texture {texture_id:#X} has invalid pixel data."));
             }
-            let err_tex: Handle<Image> =
-                get_error_texture(DEFAULT_ERROR_TEXTURE_SIZE, image_assets_resmut, uo_data_res);
+            let err_tex: Handle<Image> = get_error_texture(
+                DEFAULT_ERROR_TEXTURE_SIZE,
+                image_assets_resmut,
+                texmap_2d_res,
+            );
             return (DEFAULT_ERROR_TEXTURE_SIZE, err_tex);
         }
     };

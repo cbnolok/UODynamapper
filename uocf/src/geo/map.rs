@@ -6,7 +6,7 @@ use color_eyre::Section;
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Cursor, SeekFrom, prelude::*};
+use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Default)]
@@ -116,12 +116,31 @@ impl MapBlock {
             Ok(&mut self.cells[((Self::CELLS_PER_COLUMN * y) + x) as usize])
         }
     }
+
+    pub fn from_reader(rdr: &mut Cursor<&[u8]>) -> eyre::Result<MapBlock> {
+        let mut new_block = MapBlock::default();
+
+        let _block_header = rdr
+            .read_u32::<LittleEndian>()
+            .wrap_err("Read map block: header")?;
+
+        for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
+            for x_cell in 0..MapBlock::CELLS_PER_ROW {
+                let new_cell = new_block.cell_as_mut(x_cell, y_cell).unwrap();
+                new_cell.id = rdr
+                    .read_u16::<LittleEndian>()
+                    .wrap_err("Read map block: cell: id")?;
+                new_cell.z = rdr.read_i8().wrap_err("Read map block: cell: z")?;
+            }
+        }
+        Ok(new_block)
+    }
 }
 
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
-    map_file_mul_path: PathBuf,
+    map_file_mul_rdr: BufReader<File>,
     cached_blocks: BTreeMap<MapBlockRelPos, MapBlock>,
 }
 impl MapPlane {
@@ -234,6 +253,8 @@ impl MapPlane {
             .metadata()
             .wrap_err_with(|| format!("Get map{map_index}.mul metadata"))?;
 
+        let map_file_mul_rdr = BufReader::new(map_file_mul_handle);
+
         let map_size_tiles = match map_index {
             0..=1 => {
                 if map_file_mul_metadata.len() < 77070336 {
@@ -284,7 +305,7 @@ impl MapPlane {
         let map_plane = MapPlane {
             index: map_index,
             size_blocks: map_size_blocks,
-            map_file_mul_path: map_file_mul_path,
+            map_file_mul_rdr,
             cached_blocks: BTreeMap::new(),
         };
         Ok(map_plane)
@@ -346,18 +367,13 @@ impl MapPlane {
         }
 
         // We don't have every requested block in the cache, so we need to retrieve them.
-        let mut map_file_mul_handle = File::open(&self.map_file_mul_path).wrap_err_with(|| {
-            format!(
-                "Open map mul at '{}'",
-                self.map_file_mul_path.to_string_lossy()
-            )
-        })?;
+        
 
         // Having it sorted allows us to perform less file reads by acquiring blocks stored sequentially in the map file.
         blocks_to_load.sort(); // Sort first by x, then by y.
 
         // Start reading blocks.
-        let mut blocks_buffer: Vec<u8> = Vec::with_capacity(MAP_FILE_MAX_CHUNK_SIZE);
+        let mut blocks_buffer: Vec<u8> = vec![0; MAP_FILE_MAX_CHUNK_SIZE];
         let mut blocks_read: usize = 0;
         let mut chunk_blocks_to_read_seq_count: usize;
         'read_chunks: while blocks_read < blocks_to_load.len() {
@@ -412,12 +428,13 @@ impl MapPlane {
 
             let block_idx = MapBlock::idx_from_coords(&block_to_seek, self.size_blocks.height);
             let off = (MapBlock::PACKED_SIZE * block_idx as usize) as u64;
-            map_file_mul_handle
+            self.map_file_mul_rdr
                 .seek(SeekFrom::Start(off))
                 .wrap_err(format!("Failed to seek to {off} for block {block_idx}."))?;
+            println!("Seeked to offset: {off} for block {block_idx}");
 
             blocks_buffer.resize(chunk_blocks_to_read_seq_count * MapBlock::PACKED_SIZE, 0);
-            let read_result = map_file_mul_handle
+            let read_result = self.map_file_mul_rdr
                 .read(blocks_buffer.as_mut())
                 .wrap_err("Read map chunk")?;
             if 0 == read_result {
@@ -425,7 +442,7 @@ impl MapPlane {
                 return Err(eyre!("Encountered unexpected End Of File.".to_owned()));
             }
 
-            let mut rdr = Cursor::new(&blocks_buffer);
+            let mut rdr = Cursor::new(blocks_buffer.as_slice());
             let chunk_slice_to_loop =
                 &blocks_to_load[blocks_read..blocks_read + chunk_blocks_to_read_seq_count];
 
@@ -440,25 +457,7 @@ impl MapPlane {
                     continue 'block_store;
                 }
 
-                // Block header
-                let mut new_block = MapBlock::default();
-
-                let _block_header = rdr
-                    .read_u32::<LittleEndian>()
-                    .wrap_err("Read map block: header")?;
-
-                //println!("READING BLOCK {:?}. Header: {_block_header}", block_pos);
-                // Cells inside the block; stored sequentially left to right, then top to bottom.
-                for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
-                    for x_cell in 0..MapBlock::CELLS_PER_ROW {
-                        let new_cell = new_block.cell_as_mut(x_cell, y_cell).unwrap();
-                        new_cell.id = rdr
-                            .read_u16::<LittleEndian>()
-                            .wrap_err("Read map block: cell: id")?;
-                        new_cell.z = rdr.read_i8().wrap_err("Read map block: cell: z")?;
-                        //println!("Reading CELL {x_cell},{y_cell}. ID: 0x{:.X}, Z: {}", new_cell.id, new_cell.z);
-                    }
-                }
+                let mut new_block = MapBlock::from_reader(&mut rdr)?;
                 new_block.internal_coords = block_pos.clone();
                 self.cached_blocks.insert(*block_pos, new_block);
                 blocks_read += 1;

@@ -3,6 +3,8 @@
 use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
+use dashmap::DashMap;
+//use parking_lot::RwLock;
 use uocf::eyre_imports;
 use uocf::geo::{land_texture_2d, map};
 use uocf::tiledata;
@@ -10,25 +12,29 @@ eyre_imports!();
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::Arc;
+
+#[derive(Resource)]
+pub struct UoInterfaceSettingsRes(pub Arc<UoInterfaceSettings>);
+
+#[derive(Resource)]
+pub struct MapPlanesRes(pub Arc<DashMap<u32, map::MapPlane>>);
+
+#[derive(Resource)]
+pub struct TileDataRes(pub Arc<tiledata::TileData>);
+
+#[derive(Resource)]
+pub struct TexMap2DRes(pub Arc<land_texture_2d::TexMap2D>);
 
 pub struct UoInterfaceSettings {
     pub base_folder: PathBuf,
 }
 
-#[derive(Resource)]
-pub struct UoFileData {
-    pub settings: RwLock<UoInterfaceSettings>,
-    pub map_planes: RwLock<HashMap<u32, map::MapPlane>>,
-    pub tiledata: RwLock<tiledata::TileData>,
-    pub texmap_2d: RwLock<land_texture_2d::TexMap2D>,
-}
-
-pub struct UoFilesPlugin {
+pub struct UOFilesPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(UoFilesPlugin);
-impl Plugin for UoFilesPlugin {
+impl_tracked_plugin!(UOFilesPlugin);
+impl Plugin for UOFilesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_systems(
@@ -44,7 +50,6 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
         "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy".into();
 
     lg("Start loading UO Data.");
-    // TODO: inject a logger function to uocf crate calls.
 
     let map_plane_index = 0_u32;
     lg(
@@ -56,22 +61,8 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
         map_plane_index,
     )
     .expect(&format!("Error initializing map plane {map_plane_index}"));
-    let mut map_planes = HashMap::<u32, map::MapPlane>::new();
+    let mut map_planes = DashMap::<u32, map::MapPlane>::new();
     map_planes.insert(map_plane_index, map_plane);
-
-    // Test map loading.
-    /*
-        let map_rect_to_show = map::MapRectCells {
-            x0: 0,
-            y0: 0,
-            width: 16,
-            height: 16,
-        };
-        let blocks_to_load = map::MapPlane::calc_blocks_to_load(&mut map_plane, &map_rect_to_show);
-        map_plane
-            .load_blocks(blocks_to_load)
-            .wrap_err("Load map blocks in the view area")?;
-    */
 
     lg("Loading Tiledata");
     let tiledata = tiledata::TileData::load(uo_path.join("tiledata.mul")).expect("Load tiledata");
@@ -83,15 +74,10 @@ pub fn sys_setup_uo_data(mut commands: Commands) {
 
     lg("Done loading UO Data.");
 
-    // TODO: move each UoFileData element in its own Bevy Resource.
-    let data = UoFileData {
-        settings: RwLock::new(UoInterfaceSettings {
-            base_folder: uo_path,
-        }),
-        map_planes: RwLock::new(map_planes),
-        tiledata: RwLock::new(tiledata),
-        texmap_2d: RwLock::new(texmap_2d),
-    };
-
-    commands.insert_resource(data);
+    commands.insert_resource(UoInterfaceSettingsRes(Arc::new(UoInterfaceSettings {
+        base_folder: uo_path,
+    })));
+    commands.insert_resource(MapPlanesRes(Arc::new(map_planes)));
+    commands.insert_resource(TileDataRes(Arc::new(tiledata)));
+    commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
 }
