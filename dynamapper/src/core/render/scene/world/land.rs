@@ -35,7 +35,7 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default())
-            .insert_resource(LandChunkMeshBufferPool::with_capacity(64)) // Preallocate 64 chunks in the buffer.
+            .insert_resource(LandChunkMeshBufferPool::with_capacity(128)) // Preallocate 64 chunks in the buffer.
             .insert_resource(LandChunkMeshDiagnostics::default()) // Performance/statistics resource.
             .insert_resource(MeshBuildPerfHistory::new(64)) // Mesh build time history.
             .add_systems(

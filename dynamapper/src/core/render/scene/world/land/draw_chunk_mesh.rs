@@ -402,11 +402,14 @@ fn draw_land_chunk(
 
             // Each quad (tile) uses two triangles (6 indices).
             // Get the layer (index) of the texture array housing this texture (map tile art).
+            let start = std::time::Instant::now();
             let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
                 images_rref,
                 uo_data_rref,
                 tile_ref.id,
             );
+            let end = start.elapsed().as_nanos() as u64;
+            println!("get_texture_size_layer took {end} ns.");
 
             // Update values of the uniform buffer. This is per-chunk data (per mesh draw call).
             // We need to store the data not in a simple vector, but in a vector of 4D vectors, in order to meet
