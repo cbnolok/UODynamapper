@@ -7,6 +7,7 @@ use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
+use bytemuck::{Pod, Zeroable};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Default)]
@@ -64,6 +65,21 @@ pub struct MapBlock {
     //header: u32, // unused
     cells: Box<[MapCell; Self::CELLS_PER_BLOCK as usize]>,
 }
+
+#[repr(C, packed)] // Ensure C-compatible layout and no padding
+#[derive(Copy, Clone, Pod, Zeroable)] // Add bytemuck traits
+struct RawMapBlock {
+    header: u32,
+    cells: [RawMapCell; MapBlock::CELLS_PER_BLOCK as usize],
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawMapCell {
+    id: u16,
+    z: i8,
+}
+
 impl Default for MapBlock {
     fn default() -> Self {
         Self {
@@ -118,21 +134,24 @@ impl MapBlock {
     }
 
     pub fn from_reader(rdr: &mut Cursor<&[u8]>) -> eyre::Result<MapBlock> {
-        let mut new_block = MapBlock::default();
+        let bytes = rdr.get_ref(); // Get the underlying byte slice
+        let offset = rdr.position() as usize; // Get the current position of the cursor
 
-        let _block_header = rdr
-            .read_u32::<LittleEndian>()
-            .wrap_err("Read map block: header")?;
+        let raw_block: &RawMapBlock = bytemuck::from_bytes(&bytes[offset..offset + MapBlock::PACKED_SIZE]);
+
+        let mut new_block = MapBlock::default();
+        // No need to read header, it's in raw_block.header
 
         for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
             for x_cell in 0..MapBlock::CELLS_PER_ROW {
                 let new_cell = new_block.cell_as_mut(x_cell, y_cell).unwrap();
-                new_cell.id = rdr
-                    .read_u16::<LittleEndian>()
-                    .wrap_err("Read map block: cell: id")?;
-                new_cell.z = rdr.read_i8().wrap_err("Read map block: cell: z")?;
+                let raw_cell = &raw_block.cells[((MapBlock::CELLS_PER_COLUMN * y_cell) + x_cell) as usize];
+                new_cell.id = raw_cell.id;
+                new_cell.z = raw_cell.z;
             }
         }
+        // Advance the cursor by the size of the block
+        rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;
         Ok(new_block)
     }
 }
@@ -431,7 +450,6 @@ impl MapPlane {
             self.map_file_mul_rdr
                 .seek(SeekFrom::Start(off))
                 .wrap_err(format!("Failed to seek to {off} for block {block_idx}."))?;
-            println!("Seeked to offset: {off} for block {block_idx}");
 
             blocks_buffer.resize(chunk_blocks_to_read_seq_count * MapBlock::PACKED_SIZE, 0);
             let read_result = self.map_file_mul_rdr
