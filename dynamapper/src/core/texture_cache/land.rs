@@ -6,12 +6,12 @@ use crate::core::system_sets::*;
 use bevy::prelude::*;
 use uocf::geo::land_texture_2d::LandTextureSize;
 
-pub struct LandCachePlugin {
+pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(LandCachePlugin);
+impl_tracked_plugin!(LandTextureCachePlugin);
 
-impl Plugin for LandCachePlugin {
+impl Plugin for LandTextureCachePlugin {
     /// Allocate GPU texture array for terrain tiles and TileCache.
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
@@ -25,7 +25,7 @@ impl Plugin for LandCachePlugin {
 }
 
 pub fn sys_setup_terrain_cache(mut cmd: Commands, mut images: ResMut<Assets<Image>>) {
-    log_system_add_startup::<LandCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
+    log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
     let handle_small = texture_array::create_gpu_texture_array("land_small_texture_cache", &mut images, LandTextureSize::Small);
     let handle_big = texture_array::create_gpu_texture_array("land_big_texture_cache", &mut images, LandTextureSize::Big);

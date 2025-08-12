@@ -138,12 +138,17 @@ pub struct LandTile {
     pub texture_id: u16,
 
     #[new(default)]
-    pub name: String,
+    pub name: [u8; Self::NAME_LEN],
 }
 
 impl Default for LandTile {
     fn default() -> Self {
-        Self::new(Self::TILE_ID_UNUSED)
+        Self {
+            tile_id: Self::TILE_ID_UNUSED,
+            flags: Flags::default(),
+            texture_id: 0,
+            name: [0; Self::NAME_LEN],
+        }
     }
 }
 
@@ -154,8 +159,11 @@ impl LandTile {
 
     const NAME_LEN: usize = 20;
 
-    fn name_ascii(&self) -> &String {
-        &self.name
+    pub fn name_ascii(&self) -> &str {
+        // Names are null-terminated ASCII strings. Find the null terminator
+        // and convert the slice up to that point to a &str.
+        let null_pos = self.name.iter().position(|&c| c == 0).unwrap_or(Self::NAME_LEN);
+        std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
     }
 
     fn is_nodraw(&self) -> Option<bool> {
@@ -209,12 +217,24 @@ pub struct ItemTile {
     height: i8, // Stratics: If Conatainer, this is how much the container can hold
 
     #[new(default)]
-    name: String,
+    name: [u8; Self::NAME_LEN],
 }
 
 impl Default for ItemTile {
     fn default() -> Self {
-        Self::new(Self::TILE_ID_UNUSED)
+        Self {
+            tile_id: Self::TILE_ID_UNUSED,
+            flags: Flags::default(),
+            weight: 0,
+            quality: 0,
+            quantity: 0,
+            anim_id: 0,
+            hue_extra: 0,
+            stacking_offset: 0,
+            value: 0,
+            height: 0,
+            name: [0; Self::NAME_LEN],
+        }
     }
 }
 
@@ -242,8 +262,11 @@ impl ItemTile {
         self.anim_id as u32 + 60_000
     }
 
-    fn name_ascii(&self) -> &String {
-        &self.name
+    pub fn name_ascii(&self) -> &str {
+        // Names are null-terminated ASCII strings. Find the null terminator
+        // and convert the slice up to that point to a &str.
+        let null_pos = self.name.iter().position(|&c| c == 0).unwrap_or(Self::NAME_LEN);
+        std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
     }
 
     fn is_nodraw(&self) -> Option<bool> {
@@ -429,7 +452,6 @@ impl TileData {
         };
 
         let mut err_buf;
-        let mut name_buf = [0_u8; LandTile::NAME_LEN];
 
         // Read LandTiles
         let mut i_tile: u32 = 0;
@@ -462,9 +484,8 @@ impl TileData {
                     .wrap_err(err_buf.clone() + "texture id")?;
 
                 tiledata_file_rdr
-                    .read_exact(&mut name_buf)
+                    .read_exact(&mut land_tile.name)
                     .wrap_err(err_buf.clone() + "name")?;
-                land_tile.name = String::from_utf8_lossy(&name_buf).into_owned();
 
                 i_tile = i_tile.saturating_add(1);
             }
@@ -543,9 +564,8 @@ impl TileData {
                     .wrap_err(err_buf.clone() + "height")?;
 
                 tiledata_file_rdr
-                    .read_exact(&mut name_buf)
+                    .read_exact(&mut item_tile.name)
                     .wrap_err(err_buf.clone() + "name")?;
-                item_tile.name = String::from_utf8_lossy(&name_buf).into_owned();
 
                 i_tile = i_tile.saturating_add(1);
             }

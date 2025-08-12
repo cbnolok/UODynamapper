@@ -45,21 +45,23 @@ impl MaterialExtension for LandMaterialExtension {
 
 /// Each chunk mesh gets a shader material generated per-chunk, with this struct as its extension.
 #[repr(C, align(16))]
-#[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
-pub struct LandUniforms {
-    pub light_dir: Vec3,
-    _pad: f32,
-    pub chunk_origin: Vec2,
-    _pad2: Vec2,
-    pub tiles: [TileUniform; TILE_NUM_PER_CHUNK_TOTAL], // array of structs
-}
-
-#[repr(C, align(16))]
-#[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TileUniform {
     pub tile_height: u32,
     pub texture_size: u32,  // 0: small, 1: big
-    pub layer: u32,
-    pub hue: u32,
+    pub texture_layer: u32,
+    pub texture_hue: u32,
     // Ensure to have 16 bytes alignment (WGSL std140 layout), add padding if needed.
+}
+
+#[repr(C, align(16))]
+#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LandUniforms {
+    pub light_dir: Vec3,
+    pub _pad: u32,
+    pub chunk_origin: Vec2,
+    pub _pad2: Vec2,
+    pub tiles: [TileUniform; TILE_NUM_PER_CHUNK_TOTAL],
+    pub use_vertex_lighting: u32,
+    pub _pad3: Vec3,          // Padding for 16-byte alignment
 }
