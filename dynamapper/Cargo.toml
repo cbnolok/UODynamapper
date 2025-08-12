@@ -32,6 +32,7 @@ wide = { version = "0.7.14" }
 futures-lite = "2.6.1"
 dashmap = "6.1.0"
 parking_lot = "0.12.4"
+smallvec = "1.15.1"
 
 [dependencies.bevy]
 version = "0.16.1"

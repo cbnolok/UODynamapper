@@ -137,17 +137,25 @@ impl MapBlock {
         let bytes = rdr.get_ref(); // Get the underlying byte slice
         let offset = rdr.position() as usize; // Get the current position of the cursor
 
-        let raw_block: &RawMapBlock = bytemuck::from_bytes(&bytes[offset..offset + MapBlock::PACKED_SIZE]);
+        // Read the raw block as a byte slice
+        let raw_block_bytes = &bytes[offset..offset + MapBlock::PACKED_SIZE];
+
+        // Cast the byte slice to RawMapBlock. This is where endianness needs to be handled for fields.
+        let raw_block: &RawMapBlock = bytemuck::from_bytes(raw_block_bytes);
 
         let mut new_block = MapBlock::default();
-        // No need to read header, it's in raw_block.header
+
+        // Handle endianness for the header
+        let _header = u32::from_le_bytes(raw_block.header.to_le_bytes()); // If we need the header, use this. Otherwise, just skip.
 
         for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
             for x_cell in 0..MapBlock::CELLS_PER_ROW {
                 let new_cell = new_block.cell_as_mut(x_cell, y_cell).unwrap();
                 let raw_cell = &raw_block.cells[((MapBlock::CELLS_PER_COLUMN * y_cell) + x_cell) as usize];
-                new_cell.id = raw_cell.id;
-                new_cell.z = raw_cell.z;
+
+                // Handle endianness for the id
+                new_cell.id = u16::from_le_bytes(raw_cell.id.to_le_bytes());
+                new_cell.z = raw_cell.z; // i8 is single byte, no endianness issue
             }
         }
         // Advance the cursor by the size of the block

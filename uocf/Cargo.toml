@@ -18,3 +18,4 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 wide = { version = "0.7.14", features = ["std"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
+smallvec = "1.15.1"

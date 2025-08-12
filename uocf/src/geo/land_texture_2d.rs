@@ -230,13 +230,18 @@ impl TexMap2D {
             let mut pixel_data_bytes = vec![0u8; pixel_qty_bytes];
             texmap_file_rdr.read_exact(&mut pixel_data_bytes)?;
 
-            let pixel_data_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
-
             cur_texture.pixel_data = Vec::with_capacity(pixel_qty * 4);
-            let (pixel_data_u16_prefix, pixel_data_u16_suffix) = pixel_data_u16.as_chunks::<16>();
+
+            let (pixel_data_u16_prefix, pixel_data_u16_suffix) = bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
 
             for &chunk_array in pixel_data_u16_prefix {
-                let chunk = u16x16::new(chunk_array); // Convert array to SIMD vector
+                #[allow(unused_mut)]
+                let mut chunk = u16x16::new(chunk_array);
+
+                #[cfg(target_endian = "big")]
+                {
+                    chunk = chunk.swap_bytes();
+                }
 
                 let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
                 let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
@@ -256,6 +261,7 @@ impl TexMap2D {
             }
 
             for &pixel_16_val in pixel_data_u16_suffix {
+                #[allow(unused_mut)]
                 let mut pixel_16 = Bgra5551::new_from_val(pixel_16_val);
                 pixel_16.set_a(1);
                 cur_texture
