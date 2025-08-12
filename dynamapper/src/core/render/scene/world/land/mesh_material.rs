@@ -17,7 +17,9 @@ pub struct LandMaterialExtension {
     #[texture(102, dimension = "2d_array")]
     pub texarray_big: Handle<Image>,
     #[uniform(103, min_binding_size = 16)]
-    pub uniforms: LandUniforms,
+    pub land_uniform: LandUniforms,
+    #[uniform(104, min_binding_size = 16)]
+    pub tunables_uniform: TunablesUniform,
 }
 
 impl MaterialExtension for LandMaterialExtension {
@@ -62,6 +64,18 @@ pub struct LandUniforms {
     pub chunk_origin: Vec2,
     pub _pad2: Vec2,
     pub tiles: [TileUniform; TILE_NUM_PER_CHUNK_TOTAL],
-    pub use_vertex_lighting: u32,
-    pub _pad3: Vec3,          // Padding for 16-byte alignment
 }
+
+#[repr(C, align(16))]
+#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TunablesUniform {
+    // Like a bool: 0 = per-pixel bicubic lighting, 1 = per-vertex Gouraud lighting
+    pub use_vertex_lighting: u32,
+    // Sharpness of normal smoothing: 0.0 = blocky normals (flat shading), 1.0 = full bicubic smooth normals
+    pub sharpness_factor: f32,
+    // How much of the sharpened color is mixed to the original color.
+    pub sharpness_mix_factor: f32,
+    _pad: f32,
+
+}
+

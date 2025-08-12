@@ -309,13 +309,17 @@ fn draw_land_chunk(
 
     // 3) Precompute per-tile uniform data (texture layer / size / hue / etc.)
     //    We'll store one uniform per core tile (not per grid-vertex). This avoids calling cache in the vertex loop.
-    let mut mat_ext_uniforms = LandUniforms::zeroed();
-    mat_ext_uniforms.chunk_origin = Vec2::new(
+    let mut mat_ext_land_uniforms = LandUniforms::zeroed();
+    mat_ext_land_uniforms.chunk_origin = Vec2::new(
         chunk_origin_tile_units_x as f32,
         chunk_origin_tile_units_z as f32,
     );
-    mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
-    mat_ext_uniforms.use_vertex_lighting = 1;
+    mat_ext_land_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
+
+    let mut mat_ext_tunables_uniform = TunablesUniform::zeroed();
+    mat_ext_tunables_uniform.use_vertex_lighting = 1;
+    mat_ext_tunables_uniform.sharpness_factor = 1.0;
+    mat_ext_tunables_uniform.sharpness_mix_factor = 1.0;
 
     // Pre-allocate a small vec to hold tile texture meta if you need to inspect it
     // (not strictly necessary if you only store to mat_ext_uniforms)
@@ -332,7 +336,7 @@ fn draw_land_chunk(
             );
 
             let tile_uniform_idx = (ty * TILE_NUM_PER_CHUNK_1D as usize + tx) as usize;
-            let tile_uniform = &mut mat_ext_uniforms.tiles[tile_uniform_idx];
+            let tile_uniform = &mut mat_ext_land_uniforms.tiles[tile_uniform_idx];
             tile_uniform.tile_height = tile_ref.z as u32;
             tile_uniform.texture_size = match texture_size {
                 LandTextureSize::Small => 0,
@@ -417,7 +421,8 @@ fn draw_land_chunk(
             extension: LandMaterialExtension {
                 texarray_small: land_texture_cache_rref.small.image_handle.clone(),
                 texarray_big: land_texture_cache_rref.big.image_handle.clone(),
-                uniforms: mat_ext_uniforms,
+                land_uniform: mat_ext_land_uniforms,
+                tunables_uniform: mat_ext_tunables_uniform,
             },
         };
         materials_land_rref.add(mat)
