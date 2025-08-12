@@ -19,7 +19,10 @@
     view_transformations,
 }
 
-const TEST_TUNABLES_USE_VERTEX_LIGHTING: u32 = 0;
+const USE_TEST_TUNABLES: u32 = 1;
+const TEST_TUNABLES_USE_VERTEX_LIGHTING: u32 = 1;
+const TEST_TUNABLES_SHARPNESS_FACTOR: f32 = 1.0;
+const TEST_TUNABLES_SHARPNESS_MIX_FACTOR: f32 = 1.0;
 
 const TILE_PX: u32         = 44;
 const MAX_TILE_LAYERS: u32 = 2048;
@@ -201,7 +204,8 @@ fn vertex(
     out.uv = in.uv;
 
     // Decide lighting path
-    if (tunables.use_vertex_lighting == 1u) {
+    let use_vertex_lighting: u32 = select(tunables.use_vertex_lighting, TEST_TUNABLES_USE_VERTEX_LIGHTING, USE_TEST_TUNABLES == 1);
+    if (use_vertex_lighting == 0u) {
         // === Gouraud (vertex) lighting mode ===
 
         // Compute bicubic normal from the heightmap
@@ -281,7 +285,8 @@ fn fragment(
 
     // === Lighting calculation ===
     var lighting: f32;
-    if (tunables.use_vertex_lighting == 1u) {
+    let use_vertex_lighting: u32 = select(tunables.use_vertex_lighting, TEST_TUNABLES_USE_VERTEX_LIGHTING, USE_TEST_TUNABLES == 1);
+    if (use_vertex_lighting == 1u) {
         // Vertex lighting (Gouraud)
         lighting = in.uv_b.x;
     } else {
@@ -303,10 +308,12 @@ fn fragment(
 
 
     // === Sharpness blend ===
-    if ((tunables.sharpness_factor != 0.0) && (tunables.sharpness_mix_factor != 0.0)) {
+    let sharpness_factor = select(tunables.sharpness_factor, TEST_TUNABLES_SHARPNESS_FACTOR, USE_TEST_TUNABLES == 1);
+    let sharpness_mix_factor = select(tunables.sharpness_mix_factor, TEST_TUNABLES_SHARPNESS_MIX_FACTOR, USE_TEST_TUNABLES == 1);
+    if ((sharpness_factor != 0.0) && (sharpness_mix_factor != 0.0)) {
         let color_soft = lighting;
-        let color_sharp = pow(lighting, tunables.sharpness_factor);
-        lighting = mix(color_soft, color_sharp, tunables.sharpness_mix_factor);
+        let color_sharp = pow(lighting, sharpness_factor);
+        lighting = mix(color_soft, color_sharp, sharpness_mix_factor);
     }
 
     // === Ambient light ===
