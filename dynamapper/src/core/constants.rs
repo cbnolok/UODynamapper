@@ -10,5 +10,6 @@ pub const ASSET_FOLDER: &'static str = "assets/";
 //#[derive(Resource, Deref)]
 //pub struct LightDir(pub Vec3);
 
+// Hardcoded light direction vector.
 pub const BAKED_GLOBAL_LIGHT: Vec3 = Vec3::new(-1.0, 2.5, -1.0);
 

@@ -3,7 +3,6 @@ use bevy::{
     prelude::*,
     render::render_resource::{AsBindGroup, ShaderRef, ShaderType},
 };
-use super::TILE_NUM_PER_CHUNK_TOTAL;
 
 // ------------- Land material/shader data -------------
 pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
@@ -17,8 +16,10 @@ pub struct LandMaterialExtension {
     #[texture(102, dimension = "2d_array")]
     pub texarray_big: Handle<Image>,
     #[uniform(103, min_binding_size = 16)]
-    pub land_uniform: LandUniforms,
+    pub land_uniform: LandUniform,
     #[uniform(104, min_binding_size = 16)]
+    pub scene_uniform: SceneUniform,
+    #[uniform(105, min_binding_size = 16)]
     pub tunables_uniform: TunablesUniform,
 }
 
@@ -49,7 +50,7 @@ impl MaterialExtension for LandMaterialExtension {
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TileUniform {
-    pub tile_height: u32,
+    pub tile_height: f32,
     pub texture_size: u32,  // 0: small, 1: big
     pub texture_layer: u32,
     pub texture_hue: u32,
@@ -58,12 +59,21 @@ pub struct TileUniform {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LandUniforms {
+pub struct LandUniform {
     pub light_dir: Vec3,
     pub _pad: u32,
     pub chunk_origin: Vec2,
     pub _pad2: Vec2,
-    pub tiles: [TileUniform; TILE_NUM_PER_CHUNK_TOTAL],
+    pub tiles: [TileUniform; 81], // 9x9 grid for seamless normals
+}
+
+#[repr(C, align(16))]
+#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SceneUniform {
+    pub camera_position: Vec3,
+    _pad1: f32,
+    pub light_direction: Vec3,
+    _pad2: f32,
 }
 
 #[repr(C, align(16))]
@@ -76,6 +86,5 @@ pub struct TunablesUniform {
     // How much of the sharpened color is mixed to the original color.
     pub sharpness_mix_factor: f32,
     _pad: f32,
-
 }
 

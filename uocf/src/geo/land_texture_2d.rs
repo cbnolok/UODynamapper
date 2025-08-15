@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use crate::generic_index;
 use crate::utils::color::*;
 use crate::utils::math::*;
-use wide::*;
 use bytemuck;
 use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
+use wide::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LandTextureSize {
@@ -164,7 +164,8 @@ impl TexMap2D {
         let mut texmap_file_rdr = BufReader::new(texmap_file_handle);
 
         /* Open texidx.mul */
-        let texidx: generic_index::IndexFile = generic_index::IndexFile::load(texmap_idx_file_path)?;
+        let texidx: generic_index::IndexFile =
+            generic_index::IndexFile::load(texmap_idx_file_path)?;
 
         /* Read whole texidx.mul to get texmap index data */
         const TEXMAP_MAX_ID: u32 = 0x1388;
@@ -221,8 +222,12 @@ impl TexMap2D {
             cur_texture.size = tex_size_type.clone();
 
             let pixel_qty = match tex_size_type {
-                LandTextureSize::Small => LandTextureSize::SMALL_X as usize * LandTextureSize::SMALL_Y as usize,
-                LandTextureSize::Big => LandTextureSize::BIG_X as usize * LandTextureSize::BIG_Y as usize,
+                LandTextureSize::Small => {
+                    LandTextureSize::SMALL_X as usize * LandTextureSize::SMALL_Y as usize
+                }
+                LandTextureSize::Big => {
+                    LandTextureSize::BIG_X as usize * LandTextureSize::BIG_Y as usize
+                }
             };
 
             texmap_file_rdr.seek(SeekFrom::Start(tex_lookup as u64))?;
@@ -232,7 +237,8 @@ impl TexMap2D {
 
             cur_texture.pixel_data = Vec::with_capacity(pixel_qty * 4);
 
-            let (pixel_data_u16_prefix, pixel_data_u16_suffix) = bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
+            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
+                bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
 
             for &chunk_array in pixel_data_u16_prefix {
                 #[allow(unused_mut)]
@@ -257,7 +263,9 @@ impl TexMap2D {
                     let a_val = a_u16.as_array_ref()[i] as u32;
                     rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
                 }
-                cur_texture.pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+                cur_texture
+                    .pixel_data
+                    .extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
             }
 
             for &pixel_16_val in pixel_data_u16_suffix {

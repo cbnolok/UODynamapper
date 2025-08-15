@@ -269,7 +269,7 @@ fn draw_land_chunk(
 
     // --------- Setup chunk-specific uniforms ---------
     // For shading, lighting, texturing. Synchronized with shader struct.
-    let mut mat_ext_uniforms = LandUniforms::zeroed();
+    let mut mat_ext_uniforms = LandUniform::zeroed();
     mat_ext_uniforms.chunk_origin = Vec2::new(
         chunk_origin_tile_units_x as f32,
         chunk_origin_tile_units_z as f32,

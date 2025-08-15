@@ -50,7 +50,7 @@ impl RenderZoom {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct PlayerCamera;
 impl PlayerCamera {
-    const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
+    pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
 }
 
 pub struct CameraPlugin {

@@ -14,7 +14,7 @@ pub struct LandMaterialExtension {
     #[sampler(101)]
     pub tex_array: Handle<Image>,
     #[uniform(102, min_binding_size = 16)]
-    pub uniforms: LandUniforms,
+    pub uniforms: LandUniform,
 }
 
 impl MaterialExtension for LandMaterialExtension {
@@ -42,10 +42,10 @@ impl MaterialExtension for LandMaterialExtension {
 
 /// Each chunk mesh gets a shader material generated per-chunk, with this struct as its extension.
 ///
-/// See comments above LandUniforms for why uniforms are aligned the way they are.
+/// See comments above LandUniform for why uniforms are aligned the way they are.
 #[repr(C, align(16))]
 #[derive(Copy, Clone, Debug, ShaderType, bytemuck::Zeroable)]
-pub struct LandUniforms {
+pub struct LandUniform {
     pub light_dir: Vec3,
     _pad: f32,
     pub chunk_origin: Vec2,

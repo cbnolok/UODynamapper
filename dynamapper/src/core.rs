@@ -27,6 +27,7 @@ use bevy::{
 use bevy_framepace::FramepacePlugin;
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
+use crate::core::render::scene::world::land::draw_chunk_mesh::setup_land_mesh;
 use tracing_subscriber::fmt;
 
 #[allow(unused)]
@@ -205,7 +206,7 @@ pub fn run_bevy_app() -> ExitCode {
         )
         .add_systems(
             Startup,
-            advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
+            (setup_land_mesh, advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2)),
         )
         .run();
 

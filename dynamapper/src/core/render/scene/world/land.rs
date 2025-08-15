@@ -1,14 +1,10 @@
-pub mod diagnostics;
 pub mod draw_chunk_mesh;
-pub mod mesh_buffer_pool;
 pub mod mesh_material;
 
 use bevy::prelude::*;
 use crate::prelude::*;
 use crate::core::system_sets::*;
 use mesh_material::LandCustomMaterial;
-use mesh_buffer_pool::LandChunkMeshBufferPool;
-use diagnostics::*;
 
 
 /// How many tiles per chunk row/column? (chunks are squared)
@@ -35,9 +31,6 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default())
-            .insert_resource(LandChunkMeshBufferPool::with_capacity(128)) // Preallocate 64 chunks in the buffer.
-            .insert_resource(LandChunkMeshDiagnostics::default()) // Performance/statistics resource.
-            .insert_resource(MeshBuildPerfHistory::new(64)) // Mesh build time history.
             .add_systems(
                 Update,
                 (
@@ -45,7 +38,6 @@ impl Plugin for DrawLandChunkMeshPlugin {
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)
                         .run_if(in_state(AppState::InGame)),
-                    //print_render_stats,
                 ),
             );
     }

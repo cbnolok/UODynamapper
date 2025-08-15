@@ -13,6 +13,7 @@ use std::{
 use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
+const TEXTURE_BYTES_PER_PIXEL: usize = 4; // RGBA8888
 
 #[derive(Clone, Copy, Debug)]
 pub struct LandTextureEntry {
@@ -43,6 +44,13 @@ pub struct LandTextureCache {
     entry_by_id: HashMap<u16, (LandTextureSize, LandTextureEntry)>,
 }
 
+struct PreparedTextureUpload {
+    texture_id: u16,
+    layer: u32,
+    size: LandTextureSize,
+    bytes: Vec<u8>,
+}
+
 impl LandTextureCache {
     pub fn new(small_tex_image_handle: Handle<Image>, big_tex_image_handle: Handle<Image>) -> Self {
         Self {
@@ -58,204 +66,123 @@ impl LandTextureCache {
         }
     }
 
+    /// Preloads a set of textures into the cache, performing one batched GPU upload.
     pub fn preload_textures(
         &mut self,
         images_resmut: &mut ResMut<Assets<Image>>,
         texmap_2d: Arc<TexMap2D>,
         texture_ids: &HashSet<u16>,
     ) {
-        // This function is optimized to perform all GPU texture array modifications
-        // in a single batch, preventing multiple small updates from stalling the render pipeline.
-
-        // --- Stage 1: Collection (CPU-side work) ---
-        // First, we determine all required operations (layer allocations, data loads)
-        // without modifying the final texture array assets.
-
-        struct PendingUpload {
-            layer: u32,
-            tile_bytes: Vec<u8>,
-            texture_size: LandTextureSize,
-        }
-        struct PendingBookkeeping {
-            texture_id: u16,
-            texture_size: LandTextureSize,
-            layer: u32,
-        }
-
         let mut pending_uploads = Vec::new();
-        let mut pending_bookkeeping = Vec::new();
 
+        // --- Stage 1: Collection --- 
+        // For each texture, prepare it for upload without actually modifying the GPU asset.
         for &texture_id in texture_ids {
-            if self.entry_by_id.contains_key(&texture_id) {
-                continue;
+            if let Some(prepared) = self.prepare_texture_residency(texture_id, images_resmut, &texmap_2d) {
+                pending_uploads.push(prepared);
             }
-
-            // Get texture data and size.
-            let (texture_size, tile_handle) =
-                texture_array::get_texmap_image(texture_id, images_resmut, &texmap_2d);
-
-            // Pick which array state to use for layer allocation.
-            let array = match texture_size {
-                LandTextureSize::Small => &mut self.small,
-                LandTextureSize::Big => &mut self.big,
-            };
-
-            // Allocate a layer. This modifies the cache's CPU-side state, which is fine.
-            let layer = if let Some(l) = array.free_layers.pop() {
-                l
-            } else {
-                let victim_id = loop {
-                    let oldest = array
-                        .lru
-                        .pop_front()
-                        .expect("LRU should not be empty at this stage");
-                    let still: &(LandTextureSize, LandTextureEntry) =
-                        self.entry_by_id.get(&oldest).unwrap();
-                    if Instant::now() - still.1.last_touch >= CACHE_EVICT_AFTER {
-                        break oldest;
-                    }
-                    array.lru.push_back(oldest);
-                };
-                let victim_entry: (LandTextureSize, LandTextureEntry) =
-                    self.entry_by_id.remove(&victim_id).unwrap();
-                victim_entry.1.layer
-            };
-
-            // Get the raw pixel data.
-            let tile_bytes: Vec<u8> = {
-                let tile_img = images_resmut.get(&tile_handle).unwrap();
-                tile_img.data.as_ref().unwrap().clone()
-            };
-
-            // Store the operations instead of executing them immediately.
-            pending_uploads.push(PendingUpload {
-                layer,
-                tile_bytes,
-                texture_size,
-            });
-            pending_bookkeeping.push(PendingBookkeeping {
-                texture_id,
-                texture_size,
-                layer,
-            });
         }
 
-        // --- Stage 2: Batched Upload (GPU-side work) ---
-        // Now, apply all the collected texture data to the Bevy Image assets.
-        // This is done in batches to avoid multiple mutable borrows of the Assets<Image> resource.
-        if !pending_uploads.is_empty() {
-            let mut small_uploads = Vec::new();
-            let mut big_uploads = Vec::new();
-            for upload in pending_uploads {
-                match upload.texture_size {
-                    LandTextureSize::Small => small_uploads.push(upload),
-                    LandTextureSize::Big => big_uploads.push(upload),
-                }
-            }
+        if pending_uploads.is_empty() {
+            return;
+        }
 
-            if !small_uploads.is_empty() {
-                if let Some(data) = &mut images_resmut
-                    .get_mut(&self.small.image_handle)
-                    .unwrap()
-                    .data
-                {
-                    for upload in small_uploads {
-                        let (width, height) = LandTextureSize::Small.dimensions();
-                        const BYTES_PER_PIXEL: usize = 4;
-                        let layer_byte_size = (width * height) as usize * BYTES_PER_PIXEL;
-                        let offset = upload.layer as usize * layer_byte_size;
-                        data[offset..offset + layer_byte_size].copy_from_slice(&upload.tile_bytes);
-                    }
-                }
+        // --- Stage 2: Batched Upload --- 
+        // Separate uploads by texture array size to avoid mutable borrow conflicts.
+        let mut small_uploads = Vec::new();
+        let mut big_uploads = Vec::new();
+        for upload in pending_uploads {
+            match upload.size {
+                LandTextureSize::Small => small_uploads.push(upload),
+                LandTextureSize::Big => big_uploads.push(upload),
             }
+        }
 
-            if !big_uploads.is_empty() {
-                if let Some(data) = &mut images_resmut.get_mut(&self.big.image_handle).unwrap().data
-                {
-                    for upload in big_uploads {
-                        let (width, height) = LandTextureSize::Big.dimensions();
-                        const BYTES_PER_PIXEL: usize = 4;
-                        let layer_byte_size = (width * height) as usize * BYTES_PER_PIXEL;
-                        let offset = upload.layer as usize * layer_byte_size;
-                        data[offset..offset + layer_byte_size].copy_from_slice(&upload.tile_bytes);
-                    }
+        if !small_uploads.is_empty() {
+            if let Some(data) = &mut images_resmut.get_mut(&self.small.image_handle).unwrap().data {
+                for upload in &small_uploads {
+                    let (width, height) = upload.size.dimensions();
+                    let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
+                    let offset = upload.layer as usize * layer_byte_size;
+                    data[offset..offset + layer_byte_size].copy_from_slice(&upload.bytes);
                 }
             }
         }
 
+        if !big_uploads.is_empty() {
+            if let Some(data) = &mut images_resmut.get_mut(&self.big.image_handle).unwrap().data {
+                for upload in &big_uploads {
+                    let (width, height) = upload.size.dimensions();
+                    let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
+                    let offset = upload.layer as usize * layer_byte_size;
+                    data[offset..offset + layer_byte_size].copy_from_slice(&upload.bytes);
+                }
+            }
+        }
+        
         // --- Stage 3: Bookkeeping ---
-        // Finally, update the cache's internal maps.
-        for pending in pending_bookkeeping {
-            let array = match pending.texture_size {
-                LandTextureSize::Small => &mut self.small,
-                LandTextureSize::Big => &mut self.big,
-            };
-            self.entry_by_id.insert(
-                pending.texture_id,
-                (
-                    pending.texture_size,
-                    LandTextureEntry {
-                        layer: pending.layer,
-                        last_touch: Instant::now(),
-                    },
-                ),
-            );
-            array.lru.push_back(pending.texture_id);
+        for upload in small_uploads.iter().chain(big_uploads.iter()) {
+            self.update_bookkeeping(upload.texture_id, upload.size, upload.layer);
         }
     }
 
-    // TODO: pub fn get_or_load_texture_size_layer
-    // TODO: pub fn get_loaded_size_layer
-    // encapsulate repeated code in the new and old functions in this file in a separate function, to avoid repetition,
-
-    /// Ensure `texture_id` is resident and return (texture_size, layer)''
+    /// Gets the layer for a single texture. If not resident, it will be loaded, causing an immediate GPU upload.
     pub fn get_texture_size_layer(
         &mut self,
         images_resmut: &mut ResMut<Assets<Image>>,
         texmap_2d: Arc<TexMap2D>,
         texture_id: u16,
     ) -> (LandTextureSize, u32) {
-        // 1. Fast-path: already resident
-        let e: Option<&mut (LandTextureSize, LandTextureEntry)> =
-            self.entry_by_id.get_mut(&texture_id);
-        if e.is_some() {
-            let e: &mut (LandTextureSize, LandTextureEntry) = e.unwrap();
-            e.1.last_touch = Instant::now();
-            return (e.0, e.1.layer);
+        // If texture is already resident, just return its info.
+        if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
+            entry.1.last_touch = Instant::now();
+            return (entry.0, entry.1.layer);
         }
 
-        // 2. Get the new texture data and metadata.
+        // Otherwise, prepare it for upload.
+        let prepared = self.prepare_texture_residency(texture_id, images_resmut, &texmap_2d).unwrap();
+
+        // Perform the single upload.
+        let array_handle = match prepared.size {
+            LandTextureSize::Small => &self.small.image_handle,
+            LandTextureSize::Big => &self.big.image_handle,
+        };
+        if let Some(data) = &mut images_resmut.get_mut(array_handle).unwrap().data {
+            let (width, height) = prepared.size.dimensions();
+            let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
+            let offset = prepared.layer as usize * layer_byte_size;
+            data[offset..offset + layer_byte_size].copy_from_slice(&prepared.bytes);
+        }
+
+        // Update bookkeeping and return.
+        self.update_bookkeeping(prepared.texture_id, prepared.size, prepared.layer);
+        (prepared.size, prepared.layer)
+    }
+
+    /// Checks if a texture is resident. If not, allocates a layer and loads its data,
+    /// returning a struct with all info needed to perform the upload and bookkeeping.
+    fn prepare_texture_residency(
+        &mut self,
+        texture_id: u16,
+        images_resmut: &mut ResMut<Assets<Image>>,
+        texmap_2d: &Arc<TexMap2D>,
+    ) -> Option<PreparedTextureUpload> {
+        // If resident, touch timestamp and return None as no upload is needed.
+        if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
+            entry.1.last_touch = Instant::now();
+            return None;
+        }
+
+        // --- If not resident, perform CPU-side work --- 
+
+        // 1. Get the new texture data and metadata.
         let (texture_size, tile_handle) =
-            texture_array::get_texmap_image(texture_id, images_resmut, &texmap_2d);
+            texture_array::get_texmap_image(texture_id, images_resmut, texmap_2d);
 
-        // 2. Pick a tex array state
-        let array = match texture_size {
-            LandTextureSize::Small => &mut self.small,
-            LandTextureSize::Big => &mut self.big,
-        };
+        // 2. Allocate a layer, evicting an old one if necessary.
+        let layer = self.allocate_layer(texture_size);
 
-        // 3. Choose or evict a layer
-        let layer = if let Some(l) = array.free_layers.pop() {
-            l
-        } else {
-            let victim_id = loop {
-                let oldest = array
-                    .lru
-                    .pop_front()
-                    .expect("LRU should not be empty at this stage");
-                let still: &(LandTextureSize, LandTextureEntry) =
-                    self.entry_by_id.get(&oldest).unwrap();
-                if Instant::now() - still.1.last_touch >= CACHE_EVICT_AFTER {
-                    break oldest;
-                }
-                array.lru.push_back(oldest);
-            };
-            let victim_entry: (LandTextureSize, LandTextureEntry) =
-                self.entry_by_id.remove(&victim_id).unwrap();
-            victim_entry.1.layer
-        };
-
-        // 4. Upload/copy texture data
+        // 3. Get the raw pixel data for the upload.
         let (width, height) = texture_size.dimensions();
         let tile_bytes: Vec<u8> = {
             let tile_img = images_resmut.get(&tile_handle).unwrap();
@@ -263,31 +190,61 @@ impl LandTextureCache {
             assert_eq!(tile_img.texture_descriptor.size.height, height);
             tile_img.data.as_ref().unwrap().clone()
         };
-        {
-            const BYTES_PER_PIXEL: usize = 4; // RGBA8888
-            let layer_byte_size = (width * height) as usize * BYTES_PER_PIXEL;
-            let offset = layer as usize * layer_byte_size;
-            let array_img = images_resmut.get_mut(&array.image_handle).unwrap();
-            if let Some(data) = &mut array_img.data {
-                data[offset..offset + layer_byte_size].copy_from_slice(&tile_bytes);
-            }
-        }
 
-        // 5. Bookkeeping
+        Some(PreparedTextureUpload {
+            texture_id,
+            layer,
+            size: texture_size,
+            bytes: tile_bytes,
+        })
+    }
+
+    /// Allocates a layer for a new texture, handling LRU eviction if the array is full.
+    fn allocate_layer(&mut self, texture_size: LandTextureSize) -> u32 {
+        let array = match texture_size {
+            LandTextureSize::Small => &mut self.small,
+            LandTextureSize::Big => &mut self.big,
+        };
+
+        if let Some(l) = array.free_layers.pop() {
+            l
+        } else {
+            let victim_id = loop {
+                let oldest = array
+                    .lru
+                    .pop_front()
+                    .expect("LRU should not be empty at this stage");
+                if let Some(still) = self.entry_by_id.get(&oldest) {
+                    if Instant::now() - still.1.last_touch >= CACHE_EVICT_AFTER {
+                        break oldest;
+                    }
+                }
+                array.lru.push_back(oldest);
+            };
+            let victim_entry: (LandTextureSize, LandTextureEntry) =
+                self.entry_by_id.remove(&victim_id).unwrap();
+            victim_entry.1.layer
+        }
+    }
+
+    /// Updates the cache's internal maps after a texture has been uploaded.
+    fn update_bookkeeping(&mut self, texture_id: u16, texture_size: LandTextureSize, layer: u32) {
+        let array = match texture_size {
+            LandTextureSize::Small => &mut self.small,
+            LandTextureSize::Big => &mut self.big,
+        };
+
         self.entry_by_id.insert(
             texture_id,
             (
                 texture_size,
                 LandTextureEntry {
                     layer,
-                    //texture_size,
                     last_touch: Instant::now(),
                 },
             ),
         );
         array.lru.push_back(texture_id);
-
-        (texture_size, layer)
     }
 
     fn free_layer_for_entry(&mut self, texture_size: LandTextureSize, entry: LandTextureEntry) {

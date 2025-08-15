@@ -19,22 +19,188 @@ use uocf::geo::{
 use wide::*;
 
 use super::TILE_NUM_PER_CHUNK_1D;
-use super::{LCMesh, diagnostics::*, mesh_buffer_pool::*, mesh_material::*};
+use super::{LCMesh, mesh_material::*};
 use crate::{
     core::{
         constants,
         maps::MapPlaneMetadata,
-        render::scene::{player::Player, world::WorldGeoData, SceneStateData},
+        render::scene::{camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData},
         texture_cache::land::cache::*, uo_files_loader::{MapPlanesRes, TexMap2DRes},
     },
     prelude::*,
     util_lib::array::*,
 };
 
-// Extend to the first row and column of this neighboring block, to avoid seam artifacts.
-const CHUNK_TILE_GRID_W: u32 = TILE_NUM_PER_CHUNK_1D + 1;
-const CHUNK_TILE_GRID_H: u32 = TILE_NUM_PER_CHUNK_1D + 1;
-const HEIGHTMAP_ARRAY_SIZE: usize = (CHUNK_TILE_GRID_W * CHUNK_TILE_GRID_H) as usize;
+
+const CHUNK_TILE_GRID_W: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
+const CHUNK_TILE_GRID_H: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
+
+// ---- Shared Mesh Resource and Setup ----
+
+#[derive(Resource)]
+pub struct LandMeshHandle(pub Handle<Mesh>);
+
+/// This startup system generates a single, shared 9x9 grid mesh for all land chunks.
+pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    const GRID_W: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
+    const GRID_H: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
+    const CORE_W: usize = TILE_NUM_PER_CHUNK_1D as usize;
+    const CORE_H: usize = TILE_NUM_PER_CHUNK_1D as usize;
+
+    let estimated_vertex_count = GRID_W * GRID_H;
+    let mut positions = Vec::with_capacity(estimated_vertex_count);
+    let mut uvs = Vec::with_capacity(estimated_vertex_count);
+    let mut indices = Vec::new();
+
+    // Create a flat 9x9 grid of vertices at y=0
+    // Add dummy height values (0.0) because the real one will be calculated on the gpu, via the shader
+    //  (we send tile height through a uniform buffer).
+    // We are adding an extra row and column to avoid seam artifacts and to make the neighboring chunk minimum tiles data
+    //  available for the shader to calculate normals.
+    for gy in 0..GRID_H {
+        for gx in 0..GRID_W {
+            positions.push([gx as f32, 0.0, gy as f32]);
+            uvs.push([
+                gx as f32 / (CORE_W as f32),
+                gy as f32 / (CORE_H as f32),
+            ]);
+        }
+    }
+
+    // Create indices for the 8x8 core of the grid
+    for ty in 0..CORE_H {
+        for tx in 0..CORE_W {
+            let v0 = (ty * GRID_W + tx) as u32;
+            let v1 = v0 + 1;
+            let v2 = ((ty + 1) * GRID_W + tx) as u32;
+            let v3 = v2 + 1;
+            indices.extend_from_slice(&[v0, v3, v1, v0, v2, v3]);
+        }
+    }
+
+    // Provide dummy normals and UV1s to match the shader's vertex format
+    let dummy_normals = vec![[0.0, 1.0, 0.0]; estimated_vertex_count];
+    let dummy_uv1s = vec![[0.0, 0.0]; estimated_vertex_count];
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, dummy_normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, dummy_uv1s);
+    mesh.insert_indices(Indices::U32(indices));
+
+    let handle = meshes.add(mesh);
+    commands.insert_resource(LandMeshHandle(handle));
+}
+
+/// Creates a new material with the specific uniform data for a single land chunk.
+fn create_land_chunk_material(
+    materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
+    land_texture_cache_rref: &mut ResMut<LandTextureCache>,
+    images_rref: &mut ResMut<Assets<Image>>,
+    texmap_2d: Arc<TexMap2D>,
+    chunk_data_ref: &LandChunkConstructionData,
+    blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
+) -> Handle<LandCustomMaterial> {
+    let chunk_origin_tile_units_x =
+        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+    let chunk_origin_tile_units_z =
+        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+
+    // Helper to fetch a cell from the loaded block data.
+    fn get_cell<'a>(
+        blocks_data: &'a BTreeMap<MapBlockRelPos, MapBlock>,
+        world_tile_x: u32,
+        world_tile_z: u32,
+    ) -> &'a MapCell {
+        let chunk_rel_coords = MapBlockRelPos {
+            x: world_tile_x / TILE_NUM_PER_CHUNK_1D,
+            y: world_tile_z / TILE_NUM_PER_CHUNK_1D,
+        };
+        let tile_rel_coords = MapCellRelPos {
+            x: world_tile_x % TILE_NUM_PER_CHUNK_1D,
+            y: world_tile_z % TILE_NUM_PER_CHUNK_1D,
+        };
+        blocks_data
+            .get(&chunk_rel_coords)
+            .unwrap()
+            .cell(tile_rel_coords.x, tile_rel_coords.y)
+            .unwrap()
+    }
+
+    // 1) Gather all cell data for the 9x9 grid in one pass.
+    let mut cell_grid: Vec<&MapCell> = Vec::with_capacity(CHUNK_TILE_GRID_W * CHUNK_TILE_GRID_H);
+    for gy in 0..CHUNK_TILE_GRID_H {
+        for gx in 0..CHUNK_TILE_GRID_W {
+            let world_tx = chunk_origin_tile_units_x + gx as u32;
+            let world_tz = chunk_origin_tile_units_z + gy as u32;
+            cell_grid.push(get_cell(blocks_data_ref, world_tx, world_tz));
+        }
+    }
+
+    // 2) Prepare Uniforms. This now includes all data for the 9x9 grid.
+    let mut mat_ext_land_uniforms = LandUniform::zeroed();
+    mat_ext_land_uniforms.chunk_origin = Vec2::new(
+        chunk_origin_tile_units_x as f32,
+        chunk_origin_tile_units_z as f32,
+    );
+    mat_ext_land_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT.normalize();
+
+    // Preload all unique textures for the 9x9 grid.
+    let unique_tile_ids: HashSet<u16> = cell_grid.iter().map(|cell| cell.id).collect();
+    land_texture_cache_rref.preload_textures(
+        images_rref,
+        texmap_2d.clone(),
+        &unique_tile_ids,
+    );
+
+    // Fill the 9x9 uniform grid.
+    for i in 0..(CHUNK_TILE_GRID_W * CHUNK_TILE_GRID_H) {
+        let tile_ref = cell_grid[i];
+        let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
+            images_rref,
+            texmap_2d.clone(),
+            tile_ref.id,
+        );
+        mat_ext_land_uniforms.tiles[i] = TileUniform {
+            tile_height: scale_uo_z_to_bevy_units(tile_ref.z as f32),
+            texture_size: match texture_size {
+                LandTextureSize::Small => 0,
+                LandTextureSize::Big => 1,
+            },
+            texture_layer: layer,
+            texture_hue: 0,
+        };
+    }
+
+    // Scene data
+    let mut mat_ext_scene_uniform = SceneUniform::zeroed();
+    mat_ext_scene_uniform.camera_position = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+    mat_ext_scene_uniform.light_direction = constants::BAKED_GLOBAL_LIGHT;
+
+    // Tunables are separate.
+    let mut mat_ext_tunables_uniform = TunablesUniform::zeroed();
+    mat_ext_tunables_uniform.use_vertex_lighting = 1;
+    mat_ext_tunables_uniform.sharpness_factor = 1.0;
+    mat_ext_tunables_uniform.sharpness_mix_factor = 1.0;
+
+    // 3) Create and return the material handle.
+    let mat = ExtendedMaterial {
+        base: StandardMaterial::default(),
+        extension: LandMaterialExtension {
+            texarray_small: land_texture_cache_rref.small.image_handle.clone(),
+            texarray_big: land_texture_cache_rref.big.image_handle.clone(),
+            land_uniform: mat_ext_land_uniforms,
+            scene_uniform: mat_ext_scene_uniform,
+            tunables_uniform: mat_ext_tunables_uniform,
+        },
+    };
+    materials_land_rref.add(mat)
+}
+
 
 // ---- HELPER TRAITS / UTILS
 
@@ -60,9 +226,6 @@ struct LandChunkConstructionData {
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
-    mut pool_r: ResMut<LandChunkMeshBufferPool>,
-    mut diag_r: ResMut<LandChunkMeshDiagnostics>,
-    mut hist_r: ResMut<MeshBuildPerfHistory>,
     mut meshes_r: ResMut<Assets<Mesh>>,
     mut materials_land_r: ResMut<Assets<LandCustomMaterial>>,
     mut cache_r: ResMut<LandTextureCache>,
@@ -75,6 +238,7 @@ pub fn sys_draw_spawned_land_chunks(
     cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
     visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
+    land_mesh_handle_r: Res<LandMeshHandle>,
 ) {
     // Step 1: Get camera/player state.
     let cam_pos = cam_q.single().unwrap().translation;
@@ -93,6 +257,10 @@ pub fn sys_draw_spawned_land_chunks(
         if mesh_handle.is_none() {
             primary_chunks.insert((chunk_data.gx, chunk_data.gy), entity);
         }
+    }
+
+    if primary_chunks.is_empty() {
+        return;
     }
 
     // Step 2: Build the final set of chunks whose data we need to construct.
@@ -196,8 +364,6 @@ pub fn sys_draw_spawned_land_chunks(
 
         draw_land_chunk(
             &mut commands,
-            &mut pool_r,
-            &mut diag_r,
             &mut meshes_r,
             &mut materials_land_r,
             &mut cache_r,
@@ -206,25 +372,18 @@ pub fn sys_draw_spawned_land_chunks(
             &map_plane_metadata,
             &chunk_data,
             &blocks_data,
+            // pass the shared mesh handle
+            &land_mesh_handle_r,
         );
     }
-    let build_ms = build_time_start.elapsed().as_secs_f32() * 1000.0; // TODO: be more precise?
-    hist_r.push(build_ms);
-
-    // Step 5: Diagnostics
-    diag_r.build_last = build_ms;
-    diag_r.build_avg = hist_r.avg();
-    diag_r.build_peak = hist_r.peak();
-
-    diag_r.chunks_on_screen = visible_chunk_q.iter().count();
+    let build_time: u128 = build_time_start.elapsed().as_micros();
+    println!("Perf: chunk rendered in {build_time} ms.");
 }
 
-use std::mem;
 
+// Completed!
 fn draw_land_chunk(
     commands: &mut Commands,
-    pool_ref: &mut LandChunkMeshBufferPool,
-    diag_ref: &mut LandChunkMeshDiagnostics,
     meshes_rref: &mut ResMut<Assets<Mesh>>,
     materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
     land_texture_cache_rref: &mut ResMut<LandTextureCache>,
@@ -233,200 +392,26 @@ fn draw_land_chunk(
     map_plane_metadata_ref: &MapPlaneMetadata,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
+    land_mesh_handle_r: &Res<LandMeshHandle>,
 ) {
-    // Precompute useful sizes
-    let grid_w = CHUNK_TILE_GRID_W as usize; // TILE_NUM_PER_CHUNK_1D + 1
-    let grid_h = CHUNK_TILE_GRID_H as usize;
-    let core_w = TILE_NUM_PER_CHUNK_1D as usize;
-    let core_h = TILE_NUM_PER_CHUNK_1D as usize;
+    // Use the mesh prebuilt in setup_land_mesh.
+    let chunk_mesh_handle: Handle<Mesh> = land_mesh_handle_r.0.clone();
 
+    // Create the material with create_land_chunk_material and attach it to the entity for the new map chunk.
+    let chunk_material_handle: Handle<LandCustomMaterial> = create_land_chunk_material(
+        materials_land_rref,
+        land_texture_cache_rref,
+        images_rref,
+        texmap_2d,
+        chunk_data_ref,
+        blocks_data_ref,
+    );
+
+    // Compute chunk origin (in tile units) for the transform.
     let chunk_origin_tile_units_x =
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
     let chunk_origin_tile_units_z =
         chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
-
-    // Helper: get_cell closure (unchanged) - but we will only call it in a single pass
-    fn get_cell<'a>(
-        blocks_data: &'a BTreeMap<MapBlockRelPos, MapBlock>,
-        world_tile_x: u32,
-        world_tile_z: u32,
-    ) -> &'a MapCell {
-        let chunk_rel_coords = MapBlockRelPos {
-            x: world_tile_x / TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z / TILE_NUM_PER_CHUNK_1D,
-        };
-        let tile_rel_coords = MapCellRelPos {
-            x: world_tile_x % TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z % TILE_NUM_PER_CHUNK_1D,
-        };
-        blocks_data
-            .get(&chunk_rel_coords)
-            .unwrap_or_else(|| panic!("Requested uncached map block: {:?}", chunk_rel_coords))
-            .cell(tile_rel_coords.x, tile_rel_coords.y)
-            .unwrap_or_else(|err| panic!("Cell {:?} error: {}", tile_rel_coords, err))
-    }
-
-    // 1) Heights: fill a contiguous heights array for every grid point (W+1)*(H+1)
-    let mut heights = vec![0.0f32; grid_w * grid_h];
-    for gy in 0..grid_h {
-        for gx in 0..grid_w {
-            let world_tx = chunk_origin_tile_units_x + gx as u32;
-            let world_tz = chunk_origin_tile_units_z + gy as u32;
-            let idx = gy * grid_w + gx;
-            heights[idx] = scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, world_tx, world_tz).z as f32);
-        }
-    }
-
-    // 2) Normals: compute from heights (central differences) on the CPU using contiguous memory reads
-    // Note: border sampling clamps to grid border for derivative.
-    let mut normals_grid = vec![[0.0f32; 3]; grid_w * grid_h];
-    for gy in 0..grid_h {
-        for gx in 0..grid_w {
-            let idx = gy * grid_w + gx;
-            // neighbors clamped
-            let gx_l = if gx == 0 { 0 } else { gx - 1 };
-            let gx_r = if gx + 1 >= grid_w { grid_w - 1 } else { gx + 1 };
-            let gy_d = if gy == 0 { 0 } else { gy - 1 };
-            let gy_u = if gy + 1 >= grid_h { grid_h - 1 } else { gy + 1 };
-            let h_l = heights[gy * grid_w + gx_l];
-            let h_r = heights[gy * grid_w + gx_r];
-            let h_d = heights[gy_d * grid_w + gx];
-            let h_u = heights[gy_u * grid_w + gx];
-
-            let dx = (h_r - h_l) * 0.5f32;
-            let dz = (h_u - h_d) * 0.5f32;
-            let nx = -dx;
-            let ny = 1.0f32;
-            let nz = -dz;
-            let len = (nx * nx + ny * ny + nz * nz).sqrt();
-            if len > 0.0 {
-                normals_grid[idx] = [nx / len, ny / len, nz / len];
-            } else {
-                normals_grid[idx] = [0.0, 1.0, 0.0];
-            }
-        }
-    }
-
-    // 3) Precompute per-tile uniform data (texture layer / size / hue / etc.)
-    //    We'll store one uniform per core tile (not per grid-vertex). This avoids calling cache in the vertex loop.
-    let mut mat_ext_land_uniforms = LandUniforms::zeroed();
-    mat_ext_land_uniforms.chunk_origin = Vec2::new(
-        chunk_origin_tile_units_x as f32,
-        chunk_origin_tile_units_z as f32,
-    );
-    mat_ext_land_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
-
-    let mut mat_ext_tunables_uniform = TunablesUniform::zeroed();
-    mat_ext_tunables_uniform.use_vertex_lighting = 1;
-    mat_ext_tunables_uniform.sharpness_factor = 1.0;
-    mat_ext_tunables_uniform.sharpness_mix_factor = 1.0;
-
-    // Pre-allocate a small vec to hold tile texture meta if you need to inspect it
-    // (not strictly necessary if you only store to mat_ext_uniforms)
-    for ty in 0..core_h {
-        for tx in 0..core_w {
-            let world_x = chunk_origin_tile_units_x + tx as u32;
-            let world_y = chunk_origin_tile_units_z + ty as u32;
-            let tile_ref: &MapCell = get_cell(blocks_data_ref, world_x, world_y);
-
-            let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
-                images_rref,
-                texmap_2d.clone(),
-                tile_ref.id,
-            );
-
-            let tile_uniform_idx = (ty * TILE_NUM_PER_CHUNK_1D as usize + tx) as usize;
-            let tile_uniform = &mut mat_ext_land_uniforms.tiles[tile_uniform_idx];
-            tile_uniform.tile_height = tile_ref.z as u32;
-            tile_uniform.texture_size = match texture_size {
-                LandTextureSize::Small => 0,
-                LandTextureSize::Big => 1,
-            };
-            tile_uniform.texture_layer = layer;
-            tile_uniform.texture_hue = 0;
-        }
-    }
-
-    // 4) Build vertex buffers (grid of vertices) and indices referencing that grid.
-    // Reserve exact capacities so we avoid reallocations.
-    let estimated_vertex_count = grid_w * grid_h;
-    let estimated_index_count = core_w * core_h * 6; // 2 tris per tile, 3 indices each
-
-    let mut meshbufs = pool_ref.alloc(diag_ref);
-    meshbufs.positions.clear();
-    meshbufs.normals.clear();
-    meshbufs.uvs.clear();
-    meshbufs.indices.clear();
-    meshbufs.positions.reserve(estimated_vertex_count);
-    meshbufs.normals.reserve(estimated_vertex_count);
-    meshbufs.uvs.reserve(estimated_vertex_count);
-    meshbufs.indices.reserve(estimated_index_count);
-
-    // Fill vertices
-    for gy in 0..grid_h {
-        for gx in 0..grid_w {
-            let idx = gy * grid_w + gx;
-            // X and Z coordinates are local to chunk; Y is height.
-            meshbufs
-                .positions
-                .push([gx as f32, heights[idx], gy as f32]);
-            meshbufs.normals.push(normals_grid[idx]);
-            // UVs: map entire chunk grid to [0..1] range; adjust as you need for your texture sampling.
-            meshbufs.uvs.push([
-                gx as f32 / (core_w as f32),
-                gy as f32 / (core_h as f32),
-            ]);
-        }
-    }
-
-    // Build indices: for each core tile, reference the 4 corner vertices in grid
-    for ty in 0..core_h {
-        for tx in 0..core_w {
-            let v0 = (ty * grid_w + tx) as u32;
-            let v1 = v0 + 1;
-            let v2 = ((ty + 1) * grid_w + tx) as u32;
-            let v3 = v2 + 1;
-            // Two triangles: v0, v3, v1 and v0, v2, v3 (same winding as original)
-            meshbufs.indices.extend_from_slice(&[v0, v3, v1, v0, v2, v3]);
-        }
-    }
-
-    // 5) Move buffers into Mesh WITHOUT cloning
-    let chunk_mesh_handle: Handle<Mesh> = {
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        );
-
-        // take ownership of vectors from meshbufs to avoid clone
-        let positions = mem::take(&mut meshbufs.positions);
-        let normals = mem::take(&mut meshbufs.normals);
-        let uvs = mem::take(&mut meshbufs.uvs);
-        let indices = mem::take(&mut meshbufs.indices);
-
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.0, 0.0]; grid_w * grid_h]);
-        mesh.insert_indices(Indices::U32(indices));
-
-        meshes_rref.add(mesh)
-    };
-
-    // 6) Material: reuse pattern (we continue to create one ExtendedMaterial per chunk here,
-    // but we've already hoisted tile uniform filling). Consider converting to shared material + per-chunk UBO later.
-    let chunk_material_handle = {
-        let mat = ExtendedMaterial {
-            base: StandardMaterial::default(),
-            extension: LandMaterialExtension {
-                texarray_small: land_texture_cache_rref.small.image_handle.clone(),
-                texarray_big: land_texture_cache_rref.big.image_handle.clone(),
-                land_uniform: mat_ext_land_uniforms,
-                tunables_uniform: mat_ext_tunables_uniform,
-            },
-        };
-        materials_land_rref.add(mat)
-    };
 
     // 7) Attach to entity
     if let Ok(mut entity_commands) = commands.get_entity(chunk_data_ref.entity.unwrap()) {
@@ -448,313 +433,4 @@ fn draw_land_chunk(
             "Skipping drawing of invalid/unspawned entity at stage 'build_indexed_chunk_mesh'.",
         );
     }
-
-    // 8) Return buffers to the pool (they were taken via mem::take, so pool must be fine with empty vecs)
-    pool_ref.free(meshbufs, diag_ref);
 }
-
-
-/*
-/// Build mesh, attributes and assign to chunk entity.
-fn draw_land_chunk(
-    commands: &mut Commands,
-    pool_ref: &mut LandChunkMeshBufferPool,
-    diag_ref: &mut LandChunkMeshDiagnostics,
-    meshes_rref: &mut ResMut<Assets<Mesh>>,
-    materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
-    land_texture_cache_rref: &mut ResMut<LandTextureCache>,
-    images_rref: &mut ResMut<Assets<Image>>,
-    texmap_2d_r: Arc<TexMap2D>,
-    map_plane_metadata_ref: &MapPlaneMetadata,
-    chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
-) {
-    let chunk_origin_tile_units_x =
-        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
-    let chunk_origin_tile_units_z =
-        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
-
-    // Helper to fetch a cell from the loaded block data. Panics on OOB for safety.
-    fn get_cell<'a>(
-        blocks_data: &'a BTreeMap<MapBlockRelPos, MapBlock>,
-        world_tile_x: u32,
-        world_tile_z: u32,
-    ) -> &'a MapCell {
-        let chunk_rel_coords = MapBlockRelPos {
-            x: world_tile_x / TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z / TILE_NUM_PER_CHUNK_1D,
-        };
-        let tile_rel_coords = MapCellRelPos {
-            x: world_tile_x % TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z % TILE_NUM_PER_CHUNK_1D,
-        };
-        blocks_data
-            .get(&chunk_rel_coords)
-            .unwrap_or_else(|| panic!("Requested uncached map block: {:?}", chunk_rel_coords))
-            .cell(tile_rel_coords.x, tile_rel_coords.y)
-            .unwrap_or_else(|err| panic!("Cell {:?} error: {}", tile_rel_coords, err))
-    }
-
-    // Helper to get the scaled height (z-coordinate) for a given world tile.
-    let get_cell_z = |x: u32, z: u32| {
-        scale_uo_z_to_bevy_units(get_cell(blocks_data_ref, x, z).z as f32)
-    };
-
-    // --------- 1. Pre-computation Phase --------
-    // Pre-calculate heights and normals for the entire grid to avoid redundant work inside the main loop.
-    // The grid is extended by one tile in each direction to handle normals at the seams correctly.
-
-    // A. Pre-compute heights for the entire grid.
-    let mut heights = [0.0f32; HEIGHTMAP_ARRAY_SIZE];
-    for vy in 0..CHUNK_TILE_GRID_H {
-        for vx in 0..CHUNK_TILE_GRID_W {
-            let world_tx = chunk_origin_tile_units_x + vx;
-            let world_tz = chunk_origin_tile_units_z + vy;
-            let hindex = (vy * CHUNK_TILE_GRID_W + vx) as usize;
-            heights[hindex] = get_cell_z(world_tx, world_tz);
-        }
-    }
-
-    // B. Pre-compute normals for the entire grid using SIMD for acceleration.
-    let mut normals_grid = [[0.0f32; 3]; HEIGHTMAP_ARRAY_SIZE];
-    let map_width = map_plane_metadata_ref.width;
-    let map_height = map_plane_metadata_ref.height;
-
-    // Process the grid in chunks of 4 (the SIMD width).
-    for vy in 0..CHUNK_TILE_GRID_H {
-        for vx_base in (0..CHUNK_TILE_GRID_W).step_by(4) {
-            // Create SIMD vectors for the x and z coordinates of 4 vertices.
-            let vx = f32x4::from([
-                vx_base as f32,
-                (vx_base + 1) as f32,
-                (vx_base + 2) as f32,
-                (vx_base + 3) as f32,
-            ]);
-            let vz = f32x4::splat(vy as f32);
-
-            // World coordinates
-            let world_tx_f32 = f32x4::splat(chunk_origin_tile_units_x as f32) + vx;
-            let world_tz_f32 = f32x4::splat(chunk_origin_tile_units_z as f32) + vz;
-
-            let world_tx_arr = world_tx_f32.to_array();
-            let world_tz_arr = world_tz_f32.to_array();
-
-            let world_tx = u32x4::from([
-                world_tx_arr[0] as u32,
-                world_tx_arr[1] as u32,
-                world_tx_arr[2] as u32,
-                world_tx_arr[3] as u32,
-            ]);
-            let world_tz = u32x4::from([
-                world_tz_arr[0] as u32,
-                world_tz_arr[1] as u32,
-                world_tz_arr[2] as u32,
-                world_tz_arr[3] as u32,
-            ]);
-
-
-            // Helper to get heights for 4 vertices at once, handling boundary conditions.
-            let get_heights_simd = |x_coords: u32x4, z_coords: u32x4| -> f32x4 {
-                let mut h = [0.0f32; 4];
-                let x_coords_arr = x_coords.to_array();
-                let z_coords_arr = z_coords.to_array();
-                for i in 0..4 {
-                    // Clamp coordinates to map boundaries to prevent OOB access.
-                    let clamped_x = x_coords_arr[i].min(map_width - 1);
-                    let clamped_z = z_coords_arr[i].min(map_height - 1);
-                    h[i] = get_cell_z(clamped_x, clamped_z);
-                }
-                f32x4::from(h)
-            };
-
-            // Get heights of the center, left, right, up, and down neighbors for 4 vertices.
-            let center_h = get_heights_simd(world_tx, world_tz);
-            let left_h = get_heights_simd(world_tx - u32x4::splat(1), world_tz);
-            let right_h = get_heights_simd(world_tx + u32x4::splat(1), world_tz);
-            let down_h = get_heights_simd(world_tx, world_tz - u32x4::splat(1));
-            let up_h = get_heights_simd(world_tx, world_tz + u32x4::splat(1));
-
-            // Calculate the gradient using central differences.
-            let dx = (right_h - left_h) * f32x4::splat(0.5);
-            let dz = (up_h - down_h) * f32x4::splat(0.5);
-
-            // Construct the normal vectors.
-            let nx = -dx;
-            let ny = f32x4::splat(1.0);
-            let nz = -dz;
-
-            // Normalize the vectors to get unit normals.
-            let len_sq = nx * nx + ny * ny + nz * nz;
-            let inv_len = f32x4::splat(1.0) / len_sq.sqrt();
-            let norm_x = nx * inv_len;
-            let norm_y = ny * inv_len;
-            let norm_z = nz * inv_len;
-
-            let norm_x_arr = norm_x.to_array();
-            let norm_y_arr = norm_y.to_array();
-            let norm_z_arr = norm_z.to_array();
-
-            // Store the results back into the grid, handling cases where the width is not a multiple of 4.
-            for i in 0..4 {
-                let current_vx = vx_base + i as u32;
-                if current_vx < CHUNK_TILE_GRID_W {
-                    let hindex = (vy * CHUNK_TILE_GRID_W + current_vx) as usize;
-                    normals_grid[hindex] = [norm_x_arr[i], norm_y_arr[i], norm_z_arr[i]];
-                }
-            }
-        }
-    }
-
-    // --------- 2. MESH & UNIFORM GENERATION (Fused Loop) --------
-    let mut meshbufs = pool_ref.alloc(diag_ref);
-    meshbufs.positions.clear();
-    meshbufs.normals.clear();
-    meshbufs.uvs.clear();
-    meshbufs.indices.clear();
-
-    let mut mat_ext_uniforms = LandUniforms::zeroed();
-    mat_ext_uniforms.chunk_origin = Vec2::new(
-        chunk_origin_tile_units_x as f32,
-        chunk_origin_tile_units_z as f32,
-    );
-    mat_ext_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT;
-
-    // Iterate through each tile of the core chunk (the +1 border is only for calculation).
-    for ty in 0..TILE_NUM_PER_CHUNK_1D {
-        for tx in 0..TILE_NUM_PER_CHUNK_1D {
-            // --- A. Generate Mesh Data for the tile's quad ---
-
-            // Base index for the vertices of the current quad.
-            let base_vertex_index = meshbufs.positions.len() as u32;
-
-            // Get the indices for the four corners of this tile in the pre-computed grids.
-            let idx00 = (ty * CHUNK_TILE_GRID_W + tx) as usize;
-            let idx10 = idx00 + 1;
-            let idx01 = ((ty + 1) * CHUNK_TILE_GRID_W + tx) as usize;
-            let idx11 = idx01 + 1;
-
-            // Add the 4 vertices of the quad, looking up pre-computed heights and normals.
-            // Top-left
-            meshbufs.positions.push([tx as f32, heights[idx00], ty as f32]);
-            meshbufs.normals.push(normals_grid[idx00]);
-            meshbufs.uvs.push([0.0, 0.0]);
-            // Top-right
-            meshbufs.positions.push([(tx + 1) as f32, heights[idx10], ty as f32]);
-            meshbufs.normals.push(normals_grid[idx10]);
-            meshbufs.uvs.push([1.0, 0.0]);
-            // Bottom-right
-            meshbufs.positions.push([(tx + 1) as f32, heights[idx11], (ty + 1) as f32]);
-            meshbufs.normals.push(normals_grid[idx11]);
-            meshbufs.uvs.push([1.0, 1.0]);
-            // Bottom-left
-            meshbufs.positions.push([tx as f32, heights[idx01], (ty + 1) as f32]);
-            meshbufs.normals.push(normals_grid[idx01]);
-            meshbufs.uvs.push([0.0, 1.0]);
-
-
-            // Add indices to form two triangles for the quad.
-            meshbufs.indices.extend_from_slice(&[
-                base_vertex_index + 0,
-                base_vertex_index + 2,
-                base_vertex_index + 1,
-                base_vertex_index + 0,
-                base_vertex_index + 3,
-                base_vertex_index + 2,
-            ]);
-
-            // --- B. Update Shader Uniforms for the tile ---
-            let world_x = chunk_origin_tile_units_x + tx;
-            let world_y = chunk_origin_tile_units_z + ty;
-            let tile_ref: &MapCell = get_cell(blocks_data_ref, world_x, world_y);
-
-            // Get texture array layer for this tile's artwork.
-            let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
-                images_rref,
-                texmap_2d_r.clone(),
-                tile_ref.id,
-            );
-
-            // Update the corresponding uniform struct for this tile.
-            let tile_uniform_idx = (ty * TILE_NUM_PER_CHUNK_1D + tx) as usize;
-            let tile_uniform = &mut mat_ext_uniforms.tiles[tile_uniform_idx];
-            tile_uniform.tile_height = tile_ref.z as u32;
-            tile_uniform.texture_size = match texture_size {
-                LandTextureSize::Small => 0,
-                LandTextureSize::Big => 1,
-            };
-            tile_uniform.layer = layer;
-            tile_uniform.hue = 0; // Hue not yet implemented.
-        }
-    }
-
-    // --------- 3. Bevy Asset Creation --------
-    // Upload the generated mesh data to a new Bevy Mesh asset.
-    let chunk_mesh_handle: Handle<Mesh> = {
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, meshbufs.positions.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, meshbufs.normals.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, meshbufs.uvs.clone());
-        mesh.insert_attribute(
-            Mesh::ATTRIBUTE_UV_1,
-            vec![[0.0, 0.0]; meshbufs.positions.len()],
-        );
-        mesh.insert_indices(Indices::U32(meshbufs.indices.clone()));
-        meshes_rref.add(mesh)
-    };
-
-    // Create the custom material for this chunk.
-    let chunk_material_handle = {
-        let mat = ExtendedMaterial {
-            base: StandardMaterial::default(),
-            extension: LandMaterialExtension {
-                texarray_small: land_texture_cache_rref.small.image_handle.clone(),
-                texarray_big: land_texture_cache_rref.big.image_handle.clone(),
-                uniforms: mat_ext_uniforms,
-            },
-        };
-        materials_land_rref.add(mat)
-    };
-
-    // --------- 4. Entity Component Update --------
-    // Attach the new mesh and material to the chunk entity.
-    if let Ok(mut entity_commands) = commands.get_entity(chunk_data_ref.entity.unwrap()) {
-        entity_commands.insert((
-            Mesh3d(chunk_mesh_handle),
-            MeshMaterial3d(chunk_material_handle),
-            Transform::from_xyz(
-                chunk_origin_tile_units_x as f32,
-                0.0,
-                chunk_origin_tile_units_z as f32,
-            ),
-            GlobalTransform::default(),
-        ));
-    } else {
-        logger::one(
-            None,
-            LogSev::Error,
-            LogAbout::RenderWorldLand,
-            "Skipping drawing of invalid/unspawned entity at stage 'draw_land_chunk'.",
-        );
-    }
-
-    logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::RenderWorldLand,
-        &format!(
-            "Rendered new chunk at: gx={} gy={} (map={})",
-            chunk_data_ref.chunk_origin_chunk_units_x,
-            chunk_data_ref.chunk_origin_chunk_units_z,
-            map_plane_metadata_ref.id
-        ),
-    );
-
-    // --------- 5. Cleanup --------
-    // Return the buffers to the pool for reuse.
-    pool_ref.free(meshbufs, diag_ref);
-}
-
-*/
