@@ -32,8 +32,7 @@ use crate::{
 };
 
 
-const CHUNK_TILE_GRID_W: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
-const CHUNK_TILE_GRID_H: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
+
 
 // ---- Shared Mesh Resource and Setup ----
 
@@ -101,6 +100,7 @@ fn create_land_chunk_material(
     materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
     land_texture_cache_rref: &mut ResMut<LandTextureCache>,
     images_rref: &mut ResMut<Assets<Image>>,
+    time_r: &Res<Time>,
     texmap_2d: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
@@ -131,17 +131,21 @@ fn create_land_chunk_material(
             .unwrap()
     }
 
-    // 1) Gather all cell data for the 9x9 grid in one pass.
-    let mut cell_grid: Vec<&MapCell> = Vec::with_capacity(CHUNK_TILE_GRID_W * CHUNK_TILE_GRID_H);
-    for gy in 0..CHUNK_TILE_GRID_H {
-        for gx in 0..CHUNK_TILE_GRID_W {
-            let world_tx = chunk_origin_tile_units_x + gx as u32;
-            let world_tz = chunk_origin_tile_units_z + gy as u32;
+    const CHUNK_TILE_DATA_SIDE: i32 = (TILE_NUM_PER_CHUNK_1D + 5) as i32; // 8 + 5 = 13
+    const BORDER: i32 = 2;
+
+    // 1) Gather all cell data for the 13x13 grid in one pass.
+    let mut cell_grid: Vec<&MapCell> =
+        Vec::with_capacity((CHUNK_TILE_DATA_SIDE * CHUNK_TILE_DATA_SIDE) as usize);
+    for gy in -BORDER..(TILE_NUM_PER_CHUNK_1D as i32 + BORDER + 1) {
+        for gx in -BORDER..(TILE_NUM_PER_CHUNK_1D as i32 + BORDER + 1) {
+            let world_tx = (chunk_origin_tile_units_x as i32 + gx).max(0) as u32;
+            let world_tz = (chunk_origin_tile_units_z as i32 + gy).max(0) as u32;
             cell_grid.push(get_cell(blocks_data_ref, world_tx, world_tz));
         }
     }
 
-    // 2) Prepare Uniforms. This now includes all data for the 9x9 grid.
+    // 2) Prepare Uniforms. This now includes all data for the 13x13 grid.
     let mut mat_ext_land_uniforms = LandUniform::zeroed();
     mat_ext_land_uniforms.chunk_origin = Vec2::new(
         chunk_origin_tile_units_x as f32,
@@ -149,7 +153,7 @@ fn create_land_chunk_material(
     );
     mat_ext_land_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT.normalize();
 
-    // Preload all unique textures for the 9x9 grid.
+    // Preload all unique textures for the 13x13 grid.
     let unique_tile_ids: HashSet<u16> = cell_grid.iter().map(|cell| cell.id).collect();
     land_texture_cache_rref.preload_textures(
         images_rref,
@@ -157,8 +161,8 @@ fn create_land_chunk_material(
         &unique_tile_ids,
     );
 
-    // Fill the 9x9 uniform grid.
-    for i in 0..(CHUNK_TILE_GRID_W * CHUNK_TILE_GRID_H) {
+    // Fill the 13x13 uniform grid.
+    for i in 0..cell_grid.len() {
         let tile_ref = cell_grid[i];
         let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
             images_rref,
@@ -187,6 +191,18 @@ fn create_land_chunk_material(
     mat_ext_tunables_uniform.sharpness_factor = 1.0;
     mat_ext_tunables_uniform.sharpness_mix_factor = 1.0;
 
+    // Visuals
+    let mut mat_ext_visual_uniform = VisualUniform::zeroed();
+    mat_ext_visual_uniform.fog_color = Vec4::new(0.7, 0.8, 0.9, 0.5);
+    mat_ext_visual_uniform.fog_params = Vec4::new(0.1, 0.1, 0.01, 0.01);
+    mat_ext_visual_uniform.fill_sky_color = Vec4::new(0.5, 0.6, 0.8, 0.2);
+    mat_ext_visual_uniform.fill_ground_color = Vec4::new(0.4, 0.3, 0.2, 0.1);
+    mat_ext_visual_uniform.rim_color = Vec4::new(1.0, 1.0, 0.8, 4.0);
+    mat_ext_visual_uniform.grade_warm_color = Vec4::new(1.0, 0.9, 0.8, 1.0);
+    mat_ext_visual_uniform.grade_cool_color = Vec4::new(0.8, 0.9, 1.0, 1.0);
+    mat_ext_visual_uniform.grade_params = Vec4::new(0.1, 0.0, 0.0, 0.0);
+    mat_ext_visual_uniform.time_seconds = time_r.elapsed().as_secs_f32();
+
     // 3) Create and return the material handle.
     let mat = ExtendedMaterial {
         base: StandardMaterial::default(),
@@ -196,6 +212,8 @@ fn create_land_chunk_material(
             land_uniform: mat_ext_land_uniforms,
             scene_uniform: mat_ext_scene_uniform,
             tunables_uniform: mat_ext_tunables_uniform,
+            visual_uniform: mat_ext_visual_uniform,
+            lighting_uniform: LightingUniforms::default(),
         },
     };
     materials_land_rref.add(mat)
@@ -231,6 +249,7 @@ pub fn sys_draw_spawned_land_chunks(
     mut cache_r: ResMut<LandTextureCache>,
     mut images_r: ResMut<Assets<Image>>,
     mut map_planes_r: ResMut<MapPlanesRes>,
+    time_r: Res<Time>,
     texmap_2d_r: Res<TexMap2DRes>,
     world_geo_data_r: Res<WorldGeoData>,
     scene_state_data_r: Res<SceneStateData>,
@@ -368,6 +387,7 @@ pub fn sys_draw_spawned_land_chunks(
             &mut materials_land_r,
             &mut cache_r,
             &mut images_r,
+            &time_r,
             texmap_2d_r.0.clone(),
             &map_plane_metadata,
             &chunk_data,
@@ -388,6 +408,7 @@ fn draw_land_chunk(
     materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
     land_texture_cache_rref: &mut ResMut<LandTextureCache>,
     images_rref: &mut ResMut<Assets<Image>>,
+    time_r: &Res<Time>,
     texmap_2d: Arc<TexMap2D>,
     map_plane_metadata_ref: &MapPlaneMetadata,
     chunk_data_ref: &LandChunkConstructionData,
@@ -402,6 +423,7 @@ fn draw_land_chunk(
         materials_land_rref,
         land_texture_cache_rref,
         images_rref,
+        time_r,
         texmap_2d,
         chunk_data_ref,
         blocks_data_ref,

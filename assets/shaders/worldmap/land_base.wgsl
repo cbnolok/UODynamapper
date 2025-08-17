@@ -1,81 +1,127 @@
-// Bevy I/O and helpers
+// land_fixed.wgsl
+// Full shader: runtime shading mode, bicubic normals, optional bent normals,
+// hemisphere fill, rim, specular, multiplicative KR-style clouds/fog,
+// painterly grading + Reinhard tonemapping.
+// Designed for Bevy/WGPU (wgsl), with runtime tunables and hot-reload constants.
+// ============================================================================
+
+// Bevy PBR imports
 #import bevy_pbr::{
-    forward_io::{Vertex, VertexOutput, FragmentOutput},
-    mesh_functions, pbr_functions, pbr_fragment,
+    forward_io::{Vertex, VertexOutput},
+    mesh_functions,
     view_transformations,
 }
 
-// ==============================
-// Hot-reload debug flags
-// ==============================
-const DEBUG_EDGE_BLEND: u32 = 0u; // 0 = off, 1 = show edge blend factor in color
-const DEBUG_NORMALS:    u32 = 0u; // 0 = off, 1 = show the final normal as RGB
-const DEBUG_HEIGHT:     u32 = 0u; // Show tile height as grayscale
-const DEBUG_SLOPE:      u32 = 0u; // Show slope steepness as grayscale
+// ============================================================================
+// HOT-RELOAD / COMPILE-TIME QUICK OVERRIDES
+// Set these to 1 to override runtime uniforms quickly during development.
+// Useful for hot-reloading shader tweaks without changing CPU code.
+const HOT_OVERRIDE_USE_UNIFORMS:    u32 = 1u; // 1 = use tunables from CPU; 0 = use HOT_* constants below
+const HOT_SHADING_MODE:             u32 = 2u; // 0 = Classic(Gouraud), 1 = Fragment, 2 = Fragment (KR-style default)
+const HOT_NORMAL_MODE:              u32 = 1u; // 0 = geometric, 1 = bicubic
+const HOT_ENABLE_BENT:              u32 = 1u;
+const HOT_ENABLE_TONEMAP:           u32 = 1u;
+const HOT_ENABLE_GRADING:           u32 = 1u;
+const HOT_ENABLE_FOG:               u32 = 1u;
 
-// Test-tunable passthrough (lets you override uniforms from constants for tests)
-const USE_TEST_TUNABLES: u32 = 1u;
+// Override intensity defaults for quick testing (used only when HOT_OVERRIDE_USE_UNIFORMS == 0)
+const HOT_AMBIENT:      f32 = 0.40;
+const HOT_DIFFUSE:      f32 = 1.00;
+const HOT_SPECULAR:     f32 = 0.12;
+const HOT_RIM:          f32 = 0.25;
+const HOT_FILL:         f32 = 0.45;
+const HOT_EXPOSURE:     f32 = 1.0;
 
-// Lighting mode: 0 = Gouraud (vertex) lighting, 1 = per-fragment lighting
-const TEST_TUNABLES_USE_VERTEX_LIGHTING: u32 = 0u;
+// TODO: harmonize the override settings names. also, normalize is NOT a constant function, we can't use it like this!
+// Main light
+const OVERRIDE_LIGHT_DIR: vec3<f32>   = normalize(vec3<f32>(-0.5, -1.0, -0.3));
+const OVERRIDE_LIGHT_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.85);
 
-const TEST_TUNABLES_SHARPNESS_FACTOR:     f32 = 0.0;
-const TEST_TUNABLES_SHARPNESS_MIX_FACTOR: f32 = 0.0;
+// Ambient/fill
+const OVERRIDE_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.25, 0.28, 0.32);
+const OVERRIDE_FILL_DIR: vec3<f32>      = normalize(vec3<f32>(0.3, 1.0, 0.2));
+const OVERRIDE_FILL_STRENGTH: f32       = 0.35;
 
-// ====== TOGGLES: GRAPHICAL ENHANCEMENTS ======
-const ENABLE_FRAGMENT_LIGHTING: u32 = 0u;
+// Tone mapping
+const OVERRIDE_EXPOSURE: f32 = 1.0;
+const OVERRIDE_GAMMA: f32    = 2.2;
 
-// 0 = geometric (hard) normals, 1 = bicubic (smooth) normals
-const ENABLE_SMOOTH_NORMALS: u32 = 0u;
+// ============================================================================
+// BINDINGS / UNIFORMS
+// Keep these indices in sync with your Rust Material's AsBindGroup ordering.
+// ============================================================================
 
-// Fake "shadowing" by darkening terrain based on height differences
-const ENABLE_AMBIENT_OCCLUSION: u32 = 0u;
-
-// Blend textures based on slope steepness
-const ENABLE_SLOPE_BASED_TEXTURING: u32 = 0u;
-
-// Add specular highlights for wet/snowy/glossy terrain
-const ENABLE_SPECULAR: u32 = 0u;
-
-// ==============================
-// Chunk / grid layout constants
-// ==============================
-const CHUNK_TILE_NUM_1D: u32 = 8u;                          // 8x8 tiles form the "core" chunk
-const HEIGHT_GRID_NUM_1D: u32 = CHUNK_TILE_NUM_1D + 1u;     // 9x9 heights to include neighbors
-const HEIGHT_GRID_TOTAL:  u32 = HEIGHT_GRID_NUM_1D * HEIGHT_GRID_NUM_1D;
-
-const TEX_SIZE_SMALL: u32 = 0u;
-const TEX_SIZE_BIG:   u32 = 1u;
-
-// ==============================
-// Material / uniform interfaces
-// ==============================
 struct TileUniform {
-    tile_height:   f32, // ALREADY SCALED to world units on the CPU side
-    texture_size:  u32, // 0 = small texture atlas, 1 = big texture atlas
-    texture_layer: u32, // array layer to sample
+    tile_height:   f32, // scaled to world units on CPU
+    texture_size:  u32,
+    texture_layer: u32,
     texture_hue:   u32,
 };
 
 struct LandUniform {
-    light_dir:    vec3<f32>,
+    light_dir:    vec3<f32>, // legacy slot; prefer scene.light_direction
     _pad0:        f32,
-    chunk_origin: vec2<f32>, // chunk world origin in tile units (x,z)
+    chunk_origin: vec2<f32>, // world origin of chunk in tile units (x, z)
     _pad1:        vec2<f32>,
-    tiles:        array<TileUniform, HEIGHT_GRID_TOTAL>, // 9x9 entries
+    tiles:        array<TileUniform, 169>, // 13x13 height/info grid
 };
 
 struct SceneUniform {
     camera_position: vec3<f32>,
-    light_direction: vec3<f32>, // IMPORTANT: this MUST be normalized on the CPU
+    light_direction: vec3<f32>, // MUST be normalized on CPU for best perf and correctness
     _pad: f32,
-}
+};
 
+// Tunables: runtime-uniform controls for lighting & effects (change from Rust)
 struct TunablesUniform {
-    use_vertex_lighting:   u32,
-    sharpness_factor:      f32,
-    sharpness_mix_factor:  f32,
-    _pad:                  f32,
+    // Modes
+    shading_mode:    u32, // 0 = Gouraud (classic), 1 = Per-fragment
+    normal_mode:     u32, // 0 = geometric, 1 = bicubic
+    enable_bent:     u32, // tilt normals toward sky in concavities
+    enable_tonemap:  u32,
+    enable_grading:  u32,
+    enable_fog:      u32,
+
+    // Intensities (grouped to keep alignment)
+    ambient_strength: f32,
+    diffuse_strength: f32,
+    specular_strength:f32,
+    rim_strength:     f32,
+
+    fill_strength:    f32,
+    exposure:         f32,
+    sharpness_factor: f32,
+    sharpness_mix:    f32,
+
+    _pad: f32,
+};
+
+struct VisualUniform {
+    fog_color: vec4<f32>,    // rgb=color, a=opacity
+    fog_params: vec4<f32>,   // x=strength, y=scale, z=speed_x, w=speed_y
+    fill_sky_color: vec4<f32>,   // rgb + a = strength
+    fill_ground_color: vec4<f32>,// rgb + a = strength
+    rim_color: vec4<f32>,        // rgb + a = rim_power
+    grade_warm_color: vec4<f32>, // rgb + a unused
+    grade_cool_color: vec4<f32>, // rgb + a unused
+    grade_params: vec4<f32>,     // x = grade_strength
+    // time for animated clouds (seconds)
+    time_seconds: f32,
+    _pad: vec3<f32>,
+};
+
+// TODO: some of those were extracted from the tunablesuniform, we have to remove the duplicate ones from the
+//  origin struct. Actually, maybe we can divide the structs by naming them based on separation of concerns and code
+//  re-usability. Some of the settings are relative to lighting and color correction (to be applied to every game object), others
+//  are relevant only for map chunks, others are relative only to the scene (like the fog, which is an overlay on top of everything else)
+struct LightingUniforms {
+    light_dir: vec3<f32>,      // Main directional light direction
+    light_color: vec3<f32>,    // Main light color (linear HDR, not gamma)
+    ambient_color: vec3<f32>,  // Ambient term (fill light substitute)
+    fill_dir: vec3<f32>,       // Secondary fill light direction
+    fill_strength: f32,        // How strong the fill is
+    exposure: f32,             // Exposure bias for tonemapping
+    gamma: f32,                // Gamma correction
 };
 
 @group(2) @binding(100) var texarray_sampler: sampler;
@@ -84,420 +130,464 @@ struct TunablesUniform {
 @group(2) @binding(103) var<uniform> land:    LandUniform;
 @group(2) @binding(104) var<uniform> scene:   SceneUniform;
 @group(2) @binding(105) var<uniform> tunables: TunablesUniform;
+@group(2) @binding(106) var<uniform> visual:  VisualUniform;
+@group(2) @binding(107) var<uniform> lighting: LightingUniforms;
 
-// ==============================
-// Utility: 9x9 grid height fetch
-// ==============================
-fn tile_height_at_9x9(ix: i32, iz: i32) -> f32 {
-    let cx = clamp(ix, 0, i32(HEIGHT_GRID_NUM_1D) - 1);
-    let cz = clamp(iz, 0, i32(HEIGHT_GRID_NUM_1D) - 1);
-    let idx = cz * i32(HEIGHT_GRID_NUM_1D) + cx;
-    return land.tiles[u32(idx)].tile_height;
+
+// ============================================================================
+// CONSTANTS & GRID HELPERS
+// ============================================================================
+const CHUNK_TILE_NUM_1D: u32 = 8u;
+const DATA_GRID_BORDER: i32 = 2;     // margin radius around 8x8 core -> 13x13
+const DATA_GRID_SIDE: i32 = 13;
+const MESH_GRID_SIDE: u32 = 9u;      // vertex nodes: 9x9
+
+// Safe fetch (maps relative ix/iz -> 0..12)
+fn tile_index_clamped(ix: i32, iz: i32) -> u32 {
+    let gx = clamp(ix + DATA_GRID_BORDER, 0, DATA_GRID_SIDE - 1);
+    let gz = clamp(iz + DATA_GRID_BORDER, 0, DATA_GRID_SIDE - 1);
+    return u32(gz * DATA_GRID_SIDE + gx);
 }
 
-// ==============================
-// Cubic interpolation helpers
-// ==============================
-// We keep both the cubic value and the analytic derivative (w.r.t. t).
-// This avoids numerical finite differences (eps) and is both faster and exact.
-//
-// NOTE on terminology: "w.r.t x" / "w.r.t z" means "with respect to x/z" in the
-// calculus sense (partial derivatives). Here, x and z are the terrain's horizontal
-// axes in tile units; t is a 1D interpolation parameter in [0,1] used inside cubic blends.
-//
-// The cubic interpolation polynomial is the same shape used previously. We
-// compute both the interpolated value and its derivative at t. Those derivatives
-// let us obtain analytic partials dH/dx and dH/dz for normals (see below).
+fn tile_at_13x13(ix: i32, iz: i32) -> TileUniform {
+    return land.tiles[tile_index_clamped(ix, iz)];
+}
+fn tile_height_at_13x13(ix: i32, iz: i32) -> f32 {
+    return tile_at_13x13(ix, iz).tile_height;
+}
+
+// Edge-blend factor: 0 in interior, ramps toward 1 near chunk boundary to soften seams.
+fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
+    let tx = floor(local_x);
+    let tz = floor(local_z);
+    let dx = min(tx, f32(CHUNK_TILE_NUM_1D - 1u) - tx);
+    let dz = min(tz, f32(CHUNK_TILE_NUM_1D - 1u) - tz);
+    let min_dist = min(dx, dz);
+    // blend starts at distance 2 tiles
+    return 1.0 - smoothstep(0.0, 2.0, min_dist);
+}
+
+// Cheap 2D value-noise for animated clouds/fog mask (fast, low-quality but good for stylistic use).
+fn hash(p: vec2<f32>) -> f32 {
+    let p3 = fract(vec3<f32>(p.xyx) * 0.1031);
+    let p3_shifted = p3 + dot(p3, p3.yzx + vec3<f32>(19.19));
+    return fract((p3_shifted.x + p3_shifted.y) * p3_shifted.z);
+}
+fn noise_2d(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash(i + vec2<f32>(0.0, 0.0));
+    let b = hash(i + vec2<f32>(1.0, 0.0));
+    let c = hash(i + vec2<f32>(0.0, 1.0));
+    let d = hash(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// ============================================================================
+// CUBIC INTERP (value + analytic derivative)
+// We compute both value and d/dt to generate accurate dH/dx, dH/dz for bicubic normals.
+// t is a local fractional coordinate in [0,1] along one axis (x or z).
+// ============================================================================
 fn cubic_interp_value_and_derivative(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> vec2<f32> {
-    // Coefficients for the cubic polynomial (Catmull-Rom-like basis).
-    // value(t) = ((a * t + b) * t + c) * t + d
-    // d/dt     = 3*a*t^2 + 2*b*t + c
-    //
-    // WHY DERIVATIVES: Our terrain is a height field H(x,z). To light it
-    // smoothly, we need its surface normal, which depends on the *slopes*
-    // (partial derivatives) dH/dx and dH/dz. By deriving the cubic formula,
-    // we get exact partials analytically, avoiding noisy finite differences.
     let a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
     let b =       p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
     let c = -0.5 * p0           + 0.5 * p2;
     let d =           p1;
-
     let value = ((a * t + b) * t + c) * t + d;
-    let deriv = (3.0 * a * t * t) + (2.0 * b * t) + c; // derivative w.r.t. t
+    let deriv = (3.0 * a * t * t) + (2.0 * b * t) + c;
     return vec2<f32>(value, deriv);
 }
-
-// Convenience wrappers when only value or derivative is required.
-fn cubic_interp_value(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-    return cubic_interp_value_and_derivative(p0, p1, p2, p3, t).x;
+fn cubic_value(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    return cubic_interp_value_and_derivative(p0,p1,p2,p3,t).x;
 }
-fn cubic_interp_derivative(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-    return cubic_interp_value_and_derivative(p0, p1, p2, p3, t).y;
+fn cubic_deriv(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    return cubic_interp_value_and_derivative(p0,p1,p2,p3,t).y;
 }
 
-// ==============================
-// Bicubic normal from heights (analytic derivatives)
-// ==============================
-// We treat the 9x9 grid as samples of a height field H(x,z) at integer tile coords.
-// For a point inside a tile, we compute bicubic interpolation to estimate H and
-// compute its partial derivatives dH/dx and dH/dz analytically using the cubic
-// derivative formulas above.
-//
-// Algorithm (high-level):
-//  1) For each of the 4 z-rows, compute cubic interpolation along x: row_val[i] and
-//     row_dval_dx[i] (derivative w.r.t x for that row).
-//  2) Height H = cubic_interp(row_val0..3, frac_z).
-//     dH/dx  = cubic_interp(row_dval_dx0..3, frac_z).  (derivatives along x are interpolated in z)
-//  3) For derivative w.r.t z: for each of the 4 x-columns compute cubic_interp along z
-//     and their derivatives (dcol_dz). Then dH/dz = cubic_interp(dcol_dz0..3, frac_x).
-//
-// This produces exact bicubic partials and avoids any finite difference epsilon.
-fn get_bicubic_normal(world_x: f32, world_z: f32) -> vec3<f32> {
-    let local_x = world_x - land.chunk_origin.x; // local tile coords within chunk
-    let local_z = world_z - land.chunk_origin.y;
+// ============================================================================
+// NORMALS
+// Bicubic analytic normal from 4x4 patch of heights stored in the 13x13 grid.
+// ============================================================================
 
-    // The integer tile "cell" where the point lies (0..7), plus fractional (0..1).
+fn get_bicubic_normal(world_pos: vec3<f32>) -> vec3<f32> {
+    // local coords in tile units relative to chunk origin (x,z)
+    let local_x = world_pos.x - land.chunk_origin.x;
+    let local_z = world_pos.z - land.chunk_origin.y;
+
     let base_x = floor(local_x);
     let base_z = floor(local_z);
     let frac_x = local_x - base_x;
     let frac_z = local_z - base_z;
 
-    // Integer indices in the 9x9 grid near our point.
     let ix = i32(base_x);
     let iz = i32(base_z);
 
-    // Fetch 4x4 neighborhood; indexing consistent with earlier code:
-    let h00 = tile_height_at_9x9(ix - 1, iz - 1);
-    let h10 = tile_height_at_9x9(ix + 0, iz - 1);
-    let h20 = tile_height_at_9x9(ix + 1, iz - 1);
-    let h30 = tile_height_at_9x9(ix + 2, iz - 1);
+    // fetch 4x4 patch
+    let h00 = tile_height_at_13x13(ix - 1, iz - 1);
+    let h10 = tile_height_at_13x13(ix + 0, iz - 1);
+    let h20 = tile_height_at_13x13(ix + 1, iz - 1);
+    let h30 = tile_height_at_13x13(ix + 2, iz - 1);
 
-    let h01 = tile_height_at_9x9(ix - 1, iz + 0);
-    let h11 = tile_height_at_9x9(ix + 0, iz + 0);
-    let h21 = tile_height_at_9x9(ix + 1, iz + 0);
-    let h31 = tile_height_at_9x9(ix + 2, iz + 0);
+    let h01 = tile_height_at_13x13(ix - 1, iz + 0);
+    let h11 = tile_height_at_13x13(ix + 0, iz + 0);
+    let h21 = tile_height_at_13x13(ix + 1, iz + 0);
+    let h31 = tile_height_at_13x13(ix + 2, iz + 0);
 
-    let h02 = tile_height_at_9x9(ix - 1, iz + 1);
-    let h12 = tile_height_at_9x9(ix + 0, iz + 1);
-    let h22 = tile_height_at_9x9(ix + 1, iz + 1);
-    let h32 = tile_height_at_9x9(ix + 2, iz + 1);
+    let h02 = tile_height_at_13x13(ix - 1, iz + 1);
+    let h12 = tile_height_at_13x13(ix + 0, iz + 1);
+    let h22 = tile_height_at_13x13(ix + 1, iz + 1);
+    let h32 = tile_height_at_13x13(ix + 2, iz + 1);
 
-    let h03 = tile_height_at_9x9(ix - 1, iz + 2);
-    let h13 = tile_height_at_9x9(ix + 0, iz + 2);
-    let h23 = tile_height_at_9x9(ix + 1, iz + 2);
-    let h33 = tile_height_at_9x9(ix + 2, iz + 2);
+    let h03 = tile_height_at_13x13(ix - 1, iz + 2);
+    let h13 = tile_height_at_13x13(ix + 0, iz + 2);
+    let h23 = tile_height_at_13x13(ix + 1, iz + 2);
+    let h33 = tile_height_at_13x13(ix + 2, iz + 2);
 
-    // --- Interpolate along x for each z-row: get value and derivative w.r.t x for each row ---
-    // rowN = cubic_interp_value(row entries, frac_x)
-    // drowN_dx = cubic_interp_derivative(row entries, frac_x)
-    let row0_vd = cubic_interp_value_and_derivative(h00, h10, h20, h30, frac_x);
-    let row1_vd = cubic_interp_value_and_derivative(h01, h11, h21, h31, frac_x);
-    let row2_vd = cubic_interp_value_and_derivative(h02, h12, h22, h32, frac_x);
-    let row3_vd = cubic_interp_value_and_derivative(h03, h13, h23, h33, frac_x);
+    // Interpolate rows (x) -> values and d/dx
+    let row0 = cubic_interp_value_and_derivative(h00, h10, h20, h30, frac_x);
+    let row1 = cubic_interp_value_and_derivative(h01, h11, h21, h31, frac_x);
+    let row2 = cubic_interp_value_and_derivative(h02, h12, h22, h32, frac_x);
+    let row3 = cubic_interp_value_and_derivative(h03, h13, h23, h33, frac_x);
 
-    // Values along rows (these are functions of x evaluated at frac_x)
-    let row0 = row0_vd.x;
-    let row1 = row1_vd.x;
-    let row2 = row2_vd.x;
-    let row3 = row3_vd.x;
+    // dH/dx = cubic interp of the row derivatives (interpolated along z)
+    let dHdx = cubic_value(row0.y, row1.y, row2.y, row3.y, frac_z);
 
-    // Derivatives of those rows w.r.t x (i.e., partial of bicubic's row interpolation)
-    let drow0_dx = row0_vd.y;
-    let drow1_dx = row1_vd.y;
-    let drow2_dx = row2_vd.y;
-    let drow3_dx = row3_vd.y;
+    // dH/dz: interpolate columns
+    let col0 = cubic_interp_value_and_derivative(h00, h01, h02, h03, frac_z);
+    let col1 = cubic_interp_value_and_derivative(h10, h11, h12, h13, frac_z);
+    let col2 = cubic_interp_value_and_derivative(h20, h21, h22, h23, frac_z);
+    let col3 = cubic_interp_value_and_derivative(h30, h31, h32, h33, frac_z);
+    let dHdz = cubic_value(col0.y, col1.y, col2.y, col3.y, frac_x);
 
-    // Final height H (bicubic): interpolate the row values along z
-    let height_here = cubic_interp_value(row0, row1, row2, row3, frac_z);
-
-    // dH/dx = cubic_interp(drow0_dx..drow3_dx, frac_z)
-    let dHdx = cubic_interp_value(drow0_dx, drow1_dx, drow2_dx, drow3_dx, frac_z);
-
-    // --- For dH/dz, compute cubic interpolation along z for each x-column and get derivative ---
-    // column values (interpolating along z)
-    let col0_vd = cubic_interp_value_and_derivative(h00, h01, h02, h03, frac_z);
-    let col1_vd = cubic_interp_value_and_derivative(h10, h11, h12, h13, frac_z);
-    let col2_vd = cubic_interp_value_and_derivative(h20, h21, h22, h23, frac_z);
-    let col3_vd = cubic_interp_value_and_derivative(h30, h31, h32, h33, frac_z);
-
-    let col0 = col0_vd.x;
-    let col1 = col1_vd.x;
-    let col2 = col2_vd.x;
-    let col3 = col3_vd.x;
-
-    // Derivative of columns w.r.t z
-    let dcol0_dz = col0_vd.y;
-    let dcol1_dz = col1_vd.y;
-    let dcol2_dz = col2_vd.y;
-    let dcol3_dz = col3_vd.y;
-
-    // dH/dz = cubic_interp(dcol0_dz .. dcol3_dz, frac_x)
-    let dHdz = cubic_interp_value(dcol0_dz, dcol1_dz, dcol2_dz, dcol3_dz, frac_x);
-
-    // Convert to normal: height field is y = H(x,z) so normal ~ (-dH/dx, 1, -dH/dz)
+    // Heightfield normal
     return normalize(vec3<f32>(-dHdx, 1.0, -dHdz));
 }
 
-// ==============================
-// Edge-blend helper
-// ==============================
-fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
-    let tile_x   = floor(local_x);
-    let tile_z   = floor(local_z);
-    let dist_x   = min(tile_x, f32(CHUNK_TILE_NUM_1D - 1u) - tile_x);
-    let dist_z   = min(tile_z, f32(CHUNK_TILE_NUM_1D - 1u) - tile_z);
-    let min_dist = min(dist_x, dist_z);
-    // Blend stronger within 2 tiles of edge
-    return 1.0 - smoothstep(0.0, 2.0, min_dist);
+// Cheap bent-normal approximation (very conservative)
+fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f32> {
+    // quick center cell & 4-neighbors occlusion heuristic
+    let local_x = world_pos.x - land.chunk_origin.x;
+    let local_z = world_pos.z - land.chunk_origin.y;
+    let cx = i32(floor(local_x));
+    let cz = i32(floor(local_z));
+
+    let hc = tile_height_at_13x13(cx, cz);
+    let hl = tile_height_at_13x13(cx - 1, cz);
+    let hr = tile_height_at_13x13(cx + 1, cz);
+    let hd = tile_height_at_13x13(cx, cz - 1);
+    let hu = tile_height_at_13x13(cx, cz + 1);
+
+    let pos_slopes = max(0.0, hl - hc) + max(0.0, hr - hc) + max(0.0, hd - hc) + max(0.0, hu - hc);
+    let occl = clamp(pos_slopes * 0.25, 0.0, 1.0);
+
+    let mix_factor = occl * 0.5; // conservative bend toward up
+    return normalize(mix(base_normal_world, vec3<f32>(0.0, 1.0, 0.0), mix_factor));
 }
 
-// ==============================
-// Vertex stage
-// ==============================
+// ============================================================================
+// LIGHTING HELPERS
+// All helpers assume N,L,V are in world-space; L is expected normalized by CPU.
+// ============================================================================
+
+// Lambert (expects unit N & L). We do NOT normalize L here if HOT_OVERRIDE_USE_UNIFORMS==1
+fn get_lambert(N: vec3<f32>, L: vec3<f32>) -> f32 {
+    // Defensive normalization of N only (cheap). L assumed normalized on CPU for perf.
+    return max(dot(normalize(N), L), 0.0);
+}
+
+// Blinn-Phong specular intensity. Return scalar.
+fn get_specular(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, shininess: f32) -> f32 {
+    let H = normalize(L + V);
+    return pow(max(dot(normalize(N), H), 0.0), shininess);
+}
+
+// Rim term (grazing)
+fn get_rim(N: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
+    let rim_dot = 1.0 - max(dot(normalize(N), normalize(V)), 0.0);
+    return pow(rim_dot, power);
+}
+
+// Hemisphere fill: returns (ambient_scalar, upness) as vec2
+fn get_hemisphere_fill(N: vec3<f32>) -> vec2<f32> {
+    let upness = clamp(dot(normalize(N), vec3<f32>(0.0,1.0,0.0)) * 0.5 + 0.5, 0.0, 1.0);
+    // ambient strength will be applied by tunables.fill_strength * returned.x
+    let sky_strength = visual.fill_sky_color.a;
+    let ground_strength = visual.fill_ground_color.a;
+    let ambient_strength = mix(ground_strength, sky_strength, upness);
+    return vec2<f32>(ambient_strength, upness);
+}
+
+// Reinhard tonemap with exposure control: color * exposure -> color/(1+color)
+fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
+    let e = max(exposure, 1e-6);
+    let mapped = (c * e) / (vec3<f32>(1.0) + (c * e));
+    return mapped;
+}
+
+// Painterly grading: warm midtones + cool shadows. Strength in visual.grade_params.x
+fn grade_color(color: vec3<f32>) -> vec3<f32> {
+    let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let warm_mix = smoothstep(0.0, 1.0, luma);
+    let cool_mix = 1.0 - warm_mix;
+    let strength = visual.grade_params.x;
+    let tint = visual.grade_warm_color.rgb * warm_mix + visual.grade_cool_color.rgb * cool_mix;
+    // modest influence to avoid overpowering
+    return mix(color, color + tint * 0.25 * strength, strength);
+}
+
+// ============================================================================
+// VERTEX SHADER
+// - Displace vertex Y using pre-packed heights
+// - Compute geometric normal and (if in Gouraud) compute per-vertex lighting
+// ============================================================================
 @vertex
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    let grid_w: u32 = HEIGHT_GRID_NUM_1D;
+    // Resolve runtime vs hot overrides
+    var shading_mode: u32 = tunables.shading_mode;
+    var normal_mode:  u32 = tunables.normal_mode;
+    var enable_bent:  u32 = tunables.enable_bent;
+    var enable_tonemap: u32 = tunables.enable_tonemap;
+    var enable_grading: u32 = tunables.enable_grading;
+    var enable_fog:   u32 = tunables.enable_fog;
 
-    // Compute grid coords inside the 9x9 array.
-    let grid_x: u32 = vertex_index % grid_w;
-    let grid_z: u32 = vertex_index / grid_w;
+    if (HOT_OVERRIDE_USE_UNIFORMS == 0u) {
+        shading_mode = HOT_SHADING_MODE;
+        normal_mode  = HOT_NORMAL_MODE;
+        enable_bent  = HOT_ENABLE_BENT;
+        enable_tonemap = HOT_ENABLE_TONEMAP;
+        enable_grading = HOT_ENABLE_GRADING;
+        enable_fog = HOT_ENABLE_FOG;
+    }
 
-    // --- 1) Displace the Y coordinate using the already-scaled height ---
+    // Compute mesh grid coords (node coords 0..8)
+    let grid_x: u32 = vertex_index % MESH_GRID_SIDE;
+    let grid_z: u32 = vertex_index / MESH_GRID_SIDE;
+
+    // Map node coords into 13x13 data index (add border)
+    let arr_x = i32(grid_x) + DATA_GRID_BORDER;
+    let arr_z = i32(grid_z) + DATA_GRID_BORDER;
+    let data_idx = u32(arr_z) * u32(DATA_GRID_SIDE) + u32(arr_x);
+
+    // Displace Y using prepacked height (tile node)
     var displaced_local_pos = in.position;
-    displaced_local_pos.y = land.tiles[vertex_index].tile_height;
+    displaced_local_pos.y = land.tiles[data_idx].tile_height;
 
-    // --- 2) Compute a geometric (hard) normal from neighboring heights (central differences) ---
-    // FIX: previous bug used down_z for left/right indexing; must use current grid_z for left/right.
-    let left_x  = select(grid_x - 1u, 0u, grid_x == 0u);
-    let right_x = min(grid_x + 1u, grid_w - 1u);
-    let down_z  = select(grid_z - 1u, 0u, grid_z == 0u);
-    let up_z    = min(grid_z + 1u, grid_w - 1u);
-
-    // Correct row used for left/right: use grid_z (current row)
-    let h_left  = land.tiles[grid_z * grid_w + left_x ].tile_height;
-    let h_right = land.tiles[grid_z * grid_w + right_x].tile_height;
-    let h_down  = land.tiles[down_z * grid_w + grid_x ].tile_height;
-    let h_up    = land.tiles[up_z   * grid_w + grid_x ].tile_height;
-
+    // Geometric normal via central differences on node grid:
+    let h_left  = tile_height_at_13x13(i32(grid_x) - 1, i32(grid_z));
+    let h_right = tile_height_at_13x13(i32(grid_x) + 1, i32(grid_z));
+    let h_down  = tile_height_at_13x13(i32(grid_x), i32(grid_z) - 1);
+    let h_up    = tile_height_at_13x13(i32(grid_x), i32(grid_z) + 1);
     let dHdx_geo = 0.5 * (h_right - h_left);
     let dHdz_geo = 0.5 * (h_up    - h_down);
     let geometric_normal_local = normalize(vec3<f32>(-dHdx_geo, 1.0, -dHdz_geo));
 
-    // --- 3) Standard Bevy transforms to world space ---
+    // Transform to world space and clip
     let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
-    let geometric_normal_world = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(displaced_local_pos, 1.0));
-    out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
-    out.instance_index = in.instance_index;
+    out.position = view_transformations::position_world_to_clip(out.world_position.xyz);
 
-    // Pass UVs for texture sampling
+    // Pass basic attributes
     out.uv = in.uv;
+    out.instance_index = in.instance_index;
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
 
-    // Decide shading mode (uniform or test override)
-    var use_vertex_lighting: u32 = select(tunables.use_vertex_lighting,
-                                          TEST_TUNABLES_USE_VERTEX_LIGHTING,
-                                          USE_TEST_TUNABLES == 1u);
+    // Clear uv_b (we use uv_b.x to carry per-vertex lambert when Gouraud)
+    out.uv_b = vec2<f32>(0.0, 0.0);
 
-    if (use_vertex_lighting == 1u) {
-        // === Gouraud (per-vertex) lighting path ===
+    // Gouraud: compute per-vertex lighting (geometric normal only -> stable classic look)
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && shading_mode == 0u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_SHADING_MODE == 0u) ) {
+        // Use geometric local normal (not bicubic) for classic look
+        let normal_local = geometric_normal_local;
+        let normal_world_for_lighting = mesh_functions::mesh_normal_local_to_world(normal_local, in.instance_index);
 
-        // Optionally compute a smooth bicubic normal (local-space) at the world location.
-        var normal_local_for_lighting = geometric_normal_local;
-        if (ENABLE_SMOOTH_NORMALS == 1u) {
-            // get_bicubic_normal expects world-space x,z in tile units; it returns a LOCAL-space normal.
-            normal_local_for_lighting = get_bicubic_normal(out.world_position.x, out.world_position.z);
-        }
+        // Simple lambert (assume scene.light_direction is normalized on CPU)
+        let L = scene.light_direction; // no normalize for perf; CPU must supply unit-length
+        let lam = get_lambert(normal_world_for_lighting, L);
 
-        // Convert to world-space once and reuse.
-        let normal_world_for_lighting = mesh_functions::mesh_normal_local_to_world(normal_local_for_lighting, in.instance_index);
-
-        // Blend toward geometric normal near the chunk edges to hide seams.
-        let local_x = out.world_position.x - land.chunk_origin.x;
-        let local_z = out.world_position.z - land.chunk_origin.y;
-        let blend   = chunk_edge_blend_factor(local_x, local_z);
-        let blended_normal_world = normalize(mix(normal_world_for_lighting, geometric_normal_world, blend));
-
-        // Lambert (diffuse) term: how aligned the normal is with the (normalized) light direction.
-        // IMPORTANT: scene.light_direction must be normalized on CPU so dot(N, L) ∈ [0,1].
-        // Why normalize? The dot product of two unit vectors equals cos(theta), which is
-        // physically meaningful diffuse. A non-unit L scales brightness incorrectly.
-        let N = blended_normal_world;
-        let L = scene.light_direction; // already normalized externally
-        let lambert = max(dot(N, L), 0.0);
-
-        // Store per-vertex lighting in uv_b.x for the fragment to reuse.
-        out.uv_b = vec2<f32>(lambert, 0.0);
-        // Store the world-space normal (for fragment debug or optional usage).
-        out.world_normal = blended_normal_world;
-
-    } else {
-        // === Per-fragment lighting path ===
-        // We pass down the geometric normal in world-space; the fragment will compute smooth normals if needed.
-        out.world_normal = geometric_normal_world;
-        out.uv_b = vec2<f32>(0.0, 0.0);
+        // Simple ambient scalar for classic: use either uniform or hot-constant
+        var ambient_s = tunables.ambient_strength;
+        if (HOT_OVERRIDE_USE_UNIFORMS == 0u) { ambient_s = HOT_AMBIENT; }
+        // Compose brightness (follow earlier classic mix)
+        // diffuse strength multiplied in fragment; here we just pass lambert
+        out.uv_b.x = lam;
     }
 
     return out;
 }
 
-// ==============================
-// Fragment stage
-// ==============================
+// ============================================================================
+// FRAGMENT SHADER
+// - sample albedo, compute chosen normal (geometric/bicubic + bent),
+// - compose lighting (diffuse + ambient + rim + spec) with tunable intensities,
+// - apply multiplicative animated cloud/fog (KR style), grading + tonemap.
+// ============================================================================
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    var out: vec4<f32>;
+    // Resolve runtime vs hot-overrides (fragment side)
+    var shading_mode: u32 = tunables.shading_mode;
+    var normal_mode:  u32 = tunables.normal_mode;
+    var enable_bent:  u32 = tunables.enable_bent;
+    var enable_tonemap: u32 = tunables.enable_tonemap;
+    var enable_grading: u32 = tunables.enable_grading;
+    var enable_fog:   u32 = tunables.enable_fog;
 
-    // -----------------------
-    // 1) Per-tile data lookup
-    // -----------------------
-    // Convert world position to local chunk space (tile units).
+    var ambient_strength: f32 = tunables.ambient_strength;
+    var diffuse_strength: f32 = tunables.diffuse_strength;
+    var specular_strength: f32 = tunables.specular_strength;
+    var rim_strength: f32 = tunables.rim_strength;
+    var fill_strength: f32 = tunables.fill_strength;
+    var exposure: f32 = tunables.exposure;
+    var sharpness_factor: f32 = tunables.sharpness_factor;
+    var sharpness_mix: f32 = tunables.sharpness_mix;
+
+    if (HOT_OVERRIDE_USE_UNIFORMS == 0u) {
+        shading_mode = HOT_SHADING_MODE;
+        normal_mode  = HOT_NORMAL_MODE;
+        enable_bent  = HOT_ENABLE_BENT;
+        enable_tonemap = HOT_ENABLE_TONEMAP;
+        enable_grading = HOT_ENABLE_GRADING;
+        enable_fog = HOT_ENABLE_FOG;
+        ambient_strength = HOT_AMBIENT;
+        diffuse_strength = HOT_DIFFUSE;
+        specular_strength = HOT_SPECULAR;
+        rim_strength = HOT_RIM;
+        fill_strength = HOT_FILL;
+        exposure = HOT_EXPOSURE;
+        // sharpen params default to 0 if not passed by CPU
+    }
+
+    // --- 1) Lookup tile & albedo ---
+    // Note: horizontal plane is X,Z in world space. Use in.world_position.x and .z.
     let local_x = in.world_position.x - land.chunk_origin.x;
     let local_z = in.world_position.z - land.chunk_origin.y;
 
-    // Integer tile (0..7) the fragment lies in, used for texture lookup.
-    let tile_x_u = clamp(u32(floor(local_x)), 0u, CHUNK_TILE_NUM_1D - 1u);
-    let tile_z_u = clamp(u32(floor(local_z)), 0u, CHUNK_TILE_NUM_1D - 1u);
+    let tile_x_i = i32(floor(local_x));
+    let tile_z_i = i32(floor(local_z));
 
-    // IMPORTANT: since the uniform is a 9x9 array, we index rows with stride 9.
-    let tile_index_9 = tile_z_u * HEIGHT_GRID_NUM_1D + tile_x_u;
-
-    let tile_height = land.tiles[tile_index_9].tile_height;
-
-    let texture_size  = land.tiles[tile_index_9].texture_size;
-    let texture_layer = land.tiles[tile_index_9].texture_layer;
-
-    // Fractional UV inside tile (0..1 each axis).
+    // uv within tile (0..1)
     let uv_in_tile = vec2<f32>(fract(local_x), fract(local_z));
+    let tile = tile_at_13x13(tile_x_i, tile_z_i);
 
-    // -----------------------
-    // 2) Lighting
-    // -----------------------
-    var base_color: vec3<f32>;
-    var base_alpha: f32;
-    var lighting_factor: f32;
-    var final_normal_world: vec3<f32>;
-
-    // Decide lighting mode (same logic as vertex, plus compile-time override).
-    var use_vertex_lighting: u32 = select(tunables.use_vertex_lighting,
-                                          TEST_TUNABLES_USE_VERTEX_LIGHTING,
-                                          USE_TEST_TUNABLES == 1u);
-
-    // Sample the texture
-    var sampled_rgba: vec4<f32>;
-    if (texture_size == TEX_SIZE_BIG) {
-        sampled_rgba = textureSample(texarray_big, texarray_sampler, uv_in_tile, i32(texture_layer));
+    var base_rgba: vec4<f32>;
+    if (tile.texture_size == 1u) {
+        base_rgba = textureSample(texarray_big, texarray_sampler, uv_in_tile, i32(tile.texture_layer));
     } else {
-        sampled_rgba = textureSample(texarray_small, texarray_sampler, uv_in_tile, i32(texture_layer));
+        base_rgba = textureSample(texarray_small, texarray_sampler, uv_in_tile, i32(tile.texture_layer));
     }
-    base_color = sampled_rgba.rgb;
-    base_alpha = sampled_rgba.a;
 
-    if (use_vertex_lighting == 1u) {
-        // Gouraud: vertex shader already computed lambert and blended normals.
-        lighting_factor = in.uv_b.x;
-        final_normal_world = in.world_normal; // stored by vertex stage
+    let base_albedo = base_rgba.rgb;
+    let base_alpha  = base_rgba.a;
+
+    // --- 2) Select normals (world-space)
+    var final_normal_world = in.world_normal; // geometric world normal from vertex stage
+
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && normal_mode == 1u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_NORMAL_MODE == 1u) ) {
+        // bicubic normal computed in local-space (from heights) -> transform to world
+        let smooth_local = get_bicubic_normal(in.world_position.xyz);
+        let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
+        // edge blend to hide seams
+        let blend_edge = chunk_edge_blend_factor(local_x, local_z);
+        final_normal_world = normalize(mix(smooth_world, in.world_normal, blend_edge));
     } else {
-        // Per-fragment: compute (optionally smooth) normal here and do Lambert.
-        // Note: in.world_normal is in world-space (geometric normal).
-        var world_normal_for_lighting = in.world_normal; // world-space geometric normal
+        // ensure normalized
+        final_normal_world = normalize(in.world_normal);
+    }
 
-        if (ENABLE_SMOOTH_NORMALS == 1u) {
-            // get_bicubic_normal returns a LOCAL-space normal; convert to world-space once
-            let smooth_local = get_bicubic_normal(in.world_position.x, in.world_position.z);
-            let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
-            let blend = chunk_edge_blend_factor(local_x, local_z);
-            // Blend between the smooth (bicubic) world normal and the geometric world normal
-            world_normal_for_lighting = normalize(mix(smooth_world, in.world_normal, blend));
+    // optional bent normal (biases normal toward sky in concavities)
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && tunables.enable_bent == 1u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_ENABLE_BENT == 1u) ) {
+        final_normal_world = get_bent_normal(in.world_position.xyz, final_normal_world);
+    }
+
+    // --- 3) Lighting composition ---
+    // Use L as provided by CPU. We assume CPU normalizes scene.light_direction for perf.
+    let L = scene.light_direction; // DO NOT normalize here for perf; CPU must supply unit vector.
+    let V = normalize(scene.camera_position - in.world_position.xyz);
+
+    var hdr_rgb = vec3<f32>(0.0, 0.0, 0.0);
+
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && shading_mode == 0u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_SHADING_MODE == 0u) ) {
+        // Gouraud classic: use precomputed lambert (interpolated) + uniform ambient
+        let lam_v = in.uv_b.x; // per-vertex Lambert [0..1]
+        // compose brightness: diffuse_strength*lambert + ambient_strength
+        let brightness = lam_v * diffuse_strength + ambient_strength;
+        hdr_rgb = base_albedo * brightness;
+        // No rim/specular in classic Gouraud path (they look wrong when interpolated)
+    } else {
+        // Per-fragment path
+        let lam = get_lambert(final_normal_world, L);
+
+        // shape diffuse with tunable sharpness
+        let lam_sharp = pow(max(lam, 1e-4), max(0.0001, sharpness_factor));
+        let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
+        let diffuse_term = diffuse_strength * lam_shaped;
+
+        // hemisphere fill (color tint & scalar)
+        var hemi_scalar: f32 = 0.0;
+        var hemi_upness: f32 = 0.0;
+        if (fill_strength > 0.0) {
+            let hemi = get_hemisphere_fill(final_normal_world);
+            hemi_scalar = hemi.x * fill_strength; // tune by global fill_strength
+            hemi_upness = hemi.y;
         }
-        final_normal_world = normalize(world_normal_for_lighting);
 
-        // Lambertian diffuse. Assumes scene.light_direction is normalized on CPU.
-        // WHY NORMALIZE (recap): dot(N, L) with both unit-length equals cos(theta),
-        // giving physically meaningful diffuse energy. Non-unit L would scale
-        // the result, producing overly bright or dark shading.
-        let L = scene.light_direction;
-        lighting_factor = max(dot(final_normal_world, L), 0.0);
+        // combine base: base_color * (diffuse + ambient)
+        // ambient_strength is a uniform scalar preserving classic behavior
+        let ambient_term = ambient_strength;
+        hdr_rgb = base_albedo * (diffuse_term + ambient_term * 0.5 + hemi_scalar * 0.5);
+
+        // rim (view-dependent)
+        if (rim_strength > 0.001) {
+            let rim_power = max(0.1, visual.rim_color.a);
+            let rim_val = get_rim(final_normal_world, V, rim_power);
+            // apply rim color and scale conservatively
+            hdr_rgb += visual.rim_color.rgb * rim_val * rim_strength * 0.5;
+        }
+
+        // subtle specular
+        if (specular_strength > 0.0001) {
+            let spec_val = get_specular(final_normal_world, L, V, 32.0);
+            hdr_rgb += vec3<f32>(1.0, 1.0, 1.0) * spec_val * specular_strength;
+        }
     }
 
-    // Optional ambient occlusion (very cheap, coarse). If enabled, consider averaging
-    // multiple neighbors to avoid directional bias; kept minimal here.
-    if (ENABLE_AMBIENT_OCCLUSION == 1u) {
-        let neighbor_height_diff = abs(tile_height - tile_height_at_9x9(i32(tile_x_u) + 1, i32(tile_z_u)));
-        let occlusion = clamp(1.0 - neighbor_height_diff * 0.1, 0.5, 1.0);
-        lighting_factor *= occlusion;
+    // --- 4) KR-style multiplicative clouds/fog (animated)
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && tunables.enable_fog == 1u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_ENABLE_FOG == 1u) ) {
+        // fog_params: x=strength, y=scale, z=speed_x, w=speed_y
+        let world_uv = in.world_position.xz * visual.fog_params.y;
+        let time_off = visual.fog_params.zw * visual.time_seconds;
+        let cloud_uv = world_uv + time_off;
+        // bias noise into 0..1
+        let mask = noise_2d(cloud_uv * 0.25) * 0.5 + 0.5;
+        let fog_strength = clamp(visual.fog_params.x, 0.0, 1.0);
+        let fog_opacity = visual.fog_color.a;
+        let fog_mask = clamp(mask * fog_opacity * fog_strength, 0.0, 1.0);
+        // multiplicative darkening (subtle)
+        let tint = visual.fog_color.rgb * (fog_mask * 0.25);
+        hdr_rgb = hdr_rgb * (1.0 - fog_mask * 0.6) + hdr_rgb * tint;
     }
 
-    // Optional slope-based texture blending: keep conservative defaults so peaks aren't pure gray.
-    if (ENABLE_SLOPE_BASED_TEXTURING == 1u) {
-        let slope = 1.0 - final_normal_world.y; // 0 = flat, 1 = vertical
-        let rock_tint = vec3<f32>(0.6, 0.6, 0.6);
-        let snow_tint = vec3<f32>(0.95, 0.95, 1.0);
-        let altitude = tile_height; // already in world units
-        let rock_strength = clamp(slope * 1.25, 0.0, 1.0);
-        let snow_base = clamp((altitude - 50.0) / 20.0, 0.0, 1.0); // tweak 50/20 to taste
-        let snow_strength = snow_base * (1.0 - slope);
-        base_color = mix(base_color, rock_tint, rock_strength);
-        base_color = mix(base_color, snow_tint, snow_strength);
+    // --- 5) Grading + Tonemap (HDR workflow)
+    var post = hdr_rgb;
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && enable_grading == 1u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_ENABLE_GRADING == 1u) ) {
+        post = grade_color(post);
     }
 
-    // Optional specular highlights
-    if (ENABLE_SPECULAR == 1u) {
-        let view_dir = normalize(scene.camera_position - in.world_position.xyz);
-        let reflect_dir = reflect(-scene.light_direction, final_normal_world); // L is normalized
-        let spec = pow(max(dot(view_dir, reflect_dir), 0.0), 16.0);
-        base_color += spec * 0.2;
+    var final_rgb = post;
+    if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && enable_tonemap == 1u) ||
+         (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_ENABLE_TONEMAP == 1u) ) {
+        final_rgb = tonemap_reinhard_with_exposure(post, exposure);
     }
 
-    // -----------------------
-    // 3) Sharpness mix on diffuse term (applied ONCE)
-    // -----------------------
-    let sharpness_factor     = select(tunables.sharpness_factor,     TEST_TUNABLES_SHARPNESS_FACTOR,     USE_TEST_TUNABLES == 1u);
-    let sharpness_mix_factor = select(tunables.sharpness_mix_factor, TEST_TUNABLES_SHARPNESS_MIX_FACTOR, USE_TEST_TUNABLES == 1u);
+    final_rgb = max(final_rgb, vec3<f32>(0.0)); // avoid negative values
 
-    // Do NOT multiply base_color by lighting here (avoids double-lighting).
-    // Shape the diffuse lobe to taste:
-    let lambert_raw    = lighting_factor;
-    let lambert_sharp  = pow(max(lambert_raw, 1e-4), sharpness_factor);
-    let lambert_shaped = mix(lambert_raw, lambert_sharp, sharpness_mix_factor);
-
-    // Tiny hemispherical ambient to prevent crushed shadows on steep slopes:
-    // Up-facing surfaces get a bit more ambient than sideways/down-facing.
-    let upness = clamp(final_normal_world.y, 0.0, 1.0);
-    let ambient_up   = 0.55;
-    let ambient_down = 0.25;
-    let hemi_ambient = mix(ambient_down, ambient_up, upness);
-
-    // Final brightness: ambient + shaped diffuse
-    let brightness = clamp(hemi_ambient + lambert_shaped * 0.75, 0.0, 1.5);
-
-    // -----------------------
-    // 4) Debug modes
-    // -----------------------
-    if (DEBUG_HEIGHT == 1u) {
-        let h = tile_height / 255.0;
-        out = vec4<f32>(h, h, h, 1.0);
-        return out;
-    }
-    if (DEBUG_SLOPE == 1u) {
-        let slope = 1.0 - final_normal_world.y;
-        out = vec4<f32>(slope, slope, slope, 1.0);
-        return out;
-    }
-    if (DEBUG_NORMALS == 1u) {
-        let normal_rgb = final_normal_world * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
-        return vec4<f32>(normal_rgb, 1.0);
-    }
-    if (DEBUG_EDGE_BLEND == 1u) {
-        let edge_blend = chunk_edge_blend_factor(local_x, local_z);
-        let debug_color = mix(vec3<f32>(0.1, 1.0, 0.1), vec3<f32>(1.0, 0.1, 1.0), edge_blend);
-        return vec4<f32>(debug_color, 1.0);
-    }
-
-    // -----------------------
-    // 5) Final color (apply lighting ONCE here)
-    // -----------------------
-    let lit_rgb = base_color * brightness;
-    return vec4<f32>(lit_rgb, base_alpha);
+    return vec4<f32>(final_rgb, base_alpha);
 }
