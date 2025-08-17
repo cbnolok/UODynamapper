@@ -34,12 +34,12 @@ const HOT_EXPOSURE:     f32 = 1.0;
 
 // TODO: harmonize the override settings names. also, normalize is NOT a constant function, we can't use it like this!
 // Main light
-const OVERRIDE_LIGHT_DIR: vec3<f32>   = normalize(vec3<f32>(-0.5, -1.0, -0.3));
+const OVERRIDE_LIGHT_DIR: vec3<f32>   = vec3<f32>(-0.431922, -0.863845, -0.259153);
 const OVERRIDE_LIGHT_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.85);
 
 // Ambient/fill
 const OVERRIDE_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.25, 0.28, 0.32);
-const OVERRIDE_FILL_DIR: vec3<f32>      = normalize(vec3<f32>(0.3, 1.0, 0.2));
+const OVERRIDE_FILL_DIR: vec3<f32>      = vec3<f32>(0.282217, 0.940722, 0.188144);
 const OVERRIDE_FILL_STRENGTH: f32       = 0.35;
 
 // Tone mapping
@@ -68,19 +68,24 @@ struct LandUniform {
 
 struct SceneUniform {
     camera_position: vec3<f32>,
-    light_direction: vec3<f32>, // MUST be normalized on CPU for best perf and correctness
-    _pad: f32,
+    time_seconds: f32,
+    light_direction: vec3<f32>,
+    _pad1: f32,
+    // Fog
+    fog_color: vec4<f32>,
+    fog_params: vec4<f32>, // strength, scale, speed_x, speed_y
 };
 
 // Tunables: runtime-uniform controls for lighting & effects (change from Rust)
 struct TunablesUniform {
     // Modes
-    shading_mode:    u32, // 0 = Gouraud (classic), 1 = Per-fragment
-    normal_mode:     u32, // 0 = geometric, 1 = bicubic
-    enable_bent:     u32, // tilt normals toward sky in concavities
+    shading_mode:    u32,
+    normal_mode:     u32,
+    enable_bent:     u32,
     enable_tonemap:  u32,
     enable_grading:  u32,
     enable_fog:      u32,
+    _pad1:           vec2<u32>,
 
     // Intensities (grouped to keep alignment)
     ambient_strength: f32,
@@ -88,40 +93,37 @@ struct TunablesUniform {
     specular_strength:f32,
     rim_strength:     f32,
 
-    fill_strength:    f32,
-    exposure:         f32,
     sharpness_factor: f32,
     sharpness_mix:    f32,
-
-    _pad: f32,
+    _pad2:            vec2<f32>,
 };
 
-struct VisualUniform {
-    fog_color: vec4<f32>,    // rgb=color, a=opacity
-    fog_params: vec4<f32>,   // x=strength, y=scale, z=speed_x, w=speed_y
-    fill_sky_color: vec4<f32>,   // rgb + a = strength
-    fill_ground_color: vec4<f32>,// rgb + a = strength
-    rim_color: vec4<f32>,        // rgb + a = rim_power
-    grade_warm_color: vec4<f32>, // rgb + a unused
-    grade_cool_color: vec4<f32>, // rgb + a unused
-    grade_params: vec4<f32>,     // x = grade_strength
-    // time for animated clouds (seconds)
-    time_seconds: f32,
-    _pad: vec3<f32>,
-};
+
 
 // TODO: some of those were extracted from the tunablesuniform, we have to remove the duplicate ones from the
 //  origin struct. Actually, maybe we can divide the structs by naming them based on separation of concerns and code
 //  re-usability. Some of the settings are relative to lighting and color correction (to be applied to every game object), others
 //  are relevant only for map chunks, others are relative only to the scene (like the fog, which is an overlay on top of everything else)
 struct LightingUniforms {
-    light_dir: vec3<f32>,      // Main directional light direction
-    light_color: vec3<f32>,    // Main light color (linear HDR, not gamma)
-    ambient_color: vec3<f32>,  // Ambient term (fill light substitute)
-    fill_dir: vec3<f32>,       // Secondary fill light direction
-    fill_strength: f32,        // How strong the fill is
-    exposure: f32,             // Exposure bias for tonemapping
-    gamma: f32,                // Gamma correction
+    light_dir: vec3<f32>,
+    _pad1: f32,
+    light_color: vec3<f32>,
+    _pad2: f32,
+    ambient_color: vec3<f32>,
+    _pad3: f32,
+    fill_dir: vec3<f32>,
+    fill_strength: f32,
+    exposure: f32,
+    gamma: f32,
+    _pad4: vec2<f32>,
+
+    // from VisualUniform
+    fill_sky_color: vec4<f32>,
+    fill_ground_color: vec4<f32>,
+    rim_color: vec4<f32>,
+    grade_warm_color: vec4<f32>,
+    grade_cool_color: vec4<f32>,
+    grade_params: vec4<f32>,
 };
 
 @group(2) @binding(100) var texarray_sampler: sampler;
@@ -130,8 +132,7 @@ struct LightingUniforms {
 @group(2) @binding(103) var<uniform> land:    LandUniform;
 @group(2) @binding(104) var<uniform> scene:   SceneUniform;
 @group(2) @binding(105) var<uniform> tunables: TunablesUniform;
-@group(2) @binding(106) var<uniform> visual:  VisualUniform;
-@group(2) @binding(107) var<uniform> lighting: LightingUniforms;
+@group(2) @binding(106) var<uniform> lighting: LightingUniforms;
 
 
 // ============================================================================
@@ -308,14 +309,14 @@ fn get_rim(N: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
     return pow(rim_dot, power);
 }
 
-// Hemisphere fill: returns (ambient_scalar, upness) as vec2
-fn get_hemisphere_fill(N: vec3<f32>) -> vec2<f32> {
+// Hemisphere fill: returns a color based on normal orientation.
+// The final strength is modulated by `lighting.fill_strength` in the fragment shader.
+fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
     let upness = clamp(dot(normalize(N), vec3<f32>(0.0,1.0,0.0)) * 0.5 + 0.5, 0.0, 1.0);
-    // ambient strength will be applied by tunables.fill_strength * returned.x
-    let sky_strength = visual.fill_sky_color.a;
-    let ground_strength = visual.fill_ground_color.a;
-    let ambient_strength = mix(ground_strength, sky_strength, upness);
-    return vec2<f32>(ambient_strength, upness);
+    // The .a component of the color acts as a per-color strength multiplier.
+    let sky_color = lighting.fill_sky_color.rgb * lighting.fill_sky_color.a;
+    let ground_color = lighting.fill_ground_color.rgb * lighting.fill_ground_color.a;
+    return mix(ground_color, sky_color, upness);
 }
 
 // Reinhard tonemap with exposure control: color * exposure -> color/(1+color)
@@ -330,8 +331,8 @@ fn grade_color(color: vec3<f32>) -> vec3<f32> {
     let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
     let warm_mix = smoothstep(0.0, 1.0, luma);
     let cool_mix = 1.0 - warm_mix;
-    let strength = visual.grade_params.x;
-    let tint = visual.grade_warm_color.rgb * warm_mix + visual.grade_cool_color.rgb * cool_mix;
+    let strength = lighting.grade_params.x;
+    let tint = lighting.grade_warm_color.rgb * warm_mix + lighting.grade_cool_color.rgb * cool_mix;
     // modest influence to avoid overpowering
     return mix(color, color + tint * 0.25 * strength, strength);
 }
@@ -439,10 +440,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var diffuse_strength: f32 = tunables.diffuse_strength;
     var specular_strength: f32 = tunables.specular_strength;
     var rim_strength: f32 = tunables.rim_strength;
-    var fill_strength: f32 = tunables.fill_strength;
-    var exposure: f32 = tunables.exposure;
     var sharpness_factor: f32 = tunables.sharpness_factor;
     var sharpness_mix: f32 = tunables.sharpness_mix;
+
+    var fill_strength: f32 = lighting.fill_strength;
+    var exposure: f32 = lighting.exposure;
 
     if (HOT_OVERRIDE_USE_UNIFORMS == 0u) {
         shading_mode = HOT_SHADING_MODE;
@@ -528,26 +530,22 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
         let diffuse_term = diffuse_strength * lam_shaped;
 
-        // hemisphere fill (color tint & scalar)
-        var hemi_scalar: f32 = 0.0;
-        var hemi_upness: f32 = 0.0;
+        // hemisphere fill
+        var hemi_color = vec3<f32>(0.0, 0.0, 0.0);
         if (fill_strength > 0.0) {
-            let hemi = get_hemisphere_fill(final_normal_world);
-            hemi_scalar = hemi.x * fill_strength; // tune by global fill_strength
-            hemi_upness = hemi.y;
+            hemi_color = get_hemisphere_fill(final_normal_world) * fill_strength;
         }
 
-        // combine base: base_color * (diffuse + ambient)
-        // ambient_strength is a uniform scalar preserving classic behavior
+        // combine base: base_color * (diffuse + ambient) + fill
         let ambient_term = ambient_strength;
-        hdr_rgb = base_albedo * (diffuse_term + ambient_term * 0.5 + hemi_scalar * 0.5);
+        hdr_rgb = base_albedo * (diffuse_term + ambient_term) + hemi_color;
 
         // rim (view-dependent)
         if (rim_strength > 0.001) {
-            let rim_power = max(0.1, visual.rim_color.a);
+            let rim_power = max(0.1, lighting.rim_color.a);
             let rim_val = get_rim(final_normal_world, V, rim_power);
             // apply rim color and scale conservatively
-            hdr_rgb += visual.rim_color.rgb * rim_val * rim_strength * 0.5;
+            hdr_rgb += lighting.rim_color.rgb * rim_val * rim_strength * 0.5;
         }
 
         // subtle specular
@@ -561,16 +559,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if ( (HOT_OVERRIDE_USE_UNIFORMS == 1u && tunables.enable_fog == 1u) ||
          (HOT_OVERRIDE_USE_UNIFORMS == 0u && HOT_ENABLE_FOG == 1u) ) {
         // fog_params: x=strength, y=scale, z=speed_x, w=speed_y
-        let world_uv = in.world_position.xz * visual.fog_params.y;
-        let time_off = visual.fog_params.zw * visual.time_seconds;
+        let world_uv = in.world_position.xz * scene.fog_params.y;
+        let time_off = scene.fog_params.zw * scene.time_seconds;
         let cloud_uv = world_uv + time_off;
         // bias noise into 0..1
         let mask = noise_2d(cloud_uv * 0.25) * 0.5 + 0.5;
-        let fog_strength = clamp(visual.fog_params.x, 0.0, 1.0);
-        let fog_opacity = visual.fog_color.a;
+        let fog_strength = clamp(scene.fog_params.x, 0.0, 1.0);
+        let fog_opacity = scene.fog_color.a;
         let fog_mask = clamp(mask * fog_opacity * fog_strength, 0.0, 1.0);
         // multiplicative darkening (subtle)
-        let tint = visual.fog_color.rgb * (fog_mask * 0.25);
+        let tint = scene.fog_color.rgb * (fog_mask * 0.25);
         hdr_rgb = hdr_rgb * (1.0 - fog_mask * 0.6) + hdr_rgb * tint;
     }
 

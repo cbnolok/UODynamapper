@@ -184,24 +184,26 @@ fn create_land_chunk_material(
     let mut mat_ext_scene_uniform = SceneUniform::zeroed();
     mat_ext_scene_uniform.camera_position = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
     mat_ext_scene_uniform.light_direction = constants::BAKED_GLOBAL_LIGHT;
+    mat_ext_scene_uniform.time_seconds = time_r.elapsed().as_secs_f32();
+    mat_ext_scene_uniform.fog_color = Vec4::new(0.7, 0.8, 0.9, 0.5);
+    mat_ext_scene_uniform.fog_params = Vec4::new(0.1, 0.1, 0.01, 0.01);
 
     // Tunables are separate.
     let mut mat_ext_tunables_uniform = TunablesUniform::zeroed();
-    mat_ext_tunables_uniform.use_vertex_lighting = 1;
+    mat_ext_tunables_uniform.shading_mode = 2; // KR-like
+    mat_ext_tunables_uniform.normal_mode = 1; // Bicubic
+    mat_ext_tunables_uniform.enable_bent = 1;
+    mat_ext_tunables_uniform.enable_tonemap = 1;
+    mat_ext_tunables_uniform.enable_grading = 1;
+    mat_ext_tunables_uniform.enable_fog = 1;
+    mat_ext_tunables_uniform.ambient_strength = 0.4;
+    mat_ext_tunables_uniform.diffuse_strength = 1.0;
+    mat_ext_tunables_uniform.specular_strength = 0.12;
+    mat_ext_tunables_uniform.rim_strength = 0.25;
     mat_ext_tunables_uniform.sharpness_factor = 1.0;
-    mat_ext_tunables_uniform.sharpness_mix_factor = 1.0;
+    mat_ext_tunables_uniform.sharpness_mix = 0.5;
 
-    // Visuals
-    let mut mat_ext_visual_uniform = VisualUniform::zeroed();
-    mat_ext_visual_uniform.fog_color = Vec4::new(0.7, 0.8, 0.9, 0.5);
-    mat_ext_visual_uniform.fog_params = Vec4::new(0.1, 0.1, 0.01, 0.01);
-    mat_ext_visual_uniform.fill_sky_color = Vec4::new(0.5, 0.6, 0.8, 0.2);
-    mat_ext_visual_uniform.fill_ground_color = Vec4::new(0.4, 0.3, 0.2, 0.1);
-    mat_ext_visual_uniform.rim_color = Vec4::new(1.0, 1.0, 0.8, 4.0);
-    mat_ext_visual_uniform.grade_warm_color = Vec4::new(1.0, 0.9, 0.8, 1.0);
-    mat_ext_visual_uniform.grade_cool_color = Vec4::new(0.8, 0.9, 1.0, 1.0);
-    mat_ext_visual_uniform.grade_params = Vec4::new(0.1, 0.0, 0.0, 0.0);
-    mat_ext_visual_uniform.time_seconds = time_r.elapsed().as_secs_f32();
+    
 
     // 3) Create and return the material handle.
     let mat = ExtendedMaterial {
@@ -212,7 +214,6 @@ fn create_land_chunk_material(
             land_uniform: mat_ext_land_uniforms,
             scene_uniform: mat_ext_scene_uniform,
             tunables_uniform: mat_ext_tunables_uniform,
-            visual_uniform: mat_ext_visual_uniform,
             lighting_uniform: LightingUniforms::default(),
         },
     };

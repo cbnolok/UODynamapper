@@ -22,8 +22,6 @@ pub struct LandMaterialExtension {
     #[uniform(105, min_binding_size = 16)]
     pub tunables_uniform: TunablesUniform,
     #[uniform(106, min_binding_size = 16)]
-    pub visual_uniform: VisualUniform,
-    #[uniform(107, min_binding_size = 16)]
     pub lighting_uniform: LightingUniforms,
 }
 
@@ -75,44 +73,39 @@ pub struct LandUniform {
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SceneUniform {
     pub camera_position: Vec3,
-    _pad1: f32,
+    pub time_seconds: f32,
     pub light_direction: Vec3,
-    _pad2: f32,
+    pub _pad1: f32,
+    // Fog
+    pub fog_color: Vec4,
+    pub fog_params: Vec4, // strength, scale, speed_x, speed_y
 }
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TunablesUniform {
-    // Like a bool: 0 = per-pixel bicubic lighting, 1 = per-vertex Gouraud lighting
-    pub use_vertex_lighting: u32,
-    // Sharpness of normal smoothing: 0.0 = blocky normals (flat shading), 1.0 = full bicubic smooth normals
+    // Modes
+    pub shading_mode: u32,
+    pub normal_mode: u32,
+    pub enable_bent: u32,
+    pub enable_tonemap: u32,
+
+    pub enable_grading: u32,
+    pub enable_fog: u32,
+    pub _pad1: Vec2,
+
+    // Intensities
+    pub ambient_strength: f32,
+    pub diffuse_strength: f32,
+    pub specular_strength:f32,
+    pub rim_strength:     f32,
+
     pub sharpness_factor: f32,
-    // How much of the sharpened color is mixed to the original color.
-    pub sharpness_mix_factor: f32,
-    _pad: f32,
+    pub sharpness_mix:    f32,
+    pub _pad2: Vec2,
 }
 
-#[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VisualUniform {
-    // Fog & Clouds
-    pub fog_color: Vec4, // color and opacity
-    pub fog_params: Vec4, // strength, scale, speed_x, speed_y
 
-    // Fill & Rim Lighting
-    pub fill_sky_color: Vec4, // .rgb = color, .a = strength
-    pub fill_ground_color: Vec4,
-    pub rim_color: Vec4, // .rgb = color, .a = power
-
-    // Color Grading
-    pub grade_warm_color: Vec4,
-    pub grade_cool_color: Vec4,
-    pub grade_params: Vec4, // strength, ...
-
-    // time in seconds for animated clouds/fog
-    pub time_seconds: f32,
-    _pad_time: Vec3,
-}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
@@ -127,7 +120,15 @@ pub struct LightingUniforms {
     pub fill_strength: f32,
     pub exposure: f32,
     pub gamma: f32,
-    _pad4: Vec2, // align to 16 bytes
+    pub _pad4: Vec2, // align to 16 bytes
+
+    // from VisualUniform
+    pub fill_sky_color: Vec4, // .rgb = color, .a = strength
+    pub fill_ground_color: Vec4,
+    pub rim_color: Vec4, // .rgb = color, .a = power
+    pub grade_warm_color: Vec4,
+    pub grade_cool_color: Vec4,
+    pub grade_params: Vec4, // strength, ...
 }
 
 impl Default for LightingUniforms {
@@ -144,6 +145,13 @@ impl Default for LightingUniforms {
             exposure: 1.0,
             gamma: 2.2,
             _pad4: [0.0, 0.0].into(),
+
+            fill_sky_color: Vec4::new(0.5, 0.6, 0.8, 0.2),
+            fill_ground_color: Vec4::new(0.4, 0.3, 0.2, 0.1),
+            rim_color: Vec4::new(1.0, 1.0, 0.8, 4.0),
+            grade_warm_color: Vec4::new(1.0, 0.9, 0.8, 1.0),
+            grade_cool_color: Vec4::new(0.8, 0.9, 1.0, 1.0),
+            grade_params: Vec4::new(0.1, 0.0, 0.0, 0.0),
         }
     }
 }
