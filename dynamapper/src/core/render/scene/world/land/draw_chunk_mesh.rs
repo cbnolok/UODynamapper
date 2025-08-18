@@ -181,8 +181,6 @@ fn create_land_chunk_material(
     mat_ext_scene_uniform.camera_position = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
     mat_ext_scene_uniform.light_direction = constants::BAKED_GLOBAL_LIGHT;
     mat_ext_scene_uniform.time_seconds = time_r.elapsed().as_secs_f32();
-    mat_ext_scene_uniform.fog_color = Vec4::new(0.7, 0.8, 0.9, 0.5);
-    mat_ext_scene_uniform.fog_params = Vec4::new(0.1, 0.1, 0.01, 0.01);
 
     // Tunables are separate.
     let (mat_ext_tunables_uniform, mat_ext_lighting_uniform) = morning_preset(ShaderMode::KR);

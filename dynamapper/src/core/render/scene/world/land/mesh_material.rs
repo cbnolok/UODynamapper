@@ -53,7 +53,7 @@ impl MaterialExtension for LandMaterialExtension {
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TileUniform {
     pub tile_height: f32,
-    pub texture_size: u32,  // 0: small, 1: big
+    pub texture_size: u32, // 0: small, 1: big
     pub texture_layer: u32,
     pub texture_hue: u32,
     // Ensure to have 16 bytes alignment (WGSL std140 layout), add padding if needed.
@@ -76,24 +76,22 @@ pub struct SceneUniform {
     pub time_seconds: f32,
     pub light_direction: Vec3,
     pub _pad1: f32,
-    // Fog
-    pub fog_color: Vec4,
-    pub fog_params: Vec4, // strength, scale, speed_x, speed_y
 }
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TunablesUniform {
     // modes/toggles
-    pub shading_mode: u32,   // 0 classic, 1 enhanced, 2 KR
-    pub normal_mode: u32,    // 0 geometric, 1 bicubic
+    pub shading_mode: u32, // 0 classic, 1 enhanced, 2 KR
+    pub normal_mode: u32,  // 0 geometric, 1 bicubic
     pub enable_bent: u32,
     pub enable_fog: u32,
 
     pub enable_gloom: u32,
     pub enable_tonemap: u32,
     pub enable_grading: u32,
-    pub _pad_modes: u32,
+    // optional pre-shade blur of base albedo at fragment level
+    pub enable_blur: u32,
 
     // intensities
     pub ambient_strength: f32,
@@ -104,7 +102,17 @@ pub struct TunablesUniform {
     pub fill_strength: f32,
     pub sharpness_factor: f32,
     pub sharpness_mix: f32,
-    pub _pad_ints: f32,
+
+    // mix factor (0..1) with blurred albedo
+    pub blur_strength: f32,
+
+    // Intensities (slot C, 16B)
+    // blur radius in UV units (very small numbers like 0.001..0.005)
+    pub blur_radius: f32,
+    // padding to keep 16B alignment (WGSL expects 4-f32 slots)
+    pub _pad_c1: f32,
+    pub _pad_c2: f32,
+    pub _pad_c3: f32,
 }
 
 #[repr(C, align(16))]
@@ -131,6 +139,12 @@ pub struct LightingUniforms {
     pub grade_extra: Vec4,  // [vibrance, saturation, contrast, split_strength]
 
     pub gloom_params: Vec4, // [amount, height_falloff, shadow_bias, _]
+
+    // Fog
+    pub fog_color: Vec4,
+    pub fog_params: Vec4,
+    //   fog_color = [r,g,b, max_mix]
+    //   fog_params = [distance_density, height_density, noise_scale, noise_strength]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,14 +163,14 @@ fn common_tunables(mode: ShaderMode) -> TunablesUniform {
     };
     TunablesUniform {
         shading_mode: mode as u32,
-        normal_mode: 1,            // bicubic by default; set 0 for exact old normals
+        normal_mode: 1, // bicubic by default; set 0 for exact old normals
         enable_bent: 1,
         enable_fog: 0,
 
         enable_gloom: if matches!(mode, ShaderMode::KR) { 1 } else { 0 },
         enable_tonemap: 1,
         enable_grading: 1,
-        _pad_modes: 0,
+        enable_blur: 0,
 
         ambient_strength: ambient,
         diffuse_strength: diffuse,
@@ -174,7 +188,14 @@ fn common_tunables(mode: ShaderMode) -> TunablesUniform {
             ShaderMode::Enhanced2D => 0.25,
             ShaderMode::KR => 0.55,
         },
-        _pad_ints: 0.0,
+
+        blur_strength: 0.15, // subtle by default
+
+        // (slot C) tiny UV radius is enough for softening
+        blur_radius: 0.0025,
+        _pad_c1: 0.0,
+        _pad_c2: 0.0,
+        _pad_c3: 0.0,
     }
 }
 
@@ -189,9 +210,9 @@ fn lighting_base() -> LightingUniforms {
         gamma: 2.2,
         _pad2: [0.0, 0.0].into(),
 
-        fill_sky_color:    [0.48, 0.68, 1.00, 0.75].into(),
+        fill_sky_color: [0.48, 0.68, 1.00, 0.75].into(),
         fill_ground_color: [0.30, 0.20, 0.12, 0.35].into(),
-        rim_color:         [0.80, 0.90, 1.05, 2.6].into(), // rgb, power in .w
+        rim_color: [0.80, 0.90, 1.05, 2.6].into(), // rgb, power in .w
 
         // warm/cool tints (rgb), alpha unused (vibrance/contrast move to grade_extra)
         grade_warm_color: [1.08, 0.98, 0.90, 0.0].into(),
@@ -205,16 +226,27 @@ fn lighting_base() -> LightingUniforms {
 
         // amount, height_falloff, shadow_bias, _
         gloom_params: [0.20, 0.008, 0.45, 0.0].into(),
+
+        // Visible, subtle bluish fog by default (UI can override)
+        fog_color: [0.75, 0.85, 0.95, 0.5].into(),
+        // distance_density, height_density, noise_scale, noise_strength
+        fog_params: [0.02, 0.00, 0.00, 0.00].into(),
     }
 }
 
 // Helpers to tweak lighting per ambient quickly.
-fn set_lighting(mut l: LightingUniforms,
-                light_color: Vec3, ambient_color: Vec3,
-                fill_sky: Vec4, fill_ground: Vec4,
-                rim: Vec4,
-                grade_params: Vec4, grade_extra: Vec4,
-                gloom: Vec4, exposure: f32) -> LightingUniforms {
+fn set_lighting(
+    mut l: LightingUniforms,
+    light_color: Vec3,
+    ambient_color: Vec3,
+    fill_sky: Vec4,
+    fill_ground: Vec4,
+    rim: Vec4,
+    grade_params: Vec4,
+    grade_extra: Vec4,
+    gloom: Vec4,
+    exposure: f32,
+) -> LightingUniforms {
     l.light_color = light_color;
     l.ambient_color = ambient_color;
     l.fill_sky_color = fill_sky;
@@ -241,13 +273,15 @@ pub fn morning_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms) {
         [0.50, 0.70, 1.00, 0.70].into(),
         [0.28, 0.19, 0.12, 0.35].into(),
         [0.70, 0.85, 1.00, 2.5].into(),
-        [0.90, 0.15, 0.35, 1.0].into(),   // grade_strength, headroom, hemi_chroma, on
-        [0.45, 1.20, 1.15, 0.90].into(),  // vibrance, saturation, contrast, split
-        [0.20, 0.008, 0.45, 0.0].into(),  // gloom
-        1.05
+        [0.90, 0.15, 0.35, 1.0].into(), // grade_strength, headroom, hemi_chroma, on
+        [0.45, 1.20, 1.15, 0.90].into(), // vibrance, saturation, contrast, split
+        [0.20, 0.008, 0.45, 0.0].into(), // gloom
+        1.05,
     );
     if matches!(mode, ShaderMode::Classic2D) {
-        t.enable_grading = 0; t.enable_gloom = 0; t.fill_strength = 0.0;
+        t.enable_grading = 0;
+        t.enable_gloom = 0;
+        t.fill_strength = 0.0;
     }
     (t, l)
 }
@@ -267,10 +301,12 @@ pub fn afternoon_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms)
         [1.00, 0.15, 0.40, 1.0].into(),
         [0.60, 1.25, 1.22, 1.00].into(),
         [0.15, 0.007, 0.35, 0.0].into(),
-        1.10
+        1.10,
     );
     if matches!(mode, ShaderMode::Classic2D) {
-        t.enable_grading = 0; t.enable_gloom = 0; t.fill_strength = 0.0;
+        t.enable_grading = 0;
+        t.enable_gloom = 0;
+        t.fill_strength = 0.0;
     }
     (t, l)
 }
@@ -283,7 +319,11 @@ pub fn night_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms) {
     t.ambient_strength = 0.10;
     t.diffuse_strength = 0.70;
     t.specular_strength = 0.03;
-    t.rim_strength = if matches!(mode, ShaderMode::Classic2D) { 0.0 } else { 0.22 };
+    t.rim_strength = if matches!(mode, ShaderMode::Classic2D) {
+        0.0
+    } else {
+        0.22
+    };
     t.fill_strength = 0.28;
 
     l = set_lighting(
@@ -296,10 +336,12 @@ pub fn night_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms) {
         [1.10, 0.18, 0.45, 1.0].into(),
         [0.75, 1.20, 1.30, 0.80].into(),
         [0.40, 0.010, 0.65, 0.0].into(),
-        1.20
+        1.20,
     );
     if matches!(mode, ShaderMode::Classic2D) {
-        t.enable_grading = 0; t.enable_gloom = 0; t.fill_strength = 0.0;
+        t.enable_grading = 0;
+        t.enable_gloom = 0;
+        t.fill_strength = 0.0;
     }
     (t, l)
 }
@@ -312,7 +354,11 @@ pub fn cave_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms) {
     t.ambient_strength = 0.06;
     t.diffuse_strength = 0.85;
     t.specular_strength = 0.02;
-    t.rim_strength = if matches!(mode, ShaderMode::Classic2D) { 0.0 } else { 0.14 };
+    t.rim_strength = if matches!(mode, ShaderMode::Classic2D) {
+        0.0
+    } else {
+        0.14
+    };
     t.fill_strength = 0.22;
 
     l = set_lighting(
@@ -325,10 +371,12 @@ pub fn cave_preset(mode: ShaderMode) -> (TunablesUniform, LightingUniforms) {
         [1.05, 0.20, 0.38, 1.0].into(),
         [0.65, 1.15, 1.28, 0.80].into(),
         [0.65, 0.012, 0.75, 0.0].into(),
-        0.95
+        0.95,
     );
     if matches!(mode, ShaderMode::Classic2D) {
-        t.enable_grading = 0; t.enable_gloom = 0; t.fill_strength = 0.0;
+        t.enable_grading = 0;
+        t.enable_gloom = 0;
+        t.fill_strength = 0.0;
     }
     (t, l)
 }
