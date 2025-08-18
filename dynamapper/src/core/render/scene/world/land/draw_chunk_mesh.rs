@@ -203,7 +203,7 @@ fn create_land_chunk_material(
     mat_ext_tunables_uniform.sharpness_factor = 1.0;
     mat_ext_tunables_uniform.sharpness_mix = 0.5;
 
-    
+
 
     // 3) Create and return the material handle.
     let mat = ExtendedMaterial {
@@ -398,7 +398,7 @@ pub fn sys_draw_spawned_land_chunks(
         );
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();
-    println!("Perf: chunk rendered in {build_time} ms.");
+    println!("Perf: chunk rendered in {build_time} µs.");
 }
 
 

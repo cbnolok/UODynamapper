@@ -134,13 +134,13 @@ pub struct LightingUniforms {
 impl Default for LightingUniforms {
     fn default() -> Self {
         Self {
-            light_dir: [-0.5, -1.0, -0.3].into(),
+            light_dir: Vec3::new(-0.5, -1.0, -0.3).normalize(),
             _pad1: 0.0,
             light_color: [1.0, 0.95, 0.85].into(),
             _pad2: 0.0,
             ambient_color: [0.25, 0.28, 0.32].into(),
             _pad3: 0.0,
-            fill_dir: [0.3, 1.0, 0.2].into(),
+            fill_dir: Vec3::new(0.3, 1.0, 0.2).normalize(),
             fill_strength: 0.35,
             exposure: 1.0,
             gamma: 2.2,
