@@ -10,8 +10,11 @@ use bevy::{
     },
 };
 use bytemuck::Zeroable;
-use std::{collections::{BTreeMap, HashSet}, sync::Arc};
 use std::time::Instant;
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 use uocf::geo::{
     land_texture_2d::{LandTextureSize, TexMap2D},
     map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos},
@@ -24,15 +27,15 @@ use crate::{
     core::{
         constants,
         maps::MapPlaneMetadata,
-        render::scene::{camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData},
-        texture_cache::land::cache::*, uo_files_loader::{MapPlanesRes, TexMap2DRes},
+        render::scene::{
+            SceneStateData, camera::PlayerCamera, player::Player, world::WorldGeoData,
+        },
+        texture_cache::land::cache::*,
+        uo_files_loader::{MapPlanesRes, TexMap2DRes},
     },
     prelude::*,
     util_lib::array::*,
 };
-
-
-
 
 // ---- Shared Mesh Resource and Setup ----
 
@@ -59,10 +62,7 @@ pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>)
     for gy in 0..GRID_H {
         for gx in 0..GRID_W {
             positions.push([gx as f32, 0.0, gy as f32]);
-            uvs.push([
-                gx as f32 / (CORE_W as f32),
-                gy as f32 / (CORE_H as f32),
-            ]);
+            uvs.push([gx as f32 / (CORE_W as f32), gy as f32 / (CORE_H as f32)]);
         }
     }
 
@@ -155,11 +155,7 @@ fn create_land_chunk_material(
 
     // Preload all unique textures for the 13x13 grid.
     let unique_tile_ids: HashSet<u16> = cell_grid.iter().map(|cell| cell.id).collect();
-    land_texture_cache_rref.preload_textures(
-        images_rref,
-        texmap_2d.clone(),
-        &unique_tile_ids,
-    );
+    land_texture_cache_rref.preload_textures(images_rref, texmap_2d.clone(), &unique_tile_ids);
 
     // Fill the 13x13 uniform grid.
     for i in 0..cell_grid.len() {
@@ -189,21 +185,7 @@ fn create_land_chunk_material(
     mat_ext_scene_uniform.fog_params = Vec4::new(0.1, 0.1, 0.01, 0.01);
 
     // Tunables are separate.
-    let mut mat_ext_tunables_uniform = TunablesUniform::zeroed();
-    mat_ext_tunables_uniform.shading_mode = 2; // KR-like
-    mat_ext_tunables_uniform.normal_mode = 1; // Bicubic
-    mat_ext_tunables_uniform.enable_bent = 1;
-    mat_ext_tunables_uniform.enable_tonemap = 1;
-    mat_ext_tunables_uniform.enable_grading = 1;
-    mat_ext_tunables_uniform.enable_fog = 1;
-    mat_ext_tunables_uniform.ambient_strength = 0.4;
-    mat_ext_tunables_uniform.diffuse_strength = 1.0;
-    mat_ext_tunables_uniform.specular_strength = 0.12;
-    mat_ext_tunables_uniform.rim_strength = 0.25;
-    mat_ext_tunables_uniform.sharpness_factor = 1.0;
-    mat_ext_tunables_uniform.sharpness_mix = 0.5;
-
-
+    let (mat_ext_tunables_uniform, mat_ext_lighting_uniform) = morning_preset(ShaderMode::KR);
 
     // 3) Create and return the material handle.
     let mat = ExtendedMaterial {
@@ -214,12 +196,11 @@ fn create_land_chunk_material(
             land_uniform: mat_ext_land_uniforms,
             scene_uniform: mat_ext_scene_uniform,
             tunables_uniform: mat_ext_tunables_uniform,
-            lighting_uniform: LightingUniforms::default(),
+            lighting_uniform: mat_ext_lighting_uniform,
         },
     };
     materials_land_rref.add(mat)
 }
-
 
 // ---- HELPER TRAITS / UTILS
 
@@ -400,7 +381,6 @@ pub fn sys_draw_spawned_land_chunks(
     let build_time: u128 = build_time_start.elapsed().as_micros();
     println!("Perf: chunk rendered in {build_time} µs.");
 }
-
 
 // Completed!
 fn draw_land_chunk(

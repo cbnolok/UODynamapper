@@ -1,3 +1,12 @@
+// ============================================================================
+// Bevy PBR WGSL — Terrain (Three modes: 0 Classic, 1 Enhanced, 2 KR-like)
+// - Mode 0: “2D Classic” — faithful brightness model, vertex/Gouraud.
+// - Mode 1: “2D Enhanced/Remastered” — per-fragment, subtle improvements,
+//          stays close to original colors and contrast.
+// - Mode 2: “KR-like” — per-fragment, painterly: warm key, cool ambient/fill,
+//          vibrant grading, rim, gloom; avoids gray/metallic wash.
+// ============================================================================
+
 #import bevy_pbr::{
   forward_io::{Vertex, VertexOutput},
   mesh_functions,
@@ -5,44 +14,42 @@
 }
 
 // ============================================================================
-// Compile-time configuration (development)
+// Compile-time DEV config (unified DEV_* prefix)
 // ============================================================================
 
-// Unified dev toggles: when DEV_USE_UNIFORMS == 0, the DEV_* defaults in this
-// file are used; otherwise, CPU-provided uniforms drive the look.
+// If 0, use the DEV_* defaults below. If 1, use CPU uniforms.
 const DEV_USE_UNIFORMS: u32 = 0u;
 
-// Shading modes: 0 = Vertex/Gouraud (fast), 1 = Fragment (KR look)
-const DEV_SHADING_MODE: u32 = 1u;
+// Shader modes: 0 = Classic (vertex), 1 = Enhanced (fragment), 2 = KR (fragment)
+const DEV_SHADING_MODE: u32 = 2u;
 
-// Normal modes: 0 = geometric (quick), 1 = bicubic analytic (smoother)
+// Normal modes: 0 = geometric, 1 = bicubic
 const DEV_NORMAL_MODE:  u32 = 1u;
 
-// Feature toggles
-const DEV_ENABLE_BENT:     u32 = 1u; // bent normal sky bias in crevices
-const DEV_ENABLE_TONEMAP:  u32 = 1u;
-const DEV_ENABLE_GRADING:  u32 = 0u;
-const DEV_ENABLE_FOG:      u32 = 0u;
+// Feature flags (compile-time defaults; runtime toggles exist too)
+const DEV_BENT:   u32 = 1u;
+const DEV_FOG:    u32 = 0u;
+const DEV_GLOOM:  u32 = 1u;
+const DEV_TONEMAP:u32 = 1u;
+const DEV_GRADING:u32 = 1u;
 
-// Artist-default intensities (used when DEV_USE_UNIFORMS == 0)
-const DEV_AMBIENT:  f32 = 0.15; // cool base light in shadowed areas
-const DEV_DIFFUSE:  f32 = 0.15; // strength of direct sunlight
-const DEV_SPECULAR: f32 = 0.06; // subtle sun glint
-const DEV_RIM:      f32 = 0.005; // silhouette lift
-const DEV_FILL:     f32 = 0.1; // sky/ground environmental tint
-const DEV_EXPOSURE: f32 = 1.05; // HDR exposure for tonemapping
+// Artist defaults when DEV_USE_UNIFORMS == 0
+const DEV_AMBIENT:  f32 = 0.18; // shadow light
+const DEV_DIFFUSE:  f32 = 1.08; // direct sunlight
+const DEV_SPECULAR: f32 = 0.05; // sparkle
+const DEV_RIM:      f32 = 0.16; // silhouette
+const DEV_FILL:     f32 = 0.34; // environment intensity
+const DEV_EXPOSURE: f32 = 1.08; // tonemap exposure
 
-// “Look” defaults for dev mode (warm sun, cool ambient)
-const DEV_LIGHT_DIR:    vec3<f32> = vec3<f32>(-0.431922, -0.863845, -0.259153);
-const DEV_LIGHT_COLOR:  vec3<f32> = vec3<f32>(1.03, 0.99, 0.92); // gently warm
-const DEV_AMBIENT_COLOR:vec3<f32> = vec3<f32>(0.18, 0.22, 0.28); // cool
+// Dev palette (warm key, cool ambient)
+const DEV_LIGHT_COLOR:   vec3<f32> = vec3<f32>(1.06, 0.99, 0.92);
+const DEV_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.18, 0.22, 0.29);
 
-// Compile-time gate for headroom limiting (prevents color bleaching).
-// The runtime on/off toggle lives in lighting.grade_params.w (see below).
+// Headroom limiting (prevents bleaching in stylized modes). Also has runtime toggle.
 const CFG_ENABLE_HEADROOM_LIMIT: bool = true;
 
 // ============================================================================
-// Bindings / Uniform Layouts (unchanged; do not reorder fields)
+// Bindings / Uniform Layouts (final)
 // ============================================================================
 
 struct TileUniform {
@@ -53,11 +60,11 @@ struct TileUniform {
 };
 
 struct LandUniform {
-  _light_dir:   vec3<f32>, // legacy; prefer scene.light_direction
-  _pad0:        f32,
+  _light_dir_legacy: vec3<f32>, // kept for ABI safety; ignore
+  _pad0: f32,
   chunk_origin: vec2<f32>, // world origin of chunk (x,z) in tile units
-  _pad1:        vec2<f32>,
-  tiles:        array<TileUniform, 169>, // 13×13 grid (8×8 core + 2 border)
+  _pad1: vec2<f32>,
+  tiles: array<TileUniform, 169>, // 13×13 grid (8×8 core + 2 border)
 };
 
 struct SceneUniform {
@@ -70,53 +77,55 @@ struct SceneUniform {
   fog_params: vec4<f32>, // x=strength, y=scale, z=speed_x, w=speed_y
 };
 
+// All tunable intensities + switches live here now (clear and unified).
 struct TunablesUniform {
   // Modes / toggles
-  shading_mode:    u32,
-  normal_mode:     u32,
-  enable_bent:     u32,
-  enable_tonemap:  u32,
-  enable_grading:  u32,
-  enable_fog:      u32,
-  _pad1:           vec2<u32>,
+  shading_mode:   u32, // 0=Classic (vertex), 1=Enhanced (frag), 2=KR (frag)
+  normal_mode:    u32, // 0=geometric, 1=bicubic
+  enable_bent:    u32,
+  enable_fog:     u32,
 
-  // Intensities
-  ambient_strength: f32, // ambient (shadow light) — scalar
-  diffuse_strength: f32, // diffuse (sun) — scalar
-  specular_strength:f32, // specular highlight — scalar
-  rim_strength:     f32, // rim/silhouette — scalar
+  enable_gloom:   u32,
+  enable_tonemap: u32,
+  enable_grading: u32,
+  _pad_modes:     u32,
 
-  // Optional diffuse shaping
-  sharpness_factor: f32, // raises lambert^factor to tighten lobes
-  sharpness_mix:    f32, // 0=Lambert, 1=sharpened
-  _pad2:            vec2<f32>,
+  // Intensities (all are scalars -> hue-preserving by design)
+  ambient_strength:  f32, // Ambient: base light in shadows
+  diffuse_strength:  f32, // Diffuse: sunlight intensity
+  specular_strength: f32, // Specular: sun glint
+  rim_strength:      f32, // Rim: silhouette highlight
+
+  fill_strength:     f32, // Environment: sky/ground intensity (luma + some chroma)
+  sharpness_factor:  f32, // Diffuse shaping (lambert^factor)
+  sharpness_mix:     f32, // 0=Lambert, 1=sharpened
+  _pad_ints:         f32,
 };
 
-// Lighting and palette (unchanged layout). We reuse grade_params.yzw
-// for “look” tunables to avoid changing the ABI:
-//   grade_params.x = grading strength (existing)
-//   grade_params.y = headroom_reserve (0..1)
-//   grade_params.z = hemi_chroma_tint (0..1)
-//   grade_params.w = enable_headroom_limit (0=off, 1=on)
+// Lighting colors and look controls (expanded; clean & explicit).
+// grade_params: [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
+// grade_extra:  [vibrance, saturation, contrast, split_strength]
+// gloom_params: [amount, height_falloff, shadow_bias, unused]
 struct LightingUniforms {
-  light_dir: vec3<f32>,  // retained for ABI; prefer scene.light_direction
-  _pad1: f32,
-  light_color: vec3<f32>,    // key light color (sun)
-  _pad2: f32,
-  ambient_color: vec3<f32>,  // ambient color (cool)
-  _pad3: f32,
-  fill_dir: vec3<f32>,       // retained for ABI
-  fill_strength: f32,        // base fill scalar
-  exposure: f32,             // HDR exposure (used if tonemap enabled)
-  gamma: f32,                // kept for ABI; not used (textures are sRGB)
-  _pad4: vec2<f32>,
+  light_color:   vec3<f32>,
+  _pad0:         f32,
+  ambient_color: vec3<f32>,
+  _pad1:         f32,
 
-  fill_sky_color: vec4<f32>,     // rgb sky tint, a = per-color strength
-  fill_ground_color: vec4<f32>,  // rgb ground tint, a = per-color strength
-  rim_color: vec4<f32>,          // rgb rim tint, a = rim “power” (2..4 typical)
-  grade_warm_color: vec4<f32>,   // color grading (midtones)
-  grade_cool_color: vec4<f32>,   // color grading (shadows)
-  grade_params: vec4<f32>,       // x=grade_strength, y=headroom_reserve, z=hemi_chroma_tint, w=headroom_on
+  exposure: f32,
+  gamma:    f32,  // unused (textures are sRGB-view), kept for future
+  _pad2:    vec2<f32>,
+
+  fill_sky_color:     vec4<f32>, // rgb sky tint, a = per-color strength
+  fill_ground_color:  vec4<f32>, // rgb ground tint, a = per-color strength
+  rim_color:          vec4<f32>, // rgb rim tint,  a = rim “power” (2..4=thin edge)
+
+  grade_warm_color: vec4<f32>, // warm toning color (rgb); a unused here
+  grade_cool_color: vec4<f32>, // cool toning color (rgb); a unused here
+  grade_params:     vec4<f32>, // [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
+  grade_extra:      vec4<f32>, // [vibrance, saturation, contrast, split_strength]
+
+  gloom_params:     vec4<f32>, // [amount, height_falloff, shadow_bias, _]
 };
 
 @group(2) @binding(100) var texarray_sampler: sampler;
@@ -131,10 +140,10 @@ struct LightingUniforms {
 // Grid helpers & utilities
 // ============================================================================
 
-const CHUNK_TILE_NUM_1D: u32 = 8u;  // 8×8 tiles per chunk
-const DATA_GRID_BORDER:  i32 = 2;   // two‑tile safety border on each side
-const DATA_GRID_SIDE:    i32 = 13;  // 8 + 2 + 2 + 1
-const MESH_GRID_SIDE:    u32 = 9u;  // vertex grid is 9×9 (for 8×8 quads)
+const CHUNK_TILE_NUM_1D: u32 = 8u;
+const DATA_GRID_BORDER:  i32 = 2;
+const DATA_GRID_SIDE:    i32 = 13;
+const MESH_GRID_SIDE:    u32 = 9u;
 
 // Clamp safe index into the 13×13 “data grid”
 fn tile_index_clamped(ix: i32, iz: i32) -> u32 {
@@ -148,7 +157,6 @@ fn tile_at_13x13(ix: i32, iz: i32) -> TileUniform {
 fn tile_height_at_13x13(ix: i32, iz: i32) -> f32 {
   return tile_at_13x13(ix, iz).tile_height;
 }
-
 // Near the chunk edge, blend normals toward the original to hide seams.
 fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
   let tx = floor(local_x);
@@ -198,7 +206,7 @@ fn cubic_deriv(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
 }
 
 // ============================================================================
-// Normal utilities
+// Normal utilities (geometric, bicubic, bent)
 // ============================================================================
 
 // 1) Geometric normal from the 13×13 grid by central differences (fast).
@@ -287,7 +295,7 @@ fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f
 }
 
 // ============================================================================
-// Lighting helpers
+// Lighting helpers (theory summary in comments)
 // ============================================================================
 
 fn luminance(c: vec3<f32>) -> f32 {
@@ -315,17 +323,61 @@ fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
   let ground = lighting.fill_ground_color.rgb * lighting.fill_ground_color.a;
   return mix(ground, sky, upness);
 }
+
+fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
+  // Controls
+  let strength     = lighting.grade_params.x;          // overall grade amount
+  let vibrance     = lighting.grade_extra.x;           // selective saturation
+  let saturation   = lighting.grade_extra.y;           // global saturation
+  let contrast     = lighting.grade_extra.z;           // global contrast
+  let split_str    = lighting.grade_extra.w;           // split-toning strength
+
+  // 1) Global saturation around luminance pivot
+  let l = luminance(color_in);
+  let sat_col = mix(vec3<f32>(l), color_in, saturation);
+
+  // 2) Vibrance: boost low-sat more than high-sat (protects already vivid hues)
+  let chroma = sat_col - vec3<f32>(l);
+  let sat_mag = max(max(abs(chroma.r), abs(chroma.g)), abs(chroma.b)); // proxy for saturation
+  let vib_mask = smoothstep(0.0, 0.7, 1.0 - sat_mag); // high when low-sat
+  let vib_col = sat_col + chroma * (vibrance * vib_mask);
+
+  // 3) Contrast around 0.5 gray (gentle S-curve)
+  let ctr_col = (vib_col - vec3<f32>(0.5)) * contrast + vec3<f32>(0.5);
+
+  // 4) Split-toning by luminance: cool lows, warm mids/highs
+  let warm = lighting.grade_warm_color.rgb;
+  let cool = lighting.grade_cool_color.rgb;
+  let wmix = smoothstep(0.25, 0.85, l);
+  let split = mix(cool, warm, wmix) * split_str;
+
+  // 5) Final blend with original color by overall strength
+  let graded = mix(color_in, ctr_col + split * 0.25, clamp(strength, 0.0, 2.0));
+  return max(graded, vec3<f32>(0.0));
+}
+
+fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<f32>) -> vec3<f32> {
+  let amount         = clamp(lighting.gloom_params.x, 0.0, 1.0);
+  if (amount < 1e-4) { return color_in; }
+  let height_falloff = max(lighting.gloom_params.y, 0.0);
+  let shadow_bias    = clamp(lighting.gloom_params.z, 0.0, 1.0);
+
+  let h = max(world_pos.y, 0.0);
+  let height_term = exp(-h * height_falloff);
+
+  let NdotL = max(dot(normalize(N), normalize(L)), 0.0);
+  let shadow_term = pow(1.0 - NdotL, 1.0 + 2.0 * shadow_bias);
+
+  let g = clamp(amount * height_term * (0.3 + 0.7 * shadow_term), 0.0, 1.0);
+
+  // Cool, moody tint from ambient color; multiplicative to keep hues
+  let gloom_tint = mix(vec3<f32>(1.0), lighting.ambient_color, 0.7);
+  return color_in * mix(vec3<f32>(1.0), gloom_tint, g);
+}
+
 fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
   let e = max(exposure, 1e-6);
   return (c * e) / (vec3<f32>(1.0) + c * e);
-}
-fn grade_color(color: vec3<f32>) -> vec3<f32> {
-  let luma = luminance(color);
-  let warm_mix = smoothstep(0.0, 1.0, luma);
-  let cool_mix = 1.0 - warm_mix;
-  let strength = lighting.grade_params.x; // grading strength
-  let tint = lighting.grade_warm_color.rgb * warm_mix + lighting.grade_cool_color.rgb * cool_mix;
-  return mix(color, color + tint * 0.25 * strength, strength);
 }
 
 // ============================================================================
@@ -336,59 +388,57 @@ fn grade_color(color: vec3<f32>) -> vec3<f32> {
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   var out: VertexOutput;
 
-  // Resolve dev toggles
-  var shading_mode: u32 = tunables.shading_mode;
-  var normal_mode:  u32 = tunables.normal_mode;
+  // Resolve mode toggles (dev defaults vs uniforms)
+  var shading_mode: u32   = tunables.shading_mode;
+  var normal_mode:  u32   = tunables.normal_mode;
+
   if (DEV_USE_UNIFORMS == 0u) {
     shading_mode = DEV_SHADING_MODE;
     normal_mode  = DEV_NORMAL_MODE;
   }
 
-  // Node index in the 9×9 vertex grid
+  // Node indices in 9×9 grid
   let grid_x: u32 = vertex_index % MESH_GRID_SIDE;
   let grid_z: u32 = vertex_index / MESH_GRID_SIDE;
 
-  // Map node to 13×13 data index (adds 2-tile border)
+  // Map node to 13×13 data index (+2 border)
   let arr_x = i32(grid_x) + DATA_GRID_BORDER;
   let arr_z = i32(grid_z) + DATA_GRID_BORDER;
   let data_idx = u32(arr_z) * u32(DATA_GRID_SIDE) + u32(arr_x);
 
-  // Displace local vertex by pre-baked height
+  // Displace by pre-baked height
   var displaced_local_pos = in.position;
   displaced_local_pos.y = land.tiles[data_idx].tile_height;
 
   // Geometric normal (fast)
   let geometric_normal_local = get_geometric_normal_local(i32(grid_x), i32(grid_z));
 
-  // World transform and clip position
+  // World transform / clip
   let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
   out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(displaced_local_pos, 1.0));
-  out.position = view_transformations::position_world_to_clip(out.world_position.xyz);
+  out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
 
-  // Pass-through attributes
   out.uv = in.uv;
   out.instance_index = in.instance_index;
-  out.world_normal = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
+  out.world_normal   = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
 
-  // Vertex/Gouraud path: cache lambert in uv_b.x for cheap fragment usage
+  // Classic vertex path precomputes lambert in uv_b.x
   out.uv_b = vec2<f32>(0.0, 0.0);
-  if ((DEV_USE_UNIFORMS == 1u && shading_mode == 0u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_SHADING_MODE == 0u)) {
-    let lam_v = get_lambert(out.world_normal, scene.light_direction);
-    out.uv_b.x = lam_v;
+  if ( ((DEV_USE_UNIFORMS == 1u) && (shading_mode == 0u))
+    || ((DEV_USE_UNIFORMS == 0u) && (DEV_SHADING_MODE == 0u)) ) {
+    out.uv_b.x = get_lambert(out.world_normal, scene.light_direction);
   }
 
   return out;
 }
 
 // ============================================================================
-// Shading building blocks (kept small and testable)
+// Shading building blocks (small focused functions)
 // ============================================================================
 
-// Vertex/Gouraud model: identical in spirit to your original vertex mode.
-// brightness = albedo * (ambient + diffuse*lambert)
-fn shade_vertex_model(base_albedo: vec3<f32>, lam_v: f32,
-                      ambient_strength: f32, diffuse_strength: f32) -> vec3<f32> {
+fn shade_mode0_classic_vertex(base_albedo: vec3<f32>, lam_v: f32,
+                              ambient_strength: f32, diffuse_strength: f32) -> vec3<f32> {
+  // Faithful: color = albedo * (ambient + diffuse*lambert)
   return base_albedo * (ambient_strength + diffuse_strength * lam_v);
 }
 
@@ -406,20 +456,19 @@ fn shade_vertex_model(base_albedo: vec3<f32>, lam_v: f32,
 //   without turning the whole surface yellow/white.
 // - Specular: small, neutral-ish sparkle. Result: subtle sun glints on hard angles.
 // - Exposure: part of tonemapping; compresses highlights to keep color detail.
-fn shade_fragment_model(base_albedo: vec3<f32>,
-                        Nw: vec3<f32>, V: vec3<f32>, L: vec3<f32>,
-                        ambient_strength: f32, diffuse_strength: f32,
-                        sharpness_factor: f32, sharpness_mix: f32,
-                        fill_strength: f32, rim_strength: f32,
-                        specular_strength: f32) -> vec3<f32> {
+fn shade_mode1_enhanced_fragment(base_albedo: vec3<f32>,
+                                 world_pos: vec3<f32>, Nw: vec3<f32>, V: vec3<f32>, L: vec3<f32>,
+                                 ambient_strength: f32, diffuse_strength: f32,
+                                 sharpness_factor: f32, sharpness_mix: f32,
+                                 fill_strength: f32, rim_strength: f32,
+                                 specular_strength: f32) -> vec3<f32> {
+  // Subtle, faithful: mild shaping; fill mostly luma; tiny chroma; weak/0 rim; tiny spec.
 
-  // Diffuse shaping
   let lam = get_lambert(Nw, L);
   let lam_sharp  = pow(max(lam, 1e-4), max(0.0001, sharpness_factor));
-  let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
-  let diffuse_term = diffuse_strength * lam_shaped; // scalar
+  let lam_shaped = mix(lam, lam_sharp, clamp(sharpness_mix, 0.0, 0.4)); // clamp lower for subtlety
+  let diffuse_term = diffuse_strength * lam_shaped;
 
-  // Hemisphere fill (color) -> luma scalar + chroma
   var hemi_color = vec3<f32>(0.0);
   if (fill_strength > 0.0) {
     hemi_color = get_hemisphere_fill(Nw) * fill_strength;
@@ -427,44 +476,90 @@ fn shade_fragment_model(base_albedo: vec3<f32>,
   let hemi_luma   = luminance(hemi_color);
   let hemi_chroma = chroma_only(hemi_color);
 
-  // Ambient (scalar)
-  let ambient_term = ambient_strength;
+  // Headroom set low; very mild chroma
+  let headroom_reserve = 0.10;
+  let hemi_chroma_tint = min(lighting.grade_params.z, 0.20);
 
-  // Headroom tunables (packed to avoid ABI change)
-  let headroom_reserve = clamp(lighting.grade_params.y, 0.0, 1.0); // 0..1
-  let hemi_chroma_tint = clamp(lighting.grade_params.z, 0.0, 1.0); // 0..1
+  var base_energy = diffuse_term + ambient_strength + hemi_luma;
+  if (CFG_ENABLE_HEADROOM_LIMIT && lighting.grade_params.w >= 0.5) {
+    base_energy = clamp(base_energy, 0.0, 1.0 - headroom_reserve);
+  }
+
+  var color = base_albedo * base_energy;
+
+  var headroom = 1.0 - max(color.r, max(color.g, color.b));
+  let hemi_gain = min(headroom, hemi_luma * hemi_chroma_tint);
+  color += base_albedo * (hemi_chroma * hemi_gain);
+
+  // Very subtle rim/spec
+  let rim_local = rim_strength * 0.25;
+  if (rim_local > 0.001) {
+    let rim_raw = get_rim(Nw, V, max(0.1, lighting.rim_color.a));
+    let NdotL = max(dot(normalize(Nw), normalize(L)), 0.0);
+    let rim_vis = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
+    headroom = max(0.0, 1.0 - max(color.r, max(color.g, color.b)));
+    color += base_albedo * min(headroom, rim_vis * rim_local * 0.30);
+  }
+
+  if (specular_strength > 0.0001) {
+    let spec_val = get_specular(Nw, L, V, 24.0);
+    color += vec3<f32>(1.0) * spec_val * (specular_strength * 0.5);
+  }
+
+  // Mild gloom only (keeps faithfulness)
+  if (lighting.gloom_params.x > 0.0) {
+    color = apply_gloom(color, world_pos, Nw, L);
+  }
+
+  return color;
+}
+
+fn shade_mode2_kr_fragment(base_albedo: vec3<f32>,
+                           world_pos: vec3<f32>, Nw: vec3<f32>, V: vec3<f32>, L: vec3<f32>,
+                           ambient_strength: f32, diffuse_strength: f32,
+                           sharpness_factor: f32, sharpness_mix: f32,
+                           fill_strength: f32, rim_strength: f32,
+                           specular_strength: f32) -> vec3<f32> {
+  // Painterly KR look: strong vibrance/contrast/split, rim and gloom headroom-limited.
+
+  let lam = get_lambert(Nw, L);
+  let lam_sharp  = pow(max(lam, 1e-4), max(0.0001, sharpness_factor));
+  let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
+  let diffuse_term = diffuse_strength * lam_shaped;
+
+  var hemi_color = vec3<f32>(0.0);
+  if (fill_strength > 0.0) {
+    hemi_color = get_hemisphere_fill(Nw) * fill_strength;
+  }
+  let hemi_luma   = luminance(hemi_color);
+  let hemi_chroma = chroma_only(hemi_color);
+
+  let headroom_reserve = clamp(lighting.grade_params.y, 0.0, 1.0); // e.g., 0.15
+  let hemi_chroma_tint = clamp(lighting.grade_params.z, 0.0, 1.0); // e.g., 0.35–0.45
   let runtime_headroom_on = lighting.grade_params.w >= 0.5;
 
-  // Base brightness — strictly along the albedo
-  var base_energy = diffuse_term + ambient_term + hemi_luma;
-
-  // Optional headroom limiting to leave space for rim/spec
+  var base_energy = diffuse_term + ambient_strength + hemi_luma;
   if (CFG_ENABLE_HEADROOM_LIMIT && runtime_headroom_on) {
     base_energy = clamp(base_energy, 0.0, 1.0 - headroom_reserve);
   }
 
   var color = base_albedo * base_energy;
 
-  // Add a subtle chroma component from fill (keeps shadows colorful)
   var headroom = 1.0 - max(color.r, max(color.g, color.b));
   let hemi_gain = min(headroom, hemi_luma * hemi_chroma_tint);
   color += base_albedo * (hemi_chroma * hemi_gain);
 
   // Rim — shadow-side, headroom-limited; neutral + tiny colored contribution
   if (rim_strength > 0.001) {
-    let rim_power = max(0.1, lighting.rim_color.a); // 2..4 = thin edge
+    let rim_power = max(0.1, lighting.rim_color.a);
     let rim_raw   = get_rim(Nw, V, rim_power);
-
     // Shadow-side bias: fade rim where the surface is lit by the sun
-    let NdotL = max(dot(normalize(Nw), normalize(L)), 0.0);
-    let rim_vis = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
-
+    let NdotL     = max(dot(normalize(Nw), normalize(L)), 0.0);
+    let rim_vis   = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
     headroom = max(0.0, 1.0 - max(color.r, max(color.g, color.b)));
-
     // Neutral lift along albedo preserves hue
     let rim_neutral = min(headroom, rim_vis * rim_strength * 0.35);
     color += base_albedo * rim_neutral;
-
     // Tiny colored sparkle
     let rim_colored = min(headroom, rim_vis * rim_strength * 0.25);
     color += lighting.rim_color.rgb * rim_colored;
@@ -476,41 +571,46 @@ fn shade_fragment_model(base_albedo: vec3<f32>,
     color += vec3<f32>(1.0) * spec_val * specular_strength;
   }
 
+  // Stronger gloom for mood (cool multiplicative)
+  color = apply_gloom(color, world_pos, Nw, L);
+
   return color;
 }
 
 // ============================================================================
-// Fragment shader
+// Fragment shader — minimal branching; calls out to small functions
 // ============================================================================
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-  // Resolve toggles/intensities from uniforms or dev defaults
-  var shading_mode: u32 = tunables.shading_mode;
-  var normal_mode:  u32 = tunables.normal_mode;
-  var enable_bent:  u32 = tunables.enable_bent;
+  // Resolve toggles/intensities from uniforms or DEV defaults
+  var shading_mode:   u32 = tunables.shading_mode;
+  var normal_mode:    u32 = tunables.normal_mode;
+  var enable_bent:    u32 = tunables.enable_bent;
+  var enable_fog:     u32 = tunables.enable_fog;
+  var enable_gloom:   u32 = tunables.enable_gloom;
   var enable_tonemap: u32 = tunables.enable_tonemap;
   var enable_grading: u32 = tunables.enable_grading;
-  var enable_fog:   u32 = tunables.enable_fog;
 
   var ambient_strength:  f32 = tunables.ambient_strength;
   var diffuse_strength:  f32 = tunables.diffuse_strength;
   var specular_strength: f32 = tunables.specular_strength;
   var rim_strength:      f32 = tunables.rim_strength;
 
+  var fill_strength:     f32 = tunables.fill_strength;
   var sharpness_factor:  f32 = tunables.sharpness_factor;
   var sharpness_mix:     f32 = tunables.sharpness_mix;
 
-  var fill_strength: f32 = lighting.fill_strength;
   var exposure: f32 = lighting.exposure;
 
   if (DEV_USE_UNIFORMS == 0u) {
-    shading_mode     = DEV_SHADING_MODE;
-    normal_mode      = DEV_NORMAL_MODE;
-    enable_bent      = DEV_ENABLE_BENT;
-    enable_tonemap   = DEV_ENABLE_TONEMAP;
-    enable_grading   = DEV_ENABLE_GRADING;
-    enable_fog       = DEV_ENABLE_FOG;
+    shading_mode   = DEV_SHADING_MODE;
+    normal_mode    = DEV_NORMAL_MODE;
+    enable_bent    = DEV_BENT;
+    enable_fog     = DEV_FOG;
+    enable_gloom   = DEV_GLOOM;
+    enable_tonemap = DEV_TONEMAP;
+    enable_grading = DEV_GRADING;
 
     ambient_strength  = DEV_AMBIENT;
     diffuse_strength  = DEV_DIFFUSE;
@@ -520,7 +620,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     exposure          = DEV_EXPOSURE;
   }
 
-  // Sample albedo from tile texture array (textures are assumed sRGB-view)
+  // Sample albedo (sRGB-view → linear)
   let local_x = in.world_position.x - land.chunk_origin.x;
   let local_z = in.world_position.z - land.chunk_origin.y;
   let uv_in_tile = vec2<f32>(fract(local_x), fract(local_z));
@@ -537,42 +637,40 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   // Normal selection: geometric vs bicubic; optional bent
   var Nw = normalize(in.world_normal);
-  if ((DEV_USE_UNIFORMS == 1u && normal_mode == 1u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_NORMAL_MODE == 1u)) {
+  if (normal_mode == 1u) {
     let smooth_local = get_bicubic_normal(in.world_position.xyz);
     let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
     let blend_edge = chunk_edge_blend_factor(local_x, local_z);
     Nw = normalize(mix(smooth_world, Nw, blend_edge));
   }
-  if ((DEV_USE_UNIFORMS == 1u && enable_bent == 1u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_ENABLE_BENT == 1u)) {
+  if (enable_bent == 1u) {
     Nw = get_bent_normal(in.world_position.xyz, Nw);
   }
 
   // Light & view vectors
-  let L = scene.light_direction; // CPU supplies normalized
+  let L = scene.light_direction; // normalized by CPU
   let V = normalize(scene.camera_position - in.world_position.xyz);
 
-  // Call the chosen shading model (small branch, implementation separated)
+  // Shade by mode
   var hdr_rgb = vec3<f32>(0.0);
-  if ((DEV_USE_UNIFORMS == 1u && shading_mode == 0u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_SHADING_MODE == 0u)) {
-    // Vertex/Gouraud
-    hdr_rgb = shade_vertex_model(base_albedo, in.uv_b.x, ambient_strength, diffuse_strength);
-  } else {
-    // Fragment (KR)
-    hdr_rgb = shade_fragment_model(
-      base_albedo, Nw, V, L,
-      ambient_strength, diffuse_strength,
-      sharpness_factor, sharpness_mix,
-      fill_strength, rim_strength,
-      specular_strength
+  if (shading_mode == 0u) {
+    hdr_rgb = shade_mode0_classic_vertex(base_albedo, in.uv_b.x, ambient_strength, diffuse_strength);
+  } else if (shading_mode == 1u) {
+    hdr_rgb = shade_mode1_enhanced_fragment(
+      base_albedo, in.world_position.xyz, Nw, V, L,
+      ambient_strength, diffuse_strength, sharpness_factor, sharpness_mix,
+      fill_strength, rim_strength, specular_strength
+    );
+  } else { // 2 = KR-like
+    hdr_rgb = shade_mode2_kr_fragment(
+      base_albedo, in.world_position.xyz, Nw, V, L,
+      ambient_strength, diffuse_strength, sharpness_factor, sharpness_mix,
+      fill_strength, rim_strength, specular_strength
     );
   }
 
   // Optional fog (multiplicative tint)
-  if ((DEV_USE_UNIFORMS == 1u && enable_fog == 1u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_ENABLE_FOG == 1u)) {
+  if (enable_fog == 1u) {
     let world_uv = in.world_position.xz * scene.fog_params.y;
     let time_off = scene.fog_params.zw * scene.time_seconds;
     let cloud_uv = world_uv + time_off;
@@ -583,18 +681,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     hdr_rgb = hdr_rgb * mix(vec3<f32>(1.0), scene.fog_color.rgb, fog_mask);
   }
 
-  // Optional grading + tonemap
+  // Grading (vibrant) + tonemap
   var post = hdr_rgb;
-  if ((DEV_USE_UNIFORMS == 1u && enable_grading == 1u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_ENABLE_GRADING == 1u)) {
-    post = grade_color(post);
+  if (enable_grading == 1u) {
+    post = grade_color_vibrant(post);
   }
   var final_rgb = post;
-  if ((DEV_USE_UNIFORMS == 1u && enable_tonemap == 1u) ||
-      (DEV_USE_UNIFORMS == 0u && DEV_ENABLE_TONEMAP == 1u)) {
+  if (enable_tonemap == 1u) {
     final_rgb = tonemap_reinhard_with_exposure(post, exposure);
   }
 
-  final_rgb = max(final_rgb, vec3<f32>(0.0)); // numeric safety
+  final_rgb = max(final_rgb, vec3<f32>(0.0));
   return vec4<f32>(final_rgb, base_alpha);
 }

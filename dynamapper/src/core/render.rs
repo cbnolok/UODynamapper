@@ -1,5 +1,6 @@
 pub mod overlays;
 pub mod scene;
+pub mod terrain_shader_ui;
 
 use crate::{/*fname,*/ impl_tracked_plugin, util_lib::tracked_plugin::*};
 use bevy::prelude::*;
@@ -16,6 +17,9 @@ impl Plugin for RenderPlugin {
                 registered_by: "RenderPlugin",
             },
             overlays::OverlaysPlugin {
+                registered_by: "RenderPlugin",
+            },
+            terrain_shader_ui::TerrainUiPlugin {
                 registered_by: "RenderPlugin",
             },
         ));
