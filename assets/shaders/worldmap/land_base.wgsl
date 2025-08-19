@@ -1,10 +1,8 @@
 // ============================================================================
 // Bevy PBR WGSL — Terrain (Three modes: 0 Classic, 1 Enhanced, 2 KR-like)
 // - Mode 0: “2D Classic” — faithful brightness model, vertex/Gouraud.
-// - Mode 1: “2D Enhanced/Remastered” — per-fragment, subtle improvements,
-//          stays close to original colors and contrast.
-// - Mode 2: “KR-like” — per-fragment, painterly: warm key, cool ambient/fill,
-//          vibrant grading, rim, optional gloom; avoids gray/metallic wash.
+// - Mode 1: “2D Enhanced/Remastered” — per-fragment, subtle improvements.
+// - Mode 2: “KR-like” — painterly: warm key, cool ambient/fill, vibrant grading.
 // ============================================================================
 
 #import bevy_pbr::{
@@ -17,13 +15,12 @@
 // Compile-time DEV config (unified DEV_* prefix)
 // ============================================================================
 
-// If 0, use the DEV_* defaults below. If 1, use CPU uniforms.
-const DEV_USE_UNIFORMS: u32 = 1u;
+const DEV_USE_UNIFORMS: u32 = 1u; // 0 → use DEV_* constants below, 1 → use CPU uniforms
 
-// Shader modes: 0 = Classic (vertex), 1 = Enhanced (fragment), 2 = KR (fragment)
+// Shader modes: 0 = Classic (vertex/Gouraud), 1 = Enhanced (fragment), 2 = KR (fragment)
 const DEV_SHADING_MODE: u32 = 2u;
 
-// Normal modes: 0 = geometric, 1 = bicubic
+// Normal modes: 0 = geometric (fast), 1 = bicubic (smooth)
 const DEV_NORMAL_MODE:  u32 = 1u;
 
 // Feature flags (compile-time defaults; runtime toggles exist too)
@@ -41,8 +38,8 @@ const DEV_SPECULAR: f32 = 0.05; // sparkle
 const DEV_RIM:      f32 = 0.16; // silhouette
 const DEV_FILL:     f32 = 0.34; // environment intensity
 const DEV_EXPOSURE: f32 = 1.08; // tonemap exposure
-const DEV_BLUR_STRENGTH: f32 = 0.15;
-const DEV_BLUR_RADIUS:   f32 = 0.0025;
+const DEV_BLUR_STRENGTH: f32 = 0.25;
+const DEV_BLUR_RADIUS:   f32 = 1.0; // in screen pixels (min 0.5 enforced in code)
 
 // Dev palette (warm key, cool ambient)
 const DEV_LIGHT_COLOR:   vec3<f32> = vec3<f32>(1.06, 0.99, 0.92);
@@ -89,7 +86,7 @@ struct TunablesUniform {
   enable_grading: u32,
   enable_blur:    u32,
 
-  // Intensities (group in vec4 slots for alignment)
+  // Intensities (grouped to match std140-ish packing)
   // Slot A
   ambient_strength:  f32, // Ambient: base light in shadows
   diffuse_strength:  f32, // Diffuse: sunlight intensity
@@ -103,18 +100,35 @@ struct TunablesUniform {
   blur_strength:     f32, // 0..1 mix with blurred base albedo
 
   // Slot C
-  blur_radius:       f32, // UV radius for blur taps (e.g., 0.001..0.01)
+  blur_radius:       f32, // UV radius in *screen pixels* (we scale by fwidth)
   _pad_c1:           f32,
   _pad_c2:           f32,
   _pad_c3:           f32,
 };
 
 // Lighting / look controls.
+//
 // grade_params: [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
 // grade_extra:  [vibrance, saturation, contrast, split_strength]
-// gloom_params: [amount, height_falloff_height, shadow_bias, unused]
-//   - height_falloff_height = world height (in units) where gloom fades out (0..∞)
-//   - shadow_bias = 0 → uniform gloom, 1 → strongly biased to shadow
+// gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
+//   - amount                = gloom strength (0..1)
+//   - height_falloff_height = world height where gloom fades out (0..∞)
+//   - shadow_bias           = 0 → uniform gloom, 1 → shadow-biased
+//   - fog_height_bias       = **NEW** continuous fog bias in [-1..+1]:
+//                              -1 → valley/ground fog (denser below y=0)
+//                               0 → neutral (no height fog, distance only)
+//                              +1 → high-altitude haze (denser above y=0)
+//
+// Fog params (repurposed labels for clarity):
+//   fog_color.rgb = fog tint
+//   fog_color.a   = max fog mix (0..1) — final cap
+//   fog_params.x  = distance_fog_density (0..∞)  (per unit distance)
+//   fog_params.y  = height_fog_density   (0..∞)  (per unit height)
+//   fog_params.z  = noise_scale          (~0.05..1.0)
+//   fog_params.w  = noise_strength       (0..1)
+//
+// NOTE: We intentionally keep fog uniforms ABI-compatible and place the new
+// "fog_height_bias" into gloom_params.w which was previously unused.
 struct LightingUniforms {
   light_color:   vec3<f32>, // key light color (tints diffuse)
   _pad0:         f32,
@@ -134,16 +148,9 @@ struct LightingUniforms {
   grade_params:     vec4<f32>, // [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
   grade_extra:      vec4<f32>, // [vibrance, saturation, contrast, split_strength]
 
-  gloom_params:     vec4<f32>, // [amount, height_falloff_height, shadow_bias, _]
+  gloom_params:     vec4<f32>, // [amount, height_falloff_height, shadow_bias, fog_height_bias]
 
-  // Fog: we reinterpret params for clearer control (distance + height + noise)
-  //   fog_color.rgb = fog tint
-  //   fog_color.a   = max fog mix (0..1)
-  //   fog_params.x  = distance_fog_density (0..∞)
-  //   fog_params.y  = height_fog_density   (0..∞) (per world-unit height)
-  //   fog_params.z  = noise_scale          (e.g., 0.1..1.0)
-  //   fog_params.w  = noise_strength       (0..1)
-  fog_color: vec4<f32>,
+  fog_color:  vec4<f32>,
   fog_params: vec4<f32>,
 };
 
@@ -187,16 +194,26 @@ fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
   return 1.0 - smoothstep(0.0, 2.0, min_dist);
 }
 
-// Simple value noise for optional fog modulation.
+// ============================================================================
+// Random / noise helpers
+//  - hash + smooth value noise
+//  - FBM (fractal Brownian motion)
+//  - "Billow" transform (|2n-1|) to get fluffy cloud lobes
+//  - Domain warp (offset the sampling coords by a low-frequency field)
+// ============================================================================
+
 fn hash(p: vec2<f32>) -> f32 {
+  // Cheap hash → [0,1). Good enough for value noise base.
   let p3 = fract(vec3<f32>(p.xyx) * 0.1031);
   let p3s = p3 + dot(p3, p3.yzx + vec3<f32>(19.19));
   return fract((p3s.x + p3s.y) * p3s.z);
 }
+
+// Smooth value noise in [0,1]
 fn noise_2d(p: vec2<f32>) -> f32 {
   let i = floor(p);
   let f = fract(p);
-  let u = f * f * (3.0 - 2.0 * f);
+  let u = f * f * (3.0 - 2.0 * f); // smoothstep-like fade
   let a = hash(i + vec2<f32>(0.0, 0.0));
   let b = hash(i + vec2<f32>(1.0, 0.0));
   let c = hash(i + vec2<f32>(0.0, 1.0));
@@ -204,11 +221,37 @@ fn noise_2d(p: vec2<f32>) -> f32 {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// 3–4 octave FBM; returns ~[0,1] range
+fn fbm_value(p: vec2<f32>) -> f32 {
+  var sum = 0.0;
+  var amp = 0.5;
+  var f   = 1.0;
+  sum += amp * noise_2d(p * f);  f *= 2.0; amp *= 0.5;
+  sum += amp * noise_2d(p * f);  f *= 2.0; amp *= 0.5;
+  sum += amp * noise_2d(p * f);  f *= 2.0; amp *= 0.5;
+  sum += amp * noise_2d(p * f);
+  return clamp(sum, 0.0, 1.0);
+}
+
+// Billow transform → fluffy “cloud”-like blobs (still ~[0,1])
+fn fbm_billow(p: vec2<f32>) -> f32 {
+  let n = fbm_value(p);
+  return 1.0 - abs(2.0 * n - 1.0);
+}
+
+// Domain warp: offset p by two low-frequency FBMs to break grid patterns.
+fn domain_warp(p: vec2<f32>, strength: f32) -> vec2<f32> {
+  let w1 = fbm_value(p * 0.5 + vec2<f32>(13.37, -7.21));
+  let w2 = fbm_value(p * 0.5 + vec2<f32>(-5.73, 4.11));
+  return p + vec2<f32>(w1, w2) * strength;
+}
+
 // ============================================================================
 // Cubic interpolation (value + derivative) for heightfield normals
 // ============================================================================
 
 fn cubic_interp_value_and_derivative(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> vec2<f32> {
+  // Catmull-Rom-like cubic with derivative output.
   let a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
   let b =        p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
   let c = -0.5 * p0            + 0.5 * p2;
@@ -220,15 +263,13 @@ fn cubic_interp_value_and_derivative(p0: f32, p1: f32, p2: f32, p3: f32, t: f32)
 fn cubic_value(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
   return cubic_interp_value_and_derivative(p0,p1,p2,p3,t).x;
 }
-fn cubic_deriv(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-  return cubic_interp_value_and_derivative(p0,p1,p2,p3,t).y;
-}
 
 // ============================================================================
 // Normal utilities (geometric, bicubic, bent)
 // ============================================================================
 
 fn get_geometric_normal_local(node_x: i32, node_z: i32) -> vec3<f32> {
+  // Central differences on the discrete grid. Fast but can be “steppy”.
   let hL = tile_height_at_13x13(node_x - 1, node_z);
   let hR = tile_height_at_13x13(node_x + 1, node_z);
   let hD = tile_height_at_13x13(node_x, node_z - 1);
@@ -239,6 +280,8 @@ fn get_geometric_normal_local(node_x: i32, node_z: i32) -> vec3<f32> {
 }
 
 fn get_bicubic_normal(world_pos: vec3<f32>) -> vec3<f32> {
+  // Smooth analytic normal via bicubic interpolation of the 13×13 tile heights.
+  // Greatly reduces shading “jaggies” compared to geometric normal above.
   let local_x = world_pos.x - land.chunk_origin.x;
   let local_z = world_pos.z - land.chunk_origin.y;
 
@@ -286,6 +329,25 @@ fn get_bicubic_normal(world_pos: vec3<f32>) -> vec3<f32> {
   return normalize(vec3<f32>(-dHdx, 1.0, -dHdz));
 }
 
+// ------------------------------- Bent normals --------------------------------
+/*
+ OLD (for reference):
+   - Looked at *positive* height steps around center and *summed* them.
+   - Mix factor = (sum of positive neighbor deltas) * 0.25 → could flip
+     direction depending on which side had the larger positive step.
+   - Result: on steep, step-like terrain, adjacent triangles sometimes “chose”
+     different dominant neighbors → visible zig-zag in shading.
+
+  let pos_slopes = max(0.0, hl - hc) + max(0.0, hr - hc) + max(0.0, hd - hc) + max(0.0, hu - hc);
+  let occl = clamp(pos_slopes * 0.25, 0.0, 1.0);
+  let mix_factor = occl * 0.5;
+
+ NEW (below):
+   - Uses only the single *maximum* neighbor over-height relative to center.
+   - That makes the occlusion proxy monotonic and stable (no left/right flip).
+   - Softens with smoothstep and keeps the bend conservative.
+   - Same function is reused in BOTH fragment and vertex/Gouraud paths.
+*/
 fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f32> {
   let local_x = world_pos.x - land.chunk_origin.x;
   let local_z = world_pos.z - land.chunk_origin.y;
@@ -298,9 +360,13 @@ fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f
   let hd = tile_height_at_13x13(cx, cz - 1);
   let hu = tile_height_at_13x13(cx, cz + 1);
 
-  let pos_slopes = max(0.0, hl - hc) + max(0.0, hr - hc) + max(0.0, hd - hc) + max(0.0, hu - hc);
-  let occl = clamp(pos_slopes * 0.25, 0.0, 1.0);
-  let mix_factor = occl * 0.5;
+
+  // Use only the *max* positive step: stable across ridges.
+  let hmax = max(max(hl, hr), max(hd, hu));
+  let occl = max(hmax - hc, 0.0);        // how much neighbors overshadow center
+  let k    = smoothstep(0.0, 1.5, occl); // soften response
+  let mix_factor = k * 0.45;             // conservative bend to avoid “melting”
+
   return normalize(mix(base_normal_world, vec3<f32>(0.0, 1.0, 0.0), mix_factor));
 }
 
@@ -328,6 +394,7 @@ fn get_rim(N: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
   return pow(rim_dot, power);
 }
 fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
+  // Sky from +Y, ground from -Y, blended by “upness”.
   let upness = clamp(dot(normalize(N), vec3<f32>(0.0,1.0,0.0)) * 0.5 + 0.5, 0.0, 1.0);
   let sky    = lighting.fill_sky_color.rgb    * lighting.fill_sky_color.a;
   let ground = lighting.fill_ground_color.rgb * lighting.fill_ground_color.a;
@@ -335,23 +402,22 @@ fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
 }
 
 // Contrast S-curve with neutral at contrast=1.0 (k = contrast-1 in [-1,1])
-// FIX: do NOT clamp here — keep HDR headroom pre-tonemap.
+// NOTE: Do NOT clamp here — keep HDR headroom pre-tonemap.
 fn apply_contrast_neutral(x: vec3<f32>, contrast: f32) -> vec3<f32> {
   let t = clamp(contrast - 1.0, -1.0, 1.0);
   // y = x + t * (x - x*x) * 2  (S-curve around ~0.5; zero effect when t=0)
   return x + t * ((x - x * x) * 2.0);
 }
 
-// Stronger, stylized color grading (vibrant), with:
+// Strong, stylized color grading (vibrant), with:
 //  - truly neutral contrast=1 (no clamp inside),
 //  - multiplicative split-toning normalized to luma=1 so mid-grays stay neutral.
 fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
-  let strength   = lighting.grade_params.x;  // overall grade amount
-  let headroom_on = lighting.grade_params.w >= 0.5;
-  let vibrance   = lighting.grade_extra.x;   // selective saturation
-  let saturation = lighting.grade_extra.y;   // global saturation
-  let contrast   = lighting.grade_extra.z;   // S-curve; 1.0 = neutral
-  let split_str  = lighting.grade_extra.w;   // split-toning strength
+  let strength    = lighting.grade_params.x;  // overall grade amount
+  let vibrance    = lighting.grade_extra.x;   // selective saturation
+  let saturation  = lighting.grade_extra.y;   // global saturation
+  let contrast    = lighting.grade_extra.z;   // S-curve; 1.0 = neutral
+  let split_str   = lighting.grade_extra.w;   // split-toning strength
 
   // Global saturation around luminance pivot
   let l = luminance(color_in);
@@ -380,13 +446,11 @@ fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
   // Apply split toning multiplicatively, then blend with original by overall strength
   let graded_hq = ctr_col * split_mult;
   let graded = mix(color_in, graded_hq, clamp(strength, 0.0, 2.0));
-
-  // Keep numeric safety; we still allow HDR >1 pre-tonemap
   return max(graded, vec3<f32>(0.0));
 }
 
 // Gloom: general, height-fading, optional shadow bias.
-// gloom_params: [amount, height_falloff_height, shadow_bias, _]
+// gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
 fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<f32>) -> vec3<f32> {
   let amount             = clamp(lighting.gloom_params.x, 0.0, 1.0);
   if (amount < 1e-4) { return color_in; }
@@ -429,28 +493,33 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 }
 
 // Same as above, but with explicit gradients to keep LOD stable across taps.
+// NOTE: the WGSL signature is textureSampleGrad(tex, sampler, uv, layer, ddx, ddy).
 fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   if (tile.texture_size == 1u) {
-    return textureSampleGrad(texarray_big, texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    return textureSampleGrad(texarray_big,   texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
   } else {
     return textureSampleGrad(texarray_small, texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
   }
 }
 
 // 9-tap blur with radius in *screen pixels* via fwidth — visible regardless of UV scale.
+// LOD is kept stable by using the same gradients for all taps.
 fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> vec3<f32> {
-  // Approximate one screen pixel in UV space
+  // Approximate one screen pixel in UV space for this fragment
   let fw = fwidth(uv);
   let px_uv = max(fw.x, fw.y) + 1e-6;
-  let r = max(radius_in_pixels, 0.0) * px_uv;
+
+  // Ensure at least half-pixel radius so it’s *noticeable* even at low zoom
+  let min_px = 0.5;
+  let r = max(radius_in_pixels, min_px) * px_uv;
 
   // Keep LOD stable for all taps
   let ddx_uv = dpdx(uv);
   let ddy_uv = dpdy(uv);
 
   // Clamp taps to [0,1] to avoid bleeding across tile edges if sampler wraps
-  let c = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+  let c  = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
   let u1 = clamp(uv + vec2<f32>( r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
   let u2 = clamp(uv + vec2<f32>(-r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
   let u3 = clamp(uv + vec2<f32>(0.0,  r), vec2<f32>(0.0), vec2<f32>(1.0));
@@ -460,16 +529,10 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> ve
   let u7 = clamp(uv + vec2<f32>( r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
   let u8 = clamp(uv + vec2<f32>(-r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
 
-  // Weights (normalized 9-tap kernel)
-  let wc = 0.24;
-  let w1 = 0.10;
-  let w2 = 0.10;
-  let w3 = 0.10;
-  let w4 = 0.10;
-  let w5 = 0.09;
-  let w6 = 0.09;
-  let w7 = 0.09;
-  let w8 = 0.09;
+  // Slightly stronger normalized kernel to make effect pop
+  let wc = 0.20;
+  let w1 = 0.12; let w2 = 0.12; let w3 = 0.12; let w4 = 0.12;
+  let w5 = 0.08; let w6 = 0.08; let w7 = 0.08; let w8 = 0.08;
 
   let s0 = sample_tile_albedo_grad(c,  tile, ddx_uv, ddy_uv);
   let s1 = sample_tile_albedo_grad(u1, tile, ddx_uv, ddy_uv);
@@ -486,6 +549,8 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> ve
 
 // ============================================================================
 // Vertex shader
+//  - Also fixes zig-zag visible in classic Gouraud path by using the same
+//    smoothed/bent normal pipeline here when enabled.
 // ============================================================================
 
 @vertex
@@ -495,10 +560,12 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   // Resolve mode toggles
   var shading_mode: u32   = tunables.shading_mode;
   var normal_mode:  u32   = tunables.normal_mode;
+  var enable_bent:  u32   = tunables.enable_bent;
 
   if (DEV_USE_UNIFORMS == 0u) {
     shading_mode = DEV_SHADING_MODE;
     normal_mode  = DEV_NORMAL_MODE;
+    enable_bent  = DEV_BENT;
   }
 
   // Node indices in 9×9 grid
@@ -514,23 +581,39 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   var displaced_local_pos = in.position;
   displaced_local_pos.y = land.tiles[data_idx].tile_height;
 
-  // Geometric normal (fast)
-  let geometric_normal_local = get_geometric_normal_local(i32(grid_x), i32(grid_z));
-
   // World transform / clip
   let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
   out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(displaced_local_pos, 1.0));
   out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
-
   out.uv = in.uv;
   out.instance_index = in.instance_index;
-  out.world_normal   = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
 
-  // Classic vertex path: precompute lambert in uv_b.x
+  // Base geometric normal (fast)
+  let geometric_normal_local = get_geometric_normal_local(i32(grid_x), i32(grid_z));
+  var Nw = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
+
+  // Optional smooth/bicubic normal with edge blend to avoid seams
+  if (normal_mode == 1u) {
+    let local_x = out.world_position.x - land.chunk_origin.x;
+    let local_z = out.world_position.z - land.chunk_origin.y;
+    let smooth_local = get_bicubic_normal(out.world_position.xyz);
+    let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
+    let blend_edge = chunk_edge_blend_factor(local_x, local_z);
+    Nw = normalize(mix(smooth_world, Nw, blend_edge));
+  }
+
+  // Optional bent normal (same as fragment path → prevents classic-path zig-zag)
+  if (enable_bent == 1u) {
+    Nw = get_bent_normal(out.world_position.xyz, Nw);
+  }
+
+  out.world_normal = Nw;
+
+  // Classic vertex path: precompute lambert in uv_b.x using the final Nw
   out.uv_b = vec2<f32>(0.0, 0.0);
   if ( ((DEV_USE_UNIFORMS == 1u) && (shading_mode == 0u))
     || ((DEV_USE_UNIFORMS == 0u) && (DEV_SHADING_MODE == 0u)) ) {
-    out.uv_b.x = get_lambert(out.world_normal, scene.light_direction);
+    out.uv_b.x = get_lambert(Nw, scene.light_direction);
   }
 
   return out;
@@ -542,6 +625,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
 fn shade_mode0_classic_vertex(base_albedo: vec3<f32>, lam_v: f32,
                               ambient_strength: f32, diffuse_strength: f32) -> vec3<f32> {
+  // Simple brightness model: albedo * (ambient + diffuse * N·L)
   return base_albedo * (ambient_strength + diffuse_strength * lam_v);
 }
 
@@ -554,7 +638,7 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
                                  specular_strength: f32,
                                  enable_gloom: u32) -> vec3<f32> {
 
-  // Diffuse shaping
+  // Diffuse shaping (raises Lambert to sharpen sun side a bit)
   let lam = get_lambert(Nw, L);
   let lam_sharp  = pow(max(lam, 1e-4), max(0.0001, sharpness_factor));
   let lam_shaped = mix(lam, lam_sharp, clamp(sharpness_mix, 0.0, 0.4));
@@ -567,7 +651,7 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
   let hemi_luma = luminance(hemi_rgb);
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
 
-  // Clamp energy to keep room if headroom enabled
+  // Clamp energy to keep room if headroom enabled (prevents bleaching)
   let headroom_reserve = 0.10;
   if (CFG_ENABLE_HEADROOM_LIMIT && lighting.grade_params.w >= 0.5) {
     energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
@@ -719,7 +803,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     blur_radius       = DEV_BLUR_RADIUS;
   }
 
-  // Local coords and tile
+  // Local coords and tile selection
   let local_x = in.world_position.x - land.chunk_origin.x;
   let local_z = in.world_position.z - land.chunk_origin.y;
   let uv_in_tile = vec2<f32>(fract(local_x), fract(local_z));
@@ -733,7 +817,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
 
-  // Normals: geometric vs bicubic; optional bent
+  // Normals: we already computed in vertex and passed in.world_normal.
+  // For non-classic modes we can still override with bicubic if desired.
   var Nw = normalize(in.world_normal);
   if (normal_mode == 1u) {
     let smooth_local = get_bicubic_normal(in.world_position.xyz);
@@ -767,31 +852,58 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     );
   }
 
-  // Fog (distance + optional height + optional noise), visible and tunable
+  // ----------------------------------------------------------------------------
+  // Fog (distance + continuous height gather + animated "cloudiness")
+  // ----------------------------------------------------------------------------
   if (enable_fog == 1u) {
+    // Distances & densities
     let cam_to_p = in.world_position.xyz - scene.camera_position;
     let d = length(cam_to_p);
     let dist_density   = max(lighting.fog_params.x, 0.0);
     let height_density = max(lighting.fog_params.y, 0.0);
-    let noise_scale    = lighting.fog_params.z;
+    let noise_scale    = max(lighting.fog_params.z, 1e-4);
     let noise_strength = clamp(lighting.fog_params.w, 0.0, 1.0);
 
-    // Exponential distance fog
-    let dist_fog   = 1.0 - exp(-dist_density * d);
-    // Height fog: increases with height above y=0 (or flip sign if you prefer ground-hugging)
-    let y = max(in.world_position.y, 0.0);
-    let height_fog = 1.0 - exp(-height_density * y);
+    // Continuous height bias:
+    //   hBias ∈ [-1,+1]: -1=valley fog (denser below y=0), 0=none, +1=high haze (denser above y=0)
+    let hBias = clamp(lighting.gloom_params.w, -1.0, 1.0);
+    let high_w = max(hBias, 0.0);   // weight for high-altitude term
+    let low_w  = max(-hBias, 0.0);  // weight for valley term
 
-    // Combine as union: a + b - a*b (either density contributes)
-    var fog_factor = clamp(dist_fog + height_fog - dist_fog * height_fog, 0.0, 1.0);
+    // Build the combined “extinction” (density integrated along view):
+    //   We use 1 - exp( - ( dist_term + height_term ) ) for smoother behavior than a+b-a*b.
+    let dist_term   = dist_density * d;
 
-    // Optional soft noise modulation (stable over time)
-    if (noise_strength > 0.001 && abs(noise_scale) > 1e-6) {
-      let n = noise_2d(in.world_position.xz * noise_scale + scene.time_seconds * vec2<f32>(0.07, 0.05));
-      let modificator = mix(1.0 - 0.3 * noise_strength, 1.0 + 0.3 * noise_strength, n);
-      fog_factor = clamp(fog_factor * modificator, 0.0, 1.0);
-    }
+    // Height terms use distance from reference plane y=0 in the chosen direction(s):
+    //   high:  increases with +y (above 0)
+    //   low:   increases with -y (below 0)
+    let y = in.world_position.y;
+    let height_term = height_density * (high_w * max(y, 0.0) + low_w * max(-y, 0.0));
 
+    var fog_factor = 1.0 - exp(-(dist_term + height_term));
+
+    // Animated cloud modulation using domain-warped billow FBM
+    //  - wind flows roughly perpendicular to the light dir so clouds drift across sun
+    let L = scene.light_direction;
+    let wind = normalize(vec2<f32>(L.z, -L.x));
+    let t = scene.time_seconds * 0.035;
+
+    // Base coordinates in “world meters”, scaled by noise_scale, scrolled by wind
+    let p0 = (in.world_position.xz + wind * (t * 40.0)) * noise_scale;
+
+    // Domain warp strength scaled from noise_strength (kept gentle)
+    let pWarp = domain_warp(p0, 1.25 * noise_strength);
+
+    // Billowy FBM → soft cloudy lobes; remapped for contrast
+    let n_billow = fbm_billow(pWarp);
+    let cloud_mask = smoothstep(0.35, 0.85, n_billow); // 0..1
+
+    // Modulate fog density by clouds, but keep a baseline so it never vanishes
+    let mod_lo = 1.0 - 0.55 * noise_strength; // baseline
+    let mod_hi = 1.0 + 0.55 * noise_strength; // peaks
+    fog_factor *= mix(mod_lo, mod_hi, cloud_mask);
+
+    // Final mix capped by fog_color.a
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
     hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
   }
@@ -799,11 +911,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Grading (vibrant with neutral contrast) + Tonemap
   var post = hdr_rgb;
   if (enable_grading == 1u) {
-    post = grade_color_vibrant(post); // no pre-tonemap clamping anymore
+    post = grade_color_vibrant(post); // no pre-tonemap clamping
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {
-    // Optional safety before tonemap if upstream ops ever go negative
     final_rgb = tonemap_reinhard_with_exposure(max(post, vec3<f32>(0.0)), exposure);
   }
 

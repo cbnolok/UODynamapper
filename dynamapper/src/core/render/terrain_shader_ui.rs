@@ -193,7 +193,8 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
                 );
                 ui.separator();
                 // New: Subtle pre-shade blur of base albedo
-                // Strength is a mix factor; radius is in UV units (very small numbers)
+                // Strength is a mix factor; radius is in SCREEN PIXELS (not UV units anymore).
+                // Screen-pixel radius is more intuitive: 1.0 = approx one pixel blur at current resolution.
                 changed |= slider_s(
                     ui,
                     "Blur Strength (non-classic only)",
@@ -202,9 +203,9 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
                 );
                 changed |= slider_s(
                     ui,
-                    "Blur Radius (UV) (non-classic only)",
+                    "Blur Radius (screen pixels) (non-classic only)",
                     &mut u.tunables.blur_radius,
-                    0.0005..=0.01,
+                    0.5..=8.0,
                 );
 
                 changed |= slider_s(ui, "Rim (KR only)", &mut u.tunables.rim_strength, 0.0..=0.5);
@@ -220,7 +221,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             // - ambient_color: base cool ambient (used also by fog/gloom tint)
             // - fill_sky_color (non-classic only): rgb + strength in .a
             // - fill_ground_color (non-classic only): rgb + strength in .a
-            // - rim_color (non-classic only): rgb + rim "power" in .w (2..4 = thin edge)
+            // - rim_color (KR only): rgb + rim "power" in .w (2..4 = thin edge)
             ui.collapsing("Lighting Colors", |ui| {
                 let mut changed = false;
 
@@ -357,6 +358,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             //   [0] amount: overall strength (0..1)
             //   [1] height_falloff: exp falloff with world height (0..0.05 typical)
             //   [2] shadow_bias: bias toward shadowed faces (0..1)
+            //   [3] fog_height_bias: (NEW) continuous fog bias -1..+1
             ui.collapsing("Gloom (Moody Cool Darkening) (non-classic only)", |ui| {
                 let mut changed = false;
                 changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
@@ -372,6 +374,17 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
                     &mut u.lighting.gloom_params[2],
                     0.0..=1.0,
                 );
+                // NEW: Fog height bias control exposed here because we reuse the slot
+                // lighting.gloom_params[3] for the fog height bias (fits existing UBO layout).
+                ui.add_space(4.0);
+                ui.label("Fog Height Bias (continuous): -1 = valley/ground fog, 0 = neutral, +1 = high-alt haze");
+                changed |= slider_s(
+                    ui,
+                    "Fog Height Bias (-1..+1)",
+                    &mut u.lighting.gloom_params[3],
+                    -1.0..=1.0,
+                );
+
                 if changed {
                     u.dirty = true;
                 }
@@ -379,7 +392,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
 
             // ------------------------ Fog ------------------------------
             // Distance + height exponential fog with optional noise modulation.
-            // Note: fog is in SceneUniform, not LightingUniforms.
+            // Note: **fog parameters are stored in LightingUniforms** in this UI (fog_color/fog_params).
             ui.collapsing("Fog Params", |ui| {
                 let mut changed = false;
                 // Tint + max mix (alpha)
@@ -447,25 +460,35 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
         });
 }
 
+// CHANGED: push_uniforms_if_dirty now updates ALL LandCustomMaterial assets.
+// Reason: previously we only iterated materials referenced by current chunk entities;
+// that could leave some material assets stale if they were not bound/referenced during
+// the current frame. Updating all materials ensures every chunk uses the latest uniforms
+// as soon as the asset system uploads them, avoiding "stale lighting" when moving.
+//
+// Note: this might update more assets than strictly necessary. If you have huge numbers
+// of unique material assets and care about perf, consider splitting global lighting
+// into one shared asset/bind-group and keeping per-chunk materials separate. For most
+// projects this approach is fine and is the simplest robust fix.
 fn push_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMaterial>>,
-    q_mat_handles: Query<&MeshMaterial3d<LandCustomMaterial>>,
+    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMaterial>>, // kept for parity; unused // CHANGED: underscore to avoid warning
     mut u: ResMut<UniformState>,
 ) {
     if !u.dirty {
         return;
     }
 
-    // Update only materials actually used by current chunk entities.
-    for mat_handle in q_mat_handles.iter() {
-        if let Some(mat) = mats.get_mut(&mat_handle.0) {
-            mat.extension.tunables_uniform = u.tunables;
-            mat.extension.lighting_uniform = u.lighting;
-            mat.extension.lighting_uniform.fog_color = u.lighting.fog_color;
-            mat.extension.lighting_uniform.fog_params = u.lighting.fog_params;
-        }
+    // Update ALL LandCustomMaterial assets so every chunk's material gets the new UBO values.
+    // Iterating mats.iter_mut() gives us mutable refs to every loaded material.
+    for (_handle, mat) in mats.iter_mut() {
+        // Overwrite the embedded uniforms used by the material extension.
+        // The material code should map these extension fields to the actual GPU UBOs.
+        mat.extension.tunables_uniform = u.tunables;
+        mat.extension.lighting_uniform = u.lighting;
     }
 
+    // Clear dirty; next frame nothing will be uploaded until the UI toggles something again.
     u.dirty = false;
 }
 

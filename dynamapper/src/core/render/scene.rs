@@ -99,7 +99,7 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
-        &format!("De-spawned chunk at: \tgx={gx}\tgy={gy}\t(map={map})"),
+        &format!("De-spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
     );
 }
 
