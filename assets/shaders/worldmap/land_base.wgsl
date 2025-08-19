@@ -15,38 +15,7 @@
 // Compile-time DEV config (unified DEV_* prefix)
 // ============================================================================
 
-const DEV_USE_UNIFORMS: u32 = 1u; // 0 → use DEV_* constants below, 1 → use CPU uniforms
-
-// Shader modes: 0 = Classic (vertex/Gouraud), 1 = Enhanced (fragment), 2 = KR (fragment)
-const DEV_SHADING_MODE: u32 = 2u;
-
-// Normal modes: 0 = geometric (fast), 1 = bicubic (smooth)
-const DEV_NORMAL_MODE:  u32 = 1u;
-
-// Feature flags (compile-time defaults; runtime toggles exist too)
-const DEV_BENT:    u32 = 1u;
-const DEV_FOG:     u32 = 1u;
-const DEV_GLOOM:   u32 = 1u;
-const DEV_TONEMAP: u32 = 1u;
-const DEV_GRADING: u32 = 1u;
-const DEV_BLUR:    u32 = 0u;
-
-// Artist defaults when DEV_USE_UNIFORMS == 0
-const DEV_AMBIENT:  f32 = 0.18; // shadow light
-const DEV_DIFFUSE:  f32 = 1.08; // direct sunlight
-const DEV_SPECULAR: f32 = 0.05; // sparkle
-const DEV_RIM:      f32 = 0.16; // silhouette
-const DEV_FILL:     f32 = 0.34; // environment intensity
-const DEV_EXPOSURE: f32 = 1.08; // tonemap exposure
-const DEV_BLUR_STRENGTH: f32 = 0.25;
-const DEV_BLUR_RADIUS:   f32 = 1.0; // in screen pixels (min 0.5 enforced in code)
-
-// Dev palette (warm key, cool ambient)
-const DEV_LIGHT_COLOR:   vec3<f32> = vec3<f32>(1.06, 0.99, 0.92);
-const DEV_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.18, 0.22, 0.29);
-
-// Headroom limiting (prevents bleaching in stylized modes). Also has runtime toggle.
-const CFG_ENABLE_HEADROOM_LIMIT: bool = true;
+const USE_VOLUMETRIC_NOISE: u32 = 1u; // 0=flat fog, 1=domain-warped billow modulation
 
 // ============================================================================
 // Bindings / Uniform Layouts
@@ -60,8 +29,6 @@ struct TileUniform {
 };
 
 struct LandUniform {
-  _light_dir_legacy: vec3<f32>, // kept for ABI safety; ignore
-  _pad0: f32,
   chunk_origin: vec2<f32>, // world origin of chunk (x,z) in tile units
   _pad1: vec2<f32>,
   tiles: array<TileUniform, 169>, // 13×13 grid (8×8 core + 2 border)
@@ -71,7 +38,8 @@ struct SceneUniform {
   camera_position: vec3<f32>,
   time_seconds: f32,
   light_direction: vec3<f32>, // expected normalized by CPU
-  _pad1: f32,
+  // global scene light scaler (pre-tonemap). Default 1.0 from CPU/UI.
+  global_lighting: f32,
 };
 
 struct TunablesUniform {
@@ -503,9 +471,16 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
   }
 }
 
+// cheap per-tile random in [0,1)
+fn rand01_from_tile(ix: i32, iz: i32, layer: u32) -> f32 {
+  let p = vec2<f32>(f32(ix) + f32(layer) * 0.618, f32(iz) + f32(layer) * 1.732);
+  return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+}
+
 // 9-tap blur with radius in *screen pixels* via fwidth — visible regardless of UV scale.
 // LOD is kept stable by using the same gradients for all taps.
-fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> vec3<f32> {
+// 9-tap blur with decorrelated directions per tile
+fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world_xz: vec2<f32>) -> vec3<f32> {
   // Approximate one screen pixel in UV space for this fragment
   let fw = fwidth(uv);
   let px_uv = max(fw.x, fw.y) + 1e-6;
@@ -518,16 +493,34 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> ve
   let ddx_uv = dpdx(uv);
   let ddy_uv = dpdy(uv);
 
+  // decorrelation: derive a tiny rotation per tile/layer (+tiny world jitter)
+  let jitter = rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)), tile.texture_layer)
+             + fract(world_xz.x * 0.173 + world_xz.y * 0.271) * 0.125;
+  let ang = (jitter * 6.2831853); // 2π
+  let ca = cos(ang);
+  let sa = sin(ang);
+  let rot = mat2x2<f32>(ca, -sa, sa, ca);
+
+  // rotated offsets
+  let o1 = rot * vec2<f32>( r, 0.0);
+  let o2 = rot * vec2<f32>(-r, 0.0);
+  let o3 = rot * vec2<f32>(0.0,  r);
+  let o4 = rot * vec2<f32>(0.0, -r);
+  let o5 = rot * vec2<f32>( r,  r);
+  let o6 = rot * vec2<f32>(-r,  r);
+  let o7 = rot * vec2<f32>( r, -r);
+  let o8 = rot * vec2<f32>(-r, -r);
+
   // Clamp taps to [0,1] to avoid bleeding across tile edges if sampler wraps
-  let c  = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  let u1 = clamp(uv + vec2<f32>( r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u2 = clamp(uv + vec2<f32>(-r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u3 = clamp(uv + vec2<f32>(0.0,  r), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u4 = clamp(uv + vec2<f32>(0.0, -r), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u5 = clamp(uv + vec2<f32>( r,  r), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u6 = clamp(uv + vec2<f32>(-r,  r), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u7 = clamp(uv + vec2<f32>( r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
-  let u8 = clamp(uv + vec2<f32>(-r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let c  = clamp(uv,                 vec2<f32>(0.0), vec2<f32>(1.0));
+  let u1 = clamp(uv + o1,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u2 = clamp(uv + o2,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u3 = clamp(uv + o3,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u4 = clamp(uv + o4,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u5 = clamp(uv + o5,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u6 = clamp(uv + o6,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u7 = clamp(uv + o7,            vec2<f32>(0.0), vec2<f32>(1.0));
+  let u8 = clamp(uv + o8,            vec2<f32>(0.0), vec2<f32>(1.0));
 
   // Slightly stronger normalized kernel to make effect pop
   let wc = 0.20;
@@ -557,16 +550,9 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> ve
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   var out: VertexOutput;
 
-  // Resolve mode toggles
-  var shading_mode: u32   = tunables.shading_mode;
-  var normal_mode:  u32   = tunables.normal_mode;
-  var enable_bent:  u32   = tunables.enable_bent;
-
-  if (DEV_USE_UNIFORMS == 0u) {
-    shading_mode = DEV_SHADING_MODE;
-    normal_mode  = DEV_NORMAL_MODE;
-    enable_bent  = DEV_BENT;
-  }
+  let shading_mode: u32 = tunables.shading_mode;
+  let normal_mode:  u32 = tunables.normal_mode;
+  let enable_bent:  u32 = tunables.enable_bent;
 
   // Node indices in 9×9 grid
   let grid_x: u32 = vertex_index % MESH_GRID_SIDE;
@@ -602,7 +588,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
     Nw = normalize(mix(smooth_world, Nw, blend_edge));
   }
 
-  // Optional bent normal (same as fragment path → prevents classic-path zig-zag)
+  // Optional bent normal (same as fragment path)
   if (enable_bent == 1u) {
     Nw = get_bent_normal(out.world_position.xyz, Nw);
   }
@@ -611,8 +597,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
   // Classic vertex path: precompute lambert in uv_b.x using the final Nw
   out.uv_b = vec2<f32>(0.0, 0.0);
-  if ( ((DEV_USE_UNIFORMS == 1u) && (shading_mode == 0u))
-    || ((DEV_USE_UNIFORMS == 0u) && (DEV_SHADING_MODE == 0u)) ) {
+  if (shading_mode == 0u) {
     out.uv_b.x = get_lambert(Nw, scene.light_direction);
   }
 
@@ -620,7 +605,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 }
 
 // ============================================================================
-// Shading models (small focused functions)
+// Shading models
 // ============================================================================
 
 fn shade_mode0_classic_vertex(base_albedo: vec3<f32>, lam_v: f32,
@@ -652,8 +637,9 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
 
   // Clamp energy to keep room if headroom enabled (prevents bleaching)
+  // Headroom limiting via runtime toggle only
   let headroom_reserve = 0.10;
-  if (CFG_ENABLE_HEADROOM_LIMIT && lighting.grade_params.w >= 0.5) {
+  if (lighting.grade_params.w >= 0.5) {
     energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
   }
 
@@ -712,7 +698,7 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   let runtime_headroom_on = lighting.grade_params.w >= 0.5;
 
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
-  if (CFG_ENABLE_HEADROOM_LIMIT && runtime_headroom_on) {
+  if (runtime_headroom_on) {
     energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
   }
 
@@ -758,50 +744,28 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-  // Resolve toggles/intensities from uniforms or DEV defaults
-  var shading_mode:   u32 = tunables.shading_mode;
-  var normal_mode:    u32 = tunables.normal_mode;
-  var enable_bent:    u32 = tunables.enable_bent;
-  var enable_fog:     u32 = tunables.enable_fog;
-  var enable_gloom:   u32 = tunables.enable_gloom;
-  var enable_tonemap: u32 = tunables.enable_tonemap;
-  var enable_grading: u32 = tunables.enable_grading;
-  var enable_blur:    u32 = tunables.enable_blur;
+  let shading_mode   = tunables.shading_mode;
+  let normal_mode    = tunables.normal_mode;
+  let enable_bent    = tunables.enable_bent;
+  let enable_fog     = tunables.enable_fog;
+  let enable_gloom   = tunables.enable_gloom;
+  let enable_tonemap = tunables.enable_tonemap;
+  let enable_grading = tunables.enable_grading;
+  let enable_blur    = tunables.enable_blur;
 
-  var ambient_strength:  f32 = tunables.ambient_strength;
-  var diffuse_strength:  f32 = tunables.diffuse_strength;
-  var specular_strength: f32 = tunables.specular_strength;
-  var rim_strength:      f32 = tunables.rim_strength;
+  let ambient_strength  = tunables.ambient_strength;
+  let diffuse_strength  = tunables.diffuse_strength;
+  let specular_strength = tunables.specular_strength;
+  let rim_strength      = tunables.rim_strength;
 
-  var fill_strength:     f32 = tunables.fill_strength;
-  var sharpness_factor:  f32 = tunables.sharpness_factor;
-  var sharpness_mix:     f32 = tunables.sharpness_mix;
+  let fill_strength     = tunables.fill_strength;
+  let sharpness_factor  = tunables.sharpness_factor;
+  let sharpness_mix     = tunables.sharpness_mix;
 
-  var blur_strength:     f32 = tunables.blur_strength;
-  var blur_radius:       f32 = tunables.blur_radius;
+  let blur_strength     = tunables.blur_strength;
+  let blur_radius       = tunables.blur_radius;
 
-  var exposure: f32 = lighting.exposure;
-
-  if (DEV_USE_UNIFORMS == 0u) {
-    shading_mode   = DEV_SHADING_MODE;
-    normal_mode    = DEV_NORMAL_MODE;
-    enable_bent    = DEV_BENT;
-    enable_fog     = DEV_FOG;
-    enable_gloom   = DEV_GLOOM;
-    enable_tonemap = DEV_TONEMAP;
-    enable_grading = DEV_GRADING;
-    enable_blur    = DEV_BLUR;
-
-    ambient_strength  = DEV_AMBIENT;
-    diffuse_strength  = DEV_DIFFUSE;
-    specular_strength = DEV_SPECULAR;
-    rim_strength      = DEV_RIM;
-    fill_strength     = DEV_FILL;
-    exposure          = DEV_EXPOSURE;
-
-    blur_strength     = DEV_BLUR_STRENGTH;
-    blur_radius       = DEV_BLUR_RADIUS;
-  }
+  let exposure          = lighting.exposure;
 
   // Local coords and tile selection
   let local_x = in.world_position.x - land.chunk_origin.x;
@@ -812,7 +776,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Base albedo (optionally blurred with screen-pixel radius)
   var base_albedo = sample_tile_albedo(uv_in_tile, tile);
   if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
-    let blurred = blurred_albedo(uv_in_tile, tile, blur_radius);
+    let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(local_x, local_z));
     base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
   }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
@@ -852,8 +816,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     );
   }
 
+  // Apply global scene lighting scaler (UI: "Global Lighting / Scene Luminosity")
+  hdr_rgb *= max(scene.global_lighting, 0.0);
+
   // ----------------------------------------------------------------------------
-  // Fog (distance + continuous height gather + animated "cloudiness")
+  // Fog (distance + continuous height gather + optional volumetric-like noise)
   // ----------------------------------------------------------------------------
   if (enable_fog == 1u) {
     // Distances & densities
@@ -882,26 +849,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var fog_factor = 1.0 - exp(-(dist_term + height_term));
 
-    // Animated cloud modulation using domain-warped billow FBM
-    //  - wind flows roughly perpendicular to the light dir so clouds drift across sun
-    let L = scene.light_direction;
-    let wind = normalize(vec2<f32>(L.z, -L.x));
-    let t = scene.time_seconds * 0.035;
-
-    // Base coordinates in “world meters”, scaled by noise_scale, scrolled by wind
-    let p0 = (in.world_position.xz + wind * (t * 40.0)) * noise_scale;
-
-    // Domain warp strength scaled from noise_strength (kept gentle)
-    let pWarp = domain_warp(p0, 1.25 * noise_strength);
-
-    // Billowy FBM → soft cloudy lobes; remapped for contrast
-    let n_billow = fbm_billow(pWarp);
-    let cloud_mask = smoothstep(0.35, 0.85, n_billow); // 0..1
-
-    // Modulate fog density by clouds, but keep a baseline so it never vanishes
-    let mod_lo = 1.0 - 0.55 * noise_strength; // baseline
-    let mod_hi = 1.0 + 0.55 * noise_strength; // peaks
-    fog_factor *= mix(mod_lo, mod_hi, cloud_mask);
+    if (USE_VOLUMETRIC_NOISE == 1u && noise_strength > 1e-4) {
+      // domain-warped billow FBM modulation
+      let L = scene.light_direction;
+      let wind = normalize(vec2<f32>(L.z, -L.x));
+      let t = scene.time_seconds;// * 0.035;
+      let p0 = (in.world_position.xz + wind * (t * 40.0)) * noise_scale;
+      let pWarp = domain_warp(p0, 1.25 * noise_strength);
+      let n_billow = fbm_billow(pWarp);
+      let cloud_mask = smoothstep(0.35, 0.85, n_billow);
+      let mod_lo = 1.0 - 0.55 * noise_strength;
+      let mod_hi = 1.0 + 0.55 * noise_strength;
+      fog_factor *= mix(mod_lo, mod_hi, cloud_mask);
+    }
 
     // Final mix capped by fog_color.a
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);

@@ -62,8 +62,6 @@ pub struct TileUniform {
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LandUniform {
-    pub light_dir: Vec3,
-    pub _pad: u32,
     pub chunk_origin: Vec2,
     pub _pad2: Vec2,
     pub tiles: [TileUniform; 169], // 13x13 grid for seamless normals
@@ -75,7 +73,7 @@ pub struct SceneUniform {
     pub camera_position: Vec3,
     pub time_seconds: f32,
     pub light_direction: Vec3,
-    pub _pad1: f32,
+    pub global_lighting: f32,
 }
 
 #[repr(C, align(16))]

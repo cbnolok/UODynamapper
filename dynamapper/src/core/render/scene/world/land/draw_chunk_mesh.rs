@@ -151,7 +151,6 @@ fn create_land_chunk_material(
         chunk_origin_tile_units_x as f32,
         chunk_origin_tile_units_z as f32,
     );
-    mat_ext_land_uniforms.light_dir = constants::BAKED_GLOBAL_LIGHT.normalize();
 
     // Preload all unique textures for the 13x13 grid.
     let unique_tile_ids: HashSet<u16> = cell_grid.iter().map(|cell| cell.id).collect();
@@ -177,10 +176,12 @@ fn create_land_chunk_material(
     }
 
     // Scene data
-    let mut mat_ext_scene_uniform = SceneUniform::zeroed();
-    mat_ext_scene_uniform.camera_position = PlayerCamera::BASE_OFFSET_FROM_PLAYER;
-    mat_ext_scene_uniform.light_direction = constants::BAKED_GLOBAL_LIGHT;
-    mat_ext_scene_uniform.time_seconds = time_r.elapsed().as_secs_f32();
+    let mut mat_ext_scene_uniform = SceneUniform {
+        camera_position: PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+        light_direction: constants::BAKED_GLOBAL_LIGHT.normalize(),
+        time_seconds: time_r.elapsed().as_secs_f32(),
+        global_lighting: 1.0,
+    };
 
     // Tunables are separate.
     let (mat_ext_tunables_uniform, mat_ext_lighting_uniform) = morning_preset(ShaderMode::KR);

@@ -25,6 +25,7 @@ use super::scene::world::land::mesh_material::*;
 pub struct UniformState {
     pub tunables: TunablesUniform,  // modes/toggles + intensities
     pub lighting: LightingUniforms, // light/fill/rim + grading + gloom + exposure
+    pub global_lighting: f32,       // scene-wide brightness scaler (maps to land.global_lighting)
     pub dirty: bool,                // when true, push to GPU materials this frame
 }
 
@@ -34,6 +35,7 @@ impl Default for UniformState {
         Self {
             tunables: tun,
             lighting: light,
+            global_lighting: 1.0, // sensible default
             dirty: true,
         }
     }
@@ -105,40 +107,38 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             ui.separator();
 
             // ------------------------- Toggles -------------------------
-            // Fragment-only features show "(non-classic only)" so it’s clear they won’t affect mode 0.
-            // - Bent (non-classic only): biases normals toward "up" in concavities (fake GI)
-            // - Fog:  multiplicative tint by animated mask (applies in any mode)
-            // - Gloom (non-classic only): cool, shadow-biased multiplicative darkening (mood)
-            // - Tonemap: exposure + curve (applies in any mode)
-            // - Grading (non-classic only): vibrance/saturation/contrast/split-toning
+            // Show only toggles that are relevant to the selected shading mode.
             ui.collapsing("Toggles", |ui| {
                 let mut changed = false;
 
-                // Gloom toggle: hard-off sets amount=0; turning back on restores a sensible default
+                // Fog and Tonemap apply in ANY shading mode (keep available always)
                 changed |= toggle_u32(ui, "Fog", &mut u.tunables.enable_fog);
                 changed |= toggle_u32(ui, "Tonemap", &mut u.tunables.enable_tonemap);
-                changed |= toggle_u32(ui, "Color Grading", &mut u.tunables.enable_grading);
-                changed |= toggle_u32(
-                    ui,
-                    "Bent normals (non-classic only)",
-                    &mut u.tunables.enable_bent,
-                );
-                {
-                    //let before = u.tunables.enable_gloom;
+
+                // Color grading & fragment-only features only when in fragment modes
+                let is_classic = u.tunables.shading_mode == 0;
+                if !is_classic {
+                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.tunables.enable_grading);
+                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.tunables.enable_bent);
+
+                    // Gloom: fragment-only semantic
                     let toggled =
-                        toggle_u32(ui, "Gloom (non-classic only)", &mut u.tunables.enable_gloom);
+                        toggle_u32(ui, "Gloom (fragment)", &mut u.tunables.enable_gloom);
                     if toggled {
                         if u.tunables.enable_gloom == 0 {
-                            // amount
                             u.lighting.gloom_params[0] = 0.0;
                         } else if u.lighting.gloom_params[0] <= 0.0001 {
                             u.lighting.gloom_params[0] = 0.20;
                         }
                     }
                     changed |= toggled;
+
+                    // Blur is fragment-only
+                    changed |= toggle_u32(ui, "Blur (fragment)", &mut u.tunables.enable_blur);
+                } else {
+                    // For classic path we can optionally display the state but disabled,
+                    // but to keep the UI clean we simply hide fragment-only toggles here.
                 }
-                // New: Blur toggle (fragment-only)
-                changed |= toggle_u32(ui, "Blur (non-classic only)", &mut u.tunables.enable_blur);
 
                 if changed {
                     u.dirty = true;
@@ -146,17 +146,33 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             });
 
             // ------------------------ Intensities ----------------------
-            // Theory quick guide:
-            // - Ambient: base brightness in shadows (scalar on albedo)
-            // - Diffuse: lambert(sun) shaped light on lit faces (scalar on albedo)
-            // - Specular (non-classic only): small neutral highlight (additive)
-            // - Rim (non-classic only): silhouette lift (shadow-biased; headroom-limited)
-            // - Fill (non-classic only): sky/ground env; luma adds brightness, chroma adds subtle tint
-            // - Sharpness (non-classic only): lambert^factor; Mix blends classic and sharpened
+            // Global Lighting is a new, always-available knob that multiplies final shading.
             ui.collapsing("Intensities", |ui| {
                 let mut changed = false;
+
+                // Global scene brightness, always shown
+                changed |= slider_s(
+                    ui,
+                    "Global Lighting (Scene Luminosity)",
+                    &mut u.global_lighting,
+                    0.0..=2.0,
+                );
+
+                // Ambient always shown
                 changed |= slider_s(ui, "Ambient", &mut u.tunables.ambient_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "Diffuse", &mut u.tunables.diffuse_strength, 0.0..=2.0);
+
+                // Diffuse is meaningful only for fragment modes. For Classic (vertex)
+                // the shader uses the precomputed vertex Lambert (old behavior) and
+                // we intentionally hide the diffuse control to avoid confusion.
+                let is_classic = u.tunables.shading_mode == 0;
+                if !is_classic {
+                    changed |= slider_s(ui, "Diffuse", &mut u.tunables.diffuse_strength, 0.0..=2.0);
+                } else {
+                    // Show a small label to explain why Diffuse is hidden
+                    ui.label("Diffuse slider hidden in Classic mode (vertex shading).");
+                }
+
+                // Exposure lives in lighting UBO
                 changed |= slider_s(
                     ui,
                     "Exposure (Tonemap)",
@@ -166,49 +182,52 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
 
                 ui.separator();
 
-                changed |= slider_s(
-                    ui,
-                    "Specular (non-classic only)",
-                    &mut u.tunables.specular_strength,
-                    0.0..=0.4,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Fill (env) (non-classic only)",
-                    &mut u.tunables.fill_strength,
-                    0.0..=1.0,
-                );
-                ui.separator();
-                changed |= slider_s(
-                    ui,
-                    "Sharpness Factor (non-classic only)",
-                    &mut u.tunables.sharpness_factor,
-                    0.5..=4.0,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Sharpness Mix (non-classic only)",
-                    &mut u.tunables.sharpness_mix,
-                    0.0..=1.0,
-                );
-                ui.separator();
-                // New: Subtle pre-shade blur of base albedo
-                // Strength is a mix factor; radius is in SCREEN PIXELS (not UV units anymore).
-                // Screen-pixel radius is more intuitive: 1.0 = approx one pixel blur at current resolution.
-                changed |= slider_s(
-                    ui,
-                    "Blur Strength (non-classic only)",
-                    &mut u.tunables.blur_strength,
-                    0.0..=0.5,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Blur Radius (screen pixels) (non-classic only)",
-                    &mut u.tunables.blur_radius,
-                    0.5..=8.0,
-                );
+                if !is_classic {
+                    changed |= slider_s(
+                        ui,
+                        "Specular (fragment only)",
+                        &mut u.tunables.specular_strength,
+                        0.0..=0.4,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Fill (env) (fragment only)",
+                        &mut u.tunables.fill_strength,
+                        0.0..=1.0,
+                    );
+                    ui.separator();
+                    changed |= slider_s(
+                        ui,
+                        "Sharpness Factor (fragment only)",
+                        &mut u.tunables.sharpness_factor,
+                        0.5..=4.0,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Sharpness Mix (fragment only)",
+                        &mut u.tunables.sharpness_mix,
+                        0.0..=1.0,
+                    );
+                    ui.separator();
+                    // Blur parameters (fragment-only)
+                    changed |= slider_s(
+                        ui,
+                        "Blur Strength (fragment only)",
+                        &mut u.tunables.blur_strength,
+                        0.0..=0.5,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Blur Radius (screen pixels) (fragment only)",
+                        &mut u.tunables.blur_radius,
+                        0.5..=8.0,
+                    );
 
-                changed |= slider_s(ui, "Rim (KR only)", &mut u.tunables.rim_strength, 0.0..=0.5);
+                    changed |= slider_s(ui, "Rim (KR only)", &mut u.tunables.rim_strength, 0.0..=0.5);
+                } else {
+                    // In Classic mode show a helper note.
+                    ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
+                }
 
                 if changed {
                     u.dirty = true;
@@ -216,16 +235,9 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             });
 
             // ---------------------- Lighting Colors --------------------
-            // Stored in the lighting UBO so you can retint per environment:
-            // - light_color: key light (sun) color (generally slightly warm)
-            // - ambient_color: base cool ambient (used also by fog/gloom tint)
-            // - fill_sky_color (non-classic only): rgb + strength in .a
-            // - fill_ground_color (non-classic only): rgb + strength in .a
-            // - rim_color (KR only): rgb + rim "power" in .w (2..4 = thin edge)
             ui.collapsing("Lighting Colors", |ui| {
                 let mut changed = false;
 
-                // Light color (Vec3 UI -> [f32;3] uniform)
                 {
                     let mut v = u.lighting.light_color.clone();
                     if color3(ui, "Light Color", &mut v) {
@@ -245,7 +257,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
 
                 {
                     let mut v = u.lighting.fill_sky_color.clone();
-                    if color4(ui, "Fill Sky (rgb + strength.a) (non-classic only)", &mut v) {
+                    if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v) {
                         u.lighting.fill_sky_color = v;
                         changed = true;
                     }
@@ -254,7 +266,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
                     let mut v = u.lighting.fill_ground_color.clone();
                     if color4(
                         ui,
-                        "Fill Ground (rgb + strength.a) (non-classic only)",
+                        "Fill Ground (rgb + strength.a) (fragment only)",
                         &mut v,
                     ) {
                         u.lighting.fill_ground_color = v;
@@ -266,7 +278,7 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
 
                 {
                     let mut v = u.lighting.rim_color.clone();
-                    if color4(ui, "Rim (rgb + power.w) (non-classic only)", &mut v) {
+                    if color4(ui, "Rim (rgb + power.w) (fragment only)", &mut v) {
                         u.lighting.rim_color = v;
                         changed = true;
                     }
@@ -278,121 +290,103 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             });
 
             // ----------------- KR like Color Grading (Vibrant) --------------
-            // (non-classic only)
-            // - grade_params:
-            //   [0] grade_strength: overall grading amount
-            //   [1] headroom_reserve: keep brightness room for rim/spec (prevents bleaching)
-            //   [2] hemi_chroma_tint: how much sky/ground color to add as chroma
-            //   [3] headroom_on: 0/1 runtime toggle for headroom limiting
-            // - grade_extra (vibrant engine):
-            //   [0] vibrance: boosts low-saturation regions more than high-sat
-            //   [1] saturation: global saturation factor
-            //   [2] contrast: global contrast factor
-            //   [3] split_strength: cool lows + warm highs split-toning
-            ui.collapsing("Color Grading (Vibrant)", |ui| {
+            ui.collapsing("Color Grading (Vibrant) (fragment only)", |ui| {
                 let mut changed = false;
-                changed |= slider_s(
-                    ui,
-                    "Grade Strength",
-                    &mut u.lighting.grade_params[0],
-                    0.0..=2.0,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Headroom Reserve",
-                    &mut u.lighting.grade_params[1],
-                    0.0..=0.5,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Fill Chroma Tint",
-                    &mut u.lighting.grade_params[2],
-                    0.0..=1.0,
-                );
+                if u.tunables.shading_mode == 0 {
+                    ui.label("Color grading is fragment-only and hidden in Classic mode.");
+                } else {
+                    changed |= slider_s(
+                        ui,
+                        "Grade Strength",
+                        &mut u.lighting.grade_params[0],
+                        0.0..=2.0,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Headroom Reserve",
+                        &mut u.lighting.grade_params[1],
+                        0.0..=0.5,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Fill Chroma Tint",
+                        &mut u.lighting.grade_params[2],
+                        0.0..=1.0,
+                    );
 
-                // Headroom on/off via local bool to avoid overlapping borrows
-                {
-                    let mut headroom_on = u.lighting.grade_params[3] >= 0.5;
-                    let before = headroom_on;
-                    ui.checkbox(&mut headroom_on, "Enable Headroom Limit");
-                    if headroom_on != before {
-                        u.lighting.grade_params[3] = if headroom_on { 1.0 } else { 0.0 };
-                        changed = true;
+                    // Headroom on/off via local bool to avoid overlapping borrows
+                    {
+                        let mut headroom_on = u.lighting.grade_params[3] >= 0.5;
+                        let before = headroom_on;
+                        ui.checkbox(&mut headroom_on, "Enable Headroom Limit");
+                        if headroom_on != before {
+                            u.lighting.grade_params[3] = if headroom_on { 1.0 } else { 0.0 };
+                            changed = true;
+                        }
                     }
+
+                    ui.separator();
+                    changed |= slider_s(
+                        ui,
+                        "Vibrance (selective sat)",
+                        &mut u.lighting.grade_extra[0],
+                        0.0..=1.5,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Saturation (global)",
+                        &mut u.lighting.grade_extra[1],
+                        0.5..=2.0,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Contrast (global)",
+                        &mut u.lighting.grade_extra[2],
+                        0.5..=2.0,
+                    );
+                    changed |= slider_s(
+                        ui,
+                        "Split Tone Strength",
+                        &mut u.lighting.grade_extra[3],
+                        0.0..=2.0,
+                    );
                 }
 
-                ui.separator();
-                changed |= slider_s(
-                    ui,
-                    "Vibrance (selective sat)",
-                    &mut u.lighting.grade_extra[0],
-                    0.0..=1.5,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Saturation (global)",
-                    &mut u.lighting.grade_extra[1],
-                    0.5..=2.0,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Contrast (global)",
-                    &mut u.lighting.grade_extra[2],
-                    0.5..=2.0,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Split Tone Strength",
-                    &mut u.lighting.grade_extra[3],
-                    0.0..=2.0,
-                );
                 if changed {
                     u.dirty = true;
                 }
             });
 
             // ------------------------ Gloom ----------------------------
-            // (non-classic only)
-            // Adds moody, cool darkening biased to shadows (distinct from fog).
-            // - gloom_params:
-            //   [0] amount: overall strength (0..1)
-            //   [1] height_falloff: exp falloff with world height (0..0.05 typical)
-            //   [2] shadow_bias: bias toward shadowed faces (0..1)
-            //   [3] fog_height_bias: (NEW) continuous fog bias -1..+1
-            ui.collapsing("Gloom (Moody Cool Darkening) (non-classic only)", |ui| {
+            ui.collapsing("Gloom (Moody Cool Darkening) (fragment only)", |ui| {
                 let mut changed = false;
-                changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
-                changed |= slider_s(
-                    ui,
-                    "Height Fade Height (world units) (non-classic only)",
-                    &mut u.lighting.gloom_params[1],
-                    0.0..=200.0,
-                );
-                changed |= slider_s(
-                    ui,
-                    "Shadow Bias",
-                    &mut u.lighting.gloom_params[2],
-                    0.0..=1.0,
-                );
-                // NEW: Fog height bias control exposed here because we reuse the slot
-                // lighting.gloom_params[3] for the fog height bias (fits existing UBO layout).
-                ui.add_space(4.0);
-                ui.label("Fog Height Bias (continuous): -1 = valley/ground fog, 0 = neutral, +1 = high-alt haze");
-                changed |= slider_s(
-                    ui,
-                    "Fog Height Bias (-1..+1)",
-                    &mut u.lighting.gloom_params[3],
-                    -1.0..=1.0,
-                );
+                if u.tunables.shading_mode == 0 {
+                    ui.label("Gloom is fragment-only and hidden in Classic mode.");
+                } else {
+                    changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
+                    changed |= slider_s(
+                        ui,
+                        "Height Fade Height (world units)",
+                        &mut u.lighting.gloom_params[1],
+                        0.0..=200.0,
+                    );
+                    changed |= slider_s(ui, "Shadow Bias", &mut u.lighting.gloom_params[2], 0.0..=1.0);
 
+                    ui.add_space(4.0);
+                    ui.label("Fog Height Bias (continuous): -1 = valley/ground fog, 0 = neutral, +1 = high-alt haze");
+                    changed |= slider_s(
+                        ui,
+                        "Fog Height Bias (-1..+1)",
+                        &mut u.lighting.gloom_params[3],
+                        -1.0..=1.0,
+                    );
+                }
                 if changed {
                     u.dirty = true;
                 }
             });
 
             // ------------------------ Fog ------------------------------
-            // Distance + height exponential fog with optional noise modulation.
-            // Note: **fog parameters are stored in LightingUniforms** in this UI (fog_color/fog_params).
             ui.collapsing("Fog Params", |ui| {
                 let mut changed = false;
                 // Tint + max mix (alpha)
@@ -429,66 +423,62 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             ui.separator();
 
             // ------------------------ Presets -------------------------
-            // Apply environment presets using the current shading mode.
             ui.horizontal(|ui| {
                 ui.strong("Presets:");
                 if ui.button("Morning").clicked() {
                     let (t, l) = morning_preset(mode_from_u(u.tunables.shading_mode));
                     u.tunables = t;
                     u.lighting = l;
+                    u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Afternoon").clicked() {
                     let (t, l) = afternoon_preset(mode_from_u(u.tunables.shading_mode));
                     u.tunables = t;
                     u.lighting = l;
+                    u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Night").clicked() {
                     let (t, l) = night_preset(mode_from_u(u.tunables.shading_mode));
                     u.tunables = t;
                     u.lighting = l;
+                    u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Cave").clicked() {
                     let (t, l) = cave_preset(mode_from_u(u.tunables.shading_mode));
                     u.tunables = t;
                     u.lighting = l;
+                    u.global_lighting = 1.0;
                     u.dirty = true;
                 }
             });
         });
 }
 
-// CHANGED: push_uniforms_if_dirty now updates ALL LandCustomMaterial assets.
-// Reason: previously we only iterated materials referenced by current chunk entities;
-// that could leave some material assets stale if they were not bound/referenced during
-// the current frame. Updating all materials ensures every chunk uses the latest uniforms
-// as soon as the asset system uploads them, avoiding "stale lighting" when moving.
-//
-// Note: this might update more assets than strictly necessary. If you have huge numbers
-// of unique material assets and care about perf, consider splitting global lighting
-// into one shared asset/bind-group and keeping per-chunk materials separate. For most
-// projects this approach is fine and is the simplest robust fix.
+// push_uniforms_if_dirty updates ALL LandCustomMaterial assets.
+// That guarantees that materials not referenced this frame still get the new values
+// (fixes "stale lighting when moving" problem).
 fn push_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMaterial>>,
-    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMaterial>>, // kept for parity; unused // CHANGED: underscore to avoid warning
+    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMaterial>>, // kept for parity; unused
     mut u: ResMut<UniformState>,
 ) {
     if !u.dirty {
         return;
     }
 
-    // Update ALL LandCustomMaterial assets so every chunk's material gets the new UBO values.
-    // Iterating mats.iter_mut() gives us mutable refs to every loaded material.
     for (_handle, mat) in mats.iter_mut() {
         // Overwrite the embedded uniforms used by the material extension.
-        // The material code should map these extension fields to the actual GPU UBOs.
         mat.extension.tunables_uniform = u.tunables;
         mat.extension.lighting_uniform = u.lighting;
+
+        // NEW: write global lighting into the land uniform so shader sees it
+        // NOTE: adjust the path if your extension uses a different name for the land UBO.
+        mat.extension.scene_uniform.global_lighting = u.global_lighting;
     }
 
-    // Clear dirty; next frame nothing will be uploaded until the UI toggles something again.
     u.dirty = false;
 }
 
@@ -525,25 +515,9 @@ fn slider_s(
     ui.add(egui::Slider::new(val, range).text(label)).changed()
 }
 
-/*
-// Edit a Vec2 in-place (generic 2-parameter control). Returns true if changed.
-fn color2(ui: &mut egui::Ui, label: &str, rg: &mut Vec2) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        // Two simple sliders (0..1) for clarity; swap to another UI if needed.
-        let c1 = ui.add(egui::Slider::new(&mut rg.x, 0.0..=1.0).text("x")).changed();
-        let c2 = ui.add(egui::Slider::new(&mut rg.y, 0.0..=1.0).text("y")).changed();
-        changed = c1 || c2;
-    });
-    changed
-}
-*/
-
 // Edit a Vec3 as RGB (0..1). Returns true if changed.
 fn color3(ui: &mut egui::Ui, label: &str, v: &mut Vec3) -> bool {
     let mut changed = false;
-    // egui wants &mut [f32;3]; convert temporarily and write back if changed.
     let mut arr = v.to_array();
     ui.horizontal(|ui| {
         ui.label(label);
