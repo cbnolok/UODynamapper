@@ -335,42 +335,53 @@ fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
 }
 
 // Contrast S-curve with neutral at contrast=1.0 (k = contrast-1 in [-1,1])
+// FIX: do NOT clamp here — keep HDR headroom pre-tonemap.
 fn apply_contrast_neutral(x: vec3<f32>, contrast: f32) -> vec3<f32> {
   let t = clamp(contrast - 1.0, -1.0, 1.0);
-  // y = x + t * (x - x*x) * 2  (S-curve around 0.5; zero effect when t=0)
-  let y = x + t * ((x - x * x) * 2.0);
-  return clamp(y, vec3<f32>(0.0), vec3<f32>(1.0));
+  // y = x + t * (x - x*x) * 2  (S-curve around ~0.5; zero effect when t=0)
+  return x + t * ((x - x * x) * 2.0);
 }
 
-// Stronger, stylized color grading (vibrant) with truly neutral contrast=1
+// Stronger, stylized color grading (vibrant), with:
+//  - truly neutral contrast=1 (no clamp inside),
+//  - multiplicative split-toning normalized to luma=1 so mid-grays stay neutral.
 fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
-  let strength   = lighting.grade_params.x; // overall grade amount
-  let vibrance   = lighting.grade_extra.x;  // selective saturation
-  let saturation = lighting.grade_extra.y;  // global saturation
-  let contrast   = lighting.grade_extra.z;  // S-curve; 1.0 = neutral
-  let split_str  = lighting.grade_extra.w;  // split-toning strength
+  let strength   = lighting.grade_params.x;  // overall grade amount
+  let headroom_on = lighting.grade_params.w >= 0.5;
+  let vibrance   = lighting.grade_extra.x;   // selective saturation
+  let saturation = lighting.grade_extra.y;   // global saturation
+  let contrast   = lighting.grade_extra.z;   // S-curve; 1.0 = neutral
+  let split_str  = lighting.grade_extra.w;   // split-toning strength
 
   // Global saturation around luminance pivot
   let l = luminance(color_in);
   let sat_col = mix(vec3<f32>(l), color_in, saturation);
 
-  // Vibrance: boost low-sat regions more
+  // Vibrance: boost low-sat regions more (mask stronger for low chroma)
   let chroma = sat_col - vec3<f32>(l);
   let sat_mag = max(max(abs(chroma.r), abs(chroma.g)), abs(chroma.b));
   let vib_mask = smoothstep(0.0, 0.7, 1.0 - sat_mag);
   let vib_col = sat_col + chroma * (vibrance * vib_mask);
 
-  // Contrast (neutral at 1.0)
+  // Contrast (neutral at 1.0), keep HDR — no clamp here
   let ctr_col = apply_contrast_neutral(vib_col, contrast);
 
-  // Split-toning by luminance: cool lows, warm highs
+  // Split-toning by luminance: cool lows, warm highs — multiplicative, luma-normalized
   let warm = lighting.grade_warm_color.rgb;
   let cool = lighting.grade_cool_color.rgb;
   let wmix = smoothstep(0.25, 0.85, l);
-  let split = mix(cool, warm, wmix) * split_str;
+  let tint = mix(cool, warm, wmix);
 
-  // Final blend
-  let graded = mix(color_in, ctr_col + split * 0.25, clamp(strength, 0.0, 2.0));
+  // Normalize tint so its luma is ~1 → keeps mid-gray unchanged when applied multiplicatively
+  let tint_luma = max(luminance(tint), 1e-6);
+  let tint_norm = tint / tint_luma;
+  let split_mult = mix(vec3<f32>(1.0), tint_norm, split_str);
+
+  // Apply split toning multiplicatively, then blend with original by overall strength
+  let graded_hq = ctr_col * split_mult;
+  let graded = mix(color_in, graded_hq, clamp(strength, 0.0, 2.0));
+
+  // Keep numeric safety; we still allow HDR >1 pre-tonemap
   return max(graded, vec3<f32>(0.0));
 }
 
@@ -409,27 +420,68 @@ fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
 // ============================================================================
 
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  let layer: i32 = i32(tile.texture_layer);
   if (tile.texture_size == 1u) {
-    return textureSample(texarray_big, texarray_sampler, uv, i32(tile.texture_layer)).rgb;
+    return textureSample(texarray_big, texarray_sampler, uv, layer).rgb;
   } else {
-    return textureSample(texarray_small, texarray_sampler, uv, i32(tile.texture_layer)).rgb;
+    return textureSample(texarray_small, texarray_sampler, uv, layer).rgb;
   }
 }
 
-fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius: f32) -> vec3<f32> {
-  // 5-tap cross + center (normalized weights), subtle UV radius
-  let r = radius;
-  let w0 = 0.4;
-  let w1 = 0.15;
-  let w2 = 0.15;
-  let w3 = 0.15;
-  let w4 = 0.15;
-  let s0 = sample_tile_albedo(uv, tile);
-  let s1 = sample_tile_albedo(uv + vec2<f32>( r, 0.0), tile);
-  let s2 = sample_tile_albedo(uv + vec2<f32>(-r, 0.0), tile);
-  let s3 = sample_tile_albedo(uv + vec2<f32>(0.0,  r), tile);
-  let s4 = sample_tile_albedo(uv + vec2<f32>(0.0, -r), tile);
-  return (s0 * w0) + (s1 * w1) + (s2 * w2) + (s3 * w3) + (s4 * w4);
+// Same as above, but with explicit gradients to keep LOD stable across taps.
+fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
+  let layer: i32 = i32(tile.texture_layer);
+  if (tile.texture_size == 1u) {
+    return textureSampleGrad(texarray_big, texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+  } else {
+    return textureSampleGrad(texarray_small, texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+  }
+}
+
+// 9-tap blur with radius in *screen pixels* via fwidth — visible regardless of UV scale.
+fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32) -> vec3<f32> {
+  // Approximate one screen pixel in UV space
+  let fw = fwidth(uv);
+  let px_uv = max(fw.x, fw.y) + 1e-6;
+  let r = max(radius_in_pixels, 0.0) * px_uv;
+
+  // Keep LOD stable for all taps
+  let ddx_uv = dpdx(uv);
+  let ddy_uv = dpdy(uv);
+
+  // Clamp taps to [0,1] to avoid bleeding across tile edges if sampler wraps
+  let c = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+  let u1 = clamp(uv + vec2<f32>( r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u2 = clamp(uv + vec2<f32>(-r, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u3 = clamp(uv + vec2<f32>(0.0,  r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u4 = clamp(uv + vec2<f32>(0.0, -r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u5 = clamp(uv + vec2<f32>( r,  r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u6 = clamp(uv + vec2<f32>(-r,  r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u7 = clamp(uv + vec2<f32>( r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
+  let u8 = clamp(uv + vec2<f32>(-r, -r), vec2<f32>(0.0), vec2<f32>(1.0));
+
+  // Weights (normalized 9-tap kernel)
+  let wc = 0.24;
+  let w1 = 0.10;
+  let w2 = 0.10;
+  let w3 = 0.10;
+  let w4 = 0.10;
+  let w5 = 0.09;
+  let w6 = 0.09;
+  let w7 = 0.09;
+  let w8 = 0.09;
+
+  let s0 = sample_tile_albedo_grad(c,  tile, ddx_uv, ddy_uv);
+  let s1 = sample_tile_albedo_grad(u1, tile, ddx_uv, ddy_uv);
+  let s2 = sample_tile_albedo_grad(u2, tile, ddx_uv, ddy_uv);
+  let s3 = sample_tile_albedo_grad(u3, tile, ddx_uv, ddy_uv);
+  let s4 = sample_tile_albedo_grad(u4, tile, ddx_uv, ddy_uv);
+  let s5 = sample_tile_albedo_grad(u5, tile, ddx_uv, ddy_uv);
+  let s6 = sample_tile_albedo_grad(u6, tile, ddx_uv, ddy_uv);
+  let s7 = sample_tile_albedo_grad(u7, tile, ddx_uv, ddy_uv);
+  let s8 = sample_tile_albedo_grad(u8, tile, ddx_uv, ddy_uv);
+
+  return s0*wc + s1*w1 + s2*w2 + s3*w3 + s4*w4 + s5*w5 + s6*w6 + s7*w7 + s8*w8;
 }
 
 // ============================================================================
@@ -673,7 +725,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let uv_in_tile = vec2<f32>(fract(local_x), fract(local_z));
   let tile = tile_at_13x13(i32(floor(local_x)), i32(floor(local_z)));
 
-  // Base albedo (optionally blurred)
+  // Base albedo (optionally blurred with screen-pixel radius)
   var base_albedo = sample_tile_albedo(uv_in_tile, tile);
   if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
     let blurred = blurred_albedo(uv_in_tile, tile, blur_radius);
@@ -724,16 +776,20 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let noise_scale    = lighting.fog_params.z;
     let noise_strength = clamp(lighting.fog_params.w, 0.0, 1.0);
 
+    // Exponential distance fog
     let dist_fog   = 1.0 - exp(-dist_density * d);
-    let height_fog = 1.0 - exp(-height_density * max(in.world_position.y, 0.0));
+    // Height fog: increases with height above y=0 (or flip sign if you prefer ground-hugging)
+    let y = max(in.world_position.y, 0.0);
+    let height_fog = 1.0 - exp(-height_density * y);
 
-    // combine; height complements distance
-    var fog_factor = clamp(dist_fog + (1.0 - dist_fog) * height_fog, 0.0, 1.0);
+    // Combine as union: a + b - a*b (either density contributes)
+    var fog_factor = clamp(dist_fog + height_fog - dist_fog * height_fog, 0.0, 1.0);
 
-    // optional soft noise modulator (low amplitude to avoid flicker)
+    // Optional soft noise modulation (stable over time)
     if (noise_strength > 0.001 && abs(noise_scale) > 1e-6) {
-      let n = noise_2d(in.world_position.xz * noise_scale + scene.time_seconds * vec2<f32>(0.1, 0.07));
-      fog_factor = clamp(fog_factor * mix(1.0 - 0.25 * noise_strength, 1.0 + 0.25 * noise_strength, n), 0.0, 1.0);
+      let n = noise_2d(in.world_position.xz * noise_scale + scene.time_seconds * vec2<f32>(0.07, 0.05));
+      let modificator = mix(1.0 - 0.3 * noise_strength, 1.0 + 0.3 * noise_strength, n);
+      fog_factor = clamp(fog_factor * modificator, 0.0, 1.0);
     }
 
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
@@ -743,11 +799,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Grading (vibrant with neutral contrast) + Tonemap
   var post = hdr_rgb;
   if (enable_grading == 1u) {
-    post = grade_color_vibrant(post);
+    post = grade_color_vibrant(post); // no pre-tonemap clamping anymore
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {
-    final_rgb = tonemap_reinhard_with_exposure(post, exposure);
+    // Optional safety before tonemap if upstream ops ever go negative
+    final_rgb = tonemap_reinhard_with_exposure(max(post, vec3<f32>(0.0)), exposure);
   }
 
   final_rgb = max(final_rgb, vec3<f32>(0.0));

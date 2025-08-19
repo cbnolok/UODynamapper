@@ -67,12 +67,14 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
         .resizable(true)
         .show(ctx, |ui| {
             ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");
-            ui.label("Classic aims for original fidelity. Enhanced is subtle. KR is vibrant/painterly.");
+            ui.label(
+                "Classic aims for original fidelity. Enhanced is subtle. KR is vibrant/painterly.",
+            );
             ui.add_space(6.0);
 
             // --------------------- Mode & Normals ---------------------
             ui.horizontal(|ui| {
-                ui.strong("Mode:");
+                ui.strong("Shading Mode:");
                 let mut mode = u.tunables.shading_mode;
                 for (label, val) in [("Classic", 0u32), ("Enhanced", 1u32), ("KR", 2u32)] {
                     if ui.selectable_label(mode == val, label).clicked() {
@@ -88,8 +90,12 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
 
                 ui.strong("Normals:");
                 let mut nm = u.tunables.normal_mode;
-                if ui.selectable_label(nm == 0, "Geometric").clicked() { nm = 0; }
-                if ui.selectable_label(nm == 1, "Bicubic").clicked()   { nm = 1; }
+                if ui.selectable_label(nm == 0, "Geometric").clicked() {
+                    nm = 0;
+                }
+                if ui.selectable_label(nm == 1, "Bicubic").clicked() {
+                    nm = 1;
+                }
                 if nm != u.tunables.normal_mode {
                     u.tunables.normal_mode = nm;
                     u.dirty = true;
@@ -108,12 +114,19 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             ui.collapsing("Toggles", |ui| {
                 let mut changed = false;
 
-                changed |= toggle_u32(ui, "Bent (non-classic only)",     &mut u.tunables.enable_bent);
-                changed |= toggle_u32(ui, "Fog",      &mut u.tunables.enable_fog);
                 // Gloom toggle: hard-off sets amount=0; turning back on restores a sensible default
+                changed |= toggle_u32(ui, "Fog", &mut u.tunables.enable_fog);
+                changed |= toggle_u32(ui, "Tonemap", &mut u.tunables.enable_tonemap);
+                changed |= toggle_u32(ui, "Color Grading", &mut u.tunables.enable_grading);
+                changed |= toggle_u32(
+                    ui,
+                    "Bent normals (non-classic only)",
+                    &mut u.tunables.enable_bent,
+                );
                 {
                     //let before = u.tunables.enable_gloom;
-                    let toggled = toggle_u32(ui, "Gloom (non-classic only)", &mut u.tunables.enable_gloom);
+                    let toggled =
+                        toggle_u32(ui, "Gloom (non-classic only)", &mut u.tunables.enable_gloom);
                     if toggled {
                         if u.tunables.enable_gloom == 0 {
                             // amount
@@ -124,12 +137,12 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
                     }
                     changed |= toggled;
                 }
-                 changed |= toggle_u32(ui, "Tonemap",  &mut u.tunables.enable_tonemap);
-                changed |= toggle_u32(ui, "Grading (non-classic only)",  &mut u.tunables.enable_grading);
                 // New: Blur toggle (fragment-only)
-                changed |= toggle_u32(ui, "Blur (non-classic only)",     &mut u.tunables.enable_blur);
+                changed |= toggle_u32(ui, "Blur (non-classic only)", &mut u.tunables.enable_blur);
 
-                if changed { u.dirty = true; }
+                if changed {
+                    u.dirty = true;
+                }
             });
 
             // ------------------------ Intensities ----------------------
@@ -142,23 +155,63 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             // - Sharpness (non-classic only): lambert^factor; Mix blends classic and sharpened
             ui.collapsing("Intensities", |ui| {
                 let mut changed = false;
-                changed |= slider_s(ui, "Ambient",                   &mut u.tunables.ambient_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "Diffuse",                   &mut u.tunables.diffuse_strength, 0.0..=2.0);
-                changed |= slider_s(ui, "Specular (non-classic only)", &mut u.tunables.specular_strength, 0.0..=0.4);
-                changed |= slider_s(ui, "Rim (non-classic only)",      &mut u.tunables.rim_strength, 0.0..=0.5);
-                changed |= slider_s(ui, "Fill (env) (non-classic only)", &mut u.tunables.fill_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Ambient", &mut u.tunables.ambient_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "Diffuse", &mut u.tunables.diffuse_strength, 0.0..=2.0);
+                changed |= slider_s(
+                    ui,
+                    "Exposure (Tonemap)",
+                    &mut u.lighting.exposure,
+                    0.5..=2.0,
+                );
+
                 ui.separator();
-                changed |= slider_s(ui, "Sharpness Factor (non-classic only)", &mut u.tunables.sharpness_factor, 0.5..=4.0);
-                changed |= slider_s(ui, "Sharpness Mix (non-classic only)",    &mut u.tunables.sharpness_mix,    0.0..=1.0);
+
+                changed |= slider_s(
+                    ui,
+                    "Specular (non-classic only)",
+                    &mut u.tunables.specular_strength,
+                    0.0..=0.4,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Fill (env) (non-classic only)",
+                    &mut u.tunables.fill_strength,
+                    0.0..=1.0,
+                );
+                ui.separator();
+                changed |= slider_s(
+                    ui,
+                    "Sharpness Factor (non-classic only)",
+                    &mut u.tunables.sharpness_factor,
+                    0.5..=4.0,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Sharpness Mix (non-classic only)",
+                    &mut u.tunables.sharpness_mix,
+                    0.0..=1.0,
+                );
                 ui.separator();
                 // New: Subtle pre-shade blur of base albedo
                 // Strength is a mix factor; radius is in UV units (very small numbers)
-                changed |= slider_s(ui, "Blur Strength (non-classic only)", &mut u.tunables.blur_strength, 0.0..=0.5);
-                changed |= slider_s(ui, "Blur Radius (UV) (non-classic only)", &mut u.tunables.blur_radius, 0.0005..=0.01);
-ui.separator();
+                changed |= slider_s(
+                    ui,
+                    "Blur Strength (non-classic only)",
+                    &mut u.tunables.blur_strength,
+                    0.0..=0.5,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Blur Radius (UV) (non-classic only)",
+                    &mut u.tunables.blur_radius,
+                    0.0005..=0.01,
+                );
 
-                changed |= slider_s(ui, "Exposure (Tonemap)",         &mut u.lighting.exposure, 0.5..=2.0);
-                if changed { u.dirty = true; }
+                changed |= slider_s(ui, "Rim (KR only)", &mut u.tunables.rim_strength, 0.0..=0.5);
+
+                if changed {
+                    u.dirty = true;
+                }
             });
 
             // ---------------------- Lighting Colors --------------------
@@ -198,7 +251,11 @@ ui.separator();
                 }
                 {
                     let mut v = u.lighting.fill_ground_color.clone();
-                    if color4(ui, "Fill Ground (rgb + strength.a) (non-classic only)", &mut v) {
+                    if color4(
+                        ui,
+                        "Fill Ground (rgb + strength.a) (non-classic only)",
+                        &mut v,
+                    ) {
                         u.lighting.fill_ground_color = v;
                         changed = true;
                     }
@@ -214,10 +271,12 @@ ui.separator();
                     }
                 }
 
-                if changed { u.dirty = true; }
+                if changed {
+                    u.dirty = true;
+                }
             });
 
-            // ----------------- KR Color Grading (Vibrant) --------------
+            // ----------------- KR like Color Grading (Vibrant) --------------
             // (non-classic only)
             // - grade_params:
             //   [0] grade_strength: overall grading amount
@@ -229,11 +288,26 @@ ui.separator();
             //   [1] saturation: global saturation factor
             //   [2] contrast: global contrast factor
             //   [3] split_strength: cool lows + warm highs split-toning
-            ui.collapsing("KR Color Grading (Vibrant) (non-classic only)", |ui| {
+            ui.collapsing("Color Grading (Vibrant)", |ui| {
                 let mut changed = false;
-                changed |= slider_s(ui, "Grade Strength",      &mut u.lighting.grade_params[0], 0.0..=2.0);
-                changed |= slider_s(ui, "Headroom Reserve",    &mut u.lighting.grade_params[1], 0.0..=0.5);
-                changed |= slider_s(ui, "Fill Chroma Tint",    &mut u.lighting.grade_params[2], 0.0..=1.0);
+                changed |= slider_s(
+                    ui,
+                    "Grade Strength",
+                    &mut u.lighting.grade_params[0],
+                    0.0..=2.0,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Headroom Reserve",
+                    &mut u.lighting.grade_params[1],
+                    0.0..=0.5,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Fill Chroma Tint",
+                    &mut u.lighting.grade_params[2],
+                    0.0..=1.0,
+                );
 
                 // Headroom on/off via local bool to avoid overlapping borrows
                 {
@@ -247,11 +321,33 @@ ui.separator();
                 }
 
                 ui.separator();
-                changed |= slider_s(ui, "Vibrance (selective sat)", &mut u.lighting.grade_extra[0], 0.0..=1.5);
-                changed |= slider_s(ui, "Saturation (global)",      &mut u.lighting.grade_extra[1], 0.5..=2.0);
-                changed |= slider_s(ui, "Contrast (global)",        &mut u.lighting.grade_extra[2], 0.5..=2.0);
-                changed |= slider_s(ui, "Split Tone Strength",      &mut u.lighting.grade_extra[3], 0.0..=2.0);
-                if changed { u.dirty = true; }
+                changed |= slider_s(
+                    ui,
+                    "Vibrance (selective sat)",
+                    &mut u.lighting.grade_extra[0],
+                    0.0..=1.5,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Saturation (global)",
+                    &mut u.lighting.grade_extra[1],
+                    0.5..=2.0,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Contrast (global)",
+                    &mut u.lighting.grade_extra[2],
+                    0.5..=2.0,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Split Tone Strength",
+                    &mut u.lighting.grade_extra[3],
+                    0.0..=2.0,
+                );
+                if changed {
+                    u.dirty = true;
+                }
             });
 
             // ------------------------ Gloom ----------------------------
@@ -263,27 +359,58 @@ ui.separator();
             //   [2] shadow_bias: bias toward shadowed faces (0..1)
             ui.collapsing("Gloom (Moody Cool Darkening) (non-classic only)", |ui| {
                 let mut changed = false;
-                changed |= slider_s(ui, "Amount",         &mut u.lighting.gloom_params[0], 0.0..=1.0);
-                changed |= slider_s(ui, "Height Fade Height (world units) (non-classic only)", &mut u.lighting.gloom_params[1], 0.0..=200.0);
-                changed |= slider_s(ui, "Shadow Bias",    &mut u.lighting.gloom_params[2], 0.0..=1.0);
-                ui.label("Tip: Gloom is multiplicative and keeps hues intact; use with KR mode for mood.");
-                if changed { u.dirty = true; }
+                changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
+                changed |= slider_s(
+                    ui,
+                    "Height Fade Height (world units) (non-classic only)",
+                    &mut u.lighting.gloom_params[1],
+                    0.0..=200.0,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Shadow Bias",
+                    &mut u.lighting.gloom_params[2],
+                    0.0..=1.0,
+                );
+                if changed {
+                    u.dirty = true;
+                }
             });
 
-                        // ------------------------ Fog ------------------------------
+            // ------------------------ Fog ------------------------------
             // Distance + height exponential fog with optional noise modulation.
             // Note: fog is in SceneUniform, not LightingUniforms.
             ui.collapsing("Fog Params", |ui| {
                 let mut changed = false;
                 // Tint + max mix (alpha)
                 let mut fog = u.lighting.fog_color;
-                if color4(ui, "Fog Color (alpha = max mix)", &mut fog) { u.lighting.fog_color = fog; changed = true; }
+                if color4(ui, "Fog Color (alpha = max mix)", &mut fog) {
+                    u.lighting.fog_color = fog;
+                    changed = true;
+                }
                 // Densities and noise
-                changed |= slider_s(ui, "Distance Density", &mut u.lighting.fog_params[0], 0.0..=0.2);
-                changed |= slider_s(ui, "Height Density",   &mut u.lighting.fog_params[1], 0.0..=0.2);
-                changed |= slider_s(ui, "Noise Scale",      &mut u.lighting.fog_params[2], 0.0..=2.0);
-                changed |= slider_s(ui, "Noise Strength",   &mut u.lighting.fog_params[3], 0.0..=1.0);
-                if changed { u.dirty = true; }
+                changed |= slider_s(
+                    ui,
+                    "Distance Density",
+                    &mut u.lighting.fog_params[0],
+                    0.0..=0.2,
+                );
+                changed |= slider_s(
+                    ui,
+                    "Height Density",
+                    &mut u.lighting.fog_params[1],
+                    0.0..=0.2,
+                );
+                changed |= slider_s(ui, "Noise Scale", &mut u.lighting.fog_params[2], 0.0..=2.0);
+                changed |= slider_s(
+                    ui,
+                    "Noise Strength",
+                    &mut u.lighting.fog_params[3],
+                    0.0..=1.0,
+                );
+                if changed {
+                    u.dirty = true;
+                }
             });
 
             ui.separator();
@@ -294,19 +421,27 @@ ui.separator();
                 ui.strong("Presets:");
                 if ui.button("Morning").clicked() {
                     let (t, l) = morning_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t; u.lighting = l; u.dirty = true;
+                    u.tunables = t;
+                    u.lighting = l;
+                    u.dirty = true;
                 }
                 if ui.button("Afternoon").clicked() {
                     let (t, l) = afternoon_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t; u.lighting = l; u.dirty = true;
+                    u.tunables = t;
+                    u.lighting = l;
+                    u.dirty = true;
                 }
                 if ui.button("Night").clicked() {
                     let (t, l) = night_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t; u.lighting = l; u.dirty = true;
+                    u.tunables = t;
+                    u.lighting = l;
+                    u.dirty = true;
                 }
                 if ui.button("Cave").clicked() {
                     let (t, l) = cave_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t; u.lighting = l; u.dirty = true;
+                    u.tunables = t;
+                    u.lighting = l;
+                    u.dirty = true;
                 }
             });
         });
