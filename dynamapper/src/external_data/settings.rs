@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::prelude::*;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::logger::{self, LogAbout, LogSev};
 use crate::util_lib::uo_coords::*;
@@ -199,12 +200,14 @@ fn keyboard_toggle_wireframe(
     }
 }
      */
+
 fn sys_evlisten_switch_wireframe(
     mut events: EventReader<ToggleWireframe>,
     mut config: ResMut<WireframeConfig>,
     //mut commands: Commands,
     //query: Query<Entity, With<Wireframe>>,
 ) {
+    log_system_add_update::<SettingsPlugin>(fname!());
     for _ in events.read() {
         // This disables global wireframe for all meshes immediately
         config.global = !config.global;

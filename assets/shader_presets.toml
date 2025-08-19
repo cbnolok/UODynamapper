@@ -1,0 +1,502 @@
+# Shader Presets for UODynamapper
+# This file defines the lighting and tuning parameters for different rendering styles and times of day.
+#
+# ------------------
+# --- LEGEND ---
+# ------------------
+#
+# === [tunables] ===
+# --- Modes & Toggles ---
+# shading_mode:      The core rendering style. 0: Classic, 1: Enhanced, 2: KR.
+# normal_mode:       How surface normals are calculated. 0: Geometric (faceted), 1: Bicubic (smooth).
+# enable_bent:       If 1, uses pre-calculated bent normals to simulate ambient occlusion. 0: off.
+# enable_fog:        If 1, enables procedural, height-based fog. 0: off.
+# enable_gloom:      If 1, enables a screen-space darkening effect (KR-style only). 0: off.
+# enable_tonemap:    If 1, applies tonemapping to the final color. 0: off.
+# enable_grading:    If 1, applies color grading. 0: off.
+# enable_blur:       If 1, applies a subtle blur to the base terrain texture. 0: off.
+#
+# --- Intensities & Strengths ---
+# ambient_strength:  Base intensity of ambient light (0.0 to 1.0).
+# diffuse_strength:  Intensity of the main directional light (sun/moon).
+# specular_strength: Intensity of specular highlights on surfaces.
+# rim_strength:      Intensity of the rim light effect, which highlights edges.
+# fill_strength:     Intensity of the hemispheric fill light.
+# sharpness_factor:  Strength of the texture sharpening effect.
+# sharpness_mix:     How much the sharpened texture is blended with the original (0.0 to 1.0).
+# blur_strength:     How much the blurred texture is blended with the original (0.0 to 1.0).
+# blur_radius:       The radius for the texture blur effect (small values like 0.0025 work well).
+#
+# === [lighting] ===
+# --- Colors ---
+# light_color:         The color of the main directional light as [R, G, B].
+# ambient_color:       The base color of the ambient light as [R, G, B].
+# fill_sky_color:      Color of the upper hemisphere fill light as [R, G, B, Intensity].
+# fill_ground_color:   Color of the lower hemisphere fill light as [R, G, B, Intensity].
+# rim_color:           Color and exponent of the rim light as [R, G, B, Power].
+# grade_warm_color:    The warm tone for color grading as [R, G, B, A].
+# grade_cool_color:    The cool tone for color grading as [R, G, B, A].
+# fog_color:           The color of the procedural fog as [R, G, B, Max_Mix_Factor].
+#
+# --- Parameters ---
+# exposure:          Overall scene exposure value.
+# gamma:             Gamma correction value. (NOTE: Currently unused in the shader, Bevy handles this).
+# grade_params:      Vector of grading parameters: [Strength, Headroom_Reserve, Hemi_Chroma_Tint, Headroom_On(1/0)].
+# grade_extra:       Vector of additional grading parameters: [Vibrance, Saturation, Contrast, Split_Strength].
+# gloom_params:      Vector of gloom parameters: [Amount, Height_Falloff, Shadow_Bias, _Unused].
+# fog_params:        Vector of fog parameters: [Distance_Density, Height_Density, Noise_Scale, Noise_Strength].
+#
+
+# ------------------
+# --- CLASSIC PRESETS ---
+# ------------------
+# Simplified rendering emulating the original UO client.
+# Key features like grading, gloom, specular, and rim lighting are disabled.
+
+[classic.morning]
+# Morning: soft warm sun, cool ambient.
+[classic.morning.tunables]
+shading_mode = 0
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Classic mode
+enable_tonemap = 1
+enable_grading = 0    # Disabled in Classic mode
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.morning.lighting]
+light_color = [1.05, 0.99, 0.92]   # Soft warm white
+ambient_color = [0.17, 0.22, 0.29]  # Cool blueish
+exposure = 1.05
+gamma = 2.2
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.45, 1.2, 1.15, 0.9]
+gloom_params = [0.2, 0.008, 0.45, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[classic.afternoon]
+# Afternoon: brighter sun, rich colors.
+[classic.afternoon.tunables]
+shading_mode = 0
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Classic mode
+enable_tonemap = 1
+enable_grading = 0    # Disabled in Classic mode
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.0
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.afternoon.lighting]
+light_color = [1.08, 0.99, 0.9]    # Bright warm white
+ambient_color = [0.18, 0.22, 0.28]  # Neutral cool
+exposure = 1.1
+gamma = 2.2
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.6, 1.25, 1.22, 1.0]
+gloom_params = [0.15, 0.007, 0.35, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[classic.night]
+# Night: cool light, low ambient.
+[classic.night.tunables]
+shading_mode = 0
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Classic mode
+enable_tonemap = 1
+enable_grading = 0    # Disabled in Classic mode
+enable_blur = 0
+ambient_strength = 0.1
+diffuse_strength = 0.7
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.night.lighting]
+light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
+ambient_color = [0.12, 0.16, 0.24]  # Dark blue ambient
+exposure = 1.2
+gamma = 2.2
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.75, 1.2, 1.3, 0.8]
+gloom_params = [0.4, 0.01, 0.65, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[classic.cave]
+# Cave: very low ambient, cool tones.
+[classic.cave.tunables]
+shading_mode = 0
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Classic mode
+enable_tonemap = 1
+enable_grading = 0    # Disabled in Classic mode
+enable_blur = 0
+ambient_strength = 0.06
+diffuse_strength = 0.85
+specular_strength = 0.0 # Disabled in Classic mode
+rim_strength = 0.0      # Disabled in Classic mode
+fill_strength = 0.0     # Disabled in Classic mode
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.cave.lighting]
+light_color = [0.9, 0.95, 1.05]     # Faint cool light
+ambient_color = [0.1, 0.14, 0.2]    # Very dark blue ambient
+exposure = 0.95
+gamma = 2.2
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.65, 1.15, 1.28, 0.8]
+gloom_params = [0.65, 0.012, 0.75, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+
+# ------------------
+# --- ENHANCED PRESETS ---
+# ------------------
+# A more modern look with smooth lighting, fill lights, and basic grading.
+
+[enhanced.morning]
+[enhanced.morning.tunables]
+shading_mode = 1
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Enhanced mode
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.05
+specular_strength = 0.03
+rim_strength = 0.06
+fill_strength = 0.28
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.morning.lighting]
+light_color = [1.05, 0.99, 0.92]
+ambient_color = [0.17, 0.22, 0.29]
+exposure = 1.05
+gamma = 2.2
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.45, 1.2, 1.15, 0.9]
+gloom_params = [0.2, 0.008, 0.45, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[enhanced.afternoon]
+[enhanced.afternoon.tunables]
+shading_mode = 1
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Enhanced mode
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.05
+specular_strength = 0.03
+rim_strength = 0.06
+fill_strength = 0.28
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.afternoon.lighting]
+light_color = [1.08, 0.99, 0.9]
+ambient_color = [0.18, 0.22, 0.28]
+exposure = 1.1
+gamma = 2.2
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.6, 1.25, 1.22, 1.0]
+gloom_params = [0.15, 0.007, 0.35, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[enhanced.night]
+[enhanced.night.tunables]
+shading_mode = 1
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Enhanced mode
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.1
+diffuse_strength = 0.7
+specular_strength = 0.03
+rim_strength = 0.22
+fill_strength = 0.28
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.night.lighting]
+light_color = [0.8, 0.88, 1.05]
+ambient_color = [0.12, 0.16, 0.24]
+exposure = 1.2
+gamma = 2.2
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.75, 1.2, 1.3, 0.8]
+gloom_params = [0.4, 0.01, 0.65, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[enhanced.cave]
+[enhanced.cave.tunables]
+shading_mode = 1
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 0      # Disabled in Enhanced mode
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.06
+diffuse_strength = 0.85
+specular_strength = 0.02
+rim_strength = 0.14
+fill_strength = 0.22
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.cave.lighting]
+light_color = [0.9, 0.95, 1.05]
+ambient_color = [0.1, 0.14, 0.2]
+exposure = 0.95
+gamma = 2.2
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.65, 1.15, 1.28, 0.8]
+gloom_params = [0.65, 0.012, 0.75, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+
+# ------------------
+# --- KR PRESETS ---
+# ------------------
+# Full-featured rendering with all effects enabled for a modern look.
+
+[kr.morning]
+[kr.morning.tunables]
+shading_mode = 2
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.1
+specular_strength = 0.05
+rim_strength = 0.16
+fill_strength = 0.34
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[kr.morning.lighting]
+light_color = [1.05, 0.99, 0.92]
+ambient_color = [0.17, 0.22, 0.29]
+exposure = 1.05
+gamma = 2.2
+fill_sky_color = [0.5, 0.7, 1.0, 0.7]
+fill_ground_color = [0.28, 0.19, 0.12, 0.35]
+rim_color = [0.7, 0.85, 1.0, 2.5]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [0.9, 0.15, 0.35, 1.0]
+grade_extra = [0.45, 1.2, 1.15, 0.9]
+gloom_params = [0.2, 0.008, 0.45, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[kr.afternoon]
+[kr.afternoon.tunables]
+shading_mode = 2
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.18
+diffuse_strength = 1.1
+specular_strength = 0.05
+rim_strength = 0.16
+fill_strength = 0.34
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[kr.afternoon.lighting]
+light_color = [1.08, 0.99, 0.9]
+ambient_color = [0.18, 0.22, 0.28]
+exposure = 1.1
+gamma = 2.2
+fill_sky_color = [0.48, 0.68, 1.0, 0.75]
+fill_ground_color = [0.3, 0.2, 0.12, 0.35]
+rim_color = [0.95, 0.95, 0.85, 2.7]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.0, 0.15, 0.4, 1.0]
+grade_extra = [0.6, 1.25, 1.22, 1.0]
+gloom_params = [0.15, 0.007, 0.35, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[kr.night]
+[kr.night.tunables]
+shading_mode = 2
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.1
+diffuse_strength = 0.7
+specular_strength = 0.03
+rim_strength = 0.22
+fill_strength = 0.28
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[kr.night.lighting]
+light_color = [0.8, 0.88, 1.05]
+ambient_color = [0.12, 0.16, 0.24]
+exposure = 1.2
+gamma = 2.2
+fill_sky_color = [0.4, 0.6, 1.0, 0.7]
+fill_ground_color = [0.2, 0.16, 0.14, 0.3]
+rim_color = [0.65, 0.85, 1.1, 3.0]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.1, 0.18, 0.45, 1.0]
+grade_extra = [0.75, 1.2, 1.3, 0.8]
+gloom_params = [0.4, 0.01, 0.65, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]
+
+[kr.cave]
+[kr.cave.tunables]
+shading_mode = 2
+normal_mode = 1
+enable_bent = 1
+enable_fog = 0
+enable_gloom = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_blur = 0
+ambient_strength = 0.06
+diffuse_strength = 0.85
+specular_strength = 0.02
+rim_strength = 0.14
+fill_strength = 0.22
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[kr.cave.lighting]
+light_color = [0.9, 0.95, 1.05]
+ambient_color = [0.1, 0.14, 0.2]
+exposure = 0.95
+gamma = 2.2
+fill_sky_color = [0.38, 0.6, 1.0, 0.65]
+fill_ground_color = [0.18, 0.14, 0.12, 0.28]
+rim_color = [0.55, 0.75, 1.05, 2.8]
+grade_warm_color = [1.08, 0.98, 0.9, 0.0]
+grade_cool_color = [0.82, 0.95, 1.05, 0.0]
+grade_params = [1.05, 0.2, 0.38, 1.0]
+grade_extra = [0.65, 1.15, 1.28, 0.8]
+gloom_params = [0.65, 0.012, 0.75, 0.0]
+fog_color = [0.75, 0.85, 0.95, 0.5]
+fog_params = [0.02, 0.0, 0.0, 0.0]

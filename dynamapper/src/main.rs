@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 pub mod core;
 pub mod logger;
-pub mod settings;
+pub mod external_data;
 mod prelude;
 
 #[macro_use]

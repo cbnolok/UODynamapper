@@ -1,11 +1,11 @@
-pub mod draw_chunk_mesh;
+pub mod draw_mesh;
 pub mod mesh_material;
+pub mod setup_base_mesh;
 
-use bevy::prelude::*;
-use crate::prelude::*;
 use crate::core::system_sets::*;
+use crate::prelude::*;
+use bevy::prelude::*;
 use mesh_material::LandCustomMaterial;
-
 
 /// How many tiles per chunk row/column? (chunks are squared)
 pub const TILE_NUM_PER_CHUNK_1D: u32 = 8;
@@ -33,13 +33,11 @@ impl Plugin for DrawLandChunkMeshPlugin {
         app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default())
             .add_systems(
                 Update,
-                (
-                    draw_chunk_mesh::sys_draw_spawned_land_chunks
-                        .in_set(SceneRenderLandSysSet::RenderLandChunks)
-                        .after(SceneRenderLandSysSet::SyncLandChunks)
-                        .run_if(in_state(AppState::InGame)),
-                ),
-            );
+                (draw_mesh::sys_draw_spawned_land_chunks
+                    .in_set(SceneRenderLandSysSet::RenderLandChunks)
+                    .after(SceneRenderLandSysSet::SyncLandChunks)
+                    .run_if(in_state(AppState::InGame)),),
+            )
+            .add_systems(Startup, setup_base_mesh::setup_land_mesh);
     }
 }
-

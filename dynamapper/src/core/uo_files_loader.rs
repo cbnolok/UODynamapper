@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use crate::core::system_sets::StartupSysSet;
+use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use bevy::prelude::*;
 use dashmap::DashMap;
@@ -44,10 +45,10 @@ impl Plugin for UOFilesPlugin {
     }
 }
 
-pub fn sys_setup_uo_data(mut commands: Commands) {
+pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
+    log_system_add_startup::<UOFilesPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
     let lg = |text: &str| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
-    let uo_path: PathBuf =
-        "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy".into();
+    let uo_path: PathBuf = settings.uo_files.folder.clone().into();
 
     lg("Start loading UO Data.");
 

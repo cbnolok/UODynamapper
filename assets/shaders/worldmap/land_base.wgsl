@@ -819,53 +819,118 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Apply global scene lighting scaler (UI: "Global Lighting / Scene Luminosity")
   hdr_rgb *= max(scene.global_lighting, 0.0);
 
+// ----------------------------------------------------------------------------
+  // Fog (NEW implementation)
   // ----------------------------------------------------------------------------
-  // Fog (distance + continuous height gather + optional volumetric-like noise)
-  // ----------------------------------------------------------------------------
+  // IMPORTANT: UI-controlled inputs are remapped to internal ranges for intuitive control:
+  // - lighting.fog_params.x -> distance_density (0..~0.2 in UI) mapped to fog_end distance
+  // - lighting.fog_params.y -> height_density (0..~0.2 in UI) mapped to vertical falloff
+  // - lighting.fog_params.z -> noise_scale (0..2 in UI) mapped to world noise scale (bigger => coarser clouds)
+  // - lighting.fog_params.w -> noise_strength (0..1 in UI) mapped to cloud contrast/detail/coverage
   if (enable_fog == 1u) {
-    // Distances & densities
-    let cam_to_p = in.world_position.xyz - scene.camera_position;
-    let d = length(cam_to_p);
-    let dist_density   = max(lighting.fog_params.x, 0.0);
-    let height_density = max(lighting.fog_params.y, 0.0);
-    let noise_scale    = max(lighting.fog_params.z, 1e-4);
-    let noise_strength = clamp(lighting.fog_params.w, 0.0, 1.0);
+    // Read raw UI uniforms (defensive clamps)
+    let dist_density_ui   = clamp(lighting.fog_params.x, 0.0, 1.0);  // user slider 0..0.2 but clamp anyway
+    let height_density_ui = clamp(lighting.fog_params.y, 0.0, 1.0);
+    let noise_scale_ui    = clamp(lighting.fog_params.z, 0.0, 2.0);
+    let noise_strength_ui = clamp(lighting.fog_params.w, 0.0, 1.0);
 
-    // Continuous height bias:
-    //   hBias ∈ [-1,+1]: -1=valley fog (denser below y=0), 0=none, +1=high haze (denser above y=0)
+    // Fog height bias: -1 valley, 0 neutral, +1 high-alt haze
     let hBias = clamp(lighting.gloom_params.w, -1.0, 1.0);
-    let high_w = max(hBias, 0.0);   // weight for high-altitude term
-    let low_w  = max(-hBias, 0.0);  // weight for valley term
+    let high_w = max(hBias, 0.0);
+    let low_w  = max(-hBias, 0.0);
 
-    // Build the combined “extinction” (density integrated along view):
-    //   We use 1 - exp( - ( dist_term + height_term ) ) for smoother behavior than a+b-a*b.
-    let dist_term   = dist_density * d;
+    // -------------------------
+    // Distance mapping: translate UI density -> fog_end (meters)
+    // Small UI values -> very far (clear). Larger UI -> closer fog end.
+    // tweak these ranges if your world units are scaled differently.
+    let fog_end = mix(6000.0, 40.0, smoothstep(0.0, 0.2, dist_density_ui));
+    let fog_start = max(0.0, fog_end * 0.06);
+    let d = length(in.world_position.xyz - scene.camera_position);
+    // softer ramp for distance-based fog
+    let dist_factor = smoothstep(fog_start, fog_end, d);
 
-    // Height terms use distance from reference plane y=0 in the chosen direction(s):
-    //   high:  increases with +y (above 0)
-    //   low:   increases with -y (below 0)
+    // -------------------------
+    // Height mapping: UI -> falloff scale in meters (0.2 UI -> short falloff)
+    let height_falloff = mix(800.0, 6.0, smoothstep(0.0, 0.2, height_density_ui));
     let y = in.world_position.y;
-    let height_term = height_density * (high_w * max(y, 0.0) + low_w * max(-y, 0.0));
+    var height_term_high = 0.0;
+    var height_term_low  = 0.0;
+    if (height_density_ui > 1e-6) {
+      height_term_high = 1.0 - exp(-max(y, 0.0) / height_falloff);
+      height_term_low  = 1.0 - exp(-max(-y, 0.0) / height_falloff);
+    }
+    let height_factor = clamp(high_w * height_term_high + low_w * height_term_low, 0.0, 1.0);
 
-    var fog_factor = 1.0 - exp(-(dist_term + height_term));
+    // -------------------------
+    // Combine distance & height (union) -> base_fog (0..1)
+    let base_fog = clamp(dist_factor + height_factor - dist_factor * height_factor, 0.0, 1.0);
 
-    if (USE_VOLUMETRIC_NOISE == 1u && noise_strength > 1e-4) {
-      // domain-warped billow FBM modulation
-      let L = scene.light_direction;
-      let wind = normalize(vec2<f32>(L.z, -L.x));
-      let t = scene.time_seconds;// * 0.035;
-      let p0 = (in.world_position.xz + wind * (t * 40.0)) * noise_scale;
-      let pWarp = domain_warp(p0, 1.25 * noise_strength);
-      let n_billow = fbm_billow(pWarp);
-      let cloud_mask = smoothstep(0.35, 0.85, n_billow);
-      let mod_lo = 1.0 - 0.55 * noise_strength;
-      let mod_hi = 1.0 + 0.55 * noise_strength;
-      fog_factor *= mix(mod_lo, mod_hi, cloud_mask);
+    // -------------------------
+    // Noise / clouds — robust mapping
+    // Map user noise_scale_ui [0..2] to an internal world-scale: smaller value -> finer clouds,
+    // larger value -> coarser/bigger clouds. This remapping makes slider intuitive.
+    let noise_scale_world = mix(0.004, 0.25, clamp(noise_scale_ui / 2.0, 0.0, 1.0));
+    // noise_strength controls contrast/coverage/detail
+    let noise_strength = noise_strength_ui;
+
+    // Build wind & time for animation.
+    // If scene.time_seconds isn't being updated by the CPU, clouds won't move — see note below.
+    let base_time_speed = 0.02; // base slow speed
+    let time_speed = base_time_speed + noise_strength * 0.08;
+    let t = scene.time_seconds * time_speed;
+
+    // Wind derived from sun direction (perpendicular flow across sun)
+    let sun2 = normalize(vec2<f32>(L.x, L.z));
+    // defensively handle degenerate light_dir
+    var wind = vec2<f32>(0.7, 0.3);
+    if (length(sun2) > 1e-5) {
+      wind = normalize(vec2<f32>(L.z, -L.x));
     }
 
-    // Final mix capped by fog_color.a
+    // Sample coords in world meters; domain-warp to break tiling
+    // Note: multiply world.xz by noise_scale_world to get appropriate density
+    let p0 = (in.world_position.xz * noise_scale_world) + wind * (t * 6.0);
+
+    // Gentle domain warp — smaller strength so we don't over-warp tiny structures
+    let warp_strength = 0.4 * noise_strength + 0.08;
+    let pWarp = domain_warp(p0, warp_strength);
+
+    // Multi-scale billow FBM to get both big blobs and small fluff
+    let n1 = fbm_billow(pWarp * 1.0);
+    let n2 = fbm_billow(pWarp * 2.3) * 0.55;
+    let n_billow = clamp(n1 * 0.7 + n2 * 0.3, 0.0, 1.0);
+
+    // Control coverage/contrast:
+    // - Lower threshold -> more coverage.
+    // - width controls softness of cloud edges.
+    let base_threshold = mix(0.72, 0.46, noise_strength); // higher noise_strength -> lower threshold -> more clouds
+    let edge_width = mix(0.12, 0.20, 1.0 - noise_strength); // stronger noise -> sharper edges (smaller width)
+    let cloud_mask = smoothstep(base_threshold, base_threshold + edge_width, n_billow);
+
+    // Baseline ensures there are some clear areas when desired:
+    let baseline = mix(0.03, 0.18, 1.0 - noise_strength); // low baseline -> more clear sky by default
+    let peak_gain = mix(1.0, 1.8, noise_strength);
+
+    let cloud_mod = baseline + (peak_gain - baseline) * cloud_mask;
+
+    // Combine
+    var fog_factor = clamp(base_fog * cloud_mod, 0.0, 1.0);
+
+    // Subtle breathing so it doesn't look totally static; scaled by noise_strength
+    let breath = 0.5 + 0.5 * sin(scene.time_seconds * (0.06 + 0.02 * noise_strength) + (hash(in.world_position.xz * 0.11) * 6.2831));
+    fog_factor = clamp(fog_factor * mix(0.97, 1.03, (breath - 0.5) * 0.6 * noise_strength), 0.0, 1.0);
+
+    // Final cap set by UI alpha
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
-    hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
+
+    // If user opted out of volumetric noise, fallback to smooth (flat) fog:
+    if (USE_VOLUMETRIC_NOISE == 1u) {
+      hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
+    } else {
+      // simple fallback: linearized distance*height blend capped by alpha
+      let flat_mix = clamp(base_fog * lighting.fog_color.a, 0.0, 1.0);
+      hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, flat_mix);
+    }
   }
 
   // Grading (vibrant with neutral contrast) + Tonemap

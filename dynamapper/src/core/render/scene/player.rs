@@ -1,6 +1,7 @@
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::{color, prelude::*};
+use crate::external_data::settings::Settings;
 
 #[derive(Component)]
 pub struct Player {

@@ -7,7 +7,10 @@
 //      2 = KR-like     (fragment; painterly, vibrant, rim + gloom)
 //
 
-use crate::{/*fname,*/ impl_tracked_plugin, util_lib::tracked_plugin::*};
+use crate::{
+    external_data::shader_presets::UniformState, impl_tracked_plugin, // prelude::*,
+    util_lib::tracked_plugin::*,
+};
 
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
@@ -19,28 +22,6 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 // - ShaderMode, morning_preset, afternoon_preset, night_preset, cave_preset
 use super::scene::world::land::mesh_material::*;
 
-// Holds current UI-edited values and a dirty flag.
-// Bevy detects asset changes and re-uploads uniforms automatically.
-#[derive(Resource, Clone, Copy)]
-pub struct UniformState {
-    pub tunables: TunablesUniform,  // modes/toggles + intensities
-    pub lighting: LightingUniforms, // light/fill/rim + grading + gloom + exposure
-    pub global_lighting: f32,       // scene-wide brightness scaler (maps to land.global_lighting)
-    pub dirty: bool,                // when true, push to GPU materials this frame
-}
-
-impl Default for UniformState {
-    fn default() -> Self {
-        let (tun, light) = morning_preset(ShaderMode::KR);
-        Self {
-            tunables: tun,
-            lighting: light,
-            global_lighting: 1.0, // sensible default
-            dirty: true,
-        }
-    }
-}
-
 // Plugin that draws the UI and applies changes to materials.
 pub struct TerrainUiPlugin {
     pub registered_by: &'static str,
@@ -50,7 +31,6 @@ impl_tracked_plugin!(TerrainUiPlugin);
 impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default())
-            .init_resource::<UniformState>()
             // Draw UI in the egui pass
             .add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
@@ -62,10 +42,15 @@ impl Plugin for TerrainUiPlugin {
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
 
-fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
+fn terrain_ui_system(
+    mut egui_ctx: EguiContexts,
+    mut u: ResMut<UniformState>,
+    shader_presets: Res<LandShaderModePresets>,
+) {
     let ctx = egui_ctx.ctx_mut().expect("No egui context?");
     egui::Window::new("Terrain Shader Controls")
-        .default_pos([16.0, 16.0])
+        .default_pos([16.0, 80.0])
+        .default_open(false)
         .resizable(true)
         .show(ctx, |ui| {
             ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");
@@ -426,30 +411,46 @@ fn terrain_ui_system(mut egui_ctx: EguiContexts, mut u: ResMut<UniformState>) {
             ui.horizontal(|ui| {
                 ui.strong("Presets:");
                 if ui.button("Morning").clicked() {
-                    let (t, l) = morning_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t;
-                    u.lighting = l;
+                    let preset = match u.tunables.shading_mode {
+                        0 => &shader_presets.classic.morning,
+                        1 => &shader_presets.enhanced.morning,
+                        _ => &shader_presets.kr.morning,
+                    };
+                    u.tunables = preset.tunables;
+                    u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Afternoon").clicked() {
-                    let (t, l) = afternoon_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t;
-                    u.lighting = l;
+                    let preset = match u.tunables.shading_mode {
+                        0 => &shader_presets.classic.afternoon,
+                        1 => &shader_presets.enhanced.afternoon,
+                        _ => &shader_presets.kr.afternoon,
+                    };
+                    u.tunables = preset.tunables;
+                    u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Night").clicked() {
-                    let (t, l) = night_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t;
-                    u.lighting = l;
+                    let preset = match u.tunables.shading_mode {
+                        0 => &shader_presets.classic.night,
+                        1 => &shader_presets.enhanced.night,
+                        _ => &shader_presets.kr.night,
+                    };
+                    u.tunables = preset.tunables;
+                    u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Cave").clicked() {
-                    let (t, l) = cave_preset(mode_from_u(u.tunables.shading_mode));
-                    u.tunables = t;
-                    u.lighting = l;
+                    let preset = match u.tunables.shading_mode {
+                        0 => &shader_presets.classic.cave,
+                        1 => &shader_presets.enhanced.cave,
+                        _ => &shader_presets.kr.cave,
+                    };
+                    u.tunables = preset.tunables;
+                    u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
@@ -485,15 +486,6 @@ fn push_uniforms_if_dirty(
 // ============================ UI HELPERS =================================
 // These helpers return "changed" (bool) so callers can set u.dirty |= changed,
 // avoiding overlapping &mut borrows inside the helper.
-
-// Converts numeric mode to your enum for preset builders.
-fn mode_from_u(v: u32) -> ShaderMode {
-    match v {
-        0 => ShaderMode::Classic2D,
-        1 => ShaderMode::Enhanced2D,
-        _ => ShaderMode::KR,
-    }
-}
 
 // Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
 fn toggle_u32(ui: &mut egui::Ui, label: &str, val: &mut u32) -> bool {

@@ -9,8 +9,8 @@ mod uo_files_loader;
 
 use crate::{
     core::app_states::*,
+    external_data::{ExternalDataPlugin, settings},
     logger::{self, *},
-    settings,
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -27,7 +27,6 @@ use bevy::{
 use bevy_framepace::FramepacePlugin;
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
-use crate::core::render::scene::world::land::draw_chunk_mesh::setup_land_mesh;
 use tracing_subscriber::fmt;
 
 #[allow(unused)]
@@ -169,13 +168,13 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(FramepacePlugin) // caps at 60 FPS by default
         //.use(bevy_framepace::FramepaceSettings::default().with_framerate(30.0))
         .add_plugins((
+            ExternalDataPlugin {
+                registered_by: "Core",
+            },
             controls::ControlsPlugin {
                 registered_by: "Core",
             },
             render::RenderPlugin {
-                registered_by: "Core",
-            },
-            settings::SettingsPlugin {
                 registered_by: "Core",
             },
             texture_cache::TextureCachePlugin {
@@ -206,7 +205,7 @@ pub fn run_bevy_app() -> ExitCode {
         )
         .add_systems(
             Startup,
-            (setup_land_mesh, advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2)),
+            advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
         )
         .run();
 
