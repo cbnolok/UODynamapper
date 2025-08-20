@@ -21,7 +21,7 @@ use uocf::geo::{
 };
 use wide::*;
 
-use super::TILE_NUM_PER_CHUNK_1D;
+use super::TILE_NUM_PER_CHUNK_DIM;
 use super::{LCMesh, mesh_material::*};
 use crate::{
     core::{
@@ -54,9 +54,9 @@ fn create_land_chunk_material(
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
 ) -> Handle<LandCustomMaterial> {
     let chunk_origin_tile_units_x =
-        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
     let chunk_origin_tile_units_z =
-        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_DIM;
 
     // Helper to fetch a cell from the loaded block data.
     fn get_cell<'a>(
@@ -65,12 +65,12 @@ fn create_land_chunk_material(
         world_tile_z: u32,
     ) -> &'a MapCell {
         let chunk_rel_coords = MapBlockRelPos {
-            x: world_tile_x / TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z / TILE_NUM_PER_CHUNK_1D,
+            x: world_tile_x / TILE_NUM_PER_CHUNK_DIM,
+            y: world_tile_z / TILE_NUM_PER_CHUNK_DIM,
         };
         let tile_rel_coords = MapCellRelPos {
-            x: world_tile_x % TILE_NUM_PER_CHUNK_1D,
-            y: world_tile_z % TILE_NUM_PER_CHUNK_1D,
+            x: world_tile_x % TILE_NUM_PER_CHUNK_DIM,
+            y: world_tile_z % TILE_NUM_PER_CHUNK_DIM,
         };
         blocks_data
             .get(&chunk_rel_coords)
@@ -79,14 +79,14 @@ fn create_land_chunk_material(
             .unwrap()
     }
 
-    const CHUNK_TILE_DATA_SIDE: i32 = (TILE_NUM_PER_CHUNK_1D + 5) as i32; // 8 + 5 = 13
+    const CHUNK_TILE_DATA_SIDE: i32 = (TILE_NUM_PER_CHUNK_DIM + 5) as i32; // 8 + 5 = 13
     const BORDER: i32 = 2;
 
     // 1) Gather all cell data for the 13x13 grid in one pass.
     let mut cell_grid: Vec<&MapCell> =
         Vec::with_capacity((CHUNK_TILE_DATA_SIDE * CHUNK_TILE_DATA_SIDE) as usize);
-    for gy in -BORDER..(TILE_NUM_PER_CHUNK_1D as i32 + BORDER + 1) {
-        for gx in -BORDER..(TILE_NUM_PER_CHUNK_1D as i32 + BORDER + 1) {
+    for gy in -BORDER..(TILE_NUM_PER_CHUNK_DIM as i32 + BORDER + 1) {
+        for gx in -BORDER..(TILE_NUM_PER_CHUNK_DIM as i32 + BORDER + 1) {
             let world_tx = (chunk_origin_tile_units_x as i32 + gx).max(0) as u32;
             let world_tz = (chunk_origin_tile_units_z as i32 + gy).max(0) as u32;
             cell_grid.push(get_cell(blocks_data_ref, world_tx, world_tz));
@@ -133,7 +133,7 @@ fn create_land_chunk_material(
 
     // Tunables are separate.
     let preset = &shader_presets_r.classic.morning;
-    let mat_ext_tunables_uniform = preset.tunables;
+    let mat_ext_tunables_uniform = preset.effects;
     let mat_ext_lighting_uniform = preset.lighting;
 
     // 3) Create and return the material handle.
@@ -144,7 +144,7 @@ fn create_land_chunk_material(
             texarray_big: land_texture_cache_rref.big.image_handle.clone(),
             land_uniform: mat_ext_land_uniforms,
             scene_uniform: mat_ext_scene_uniform,
-            tunables_uniform: mat_ext_tunables_uniform,
+            effects_uniform: mat_ext_tunables_uniform,
             lighting_uniform: mat_ext_lighting_uniform,
         },
     };
@@ -307,6 +307,7 @@ pub fn sys_draw_spawned_land_chunks(
         }
         // Paranoid check, shouldn't ever happen.
         if commands.get_entity(entity.unwrap()).is_err() {
+            // TODO: change to logger::one.
             println!(
                 "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'."
             );
@@ -365,9 +366,9 @@ fn draw_land_chunk(
 
     // Compute chunk origin (in tile units) for the transform.
     let chunk_origin_tile_units_x =
-        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_1D;
+        chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
     let chunk_origin_tile_units_z =
-        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_1D;
+        chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_DIM;
 
     // 7) Attach to entity
     if let Ok(mut entity_commands) = commands.get_entity(chunk_data_ref.entity.unwrap()) {

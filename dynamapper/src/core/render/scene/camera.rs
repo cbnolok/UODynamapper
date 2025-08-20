@@ -123,7 +123,7 @@ fn sys_setup_cam(
 // World light
 //------------------------------------
 
-// We won't use a world light source, we'll bake the light from the material and the shader.
+// We won't use a world light source, we'll bake the light in the material and the shader.
 // We use it now just to light the "player" cube.
 /*
 // Set up a directional light (sun)

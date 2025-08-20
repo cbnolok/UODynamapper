@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::window::{Window, WindowResized};
 use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use player::Player;
-use world::land::TILE_NUM_PER_CHUNK_1D;
+use world::land::TILE_NUM_PER_CHUNK_DIM;
 use world::{WorldGeoData, land};
 
 #[derive(Resource)]
@@ -133,7 +133,7 @@ fn compute_visible_chunks(
 
     // Now convert these to chunk indices (and always round DOWN for min, UP for max)
     // so that *any partially overlapping chunk is included*.
-    let chunk_size = TILE_NUM_PER_CHUNK_1D;
+    let chunk_size = TILE_NUM_PER_CHUNK_DIM;
     let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
     let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
     let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);

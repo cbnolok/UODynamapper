@@ -145,3 +145,7 @@ pub fn one(
 
     paris::log!("{full_msg}");
 }
+
+pub fn system(msg: &str) {
+    paris::log!("<dark-green>{msg}</>");
+}

@@ -127,10 +127,10 @@ pub fn run_bevy_app() -> ExitCode {
     let assets_folder = cwd.join(constants::ASSET_FOLDER);
 
     // Current working directory.
-    println!("CWD: {cwd:?}");
+    logger::system(&format!("CWD: {cwd:?}"));
     // Other debug info.
-    //println!("DEFAULT ASSET DIR: {:?}", bevy::asset::AssetPlugin::default().file_path);
-    println!("Assets folder: {assets_folder:?}");
+    logger::system(&format!("Default Assets folder: {:?}", bevy::asset::AssetPlugin::default().file_path));
+    logger::system(&format!("Setting custom Assets folder: {assets_folder:?}"));
 
     let settings_data = settings::load_from_file();
     logger::one(

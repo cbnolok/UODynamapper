@@ -1,4 +1,4 @@
-use super::{TILE_NUM_PER_CHUNK_1D, draw_mesh::LandMeshHandle};
+use super::{TILE_NUM_PER_CHUNK_DIM, draw_mesh::LandMeshHandle};
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
@@ -7,10 +7,12 @@ use bevy::{
 
 /// This startup system generates a single, shared 9x9 grid mesh for all land chunks.
 pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    const GRID_W: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
-    const GRID_H: usize = (TILE_NUM_PER_CHUNK_1D + 1) as usize;
-    const CORE_W: usize = TILE_NUM_PER_CHUNK_1D as usize;
-    const CORE_H: usize = TILE_NUM_PER_CHUNK_1D as usize;
+    // Core: real tile number inside a map block.
+    const CORE_W: usize = TILE_NUM_PER_CHUNK_DIM as usize;
+    const CORE_H: usize = TILE_NUM_PER_CHUNK_DIM as usize;
+    // The Grid we are making though has an additional row and column at south and east, so that it can contain the data about adjacent tiles.
+    const GRID_W: usize = (TILE_NUM_PER_CHUNK_DIM + 1) as usize;
+    const GRID_H: usize = (TILE_NUM_PER_CHUNK_DIM + 1) as usize;
 
     let estimated_vertex_count = GRID_W * GRID_H;
     let mut positions = Vec::with_capacity(estimated_vertex_count);
@@ -51,6 +53,9 @@ pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>)
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, dummy_normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    // Add dummy UV1 values (a second copy of UV coords). We aren't really using them as those are, but by inserting them here
+    //  we'll have them available in the render pipeline and we can use this variable to pass custom data from the vertex
+    //  to the fragment shader.
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, dummy_uv1s);
     mesh.insert_indices(Indices::U32(indices));
 

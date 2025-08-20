@@ -1,4 +1,8 @@
-.cargo
+/.cargo
+/archive
 .idea
 .vscode
-archive
+
+*.bak
+*.bku
+*.swp*

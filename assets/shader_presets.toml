@@ -1,11 +1,11 @@
-# Shader Presets for UODynamapper
+# Shader Presets.
 # This file defines the lighting and tuning parameters for different rendering styles and times of day.
 #
 # ------------------
 # --- LEGEND ---
 # ------------------
 #
-# === [tunables] ===
+# === [Effects (general)] ===
 # --- Modes & Toggles ---
 # shading_mode:      The core rendering style. 0: Classic, 1: Enhanced, 2: KR.
 # normal_mode:       How surface normals are calculated. 0: Geometric (faceted), 1: Bicubic (smooth).
@@ -27,7 +27,7 @@
 # blur_strength:     How much the blurred texture is blended with the original (0.0 to 1.0).
 # blur_radius:       The radius for the texture blur effect (small values like 0.0025 work well).
 #
-# === [lighting] ===
+# === [Lighting] ===
 # --- Colors ---
 # light_color:         The color of the main directional light as [R, G, B].
 # ambient_color:       The base color of the ambient light as [R, G, B].
@@ -55,7 +55,7 @@
 
 [classic.morning]
 # Morning: soft warm sun, cool ambient.
-[classic.morning.tunables]
+[classic.morning.effects]
 shading_mode = 0
 normal_mode = 1
 enable_bent = 1
@@ -92,7 +92,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.afternoon]
 # Afternoon: brighter sun, rich colors.
-[classic.afternoon.tunables]
+[classic.afternoon.effects]
 shading_mode = 0
 normal_mode = 1
 enable_bent = 1
@@ -129,7 +129,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.night]
 # Night: cool light, low ambient.
-[classic.night.tunables]
+[classic.night.effects]
 shading_mode = 0
 normal_mode = 1
 enable_bent = 1
@@ -166,7 +166,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.cave]
 # Cave: very low ambient, cool tones.
-[classic.cave.tunables]
+[classic.cave.effects]
 shading_mode = 0
 normal_mode = 1
 enable_bent = 1
@@ -208,7 +208,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 # A more modern look with smooth lighting, fill lights, and basic grading.
 
 [enhanced.morning]
-[enhanced.morning.tunables]
+[enhanced.morning.effects]
 shading_mode = 1
 normal_mode = 1
 enable_bent = 1
@@ -244,7 +244,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon]
-[enhanced.afternoon.tunables]
+[enhanced.afternoon.effects]
 shading_mode = 1
 normal_mode = 1
 enable_bent = 1
@@ -280,7 +280,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.night]
-[enhanced.night.tunables]
+[enhanced.night.effects]
 shading_mode = 1
 normal_mode = 1
 enable_bent = 1
@@ -316,7 +316,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.cave]
-[enhanced.cave.tunables]
+[enhanced.cave.effects]
 shading_mode = 1
 normal_mode = 1
 enable_bent = 1
@@ -358,7 +358,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 # Full-featured rendering with all effects enabled for a modern look.
 
 [kr.morning]
-[kr.morning.tunables]
+[kr.morning.effects]
 shading_mode = 2
 normal_mode = 1
 enable_bent = 1
@@ -394,7 +394,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.afternoon]
-[kr.afternoon.tunables]
+[kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
 enable_bent = 1
@@ -430,7 +430,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.night]
-[kr.night.tunables]
+[kr.night.effects]
 shading_mode = 2
 normal_mode = 1
 enable_bent = 1
@@ -466,7 +466,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.cave]
-[kr.cave.tunables]
+[kr.cave.effects]
 shading_mode = 2
 normal_mode = 1
 enable_bent = 1

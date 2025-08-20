@@ -1,5 +1,5 @@
 // Terrain shader live UI (Bevy 0.16 + egui)
-// - Controls TunablesUniform and LightingUniforms as used by your WGSL
+// - Controls LandEffectsUniform and LandLightingUniform as used by your WGSL
 // - Writes to material assets so Bevy re-uploads uniforms automatically
 // - Shading modes:
 //      0 = Classic 2D (vertex/Gouraud; faithful to original)
@@ -15,11 +15,6 @@ use crate::{
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-
-// Your material types and uniform structs (exported by your mesh_material module):
-// - LandCustomMaterial: ExtendedMaterial<StandardMaterial, LandMaterialExtension>
-// - TunablesUniform, LightingUniforms
-// - ShaderMode, morning_preset, afternoon_preset, night_preset, cave_preset
 use super::scene::world::land::mesh_material::*;
 
 // Plugin that draws the UI and applies changes to materials.
@@ -62,29 +57,29 @@ fn terrain_ui_system(
             // --------------------- Mode & Normals ---------------------
             ui.horizontal(|ui| {
                 ui.strong("Shading Mode:");
-                let mut mode = u.tunables.shading_mode;
+                let mut mode = u.effects.shading_mode;
                 for (label, val) in [("Classic", 0u32), ("Enhanced", 1u32), ("KR", 2u32)] {
                     if ui.selectable_label(mode == val, label).clicked() {
                         mode = val;
                     }
                 }
-                if mode != u.tunables.shading_mode {
-                    u.tunables.shading_mode = mode;
+                if mode != u.effects.shading_mode {
+                    u.effects.shading_mode = mode;
                     u.dirty = true; // push to GPU next frame
                 }
 
                 ui.separator();
 
                 ui.strong("Normals:");
-                let mut nm = u.tunables.normal_mode;
+                let mut nm = u.effects.normal_mode;
                 if ui.selectable_label(nm == 0, "Geometric").clicked() {
                     nm = 0;
                 }
                 if ui.selectable_label(nm == 1, "Bicubic").clicked() {
                     nm = 1;
                 }
-                if nm != u.tunables.normal_mode {
-                    u.tunables.normal_mode = nm;
+                if nm != u.effects.normal_mode {
+                    u.effects.normal_mode = nm;
                     u.dirty = true;
                 }
             });
@@ -97,20 +92,20 @@ fn terrain_ui_system(
                 let mut changed = false;
 
                 // Fog and Tonemap apply in ANY shading mode (keep available always)
-                changed |= toggle_u32(ui, "Fog", &mut u.tunables.enable_fog);
-                changed |= toggle_u32(ui, "Tonemap", &mut u.tunables.enable_tonemap);
+                changed |= toggle_u32(ui, "Fog", &mut u.effects.enable_fog);
+                changed |= toggle_u32(ui, "Tonemap", &mut u.effects.enable_tonemap);
 
                 // Color grading & fragment-only features only when in fragment modes
-                let is_classic = u.tunables.shading_mode == 0;
+                let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
-                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.tunables.enable_grading);
-                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.tunables.enable_bent);
+                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.effects.enable_grading);
+                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.effects.enable_bent);
 
                     // Gloom: fragment-only semantic
                     let toggled =
-                        toggle_u32(ui, "Gloom (fragment)", &mut u.tunables.enable_gloom);
+                        toggle_u32(ui, "Gloom (fragment)", &mut u.effects.enable_gloom);
                     if toggled {
-                        if u.tunables.enable_gloom == 0 {
+                        if u.effects.enable_gloom == 0 {
                             u.lighting.gloom_params[0] = 0.0;
                         } else if u.lighting.gloom_params[0] <= 0.0001 {
                             u.lighting.gloom_params[0] = 0.20;
@@ -119,7 +114,7 @@ fn terrain_ui_system(
                     changed |= toggled;
 
                     // Blur is fragment-only
-                    changed |= toggle_u32(ui, "Blur (fragment)", &mut u.tunables.enable_blur);
+                    changed |= toggle_u32(ui, "Blur (fragment)", &mut u.effects.enable_blur);
                 } else {
                     // For classic path we can optionally display the state but disabled,
                     // but to keep the UI clean we simply hide fragment-only toggles here.
@@ -144,14 +139,14 @@ fn terrain_ui_system(
                 );
 
                 // Ambient always shown
-                changed |= slider_s(ui, "Ambient", &mut u.tunables.ambient_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "Ambient", &mut u.effects.ambient_strength, 0.0..=1.5);
 
                 // Diffuse is meaningful only for fragment modes. For Classic (vertex)
                 // the shader uses the precomputed vertex Lambert (old behavior) and
                 // we intentionally hide the diffuse control to avoid confusion.
-                let is_classic = u.tunables.shading_mode == 0;
+                let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
-                    changed |= slider_s(ui, "Diffuse", &mut u.tunables.diffuse_strength, 0.0..=2.0);
+                    changed |= slider_s(ui, "Diffuse", &mut u.effects.diffuse_strength, 0.0..=2.0);
                 } else {
                     // Show a small label to explain why Diffuse is hidden
                     ui.label("Diffuse slider hidden in Classic mode (vertex shading).");
@@ -171,26 +166,26 @@ fn terrain_ui_system(
                     changed |= slider_s(
                         ui,
                         "Specular (fragment only)",
-                        &mut u.tunables.specular_strength,
+                        &mut u.effects.specular_strength,
                         0.0..=0.4,
                     );
                     changed |= slider_s(
                         ui,
                         "Fill (env) (fragment only)",
-                        &mut u.tunables.fill_strength,
+                        &mut u.effects.fill_strength,
                         0.0..=1.0,
                     );
                     ui.separator();
                     changed |= slider_s(
                         ui,
                         "Sharpness Factor (fragment only)",
-                        &mut u.tunables.sharpness_factor,
+                        &mut u.effects.sharpness_factor,
                         0.5..=4.0,
                     );
                     changed |= slider_s(
                         ui,
                         "Sharpness Mix (fragment only)",
-                        &mut u.tunables.sharpness_mix,
+                        &mut u.effects.sharpness_mix,
                         0.0..=1.0,
                     );
                     ui.separator();
@@ -198,17 +193,17 @@ fn terrain_ui_system(
                     changed |= slider_s(
                         ui,
                         "Blur Strength (fragment only)",
-                        &mut u.tunables.blur_strength,
+                        &mut u.effects.blur_strength,
                         0.0..=0.5,
                     );
                     changed |= slider_s(
                         ui,
                         "Blur Radius (screen pixels) (fragment only)",
-                        &mut u.tunables.blur_radius,
+                        &mut u.effects.blur_radius,
                         0.5..=8.0,
                     );
 
-                    changed |= slider_s(ui, "Rim (KR only)", &mut u.tunables.rim_strength, 0.0..=0.5);
+                    changed |= slider_s(ui, "Rim (KR only)", &mut u.effects.rim_strength, 0.0..=0.5);
                 } else {
                     // In Classic mode show a helper note.
                     ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
@@ -277,7 +272,7 @@ fn terrain_ui_system(
             // ----------------- KR like Color Grading (Vibrant) --------------
             ui.collapsing("Color Grading (Vibrant) (fragment only)", |ui| {
                 let mut changed = false;
-                if u.tunables.shading_mode == 0 {
+                if u.effects.shading_mode == 0 {
                     ui.label("Color grading is fragment-only and hidden in Classic mode.");
                 } else {
                     changed |= slider_s(
@@ -345,7 +340,7 @@ fn terrain_ui_system(
             // ------------------------ Gloom ----------------------------
             ui.collapsing("Gloom (Moody Cool Darkening) (fragment only)", |ui| {
                 let mut changed = false;
-                if u.tunables.shading_mode == 0 {
+                if u.effects.shading_mode == 0 {
                     ui.label("Gloom is fragment-only and hidden in Classic mode.");
                 } else {
                     changed |= slider_s(ui, "Amount", &mut u.lighting.gloom_params[0], 0.0..=1.0);
@@ -411,45 +406,45 @@ fn terrain_ui_system(
             ui.horizontal(|ui| {
                 ui.strong("Presets:");
                 if ui.button("Morning").clicked() {
-                    let preset = match u.tunables.shading_mode {
+                    let preset = match u.effects.shading_mode {
                         0 => &shader_presets.classic.morning,
                         1 => &shader_presets.enhanced.morning,
                         _ => &shader_presets.kr.morning,
                     };
-                    u.tunables = preset.tunables;
+                    u.effects = preset.effects;
                     u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Afternoon").clicked() {
-                    let preset = match u.tunables.shading_mode {
+                    let preset = match u.effects.shading_mode {
                         0 => &shader_presets.classic.afternoon,
                         1 => &shader_presets.enhanced.afternoon,
                         _ => &shader_presets.kr.afternoon,
                     };
-                    u.tunables = preset.tunables;
+                    u.effects = preset.effects;
                     u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Night").clicked() {
-                    let preset = match u.tunables.shading_mode {
+                    let preset = match u.effects.shading_mode {
                         0 => &shader_presets.classic.night,
                         1 => &shader_presets.enhanced.night,
                         _ => &shader_presets.kr.night,
                     };
-                    u.tunables = preset.tunables;
+                    u.effects = preset.effects;
                     u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
                 }
                 if ui.button("Cave").clicked() {
-                    let preset = match u.tunables.shading_mode {
+                    let preset = match u.effects.shading_mode {
                         0 => &shader_presets.classic.cave,
                         1 => &shader_presets.enhanced.cave,
                         _ => &shader_presets.kr.cave,
                     };
-                    u.tunables = preset.tunables;
+                    u.effects = preset.effects;
                     u.lighting = preset.lighting;
                     u.global_lighting = 1.0;
                     u.dirty = true;
@@ -472,7 +467,7 @@ fn push_uniforms_if_dirty(
 
     for (_handle, mat) in mats.iter_mut() {
         // Overwrite the embedded uniforms used by the material extension.
-        mat.extension.tunables_uniform = u.tunables;
+        mat.extension.effects_uniform = u.effects;
         mat.extension.lighting_uniform = u.lighting;
 
         // NEW: write global lighting into the land uniform so shader sees it

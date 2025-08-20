@@ -2,7 +2,7 @@ pub mod overlays;
 pub mod scene;
 pub mod terrain_shader_ui;
 
-use crate::{/*fname,*/ impl_tracked_plugin, util_lib::tracked_plugin::*};
+use crate::prelude::*;
 use bevy::prelude::*;
 
 pub struct RenderPlugin {

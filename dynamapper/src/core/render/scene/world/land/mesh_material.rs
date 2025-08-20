@@ -21,7 +21,7 @@ pub struct LandMaterialExtension {
     #[uniform(104, min_binding_size = 16)]
     pub scene_uniform: SceneUniform,
     #[uniform(105, min_binding_size = 16)]
-    pub tunables_uniform: LandTunablesUniform,
+    pub effects_uniform: LandEffectsUniform,
     #[uniform(106, min_binding_size = 16)]
     pub lighting_uniform: LandLightingUniforms,
 }
@@ -79,7 +79,9 @@ pub struct SceneUniform {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
-pub struct LandTunablesUniform {
+pub struct LandEffectsUniform {
+    // TODO: keep here only non-lighting data. Move the others to LandLightingUniforms, then update the shader and terrain_shader_ui.rs.
+
     // modes/toggles
     pub shading_mode: u32,
     pub normal_mode: u32,
@@ -134,6 +136,7 @@ pub struct LandLightingUniforms {
     pub rim_color: Vec4,
     pub grade_warm_color: Vec4,
     pub grade_cool_color: Vec4,
+    // TODO: explain via a comment the fields of the Vec fields that are NOT RGBA colors.
     pub grade_params: Vec4,
     pub grade_extra: Vec4,
     pub gloom_params: Vec4,
@@ -168,6 +171,6 @@ pub struct LandRenderStylePresetsPerMode {
 }
 #[derive(Debug, Deserialize)]
 pub struct LandMaterialUniformsPresets {
-    pub tunables: LandTunablesUniform,
+    pub effects: LandEffectsUniform,
     pub lighting: LandLightingUniforms,
 }

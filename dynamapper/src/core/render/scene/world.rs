@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use crate::prelude::*;
 use crate::core::maps::MapPlaneMetadata;
 
-
+// Temp map0 default size:
 const DUMMY_MAP_SIZE_X: u32 = 4096;
 const DUMMY_MAP_SIZE_Y: u32 = 7120;
 

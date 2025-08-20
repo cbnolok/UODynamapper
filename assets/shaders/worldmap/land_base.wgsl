@@ -42,7 +42,7 @@ struct SceneUniform {
   global_lighting: f32,
 };
 
-struct TunablesUniform {
+struct EffectsUniform {
   // Modes / toggles
   shading_mode:   u32, // 0=Classic (vertex), 1=Enhanced (frag), 2=KR (frag)
   normal_mode:    u32, // 0=geometric, 1=bicubic
@@ -127,16 +127,16 @@ struct LightingUniforms {
 @group(2) @binding(102) var texarray_big:   texture_2d_array<f32>;
 @group(2) @binding(103) var<uniform> land:    LandUniform;
 @group(2) @binding(104) var<uniform> scene:   SceneUniform;
-@group(2) @binding(105) var<uniform> tunables: TunablesUniform;
+@group(2) @binding(105) var<uniform> effects: EffectsUniform;
 @group(2) @binding(106) var<uniform> lighting: LightingUniforms;
 
 // ============================================================================
 // Grid helpers & utilities
 // ============================================================================
 
-const CHUNK_TILE_NUM_1D: u32 = 8u;
+const CHUNK_TILE_NUM_DIM: u32 = 8u;
 const DATA_GRID_BORDER:  i32 = 2;
-const DATA_GRID_SIDE:    i32 = 13;
+const DATA_GRID_SIDE:    i32 = 13;  // DATA_GRID_BORDER + CHUNK_TILE_NUM_DIM + DATA_GRID_BORDER
 const MESH_GRID_SIDE:    u32 = 9u;
 
 // Clamp safe index into the 13×13 “data grid”
@@ -156,8 +156,8 @@ fn tile_height_at_13x13(ix: i32, iz: i32) -> f32 {
 fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
   let tx = floor(local_x);
   let tz = floor(local_z);
-  let dx = min(tx, f32(CHUNK_TILE_NUM_1D - 1u) - tx);
-  let dz = min(tz, f32(CHUNK_TILE_NUM_1D - 1u) - tz);
+  let dx = min(tx, f32(CHUNK_TILE_NUM_DIM - 1u) - tx);
+  let dz = min(tz, f32(CHUNK_TILE_NUM_DIM - 1u) - tz);
   let min_dist = min(dx, dz);
   return 1.0 - smoothstep(0.0, 2.0, min_dist);
 }
@@ -550,9 +550,9 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   var out: VertexOutput;
 
-  let shading_mode: u32 = tunables.shading_mode;
-  let normal_mode:  u32 = tunables.normal_mode;
-  let enable_bent:  u32 = tunables.enable_bent;
+  let shading_mode: u32 = effects.shading_mode;
+  let normal_mode:  u32 = effects.normal_mode;
+  let enable_bent:  u32 = effects.enable_bent;
 
   // Node indices in 9×9 grid
   let grid_x: u32 = vertex_index % MESH_GRID_SIDE;
@@ -744,26 +744,26 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-  let shading_mode   = tunables.shading_mode;
-  let normal_mode    = tunables.normal_mode;
-  let enable_bent    = tunables.enable_bent;
-  let enable_fog     = tunables.enable_fog;
-  let enable_gloom   = tunables.enable_gloom;
-  let enable_tonemap = tunables.enable_tonemap;
-  let enable_grading = tunables.enable_grading;
-  let enable_blur    = tunables.enable_blur;
+  let shading_mode   = effects.shading_mode;
+  let normal_mode    = effects.normal_mode;
+  let enable_bent    = effects.enable_bent;
+  let enable_fog     = effects.enable_fog;
+  let enable_gloom   = effects.enable_gloom;
+  let enable_tonemap = effects.enable_tonemap;
+  let enable_grading = effects.enable_grading;
+  let enable_blur    = effects.enable_blur;
 
-  let ambient_strength  = tunables.ambient_strength;
-  let diffuse_strength  = tunables.diffuse_strength;
-  let specular_strength = tunables.specular_strength;
-  let rim_strength      = tunables.rim_strength;
+  let ambient_strength  = effects.ambient_strength;
+  let diffuse_strength  = effects.diffuse_strength;
+  let specular_strength = effects.specular_strength;
+  let rim_strength      = effects.rim_strength;
 
-  let fill_strength     = tunables.fill_strength;
-  let sharpness_factor  = tunables.sharpness_factor;
-  let sharpness_mix     = tunables.sharpness_mix;
+  let fill_strength     = effects.fill_strength;
+  let sharpness_factor  = effects.sharpness_factor;
+  let sharpness_mix     = effects.sharpness_mix;
 
-  let blur_strength     = tunables.blur_strength;
-  let blur_radius       = tunables.blur_radius;
+  let blur_strength     = effects.blur_strength;
+  let blur_radius       = effects.blur_radius;
 
   let exposure          = lighting.exposure;
 
