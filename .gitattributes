@@ -1,5 +1,38 @@
-* text eol=lf
+* text text=auto
 
-# Don't check for trailing whitespace at the end of lines.
-*.md -whitespace=blank-at-eol
+*.rs       text diff=rust
+*.toml     text diff=toml
+Cargo.lock text
+
+# git config
+.gitattributes text
+.gitignore text
+.gitconfig text
+
+# Documentation
 #*.md filter=space-removal-at-eol
+*.md text diff=markdown -whitespace=blank-at-eol # Don't check for trailing whitespace at the end of lines.
+LICENSE text
+AUTHORS text
+
+# (binary is a macro for -text -diff)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.mp3 binary
+*.flv binary
+*.fla binary
+*.swf binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.ttf binary
+*.eot binary
+*.woff binary
+*.pyc binary
+*.pdf binary

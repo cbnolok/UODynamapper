@@ -3,7 +3,7 @@
 
 Ultima Online dynamic map renderer, at a very early stage.
 
-![Current state of version 0.1](docs/screenshot-0.1.webp)
+![Current state of version 0.1](./docs/screenshot-0.1.webp)
 
 ## Running
 

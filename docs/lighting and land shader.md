@@ -20,13 +20,13 @@ final_rgb =
 
 ---
 
-## 1) Geometry, grids, and why 8×8 → 9×9 → 12×12/13×13
+## 1) Geometry, grids, and why 8×8 → 9×9 → 13×13
 
 ### 1.1 What we draw vs what we need
 
 * **Core tiles we render:** **8×8** per chunk (the actual quads).
 * **Vertex grid we build:** **9×9** (one more in each axis) so every quad has 4 distinct corners and so we can compute edge-safe vertex normals/displacements without falling off the mesh.
-* **Shader “tile data” we upload:** **≥ 11×11** to support smooth per-fragment reconstruction (bicubic) and optional ambient/bent-normal sampling near borders.
+* **Shader “tile data” we upload:** **≥ 13×13** to support smooth per-fragment reconstruction (bicubic) and optional ambient/bent-normal sampling near borders.
 
 ### 1.2 Why 9×9 vertices for an 8×8 core
 
@@ -52,24 +52,13 @@ That motivates **larger margins**:
 
 * 9 + 2×**2** = **13×13** (margin radius = 2 nodes) → robust for bicubic **and** small horizon/bent-normal kernels.
 * 9 + 2×**1** = **11×11** (margin radius = 1 node) → just enough for bicubic, but tight for horizon sampling.
-* **12×12** is an awkward in-between (9 + 3), implying an average margin of **1.5**—easy to run out on one side when kernels point outward.
 
 **Conclusion:** If you plan **only bicubic** and no horizon/bent normals, **11×11 is sufficient**.
-If you want **bent normals / tiny AO kernels** (our KR preset), **13×13 is the right choice**. The extra cost is tiny (see §1.5).
+If you want **bent normals / tiny AO kernels** (our KR preset), **13×13 is the right choice**. The extra cost is tiny.
 
 ### 1.4 Why we sometimes say “12×12”
 
 Some pipelines store **tile-center** attributes (one per tile), not node heights. An 8×8 core plus a 2-tile border becomes **12×12** “tiles”. But to do bicubic correctly you want **node** samples. In our implementation the uniform holds **per-cell attributes** including the height used for reconstruction; we standardized on **13×13** so we’re never forced to clamp or silently change kernels at borders.
-
-### 1.5 Memory and cost check
-
-`TileUniform` is **16 bytes** (std140-safe: `f32 + u32 + u32 + u32`).
-
-* **12×12:** 144 tiles → **2304 B**.
-* **13×13:** 169 tiles → **2704 B**.
-  Difference: **400 B per chunk**—negligible versus the 64 KB UBO soft limit and well within Bevy/encase expectations.
-
-**Recommendation:** Use **13×13**. Quality ↑, robustness ↑, cost \~0.
 
 ---
 
@@ -187,36 +176,7 @@ Once any channel is > 1, you’re in **HDR**. The framebuffer or the logical col
 
 ---
 
-## 7) 12×12 vs 13×13: does 13×13 really help?
-
-### 7.1 What 12×12 gets you
-
-* If your kernels never step beyond **±1** node from the 9×9 interior, **12×12 is almost enough** in one axis and **barely short** in the other (since 12 = 9 + 3 → average margin 1.5, but margins must be integers per side).
-* In practice, at **some edges** you’ll need to clamp or switch to a smaller kernel. That produces **subtle lighting shifts at borders** (you’ll see it under rim/spec or strong fill).
-
-### 7.2 What 13×13 guarantees
-
-* Clean **margin radius = 2** around the entire 9×9 node grid.
-* Bicubic everywhere in the 8×8 interior with **no clamping**.
-* Small **bent-normal** (e.g., 8 directions × 2 taps) fits safely—no border condition changes.
-* Enables **consistent edge-blend** logic between chunks.
-
-### 7.3 Visual impact
-
-* On *flat* terrain with **diffuse only**, 12×12 vs 13×13 is subtle.
-* Once you enable **rim/spec/fill** (KR), edge-cases get amplified: highlight contours and ambient gradients make any border inconsistency obvious.
-* 13×13 eliminates those hiccups.
-
-### 7.4 Cost delta
-
-* **+25 tiles** worth of uniforms (400 bytes) and a few extra CPU writes per chunk. GPU side unchanged.
-* This is an easy quality win.
-
-**Answer:** Yes—**13×13 provides a meaningful quality and robustness benefit** in our KR target, while the cost is negligible.
-
----
-
-## 8) Edge blending and seams
+## 6) Edge blending and seams
 
 Even with extra margins, cross-chunk seams can show if adjacent chunks reconstruct normals from slightly different neighborhoods. We mitigate by:
 
@@ -230,11 +190,11 @@ Even with extra margins, cross-chunk seams can show if adjacent chunks reconstru
 
 ---
 
-## 9) Diffuse shaping (“minimal grading” vs painterly shaping)
+## 8) Diffuse shaping (“minimal grading” vs painterly shaping)
 
 Besides tonemapping and color grading, we apply a **diffuse shaping** curve to tune the roll-off of Lambert:
 
-```
+```wgsl
 lambert_shaped = mix(lambert, lambert^γ, mix_factor)
 ```
 
@@ -245,9 +205,9 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 
 ---
 
-## 10) Style presets (toggle matrix)
+## 9) Style presets (toggle matrix)
 
-### 10.1 Original / Classic 2D
+### 9 Original / Classic 2D
 
 * **Normals:** Geometric
 * **Shading:** **Gouraud** (Lambert only)
@@ -257,7 +217,7 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 * **Tonemap:** Off (stay LDR)
 * **Goal:** faithful stepped look
 
-### 10.2 Enhanced Classic 2D
+### 9.2 Enhanced Classic 2D
 
 * **Normals:** Bicubic
 * **Shading:** **Per-fragment** Lambert
@@ -268,7 +228,7 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 * **Tonemap:** On (mild; prevents clipping)
 * **Goal:** “Remastered” cohesion; still classic
 
-### 10.3 KR-like Painterly
+### 9.3 KR-like Painterly
 
 * **Normals:** Bicubic + **Bent** for ambient terms
 * **Shading:** **Per-fragment** Lambert + **Rim** + **Blinn-Phong Spec** (low, wide)
@@ -280,7 +240,7 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 
 ---
 
-## 11) Light direction: why we pass it, and how it affects both paths
+## 10) Light direction: why we pass it, and how it affects both paths
 
 * The core of diffuse is **Lambert**: `dot(N, L)`.
 * We **normalize `L` on the CPU** to keep intensities meaningful and consistent.
@@ -289,7 +249,7 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 
 ---
 
-## 12) Practical implementation caveats (Bevy / encase / WGSL)
+## 11) Practical implementation caveats (Bevy / encase / WGSL)
 
 * **std140 alignment:** Arrays in uniform buffers must have **16-byte strides**. Our `TileUniform` packs to 16 bytes, and the struct/array is `#[repr(C, align(16))]`. This prevents the dreaded *“array stride must be a multiple of 16”* panic.
 * **Counts:** 13×13 = 169 elements; still tiny vs UBO limits.
@@ -300,10 +260,7 @@ Think of this as **luma-space pre-contrast** just on diffuse, not a global grade
 
 ---
 
-## 13) FAQ quick hits
-
-**Q: Is 13×13 *visibly* better than 12×12?**
-**A:** With only diffuse, not much. With KR stack (rim/spec/fill + tonemap), yes—border consistency improves, bent-normal probes don’t downshift kernels near edges, highlights/fill gradients stay smooth across chunk seams.
+## FAQ quick hits
 
 **Q: Are bicubic and bent normals the same thing?**
 **A:** No. **Bicubic** reconstructs a smooth surface from samples (a *geometric* model). **Bent** normals bias direction toward open sky (an *ambient visibility* model). We often compute bent normals **from the bicubic field** or blend between them.

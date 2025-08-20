@@ -12,6 +12,6 @@ fn main() -> ExitCode {
     color_eyre::install() // colored panic and backtrace
         .expect("Can't install color_eyre?");
 
-    println!("Starting Bevy app.");
+    logger::system("Starting Bevy app.");
     core::run_bevy_app()
 }
