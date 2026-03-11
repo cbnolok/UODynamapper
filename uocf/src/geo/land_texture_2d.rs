@@ -176,6 +176,18 @@ impl TexMap2D {
 
         // Loop on each entry of texidx
         let mut i_idx_valid: usize = 0;
+
+        #[cfg(debug_assertions)]
+        let lut: Vec<[u8; 4]> = {
+            let mut table = Vec::with_capacity(65536);
+            for i in 0..=65535u16 {
+                use crate::utils::color::Bgra5551;
+                let mut p = Bgra5551::new_from_val(i);
+                p.set_a(1);
+                table.push(p.as_rgba8888().value().to_le_bytes());
+            }
+            table
+        };
         for i_idx_raw in 0..TEXMAP_MAX_ID {
             // 0..texidx.element_count() {
             // Fill texmap
@@ -237,44 +249,54 @@ impl TexMap2D {
 
             cur_texture.pixel_data = Vec::with_capacity(pixel_qty * 4);
 
-            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
-                bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
-
-            for &chunk_array in pixel_data_u16_prefix {
-                #[allow(unused_mut)]
-                let mut chunk = u16x16::new(chunk_array);
-
-                #[cfg(target_endian = "big")]
-                {
-                    chunk = chunk.swap_bytes();
+            #[cfg(debug_assertions)]
+            {
+                let pixels_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
+                for &p in pixels_u16 {
+                    cur_texture.pixel_data.extend_from_slice(&lut[p as usize]);
                 }
-
-                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
-                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
-                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
-                let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
-
-                // Now convert u16x16 to [u32; 16]
-                let mut rgba_u32_array = [0u32; 16];
-                for i in 0..16 {
-                    let r_val = r_u16.as_array_ref()[i] as u32;
-                    let g_val = g_u16.as_array_ref()[i] as u32;
-                    let b_val = b_u16.as_array_ref()[i] as u32;
-                    let a_val = a_u16.as_array_ref()[i] as u32;
-                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
-                }
-                cur_texture
-                    .pixel_data
-                    .extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
             }
+            #[cfg(not(debug_assertions))]
+            {
+                let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
+                    bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
 
-            for &pixel_16_val in pixel_data_u16_suffix {
-                #[allow(unused_mut)]
-                let mut pixel_16 = Bgra5551::new_from_val(pixel_16_val);
-                pixel_16.set_a(1);
-                cur_texture
-                    .pixel_data
-                    .extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+                for &chunk_array in pixel_data_u16_prefix {
+                    #[allow(unused_mut)]
+                    let mut chunk = u16x16::new(chunk_array);
+
+                    #[cfg(target_endian = "big")]
+                    {
+                        chunk = chunk.swap_bytes();
+                    }
+
+                    let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
+                    let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
+                    let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
+                    let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
+
+                    // Now convert u16x16 to [u32; 16]
+                    let mut rgba_u32_array = [0u32; 16];
+                    for i in 0..16 {
+                        let r_val = r_u16.as_array_ref()[i] as u32;
+                        let g_val = g_u16.as_array_ref()[i] as u32;
+                        let b_val = b_u16.as_array_ref()[i] as u32;
+                        let a_val = a_u16.as_array_ref()[i] as u32;
+                        rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                    }
+                    cur_texture
+                        .pixel_data
+                        .extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+                }
+
+                for &pixel_16_val in pixel_data_u16_suffix {
+                    #[allow(unused_mut)]
+                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(pixel_16_val);
+                    pixel_16.set_a(1);
+                    cur_texture
+                        .pixel_data
+                        .extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+                }
             }
 
             cur_texture.valid = true;

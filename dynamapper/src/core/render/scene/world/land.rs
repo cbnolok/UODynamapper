@@ -62,6 +62,7 @@ impl Plugin for DrawLandChunkMeshPlugin {
                         .run_if(in_state(AppState::InGame)),
                 ),
             )
+            .add_systems(First, tile_atlas::sys_clear_atlas_uploads)
             .add_systems(Startup, setup_base_mesh::setup_land_mesh);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };

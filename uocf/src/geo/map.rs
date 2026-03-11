@@ -1,3 +1,20 @@
+//! # UO Map Data Parser (`map.mul`)
+//!
+//! This module handles the loading and parsing of Ultima Online map data from the `map.mul` files.
+//! The map is a 2D grid of tiles, which are organized into blocks of 8x8 tiles.
+//!
+//! ## File Format
+//!
+//! `map.mul` contains a sequence of map blocks. Each block is 196 bytes long and has the
+//! following structure:
+//!
+//! - **Header** (4 bytes, u32, little-endian): An unknown header value.
+//! - **64 Map Cells**: Each cell is 3 bytes long:
+//!   - **Tile ID** (2 bytes, u16, little-endian): The ID of the tile.
+//!   - **Altitude** (1 byte, i8): The Z-coordinate of the tile.
+//!
+//! The blocks are stored in column-major order (top to bottom, then left to right).
+
 #![allow(dead_code)]
 
 crate::eyre_imports!();
@@ -10,10 +27,13 @@ use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
 use bytemuck::{Pod, Zeroable};
 use std::path::PathBuf;
 
+/// Represents a single cell (or tile) in the map.
 #[derive(Clone, Copy, Default)]
 pub struct MapCell {
     // Cells are loaded from blocks in the mul file: left-to-right then top-to-bottom.
+    /// The texture ID of the tile.
     pub id: u16,
+    /// The altitude of the tile.
     pub z: i8,
 }
 impl MapCell {
@@ -58,11 +78,14 @@ impl MapCell {
     }
 }
 
+/// Represents a block of 8x8 cells.
 #[derive(Clone)]
 pub struct MapBlock {
     // Blocks are loaded from the mul file: top-to-bottom then left-to-right.
+    /// The coordinates of the block in the map plane.
     pub internal_coords: MapBlockRelPos,
     //header: u32, // unused
+    /// The cells in the block.
     cells: Box<[MapCell; Self::CELLS_PER_BLOCK as usize]>,
 }
 
@@ -164,6 +187,7 @@ impl MapBlock {
     }
 }
 
+/// Represents a map plane, which is a 2D grid of blocks.
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
@@ -282,8 +306,10 @@ impl MapPlane {
 
         let map_file_mul_rdr = BufReader::new(map_file_mul_handle);
 
+        // The dimensions of the maps are hardcoded based on the map index.
         let map_size_tiles = match map_index {
             0..=1 => {
+                // Determine if this is a pre-ML (6144x4096) or post-ML (7168x4096) map by checking file size.
                 if map_file_mul_metadata.len() < 77070336 {
                     Ok(MapSizeCells {
                         width: 6144,
@@ -370,127 +396,78 @@ impl MapPlane {
         ret
     }
 
-    pub fn load_blocks(&mut self,   blocks_to_load: &mut Vec<MapBlockRelPos>) -> eyre::Result<()> {
-        const MAP_FILE_MAX_SEQ_BLOCKS: usize = 10_000; // Cap of blocks to be read sequentially.
-        const MAP_FILE_MAX_CHUNK_SIZE: usize = MapBlock::PACKED_SIZE * MAP_FILE_MAX_SEQ_BLOCKS;
-
+    pub fn load_blocks(&mut self, blocks_to_load: &mut Vec<MapBlockRelPos>) -> eyre::Result<()> {
         if blocks_to_load.is_empty() {
-            //println!("Received empty load request (no blocks).");
             return Ok(());
         }
 
-        // First, check if we lack some block in our cache.
-        if !self.cached_blocks.is_empty() {
-            let mut missing_key = false;
-            for block_pos in &*blocks_to_load {
-                if !self.cached_blocks.contains_key(block_pos) {
-                    missing_key = true;
-                    break;
+        // Sort the blocks to load by their coordinates.
+        // This makes it more likely that sequential blocks are next to each other in the vector.
+        blocks_to_load.sort_unstable();
+
+        // Group the blocks into ranges of sequential blocks.
+        let mut ranges = Vec::new();
+        if !blocks_to_load.is_empty() {
+            let mut current_range_start = blocks_to_load[0];
+            let mut current_range_end = blocks_to_load[0];
+
+            for i in 1..blocks_to_load.len() {
+                let prev_idx =
+                    MapBlock::idx_from_coords(&blocks_to_load[i - 1], self.size_blocks.height);
+                let current_idx =
+                    MapBlock::idx_from_coords(&blocks_to_load[i], self.size_blocks.height);
+
+                if current_idx == prev_idx + 1 {
+                    current_range_end = blocks_to_load[i];
+                } else {
+                    ranges.push((current_range_start, current_range_end));
+                    current_range_start = blocks_to_load[i];
+                    current_range_end = blocks_to_load[i];
                 }
             }
-            if !missing_key {
-                return Ok(());
-            }
+            ranges.push((current_range_start, current_range_end));
         }
 
-        // We don't have every requested block in the cache, so we need to retrieve them.
-        
+        // Read each range of blocks in a single operation.
+        for (start_block, end_block) in ranges {
+            let start_idx = MapBlock::idx_from_coords(&start_block, self.size_blocks.height);
+            let end_idx = MapBlock::idx_from_coords(&end_block, self.size_blocks.height);
+            let num_blocks = (end_idx - start_idx + 1) as usize;
 
-        // Having it sorted allows us to perform less file reads by acquiring blocks stored sequentially in the map file.
-        blocks_to_load.sort(); // Sort first by x, then by y.
-
-        // Start reading blocks.
-        let mut blocks_buffer: Vec<u8> = vec![0; MAP_FILE_MAX_CHUNK_SIZE];
-        let mut blocks_read: usize = 0;
-        let mut chunk_blocks_to_read_seq_count: usize;
-        'read_chunks: while blocks_read < blocks_to_load.len() {
-            chunk_blocks_to_read_seq_count = 1;
-            if blocks_to_load.len() - blocks_read > 1 {
-                // Given the list of blocks to load, how many of them can i load sequentially?
-                //  (in order to execute the minimum amount of file read operations)
-                'count_sequential_blocks: loop {
-                    if blocks_to_load.len() == blocks_read + chunk_blocks_to_read_seq_count {
-                        // Reached after reading the last chunk
-                        break 'count_sequential_blocks;
-                    }
-
-                    // Blocks are stored sequentially top to bottom, then left to right.
-                    let block_pos_prev: &MapBlockRelPos =
-                        &blocks_to_load[blocks_read + chunk_blocks_to_read_seq_count - 1];
-                    let block_pos: &MapBlockRelPos =
-                        &blocks_to_load[blocks_read + chunk_blocks_to_read_seq_count];
-                    /*
-                    if (block_pos.y < block_pos_prev.y || block_pos.x > block_pos_prev.x)
-                        || (chunk_blocks_to_read_seq_count >= MAP_FILE_MAX_SEQ_BLOCKS)
-                    {
-                        // Reached after reading the last block in every chunk (except the last chunk)
-                        break 'count_sequential_blocks;
-                    }
-                    */
-                    let block_idx_prev =
-                        MapBlock::idx_from_coords(block_pos_prev, self.size_blocks.height);
-                    let block_idx = MapBlock::idx_from_coords(block_pos, self.size_blocks.height);
-
-                    if block_idx != block_idx_prev + 1 {
-                        // The blocks are not sequential in the file, so break the chunk.
-                        break 'count_sequential_blocks;
-                    }
-                    chunk_blocks_to_read_seq_count += 1;
-                }
-            }
-            if chunk_blocks_to_read_seq_count == 0 {
-                break 'read_chunks;
-            }
-
-            // Read the current chunk of blocks.
-            let block_to_seek = blocks_to_load[blocks_read];
-            //let max_blocks = self.size_blocks.width * self.size_blocks.height;
-            if block_to_seek.x >= self.size_blocks.width
-                || block_to_seek.y >= self.size_blocks.height
-            {
-                Err(eyre!(format!(
-                    "Requested map block out of bounds {block_to_seek:?}.")
-                ))?;
-            }
-
-            let block_idx = MapBlock::idx_from_coords(&block_to_seek, self.size_blocks.height);
-            let off = (MapBlock::PACKED_SIZE * block_idx as usize) as u64;
+            let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
             self.map_file_mul_rdr
-                .seek(SeekFrom::Start(off))
-                .wrap_err(format!("Failed to seek to {off} for block {block_idx}."))?;
+                .seek(SeekFrom::Start(offset))
+                .wrap_err_with(|| {
+                    format!(
+                        "Failed to seek to offset {} for block index {}",
+                        offset, start_idx
+                    )
+                })?;
 
-            blocks_buffer.resize(chunk_blocks_to_read_seq_count * MapBlock::PACKED_SIZE, 0);
-            let read_result = self.map_file_mul_rdr
-                .read(blocks_buffer.as_mut())
-                .wrap_err("Read map chunk")?;
-            if 0 == read_result {
-                // EOF
-                return Err(eyre!("Encountered unexpected End Of File.".to_owned()));
-            }
+            let mut buffer = vec![0; num_blocks * MapBlock::PACKED_SIZE];
+            self.map_file_mul_rdr
+                .read_exact(&mut buffer)
+                .wrap_err_with(|| {
+                    format!(
+                        "Failed to read {} blocks from offset {}",
+                        num_blocks, offset
+                    )
+                })?;
 
-            let mut rdr = Cursor::new(blocks_buffer.as_slice());
-            let chunk_slice_to_loop =
-                &blocks_to_load[blocks_read..blocks_read + chunk_blocks_to_read_seq_count];
-
-            'block_store: for block_pos in chunk_slice_to_loop.iter() {
-                if self.cached_blocks.contains_key(block_pos) {
-                    rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))
-                        .wrap_err(format!(
-                            "Failed to seek after already cached block {:?}.",
-                            block_pos
-                        ))?;
-                    blocks_read += 1;
-                    continue 'block_store;
+            let mut cursor = Cursor::new(buffer.as_slice());
+            for i in 0..num_blocks {
+                let block_pos =
+                    MapBlock::coords_from_idx(start_idx + i as u32, self.size_blocks.height);
+                if self.cached_blocks.contains_key(&block_pos) {
+                    cursor.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;
+                    continue;
                 }
 
-                let mut new_block = MapBlock::from_reader(&mut rdr)?;
-                new_block.internal_coords = block_pos.clone();
-                self.cached_blocks.insert(*block_pos, new_block);
-                blocks_read += 1;
+                let mut new_block = MapBlock::from_reader(&mut cursor)?;
+                new_block.internal_coords = block_pos;
+                self.cached_blocks.insert(block_pos, new_block);
             }
         }
-
-        //println!("Done reading block.");
 
         Ok(())
     }

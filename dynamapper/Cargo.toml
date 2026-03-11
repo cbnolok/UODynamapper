@@ -92,7 +92,7 @@ features = [
 
 
   # Platform-Specific
-  #"wayland",                  # Linux: Support Wayland windowing system
+  "wayland",                   # Linux: Support Wayland windowing system
   #"accesskit_unix",           # UNIX-like: AccessKit Accessibility Framework support
   #"android-native-activity",  # Android: Use NativeActivity instead of GameActivity
   #"spirv_shader_passthrough", # Vulkan: allow direct loading of SPIR-V shader blobs without validation
@@ -109,21 +109,21 @@ features = [
   #"pbr_transmission_textures", # Support textures for light transimssion (translucency)
 
   # Development features
-  #"dynamic_linking",     # Dynamic linking for faster compile-times
+  "dynamic_linking",     # Dynamic linking for faster compile-times
   "asset_processor",     # Enable asset processing support
   #"bevy_debug_stepping", # Enable stepping through ECS systems for debugging
   "bevy_dev_tools",      # Extra dev functionality (like FPS overlay)
   "bevy_remote",         # Enable BRP (Bevy Remote Protocol) for integration with editors and external dev tools
   "file_watcher",        # Asset hot-reloading
-  "meshlet_processor",   # Asset processor to convert meshes into meshlet format
+  #"meshlet_processor",   # Asset processor to convert meshes into meshlet format
   "glam_assert",         # Math validation / debug assertions
   "debug_glam_assert",   # Math validation / debug assertions
   "embedded_watcher",    # Hot-reloading for Bevy's internal/builtin assets
   "configurable_error_handler",
-  #"trace",               # Enable tracing
-  #"trace_chrome",        # Enable tracing using the Chrome backend
-  #"trace_tracy",         # Enable tracing using Tracy
-  #"trace_tracy_memory",  # Enable memory tracking for Tracy
+  "trace",               # Enable tracing
+  "trace_chrome",        # Enable tracing using the Chrome backend
+  "trace_tracy",         # Enable tracing using Tracy
+  "trace_tracy_memory",  # Enable memory tracking for Tracy
   "track_location",      # Enable location tracking
   #"detailed_trace",      # Extra verbose tracing
 

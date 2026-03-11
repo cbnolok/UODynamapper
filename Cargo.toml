@@ -5,6 +5,14 @@ members = [
     "uocf"
 ]
 
+[profile.release]
+#lto = true
+#codegen-units = 1
+lto = "thin"
+opt-level = 3
+incremental = false
+debug = false
+
 # Enable a small amount of optimization in debug mode for our crate.
 [profile.dev]
 opt-level = 1
@@ -20,11 +28,3 @@ debug = false # Disable generation of debug info
 # Incremental compilation. The deps are seldomly compiled, generating additional data and files to
 #   allow incremental compilation is a waste.
 incremental = true # false
-
-[profile.release]
-lto = true
-opt-level = 3
-codegen-units = 1
-incremental = false
-debug = false
-

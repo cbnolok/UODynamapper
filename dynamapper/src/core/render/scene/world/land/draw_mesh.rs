@@ -49,12 +49,11 @@ pub struct SharedLandMaterial(pub Handle<LandCustomMaterial>);
 
 /// Enqueues the 8x8 tile data for this chunk into the TileAtlas, and preloads the textures.
 fn enqueue_chunk_to_atlas_and_preload(
-    land_texture_cache_rref: &mut ResMut<LandTextureCache>,
-    images_rref: &mut ResMut<Assets<Image>>,
+    texture_cache: &mut ResMut<LandTextureCache>,
     tile_atlas: &mut ResMut<TileAtlas>,
-    texmap_2d: Arc<TexMap2D>,
+    texmap_2d_r: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
+    blocks_data_map: &BTreeMap<MapBlockRelPos, MapBlock>,
 ) {
     let chunk_origin_tile_units_x =
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
@@ -65,7 +64,7 @@ fn enqueue_chunk_to_atlas_and_preload(
         x: chunk_data_ref.chunk_origin_chunk_units_x,
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
-    let block = blocks_data_ref.get(&chunk_rel_coords).unwrap();
+    let block = blocks_data_map.get(&chunk_rel_coords).unwrap();
 
     let mut unique_tile_ids = HashSet::new();
     let mut texels = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL);
@@ -75,9 +74,8 @@ fn enqueue_chunk_to_atlas_and_preload(
             let cell = block.cell(tx, tz).unwrap();
             unique_tile_ids.insert(cell.id);
 
-            let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
-                images_rref,
-                texmap_2d.clone(),
+            let (texture_size, layer) = texture_cache.get_texture_size_layer(
+                texmap_2d_r.clone(),
                 cell.id,
             );
 
@@ -91,7 +89,6 @@ fn enqueue_chunk_to_atlas_and_preload(
         }
     }
 
-    land_texture_cache_rref.preload_textures(images_rref, texmap_2d.clone(), &unique_tile_ids);
 
     let page_w = tile_atlas.params.page_texels.x;
     let page_h = tile_atlas.params.page_texels.y;
@@ -142,7 +139,6 @@ pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
     mut meshes_r: ResMut<Assets<Mesh>>,
     mut cache_r: ResMut<LandTextureCache>,
-    mut images_r: ResMut<Assets<Image>>,
     mut tile_atlas_r: ResMut<TileAtlas>,
     mut map_planes_r: ResMut<MapPlanesRes>,
     texmap_2d_r: Res<TexMap2DRes>,
@@ -246,9 +242,14 @@ pub fn sys_draw_spawned_land_chunks(
         let mut uo_data_map_plane = uo_data_map_planes_arc
             .get_mut(&current_map_id)
             .expect("Requested map plane metadata is uncached?");
+        let load_blocks_start = Instant::now();
         uo_data_map_plane
             .load_blocks(&mut blocks_to_draw)
             .expect("Can't load map blocks");
+        let load_blocks_us = load_blocks_start.elapsed().as_micros();
+        if load_blocks_us > 1000 {
+            println!("Perf: load_blocks took {} µs for {} blocks.", load_blocks_us, blocks_to_draw.len());
+        }
         for block_coords in blocks_to_draw {
             let block_ref = uo_data_map_plane
                 .block(block_coords)
@@ -262,14 +263,13 @@ pub fn sys_draw_spawned_land_chunks(
         }
     }
 
-    // Step 4: For every chunk that corresponds to a current entity (not filler neighbors), build the mesh.
+    // Step 4: For every chunk that corresponds to a current entity (not filler neighbors), spawn the prebuilt map chunk mesh.
     let build_time_start = Instant::now();
-    for chunk_data in spawn_targets {
+    for chunk_data in &spawn_targets {
         let entity = chunk_data.entity;
         
         enqueue_chunk_to_atlas_and_preload(
             &mut cache_r,
-            &mut images_r,
             &mut tile_atlas_r,
             texmap_2d_r.0.clone(),
             &chunk_data,
@@ -295,7 +295,9 @@ pub fn sys_draw_spawned_land_chunks(
         );
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();
-    println!("Perf: chunk rendered in {build_time} µs.");
+    if build_time > 1000 {
+        println!("Perf: chunk rendering preloader took {build_time} µs for {} chunks.", spawn_targets.len());
+    }
 }
 
 // Completed!

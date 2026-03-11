@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
-use std::num::NonZeroUsize;
-use lru::LruCache; // Assuming lru crate is available on Bevy or std - actually let's implement a simple wrapper or use a known one. Wait, let's use a custom simple LRU or depend on `lru`. I'll use `bevy::utils::HashMap` and a manual tick or `lru` crate if present. Bevy doesn't re-export lru, but we can check if it's there, or just build a trivial one.
 
+/// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
+/// This matches the target texture format (Rg16Uint) in the shader.
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Rg16u {
@@ -11,6 +11,8 @@ pub struct Rg16u {
 }
 
 impl Rg16u {
+    /// Packs tile ID, height (Z), and texture size bit into the Rg16u format.
+    /// This packing must be manually unrolled in the WGSL shader logic.
     pub fn pack(tile_id: u16, height_i8: i8, tex_size_bits: u16) -> Self {
         // g: low 8 bits: height_i8 + 128
         // g: high 8 bits: tex_size_bits (0 or 1)
@@ -20,15 +22,23 @@ impl Rg16u {
     }
 }
 
+/// Uniform parameters passed to the terrain shader to resolve world coordinates into atlas samples.
+/// This struct must be kept in sync with the shader's `AtlasParams` (including std140/std430 alignment).
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType)]
 pub struct AtlasParams {
+    /// Dimension of a single page in texels.
     pub page_texels: UVec2,
+    /// Number of tiles per page (e.g., 8x8 or 2048x2048).
     pub tiles_per_page: UVec2,
+    /// Maximum number of physical layers available in the texture array.
     pub max_layers: u32,
+    /// Number of world pages along the X axis, used for flat index calculation.
     pub world_pages_x: u32,
     pub _pad: UVec2,
-    pub page_to_layer: [bevy::math::UVec4; 64], // Stores mapping for up to 256 pages! Unmapped = u32::MAX
+    /// A flattened array mapping page indices to physical layer indices.
+    /// Each u32 stores the layer index, or u32::MAX if not mapped.
+    pub page_to_layer: [bevy::math::UVec4; 64], // Stores mapping for up to 256 pages! 
 }
 
 impl Default for AtlasParams {
@@ -57,15 +67,22 @@ pub struct AtlasUpload {
     pub data: Vec<u8>,
 }
 
+/// Resource managing the paged metadata atlas. 
+/// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
 pub struct TileAtlas {
+    /// Parameters shared with the GPU.
     pub params: AtlasParams,
-    // LRU: mapped from Page Coordinate (IVec2) to Layer Index (u32)
+    /// LRU Cache: Maps logical Page Coordinate (IVec2) to physical Layer Index (u32).
     page_to_layer: std::collections::HashMap<IVec2, u32>,
+    /// Reverse mapping for eviction logic.
     layer_to_page: std::collections::HashMap<u32, IVec2>,
+    /// Tracks the 'last used' tick for each layer for LRU eviction.
     layer_access_tick: std::collections::HashMap<u32, u64>,
+    /// Monotonically increasing counter for LRU tracking.
     current_tick: u64,
     
+    /// Collects dirty regions to be uploaded to the GPU via `write_texture`.
     pending_uploads: Vec<AtlasUpload>,
 }
 
@@ -81,6 +98,9 @@ impl TileAtlas {
         }
     }
 
+    /// Assigns or retrieves a physical layer index for a given logical world page.
+    /// If no layers are free, it evicts the least recently used (LRU) page.
+    /// Returns the layer index and the optionally evicted page coordinate.
     pub fn ensure_layer_for_page(&mut self, page: IVec2) -> (u32, Option<IVec2>) {
         self.current_tick += 1;
 
@@ -137,6 +157,8 @@ impl TileAtlas {
         (layer, evicted_page)
     }
 
+    /// Enqueues a block of Rg16u metadata for upload to a specific layer and offset.
+    /// This registers a `write_texture` operation that will be executed in the render world.
     pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
         let size_bytes = texels.len() * std::mem::size_of::<Rg16u>();
         let mut data = vec![0u8; size_bytes];
@@ -160,9 +182,12 @@ use bevy::render::render_asset::RenderAssets;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 
+/// Middle-man resource that holds uploaded data during the transition from Main world to Render world.
 #[derive(Resource, Default)]
 pub struct RenderAtlasUploads(pub Vec<AtlasUpload>);
 
+/// System that extracts pending uploads from the `TileAtlas` resource in the Main world
+/// and moves them into the `RenderAtlasUploads` resource in the Render world.
 pub fn sys_extract_atlas_uploads(
     tile_atlas: Extract<Res<TileAtlas>>,
     mut render_uploads: ResMut<RenderAtlasUploads>,
@@ -172,10 +197,13 @@ pub fn sys_extract_atlas_uploads(
     }
 }
 
+/// System that clears the main world's pending uploads after they have been extracted.
 pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
     tile_atlas.pending_uploads.clear();
 }
 
+/// System running in the Render world that drains `RenderAtlasUploads` and issues 
+/// `write_texture` commands to the GPU queue to update the metadata atlas.
 pub fn sys_render_upload_tile_atlas(
     mut uploads: ResMut<RenderAtlasUploads>,
     atlas_handle: Res<TileAtlasImageHandle>,

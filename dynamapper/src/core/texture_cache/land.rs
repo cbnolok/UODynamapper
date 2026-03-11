@@ -15,12 +15,22 @@ impl Plugin for LandTextureCachePlugin {
     /// Allocate GPU texture array for terrain tiles and TileCache.
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(
+        app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<cache::TextureArrayImageHandles>::default())
+           .add_systems(
             Startup,
             sys_setup_terrain_cache
                 .in_set(StartupSysSet::SetupSceneStage1)
                 .after(StartupSysSet::LoadStartupUOFiles)
         );
+
+        // Use Main world to clear pending uploads at the START of the frame, so Extract can see last frame's data
+        app.add_systems(First, cache::sys_clear_texture_array_uploads);
+
+        let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
+        render_app.init_resource::<cache::RenderTextureArrayUploads>();
+        render_app.add_systems(bevy::render::ExtractSchedule, cache::sys_extract_texture_array_uploads);
+        
+        render_app.add_systems(bevy::render::Render, cache::sys_render_upload_texture_array.in_set(bevy::render::RenderSet::Queue));
     }
 }
 
@@ -39,6 +49,11 @@ pub fn sys_setup_terrain_cache(
     use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, TileAtlasImageHandle, AtlasParams};
     use crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial;
     use crate::core::render::scene::world::land::mesh_material::{LandMaterialExtension, SceneUniform};
+
+    cmd.insert_resource(cache::TextureArrayImageHandles {
+        small: handle_small.clone(),
+        big: handle_big.clone(),
+    });
 
     let page_texels = UVec2::new(2048, 2048);
     let tiles_per_page = UVec2::new(2048, 2048);

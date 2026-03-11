@@ -11,6 +11,27 @@ use std::{
     time::{Duration, Instant},
 };
 use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
+use bevy::render::extract_resource::ExtractResource;
+use bevy::render::renderer::RenderQueue;
+use bevy::render::render_asset::RenderAssets;
+use bevy::render::texture::GpuImage;
+use bevy::render::Extract;
+
+#[derive(Resource, Clone, ExtractResource)]
+pub struct TextureArrayImageHandles {
+    pub small: Handle<Image>,
+    pub big: Handle<Image>,
+}
+
+#[derive(Clone)]
+pub struct TextureArrayUpload {
+    pub size: LandTextureSize,
+    pub layer: u32,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Resource, Default)]
+pub struct RenderTextureArrayUploads(pub Vec<TextureArrayUpload>);
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 const TEXTURE_BYTES_PER_PIXEL: usize = 4; // RGBA8888
@@ -42,13 +63,7 @@ pub struct LandTextureCache {
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
     entry_by_id: HashMap<u16, (LandTextureSize, LandTextureEntry)>,
-}
-
-struct PreparedTextureUpload {
-    texture_id: u16,
-    layer: u32,
-    size: LandTextureSize,
-    bytes: Vec<u8>,
+    pub pending_uploads: Vec<TextureArrayUpload>,
 }
 
 impl LandTextureCache {
@@ -63,73 +78,15 @@ impl LandTextureCache {
                 texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
             ),
             entry_by_id: HashMap::default(),
+            pending_uploads: Vec::new(),
         }
     }
 
-    /// Preloads a set of textures into the cache, performing one batched GPU upload.
-    pub fn preload_textures(
-        &mut self,
-        images_resmut: &mut ResMut<Assets<Image>>,
-        texmap_2d: Arc<TexMap2D>,
-        texture_ids: &HashSet<u16>,
-    ) {
-        let mut pending_uploads = Vec::new();
 
-        // --- Stage 1: Collection --- 
-        // For each texture, prepare it for upload without actually modifying the GPU asset.
-        for &texture_id in texture_ids {
-            if let Some(prepared) = self.prepare_texture_residency(texture_id, images_resmut, &texmap_2d) {
-                pending_uploads.push(prepared);
-            }
-        }
 
-        if pending_uploads.is_empty() {
-            return;
-        }
-
-        // --- Stage 2: Batched Upload --- 
-        // Separate uploads by texture array size to avoid mutable borrow conflicts.
-        let mut small_uploads = Vec::new();
-        let mut big_uploads = Vec::new();
-        for upload in pending_uploads {
-            match upload.size {
-                LandTextureSize::Small => small_uploads.push(upload),
-                LandTextureSize::Big => big_uploads.push(upload),
-            }
-        }
-
-        if !small_uploads.is_empty() {
-            if let Some(data) = &mut images_resmut.get_mut(&self.small.image_handle).unwrap().data {
-                for upload in &small_uploads {
-                    let (width, height) = upload.size.dimensions();
-                    let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
-                    let offset = upload.layer as usize * layer_byte_size;
-                    data[offset..offset + layer_byte_size].copy_from_slice(&upload.bytes);
-                }
-            }
-        }
-
-        if !big_uploads.is_empty() {
-            if let Some(data) = &mut images_resmut.get_mut(&self.big.image_handle).unwrap().data {
-                for upload in &big_uploads {
-                    let (width, height) = upload.size.dimensions();
-                    let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
-                    let offset = upload.layer as usize * layer_byte_size;
-                    data[offset..offset + layer_byte_size].copy_from_slice(&upload.bytes);
-                }
-            }
-        }
-        
-        // --- Stage 3: Bookkeeping ---
-        for upload in small_uploads.iter().chain(big_uploads.iter()) {
-            self.update_bookkeeping(upload.texture_id, upload.size, upload.layer);
-        }
-    }
-
-    /// Gets the layer for a single texture. If not resident, it will be loaded, causing an immediate GPU upload.
+    /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
     pub fn get_texture_size_layer(
         &mut self,
-        images_resmut: &mut ResMut<Assets<Image>>,
         texmap_2d: Arc<TexMap2D>,
         texture_id: u16,
     ) -> (LandTextureSize, u32) {
@@ -139,23 +96,12 @@ impl LandTextureCache {
             return (entry.0, entry.1.layer);
         }
 
-        // Otherwise, prepare it for upload.
-        let prepared = self.prepare_texture_residency(texture_id, images_resmut, &texmap_2d).unwrap();
+        let prepared = self.prepare_texture_residency(texture_id, &texmap_2d).unwrap();
 
-        // Perform the single upload.
-        let array_handle = match prepared.size {
-            LandTextureSize::Small => &self.small.image_handle,
-            LandTextureSize::Big => &self.big.image_handle,
-        };
-        if let Some(data) = &mut images_resmut.get_mut(array_handle).unwrap().data {
-            let (width, height) = prepared.size.dimensions();
-            let layer_byte_size = (width * height) as usize * TEXTURE_BYTES_PER_PIXEL;
-            let offset = prepared.layer as usize * layer_byte_size;
-            data[offset..offset + layer_byte_size].copy_from_slice(&prepared.bytes);
-        }
+        self.pending_uploads.push(prepared.clone());
 
         // Update bookkeeping and return.
-        self.update_bookkeeping(prepared.texture_id, prepared.size, prepared.layer);
+        self.update_bookkeeping(texture_id, prepared.size, prepared.layer);
         (prepared.size, prepared.layer)
     }
 
@@ -164,9 +110,8 @@ impl LandTextureCache {
     fn prepare_texture_residency(
         &mut self,
         texture_id: u16,
-        images_resmut: &mut ResMut<Assets<Image>>,
         texmap_2d: &Arc<TexMap2D>,
-    ) -> Option<PreparedTextureUpload> {
+    ) -> Option<TextureArrayUpload> {
         // If resident, touch timestamp and return None as no upload is needed.
         if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
             entry.1.last_touch = Instant::now();
@@ -176,23 +121,16 @@ impl LandTextureCache {
         // --- If not resident, perform CPU-side work --- 
 
         // 1. Get the new texture data and metadata.
-        let (texture_size, tile_handle) =
-            texture_array::get_texmap_image(texture_id, images_resmut, texmap_2d);
+        let (texture_size, slice_bytes) =
+            texture_array::get_texmap_raw_data(texture_id, texmap_2d);
 
         // 2. Allocate a layer, evicting an old one if necessary.
         let layer = self.allocate_layer(texture_size);
 
         // 3. Get the raw pixel data for the upload.
-        let (width, height) = texture_size.dimensions();
-        let tile_bytes: Vec<u8> = {
-            let tile_img = images_resmut.get(&tile_handle).unwrap();
-            assert_eq!(tile_img.texture_descriptor.size.width, width);
-            assert_eq!(tile_img.texture_descriptor.size.height, height);
-            tile_img.data.as_ref().unwrap().clone()
-        };
+        let tile_bytes: Vec<u8> = slice_bytes.to_vec();
 
-        Some(PreparedTextureUpload {
-            texture_id,
+        Some(TextureArrayUpload {
             layer,
             size: texture_size,
             bytes: tile_bytes,
@@ -294,3 +232,72 @@ fn dump_texture_array_layer(
     }
 }
 */
+
+pub fn sys_extract_texture_array_uploads(
+    cache: Extract<Res<LandTextureCache>>,
+    mut render_uploads: ResMut<RenderTextureArrayUploads>,
+) {
+    if !cache.pending_uploads.is_empty() {
+        render_uploads.0.extend(cache.pending_uploads.iter().cloned());
+    }
+}
+
+pub fn sys_clear_texture_array_uploads(mut cache: ResMut<LandTextureCache>) {
+    cache.pending_uploads.clear();
+}
+
+pub fn sys_render_upload_texture_array(
+    mut uploads: ResMut<RenderTextureArrayUploads>,
+    handles: Res<TextureArrayImageHandles>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    render_queue: Res<RenderQueue>,
+) {
+    if uploads.0.is_empty() {
+        return;
+    }
+
+    let small_gpu = gpu_images.get(&handles.small);
+    let big_gpu = gpu_images.get(&handles.big);
+
+    if small_gpu.is_none() && big_gpu.is_none() {
+        uploads.0.clear();
+        return;
+    }
+
+    use wgpu::{TexelCopyTextureInfo, TexelCopyBufferLayout, Origin3d, Extent3d};
+
+    for upload in uploads.0.drain(..) {
+        let gpu_image = match upload.size {
+            LandTextureSize::Small => small_gpu,
+            LandTextureSize::Big => big_gpu,
+        };
+        let Some(gpu_image) = gpu_image else { continue; };
+        
+        let (width, height) = upload.size.dimensions();
+
+        let destination = TexelCopyTextureInfo {
+            texture: &*gpu_image.texture,
+            mip_level: 0,
+            origin: Origin3d {
+                x: 0,
+                y: 0,
+                z: upload.layer,
+            },
+            aspect: bevy::render::render_resource::TextureAspect::All,
+        };
+
+        let data_layout = TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4), 
+            rows_per_image: Some(height),
+        };
+
+        let extent = Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        render_queue.write_texture(destination, &upload.bytes, data_layout, extent);
+    }
+}
