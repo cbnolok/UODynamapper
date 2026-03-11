@@ -22,7 +22,7 @@ use uocf::geo::{
 use wide::*;
 
 use super::TILE_NUM_PER_CHUNK_DIM;
-use super::{LCMesh, mesh_material::*};
+use super::{LCMesh, mesh_material::*, TILE_NUM_PER_CHUNK_TOTAL};
 use crate::{
     core::{
         constants,
@@ -42,113 +42,78 @@ use crate::{
 #[derive(Resource)]
 pub struct LandMeshHandle(pub Handle<Mesh>);
 
-/// Creates a new material with the specific uniform data for a single land chunk.
-fn create_land_chunk_material(
-    materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
+use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
+
+#[derive(Resource)]
+pub struct SharedLandMaterial(pub Handle<LandCustomMaterial>);
+
+/// Enqueues the 8x8 tile data for this chunk into the TileAtlas, and preloads the textures.
+fn enqueue_chunk_to_atlas_and_preload(
     land_texture_cache_rref: &mut ResMut<LandTextureCache>,
     images_rref: &mut ResMut<Assets<Image>>,
-    time_r: &Res<Time>,
-    shader_presets_r: &Res<LandShaderModePresets>,
+    tile_atlas: &mut ResMut<TileAtlas>,
     texmap_2d: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
-) -> Handle<LandCustomMaterial> {
+) {
     let chunk_origin_tile_units_x =
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
     let chunk_origin_tile_units_z =
         chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_DIM;
 
-    // Helper to fetch a cell from the loaded block data.
-    fn get_cell<'a>(
-        blocks_data: &'a BTreeMap<MapBlockRelPos, MapBlock>,
-        world_tile_x: u32,
-        world_tile_z: u32,
-    ) -> &'a MapCell {
-        let chunk_rel_coords = MapBlockRelPos {
-            x: world_tile_x / TILE_NUM_PER_CHUNK_DIM,
-            y: world_tile_z / TILE_NUM_PER_CHUNK_DIM,
-        };
-        let tile_rel_coords = MapCellRelPos {
-            x: world_tile_x % TILE_NUM_PER_CHUNK_DIM,
-            y: world_tile_z % TILE_NUM_PER_CHUNK_DIM,
-        };
-        blocks_data
-            .get(&chunk_rel_coords)
-            .unwrap()
-            .cell(tile_rel_coords.x, tile_rel_coords.y)
-            .unwrap()
-    }
+    let chunk_rel_coords = MapBlockRelPos {
+        x: chunk_data_ref.chunk_origin_chunk_units_x,
+        y: chunk_data_ref.chunk_origin_chunk_units_z,
+    };
+    let block = blocks_data_ref.get(&chunk_rel_coords).unwrap();
 
-    const CHUNK_TILE_DATA_SIDE: i32 = (TILE_NUM_PER_CHUNK_DIM + 5) as i32; // 8 + 5 = 13
-    const BORDER: i32 = 2;
+    let mut unique_tile_ids = HashSet::new();
+    let mut texels = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL);
 
-    // 1) Gather all cell data for the 13x13 grid in one pass.
-    let mut cell_grid: Vec<&MapCell> =
-        Vec::with_capacity((CHUNK_TILE_DATA_SIDE * CHUNK_TILE_DATA_SIDE) as usize);
-    for gy in -BORDER..(TILE_NUM_PER_CHUNK_DIM as i32 + BORDER + 1) {
-        for gx in -BORDER..(TILE_NUM_PER_CHUNK_DIM as i32 + BORDER + 1) {
-            let world_tx = (chunk_origin_tile_units_x as i32 + gx).max(0) as u32;
-            let world_tz = (chunk_origin_tile_units_z as i32 + gy).max(0) as u32;
-            cell_grid.push(get_cell(blocks_data_ref, world_tx, world_tz));
+    for tz in 0..TILE_NUM_PER_CHUNK_DIM {
+        for tx in 0..TILE_NUM_PER_CHUNK_DIM {
+            let cell = block.cell(tx, tz).unwrap();
+            unique_tile_ids.insert(cell.id);
+
+            let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
+                images_rref,
+                texmap_2d.clone(),
+                cell.id,
+            );
+
+            let tex_size_bits = match texture_size {
+                LandTextureSize::Small => 0,
+                LandTextureSize::Big => 1,
+            };
+
+            // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
+            texels.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
         }
     }
 
-    // 2) Prepare Uniforms. This now includes all data for the 13x13 grid.
-    let mut mat_ext_land_uniforms = LandUniform::zeroed();
-    mat_ext_land_uniforms.chunk_origin = Vec2::new(
-        chunk_origin_tile_units_x as f32,
-        chunk_origin_tile_units_z as f32,
-    );
-
-    // Preload all unique textures for the 13x13 grid.
-    let unique_tile_ids: HashSet<u16> = cell_grid.iter().map(|cell| cell.id).collect();
     land_texture_cache_rref.preload_textures(images_rref, texmap_2d.clone(), &unique_tile_ids);
 
-    // Fill the 13x13 uniform grid.
-    for i in 0..cell_grid.len() {
-        let tile_ref = cell_grid[i];
-        let (texture_size, layer) = land_texture_cache_rref.get_texture_size_layer(
-            images_rref,
-            texmap_2d.clone(),
-            tile_ref.id,
-        );
-        mat_ext_land_uniforms.tiles[i] = TileUniform {
-            tile_height: scale_uo_z_to_bevy_units(tile_ref.z as f32),
-            texture_size: match texture_size {
-                LandTextureSize::Small => 0,
-                LandTextureSize::Big => 1,
-            },
-            texture_layer: layer,
-            texture_hue: 0,
-        };
-    }
+    let page_w = tile_atlas.params.page_texels.x;
+    let page_h = tile_atlas.params.page_texels.y;
+    assert!(
+        page_w % TILE_NUM_PER_CHUNK_DIM == 0 && page_h % TILE_NUM_PER_CHUNK_DIM == 0,
+        "Page size must be a multiple of chunk size to avoid split logic"
+    );
 
-    // Scene data
-    let mut mat_ext_scene_uniform = SceneUniform {
-        camera_position: PlayerCamera::BASE_OFFSET_FROM_PLAYER,
-        light_direction: constants::BAKED_GLOBAL_LIGHT.normalize(),
-        time_seconds: time_r.elapsed().as_secs_f32(),
-        global_lighting: 1.0,
-    };
+    let page_x = chunk_origin_tile_units_x / page_w;
+    let page_y = chunk_origin_tile_units_z / page_h;
 
-    // Tunables are separate.
-    let preset = &shader_presets_r.classic.morning;
-    let mat_ext_tunables_uniform = preset.effects;
-    let mat_ext_lighting_uniform = preset.lighting;
+    let off_x_in_page = chunk_origin_tile_units_x % page_w;
+    let off_y_in_page = chunk_origin_tile_units_z % page_h;
 
-    // 3) Create and return the material handle.
-    let mat = ExtendedMaterial {
-        base: StandardMaterial::default(),
-        extension: LandMaterialExtension {
-            texarray_small: land_texture_cache_rref.small.image_handle.clone(),
-            texarray_big: land_texture_cache_rref.big.image_handle.clone(),
-            land_uniform: mat_ext_land_uniforms,
-            scene_uniform: mat_ext_scene_uniform,
-            effects_uniform: mat_ext_tunables_uniform,
-            lighting_uniform: mat_ext_lighting_uniform,
-        },
-    };
-    materials_land_rref.add(mat)
+    let (layer, _evicted) = tile_atlas.ensure_layer_for_page(IVec2::new(page_x as i32, page_y as i32));
+
+    tile_atlas.enqueue_rg16u_block(
+        layer,
+        UVec2::new(off_x_in_page, off_y_in_page),
+        UVec2::new(TILE_NUM_PER_CHUNK_DIM, TILE_NUM_PER_CHUNK_DIM),
+        &texels,
+    );
 }
 
 // ---- HELPER TRAITS / UTILS
@@ -176,12 +141,10 @@ struct LandChunkConstructionData {
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
     mut meshes_r: ResMut<Assets<Mesh>>,
-    mut materials_land_r: ResMut<Assets<LandCustomMaterial>>,
     mut cache_r: ResMut<LandTextureCache>,
     mut images_r: ResMut<Assets<Image>>,
+    mut tile_atlas_r: ResMut<TileAtlas>,
     mut map_planes_r: ResMut<MapPlanesRes>,
-    time_r: Res<Time>,
-    shader_presets_r: Res<LandShaderModePresets>,
     texmap_2d_r: Res<TexMap2DRes>,
     world_geo_data_r: Res<WorldGeoData>,
     scene_state_data_r: Res<SceneStateData>,
@@ -190,6 +153,7 @@ pub fn sys_draw_spawned_land_chunks(
     chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
     visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
     land_mesh_handle_r: Res<LandMeshHandle>,
+    shared_land_material_r: Res<SharedLandMaterial>,
 ) {
     // Step 1: Get camera/player state.
     let cam_pos = cam_q.single().unwrap().translation;
@@ -302,12 +266,21 @@ pub fn sys_draw_spawned_land_chunks(
     let build_time_start = Instant::now();
     for chunk_data in spawn_targets {
         let entity = chunk_data.entity;
+        
+        enqueue_chunk_to_atlas_and_preload(
+            &mut cache_r,
+            &mut images_r,
+            &mut tile_atlas_r,
+            texmap_2d_r.0.clone(),
+            &chunk_data,
+            &blocks_data,
+        );
+
         if entity.is_none() {
             continue;
         }
         // Paranoid check, shouldn't ever happen.
         if commands.get_entity(entity.unwrap()).is_err() {
-            // TODO: change to logger::one.
             println!(
                 "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'."
             );
@@ -316,18 +289,9 @@ pub fn sys_draw_spawned_land_chunks(
 
         draw_land_chunk(
             &mut commands,
-            &mut meshes_r,
-            &mut materials_land_r,
-            &mut cache_r,
-            &mut images_r,
-            &time_r,
-            &shader_presets_r,
-            texmap_2d_r.0.clone(),
-            &map_plane_metadata,
             &chunk_data,
-            &blocks_data,
-            // pass the shared mesh handle
             &land_mesh_handle_r,
+            &shared_land_material_r,
         );
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();
@@ -337,32 +301,13 @@ pub fn sys_draw_spawned_land_chunks(
 // Completed!
 fn draw_land_chunk(
     commands: &mut Commands,
-    meshes_rref: &mut ResMut<Assets<Mesh>>,
-    materials_land_rref: &mut ResMut<Assets<LandCustomMaterial>>,
-    land_texture_cache_rref: &mut ResMut<LandTextureCache>,
-    images_rref: &mut ResMut<Assets<Image>>,
-    time_r: &Res<Time>,
-    shader_presets_r: &Res<LandShaderModePresets>,
-    texmap_2d: Arc<TexMap2D>,
-    map_plane_metadata_ref: &MapPlaneMetadata,
     chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_ref: &BTreeMap<MapBlockRelPos, MapBlock>,
     land_mesh_handle_r: &Res<LandMeshHandle>,
+    shared_land_material_r: &Res<SharedLandMaterial>,
 ) {
     // Use the mesh prebuilt in setup_land_mesh.
     let chunk_mesh_handle: Handle<Mesh> = land_mesh_handle_r.0.clone();
-
-    // Create the material with create_land_chunk_material and attach it to the entity for the new map chunk.
-    let chunk_material_handle: Handle<LandCustomMaterial> = create_land_chunk_material(
-        materials_land_rref,
-        land_texture_cache_rref,
-        images_rref,
-        time_r,
-        shader_presets_r,
-        texmap_2d,
-        chunk_data_ref,
-        blocks_data_ref,
-    );
+    let chunk_material_handle: Handle<LandCustomMaterial> = shared_land_material_r.0.clone();
 
     // Compute chunk origin (in tile units) for the transform.
     let chunk_origin_tile_units_x =

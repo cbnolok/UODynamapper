@@ -34,6 +34,7 @@ parking_lot = "0.12.4"
 smallvec = "1.15.1"
 bevy_egui = "0.36.0"
 serde_derive = "1.0.219"
+wgpu = "24.0"
 
 [dependencies.bevy]
 version = "0.16.1"

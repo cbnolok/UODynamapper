@@ -16,13 +16,15 @@ pub struct LandMaterialExtension {
     pub texarray_small: Handle<Image>,
     #[texture(102, dimension = "2d_array")]
     pub texarray_big: Handle<Image>,
-    #[uniform(103, min_binding_size = 16)]
-    pub land_uniform: LandUniform,
-    #[uniform(104, min_binding_size = 16)]
-    pub scene_uniform: SceneUniform,
+    #[texture(103, dimension = "2d_array", sample_type = "u_int")]
+    pub tile_meta_atlas: Handle<Image>,
+    #[uniform(104)]
+    pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,
     #[uniform(105, min_binding_size = 16)]
-    pub effects_uniform: LandEffectsUniform,
+    pub scene_uniform: SceneUniform,
     #[uniform(106, min_binding_size = 16)]
+    pub effects_uniform: LandEffectsUniform,
+    #[uniform(107, min_binding_size = 16)]
     pub lighting_uniform: LandLightingUniforms,
 }
 
@@ -49,24 +51,7 @@ impl MaterialExtension for LandMaterialExtension {
 // In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
-/// Each chunk mesh gets a shader material generated per-chunk, with this struct as its extension.
-#[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct TileUniform {
-    pub tile_height: f32,
-    pub texture_size: u32, // 0: small, 1: big
-    pub texture_layer: u32,
-    pub texture_hue: u32,
-    // Ensure to have 16 bytes alignment (WGSL std140 layout), add padding if needed.
-}
 
-#[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LandUniform {
-    pub chunk_origin: Vec2,
-    pub _pad2: Vec2,
-    pub tiles: [TileUniform; 169], // 13x13 grid for seamless normals
-}
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]

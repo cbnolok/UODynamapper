@@ -28,10 +28,13 @@ struct TileUniform {
   texture_hue:   u32,
 };
 
-struct LandUniform {
-  chunk_origin: vec2<f32>, // world origin of chunk (x,z) in tile units
-  _pad1: vec2<f32>,
-  tiles: array<TileUniform, 169>, // 13×13 grid (8×8 core + 2 border)
+struct AtlasParams {
+  page_texels: vec2<u32>,
+  tiles_per_page: vec2<u32>,
+  max_layers: u32,
+  world_pages_x: u32,
+  _pad: vec2<u32>,
+  page_to_layer: array<vec4<u32>, 64>, // Maps 256 logic pages
 };
 
 struct SceneUniform {
@@ -125,10 +128,11 @@ struct LightingUniforms {
 @group(2) @binding(100) var texarray_sampler: sampler;
 @group(2) @binding(101) var texarray_small: texture_2d_array<f32>;
 @group(2) @binding(102) var texarray_big:   texture_2d_array<f32>;
-@group(2) @binding(103) var<uniform> land:    LandUniform;
-@group(2) @binding(104) var<uniform> scene:   SceneUniform;
-@group(2) @binding(105) var<uniform> effects: EffectsUniform;
-@group(2) @binding(106) var<uniform> lighting: LightingUniforms;
+@group(2) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
+@group(2) @binding(104) var<uniform> ATLAS: AtlasParams;
+@group(2) @binding(105) var<uniform> scene:   SceneUniform;
+@group(2) @binding(106) var<uniform> effects: EffectsUniform;
+@group(2) @binding(107) var<uniform> lighting: LightingUniforms;
 
 // ============================================================================
 // Grid helpers & utilities
@@ -139,21 +143,60 @@ const DATA_GRID_BORDER:  i32 = 2;
 const DATA_GRID_SIDE:    i32 = 13;  // DATA_GRID_BORDER + CHUNK_TILE_NUM_DIM + DATA_GRID_BORDER
 const MESH_GRID_SIDE:    u32 = 9u;
 
-// Clamp safe index into the 13×13 “data grid”
-fn tile_index_clamped(ix: i32, iz: i32) -> u32 {
-  let gx = clamp(ix + DATA_GRID_BORDER, 0, DATA_GRID_SIDE - 1);
-  let gz = clamp(iz + DATA_GRID_BORDER, 0, DATA_GRID_SIDE - 1);
-  return u32(gz * DATA_GRID_SIDE + gx);
+// Query the world page coordinates and map them through LRU to a physical GPU Array Layer
+fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
+  if (world_x < 0 || world_z < 0) {
+    return TileUniform(0.0, 0u, 0u, 0u);
+  }
+
+  let wx = u32(world_x);
+  let wz = u32(world_z);
+
+  let pw = ATLAS.page_texels.x;
+  let ph = ATLAS.page_texels.y;
+
+  let page_x = wx / pw;
+  let page_y = wz / ph;
+
+  let off_x = wx % pw;
+  let off_y = wz % ph;
+
+  let page_index = page_y * ATLAS.world_pages_x + page_x;
+  var layer: u32 = 0xFFFFFFFFu;
+  if (page_index < 256u) {
+    let arr_idx = page_index / 4u;
+    let comp = page_index % 4u;
+    layer = ATLAS.page_to_layer[arr_idx][comp];
+  }
+
+  if (layer >= ATLAS.max_layers) { 
+    return TileUniform(0.0, 0u, 0u, 0u);
+  }
+
+  // Load from Rg16Uint texture array
+  let packed = textureLoad(tile_meta_atlas, vec2<i32>(i32(off_x), i32(off_y)), i32(layer), 0);
+  let r = packed.x;
+  let g = packed.y;
+
+  let layer_idx = r; // contains only texture layer index (16 bit)
+  
+  let height_biased = g & 0xFFu;
+  let z_i32 = i32(height_biased) - 128;
+  let tile_height = f32(z_i32) * 0.1;
+  
+  let tex_size = (g >> 8u) & 1u;
+
+  return TileUniform(tile_height, tex_size, layer_idx, 0u);
 }
-fn tile_at_13x13(ix: i32, iz: i32) -> TileUniform {
-  return land.tiles[tile_index_clamped(ix, iz)];
-}
-fn tile_height_at_13x13(ix: i32, iz: i32) -> f32 {
-  return tile_at_13x13(ix, iz).tile_height;
+
+fn atlas_read_height(world_x: i32, world_z: i32) -> f32 {
+  return atlas_read_meta(world_x, world_z).tile_height;
 }
 
 // Near the chunk edge, blend normals toward the original to hide seams.
-fn chunk_edge_blend_factor(local_x: f32, local_z: f32) -> f32 {
+fn chunk_edge_blend_factor(world_x: f32, world_z: f32) -> f32 {
+  let local_x = fract(world_x / 8.0) * 8.0;
+  let local_z = fract(world_z / 8.0) * 8.0;
   let tx = floor(local_x);
   let tz = floor(local_z);
   let dx = min(tx, f32(CHUNK_TILE_NUM_DIM - 1u) - tx);
@@ -236,12 +279,13 @@ fn cubic_value(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
 // Normal utilities (geometric, bicubic, bent)
 // ============================================================================
 
-fn get_geometric_normal_local(node_x: i32, node_z: i32) -> vec3<f32> {
-  // Central differences on the discrete grid. Fast but can be “steppy”.
-  let hL = tile_height_at_13x13(node_x - 1, node_z);
-  let hR = tile_height_at_13x13(node_x + 1, node_z);
-  let hD = tile_height_at_13x13(node_x, node_z - 1);
-  let hU = tile_height_at_13x13(node_x, node_z + 1);
+fn get_geometric_normal_local(world_pos: vec3<f32>) -> vec3<f32> {
+  let wx = i32(round(world_pos.x));
+  let wz = i32(round(world_pos.z));
+  let hL = atlas_read_height(wx - 1, wz);
+  let hR = atlas_read_height(wx + 1, wz);
+  let hD = atlas_read_height(wx, wz - 1);
+  let hU = atlas_read_height(wx, wz + 1);
   let dHdx = 0.5 * (hR - hL);
   let dHdz = 0.5 * (hU - hD);
   return normalize(vec3<f32>(-dHdx, 1.0, -dHdz));
@@ -250,36 +294,33 @@ fn get_geometric_normal_local(node_x: i32, node_z: i32) -> vec3<f32> {
 fn get_bicubic_normal(world_pos: vec3<f32>) -> vec3<f32> {
   // Smooth analytic normal via bicubic interpolation of the 13×13 tile heights.
   // Greatly reduces shading “jaggies” compared to geometric normal above.
-  let local_x = world_pos.x - land.chunk_origin.x;
-  let local_z = world_pos.z - land.chunk_origin.y;
-
-  let base_x = floor(local_x);
-  let base_z = floor(local_z);
-  let frac_x = local_x - base_x;
-  let frac_z = local_z - base_z;
+  let base_x = floor(world_pos.x);
+  let base_z = floor(world_pos.z);
+  let frac_x = world_pos.x - base_x;
+  let frac_z = world_pos.z - base_z;
 
   let ix = i32(base_x);
   let iz = i32(base_z);
 
-  let h00 = tile_height_at_13x13(ix - 1, iz - 1);
-  let h10 = tile_height_at_13x13(ix + 0, iz - 1);
-  let h20 = tile_height_at_13x13(ix + 1, iz - 1);
-  let h30 = tile_height_at_13x13(ix + 2, iz - 1);
+  let h00 = atlas_read_height(ix - 1, iz - 1);
+  let h10 = atlas_read_height(ix + 0, iz - 1);
+  let h20 = atlas_read_height(ix + 1, iz - 1);
+  let h30 = atlas_read_height(ix + 2, iz - 1);
 
-  let h01 = tile_height_at_13x13(ix - 1, iz + 0);
-  let h11 = tile_height_at_13x13(ix + 0, iz + 0);
-  let h21 = tile_height_at_13x13(ix + 1, iz + 0);
-  let h31 = tile_height_at_13x13(ix + 2, iz + 0);
+  let h01 = atlas_read_height(ix - 1, iz + 0);
+  let h11 = atlas_read_height(ix + 0, iz + 0);
+  let h21 = atlas_read_height(ix + 1, iz + 0);
+  let h31 = atlas_read_height(ix + 2, iz + 0);
 
-  let h02 = tile_height_at_13x13(ix - 1, iz + 1);
-  let h12 = tile_height_at_13x13(ix + 0, iz + 1);
-  let h22 = tile_height_at_13x13(ix + 1, iz + 1);
-  let h32 = tile_height_at_13x13(ix + 2, iz + 1);
+  let h02 = atlas_read_height(ix - 1, iz + 1);
+  let h12 = atlas_read_height(ix + 0, iz + 1);
+  let h22 = atlas_read_height(ix + 1, iz + 1);
+  let h32 = atlas_read_height(ix + 2, iz + 1);
 
-  let h03 = tile_height_at_13x13(ix - 1, iz + 2);
-  let h13 = tile_height_at_13x13(ix + 0, iz + 2);
-  let h23 = tile_height_at_13x13(ix + 1, iz + 2);
-  let h33 = tile_height_at_13x13(ix + 2, iz + 2);
+  let h03 = atlas_read_height(ix - 1, iz + 2);
+  let h13 = atlas_read_height(ix + 0, iz + 2);
+  let h23 = atlas_read_height(ix + 1, iz + 2);
+  let h33 = atlas_read_height(ix + 2, iz + 2);
 
   let row0 = cubic_interp_value_and_derivative(h00, h10, h20, h30, frac_x);
   let row1 = cubic_interp_value_and_derivative(h01, h11, h21, h31, frac_x);
@@ -317,16 +358,14 @@ fn get_bicubic_normal(world_pos: vec3<f32>) -> vec3<f32> {
    - Same function is reused in BOTH fragment and vertex/Gouraud paths.
 */
 fn get_bent_normal(world_pos: vec3<f32>, base_normal_world: vec3<f32>) -> vec3<f32> {
-  let local_x = world_pos.x - land.chunk_origin.x;
-  let local_z = world_pos.z - land.chunk_origin.y;
-  let cx = i32(floor(local_x));
-  let cz = i32(floor(local_z));
+  let cx = i32(floor(world_pos.x));
+  let cz = i32(floor(world_pos.z));
 
-  let hc = tile_height_at_13x13(cx, cz);
-  let hl = tile_height_at_13x13(cx - 1, cz);
-  let hr = tile_height_at_13x13(cx + 1, cz);
-  let hd = tile_height_at_13x13(cx, cz - 1);
-  let hu = tile_height_at_13x13(cx, cz + 1);
+  let hc = atlas_read_height(cx, cz);
+  let hl = atlas_read_height(cx - 1, cz);
+  let hr = atlas_read_height(cx + 1, cz);
+  let hd = atlas_read_height(cx, cz - 1);
+  let hu = atlas_read_height(cx, cz + 1);
 
 
   // Use only the *max* positive step: stable across ridges.
@@ -554,37 +593,33 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   let normal_mode:  u32 = effects.normal_mode;
   let enable_bent:  u32 = effects.enable_bent;
 
-  // Node indices in 9×9 grid
-  let grid_x: u32 = vertex_index % MESH_GRID_SIDE;
-  let grid_z: u32 = vertex_index / MESH_GRID_SIDE;
-
-  // Map node to 13×13 data index (+2 border)
-  let arr_x = i32(grid_x) + DATA_GRID_BORDER;
-  let arr_z = i32(grid_z) + DATA_GRID_BORDER;
-  let data_idx = u32(arr_z) * u32(DATA_GRID_SIDE) + u32(arr_x);
-
-  // Displace by pre-baked height
-  var displaced_local_pos = in.position;
-  displaced_local_pos.y = land.tiles[data_idx].tile_height;
-
-  // World transform / clip
+  // Apply mesh local_to_world ON THE FLAT GRID FIRST to get actual world tile coords
   let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
-  out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(displaced_local_pos, 1.0));
+  var flat_local_pos = in.position;
+  flat_local_pos.y = 0.0;
+  let flat_world_pos = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(flat_local_pos, 1.0));
+
+  let wx = i32(round(flat_world_pos.x));
+  let wz = i32(round(flat_world_pos.z));
+  let final_y = atlas_read_height(wx, wz);
+
+  var final_world_pos = flat_world_pos;
+  final_world_pos.y += final_y;
+
+  out.world_position = final_world_pos;
   out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
   out.uv = in.uv;
   out.instance_index = in.instance_index;
 
   // Base geometric normal (fast)
-  let geometric_normal_local = get_geometric_normal_local(i32(grid_x), i32(grid_z));
+  let geometric_normal_local = get_geometric_normal_local(out.world_position.xyz);
   var Nw = mesh_functions::mesh_normal_local_to_world(geometric_normal_local, in.instance_index);
 
   // Optional smooth/bicubic normal with edge blend to avoid seams
   if (normal_mode == 1u) {
-    let local_x = out.world_position.x - land.chunk_origin.x;
-    let local_z = out.world_position.z - land.chunk_origin.y;
     let smooth_local = get_bicubic_normal(out.world_position.xyz);
     let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
-    let blend_edge = chunk_edge_blend_factor(local_x, local_z);
+    let blend_edge = chunk_edge_blend_factor(out.world_position.x, out.world_position.z);
     Nw = normalize(mix(smooth_world, Nw, blend_edge));
   }
 
@@ -768,15 +803,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let exposure          = lighting.exposure;
 
   // Local coords and tile selection
-  let local_x = in.world_position.x - land.chunk_origin.x;
-  let local_z = in.world_position.z - land.chunk_origin.y;
-  let uv_in_tile = vec2<f32>(fract(local_x), fract(local_z));
-  let tile = tile_at_13x13(i32(floor(local_x)), i32(floor(local_z)));
+  let uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
+  let tile = atlas_read_meta(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
 
   // Base albedo (optionally blurred with screen-pixel radius)
   var base_albedo = sample_tile_albedo(uv_in_tile, tile);
   if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
-    let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(local_x, local_z));
+    let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
     base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
   }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
@@ -787,7 +820,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (normal_mode == 1u) {
     let smooth_local = get_bicubic_normal(in.world_position.xyz);
     let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
-    let blend_edge = chunk_edge_blend_factor(local_x, local_z);
+    let blend_edge = chunk_edge_blend_factor(in.world_position.x, in.world_position.z);
     Nw = normalize(mix(smooth_world, Nw, blend_edge));
   }
   if (enable_bent == 1u) {

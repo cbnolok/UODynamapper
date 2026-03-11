@@ -1,8 +1,4 @@
-/.cargo
-/archive
-.idea
-.vscode
-
-*.bak
-*.bku
-*.swp*
+ClassicUO/
+archive/
+target/
+tools/

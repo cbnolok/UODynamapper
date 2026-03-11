@@ -2236,6 +2236,7 @@ dependencies = [
  "toml",
  "tracing-subscriber",
  "uocf",
+ "wgpu",
  "wide",
 ]
 

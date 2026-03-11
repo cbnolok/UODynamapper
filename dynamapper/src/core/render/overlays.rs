@@ -28,7 +28,7 @@ impl Plugin for OverlaysPlugin {
 pub struct OverlayPlayerPositionText;
 
 pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font: Handle<Font> = asset_server.load("fonts/UOClassicRough.ttf"); // FiraMono-Medium
+    let font: Handle<Font> = asset_server.load("fonts/UOClassicRough.ttf"); // or FiraMono-Medium
 
     // Root UI node, pinned to the top left with margin
     let root_id = commands

@@ -11,7 +11,8 @@ Cargo.lock text
 
 # Documentation
 #*.md filter=space-removal-at-eol
-*.md text diff=markdown -whitespace=blank-at-eol # Don't check for trailing whitespace at the end of lines.
+# Don't check for trailing whitespace at the end of lines.
+*.md text diff=markdown -whitespace=blank-at-eol
 LICENSE text
 AUTHORS text
 
