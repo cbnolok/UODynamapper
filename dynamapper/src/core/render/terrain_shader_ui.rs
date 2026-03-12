@@ -6,6 +6,7 @@
 //      1 = Enhanced 2D (fragment; subtle improvements, still faithful)
 //      2 = KR-like     (fragment; painterly, vibrant, rim + gloom)
 //
+// Keybinding: F1 = toggle this panel open/closed.
 
 use crate::{
     external_data::shader_presets::UniformState, impl_tracked_plugin, // prelude::*,
@@ -17,6 +18,16 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use super::scene::world::land::mesh_material::*;
 
+// Keybinding to toggle the terrain shader UI panel.
+const KEY_TOGGLE_TERRAIN_UI: KeyCode = KeyCode::F1;
+
+/// Resource that tracks whether the terrain shader panel is visible.
+/// Toggled by the keybinding; also closed when egui's own close button is used.
+#[derive(Resource, Default)]
+pub struct TerrainShaderUiState {
+    pub open: bool,
+}
+
 // Plugin that draws the UI and applies changes to materials.
 pub struct TerrainUiPlugin {
     pub registered_by: &'static str,
@@ -26,9 +37,21 @@ impl_tracked_plugin!(TerrainUiPlugin);
 impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
-        app.add_systems(EguiPrimaryContextPass, terrain_ui_system)
+        app.init_resource::<TerrainShaderUiState>()
+            .add_systems(Update, sys_toggle_terrain_ui)
+            .add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);
+    }
+}
+
+/// Toggles the terrain UI panel open/closed on each F1 press.
+fn sys_toggle_terrain_ui(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<TerrainShaderUiState>,
+) {
+    if keyboard.just_pressed(KEY_TOGGLE_TERRAIN_UI) {
+        state.open = !state.open;
     }
 }
 
@@ -40,11 +63,13 @@ fn terrain_ui_system(
     mut egui_ctx: EguiContexts,
     mut u: ResMut<UniformState>,
     shader_presets: Res<LandShaderModePresets>,
+    mut ui_state: ResMut<TerrainShaderUiState>,
 ) {
     let ctx = egui_ctx.ctx_mut().expect("No egui context?");
-    egui::Window::new("Terrain Shader Controls")
+    // `open_mut()` lets the egui title-bar close button sync back to our resource.
+    egui::Window::new("Terrain Shader Controls [F1]")
         .default_pos([16.0, 80.0])
-        .default_open(false)
+        .open(&mut ui_state.open)
         .resizable(true)
         .show(ctx, |ui| {
             ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");

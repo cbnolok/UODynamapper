@@ -59,6 +59,8 @@ fn bevy_logging_fmt_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
 
 fn custom_bevy_log_config() -> LogPlugin {
     LogPlugin {
+        // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
+        filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error".into(),
         //custom_layer: bevy_logging_custom_layer,
         ..Default::default()
     }
@@ -188,7 +190,10 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(EguiPlugin::default()) // egui UI layer (used for teleport dialog, etc.)
         .add_plugins((
             bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
-            bevy::diagnostic::SystemInformationDiagnosticsPlugin::default(),
+            // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
+            // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
+            // warning and returns no data). We read CPU/RAM directly via `sysinfo` instead
+            // (see `core/render/overlays/performance.rs`).
         ))
         .add_plugins((
             ExternalDataPlugin {

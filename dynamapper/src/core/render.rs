@@ -1,3 +1,4 @@
+pub mod options_dialog;
 pub mod overlays;
 pub mod scene;
 pub mod terrain_shader_ui;
@@ -22,6 +23,7 @@ impl Plugin for RenderPlugin {
             terrain_shader_ui::TerrainUiPlugin {
                 registered_by: "RenderPlugin",
             },
+            options_dialog::OptionsDialogPlugin,
         ));
     }
 }

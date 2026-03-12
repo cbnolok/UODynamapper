@@ -38,6 +38,10 @@ wgpu = "24.0"
 # BC7 texture compression for GPU VRAM reduction (lossy, enables via settings).
 # Uses Intel's ISPC compressor under the hood \u2014 very fast, near-lossless quality.
 intel_tex_2 = "0.4"
+# System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
+# but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
+# fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
+sysinfo = { version = "0.34", default-features = false, features = ["system"] }
 
 [dependencies.bevy]
 version = "0.16.1"
@@ -72,7 +76,8 @@ features = [
   "std",            # Use the Rust standard library (important!)
   "async_executor", # Enable the Async Executor (Bevy task pools)
   "multi_threaded", # Enable CPU multithreading
-  "sysinfo_plugin", # Support CPU and RAM usage diagnostics
+  # `sysinfo_plugin` intentionally NOT listed: Bevy's SystemInformationDiagnosticsPlugin
+  # fails with dynamic_linking enabled. We read metrics directly via the `sysinfo` crate.
   #"custom_cursor",  # Support custom cursors
 
   # Platform-Specific

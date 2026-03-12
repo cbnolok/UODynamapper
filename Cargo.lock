@@ -631,7 +631,6 @@ dependencies = [
  "const-fnv1a-hash",
  "log",
  "serde",
- "sysinfo",
 ]
 
 [[package]]
@@ -2223,6 +2222,7 @@ dependencies = [
  "smallvec",
  "strum 0.27.2",
  "strum_macros 0.27.2",
+ "sysinfo",
  "time",
  "toml",
  "tracing-subscriber",
