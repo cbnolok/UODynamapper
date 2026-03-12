@@ -40,7 +40,7 @@ pub fn sys_spawn_dynamic_light(
     let camera_pos = light_component.camera_player_rel_pos + player_start_pos;
 
     // Set up a directional light (sun)
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Debug,
         LogAbout::Camera,

@@ -1,6 +1,6 @@
-
 use bevy::state::state::States;
-use crate::logger;
+
+use crate::console_logger;
 
 // OnEnter systems only run for one frame
 #[derive(strum_macros::AsRefStr, States, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -13,10 +13,10 @@ pub enum AppState {
 
 #[track_caller]
 pub fn log_appstate_change(new_appstate_name: &'static str) {
-    logger::one(
+    console_logger::one(
         None,
-        logger::LogSev::Debug,
-        logger::LogAbout::AppState,
+        console_logger::LogSev::Debug,
+        console_logger::LogAbout::AppState,
         format!("Changing AppState to: {new_appstate_name}.").as_str(),
     );
     use std::io::Write; // for flush().

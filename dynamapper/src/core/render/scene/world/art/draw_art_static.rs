@@ -2,10 +2,10 @@
 
 /*
     // Load the ground textures in our UO Data Cache.
-    logger::one(
+    console_logger::one(
         None,
-        logger::Severity::Info,
-        logger::About::Systems,
+        console_logger::Severity::Info,
+        console_logger::About::Systems,
         "Startup: load_res_terrain"
     );
 
@@ -36,10 +36,10 @@
             .insert(tex.id, asset::UoImageResource { id: tex.id, handle });
     }
 
-    logger::one(
+    console_logger::one(
         None,
-        logger::Severity::Info,
-        logger::About::AppState,
+        console_logger::Severity::Info,
+        console_logger::About::AppState,
         "Setting: SetupRender",
     );
 

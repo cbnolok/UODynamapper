@@ -49,7 +49,12 @@ fn sys_evict_idle_land_cache(
 ) {
     let evicted_tex = cache_r.evict_idle_textures();
     if evicted_tex > 0 {
-        bevy::log::info!("Evicted {} idle textures from cache.", evicted_tex);
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!("Evicted {} idle textures from cache.", evicted_tex),
+        );
     }
 
     // Also evict idle blocks from the active map plane
@@ -57,7 +62,12 @@ fn sys_evict_idle_land_cache(
     if let Some(mut plane) = map_planes.get_mut(&scene_state_r.map_id) {
         let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
         if evicted_blocks > 0 {
-            bevy::log::info!("Evicted {} idle blocks from map {}.", evicted_blocks, scene_state_r.map_id);
+            console_logger::one(
+                None,
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!("Evicted {} idle blocks from map {}.", evicted_blocks, scene_state_r.map_id),
+            );
         }
     }
 }

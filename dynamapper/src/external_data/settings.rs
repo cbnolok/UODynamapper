@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::prelude::*;
 use crate::core::render::scene::camera::RenderZoom;
-use crate::logger::{self, LogAbout, LogSev};
+use crate::console_logger::{self, LogAbout, LogSev};
 use crate::util_lib::uo_coords::*;
 use bevy::{
     //asset::{AssetLoader, LoadContext, io::Reader},
@@ -164,7 +164,7 @@ pub fn save_user_preferences(settings: &Settings) {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
                 paris::error!("Failed to save user_preferences.toml: {}", e);
             } else {
-                logger::one(None, LogSev::Info, LogAbout::General, "Saved user_preferences.toml");
+                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved user_preferences.toml");
             }
         }
         Err(e) => {
@@ -200,19 +200,19 @@ fn sys_startup_load_file(mut commands: Commands) {
     // Initialize logger settings
     let mut filters = Vec::new();
     for f in &data.logging.filters {
-        filters.push(logger::LogFilter {
+        filters.push(console_logger::LogFilter {
             sev: f.sev.clone(),
             about: f.about.clone(),
             suppress: f.suppress,
         });
     }
-    logger::set_log_settings(logger::LogSettings {
+    console_logger::set_log_settings(console_logger::LogSettings {
         min_severity: Some(data.logging.min_severity.clone()),
         filters,
     });
 
     commands.insert_resource(data);
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Info,
         LogAbout::Startup,

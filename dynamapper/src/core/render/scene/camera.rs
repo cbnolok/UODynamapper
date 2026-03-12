@@ -117,7 +117,7 @@ fn sys_setup_cam(
         GlobalTransform::default(),
     ));
 
-    logger::one(None, LogSev::Debug, LogAbout::Camera, "Spawned.");
+    console_logger::one(None, LogSev::Debug, LogAbout::Camera, "Spawned.");
 }
 
 //------------------------------------

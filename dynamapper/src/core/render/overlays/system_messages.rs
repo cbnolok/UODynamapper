@@ -1,0 +1,92 @@
+use crate::prelude::*;
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use crate::ingame_logger::{self, InGameLog};
+use std::time::Duration;
+
+pub struct SystemMessagesPlugin;
+
+impl Plugin for SystemMessagesPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            EguiPrimaryContextPass,
+            sys_render_system_messages.run_if(in_state(AppState::InGame)),
+        );
+    }
+}
+
+const LOG_MAX_AGE_SEC: u64 = 8;
+const MAX_VISIBLE_MESSAGES: usize = 5;
+
+fn sys_render_system_messages(mut contexts: EguiContexts) {
+    let ctx = match contexts.ctx_mut() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // 1. Cleanup old logs
+    ingame_logger::clear_expired(Duration::from_secs(LOG_MAX_AGE_SEC));
+
+    // 2. Fetch current logs
+    let logs = ingame_logger::get_logs();
+    if logs.is_empty() {
+        return;
+    }
+
+    // 3. Render at bottom-left
+    egui::Area::new(egui::Id::new("in_game_logger_area"))
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(20.0, -20.0))
+        .show(ctx, |ui| {
+            // Semi-transparent background for the whole log area
+            egui::Frame::NONE
+                .fill(egui::Color32::from_black_alpha(100))
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.set_max_width(400.0);
+                    
+                    let mut scroll_area = egui::ScrollArea::vertical()
+                        .max_height(120.0) // Roughly 5 lines
+                        .auto_shrink([false, true])
+                        .stick_to_bottom(true);
+
+                    // If we exceed 5 messages, show the scrollbar
+                    use egui::scroll_area::ScrollBarVisibility;
+                    if logs.len() <= MAX_VISIBLE_MESSAGES {
+                        scroll_area = scroll_area.scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden);
+                    } else {
+                        scroll_area = scroll_area.scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded);
+                    }
+
+                    scroll_area.show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            for log in &logs {
+                                render_log_line(ui, log);
+                            }
+                        });
+                    });
+                });
+        });
+}
+
+fn render_log_line(ui: &mut egui::Ui, log: &InGameLog) {
+    let now = std::time::Instant::now();
+    let age = now.duration_since(log.timestamp).as_secs_f32();
+    
+    // Fade out in the last 1 second as requested
+    let alpha = if age > (LOG_MAX_AGE_SEC as f32 - 1.0) {
+        ((LOG_MAX_AGE_SEC as f32 - age) / 1.0).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    let srgba = log.color.to_srgba();
+    let color = egui::Color32::from_rgba_unmultiplied(
+        (srgba.red * 255.0) as u8,
+        (srgba.green * 255.0) as u8,
+        (srgba.blue * 255.0) as u8,
+        (alpha * 255.0) as u8,
+    );
+
+    let text = format!("{} {}", log.symbol, log.message);
+    ui.label(egui::RichText::new(text).color(color).size(13.0));
+}

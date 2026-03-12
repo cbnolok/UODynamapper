@@ -6,10 +6,11 @@
 //   - Frame Limiter: checkbox to enable/disable + combobox to pick target FPS.
 //     Writes to `bevy_framepace::FramepaceSettings` directly.
 
+use crate::core::WireframeConfig;
+use crate::prelude::*;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_framepace::{FramepaceSettings, Limiter};
-use crate::prelude::*;
 
 // Keybinding to toggle the options dialog.
 const KEY_TOGGLE_OPTIONS: KeyCode = KeyCode::F2;
@@ -67,21 +68,31 @@ pub struct OptionsDialogPlugin;
 impl Plugin for OptionsDialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OptionsDialogState>()
-            .add_systems(Update, (
-                sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
-                sys_sync_settings_to_state.run_if(in_state(AppState::InGame))
-            ))
-            .add_systems(EguiPrimaryContextPass, sys_render_options_dialog.run_if(in_state(AppState::InGame)));
+            .add_systems(
+                Update,
+                (
+                    sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
+                    sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),
+                ),
+            )
+            .add_systems(
+                EguiPrimaryContextPass,
+                sys_render_options_dialog.run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
-/// One-time sync from Settings resource to UI state when dialog is first initialized or loaded.
+/// Syncs from Settings resource to UI state.
+/// We sync if it's the first initialization, or if the settings resource changed while the dialog is closed.
 fn sys_sync_settings_to_state(
     settings: Res<Settings>,
     mut state: ResMut<OptionsDialogState>,
     mut initialized: Local<bool>,
+    mut wireframe_config: ResMut<WireframeConfig>,
 ) {
-    if !*initialized {
+    let should_sync = !*initialized || (!state.open && settings.is_changed());
+
+    if should_sync {
         state.movement_speed_multiplier = settings.app.input.movement_speed_multiplier;
         state.hide_player = settings.core.world.hide_player;
         state.show_overlay = settings.app.performance.show_overlay;
@@ -90,6 +101,10 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
+
+        // Also apply wireframe setting which isn't in the dialog yet but is in settings
+        wireframe_config.global = settings.app.debug.map_render_wireframe;
+
         *initialized = true;
     }
 }
@@ -207,7 +222,10 @@ fn sys_render_options_dialog(
             // ---- Movement Speed ----
             ui.horizontal(|ui| {
                 ui.label("Move Speed:");
-                ui.add(egui::Slider::new(&mut state.movement_speed_multiplier, 0.1..=40.0));
+                ui.add(egui::Slider::new(
+                    &mut state.movement_speed_multiplier,
+                    0.1..=40.0,
+                ));
             });
 
             // ---- Visibility/Graphics ----
@@ -215,22 +233,25 @@ fn sys_render_options_dialog(
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
             // ---- Sync UI state to Settings resource ----
-            // We use ResMut here every frame we detect a difference. 
-            // This triggers Bevy's change detection which the debounced save system monitors.
-            if settings.app.input.movement_speed_multiplier != state.movement_speed_multiplier {
+            // We use .as_ref() for comparisons to avoid triggering change detection
+            // unless we actually write a new value. This prevents the debounced save
+            // timer from being reset every frame.
+            if settings.as_ref().app.input.movement_speed_multiplier
+                != state.movement_speed_multiplier
+            {
                 settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
             }
-            if settings.core.world.hide_player != state.hide_player {
+            if settings.as_ref().core.world.hide_player != state.hide_player {
                 settings.core.world.hide_player = state.hide_player;
             }
-            if settings.app.performance.show_overlay != state.show_overlay {
+            if settings.as_ref().app.performance.show_overlay != state.show_overlay {
                 settings.app.performance.show_overlay = state.show_overlay;
             }
-            if settings.app.performance.frame_limit_enabled != state.frame_limit_enabled {
+            if settings.as_ref().app.performance.frame_limit_enabled != state.frame_limit_enabled {
                 settings.app.performance.frame_limit_enabled = state.frame_limit_enabled;
             }
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
-            if settings.app.performance.target_fps != target_fps {
+            if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
             }
         });

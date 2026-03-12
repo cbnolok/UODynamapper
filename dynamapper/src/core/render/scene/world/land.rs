@@ -33,25 +33,40 @@ pub fn sys_update_shared_land_material(
     mut materials: ResMut<Assets<LandCustomMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     time: Res<Time>,
-    presets: Res<mesh_material::LandShaderModePresets>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
+    uniform_state: Res<crate::external_data::shader_presets::UniformState>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
+    mut last_time: Local<f32>,
+    mut last_global_lighting: Local<f32>,
 ) {
     if let Some(shared_mat) = shared_mat {
-        if let Some(mat) = materials.get_mut(&shared_mat.0) {
-            mat.extension.scene_uniform.time_seconds = time.elapsed().as_secs_f32();
-            let preset = &presets.classic.morning; // dynamically selected based on logic later
-            mat.extension.effects_uniform = preset.effects;
-            mat.extension.lighting_uniform = preset.lighting;
-            
-            // Only update atlas_params if they changed! 
-            // AtlasParams derives ShaderType which doesn't directly give us easy PartialEq but it's POD.
-            // We can compare the page_to_layer array if it's too expensive to update every frame.
-            // Actually, let's just always update time (it changes every frame), but we can 
-            // skip the heavy atlas mapping if we track changes.
-            if *last_atlas_params != Some(tile_atlas.params) {
-                mat.extension.atlas_params = tile_atlas.params;
-                *last_atlas_params = Some(tile_atlas.params);
+        // We only use get_mut if we actually intend to change something.
+        // Even for time, we check if it changed.
+        let current_time = time.elapsed().as_secs_f32();
+        let current_global_lighting = uniform_state.global_lighting;
+        
+        // AtlasParams update check
+        let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
+        let time_changed = (current_time - *last_time).abs() > 0.0001;
+        let lighting_changed = (current_global_lighting - *last_global_lighting).abs() > 0.0001;
+
+        if atlas_changed || time_changed || lighting_changed {
+            if let Some(mat) = materials.get_mut(&shared_mat.0) {
+                if time_changed {
+                    mat.extension.scene_uniform.time_seconds = current_time;
+                    *last_time = current_time;
+                }
+                if lighting_changed {
+                    mat.extension.scene_uniform.global_lighting = current_global_lighting;
+                    *last_global_lighting = current_global_lighting;
+                }
+                if atlas_changed {
+                    mat.extension.atlas_params = tile_atlas.params;
+                    *last_atlas_params = Some(tile_atlas.params);
+                }
+                
+                // Note: effects_uniform and lighting_uniform are handled by TerrainUiPlugin::push_uniforms_if_dirty
+                // which monitors the UniformState resource and its 'dirty' flag.
             }
         }
     }

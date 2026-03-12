@@ -48,7 +48,7 @@ impl Plugin for UOFilesPlugin {
 
 pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     log_system_add_startup::<UOFilesPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
-    let lg = |text: &str| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
+    let lg = |text: &str| console_logger::one(None, console_logger::LogSev::Info, console_logger::LogAbout::UoFiles, text);
     let uo_path: PathBuf = settings.core.uo_files.folder.clone().into();
     let lossy = settings.core.graphics.lossy_texture_compression;
 

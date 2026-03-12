@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
+use crate::console_logger::{self, LogAbout, LogSev};
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
@@ -197,6 +198,13 @@ pub fn sys_extract_atlas_uploads(
     mut render_uploads: ResMut<RenderAtlasUploads>,
 ) {
     if !tile_atlas.pending_uploads.is_empty() {
+        let count = tile_atlas.pending_uploads.len();
+        console_logger::one(
+            None,
+            LogSev::Debug,
+            LogAbout::Performance,
+            &format!("[DBG-extract] Extracting {count} texture array uploads"),
+        );
         render_uploads.0.extend(tile_atlas.pending_uploads.clone());
     }
 }
@@ -217,6 +225,14 @@ pub fn sys_render_upload_tile_atlas(
     if uploads.0.is_empty() {
         return;
     }
+
+    let count = uploads.0.len();
+    console_logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::Performance,
+        &format!("[DBG-render] Processing {count} texture array uploads"),
+    );
 
     let Some(gpu_image) = gpu_images.get(&atlas_handle.0) else {
         uploads.0.clear();

@@ -147,7 +147,7 @@ pub fn get_texmap_raw_data(
     texmap_2d_res: &TexMap2D,
 ) -> (LandTextureSize, std::sync::Arc<Vec<u8>>) {
     fn local_log_warn(msg: &str) {
-        logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
+        console_logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
     }
 
     let tex_size_and_rgba = {

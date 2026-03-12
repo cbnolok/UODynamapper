@@ -30,6 +30,8 @@ This file is responsible for building and configuring the Bevy `App`. Here's a b
         * `SettingsPlugin`: Manages application settings.
         * `TextureCachePlugin`: Caches land and item textures.
         * `UOFilesPlugin`: Responsible for loading data from the Ultima Online game files.
+        * `PerformanceOverlayPlugin`: Displays real-time metrics (FPS, CPU, RAM).
+        * `SystemMessagesPlugin`: Renders in-game log messages in the bottom-left corner with Unicode symbols, specific colors for severity, and 1-second fade out.
 
 ## 3. Application State Machine
 
@@ -126,8 +128,11 @@ The rendering of the game world, especially the terrain, is a core feature. Here
     * The `LandCustomMaterial` remains slim, binding only the Tile Atlas handle and layout parameters.
 
 6. **Logger and Settings**:
-    * **Settings**: Global configuration is loaded from `assets/settings.toml`. It supports hot-swappable log filtering settings.
     * **Log Filtering**: The logger respects `SectLogging` settings, allowing suppression of specific message types (e.g., `RenderWorldLand` or `Debug` severity) to reduce console noise.
+    * **Performance Category**: A specialized `Performance` log category (using the `Performance` about tag) is used to track heavy operations like texture atlas uploads, idle eviction, and BC7 compression.
+    * **Custom Timestamps**: Bevy's default logging is configured with a clean `HH:MM:SS` local timestamp, stripping away redundant ISO-8601 milliseconds and time zone data.
+    * **In-Game Logger Backend**: A standalone backend (`ingame_logger.rs`) with a specialized API (`normal`, `warning`, `error`, `custom`). It uses Unicode symbols (ⓘ, ⚠, ✖) and severity-specific colors (White, Yellow, Red) to prefix messages.
+    * **System Messages Overlay**: An Egui-based overlay (`system_messages.rs`) in the bottom-left corner that renders the logs. It shows up to 5 messages with a 1-second fade-out effect when they time out (at 8 seconds).
 
 7. **Multi-Map Support**:
     * The `UOFilesPlugin` automatically discovers all available `mapX.mul` files in the UO directory (indexing maps 0 through 5) and makes them available to the simulation.
@@ -143,5 +148,7 @@ The rendering of the game world, especially the terrain, is a core feature. Here
     * **Idle Eviction**: An eviction system (`sys_evict_map_blocks`) checks for inactive `MapBlock`s and textures every 5 seconds, dropping data older than 60 seconds.
     * **Power Saving**: When the window is unfocused, the app can switch to `ReactiveLowPower` mode (configurable in `settings.toml`) to drastically reduce CPU/GPU usage.
     * **Performance Monitoring**: A real-time overlay in the top-right corner displays FPS, CPU usage, and RAM (RSS) footprint.
+    * **CRITICAL: Avoid `get_mut()` in Hot Paths**: Redundant calls to `get_mut()` on Materials or Assets trigger Bevy's change detection every frame. For global materials binding large texture arrays, this causes extreme GPU overhead (70%+).
+    * **Architectural Workaround**: We avoid these stalls by using a **global bind group** and a **paged atlas**. Instead of per-chunk uniform updates, we modify raw pixel data on the CPU and use `write_texture` to stream updates directly to VRAM. This allows thousands of chunks to remain static in the material system while their underlying data is updated dynamically through the atlas.
 
 

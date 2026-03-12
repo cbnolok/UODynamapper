@@ -247,7 +247,12 @@ pub fn sys_draw_spawned_land_chunks(
             .expect("Can't load map blocks");
         let load_blocks_us = load_blocks_start.elapsed().as_micros();
         if load_blocks_us > 1000 {
-            println!("Perf: load_blocks took {} µs for {} blocks.", load_blocks_us, blocks_to_draw.len());
+            console_logger::one(
+                None,
+                LogSev::Diagnostics,
+                LogAbout::Performance,
+                &format!("Perf: load_blocks took {} µs for {} blocks.", load_blocks_us, blocks_to_draw.len()),
+            );
         }
         for block_coords in blocks_to_draw {
             let block_ref = uo_data_map_plane
@@ -308,8 +313,11 @@ pub fn sys_draw_spawned_land_chunks(
         }
         // Paranoid check, shouldn't ever happen.
         if commands.get_entity(entity.unwrap()).is_err() {
-            println!(
-                "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'."
+            console_logger::one(
+                None,
+                LogSev::Warn,
+                LogAbout::RenderWorldLand,
+                "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'.",
             );
             continue;
         }
@@ -323,7 +331,12 @@ pub fn sys_draw_spawned_land_chunks(
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();
     if build_time > 1000 {
-        println!("Perf: chunk rendering preloader took {build_time} µs for {} chunks.", spawn_targets.len());
+        console_logger::one(
+            None,
+            LogSev::Diagnostics,
+            LogAbout::Performance,
+            &format!("Perf: chunk rendering preloader took {build_time} µs for {} chunks.", spawn_targets.len()),
+        );
     }
 }
 
@@ -357,7 +370,7 @@ fn draw_land_chunk(
             GlobalTransform::default(),
         ));
     } else {
-        logger::one(
+        console_logger::one(
             None,
             LogSev::Error,
             LogAbout::RenderWorldLand,
@@ -381,7 +394,12 @@ pub fn sys_evict_map_blocks(
             let evicted_blocks = map_plane.evict_idle_blocks(std::time::Duration::from_secs(60));
             let evicted_textures = texmap_2d_r.0.evict_idle_textures(std::time::Duration::from_secs(60));
             if evicted_blocks > 0 || evicted_textures > 0 {
-                bevy::log::debug!("Evicted {} idle map blocks, {} idle textures.", evicted_blocks, evicted_textures);
+                console_logger::one(
+                    None,
+                    LogSev::Debug,
+                    LogAbout::Performance,
+                    &format!("Evicted {} idle map blocks, {} idle textures.", evicted_blocks, evicted_textures),
+                );
             }
         }
     }

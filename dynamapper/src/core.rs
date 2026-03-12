@@ -10,7 +10,7 @@ mod uo_files_loader;
 use crate::{
     core::app_states::*,
     external_data::{ExternalDataPlugin, settings},
-    logger::{self, *},
+    console_logger::{self, LogAbout, LogSev},
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -40,8 +40,7 @@ fn bevy_logging_custom_layer(_app: &mut App) -> Option<BoxedLayer> {
             // Use chrono for timestamp, format with NO milliseconds
             .with_timer(fmt::time::ChronoLocal::new("%H:%M:%S".into()))
             // compact() looks a lot like Bevy default
-            // (use .pretty() for multiline pretty logs)
-            .pretty(),
+            .compact(),
     ))
 }
 
@@ -61,7 +60,7 @@ fn custom_bevy_log_config() -> LogPlugin {
     LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
         filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error,bevy_framepace=warn".into(),
-        //custom_layer: bevy_logging_custom_layer,
+        custom_layer: bevy_logging_custom_layer,
         ..Default::default()
     }
 }
@@ -143,16 +142,16 @@ pub fn run_bevy_app() -> ExitCode {
     let assets_folder = cwd.join(constants::ASSET_FOLDER);
 
     // Current working directory.
-    logger::system(&format!("CWD: {cwd:?}"));
+    console_logger::system(&format!("CWD: {cwd:?}"));
     // Other debug info.
-    logger::system(&format!(
+    console_logger::system(&format!(
         "Default Assets folder: {:?}",
         bevy::asset::AssetPlugin::default().file_path
     ));
-    logger::system(&format!("Setting custom Assets folder: {assets_folder:?}"));
+    console_logger::system(&format!("Setting custom Assets folder: {assets_folder:?}"));
 
     let settings_data = settings::load_from_files();
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Info,
         LogAbout::Startup,
@@ -170,7 +169,7 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(
             DefaultPlugins
                 .build()
-                .set(custom_bevy_log_config())
+                .disable::<LogPlugin>() // Disable default to avoid double-logging or formatting issues
                 .set(custom_window_plugin_settings(window_size))
                 .set(custom_threadpool_settings())
                 .set(custom_render_plugin_settings())
@@ -181,6 +180,7 @@ pub fn run_bevy_app() -> ExitCode {
                     ..default()
                 }),
         )
+        .add_plugins(custom_bevy_log_config())
         .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
         .insert_resource(custom_wireframe_config(wireframe_enabled))
         //.edit_schedule(Update, |schedule| {

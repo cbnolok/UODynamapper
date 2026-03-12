@@ -2,7 +2,8 @@ use std::process::ExitCode;
 
 pub mod core;
 pub mod external_data;
-pub mod logger;
+pub mod console_logger;
+pub mod ingame_logger;
 mod prelude;
 
 #[macro_use]
@@ -12,6 +13,6 @@ fn main() -> ExitCode {
     color_eyre::install() // colored panic and backtrace
         .expect("Can't install color_eyre?");
 
-    logger::system("Starting Bevy app.");
+    console_logger::system("Starting Bevy app.");
     core::run_bevy_app()
 }

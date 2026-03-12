@@ -108,3 +108,12 @@ To keep the RAM footprint low, the following data is evicted if not accessed for
 * **Linker**: Release builds use the `mold` linker (via GitHub Actions) for 3-5x faster link times.
 * **Binary Size**: Production builds (`profile.release`) use `opt-level = "s"` + LTO + stripping to minimize executable weight.
 
+### 7.4. Performance Pitfall: get_mut()
+> [!IMPORTANT]
+> **NEVER use `get_mut()` on Materials or Assets inside hot loops (like `Update` systems) unless you have confirmed the data *actually* changed.**
+> 
+> * **The Pitfall**: Calling `get_mut()` triggers Bevy's change detection. For large assets like terrain materials (which bind global texture arrays), this forces the renderer to perform an expensive **re-extraction** (copying data to the Render World) and **re-binding** (updating GPU bind groups) of the entire material every single frame.
+> * **The Result**: High GPU usage (70%+) even when idle, micro-stutters, and sabotaging of UI-driven uniform updates (as defaults overwrite UI changes every frame).
+> * **The Workaround (direct GPU write)**: To update terrain metadata without material overhead, we use the **Paged Tile Metadata Atlas** (Section 3.2). Instead of modifying a material uniform, we use `render_queue.write_texture` to upload only the changed texels directly to a GPU texture. The shader then samples from this texture. This bypasses Bevy's material mutation tracking entirely.
+> * **Solution**: Use `get()` for read-only checks. Only use `get_mut()` if a comparison (using a `Local` or `is_changed()`) proves that a uniform update is strictly necessary.
+

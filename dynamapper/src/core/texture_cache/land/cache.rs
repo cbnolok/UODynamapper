@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use super::texture_array;
+use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::prelude::*;
 use std::{
     collections::{HashMap, VecDeque},
@@ -140,7 +141,12 @@ impl LandTextureCache {
         let use_mt = to_load.len() > 1000;
 
         if use_mt {
-            bevy::log::info!("Par-compressing {} textures to BC7...", to_load.len());
+            console_logger::one(
+                None,
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!("Par-compressing {} textures to BC7...", to_load.len()),
+            );
             
             // Collect raw data for all textures first (CPU work, can be parallelized too but mostly I/O or mem copy)
             let raw_data: Vec<_> = to_load.iter().map(|&id| {
@@ -344,7 +350,12 @@ pub fn sys_extract_texture_array_uploads(
     mut render_uploads: ResMut<RenderTextureArrayUploads>,
 ) {
     if !cache.pending_uploads.is_empty() {
-        eprintln!("[DBG-extract] Extracting {} texture array uploads", cache.pending_uploads.len());
+        console_logger::one(
+            None,
+            LogSev::Debug,
+            LogAbout::Performance,
+            &format!("[DBG-extract] Extracting {} texture array uploads", cache.pending_uploads.len()),
+        );
         render_uploads.0.extend(cache.pending_uploads.iter().cloned());
     }
 }
@@ -363,16 +374,31 @@ pub fn sys_render_upload_texture_array(
         return;
     }
 
-    eprintln!("[DBG-render] Processing {} texture array uploads", uploads.0.len());
+    console_logger::one(
+        None,
+        LogSev::Debug,
+                LogAbout::Performance,
+        &format!("[DBG-render] Processing {} texture array uploads", uploads.0.len()),
+    );
 
     let small_gpu = gpu_images.get(&handles.small);
     let big_gpu = gpu_images.get(&handles.big);
 
     if small_gpu.is_none() {
-        eprintln!("[DBG-render] small_gpu image NOT FOUND in RenderAssets");
+        console_logger::one(
+            None,
+            LogSev::Warn,
+            LogAbout::Performance,
+            "[DBG-render] small_gpu image NOT FOUND in RenderAssets",
+        );
     }
     if big_gpu.is_none() {
-        eprintln!("[DBG-render] big_gpu image NOT FOUND in RenderAssets");
+        console_logger::one(
+            None,
+            LogSev::Warn,
+            LogAbout::Performance,
+            "[DBG-render] big_gpu image NOT FOUND in RenderAssets",
+        );
     }
 
     if small_gpu.is_none() && big_gpu.is_none() {

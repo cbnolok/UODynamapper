@@ -62,7 +62,7 @@ pub fn sys_spawn_player_entity(
         ));
     }
 
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Debug,
         LogAbout::Player,

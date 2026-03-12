@@ -1,7 +1,8 @@
-use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
-use crate::core::render::scene::player::Player;
 use crate::prelude::*;
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use crate::core::render::scene::player::Player;
+use crate::ingame_logger;
 
 #[derive(Resource, Default)]
 pub struct TeleportDialogState {
@@ -17,7 +18,8 @@ pub struct TeleportPlugin;
 impl Plugin for TeleportPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TeleportDialogState>()
-            .add_systems(Update, (sys_toggle_teleport_dialog, sys_render_teleport_dialog).run_if(in_state(AppState::InGame)));
+            .add_systems(Update, sys_toggle_teleport_dialog.run_if(in_state(AppState::InGame)))
+            .add_systems(EguiPrimaryContextPass, sys_render_teleport_dialog.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -80,12 +82,7 @@ fn sys_render_teleport_dialog(
                     let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();
                     transform.translation = bevy_pos;
                     
-                    logger::one(
-                        None,
-                        logger::LogSev::Info,
-                        logger::LogAbout::Player,
-                        &format!("Teleported to [{}, {}, {}, {}]", x, y, z, m),
-                    );
+                    ingame_logger::normal(format!("Teleported to [{}, {}, {}, {}]", x, y, z, m));
                     state.open = false;
                 }
             }

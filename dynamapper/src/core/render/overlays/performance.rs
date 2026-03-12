@@ -1,7 +1,7 @@
 use crate::{core::system_sets::StartupSysSet, prelude::*};
+use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use bevy::color::Srgba;
 use sysinfo::{ProcessesToUpdate, System};
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
@@ -66,7 +66,11 @@ pub struct OverlayPerformanceContainer;
 #[derive(Component)]
 pub struct OverlayPerformanceText;
 
-pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<AssetServer>, settings: Res<Settings>) {
+pub fn setup_overlay_performance(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    settings: Res<Settings>,
+) {
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
 
     commands
@@ -76,7 +80,11 @@ pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<Asset
                 right: Val::Px(20.0),
                 top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(10.0)),
-                display: if settings.app.performance.show_overlay { Display::Flex } else { Display::None },
+                display: if settings.app.performance.show_overlay {
+                    Display::Flex
+                } else {
+                    Display::None
+                },
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
@@ -106,17 +114,23 @@ pub fn sys_refresh_process_metrics(time: Res<Time>, mut metrics: ResMut<ProcessM
     }
 
     let pid = metrics.pid;
-    metrics.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-    
+    metrics
+        .sys
+        .refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+
     if let Some(process) = metrics.sys.process(pid) {
         let cpu = process.cpu_usage();
         const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
         let mem = process.memory() as f32 / BYTES_PER_MIB;
-        
+
         // sysinfo process cpu usage is [0..100 * num_cpus].
         // Normalize it by dividing by core count for a "standard" 0..100% total system load.
         let core_count = metrics.sys.cpus().len() as f32;
-        metrics.cpu_usage = if core_count > 0.0 { cpu / core_count } else { cpu };
+        metrics.cpu_usage = if core_count > 0.0 {
+            cpu / core_count
+        } else {
+            cpu
+        };
         metrics.mem_usage_mib = mem;
     }
 }
@@ -126,32 +140,38 @@ pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
-    entities: Query<Entity>,
+    entities: &bevy::ecs::entity::Entities,
     land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut text_query: Query<&mut Text, With<OverlayPerformanceText>>,
     mut node_query: Query<&mut Node, With<OverlayPerformanceContainer>>,
 ) {
     // Real-time visibility toggle from settings
-    if let Ok(mut node) = node_query.get_single_mut() {
-        let target_display = if settings.app.performance.show_overlay { Display::Flex } else { Display::None };
+    if let Ok(mut node) = node_query.single_mut() {
+        let target_display = if settings.app.performance.show_overlay {
+            Display::Flex
+        } else {
+            Display::None
+        };
         if node.display != target_display {
             node.display = target_display;
         }
     }
 
-    if let Ok(mut text) = text_query.get_single_mut() {
+    if let Ok(mut text) = text_query.single_mut() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|diag| diag.smoothed())
             .map(|val| format!("{:.0}", val))
             .unwrap_or_else(|| "--".to_string());
 
-        let entity_count = entities.iter().count();
+        let entity_count = entities.len();
+        // Since land_chunks query is filtered, we still need to count,
+        // but this set is much smaller than all entities.
         let chunk_count = land_chunks.iter().count();
 
         text.0 = format!(
-            "FPS: {}\nCPU: {:.1}%  RAM: {:.1} MiB\nENTs: {}  CHKs: {}",
-            fps, metrics.cpu_usage, metrics.mem_usage_mib, entity_count, chunk_count
+            "FPS: {}\nCPU: {:.1}% | RAM: {:.1} MiB\nCHKs: {} | ENTs: {}",
+            fps, metrics.cpu_usage, metrics.mem_usage_mib, chunk_count, entity_count
         );
     }
 }

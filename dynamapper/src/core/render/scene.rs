@@ -86,7 +86,7 @@ pub fn sys_update_scene_on_window_resize(mut resize_events: EventReader<WindowRe
 }
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
@@ -95,7 +95,7 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
 }
 
 fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
-    logger::one(
+    console_logger::one(
         None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
@@ -199,7 +199,7 @@ fn sys_update_worldmap_chunks_to_render(
 
     // If map plane changes, brute-force despawn all and respawn
     if map_switch {
-        logger::one(
+        console_logger::one(
             None,
             LogSev::Info,
             LogAbout::RenderWorldLand,

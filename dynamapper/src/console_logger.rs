@@ -45,6 +45,7 @@ pub enum LogAbout {
     General,
     Input,
     InternalAssets,
+    Performance,
     Player,
     Plugins,
     Renderer,
@@ -191,7 +192,13 @@ pub fn one(
         LogSev::Error => write!(full_msg, "<red><bold>{msg}</>").unwrap(),
         LogSev::Info => write!(full_msg, "<cyan>{msg}</>").unwrap(),
         LogSev::Warn => write!(full_msg, "<bright-yellow>{msg}</>").unwrap(),
-        _ => full_msg.push_str(msg),
+        _ => {
+            if about == LogAbout::Performance {
+                write!(full_msg, "<bright-cyan>{msg}</>").unwrap();
+            } else {
+                full_msg.push_str(msg);
+            }
+        }
     }
 
     paris::log!("{full_msg}");
