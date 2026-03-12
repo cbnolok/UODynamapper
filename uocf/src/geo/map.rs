@@ -28,7 +28,8 @@ use bytemuck::{Pod, Zeroable};
 use std::path::PathBuf;
 
 /// Represents a single cell (or tile) in the map.
-#[derive(Clone, Copy, Default)]
+#[repr(C, packed)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
 pub struct MapCell {
     // Cells are loaded from blocks in the mul file: left-to-right then top-to-bottom.
     /// The texture ID of the tile.
@@ -156,34 +157,32 @@ impl MapBlock {
         }
     }
 
-    pub fn from_reader(rdr: &mut Cursor<&[u8]>) -> eyre::Result<MapBlock> {
-        let bytes = rdr.get_ref(); // Get the underlying byte slice
-        let offset = rdr.position() as usize; // Get the current position of the cursor
+    pub fn from_reader(rdr: &mut Cursor<&[u8]>, new_block: &mut MapBlock) -> eyre::Result<()> {
+        let bytes = rdr.get_ref();
+        let offset = rdr.position() as usize;
 
-        // Read the raw block as a byte slice
         let raw_block_bytes = &bytes[offset..offset + MapBlock::PACKED_SIZE];
-
-        // Cast the byte slice to RawMapBlock. This is where endianness needs to be handled for fields.
         let raw_block: &RawMapBlock = bytemuck::from_bytes(raw_block_bytes);
 
-        let mut new_block = MapBlock::default();
+        // MapCell is packed and identical to RawMapCell
+        // We can bulk copy cells
+        new_block.cells.copy_from_slice(bytemuck::cast_slice(&raw_block.cells));
 
-        // Handle endianness for the header
-        let _header = u32::from_le_bytes(raw_block.header.to_le_bytes()); // If we need the header, use this. Otherwise, just skip.
-
-        for y_cell in 0..MapBlock::CELLS_PER_COLUMN {
-            for x_cell in 0..MapBlock::CELLS_PER_ROW {
-                let new_cell = new_block.cell_as_mut(x_cell, y_cell).unwrap();
-                let raw_cell = &raw_block.cells[((MapBlock::CELLS_PER_COLUMN * y_cell) + x_cell) as usize];
-
-                // Handle endianness for the id
-                new_cell.id = u16::from_le_bytes(raw_cell.id.to_le_bytes());
-                new_cell.z = raw_cell.z; // i8 is single byte, no endianness issue
+        // Handle endianness for IDs in bulk using SIMD if target is Big Endian.
+        // On LE systems (most PCs), UO data is already LE, so this is just a check.
+        #[cfg(target_endian = "big")]
+        {
+            use wide::*;
+            let cells_slice: &mut [MapCell] = &mut new_block.cells;
+            // MapCell is 3 bytes (packed). Vectorizing this is tricky due to 3-byte stride.
+            // However, most CPUs are LE, so we just do a fallback loop if BE.
+            for cell in cells_slice.iter_mut() {
+                cell.id = cell.id.swap_bytes();
             }
         }
-        // Advance the cursor by the size of the block
+
         rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;
-        Ok(new_block)
+        Ok(())
     }
 }
 
@@ -485,7 +484,8 @@ impl MapPlane {
                     continue;
                 }
 
-                let mut new_block = MapBlock::from_reader(&mut cursor)?;
+                let mut new_block = MapBlock::default();
+                MapBlock::from_reader(&mut cursor, &mut new_block)?;
                 new_block.internal_coords = block_pos;
                 self.cached_blocks.insert(block_pos, CachedBlock {
                     block: new_block,

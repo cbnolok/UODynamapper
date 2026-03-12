@@ -43,8 +43,12 @@ jobs:
             clang \
             mold
 
+      # dtolnay/rust-toolchain already sets up basic rust
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       # Caches ~/.cargo/registry (downloaded crates) and the incremental build
       # artifacts in target/. On a cache hit, subsequent builds are very fast.
@@ -52,12 +56,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          # Add extra key components so the cache is invalidated if Cargo.lock or
-          # toolchain changes (rust-cache does this automatically, but being explicit
-          # helps debug cache misses).
-          key: "linux-x86_64-stable"
+          key: "linux-x86_64-stable-sccache"
 
       - name: Build release binary
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+          CARGO_INCREMENTAL: 0
         run: cargo build --release --locked --bin dynamapper --package dynamapper
 
       - name: Package binary and assets
@@ -66,9 +71,8 @@ jobs:
           cp target/release/dynamapper release_package/
           cp -r assets/shaders release_package/assets/
           cp README.md release_package/ 2>/dev/null || true
-          # NOTE: UO game data files (*.mul, *.uop) are NOT included for copyright reasons.
-          # Users must supply their own copy and configure the path in settings.toml.
-          tar -czf dynamapper-linux-x86_64.tar.gz -C release_package .
+          # Use fast compression (gzip -1 or zstd)
+          tar -c release_package | gzip -1 > dynamapper-linux-x86_64.tar.gz
           echo "Archive size: $(du -sh dynamapper-linux-x86_64.tar.gz | cut -f1)"
 
       # Always upload as workflow artifact (available from the Actions UI, 30d TTL)

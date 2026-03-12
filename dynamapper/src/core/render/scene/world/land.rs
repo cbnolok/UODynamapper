@@ -35,6 +35,7 @@ pub fn sys_update_shared_land_material(
     time: Res<Time>,
     presets: Res<mesh_material::LandShaderModePresets>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
+    mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
 ) {
     if let Some(shared_mat) = shared_mat {
         if let Some(mat) = materials.get_mut(&shared_mat.0) {
@@ -42,7 +43,16 @@ pub fn sys_update_shared_land_material(
             let preset = &presets.classic.morning; // dynamically selected based on logic later
             mat.extension.effects_uniform = preset.effects;
             mat.extension.lighting_uniform = preset.lighting;
-            mat.extension.atlas_params = tile_atlas.params;
+            
+            // Only update atlas_params if they changed! 
+            // AtlasParams derives ShaderType which doesn't directly give us easy PartialEq but it's POD.
+            // We can compare the page_to_layer array if it's too expensive to update every frame.
+            // Actually, let's just always update time (it changes every frame), but we can 
+            // skip the heavy atlas mapping if we track changes.
+            if *last_atlas_params != Some(tile_atlas.params) {
+                mat.extension.atlas_params = tile_atlas.params;
+                *last_atlas_params = Some(tile_atlas.params);
+            }
         }
     }
 }

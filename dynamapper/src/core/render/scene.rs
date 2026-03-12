@@ -86,7 +86,6 @@ pub fn sys_update_scene_on_window_resize(mut resize_events: EventReader<WindowRe
 }
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
-    return;
     logger::one(
         None,
         LogSev::Debug,
@@ -96,7 +95,6 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
 }
 
 fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
-    return;
     logger::one(
         None,
         LogSev::Debug,

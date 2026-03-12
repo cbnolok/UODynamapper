@@ -1,3 +1,8 @@
+// ShaderType (from the `encase` crate) generates an internal `check()` function per
+// field that validates alignment at compile time. The compiler incorrectly reports
+// these as "function `check` is never used" — suppressed here.
+#![allow(dead_code)]
+
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
@@ -55,6 +60,7 @@ impl MaterialExtension for LandMaterialExtension {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct SceneUniform {
     pub camera_position: Vec3,
     pub time_seconds: f32,
@@ -64,6 +70,7 @@ pub struct SceneUniform {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
+#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandEffectsUniform {
     // TODO: keep here only non-lighting data. Move the others to LandLightingUniforms, then update the shader and terrain_shader_ui.rs.
 
@@ -104,6 +111,7 @@ pub struct LandEffectsUniform {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
+#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandLightingUniforms {
     // vec3 + pad
     pub light_color: Vec3,

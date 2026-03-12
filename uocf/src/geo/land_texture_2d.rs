@@ -106,7 +106,7 @@ impl Texture2DElement {
 #[derive(Debug)]
 pub struct TexMap2D {
     file_data: Vec<Texture2DElement>, //HashMap<u32, Texture2DElement>,
-    file_reader: std::sync::Mutex<BufReader<File>>,
+    file_reader: std::sync::Mutex<(BufReader<File>, Vec<u8>)>,
 }
 
 impl TexMap2D {
@@ -164,14 +164,14 @@ impl TexMap2D {
         let mut texmap = TexMap2D {
             //file_data: vec![Texture2DElement::default(); texidx.element_count()],
             file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
-            file_reader: std::sync::Mutex::new(BufReader::new(texmap_file_handle)),
+            file_reader: std::sync::Mutex::new((BufReader::new(texmap_file_handle), Vec::new())),
         };
 
         // Loop on each entry of texidx
         let mut i_idx_valid: usize = 0;
 
         #[cfg(debug_assertions)]
-        let lut: Vec<[u8; 4]> = {
+        let _lut: Vec<[u8; 4]> = {
             let mut table = Vec::with_capacity(65536);
             for i in 0..=65535u16 {
                 use crate::utils::color::Bgra5551;
@@ -265,58 +265,61 @@ impl TexMap2D {
             }
         }
 
-        let mut rdr = self.file_reader.lock().unwrap();
-        rdr.seek(SeekFrom::Start(element.file_offset)).ok()?;
-        let pixel_qty_bytes = element.pixel_qty * 2; // u16 per pixel
-        let mut pixel_data_bytes = vec![0u8; pixel_qty_bytes];
-        rdr.read_exact(&mut pixel_data_bytes).ok()?;
-
         let mut pixel_data = Vec::with_capacity(element.pixel_qty * 4);
 
-        // Convert BGRA5551 to RGBA8888
-        #[cfg(debug_assertions)]
         {
-            // Fallback for debug without relying on precomputed lut
-            let pixels_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
-            for &p in pixels_u16 {
-                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
-                pixel_16.set_a(1);
-                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+            let mut guard = self.file_reader.lock().unwrap();
+            let (rdr, scratch) = &mut *guard;
+            rdr.seek(SeekFrom::Start(element.file_offset)).ok()?;
+            let pixel_qty_bytes = element.pixel_qty * 2;
+            
+            scratch.resize(pixel_qty_bytes, 0);
+            rdr.read_exact(scratch).ok()?;
+
+            // Convert BGRA5551 to RGBA8888 using the scratch buffer directly
+            #[cfg(debug_assertions)]
+            {
+                let pixels_u16: &[u16] = bytemuck::cast_slice(&scratch);
+                for &p in pixels_u16 {
+                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                    pixel_16.set_a(1);
+                    pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+                }
             }
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
-                bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
+            #[cfg(not(debug_assertions))]
+            {
+                let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
+                    bytemuck::cast_slice(&scratch).as_chunks::<16>();
 
-            for &chunk_array in pixel_data_u16_prefix {
-                let mut chunk = u16x16::new(chunk_array);
+                for &chunk_array in pixel_data_u16_prefix {
+                    let mut chunk = u16x16::new(chunk_array);
 
-                #[cfg(target_endian = "big")]
-                {
-                    chunk = chunk.swap_bytes();
+                    #[cfg(target_endian = "big")]
+                    {
+                        chunk = chunk.swap_bytes();
+                    }
+
+                    let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
+                    let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
+                    let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
+                    let a_u16: u16x16 = u16x16::splat(0xFF);
+
+                    let mut rgba_u32_array = [0u32; 16];
+                    for i in 0..16 {
+                        let r_val = r_u16.as_array_ref()[i] as u32;
+                        let g_val = g_u16.as_array_ref()[i] as u32;
+                        let b_val = b_u16.as_array_ref()[i] as u32;
+                        let a_val = a_u16.as_array_ref()[i] as u32;
+                        rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                    }
+                    pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
                 }
 
-                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
-                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
-                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
-                let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
-
-                let mut rgba_u32_array = [0u32; 16];
-                for i in 0..16 {
-                    let r_val = r_u16.as_array_ref()[i] as u32;
-                    let g_val = g_u16.as_array_ref()[i] as u32;
-                    let b_val = b_u16.as_array_ref()[i] as u32;
-                    let a_val = a_u16.as_array_ref()[i] as u32;
-                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                for &p in pixel_data_u16_suffix {
+                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                    pixel_16.set_a(1);
+                    pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
                 }
-                pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
-            }
-
-            for &p in pixel_data_u16_suffix {
-                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
-                pixel_16.set_a(1);
-                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
             }
         }
 

@@ -1,14 +1,17 @@
 #![allow(dead_code)]
 
 crate::eyre_imports!();
-use byteorder::{LittleEndian, ReadBytesExt};
+// use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
-use std::io::{prelude::*, Cursor};
+use std::io::prelude::*;
 use std::path::PathBuf;
 
 use super::utils::math::*;
 
-#[derive(Clone, Debug, Default)]
+use bytemuck::{Pod, Zeroable};
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct IndexElement {
     lookup: u32, // Position of the element in the related file.
     size: u32,   // Size of the element in bytes.
@@ -76,34 +79,29 @@ impl IndexFile {
         let file_size = downcast_ceil_usize(file_metadata.len());
 
         let index_element_qty = file_size / IndexElement::PACKED_SIZE as usize;
-        let mut index_file = IndexFile {
-            file_data: vec![IndexElement::default(); index_element_qty],
-        };
+        let valid_byte_size = index_element_qty * IndexElement::PACKED_SIZE as usize;
 
-        let mut index_file_rdr = {
-            let mut rdr_buf = vec![0; file_size];
-            file_handle
-                .read_exact(rdr_buf.as_mut())
-                .wrap_err("Read index file")?;
-            Cursor::new(rdr_buf)
-        };
+        let mut rdr_buf = vec![0; file_size];
+        file_handle
+            .read_exact(rdr_buf.as_mut())
+            .wrap_err("Read index file")?;
 
-        let strerr_base = "Reading index data for element ";
-        let mut i_elem = 0;
-        for elem in index_file.file_data.iter_mut() {
-            elem.lookup = index_file_rdr
-                .read_u32::<LittleEndian>()
-                .wrap_err_with(|| format!("{}0x{:x}: Reading {}", strerr_base, i_elem, "lookup"))?;
+        // Bulk cast only the valid portion of the buffer to IndexElement slice to avoid "slop" panic
+        let file_data: Vec<IndexElement> = bytemuck::cast_slice::<u8, IndexElement>(&rdr_buf[..valid_byte_size]).to_vec();
 
-            elem.size = index_file_rdr
-                .read_u32::<LittleEndian>()
-                .wrap_err_with(|| format!("{}0x{:x}: Reading {}", strerr_base, i_elem, "size"))?;
-
-            elem.extra = index_file_rdr
-                .read_u32::<LittleEndian>()
-                .wrap_err_with(|| format!("{}0x{:x}: Reading {}", strerr_base, i_elem, "extra"))?;
-            i_elem += 1;
+        // Handle endianness if strictly necessary, though UO data is always LE.
+        // On LE systems, this is a no-op if optimized.
+        #[cfg(target_endian = "big")]
+        {
+            for elem in file_data.iter_mut() {
+                elem.lookup = elem.lookup.swap_bytes();
+                elem.size = elem.size.swap_bytes();
+                elem.extra = elem.extra.swap_bytes();
+            }
         }
+
+        let i_elem = file_data.len();
+        let index_file = IndexFile { file_data };
         println!(
             "Loaded {i_elem} (0x{:x}) Index Elements from '{file_name}'.",
             i_elem

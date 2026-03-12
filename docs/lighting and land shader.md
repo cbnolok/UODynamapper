@@ -107,6 +107,7 @@ Some pipelines store **tile-center** attributes (one per tile), not node heights
   * ✅ Cheap; matches classic look.
   * ❌ Rim/specular are **view-dependent** and local; interpolation **smears or kills** them.
   * Diffuse **is** affected by **light direction** (it’s Lambert at vertices), so changing sun angles still changes shading—just coarsely.
+
 * **Per-fragment shading:** compute lighting **per pixel** using the interpolated normal or re-derived normal.
 
   * ✅ Accurate rim/specular; works with bicubic/bent normals.

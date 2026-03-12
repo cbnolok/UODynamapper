@@ -52,18 +52,16 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Start loading UO Data.");
 
-    let map_plane_index = 0_u32;
-    lg(
-        &format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)...")
-            .as_str(),
-    );
-    let map_plane = map::MapPlane::init(
-        uo_path.join(&format!("map{map_plane_index}.mul")),
-        map_plane_index,
-    )
-    .expect(&format!("Error initializing map plane {map_plane_index}"));
     let mut map_planes = DashMap::<u32, map::MapPlane>::new();
-    map_planes.insert(map_plane_index, map_plane);
+    for map_plane_index in 0..6 {
+        let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
+        if map_file.exists() {
+            lg(&format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)..."));
+            let map_plane = map::MapPlane::init(map_file, map_plane_index)
+                .expect(&format!("Error initializing map plane {map_plane_index}"));
+            map_planes.insert(map_plane_index, map_plane);
+        }
+    }
 
     lg("Loading Tiledata");
     let tiledata = tiledata::TileData::load(uo_path.join("tiledata.mul")).expect("Load tiledata");

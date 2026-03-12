@@ -14,7 +14,7 @@ use crate::{
 
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use super::scene::world::land::mesh_material::*;
 
 // Plugin that draws the UI and applies changes to materials.
@@ -25,9 +25,8 @@ impl_tracked_plugin!(TerrainUiPlugin);
 
 impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(EguiPlugin::default())
-            // Draw UI in the egui pass
-            .add_systems(EguiPrimaryContextPass, terrain_ui_system)
+        // Draw UI in the egui pass
+        app.add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);
     }

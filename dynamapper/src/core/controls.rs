@@ -1,4 +1,6 @@
 pub mod player_movement;
+pub mod teleport;
+pub mod window_controls;
 
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -10,8 +12,14 @@ impl_tracked_plugin!(ControlsPlugin);
 impl Plugin for ControlsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_plugins((player_movement::PlayerMovementPlugin {
-            registered_by: "ControlsPlugin",
-        },));
+        app.add_plugins((
+            player_movement::PlayerMovementPlugin {
+                registered_by: "ControlsPlugin",
+            },
+            window_controls::WindowControlsPlugin {
+                registered_by: "ControlsPlugin",
+            },
+            teleport::TeleportPlugin,
+        ));
     }
 }

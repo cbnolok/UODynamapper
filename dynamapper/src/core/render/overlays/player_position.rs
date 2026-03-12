@@ -1,61 +1,73 @@
+use crate::{
+    core::{render::scene::player::Player, system_sets::StartupSysSet},
+    prelude::*,
+};
 use bevy::prelude::*;
 
-pub fn setup_player_overlay(mut commands: Commands, asset_server: Res<AssetServer>) {
-    // Root UI node
-    commands.spawn(NodeBundle {
-        style: Style {
-            align_items: AlignItems::Start,
-            justify_content: JustifyContent::Start,
-            // Position it pinned to the top-left with some margin
+pub struct PlayerPositionOverlayPlugin;
+
+impl Plugin for PlayerPositionOverlayPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Startup,
+            setup_overlay_player_position.in_set(StartupSysSet::SetupSceneStage2),
+        )
+        .add_systems(
+            Update,
+            update_player_position_text.run_if(in_state(AppState::InGame)),
+        );
+    }
+}
+
+#[derive(Component)]
+pub struct OverlayPlayerPositionText;
+
+pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font: Handle<Font> = asset_server.load("fonts/uo/UOClassicRough.ttf");
+
+    let root_id = commands
+        .spawn(Node {
             position_type: PositionType::Absolute,
             left: Val::Px(20.0),
             top: Val::Px(20.0),
             ..default()
-        },
-        background_color: BackgroundColor(Color::NONE),
-        ..default()
-    })
-    .with_children(|parent| {
-        // Black rectangle background
-        parent.spawn(NodeBundle {
-            style: Style {
+        })
+        .id();
+
+    let bg_id = commands
+        .spawn((
+            Node {
                 padding: UiRect::all(Val::Px(7.0)),
                 ..default()
             },
-            background_color: BackgroundColor(Color::BLACK.with_a(0.8)),
-            ..default()
-        })
-        .with_children(|parent| {
-            // Player position text; use a marker for later update
-            parent.spawn((
-                TextBundle::from_section(
-                    "Player: (0.00, 0.00, 0.00)",
-                    TextStyle {
-                        font: asset_server.load("fonts/FiraMono-Medium.ttf"),
-                        font_size: 18.0,
-                        color: Color::WHITE,
-                    },
-                ),
-                PlayerPositionText,
+            BackgroundColor(Color::BLACK.with_alpha(0.65)),
+        ))
+        .with_children(|builder| {
+            builder.spawn((
+                Text::new("Player position: (NA, NA, NA)"),
+                TextFont {
+                    font,
+                    font_size: 15.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                OverlayPlayerPositionText,
             ));
-        });
-    });
+        })
+        .id();
+
+    commands.entity(root_id).add_child(bg_id);
 }
 
-// Marker so we can update the text
-#[derive(Component)]
-pub struct PlayerPositionText;
-
-// System to update text
 pub fn update_player_position_text(
-    player_query: Query<&Transform, With<PlayerControlled>>,
-    mut text_query: Query<&mut Text, With<PlayerPositionText>>,
+    player_query: Query<&Transform, With<Player>>,
+    mut text_query: Query<&mut Text, With<OverlayPlayerPositionText>>,
 ) {
-    if let (Ok(transform), Ok(mut text)) =
-        (player_query.get_single(), text_query.get_single_mut())
-    {
-        let pos = transform.translation;
-        text.sections[0].value =
-            format!("Player: ({:.2}, {:.2}, {:.2})", pos.x, pos.y, pos.z);
+    if let (Ok(transform), Ok(mut text)) = (player_query.single(), text_query.single_mut()) {
+        let pos = transform.translation.to_uo_vec3();
+        *text = Text::new(format!(
+            "Player position: [{}, {}, {}]",
+            pos.x, pos.y, pos.z
+        ));
     }
 }

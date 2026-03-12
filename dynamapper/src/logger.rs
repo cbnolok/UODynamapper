@@ -1,13 +1,33 @@
 use chrono::Timelike;
-//use pad::PadStr;
+use serde::Deserialize;
 use regex::Regex;
 use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames};
 //use std::io::Write; // for flush().
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+
+#[derive(Default)]
+pub struct LogSettings {
+    pub min_severity: Option<LogSev>,
+    pub filters: Vec<LogFilter>,
+}
+
+pub struct LogFilter {
+    pub sev: Option<LogSev>,
+    pub about: Option<LogAbout>,
+    pub suppress: bool,
+}
+
+static LOG_SETTINGS: OnceLock<RwLock<LogSettings>> = OnceLock::new();
+
+pub fn set_log_settings(settings: LogSettings) {
+    let _ = LOG_SETTINGS.get_or_init(|| RwLock::new(LogSettings::default()))
+        .write()
+        .map(|mut guard| *guard = settings);
+}
 
 // Event severity.
-#[derive(Display, EnumString, VariantNames, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Display, EnumString, VariantNames, PartialEq)]
 pub enum LogSev {
     Debug,
     DebugVerbose,
@@ -18,7 +38,7 @@ pub enum LogSev {
 }
 
 // Event context.
-#[derive(Display, EnumString, VariantNames, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Display, EnumString, VariantNames, PartialEq)]
 pub enum LogAbout {
     AppState,
     Camera,
@@ -77,7 +97,34 @@ fn enum_about_variant_name_validate(val: &str) -> bool {
 }
 
 #[allow(unused)]
-fn can_show_msg(severity: LogSev, about: LogAbout) -> bool {
+fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
+    let settings_guard = LOG_SETTINGS.get_or_init(|| RwLock::new(LogSettings::default())).read().unwrap();
+    
+    // 1. Check min severity
+    if let Some(min_sev) = &settings_guard.min_severity {
+        // Simple ordinal comparison if we had one, but we use match for now
+        let sev_val = |s: &LogSev| match s {
+            LogSev::DebugVerbose => 0,
+            LogSev::Debug => 1,
+            LogSev::Diagnostics => 2,
+            LogSev::Info => 3,
+            LogSev::Warn => 4,
+            LogSev::Error => 5,
+        };
+        if sev_val(severity) < sev_val(min_sev) {
+            return false;
+        }
+    }
+
+    // 2. Check filters
+    for filter in &settings_guard.filters {
+        let sev_match = filter.sev.as_ref().map_or(true, |s| s == severity);
+        let about_match = filter.about.as_ref().map_or(true, |a| a == about);
+        if sev_match && about_match {
+            return !filter.suppress;
+        }
+    }
+
     true
 }
 
@@ -88,6 +135,10 @@ pub fn one(
     about: LogAbout,
     msg: &str,
 ) {
+    if !can_show_msg(&severity, &about) {
+        return;
+    }
+
     use std::fmt::Write;
     let show_location = show_caller_location_override.unwrap_or(true);
 
@@ -126,7 +177,7 @@ pub fn one(
     let sev_symbol: &'static str = match severity {
         LogSev::Debug => "<bright-magenta><bold><info></bold></>",
         LogSev::DebugVerbose => "<bright-magenta><bold><info></bold></>",
-        LogSev::Diagnostics => "<dark-green><bold><info></bold></>",
+        LogSev::Diagnostics => "<green><bold><info></bold></>",
         LogSev::Error => "<red><bold><cross></bold></>",
         LogSev::Info => "<cyan><bold><info></bold></>",
         LogSev::Warn => "<bright-yellow><bold><warn></bold></>",
@@ -136,7 +187,7 @@ pub fn one(
 
     // Style message (only clone/format if needed)
     match severity {
-        LogSev::Diagnostics => write!(full_msg, "<dark-green>{msg}</>").unwrap(),
+        LogSev::Diagnostics => write!(full_msg, "<green>{msg}</>").unwrap(),
         LogSev::Error => write!(full_msg, "<red><bold>{msg}</></bold>").unwrap(),
         LogSev::Info => write!(full_msg, "<cyan>{msg}</>").unwrap(),
         LogSev::Warn => write!(full_msg, "<bright-yellow>{msg}</>").unwrap(),
@@ -147,5 +198,5 @@ pub fn one(
 }
 
 pub fn system(msg: &str) {
-    paris::log!("<dark-green>{msg}</>");
+    paris::log!("<green>{msg}</>");
 }

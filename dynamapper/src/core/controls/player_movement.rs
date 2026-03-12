@@ -28,6 +28,7 @@ pub struct MoveCooldown(Timer);
 #[derive(Debug, Default, Resource)]
 pub struct MoveDirection {
     pub dir: Option<IVec2>,
+    pub vertical_dir: i32,
 }
 // Reads WASD "intent" and stores it
 fn sys_player_input(
@@ -48,6 +49,15 @@ fn sys_player_input(
         dir.x += 1;
     }
     move_dir.dir = if dir != IVec2::ZERO { Some(dir) } else { None };
+
+    let mut v_dir = 0;
+    if keyboard_input.pressed(KeyCode::PageUp) {
+        v_dir += 1;
+    }
+    if keyboard_input.pressed(KeyCode::PageDown) {
+        v_dir -= 1;
+    }
+    move_dir.vertical_dir = v_dir;
 }
 
 fn sys_player_move(
@@ -65,6 +75,16 @@ fn sys_player_move(
                 // Move by exactly 1.0 per tile/step
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 transform.translation += delta;
+            }
+            cooldown.0.reset();
+        }
+
+        if move_dir.vertical_dir != 0 {
+            for mut transform in query.iter_mut() {
+                // Adjust height. Use the scale utility if available or a standard step.
+                // In UO a height step is often 1, but we scale it for Bevy.
+                let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(move_dir.vertical_dir as f32);
+                transform.translation.y += delta_y;
             }
             cooldown.0.reset();
         }

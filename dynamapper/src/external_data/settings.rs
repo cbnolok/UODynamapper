@@ -22,7 +22,7 @@ pub struct Settings {
     pub world: SectWorld,
     pub debug: SectDebug,
     pub graphics: SectGraphics,
-    // pub logger: Option<Logger>, // For the commented section
+    pub logging: SectLogging,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -45,6 +45,7 @@ pub struct SectWindow {
 #[derive(Clone, Debug, Deserialize)]
 pub struct SectWorld {
     pub start_p: UOVec4, //[i32; 4], // or [f32;4].
+    pub hide_player: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -58,6 +59,21 @@ pub struct SectGraphics {
     /// This saves ~8x VRAM (160 MB -> ~20 MB) at the cost of near-lossless quality.
     /// Requires BC texture compression GPU support (most desktop GPUs support this).
     pub lossy_texture_compression: bool,
+    /// When true, the application significantly reduces FPS/updates when the window is unfocused.
+    pub reduce_unfocused_fps: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SectLogging {
+    pub min_severity: LogSev,
+    pub filters: Vec<LogFilterSetting>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct LogFilterSetting {
+    pub sev: Option<LogSev>,
+    pub about: Option<LogAbout>,
+    pub suppress: bool,
 }
 
 // ----
@@ -73,7 +89,15 @@ pub fn load_from_file() -> Settings {
 
     let contents =
         std::fs::read_to_string(&settings_with_rel_path).expect("Failed to read settings file");
-    let settings: Settings = toml::from_str(&contents).expect("Failed to parse settings TOML");
+    let settings: Settings = match toml::from_str(&contents) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("\n<red><bold>!! TOML PARSING ERROR !!</></bold>");
+            eprintln!("<red>File: {:?}</>", settings_with_rel_path);
+            eprintln!("<red>Error: {}</>\n", e);
+            panic!("Configuration failure. Please check your settings.toml");
+        }
+    };
 
     settings
 }
@@ -100,6 +124,21 @@ impl Plugin for SettingsPlugin {
 
 fn sys_startup_load_file(mut commands: Commands) {
     let data = load_from_file();
+    
+    // Initialize logger settings
+    let mut filters = Vec::new();
+    for f in &data.logging.filters {
+        filters.push(logger::LogFilter {
+            sev: f.sev.clone(),
+            about: f.about.clone(),
+            suppress: f.suppress,
+        });
+    }
+    logger::set_log_settings(logger::LogSettings {
+        min_severity: Some(data.logging.min_severity.clone()),
+        filters,
+    });
+
     commands.insert_resource(data);
     logger::one(
         None,

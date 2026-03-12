@@ -1,3 +1,7 @@
+// ShaderType (from `encase`) generates internal `check()` functions per field for
+// alignment validation at compile time — these appear as "function `check` is never used".
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 
@@ -25,7 +29,7 @@ impl Rg16u {
 /// Uniform parameters passed to the terrain shader to resolve world coordinates into atlas samples.
 /// This struct must be kept in sync with the shader's `AtlasParams` (including std140/std430 alignment).
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType)]
+#[derive(Debug, Clone, Copy, ShaderType, PartialEq)]
 pub struct AtlasParams {
     /// Dimension of a single page in texels.
     pub page_texels: UVec2,
@@ -193,7 +197,7 @@ pub fn sys_extract_atlas_uploads(
     mut render_uploads: ResMut<RenderAtlasUploads>,
 ) {
     if !tile_atlas.pending_uploads.is_empty() {
-        render_uploads.0.extend(tile_atlas.pending_uploads.iter().cloned());
+        render_uploads.0.extend(tile_atlas.pending_uploads.clone());
     }
 }
 

@@ -6,7 +6,7 @@
 use super::texture_array;
 use bevy::prelude::*;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };

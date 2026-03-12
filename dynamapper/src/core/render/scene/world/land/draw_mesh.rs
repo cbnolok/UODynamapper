@@ -163,14 +163,10 @@ pub fn sys_draw_spawned_land_chunks(
     ));
 
     // Step 1: Collect all primary chunks that need meshing into a HashMap.
-    // This maps coordinates to an entity, ensuring we don't lose the entity reference
-    // and allows for fast lookups.
+    // Process only chunks that don't have a mesh yet.
     let mut primary_chunks = std::collections::HashMap::new();
-    for (entity, chunk_data, mesh_handle) in chunk_q.iter() {
-        // Process chunks that don't have a mesh yet.
-        if mesh_handle.is_none() {
-            primary_chunks.insert((chunk_data.gx, chunk_data.gy), entity);
-        }
+    for (entity, chunk_data, _) in chunk_q.iter().filter(|(_, _, mesh)| mesh.is_none()) {
+        primary_chunks.insert((chunk_data.gx, chunk_data.gy), entity);
     }
 
     if primary_chunks.is_empty() {

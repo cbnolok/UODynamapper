@@ -24,6 +24,7 @@ use bevy::{
     window::WindowResolution,
     winit::{UpdateMode, WinitSettings},
 };
+use bevy_egui::EguiPlugin;
 use bevy_framepace::FramepacePlugin;
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
@@ -63,11 +64,24 @@ fn custom_bevy_log_config() -> LogPlugin {
     }
 }
 
-fn custom_winit_settings() -> WinitSettings {
+fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
     // Use Continuous mode: render every frame unconditionally.
     // Reactive mode only schedules frames when OS events arrive (mouse/keyboard),
     // which caps FPS at the event rate and causes visual stutter during scrolling.
-    WinitSettings::game()
+    let mut settings = WinitSettings::game();
+    if reduce_unfocused_fps {
+        /* settings.unfocused_mode = UpdateMode::ReactiveLowPower {
+            max_wait: Duration::from_millis(250), // Refresh at least ~4 times a second even if idle
+        };
+        */
+        settings.unfocused_mode = UpdateMode::Reactive {
+            wait: Duration::from_millis(250),
+            react_to_device_events: true,
+            react_to_user_events: true,
+            react_to_window_events: true,
+        };
+    }
+    settings
 }
 
 fn custom_threadpool_settings() -> TaskPoolPlugin {
@@ -129,7 +143,10 @@ pub fn run_bevy_app() -> ExitCode {
     // Current working directory.
     logger::system(&format!("CWD: {cwd:?}"));
     // Other debug info.
-    logger::system(&format!("Default Assets folder: {:?}", bevy::asset::AssetPlugin::default().file_path));
+    logger::system(&format!(
+        "Default Assets folder: {:?}",
+        bevy::asset::AssetPlugin::default().file_path
+    ));
     logger::system(&format!("Setting custom Assets folder: {assets_folder:?}"));
 
     let settings_data = settings::load_from_file();
@@ -145,7 +162,9 @@ pub fn run_bevy_app() -> ExitCode {
 
     let mut app = App::new();
     let result = app
-        .insert_resource(custom_winit_settings())
+        .insert_resource(custom_winit_settings(
+            settings_data.graphics.reduce_unfocused_fps,
+        ))
         .add_plugins(
             DefaultPlugins
                 .build()
@@ -166,7 +185,11 @@ pub fn run_bevy_app() -> ExitCode {
         //  schedule.set_executor_kind(ExecutorKind::SingleThreaded);
         //})
         .add_plugins(FramepacePlugin) // caps at 60 FPS by default
-        //.use(bevy_framepace::FramepaceSettings::default().with_framerate(30.0))
+        .add_plugins(EguiPlugin::default()) // egui UI layer (used for teleport dialog, etc.)
+        .add_plugins((
+            bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+            bevy::diagnostic::SystemInformationDiagnosticsPlugin::default(),
+        ))
         .add_plugins((
             ExternalDataPlugin {
                 registered_by: "Core",

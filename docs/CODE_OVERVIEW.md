@@ -125,10 +125,23 @@ The rendering of the game world, especially the terrain, is a core feature. Here
     * Shared scene data (Lighting, Effects, Globals) are extracted into a shared bind group to further maximize batching efficiency.
     * The `LandCustomMaterial` remains slim, binding only the Tile Atlas handle and layout parameters.
 
-6. **Optimization & Implementation Details**:
+6. **Logger and Settings**:
+    * **Settings**: Global configuration is loaded from `assets/settings.toml`. It supports hot-swappable log filtering settings.
+    * **Log Filtering**: The logger respects `SectLogging` settings, allowing suppression of specific message types (e.g., `RenderWorldLand` or `Debug` severity) to reduce console noise.
+
+7. **Multi-Map Support**:
+    * The `UOFilesPlugin` automatically discovers all available `mapX.mul` files in the UO directory (indexing maps 0 through 5) and makes them available to the simulation.
+
+8. **User Interface and Overlays**:
+    * **Refactored Overlays**: UI overlays are modularized into separate files (e.g., `performance.rs`, `player_position.rs`) for easier maintenance.
+    * **Teleport Dialog**: A specialized egui dialog (opened with `Ctrl+G`) allows for instant teleportation by entering X, Y, Z, and M (map plane) coordinates.
+
+9. **Optimization & Implementation Details**:
     * **Sequential I/O**: The map loader (`map.rs`) groups non-contiguous block requests into sequential ranges to minimize filesystem seeks and reads.
     * **Lazy Texture Residency**: `TexMap2D` lazy-loads land texture pixels from `.mul` files on-demand, caching them in an `Arc<Vec<u8>>` with 60s idle eviction.
     * **BC7 Alignment**: When uploading BC7-compressed textures via WGPU's `write_texture`, `bytes_per_row` is calculated as `(width + 3) / 4 * 16` to align with 4x4 pixel blocks.
     * **Idle Eviction**: An eviction system (`sys_evict_map_blocks`) checks for inactive `MapBlock`s and textures every 5 seconds, dropping data older than 60 seconds.
+    * **Power Saving**: When the window is unfocused, the app can switch to `ReactiveLowPower` mode (configurable in `settings.toml`) to drastically reduce CPU/GPU usage.
+    * **Performance Monitoring**: A real-time overlay in the top-right corner displays FPS, CPU usage, and RAM (RSS) footprint.
 
 
