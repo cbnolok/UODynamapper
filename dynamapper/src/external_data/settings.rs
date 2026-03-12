@@ -10,72 +10,83 @@ use bevy::{
     prelude::*,
     window::WindowResolution
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-const CONFIG_FILE_NAME: &'static str = "settings.toml";
 
-#[derive(Asset, Clone, Debug, Deserialize, Resource, TypePath)]
+#[derive(Asset, Clone, Debug, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
     pub core: SectCore,
     pub app: SectApp,
     pub logging: SectLogging,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectCore {
     pub uo_files: SectUoFiles,
     pub world: SectWorld,
     pub graphics: SectGraphics,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectApp {
     pub input: SectInput,
     pub window: SectWindow,
     pub debug: SectDebug,
+    pub performance: SectPerformance,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectUoFiles {
     pub folder: String, 
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectWindow {
     pub height: f32,
     pub width: f32,
     pub zoom: f32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SectPerformance {
+    pub show_overlay: bool,
+    pub frame_limit_enabled: bool,
+    pub target_fps: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     pub reduce_unfocused_fps: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// Resource used to debounce saving settings to disk.
+#[derive(Resource)]
+pub struct SettingsSaveTimer(pub Timer);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectLogging {
     pub min_severity: LogSev,
     pub filters: Vec<LogFilterSetting>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LogFilterSetting {
     pub sev: Option<LogSev>,
     pub about: Option<LogAbout>,
@@ -89,23 +100,77 @@ pub struct ToggleWireframe;
 
 // ----
 
-pub fn load_from_file() -> Settings {
-    let settings_with_rel_path: PathBuf =
-        PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string() + CONFIG_FILE_NAME);
+const CORE_CONFIG_FILE: &'static str = "core_settings.toml";
+const USER_CONFIG_FILE: &'static str = "user_preferences.toml";
 
-    let contents =
-        std::fs::read_to_string(&settings_with_rel_path).expect("Failed to read settings file");
-    let settings: Settings = match toml::from_str(&contents) {
+pub fn load_from_files() -> Settings {
+    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    
+    let core_path = assets_path.join(CORE_CONFIG_FILE);
+    let user_path = assets_path.join(USER_CONFIG_FILE);
+
+    let core_contents = std::fs::read_to_string(&core_path)
+        .expect("Failed to read core_settings.toml");
+    
+    // Core settings file contains top-level core and logging sections
+    #[derive(Deserialize)]
+    struct CoreWrapper {
+        core: SectCore,
+        logging: SectLogging,
+    }
+    let core_data: CoreWrapper = match toml::from_str(&core_contents) {
         Ok(s) => s,
         Err(e) => {
-            paris::error!("\n<bold>!! TOML PARSING ERROR !!</>");
-            paris::log!("<red>File: {:?}</>", settings_with_rel_path);
+            paris::error!("\n<bold>!! TOML PARSING ERROR in core_settings.toml !!</>");
             paris::log!("<red>Error: {}</>\n", e);
-            panic!("Configuration failure. Please check your settings.toml");
+            panic!("Configuration failure.");
         }
     };
 
-    settings
+    // User preferences file contains SectApp fields directly at top level
+    let user_contents = std::fs::read_to_string(&user_path)
+        .unwrap_or_else(|_| "".to_string());
+    
+    let user_app: SectApp = match toml::from_str(&user_contents) {
+        Ok(s) => s,
+        Err(_e) => {
+            // If it fails (maybe partial file), use defaults for app section
+            SectApp {
+                input: SectInput { movement_speed_multiplier: 1.0 },
+                window: SectWindow { width: 1024.0, height: 768.0, zoom: 1.0 },
+                debug: SectDebug { map_render_wireframe: false },
+                performance: SectPerformance { 
+                    show_overlay: true,
+                    frame_limit_enabled: true,
+                    target_fps: 60,
+                },
+            }
+        }
+    };
+
+    Settings {
+        core: core_data.core,
+        app: user_app,
+        logging: core_data.logging,
+    }
+}
+
+pub fn save_user_preferences(settings: &Settings) {
+    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let user_path = assets_path.join(USER_CONFIG_FILE);
+
+    match toml::to_string_pretty(&settings.app) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&user_path, toml_str) {
+                paris::error!("Failed to save user_preferences.toml: {}", e);
+            } else {
+                logger::one(None, LogSev::Info, LogAbout::General, "Saved user_preferences.toml");
+            }
+        }
+        Err(e) => {
+            paris::error!("Failed to serialize user preferences: {}", e);
+        }
+    }
 }
 
 // ----
@@ -123,13 +188,14 @@ impl Plugin for SettingsPlugin {
             .add_event::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
-            .add_systems(Update, sys_evlisten_switch_wireframe)
+            .insert_resource(SettingsSaveTimer(Timer::from_seconds(1.0, TimerMode::Once)))
+            .add_systems(Update, (sys_evlisten_switch_wireframe, sys_debounced_save))
             ;
     }
 }
 
 fn sys_startup_load_file(mut commands: Commands) {
-    let data = load_from_file();
+    let data = load_from_files();
     
     // Initialize logger settings
     let mut filters = Vec::new();
@@ -271,5 +337,26 @@ fn sys_evlisten_switch_wireframe(
             commands.entity(entity).remove::<Wireframe>();
         }
         */
+    }
+}
+
+/// Automatically saves user preferences if they have been modified, with a 1s debounce timer.
+fn sys_debounced_save(
+    time: Res<Time>,
+    settings: Res<Settings>,
+    mut save_timer: ResMut<SettingsSaveTimer>,
+) {
+    if settings.is_changed() {
+        // Reset timer whenever a change occurs
+        save_timer.0.reset();
+        save_timer.0.unpause();
+    }
+
+    if !save_timer.0.paused() {
+        save_timer.0.tick(time.delta());
+        if save_timer.0.just_finished() {
+            save_user_preferences(&settings);
+            save_timer.0.pause();
+        }
     }
 }

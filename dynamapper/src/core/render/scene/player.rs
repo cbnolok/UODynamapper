@@ -19,7 +19,8 @@ impl Plugin for PlayerPlugin {
         app.add_systems(
             Startup,
             sys_spawn_player_entity.in_set(StartupSysSet::SetupSceneStage1),
-        );
+        )
+        .add_systems(Update, sys_update_player_visibility.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -39,6 +40,8 @@ pub fn sys_spawn_player_entity(
         base_color: Color::Srgba(color::palettes::basic::GREEN),
         ..default()
     });
+    
+    // Store handles in a resource for dynamic toggling or just let the system handle it
 
     let start_p = settings.core.world.start_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
@@ -52,7 +55,7 @@ pub fn sys_spawn_player_entity(
         },
     ));
 
-    if settings.core.world.hide_player {
+    if !settings.core.world.hide_player {
         player_entity.insert((
             Mesh3d(mesh_handle),
             MeshMaterial3d(material_handle),
@@ -65,4 +68,39 @@ pub fn sys_spawn_player_entity(
         LogAbout::Player,
         format!("Spawned player at pos {player_start_pos}.").as_str(),
     );
+}
+
+pub fn sys_update_player_visibility(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    player_q: Query<Entity, With<Player>>,
+    render_q: Query<Entity, (With<Player>, With<Mesh3d>)>,
+) {
+    let hide = settings.core.world.hide_player;
+    let is_rendered = !render_q.is_empty();
+
+    if hide && is_rendered {
+        for entity in render_q.iter() {
+            commands.entity(entity).remove::<(Mesh3d, MeshMaterial3d<StandardMaterial>)>();
+        }
+    } else if !hide && !is_rendered {
+        // We need the handles again. Since we don't store them, we recreate them or 
+        // better, the startup should have stored them. 
+        // For simplicity here, just recreate (AssetServer would be better for real assets).
+        let mesh_handle = meshes.add(Mesh::from(Cuboid {
+            half_size: Vec3::splat(0.5),
+        }));
+        let material_handle = materials.add(StandardMaterial {
+            base_color: Color::Srgba(color::palettes::basic::GREEN),
+            ..default()
+        });
+        for entity in player_q.iter() {
+            commands.entity(entity).insert((
+                Mesh3d(mesh_handle.clone()),
+                MeshMaterial3d(material_handle.clone()),
+            ));
+        }
+    }
 }

@@ -33,21 +33,29 @@ pub struct OptionsDialogState {
     pub open: bool,
     /// Whether frame limiting is active.
     pub frame_limit_enabled: bool,
-    /// The target FPS when frame limiting is enabled.  Stored as an index into `FPS_PRESETS`.
+    /// The target FPS when frame limiting is enabled.
     pub fps_preset_idx: usize,
+    /// Speed multiplier for player movement.
+    pub movement_speed_multiplier: f32,
+    /// Whether to hide the player mesh.
+    pub hide_player: bool,
+    /// Whether to show the performance overlay.
+    pub show_overlay: bool,
 }
 
 impl Default for OptionsDialogState {
     fn default() -> Self {
-        // Find the index of DEFAULT_FPS_LIMIT in the presets, falling back to 0.
         let fps_preset_idx = FPS_PRESETS
             .iter()
             .position(|&fps| fps == DEFAULT_FPS_LIMIT)
             .unwrap_or(0);
         Self {
             open: false,
-            frame_limit_enabled: true, // match the default FramepacePlugin behaviour (60 fps)
+            frame_limit_enabled: true,
             fps_preset_idx,
+            movement_speed_multiplier: 1.0,
+            hide_player: false,
+            show_overlay: true,
         }
     }
 }
@@ -59,8 +67,30 @@ pub struct OptionsDialogPlugin;
 impl Plugin for OptionsDialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OptionsDialogState>()
-            .add_systems(Update, sys_toggle_options_dialog.run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (
+                sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
+                sys_sync_settings_to_state.run_if(in_state(AppState::InGame))
+            ))
             .add_systems(EguiPrimaryContextPass, sys_render_options_dialog.run_if(in_state(AppState::InGame)));
+    }
+}
+
+/// One-time sync from Settings resource to UI state when dialog is first initialized or loaded.
+fn sys_sync_settings_to_state(
+    settings: Res<Settings>,
+    mut state: ResMut<OptionsDialogState>,
+    mut initialized: Local<bool>,
+) {
+    if !*initialized {
+        state.movement_speed_multiplier = settings.app.input.movement_speed_multiplier;
+        state.hide_player = settings.core.world.hide_player;
+        state.show_overlay = settings.app.performance.show_overlay;
+        state.frame_limit_enabled = settings.app.performance.frame_limit_enabled;
+        state.fps_preset_idx = FPS_PRESETS
+            .iter()
+            .position(|&fps| fps == settings.app.performance.target_fps)
+            .unwrap_or(0);
+        *initialized = true;
     }
 }
 
@@ -85,7 +115,7 @@ fn sys_render_options_dialog(
     mut contexts: EguiContexts,
     mut state: ResMut<OptionsDialogState>,
     mut framepace: ResMut<FramepaceSettings>,
-    _settings: Res<Settings>,
+    mut settings: ResMut<Settings>,
 ) {
     let ctx = match contexts.ctx_mut() {
         Ok(c) => c,
@@ -169,6 +199,40 @@ fn sys_render_options_dialog(
                 .small()
                 .weak(),
             );
+
+            ui.add_space(8.0);
+            ui.heading("World & Input");
+            ui.separator();
+
+            // ---- Movement Speed ----
+            ui.horizontal(|ui| {
+                ui.label("Move Speed:");
+                ui.add(egui::Slider::new(&mut state.movement_speed_multiplier, 0.1..=40.0));
+            });
+
+            // ---- Visibility/Graphics ----
+            ui.checkbox(&mut state.hide_player, "Hide Player Object");
+            ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
+
+            // ---- Sync UI state to Settings resource ----
+            // We use ResMut here every frame we detect a difference. 
+            // This triggers Bevy's change detection which the debounced save system monitors.
+            if settings.app.input.movement_speed_multiplier != state.movement_speed_multiplier {
+                settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
+            }
+            if settings.core.world.hide_player != state.hide_player {
+                settings.core.world.hide_player = state.hide_player;
+            }
+            if settings.app.performance.show_overlay != state.show_overlay {
+                settings.app.performance.show_overlay = state.show_overlay;
+            }
+            if settings.app.performance.frame_limit_enabled != state.frame_limit_enabled {
+                settings.app.performance.frame_limit_enabled = state.frame_limit_enabled;
+            }
+            let target_fps = FPS_PRESETS[state.fps_preset_idx];
+            if settings.app.performance.target_fps != target_fps {
+                settings.app.performance.target_fps = target_fps;
+            }
         });
 
     // Write back: if egui's close button was pressed, window_open is now false.

@@ -1,46 +1,31 @@
-[uo_files]
-folder="/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
+# Core settings for UODynamapper
+# These are strictly engine/system level and usually don't change often.
 
-[input]
-movement_speed_multiplier=1.0 # 100.0
+[core.uo_files]
+# Path to your UO client folder containing .mul or .uop files
+folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
 
-[window]
-height=768.0
-width=1024.0
-zoom=1.0
+[core.world]
+# Default starting position in UO coordinates [X, Y, Z, MapID]
+start_p = [1100, 1800, 20, 0]
+# Whether to hide the player cube on startup
+hide_player = false
 
-[world]
-start_p=[1100,1800,20,0]
-hide_player=false
-
-#[scene]
-#hide_player=false
-#brightness=20 # 1-25
-#fog=0 # 0-100
-#saturation_factor=1 # 0.0-10.0?
-
-[debug]
-map_render_wireframe=false
-#print_land_mesh_stats=false
-#print_land_mesh_period=5.0 # seconds
-
-[graphics]
-# When enabled, terrain textures are compressed to BC7 format on the CPU before uploading
-# to the GPU. This reduces VRAM usage by ~8x (160 MB -> ~20 MB) at the cost of lossy quality
-# (near-lossless in practice) and slightly slower texture loading (compression is done once
-# per texture, cached in the LRU).
-# Requires GPU support for BC texture compression (supported on most desktop GPUs via wgpu).
-# Default: false (uncompressed, highest quality).
+[core.graphics]
+# Use BC7 texture compression to save VRAM (requires intel_tex_2)
 lossy_texture_compression = false
-# When enabled, the application uses ReactiveLowPower mode when the window is unfocused,
-# significantly reducing CPU/GPU usage.
+# Lower frame rate when the window is not focused
 reduce_unfocused_fps = true
 
 [logging]
+# Minimum log level to display in terminal
 min_severity = "Info"
-# Log filters: specify sev (severity), about (component), and suppress (true/false)
-# If a field is missing, it matches everything.
-filters = [
-    { about = "RenderWorldLand", suppress = true },
-    { sev = "Debug", suppress = true },
-]
+
+# Custom filters for specific modules or severities
+[[logging.filters]]
+about = "RenderWorldLand"
+suppress = true
+
+[[logging.filters]]
+sev = "Debug"
+suppress = true

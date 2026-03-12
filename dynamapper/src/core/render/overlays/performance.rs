@@ -2,7 +2,7 @@ use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::color::Srgba;
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{ProcessesToUpdate, System};
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
@@ -13,26 +13,26 @@ const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
 /// /proc/ files under the hood and creating a System is not free.
 #[derive(Resource)]
 pub struct ProcessMetrics {
-    /// The sysinfo handle; instantiated once and kept alive for the application lifetime.
+    /// The sysinfo handle.
     sys: System,
+    /// PID of the current process.
+    pid: sysinfo::Pid,
     /// Timer to throttle the update frequency.
     poll_timer: Timer,
-    /// Latest CPU usage for this process (percentage 0..100).
+    /// Latest CPU usage (percentage 0..100).
     pub cpu_usage: f32,
-    /// Latest RAM usage for this process (MiB).
+    /// Latest RAM usage (MiB).
     pub mem_usage_mib: f32,
 }
 
 impl Default for ProcessMetrics {
     fn default() -> Self {
-        // Only enable the CPU and memory components we care about to avoid overhead.
-        let sys = System::new_with_specifics(
-            RefreshKind::nothing()
-                .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
-                .with_memory(MemoryRefreshKind::nothing().with_ram()),
-        );
+        let mut sys = System::new();
+        sys.refresh_all();
+        let pid = sysinfo::get_current_pid().expect("Failed to get current check PID");
         Self {
             sys,
+            pid,
             poll_timer: Timer::from_seconds(SYSINFO_REFRESH_INTERVAL_SEC, TimerMode::Repeating),
             cpu_usage: 0.0,
             mem_usage_mib: 0.0,
@@ -61,9 +61,12 @@ impl Plugin for PerformanceOverlayPlugin {
 }
 
 #[derive(Component)]
+pub struct OverlayPerformanceContainer;
+
+#[derive(Component)]
 pub struct OverlayPerformanceText;
 
-pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<AssetServer>) {
+pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<AssetServer>, settings: Res<Settings>) {
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
 
     commands
@@ -73,10 +76,13 @@ pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<Asset
                 right: Val::Px(20.0),
                 top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(10.0)),
+                display: if settings.app.performance.show_overlay { Display::Flex } else { Display::None },
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
             BackgroundColor(Color::BLACK.with_alpha(0.7)),
             ZIndex(100),
+            OverlayPerformanceContainer,
         ))
         .with_children(|builder| {
             builder.spawn((
@@ -99,26 +105,40 @@ pub fn sys_refresh_process_metrics(time: Res<Time>, mut metrics: ResMut<ProcessM
         return;
     }
 
-    metrics.sys.refresh_specifics(
-        RefreshKind::nothing()
-            .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
-            .with_memory(MemoryRefreshKind::nothing().with_ram()),
-    );
-
-    metrics.cpu_usage = metrics.sys.global_cpu_usage();
-    const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
-    metrics.mem_usage_mib = metrics.sys.used_memory() as f32 / BYTES_PER_MIB;
+    let pid = metrics.pid;
+    metrics.sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    
+    if let Some(process) = metrics.sys.process(pid) {
+        let cpu = process.cpu_usage();
+        const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
+        let mem = process.memory() as f32 / BYTES_PER_MIB;
+        
+        // sysinfo process cpu usage is [0..100 * num_cpus].
+        // Normalize it by dividing by core count for a "standard" 0..100% total system load.
+        let core_count = metrics.sys.cpus().len() as f32;
+        metrics.cpu_usage = if core_count > 0.0 { cpu / core_count } else { cpu };
+        metrics.mem_usage_mib = mem;
+    }
 }
 
 /// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
-    _settings: Res<Settings>,
+    settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
     entities: Query<Entity>,
     land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut text_query: Query<&mut Text, With<OverlayPerformanceText>>,
+    mut node_query: Query<&mut Node, With<OverlayPerformanceContainer>>,
 ) {
+    // Real-time visibility toggle from settings
+    if let Ok(mut node) = node_query.get_single_mut() {
+        let target_display = if settings.app.performance.show_overlay { Display::Flex } else { Display::None };
+        if node.display != target_display {
+            node.display = target_display;
+        }
+    }
+
     if let Ok(mut text) = text_query.get_single_mut() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -130,7 +150,7 @@ pub fn update_performance_text(
         let chunk_count = land_chunks.iter().count();
 
         text.0 = format!(
-            "FPS: {}   CPU: {:.0}%   RAM: {} MiB   ENTs: {}   CHKs: {}",
+            "FPS: {}\nCPU: {:.1}%  RAM: {:.1} MiB\nENTs: {}  CHKs: {}",
             fps, metrics.cpu_usage, metrics.mem_usage_mib, entity_count, chunk_count
         );
     }

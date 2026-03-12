@@ -145,9 +145,3 @@ features = [
   "shader_format_wesl",  # WESL (Extended WGSL) shader support
 ]
 
-# Optimizations for Release build (Binary Size Reduction)
-[profile.release]
-opt-level = "s"      # Optimize for size
-lto = true           # Enable Link-Time Optimization (drops dead code)
-codegen-units = 1    # Maximize size reduction (slower build time)
-strip = true         # Strip debug symbols

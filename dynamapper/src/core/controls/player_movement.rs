@@ -3,7 +3,8 @@ use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 
-const MOVE_COOLDOWN: f32 = 0.01; // seconds
+/// Base delay between tiles at speed multiplier 1.0 (20 steps per second).
+const BASE_MOVE_COOLDOWN: f32 = 0.05;
 
 pub struct PlayerMovementPlugin {
     pub registered_by: &'static str,
@@ -14,7 +15,7 @@ impl Plugin for PlayerMovementPlugin {
         log_plugin_build(self);
         app
             .insert_resource(MoveCooldown(Timer::from_seconds(
-                MOVE_COOLDOWN,
+                BASE_MOVE_COOLDOWN,
                 TimerMode::Repeating,
             )))
             .insert_resource(MoveDirection::default())
@@ -67,15 +68,15 @@ fn sys_player_move(
     mut query: Query<&mut Transform, With<Player>>,
     settings: Res<Settings>,
 ) {
-    cooldown.0.tick(time.delta());
+    let multiplier = settings.app.input.movement_speed_multiplier;
+    cooldown.0.tick(time.delta().mul_f32(multiplier));
 
     // Only move if cooldown finished and a direction is pressed
     if cooldown.0.finished() {
         if let Some(dir) = move_dir.dir {
             for mut transform in query.iter_mut() {
-                // Move by exactly 1.0 per tile/step, scaled by multiplier.
-                let multiplier = settings.app.input.movement_speed_multiplier;
-                let delta = Vec3::new(dir.x as f32 * multiplier, 0.0, dir.y as f32 * multiplier);
+                // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
+                let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 transform.translation += delta;
             }
             cooldown.0.reset();

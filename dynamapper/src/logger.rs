@@ -1,5 +1,5 @@
 use chrono::Timelike;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use regex::Regex;
 use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames};
@@ -27,7 +27,7 @@ pub fn set_log_settings(settings: LogSettings) {
 }
 
 // Event severity.
-#[derive(Clone, Debug, Deserialize, Display, EnumString, VariantNames, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Display, EnumString, VariantNames, PartialEq)]
 pub enum LogSev {
     Debug,
     DebugVerbose,
@@ -38,7 +38,7 @@ pub enum LogSev {
 }
 
 // Event context.
-#[derive(Clone, Debug, Deserialize, Display, EnumString, VariantNames, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Display, EnumString, VariantNames, PartialEq)]
 pub enum LogAbout {
     AppState,
     Camera,

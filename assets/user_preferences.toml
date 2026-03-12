@@ -1,13 +1,15 @@
 [input]
-walking_speed = 1.0
+movement_speed_multiplier = 4.0
 
 [window]
-height=768.0
-width=1024.0
-zoom=1.0
-
-[world]
-hide_player=false
+height = 768.0
+width = 1024.0
+zoom = 1.0
 
 [debug]
-map_render_wireframe=false
+map_render_wireframe = false
+
+[performance]
+show_overlay = true
+frame_limit_enabled = true
+target_fps = 60

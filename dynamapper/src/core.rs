@@ -60,7 +60,7 @@ fn bevy_logging_fmt_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
 fn custom_bevy_log_config() -> LogPlugin {
     LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
-        filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error".into(),
+        filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error,bevy_framepace=warn".into(),
         //custom_layer: bevy_logging_custom_layer,
         ..Default::default()
     }
@@ -151,7 +151,7 @@ pub fn run_bevy_app() -> ExitCode {
     ));
     logger::system(&format!("Setting custom Assets folder: {assets_folder:?}"));
 
-    let settings_data = settings::load_from_file();
+    let settings_data = settings::load_from_files();
     logger::one(
         None,
         LogSev::Info,
@@ -186,7 +186,14 @@ pub fn run_bevy_app() -> ExitCode {
         //.edit_schedule(Update, |schedule| {
         //  schedule.set_executor_kind(ExecutorKind::SingleThreaded);
         //})
-        .add_plugins(FramepacePlugin) // caps at 60 FPS by default
+        .add_plugins(FramepacePlugin)
+        .insert_resource(bevy_framepace::FramepaceSettings {
+            limiter: if settings_data.app.performance.frame_limit_enabled {
+                bevy_framepace::Limiter::from_framerate(settings_data.app.performance.target_fps as f64)
+            } else {
+                bevy_framepace::Limiter::Off
+            },
+        })
         .add_plugins(EguiPlugin::default()) // egui UI layer (used for teleport dialog, etc.)
         .add_plugins((
             bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
