@@ -40,19 +40,19 @@ pub fn sys_spawn_player_entity(
         ..default()
     });
 
-    let player_start_pos_uo = settings.world.start_p;
-    let player_start_pos = player_start_pos_uo.to_bevy_vec3_ignore_map();
+    let start_p = settings.core.world.start_p;
+    let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
     let mut player_entity = commands.spawn((
         Transform::from_xyz(player_start_pos.x, player_start_pos.y, player_start_pos.z),
         GlobalTransform::default(),
         Player {
-            current_pos: Some(player_start_pos_uo),
+            current_pos: Some(start_p),
             prev_rendered_pos: None,
         },
     ));
 
-    if !settings.world.hide_player {
+    if settings.core.world.hide_player {
         player_entity.insert((
             Mesh3d(mesh_handle),
             MeshMaterial3d(material_handle),

@@ -5,6 +5,9 @@ use crate::prelude::*;
 use crate::core::system_sets::*;
 use bevy::prelude::*;
 use uocf::geo::land_texture_2d::LandTextureSize;
+use std::time::Duration;
+use bevy::time::common_conditions::on_timer;
+
 
 pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,
@@ -34,6 +37,28 @@ impl Plugin for LandTextureCachePlugin {
         render_app.add_systems(bevy::render::ExtractSchedule, cache::sys_extract_texture_array_uploads);
         
         render_app.add_systems(bevy::render::Render, cache::sys_render_upload_texture_array.in_set(bevy::render::RenderSet::Queue));
+
+        app.add_systems(Update, sys_evict_idle_land_cache.run_if(on_timer(Duration::from_secs(5))));
+    }
+}
+
+fn sys_evict_idle_land_cache(
+    mut cache_r: ResMut<cache::LandTextureCache>,
+    map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    scene_state_r: Res<crate::core::render::scene::SceneStateData>,
+) {
+    let evicted_tex = cache_r.evict_idle_textures();
+    if evicted_tex > 0 {
+        bevy::log::info!("Evicted {} idle textures from cache.", evicted_tex);
+    }
+
+    // Also evict idle blocks from the active map plane
+    let map_planes = map_planes_r.0.clone();
+    if let Some(mut plane) = map_planes.get_mut(&scene_state_r.map_id) {
+        let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
+        if evicted_blocks > 0 {
+            bevy::log::info!("Evicted {} idle blocks from map {}.", evicted_blocks, scene_state_r.map_id);
+        }
     }
 }
 
@@ -45,7 +70,7 @@ pub fn sys_setup_terrain_cache(
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let lossy = settings.graphics.lossy_texture_compression;
+    let lossy = settings.core.graphics.lossy_texture_compression;
     let handle_small = texture_array::create_gpu_texture_array("land_small_texture_cache", &mut images, LandTextureSize::Small, lossy);
     let handle_big = texture_array::create_gpu_texture_array("land_big_texture_cache", &mut images, LandTextureSize::Big, lossy);
     cmd.insert_resource(cache::LandTextureCache::new(handle_small.clone(), handle_big.clone()));

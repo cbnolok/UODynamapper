@@ -261,8 +261,35 @@ pub fn sys_draw_spawned_land_chunks(
             }
         }
     }
+    // Step 4: Aggregate all tile IDs needed for the primary chunks and their neighbors,
+    // and perform a batch pre-cache (using MT compression if > 1000).
+    {
+        let mut missing_tile_ids = HashSet::new();
+        for chunk_data in &spawn_targets {
+            let chunk_rel_coords = MapBlockRelPos {
+                x: chunk_data.chunk_origin_chunk_units_x,
+                y: chunk_data.chunk_origin_chunk_units_z,
+            };
+            if let Some(block) = blocks_data.get(&chunk_rel_coords) {
+                for tz in 0..8 {
+                    for tx in 0..8 {
+                        if let Ok(cell) = block.cell(tx, tz) {
+                            missing_tile_ids.insert(cell.id);
+                        }
+                    }
+                }
+            }
+        }
 
-    // Step 4: For every chunk that corresponds to a current entity (not filler neighbors), spawn the prebuilt map chunk mesh.
+        let ids: Vec<u16> = missing_tile_ids.into_iter().collect();
+        cache_r.precache_textures_parallel(
+            &ids,
+            texmap_2d_r.0.clone(),
+            cache_settings_r.lossy_texture_compression,
+        );
+    }
+
+    // Step 5: For every chunk that corresponds to a current entity (not filler neighbors), spawn the prebuilt map chunk mesh.
     let build_time_start = Instant::now();
     for chunk_data in &spawn_targets {
         let entity = chunk_data.entity;

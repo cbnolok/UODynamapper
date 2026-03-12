@@ -65,6 +65,7 @@ fn sys_player_move(
     mut cooldown: ResMut<MoveCooldown>,
     move_dir: Res<MoveDirection>,
     mut query: Query<&mut Transform, With<Player>>,
+    settings: Res<Settings>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -72,8 +73,9 @@ fn sys_player_move(
     if cooldown.0.finished() {
         if let Some(dir) = move_dir.dir {
             for mut transform in query.iter_mut() {
-                // Move by exactly 1.0 per tile/step
-                let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
+                // Move by exactly 1.0 per tile/step, scaled by multiplier.
+                let multiplier = settings.app.input.movement_speed_multiplier;
+                let delta = Vec3::new(dir.x as f32 * multiplier, 0.0, dir.y as f32 * multiplier);
                 transform.translation += delta;
             }
             cooldown.0.reset();

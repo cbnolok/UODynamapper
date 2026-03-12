@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default)]
 pub struct Flags {
-    internal_flags: u32,
+    pub internal_flags: u32,
 }
 
 #[allow(unused)]
@@ -214,10 +214,10 @@ pub struct ItemTile {
     pub value: u8,
 
     #[new(default)]
-    height: i8, // Stratics: If Conatainer, this is how much the container can hold
+    pub height: i8, // Stratics: If Conatainer, this is how much the container can hold
 
     #[new(default)]
-    name: [u8; Self::NAME_LEN],
+    pub name: [u8; Self::NAME_LEN],
 }
 
 impl Default for ItemTile {
@@ -251,7 +251,7 @@ impl ItemTile {
             self.height
         }
     }
-    fn height_raw(&self) -> i8 {
+    pub fn height_raw(&self) -> i8 {
         self.height
     }
 

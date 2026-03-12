@@ -16,18 +16,28 @@ const CONFIG_FILE_NAME: &'static str = "settings.toml";
 
 #[derive(Asset, Clone, Debug, Deserialize, Resource, TypePath)]
 pub struct Settings {
-    pub uo_files: SectUoFiles,
-    pub input: SectInput,
-    pub window: SectWindow,
-    pub world: SectWorld,
-    pub debug: SectDebug,
-    pub graphics: SectGraphics,
+    pub core: SectCore,
+    pub app: SectApp,
     pub logging: SectLogging,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct SectCore {
+    pub uo_files: SectUoFiles,
+    pub world: SectWorld,
+    pub graphics: SectGraphics,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SectApp {
+    pub input: SectInput,
+    pub window: SectWindow,
+    pub debug: SectDebug,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct SectUoFiles {
-    pub folder: String, // or PathBuf for extra fanciness
+    pub folder: String, 
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -44,7 +54,7 @@ pub struct SectWindow {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SectWorld {
-    pub start_p: UOVec4, //[i32; 4], // or [f32;4].
+    pub start_p: UOVec4,
     pub hide_player: bool,
 }
 
@@ -55,11 +65,7 @@ pub struct SectDebug {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SectGraphics {
-    /// When true, terrain textures are BC7-compressed on the CPU before uploading to the GPU.
-    /// This saves ~8x VRAM (160 MB -> ~20 MB) at the cost of near-lossless quality.
-    /// Requires BC texture compression GPU support (most desktop GPUs support this).
     pub lossy_texture_compression: bool,
-    /// When true, the application significantly reduces FPS/updates when the window is unfocused.
     pub reduce_unfocused_fps: bool,
 }
 
@@ -92,9 +98,9 @@ pub fn load_from_file() -> Settings {
     let settings: Settings = match toml::from_str(&contents) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("\n<red><bold>!! TOML PARSING ERROR !!</></bold>");
-            eprintln!("<red>File: {:?}</>", settings_with_rel_path);
-            eprintln!("<red>Error: {}</>\n", e);
+            paris::error!("\n<bold>!! TOML PARSING ERROR !!</>");
+            paris::log!("<red>File: {:?}</>", settings_with_rel_path);
+            paris::log!("<red>Error: {}</>\n", e);
             panic!("Configuration failure. Please check your settings.toml");
         }
     };
@@ -154,9 +160,9 @@ fn sys_apply(
     mut zoom_res: ResMut<RenderZoom>,
 ){
     let mut w = windows_q.single_mut().unwrap();
-    w.resolution = WindowResolution::new(settings_res.window.width, settings_res.window.height);
+    w.resolution = WindowResolution::new(settings_res.app.window.width, settings_res.app.window.height);
 
-    zoom_res.write_val(settings_res.window.zoom);
+    zoom_res.write_val(settings_res.app.window.zoom);
 }
 
 // ----

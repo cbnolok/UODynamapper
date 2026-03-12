@@ -175,12 +175,12 @@ pub fn one(
 
     // Severity symbol (static &str)
     let sev_symbol: &'static str = match severity {
-        LogSev::Debug => "<bright-magenta><bold><info></bold></>",
-        LogSev::DebugVerbose => "<bright-magenta><bold><info></bold></>",
-        LogSev::Diagnostics => "<green><bold><info></bold></>",
-        LogSev::Error => "<red><bold><cross></bold></>",
-        LogSev::Info => "<cyan><bold><info></bold></>",
-        LogSev::Warn => "<bright-yellow><bold><warn></bold></>",
+        LogSev::Debug => "<bright-magenta><bold><info></></>",
+        LogSev::DebugVerbose => "<bright-magenta><bold><info></></>",
+        LogSev::Diagnostics => "<green><bold><info></></>",
+        LogSev::Error => "<red><bold><cross></></>",
+        LogSev::Info => "<cyan><bold><info></></>",
+        LogSev::Warn => "<bright-yellow><bold><warn></></>",
     };
     full_msg.push_str(sev_symbol);
     full_msg.push(' ');
@@ -188,7 +188,7 @@ pub fn one(
     // Style message (only clone/format if needed)
     match severity {
         LogSev::Diagnostics => write!(full_msg, "<green>{msg}</>").unwrap(),
-        LogSev::Error => write!(full_msg, "<red><bold>{msg}</></bold>").unwrap(),
+        LogSev::Error => write!(full_msg, "<red><bold>{msg}</>").unwrap(),
         LogSev::Info => write!(full_msg, "<cyan>{msg}</>").unwrap(),
         LogSev::Warn => write!(full_msg, "<bright-yellow>{msg}</>").unwrap(),
         _ => full_msg.push_str(msg),

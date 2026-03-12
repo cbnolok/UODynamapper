@@ -1,6 +1,7 @@
 use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy::color::Srgba;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
@@ -65,79 +66,72 @@ pub struct OverlayPerformanceText;
 pub fn setup_overlay_performance(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
 
-    let root_id = commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(20.0),
-            top: Val::Px(20.0),
-            ..default()
-        })
-        .id();
-
-    let bg_id = commands
+    commands
         .spawn((
             Node {
-                padding: UiRect::all(Val::Px(7.0)),
+                position_type: PositionType::Absolute,
+                right: Val::Px(20.0),
+                top: Val::Px(20.0),
+                padding: UiRect::all(Val::Px(10.0)),
                 ..default()
             },
-            BackgroundColor(Color::BLACK.with_alpha(0.65)),
+            BackgroundColor(Color::BLACK.with_alpha(0.7)),
+            ZIndex(100),
         ))
         .with_children(|builder| {
             builder.spawn((
-                Text::new("FPS: --\nCPU: --%\nRAM: --MB"),
+                Text::new(""),
                 TextFont {
                     font,
                     font_size: 14.0,
                     ..default()
                 },
-                TextColor(Color::WHITE),
+                TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
                 OverlayPerformanceText,
             ));
-        })
-        .id();
-
-    commands.entity(root_id).add_child(bg_id);
+        });
 }
 
 /// Polls the sysinfo library to get up-to-date CPU and RAM usage for the current process.
-/// This runs at most once per `SYSINFO_REFRESH_INTERVAL_SEC` to avoid hammering /proc/.
 pub fn sys_refresh_process_metrics(time: Res<Time>, mut metrics: ResMut<ProcessMetrics>) {
     metrics.poll_timer.tick(time.delta());
     if !metrics.poll_timer.just_finished() {
         return;
     }
 
-    // Refresh only CPU and RAM; other subsystems are not needed.
-    metrics
-        .sys
-        .refresh_specifics(RefreshKind::nothing()
+    metrics.sys.refresh_specifics(
+        RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
-            .with_memory(MemoryRefreshKind::nothing().with_ram()));
+            .with_memory(MemoryRefreshKind::nothing().with_ram()),
+    );
 
-    // Global CPU usage is the average across all CPU cores.
     metrics.cpu_usage = metrics.sys.global_cpu_usage();
-
-    // `used_memory` returns bytes; convert to MiB for readability.
     const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
     metrics.mem_usage_mib = metrics.sys.used_memory() as f32 / BYTES_PER_MIB;
 }
 
-/// Updates the on-screen text widget with the latest FPS, CPU, and RAM values.
+/// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
+    _settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
+    entities: Query<Entity>,
+    land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut text_query: Query<&mut Text, With<OverlayPerformanceText>>,
 ) {
-    if let Ok(mut text) = text_query.single_mut() {
+    if let Ok(mut text) = text_query.get_single_mut() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|diag| diag.smoothed())
-            .map(|val| format!("{:.1}", val))
+            .map(|val| format!("{:.0}", val))
             .unwrap_or_else(|| "--".to_string());
 
-        *text = Text::new(format!(
-            "FPS: {}\nCPU: {:.1}%\nRAM: {:.0}MB",
-            fps, metrics.cpu_usage, metrics.mem_usage_mib
-        ));
+        let entity_count = entities.iter().count();
+        let chunk_count = land_chunks.iter().count();
+
+        text.0 = format!(
+            "FPS: {}   CPU: {:.0}%   RAM: {} MiB   ENTs: {}   CHKs: {}",
+            fps, metrics.cpu_usage, metrics.mem_usage_mib, entity_count, chunk_count
+        );
     }
 }

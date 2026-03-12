@@ -16,6 +16,7 @@ use bevy::render::renderer::RenderQueue;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
+use bevy::tasks::ComputeTaskPool;
 
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TextureArrayImageHandles {
@@ -116,6 +117,71 @@ impl LandTextureCache {
         (prepared.size, prepared.layer)
     }
 
+    /// Optimized batch pre-caching with multithreaded BC7 compression.
+    /// Used during large scene loads to avoid main-thread stalls.
+    pub fn precache_textures_parallel(
+        &mut self,
+        texture_ids: &[u16],
+        texmap_2d: Arc<TexMap2D>,
+        lossy_compression: bool,
+    ) {
+        let pool = ComputeTaskPool::get();
+        let mut to_load = Vec::new();
+
+        for &id in texture_ids {
+            if !self.entry_by_id.contains_key(&id) {
+                to_load.push(id);
+            }
+        }
+
+        if to_load.is_empty() { return; }
+
+        // Determine if we should use multithreading based on the count (user threshold: 1000)
+        let use_mt = to_load.len() > 1000;
+
+        if use_mt {
+            bevy::log::info!("Par-compressing {} textures to BC7...", to_load.len());
+            
+            // Collect raw data for all textures first (CPU work, can be parallelized too but mostly I/O or mem copy)
+            let raw_data: Vec<_> = to_load.iter().map(|&id| {
+                let (size, rgba8) = super::texture_array::get_texmap_raw_data(id, &texmap_2d);
+                (id, size, rgba8)
+            }).collect();
+
+            // Compress in parallel
+            let compressed_results: Vec<_> = pool.scope(|s| {
+                for (_, size, rgba8) in &raw_data {
+                    s.spawn(async move {
+                        if lossy_compression {
+                            (super::texture_array::compress_rgba8_to_bc7(rgba8.as_slice(), *size), true)
+                        } else {
+                            (rgba8.to_vec(), false)
+                        }
+                    });
+                }
+            });
+
+            // Associate layers and update bookkeeping
+            for (i, (id, size, _)) in raw_data.into_iter().enumerate() {
+                let layer = self.allocate_layer(size);
+                let (bytes, compressed) = compressed_results[i].clone();
+                let upload = TextureArrayUpload {
+                    layer,
+                    size,
+                    bytes,
+                    lossy_compressed: compressed,
+                };
+                self.pending_uploads.push(upload);
+                self.update_bookkeeping(id, size, layer);
+            }
+        } else {
+            // Normal sequential loading
+            for id in to_load {
+                self.get_texture_size_layer(texmap_2d.clone(), id, lossy_compression);
+            }
+        }
+    }
+
     /// Checks if a texture is resident. If not, allocates a layer and loads its data,
     /// returning a struct with all info needed to perform the upload and bookkeeping.
     fn prepare_texture_residency(
@@ -204,13 +270,34 @@ impl LandTextureCache {
         array.lru.push_back(texture_id);
     }
 
+    pub fn evict_idle_textures(&mut self) -> usize {
+        let now = Instant::now();
+        let mut evicted_count = 0;
+        let mut to_remove = Vec::new();
+
+        for (&id, (size, entry)) in &self.entry_by_id {
+            if now - entry.last_touch >= CACHE_EVICT_AFTER {
+                to_remove.push((id, *size, *entry));
+            }
+        }
+
+        for (id, size, entry) in to_remove {
+            self.entry_by_id.remove(&id);
+            self.free_layer_for_entry(size, entry);
+            evicted_count += 1;
+        }
+
+        evicted_count
+    }
+
     fn free_layer_for_entry(&mut self, texture_size: LandTextureSize, entry: LandTextureEntry) {
         let array = match texture_size {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
         };
         array.free_layers.push(entry.layer);
-        // Removal from LRU performed implicitly (by removing the entry entirely or letting it fall off on reset)
+        // Note: we don't bother scouring the LRU VecDeque for the ID. 
+        // allocate_layer handles stale/missing entries in its loop.
     }
 }
 

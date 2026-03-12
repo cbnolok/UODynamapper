@@ -1,11 +1,30 @@
-[core.uo_files]
+[uo_files]
 folder="/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
 
-[core.world]
+[input]
+movement_speed_multiplier=1.0 # 100.0
+
+[window]
+height=768.0
+width=1024.0
+zoom=1.0
+
+[world]
 start_p=[1100,1800,20,0]
 hide_player=false
 
-[core.graphics]
+#[scene]
+#hide_player=false
+#brightness=20 # 1-25
+#fog=0 # 0-100
+#saturation_factor=1 # 0.0-10.0?
+
+[debug]
+map_render_wireframe=false
+#print_land_mesh_stats=false
+#print_land_mesh_period=5.0 # seconds
+
+[graphics]
 # When enabled, terrain textures are compressed to BC7 format on the CPU before uploading
 # to the GPU. This reduces VRAM usage by ~8x (160 MB -> ~20 MB) at the cost of lossy quality
 # (near-lossless in practice) and slightly slower texture loading (compression is done once
@@ -16,19 +35,6 @@ lossy_texture_compression = false
 # When enabled, the application uses ReactiveLowPower mode when the window is unfocused,
 # significantly reducing CPU/GPU usage.
 reduce_unfocused_fps = true
-
-[app.input]
-movement_speed_multiplier=1.0 # 100.0
-
-[app.window]
-height=768.0
-width=1024.0
-zoom=1.0
-
-[app.debug]
-map_render_wireframe=false
-#print_land_mesh_stats=false
-#print_land_mesh_period=5.0 # seconds
 
 [logging]
 min_severity = "Info"

@@ -1,0 +1,13 @@
+[input]
+walking_speed = 1.0
+
+[window]
+height=768.0
+width=1024.0
+zoom=1.0
+
+[world]
+hide_player=false
+
+[debug]
+map_render_wireframe=false

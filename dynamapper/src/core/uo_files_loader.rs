@@ -29,6 +29,7 @@ pub struct TexMap2DRes(pub Arc<land_texture_2d::TexMap2D>);
 
 pub struct UoInterfaceSettings {
     pub base_folder: PathBuf,
+    pub lossy_texture_compression: bool,
 }
 
 pub struct UOFilesPlugin {
@@ -48,7 +49,8 @@ impl Plugin for UOFilesPlugin {
 pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     log_system_add_startup::<UOFilesPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
     let lg = |text: &str| logger::one(None, logger::LogSev::Info, logger::LogAbout::UoFiles, text);
-    let uo_path: PathBuf = settings.uo_files.folder.clone().into();
+    let uo_path: PathBuf = settings.core.uo_files.folder.clone().into();
+    let lossy = settings.core.graphics.lossy_texture_compression;
 
     lg("Start loading UO Data.");
 
@@ -75,6 +77,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     commands.insert_resource(UoInterfaceSettingsRes(Arc::new(UoInterfaceSettings {
         base_folder: uo_path,
+        lossy_texture_compression: lossy,
     })));
     commands.insert_resource(MapPlanesRes(Arc::new(map_planes)));
     commands.insert_resource(TileDataRes(Arc::new(tiledata)));

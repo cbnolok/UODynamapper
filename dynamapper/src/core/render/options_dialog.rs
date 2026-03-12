@@ -85,6 +85,7 @@ fn sys_render_options_dialog(
     mut contexts: EguiContexts,
     mut state: ResMut<OptionsDialogState>,
     mut framepace: ResMut<FramepaceSettings>,
+    _settings: Res<Settings>,
 ) {
     let ctx = match contexts.ctx_mut() {
         Ok(c) => c,
@@ -161,7 +162,6 @@ fn sys_render_options_dialog(
                 };
             }
 
-            ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(
                     "Note: frame limiting also affected by VSync (driver/compositor level).",
