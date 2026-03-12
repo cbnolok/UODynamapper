@@ -48,7 +48,7 @@ impl LandTextureSize {
     }
 }
 
-#[derive(Clone, Debug, Default, Getters)]
+#[derive(Debug, Default, Getters)]
 pub struct Texture2DElement {
     // Pixel data in TexMap.mul is stored as bgra5551 (u16), but we convert it to argb8888 (u32) before storing it.
     valid: bool,
@@ -56,8 +56,22 @@ pub struct Texture2DElement {
     id: u32,
     #[get = "pub"]
     size: LandTextureSize,
-    #[get = "pub"]
-    pixel_data: Vec<u8>,
+    file_offset: u64,
+    pixel_qty: usize,
+    cache: std::sync::Mutex<Option<(std::sync::Arc<Vec<u8>>, std::time::Instant)>>,
+}
+
+impl Clone for Texture2DElement {
+    fn clone(&self) -> Self {
+        Self {
+            valid: self.valid,
+            id: self.id,
+            size: self.size,
+            file_offset: self.file_offset,
+            pixel_qty: self.pixel_qty,
+            cache: std::sync::Mutex::new(None), // Don't block loading a new element if cloned
+        }
+    }
 }
 impl Texture2DElement {
     pub const TEXTURE_UNUSED: u32 = 0x007F; // NODRAW
@@ -87,35 +101,12 @@ impl Texture2DElement {
         Self::size_type_y(self.size)
     }
 
-    #[must_use]
-    pub fn to_image(&self) -> eyre::Result<DynamicImage> {
-        /*  // Less efficient way?
-        let mut built_img = RgbImage::new(size.0, size.1);
-        for y in 0..size.1 {
-            for x in 0..size.0 {
-                let pixel_data_index = (y*size.1 + x) as usize * PIXEL_DATA_CHANNELS;
-                let pixel_data = self.pixel_data[pixel_data_index..pixel_data_index + PIXEL_DATA_CHANNELS];
-                let pixel = image::Rgb::<u8>(pixel_data);
-                println!("pixel data 0x{:X} {pixel_data}.  pixel {:?}", pixel_data, pixel);
-                built_img.put_pixel(x, y, pixel);
-            }
-        }
-        built_img.save("./test_built.png")?;
-        */
-
-        let img: image::ImageBuffer<image::Rgba<u8>, _> =
-            ImageBuffer::from_vec(self.size_x(), self.size_y(), self.pixel_data.clone())
-                .ok_or(eyre!("Invalid Texture Data"))?;
-        //image::save_buffer("./test.png", &buf, size.0, size.1, image::ColorType::Rgba8);
-        let img = DynamicImage::ImageRgba8(img);
-        //Image::from_dynamic
-        Ok(img)
-    }
 }
 
 #[derive(Debug)]
 pub struct TexMap2D {
     file_data: Vec<Texture2DElement>, //HashMap<u32, Texture2DElement>,
+    file_reader: std::sync::Mutex<BufReader<File>>,
 }
 
 impl TexMap2D {
@@ -161,7 +152,8 @@ impl TexMap2D {
             .metadata()
             .wrap_err_with(|| format!("Get {texmap_file_name} metadata"))?;
         let texmap_file_size = downcast_ceil_usize(texmap_file_metadata.len());
-        let mut texmap_file_rdr = BufReader::new(texmap_file_handle);
+        // Do not use a local reader, use the struct's
+        // let mut texmap_file_rdr = BufReader::new(texmap_file_handle);
 
         /* Open texidx.mul */
         let texidx: generic_index::IndexFile =
@@ -172,6 +164,7 @@ impl TexMap2D {
         let mut texmap = TexMap2D {
             //file_data: vec![Texture2DElement::default(); texidx.element_count()],
             file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
+            file_reader: std::sync::Mutex::new(BufReader::new(texmap_file_handle)),
         };
 
         // Loop on each entry of texidx
@@ -242,62 +235,8 @@ impl TexMap2D {
                 }
             };
 
-            texmap_file_rdr.seek(SeekFrom::Start(tex_lookup as u64))?;
-            let pixel_qty_bytes = pixel_qty * 2; // Each u16 is 2 bytes
-            let mut pixel_data_bytes = vec![0u8; pixel_qty_bytes];
-            texmap_file_rdr.read_exact(&mut pixel_data_bytes)?;
-
-            cur_texture.pixel_data = Vec::with_capacity(pixel_qty * 4);
-
-            #[cfg(debug_assertions)]
-            {
-                let pixels_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
-                for &p in pixels_u16 {
-                    cur_texture.pixel_data.extend_from_slice(&lut[p as usize]);
-                }
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
-                    bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
-
-                for &chunk_array in pixel_data_u16_prefix {
-                    #[allow(unused_mut)]
-                    let mut chunk = u16x16::new(chunk_array);
-
-                    #[cfg(target_endian = "big")]
-                    {
-                        chunk = chunk.swap_bytes();
-                    }
-
-                    let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
-                    let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
-                    let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
-                    let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
-
-                    // Now convert u16x16 to [u32; 16]
-                    let mut rgba_u32_array = [0u32; 16];
-                    for i in 0..16 {
-                        let r_val = r_u16.as_array_ref()[i] as u32;
-                        let g_val = g_u16.as_array_ref()[i] as u32;
-                        let b_val = b_u16.as_array_ref()[i] as u32;
-                        let a_val = a_u16.as_array_ref()[i] as u32;
-                        rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
-                    }
-                    cur_texture
-                        .pixel_data
-                        .extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
-                }
-
-                for &pixel_16_val in pixel_data_u16_suffix {
-                    #[allow(unused_mut)]
-                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(pixel_16_val);
-                    pixel_16.set_a(1);
-                    cur_texture
-                        .pixel_data
-                        .extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
-                }
-            }
+            cur_texture.file_offset = tex_lookup as u64;
+            cur_texture.pixel_qty = pixel_qty;
 
             cur_texture.valid = true;
             i_idx_valid += 1;
@@ -314,5 +253,96 @@ impl TexMap2D {
         );
 
         Ok(texmap)
+    }
+
+    pub fn get_pixel_data(&self, element_index: usize) -> Option<std::sync::Arc<Vec<u8>>> {
+        let element = self.element(element_index)?;
+        {
+            let mut cache = element.cache.lock().unwrap();
+            if let Some((data, time)) = cache.as_mut() {
+                *time = std::time::Instant::now();
+                return Some(std::sync::Arc::clone(data));
+            }
+        }
+
+        let mut rdr = self.file_reader.lock().unwrap();
+        rdr.seek(SeekFrom::Start(element.file_offset)).ok()?;
+        let pixel_qty_bytes = element.pixel_qty * 2; // u16 per pixel
+        let mut pixel_data_bytes = vec![0u8; pixel_qty_bytes];
+        rdr.read_exact(&mut pixel_data_bytes).ok()?;
+
+        let mut pixel_data = Vec::with_capacity(element.pixel_qty * 4);
+
+        // Convert BGRA5551 to RGBA8888
+        #[cfg(debug_assertions)]
+        {
+            // Fallback for debug without relying on precomputed lut
+            let pixels_u16: &[u16] = bytemuck::cast_slice(&pixel_data_bytes);
+            for &p in pixels_u16 {
+                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                pixel_16.set_a(1);
+                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
+                bytemuck::cast_slice(&pixel_data_bytes).as_chunks::<16>();
+
+            for &chunk_array in pixel_data_u16_prefix {
+                let mut chunk = u16x16::new(chunk_array);
+
+                #[cfg(target_endian = "big")]
+                {
+                    chunk = chunk.swap_bytes();
+                }
+
+                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
+                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
+                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
+                let a_u16: u16x16 = u16x16::splat(0xFF); // Alpha is set to 255
+
+                let mut rgba_u32_array = [0u32; 16];
+                for i in 0..16 {
+                    let r_val = r_u16.as_array_ref()[i] as u32;
+                    let g_val = g_u16.as_array_ref()[i] as u32;
+                    let b_val = b_u16.as_array_ref()[i] as u32;
+                    let a_val = a_u16.as_array_ref()[i] as u32;
+                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                }
+                pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+            }
+
+            for &p in pixel_data_u16_suffix {
+                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                pixel_16.set_a(1);
+                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+            }
+        }
+
+        let arc_data = std::sync::Arc::new(pixel_data);
+        let mut cache = element.cache.lock().unwrap();
+        *cache = Some((std::sync::Arc::clone(&arc_data), std::time::Instant::now()));
+        Some(arc_data)
+    }
+
+    pub fn evict_idle_textures(&self, timeout: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut evicted = 0;
+        for element in &self.file_data {
+            if element.valid {
+                let mut cache = element.cache.lock().unwrap();
+                let should_evict = if let Some((_, time)) = cache.as_ref() {
+                    now.duration_since(*time) > timeout
+                } else {
+                    false
+                };
+                if should_evict {
+                    *cache = None;
+                    evicted += 1;
+                }
+            }
+        }
+        evicted
     }
 }

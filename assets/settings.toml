@@ -23,6 +23,15 @@ map_render_wireframe=false
 #print_land_mesh_stats=false
 #print_land_mesh_period=5.0 # seconds
 
+[graphics]
+# When enabled, terrain textures are compressed to BC7 format on the CPU before uploading
+# to the GPU. This reduces VRAM usage by ~8x (160 MB -> ~20 MB) at the cost of lossy quality
+# (near-lossless in practice) and slightly slower texture loading (compression is done once
+# per texture, cached in the LRU).
+# Requires GPU support for BC texture compression (supported on most desktop GPUs via wgpu).
+# Default: false (uncompressed, highest quality).
+lossy_texture_compression = false
+
 #[logger]
 #ignore=[
     # Uses a regex for the match.

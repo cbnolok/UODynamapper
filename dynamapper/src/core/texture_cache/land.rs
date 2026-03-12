@@ -23,7 +23,10 @@ impl Plugin for LandTextureCachePlugin {
                 .after(StartupSysSet::LoadStartupUOFiles)
         );
 
-        // Use Main world to clear pending uploads at the START of the frame, so Extract can see last frame's data
+        // Clear pending uploads at the start of each frame (First schedule), which runs BEFORE Update.
+        // This is correct: Extract runs AFTER Last (end of previous frame), so by the time we reach
+        // First of the next frame, the previous frame's uploads have already been consumed by Extract.
+        // Clearing here ensures Update fills a fresh list for the current frame.
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
@@ -38,12 +41,16 @@ pub fn sys_setup_terrain_cache(
     mut cmd: Commands,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<crate::core::render::scene::world::land::mesh_material::LandCustomMaterial>>,
+    settings: Res<crate::external_data::settings::Settings>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let handle_small = texture_array::create_gpu_texture_array("land_small_texture_cache", &mut images, LandTextureSize::Small);
-    let handle_big = texture_array::create_gpu_texture_array("land_big_texture_cache", &mut images, LandTextureSize::Big);
+    let lossy = settings.graphics.lossy_texture_compression;
+    let handle_small = texture_array::create_gpu_texture_array("land_small_texture_cache", &mut images, LandTextureSize::Small, lossy);
+    let handle_big = texture_array::create_gpu_texture_array("land_big_texture_cache", &mut images, LandTextureSize::Big, lossy);
     cmd.insert_resource(cache::LandTextureCache::new(handle_small.clone(), handle_big.clone()));
+    // Store the compression setting so the per-tile upload path can encode BC7 when enabled.
+    cmd.insert_resource(cache::LandTextureCacheSettings { lossy_texture_compression: lossy });
 
     use bevy::render::render_resource::{TextureDimension, TextureFormat, TextureUsages, Extent3d};
     use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, TileAtlasImageHandle, AtlasParams};

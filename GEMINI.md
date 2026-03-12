@@ -30,25 +30,27 @@ When making changes, always consider how they will affect each preset.
 
 ### 3.2 Terrain rendering
 
-#### The 8x8 -> 9x9 -> 13x13 Grid System
+#### The Paged Tile Metadata Atlas
 
-Map data is stored in UO mul/uop files as a collection of blocks in row-major order. Each block has 8x8 tiles. Each tile has 64x64 pixel size.
-
-This is fundamental to the terrain renderer:
+Map data is stored in UO mul/uop files as a collection of blocks in row-major order. Each block has 8x8 tiles.
 
 * **8x8 Core**: The logical size of a game chunk.
-* **9x9 Vertices**: The mesh for a chunk is a 9x9 grid of vertices to ensure all 8x8 tiles have distinct corners, thus avoiding seam artifacts between chunks.
-* **13x13 Tile Data**: The shader is passed a 13x13 grid of tile data in a uniform. This extra 2-tile border is crucial for high-quality **bicubic normal** calculations, preventing artifacts at chunk edges.
+* **Paged Atlas**: Instead of per-chunk uniforms, terrain metadata is stored in a layered **Rg16Uint** GPU texture array.
+    * **R16**: `tile_id` (0..65535).
+    * **G16**: Packed `[height:low 8 | tex_size:high 8]`. `height` is biased by +128.
+* **LRU Paging**: World pages (e.g. 2048x2048 tiles) are dynamically mapped to physical layers in the GPU atlas.
+* **Incremental Updates**: Chunks are uploaded to the atlas using `queue.write_texture` on the fly.
+* **Neighborhood Sampling**: The shader samples across chunk boundaries by resolving global world coordinates into atlas page/layer coordinates, enabling high-quality bicubic normal calculations without per-chunk padding.
 
 ### 3.3. Uniform-Driven Shaders
 
-Almost all visual features are controlled by uniforms, which are grouped by concern:
+Visual features are controlled by uniforms grouped by concern:
 
-* `LandUniform`: Per-chunk terrain data (heights, textures).
-* `SceneUniform`: Per-frame data (camera, light direction, time, fog).
-* `LightingUniforms`: Global lighting and color settings (fill, rim, grading, exposure).
-    Right now those are added as a per mesh instance uniform, but in the future it will be moved to a global struct.
-* `EffectsUniform`: Terrain-specific toggles and strength parameters.
+* `LandUniform`: Per-chunk instanced data (coordinates, atlas layer).
+* `SceneUniform`, `LightingUniforms`, `EffectsUniform`: Global/Shared uniforms moved to a shared bind group to reduce material churn.
+* `AtlasParams`: Metadata about the Paged Tile Atlas (page size, layer mappings).
+
+**BC7 Compression**: When `lossy_texture_compression` is enabled in `settings.toml`, terrain textures are compressed to **BC7** on the CPU using `intel_tex_2` before being uploaded to VRAM, reducing texture array memory usage by ~8x (~160MB to ~20MB).
 
 **CRITICAL**: The layout of these structs in Rust (`mesh_material.rs`) must **exactly** match the shader structs in `land_base.wgsl`, including `std140` alignment and padding.
 
@@ -89,3 +91,20 @@ This requires modifying both Rust and WGSL code in a specific order.
   * Check the tonemapping and fog calculations. An incorrect blend or exposure setting can desaturate or overly brighten the scene.
 
 * **Shader Fails to Compile**: Read the `wgpu` error message carefully. It will usually point to the exact line in the WGSL shader that has a syntax error. Remember that WGSL is more strict than GLSL in many ways (e.g., no implicit type conversions).
+
+## 7. Performance & Memory Management
+
+### 7.1. Idle Eviction (60s)
+To keep the RAM footprint low, the following data is evicted if not accessed for 60 seconds. The check is performed by a dedicated system every 5 seconds:
+* **MapBlocks**: Cached blocks in `MapPlane`.
+* **Land Textures**: Pixel data in `TexMap2D` (lazy-loaded on demand).
+
+### 7.2. BC7 Compression & VRAM
+* **VRAM Savings**: Reduces texture array usage from ~160MB to ~20MB.
+* **Format**: Uses `intel_tex_2` with `alpha_basic_settings`.
+* **Alignment**: GPU uploads must respect the 4x4 pixel block size (16 bytes per block) for $bytes\_per\_row$ calculations.
+
+### 7.3. Build Optimizations
+* **Linker**: Release builds use the `mold` linker (via GitHub Actions) for 3-5x faster link times.
+* **Binary Size**: Production builds (`profile.release`) use `opt-level = "s"` + LTO + stripping to minimize executable weight.
+

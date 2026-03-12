@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build-debug",
+            "type": "process",
+            "command": "cargo",
+            "args": ["build", "--bin", "dynamapper", "--package", "dynamapper"],
+            "problemMatcher": ["$rustc"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build-release",
+            "type": "process",
+            "command": "cargo",
+            "args": ["build", "--release", "--bin", "dynamapper", "--package", "dynamapper"],
+            "problemMatcher": ["$rustc"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        }
+    ]
+}

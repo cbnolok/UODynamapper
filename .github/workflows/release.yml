@@ -1,0 +1,111 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      prerelease_tag:
+        description: "Tag to use for the auto-generated prerelease (e.g. 'nightly')"
+        required: false
+        default: "nightly"
+
+env:
+  CARGO_TERM_COLOR: always
+  # Use mold for faster linking (installed below)
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+  RUSTFLAGS: "-C link-arg=-fuse-ld=/usr/bin/mold"
+
+jobs:
+  build-linux:
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # Required to create/write GitHub Releases
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # These are cached by GitHub's runner between runs if unchanged.
+        # apt-get itself is fast (~15s). mold makes linking ~5x faster than ld.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            pkg-config \
+            clang \
+            mold
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # Caches ~/.cargo/registry (downloaded crates) and the incremental build
+      # artifacts in target/. On a cache hit, subsequent builds are very fast.
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          # Add extra key components so the cache is invalidated if Cargo.lock or
+          # toolchain changes (rust-cache does this automatically, but being explicit
+          # helps debug cache misses).
+          key: "linux-x86_64-stable"
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin dynamapper --package dynamapper
+
+      - name: Package binary and assets
+        run: |
+          mkdir -p release_package/assets
+          cp target/release/dynamapper release_package/
+          cp -r assets/shaders release_package/assets/
+          cp README.md release_package/ 2>/dev/null || true
+          # NOTE: UO game data files (*.mul, *.uop) are NOT included for copyright reasons.
+          # Users must supply their own copy and configure the path in settings.toml.
+          tar -czf dynamapper-linux-x86_64.tar.gz -C release_package .
+          echo "Archive size: $(du -sh dynamapper-linux-x86_64.tar.gz | cut -f1)"
+
+      # Always upload as workflow artifact (available from the Actions UI, 30d TTL)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-linux-x86_64
+          path: dynamapper-linux-x86_64.tar.gz
+          retention-days: 30
+
+      # On tag push: create a proper versioned GitHub Release
+      - name: Create versioned GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dynamapper-linux-x86_64.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      # On manual dispatch: create/overwrite the "nightly" (or custom) prerelease
+      - name: Compute nightly tag name
+        if: github.event_name == 'workflow_dispatch'
+        id: nightly_tag
+        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update prerelease
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.nightly_tag.outputs.tag }}
+          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
+          prerelease: true
+          files: dynamapper-linux-x86_64.tar.gz
+          generate_release_notes: false
+          body: |
+            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
+
+            Built on: ${{ github.event.repository.updated_at }}
+
+            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.

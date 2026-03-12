@@ -64,10 +64,10 @@ fn custom_bevy_log_config() -> LogPlugin {
 }
 
 fn custom_winit_settings() -> WinitSettings {
-    WinitSettings {
-        focused_mode: UpdateMode::reactive(Duration::from_secs_f64(1.0 / 60.0)), // 60.0 Hz
-        unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(1.0 / 30.0)), // 30.0 Hz
-    }
+    // Use Continuous mode: render every frame unconditionally.
+    // Reactive mode only schedules frames when OS events arrive (mouse/keyboard),
+    // which caps FPS at the event rate and causes visual stutter during scrolling.
+    WinitSettings::game()
 }
 
 fn custom_threadpool_settings() -> TaskPoolPlugin {

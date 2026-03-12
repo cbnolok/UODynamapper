@@ -21,6 +21,7 @@ pub struct Settings {
     pub window: SectWindow,
     pub world: SectWorld,
     pub debug: SectDebug,
+    pub graphics: SectGraphics,
     // pub logger: Option<Logger>, // For the commented section
 }
 
@@ -49,6 +50,14 @@ pub struct SectWorld {
 #[derive(Clone, Debug, Deserialize)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SectGraphics {
+    /// When true, terrain textures are BC7-compressed on the CPU before uploading to the GPU.
+    /// This saves ~8x VRAM (160 MB -> ~20 MB) at the cost of near-lossless quality.
+    /// Requires BC texture compression GPU support (most desktop GPUs support this).
+    pub lossy_texture_compression: bool,
 }
 
 // ----

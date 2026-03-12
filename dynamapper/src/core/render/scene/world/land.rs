@@ -58,6 +58,8 @@ impl Plugin for DrawLandChunkMeshPlugin {
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)
                         .run_if(in_state(AppState::InGame)),
+                    draw_mesh::sys_evict_map_blocks
+                        .run_if(in_state(AppState::InGame)),
                     sys_update_shared_land_material
                         .run_if(in_state(AppState::InGame)),
                 ),

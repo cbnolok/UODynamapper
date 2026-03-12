@@ -192,22 +192,44 @@ pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
     map_file_mul_rdr: BufReader<File>,
-    cached_blocks: BTreeMap<MapBlockRelPos, MapBlock>,
+    cached_blocks: BTreeMap<MapBlockRelPos, CachedBlock>,
 }
+
+pub struct CachedBlock {
+    pub block: MapBlock,
+    pub last_accessed: std::time::Instant,
+}
+
 impl MapPlane {
     pub const EXTRA_BLOCKS_TO_CACHE_PER_SIDE: u32 = 8;
 
-    //pub fn block(&self, x: u32, y: u32) -> Option<&MapBlock> {
-    //    self.cached_blocks.get(&MapBlockRelPos { x, y })
-    //}
-    pub fn block(&self, pos: MapBlockRelPos) -> Option<&MapBlock> {
-        self.cached_blocks.get(&pos)
+    pub fn block(&mut self, pos: MapBlockRelPos) -> Option<&MapBlock> {
+        if let Some(cached) = self.cached_blocks.get_mut(&pos) {
+            cached.last_accessed = std::time::Instant::now();
+            // We have to return an immutable borrow to the block now
+            let block_ptr = &cached.block as *const MapBlock;
+            Some(unsafe { &*block_ptr })
+        } else {
+            None
+        }
     }
-    //pub fn block_as_mut(&mut self, x: u32, y: u32) -> Option<&mut MapBlock> {
-    //    self.cached_blocks.get_mut(&MapBlockRelPos { x, y })
-    //}
+
     pub fn block_as_mut(&mut self, pos: MapBlockRelPos) -> Option<&mut MapBlock> {
-        self.cached_blocks.get_mut(&pos)
+        if let Some(cached) = self.cached_blocks.get_mut(&pos) {
+            cached.last_accessed = std::time::Instant::now();
+            Some(&mut cached.block)
+        } else {
+            None
+        }
+    }
+
+    pub fn evict_idle_blocks(&mut self, timeout: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let initial_len = self.cached_blocks.len();
+        self.cached_blocks.retain(|_, cached| {
+            now.duration_since(cached.last_accessed) <= timeout // Keep if newer than timeout
+        });
+        initial_len - self.cached_blocks.len()
     }
 }
 
@@ -465,7 +487,10 @@ impl MapPlane {
 
                 let mut new_block = MapBlock::from_reader(&mut cursor)?;
                 new_block.internal_coords = block_pos;
-                self.cached_blocks.insert(block_pos, new_block);
+                self.cached_blocks.insert(block_pos, CachedBlock {
+                    block: new_block,
+                    last_accessed: std::time::Instant::now(),
+                });
             }
         }
 

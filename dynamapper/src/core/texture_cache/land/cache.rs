@@ -28,13 +28,23 @@ pub struct TextureArrayUpload {
     pub size: LandTextureSize,
     pub layer: u32,
     pub bytes: Vec<u8>,
+    /// True if `bytes` contains BC7-compressed data instead of raw RGBA8.
+    pub lossy_compressed: bool,
 }
 
 #[derive(Resource, Default)]
 pub struct RenderTextureArrayUploads(pub Vec<TextureArrayUpload>);
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
-const TEXTURE_BYTES_PER_PIXEL: usize = 4; // RGBA8888
+
+/// Runtime settings for the land texture cache, inserted at startup.
+/// Holds values read from `settings.toml` that affect how tiles are uploaded to the GPU.
+#[derive(Resource, Clone, Copy)]
+pub struct LandTextureCacheSettings {
+    /// When true, tiles are BC7-compressed on the CPU before uploading to the GPU.
+    /// Reduces VRAM from ~160 MB to ~20 MB at the cost of near-lossless quality.
+    pub lossy_texture_compression: bool,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct LandTextureEntry {
@@ -89,6 +99,7 @@ impl LandTextureCache {
         &mut self,
         texmap_2d: Arc<TexMap2D>,
         texture_id: u16,
+        lossy_compression: bool,
     ) -> (LandTextureSize, u32) {
         // If texture is already resident, just return its info.
         if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
@@ -96,7 +107,7 @@ impl LandTextureCache {
             return (entry.0, entry.1.layer);
         }
 
-        let prepared = self.prepare_texture_residency(texture_id, &texmap_2d).unwrap();
+        let prepared = self.prepare_texture_residency(texture_id, &texmap_2d, lossy_compression).unwrap();
 
         self.pending_uploads.push(prepared.clone());
 
@@ -111,6 +122,7 @@ impl LandTextureCache {
         &mut self,
         texture_id: u16,
         texmap_2d: &Arc<TexMap2D>,
+        lossy_compression: bool,
     ) -> Option<TextureArrayUpload> {
         // If resident, touch timestamp and return None as no upload is needed.
         if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
@@ -121,19 +133,26 @@ impl LandTextureCache {
         // --- If not resident, perform CPU-side work --- 
 
         // 1. Get the new texture data and metadata.
-        let (texture_size, slice_bytes) =
+        let (texture_size, raw_rgba8) =
             texture_array::get_texmap_raw_data(texture_id, texmap_2d);
 
         // 2. Allocate a layer, evicting an old one if necessary.
         let layer = self.allocate_layer(texture_size);
 
-        // 3. Get the raw pixel data for the upload.
-        let tile_bytes: Vec<u8> = slice_bytes.to_vec();
+        // 3. Optionally compress to BC7 before storing the upload bytes.
+        //    Compression is done once per texture; the result is cached implicitly
+        //    because the LRU keeps the entry alive until eviction.
+        let tile_bytes: Vec<u8> = if lossy_compression {
+            texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+        } else {
+            raw_rgba8.to_vec()
+        };
 
         Some(TextureArrayUpload {
             layer,
             size: texture_size,
             bytes: tile_bytes,
+            lossy_compressed: lossy_compression,
         })
     }
 
@@ -238,6 +257,7 @@ pub fn sys_extract_texture_array_uploads(
     mut render_uploads: ResMut<RenderTextureArrayUploads>,
 ) {
     if !cache.pending_uploads.is_empty() {
+        eprintln!("[DBG-extract] Extracting {} texture array uploads", cache.pending_uploads.len());
         render_uploads.0.extend(cache.pending_uploads.iter().cloned());
     }
 }
@@ -256,8 +276,17 @@ pub fn sys_render_upload_texture_array(
         return;
     }
 
+    eprintln!("[DBG-render] Processing {} texture array uploads", uploads.0.len());
+
     let small_gpu = gpu_images.get(&handles.small);
     let big_gpu = gpu_images.get(&handles.big);
+
+    if small_gpu.is_none() {
+        eprintln!("[DBG-render] small_gpu image NOT FOUND in RenderAssets");
+    }
+    if big_gpu.is_none() {
+        eprintln!("[DBG-render] big_gpu image NOT FOUND in RenderAssets");
+    }
 
     if small_gpu.is_none() && big_gpu.is_none() {
         uploads.0.clear();
@@ -286,9 +315,21 @@ pub fn sys_render_upload_texture_array(
             aspect: bevy::render::render_resource::TextureAspect::All,
         };
 
+        // bytes_per_row must match the data format:
+        //  - Uncompressed RGBA8: each row is `width * 4` bytes.
+        //  - BC7 (block-compressed): each "row" in wgpu terms is one row of 4×4 blocks.
+        //    A single block covers 4 pixels horizontally and costs 16 bytes.
+        //    So bytes_per_row = ceil(width / 4) * 16.
+        let bytes_per_row = if upload.lossy_compressed {
+            let blocks_wide = (width + 3) / 4;
+            blocks_wide * 16
+        } else {
+            width * 4
+        };
+
         let data_layout = TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4), 
+            bytes_per_row: Some(bytes_per_row),
             rows_per_image: Some(height),
         };
 

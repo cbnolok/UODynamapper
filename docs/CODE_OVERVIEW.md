@@ -91,9 +91,10 @@ Here is a simplified diagram of the application flow from launch to the main gam
     |--> Render World (RenderPlugin)
         |--> Identify visible chunks
         |--> For each chunk:
-            |--> create_land_chunk_material() in draw_chunk_mesh.rs
-            |--> Prepare uniforms (height data, lighting, etc.)
-            |--> Draw mesh with land_base.wgsl shader
+            |--> Gather 8x8 tile metadata (ID, height)
+            |--> Enqueue to TileAtlas in draw_mesh.rs
+        |--> Draw mesh with land_base.wgsl shader
+    |--> Evict Idle Blocks/Textures (sys_evict_map_blocks)
     |--> Render UI
     |--> (Loop)
 ```
@@ -102,13 +103,32 @@ Here is a simplified diagram of the application flow from launch to the main gam
 
 The rendering of the game world, especially the terrain, is a core feature. Here's a high-level look at how it works:
 
-1. **Chunk Management**: The world is divided into 8x8 tile chunks. The `RenderPlugin` contains logic to determine which chunks are visible to the camera.
+1. **Chunk Management**: The world is divided into 8x8 tile chunks. The `RenderPlugin` determines visible chunks based on camera position.
 
-2. **Mesh Generation**: For each visible chunk that doesn't have a mesh yet, the `sys_draw_spawned_land_chunks` system in `draw_chunk_mesh.rs` is called.
+2. **Paged Tile Metadata Atlas**: Terrain metadata is stored in a layered `Rg16Uint` texture array (Tile Metadata Atlas) instead of per-chunk uniforms. This architecture solves two primary problems:
+    * **Material Churn**: By moving metadata to a global atlas, thousands of chunks can share a single material and bind group, virtually eliminating the CPU/GPU stalls caused by frequent uniform buffer updates.
+    * **Scalability**: A paged system (using 2048x2048 layers) allows for massive maps (10,000x10,000+) while respecting GPU hardware limits on texture dimensions.
 
-3. **Material Creation**: This system calls `create_land_chunk_material`, which is the bridge between the Rust code and the shader. This function is responsible for:
-    * Gathering the height and texture data for a **13x13 tile area** (the 8x8 chunk + a 2-tile border).
-    * Packing this data into uniform buffers (`LandUniform`, `LightingUniforms`, etc.).
-    * Creating a new `LandCustomMaterial` with this data.
+3. **Data Format & Packing**:
+    The atlas uses a **4-byte-per-texel** (`Rg16Uint`) format to represent each world tile:
+    * **R (16-bit)**: `tile_id` (0..65535).
+    * **G (16-bit)**: Packed metadata:
+        * **Low 8 bits**: `height_biased` (signed i8 height + 128 offset).
+        * **High 8 bits**: `tex_size` flag (0 = small 64x64 texture array, 1 = big 128x128 array).
 
-4. **Drawing**: Bevy then draws the chunk's mesh using this custom material. The GPU executes the `land_base.wgsl` shader, which uses the uniform data to displace the mesh vertices and calculate the final color for each pixel, resulting in the stylized terrain.
+4. **Coordinate Mapping & Sampling**:
+    * **CPU**: When a chunk is spawned, its 8x8 tile region is mapped to a logical page. The `TileAtlas` LRU cache assigns a physical layer and enqueues subregion updates via `queue.write_texture`.
+    * **GPU**: The `land_base.wgsl` shader resolves world coordinates into `(layer, uv)` using `AtlasParams`. It uses `textureLoad` for deterministic integer lookups of IDs and heights.
+    * **Neighborhood Sampling**: High-quality bicubic normals and slopes are calculated by reading neighboring texels directly from the atlas. Since the atlas is global/paged, sampling across chunk boundaries is seamless without requiring per-chunk padding.
+
+5. **Uniform Management**:
+    * Shared scene data (Lighting, Effects, Globals) are extracted into a shared bind group to further maximize batching efficiency.
+    * The `LandCustomMaterial` remains slim, binding only the Tile Atlas handle and layout parameters.
+
+6. **Optimization & Implementation Details**:
+    * **Sequential I/O**: The map loader (`map.rs`) groups non-contiguous block requests into sequential ranges to minimize filesystem seeks and reads.
+    * **Lazy Texture Residency**: `TexMap2D` lazy-loads land texture pixels from `.mul` files on-demand, caching them in an `Arc<Vec<u8>>` with 60s idle eviction.
+    * **BC7 Alignment**: When uploading BC7-compressed textures via WGPU's `write_texture`, `bytes_per_row` is calculated as `(width + 3) / 4 * 16` to align with 4x4 pixel blocks.
+    * **Idle Eviction**: An eviction system (`sys_evict_map_blocks`) checks for inactive `MapBlock`s and textures every 5 seconds, dropping data older than 60 seconds.
+
+

@@ -35,6 +35,9 @@ smallvec = "1.15.1"
 bevy_egui = "0.36.0"
 serde_derive = "1.0.219"
 wgpu = "24.0"
+# BC7 texture compression for GPU VRAM reduction (lossy, enables via settings).
+# Uses Intel's ISPC compressor under the hood \u2014 very fast, near-lossless quality.
+intel_tex_2 = "0.4"
 
 [dependencies.bevy]
 version = "0.16.1"
@@ -120,11 +123,11 @@ features = [
   "debug_glam_assert",   # Math validation / debug assertions
   "embedded_watcher",    # Hot-reloading for Bevy's internal/builtin assets
   "configurable_error_handler",
-  "trace",               # Enable tracing
-  "trace_chrome",        # Enable tracing using the Chrome backend
-  "trace_tracy",         # Enable tracing using Tracy
-  "trace_tracy_memory",  # Enable memory tracking for Tracy
-  "track_location",      # Enable location tracking
+  #"trace",               # Enable tracing
+  ##"trace_chrome",        # Enable tracing using the Chrome backend
+  #"trace_tracy",         # Enable tracing using Tracy
+  #"trace_tracy_memory",  # Enable memory tracking for Tracy
+  #"track_location",      # Enable location tracking
   #"detailed_trace",      # Extra verbose tracing
 
   # Asset File Format Support
@@ -137,3 +140,9 @@ features = [
   "shader_format_wesl",  # WESL (Extended WGSL) shader support
 ]
 
+# Optimizations for Release build (Binary Size Reduction)
+[profile.release]
+opt-level = "s"      # Optimize for size
+lto = true           # Enable Link-Time Optimization (drops dead code)
+codegen-units = 1    # Maximize size reduction (slower build time)
+strip = true         # Strip debug symbols

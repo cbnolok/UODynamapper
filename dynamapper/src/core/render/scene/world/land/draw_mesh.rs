@@ -54,6 +54,7 @@ fn enqueue_chunk_to_atlas_and_preload(
     texmap_2d_r: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_map: &BTreeMap<MapBlockRelPos, MapBlock>,
+    lossy_compression: bool,
 ) {
     let chunk_origin_tile_units_x =
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
@@ -77,6 +78,7 @@ fn enqueue_chunk_to_atlas_and_preload(
             let (texture_size, layer) = texture_cache.get_texture_size_layer(
                 texmap_2d_r.clone(),
                 cell.id,
+                lossy_compression,
             );
 
             let tex_size_bits = match texture_size {
@@ -150,6 +152,7 @@ pub fn sys_draw_spawned_land_chunks(
     visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
     land_mesh_handle_r: Res<LandMeshHandle>,
     shared_land_material_r: Res<SharedLandMaterial>,
+    cache_settings_r: Res<crate::core::texture_cache::land::cache::LandTextureCacheSettings>,
 ) {
     // Step 1: Get camera/player state.
     let cam_pos = cam_q.single().unwrap().translation;
@@ -274,6 +277,7 @@ pub fn sys_draw_spawned_land_chunks(
             texmap_2d_r.0.clone(),
             &chunk_data,
             &blocks_data,
+            cache_settings_r.lossy_texture_compression,
         );
 
         if entity.is_none() {
@@ -336,5 +340,26 @@ fn draw_land_chunk(
             LogAbout::RenderWorldLand,
             "Skipping drawing of invalid/unspawned entity at stage 'build_indexed_chunk_mesh'.",
         );
+    }
+}
+
+pub fn sys_evict_map_blocks(
+    mut map_planes_r: ResMut<MapPlanesRes>,
+    texmap_2d_r: Res<TexMap2DRes>,
+    scene_state_data_r: Res<SceneStateData>,
+    time: Res<Time>,
+    mut evict_timer: Local<f32>,
+) {
+    *evict_timer += time.delta_secs();
+    if *evict_timer >= 5.0 {
+        *evict_timer = 0.0;
+        let current_map_id = scene_state_data_r.map_id;
+        if let Some(mut map_plane) = map_planes_r.0.get_mut(&current_map_id) {
+            let evicted_blocks = map_plane.evict_idle_blocks(std::time::Duration::from_secs(60));
+            let evicted_textures = texmap_2d_r.0.evict_idle_textures(std::time::Duration::from_secs(60));
+            if evicted_blocks > 0 || evicted_textures > 0 {
+                bevy::log::debug!("Evicted {} idle map blocks, {} idle textures.", evicted_blocks, evicted_textures);
+            }
+        }
     }
 }
