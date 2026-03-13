@@ -8,19 +8,16 @@ mod texture_cache;
 mod uo_files_loader;
 
 use crate::{
+    console_logger::{self, LogAbout, LogSev},
     core::app_states::*,
     external_data::{ExternalDataPlugin, settings},
-    console_logger::{self, LogAbout, LogSev},
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
     log::{BoxedLayer, LogPlugin},
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
-    render::{
-        RenderPlugin,
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
-    },
+    render::settings::{RenderCreation, WgpuFeatures, WgpuSettings},
     window::WindowResolution,
     winit::{UpdateMode, WinitSettings},
 };
@@ -59,7 +56,8 @@ fn bevy_logging_fmt_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
 fn custom_bevy_log_config() -> LogPlugin {
     LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
-        filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error,bevy_framepace=warn".into(),
+        filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error,bevy_framepace=warn"
+            .into(),
         custom_layer: bevy_logging_custom_layer,
         ..Default::default()
     }
@@ -99,7 +97,7 @@ fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
             resizable: true,
             // Force 1:1 aspect for virtual rendering (game world)
             // UO requires 'virtual' 44×44 diamonds, so...
-            resolution: WindowResolution::new(size.0, size.1), //(1320.0, 924.0), // (44*30)x(44*21), etc
+            resolution: WindowResolution::new(size.0 as u32, size.1 as u32), //(1320.0, 924.0), // (44*30)x(44*21), etc
             resize_constraints: WindowResizeConstraints {
                 min_width: 44.0 * 10.0,
                 min_height: 44.0 * 10.0,
@@ -127,8 +125,8 @@ fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
     }
 }
 
-fn custom_render_plugin_settings() -> RenderPlugin {
-    RenderPlugin {
+fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
+    bevy::render::RenderPlugin {
         render_creation: RenderCreation::Automatic(WgpuSettings {
             features: WgpuFeatures::POLYGON_MODE_LINE, // Required for wireframe
             ..Default::default()
@@ -158,7 +156,10 @@ pub fn run_bevy_app() -> ExitCode {
         "Loaded settings file to retrieve app building data.",
     );
 
-    let window_size: (f32, f32) = (settings_data.app.window.width, settings_data.app.window.height);
+    let window_size: (f32, f32) = (
+        settings_data.app.window.width,
+        settings_data.app.window.height,
+    );
     let wireframe_enabled: bool = settings_data.app.debug.map_render_wireframe;
 
     let mut app = App::new();
@@ -169,7 +170,8 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(
             DefaultPlugins
                 .build()
-                .disable::<LogPlugin>() // Disable default to avoid double-logging or formatting issues
+                //.disable::<LogPlugin>() // This removes every Bevy logs, instead of just disabling default to avoid double-logging or formatting issues
+                .set(custom_bevy_log_config())
                 .set(custom_window_plugin_settings(window_size))
                 .set(custom_threadpool_settings())
                 .set(custom_render_plugin_settings())
@@ -180,7 +182,7 @@ pub fn run_bevy_app() -> ExitCode {
                     ..default()
                 }),
         )
-        .add_plugins(custom_bevy_log_config())
+        .add_plugins(WireframePanicFixPlugin) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
         .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
         .insert_resource(custom_wireframe_config(wireframe_enabled))
         //.edit_schedule(Update, |schedule| {
@@ -189,7 +191,9 @@ pub fn run_bevy_app() -> ExitCode {
         .add_plugins(FramepacePlugin)
         .insert_resource(bevy_framepace::FramepaceSettings {
             limiter: if settings_data.app.performance.frame_limit_enabled {
-                bevy_framepace::Limiter::from_framerate(settings_data.app.performance.target_fps as f64)
+                bevy_framepace::Limiter::from_framerate(
+                    settings_data.app.performance.target_fps as f64,
+                )
             } else {
                 bevy_framepace::Limiter::Off
             },
@@ -255,6 +259,25 @@ fn advance_state_after_init_core() {
 }
 
 fn advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {
+    println!("DEBUG: Transitioning to AppState::InGame");
     log_appstate_change("InGame");
     next_state.set(AppState::InGame);
+}
+
+// ================================================================================================
+// FIXES FOR BEVY 0.18.1
+// ================================================================================================
+
+/// Bevy 0.18.1 WireframePlugin panics if Node3d::PostProcessing is missing from the graph.
+/// This plugin adds an EmptyNode to satisfy the edge requirement.
+struct WireframePanicFixPlugin;
+impl Plugin for WireframePanicFixPlugin {
+    fn build(&self, app: &mut App) {
+        use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
+        use bevy::render::render_graph::{EmptyNode, RenderGraphExt};
+        let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
+            return;
+        };
+        render_app.add_render_graph_node::<EmptyNode>(Core3d, Node3d::PostProcessing);
+    }
 }

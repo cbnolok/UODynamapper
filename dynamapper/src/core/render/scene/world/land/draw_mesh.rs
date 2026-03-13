@@ -3,11 +3,10 @@
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
-    render::{
-        mesh::{Indices, PrimitiveTopology},
-        render_asset::RenderAssetUsages,
-        render_resource::{AsBindGroup, ShaderRef, ShaderType},
-    },
+    render::render_resource::{AsBindGroup, ShaderType, PrimitiveTopology},
+    asset::RenderAssetUsages,
+    mesh::{Indices, MeshVertexAttribute},
+    shader::ShaderRef,
 };
 use bytemuck::Zeroable;
 use std::time::Instant;
@@ -19,7 +18,6 @@ use uocf::geo::{
     land_texture_2d::{LandTextureSize, TexMap2D},
     map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos},
 };
-use wide::*;
 
 use super::TILE_NUM_PER_CHUNK_DIM;
 use super::{LCMesh, mesh_material::*, TILE_NUM_PER_CHUNK_TOTAL};

@@ -95,6 +95,6 @@ impl Plugin for DrawLandChunkMeshPlugin {
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
         render_app.init_resource::<tile_atlas::RenderAtlasUploads>();
         render_app.add_systems(bevy::render::ExtractSchedule, tile_atlas::sys_extract_atlas_uploads);
-        render_app.add_systems(bevy::render::Render, tile_atlas::sys_render_upload_tile_atlas.in_set(bevy::render::RenderSet::Queue));
+        render_app.add_systems(bevy::render::Render, tile_atlas::sys_render_upload_tile_atlas.in_set(bevy::render::RenderSystems::Queue));
     }
 }

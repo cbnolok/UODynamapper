@@ -72,7 +72,7 @@ fn sys_player_move(
     cooldown.0.tick(time.delta().mul_f32(multiplier));
 
     // Only move if cooldown finished and a direction is pressed
-    if cooldown.0.finished() {
+    if cooldown.0.just_finished() {
         if let Some(dir) = move_dir.dir {
             for mut transform in query.iter_mut() {
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.

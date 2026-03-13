@@ -6,37 +6,34 @@ edition = "2024"
 
 [dependencies]
 uocf = { path = "../uocf" }
-bytemuck = { version = "1.14", features = ["derive"] }
-color-eyre = { version = "0.6.5", default-features = false, features = ["track-caller"] }
-config = { version = "0.15.11", default-features = false, features = ["toml"] }
-pad = "0.1.6"
-paris = { version = "1.5.15", features = ["macros", "no_logger"] } # log formatting
-regex = { version = "1.11.1", default-features = false, features = ["std", "unicode"] }
+bevy_framepace = "0.21"
+bevy_egui = "0.39"
+wgpu = "27.0"
+tracing-subscriber = { version = "0.3", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
+bytemuck = { version = "1", features = ["derive"] }
+color-eyre = { version = "0.6", default-features = false, features = ["track-caller"] }
+config = { version = "0.15", default-features = false, features = ["toml"] }
+pad = "0.1"
+paris = { version = "1.5", features = ["macros", "no_logger"] } # log formatting
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+strum = "0.28"
+strum_macros = "0.28"
+guillotiere = "0.6"
+lru = "0.15"
+image = {version = "0.25", default-features = false, features = ["bmp", "png", "dds"]}
+time = "0.3"
+toml = "0.9"
 #serde, miniserde, nanoserde
-#serde_derive
-strum = "0.27.1"
-strum_macros = "0.27.1"
-tracing-subscriber = { version = "0.3.19", features = ["std", "ansi", "chrono", "fmt", "thread_local", "tracing-log" ] }
-guillotiere = "0.6.2"
-lru = "0.15.0"
-bevy_framepace = "0.19.1"
-image = {version = "0.25.6", default-features = false, features = ["bmp", "png", "dds"]}
-time = "0.3.41"
-toml = "0.9.5"
-serde = { version = "1.0.203", features = ["derive"] }
-anyhow = "1.0.98"
-getset = "0.1.6"
-chrono = { version = "0.4.41", default-features = false, features = ["clock", "std"] }
-wide = { version = "0.7.14" }
-futures-lite = "2.6.1"
-dashmap = "6.1.0"
-parking_lot = "0.12.4"
-smallvec = "1.15.1"
-bevy_egui = "0.36.0"
-serde_derive = "1.0.219"
-wgpu = "24.0"
+serde = { version = "1", features = ["derive"] }
+serde_derive = "1.0.228"
+getset = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-lite = "2"
+dashmap = "6"
+parking_lot = "0.12"
+smallvec = "1"
 # BC7 texture compression for GPU VRAM reduction (lossy, enables via settings).
-# Uses Intel's ISPC compressor under the hood \u2014 very fast, near-lossless quality.
+# Uses Intel's ISPC compressor under the hood — very fast, near-lossless quality.
 intel_tex_2 = "0.4"
 # System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
@@ -44,7 +41,7 @@ intel_tex_2 = "0.4"
 sysinfo = { version = "0.34", default-features = false, features = ["system"] }
 
 [dependencies.bevy]
-version = "0.16.1"
+version = "0.18.1"
 default-features = false
 features = [
   # Parts of Bevy:
@@ -58,7 +55,7 @@ features = [
   "bevy_image",                  # Image support
   "bevy_input_focus",            # Input focusing system for UI
   "bevy_log",                    # Logging to console
-  "bevy_mesh_picking_backend",   # 3D mesh picking (selection by cursor)
+  ###"bevy_mesh_picking_backend",   # 3D mesh picking (selection by cursor) # TODO: this was removed from 0.18, it was in 0.16
   "bevy_pbr",                    # 3D rendering and Physically Based Shading
   "bevy_picking",                # Picking (selection of objects by cursor)
   "bevy_render",                 # GPU support (based on `wgpu`)
@@ -68,7 +65,7 @@ features = [
   "bevy_state",                  # App state management
   "bevy_text",                   # Text rendering
   "bevy_ui",                     # UI toolkit
-  "bevy_ui_picking_backend",     # UI node picking (selection by cursor)
+  ###"bevy_ui_picking_backend",     # UI node picking (selection by cursor) # TODO: this was removed from 0.18, it was in 0.16
   "bevy_window",                 # Window management
   "bevy_winit",                  # Cross-platform window management support
 
@@ -95,7 +92,8 @@ features = [
   "png",       # PNG image format for simple 2D images
   #"hdr",       # HDR image format
   "ktx2",      # KTX2 format for GPU texture data
-  "zstd",      # ZSTD compression support in KTX2 files
+  ###"zstd",      # ZSTD compression support in KTX2 files # TODO: this was removed from 0.18, it was in 0.16
+  "zstd_rust",
   #"vorbis",    # Audio: OGG Vorbis
 
 
@@ -127,7 +125,7 @@ features = [
   "glam_assert",         # Math validation / debug assertions
   "debug_glam_assert",   # Math validation / debug assertions
   "embedded_watcher",    # Hot-reloading for Bevy's internal/builtin assets
-  "configurable_error_handler",
+  ###"configurable_error_handler", # TODO: this was removed from 0.18, it was in 0.16
   #"trace",               # Enable tracing
   ##"trace_chrome",        # Enable tracing using the Chrome backend
   #"trace_tracy",         # Enable tracing using Tracy

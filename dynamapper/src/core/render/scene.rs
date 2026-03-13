@@ -9,6 +9,7 @@ use crate::core::maps::MapPlaneMetadata;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
+use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::window::{Window, WindowResized};
 use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
 use player::Player;
@@ -20,7 +21,7 @@ pub struct SceneStateData {
     pub map_id: u32,
 }
 
-#[derive(Event, Debug, Clone, PartialEq)]
+#[derive(Message, Debug, Clone, PartialEq)]
 pub struct RecomputeVisibleChunksEvent;
 
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
@@ -51,7 +52,7 @@ impl Plugin for ScenePlugin {
         .insert_resource(SceneStateData {
             map_id: 0xFFFF, // placeholder
         })
-        .add_event::<RecomputeVisibleChunksEvent>()
+        .add_message::<RecomputeVisibleChunksEvent>()
         .configure_sets(Update, (SceneRenderLandSysSet::SyncLandChunks.after(SceneRenderLandSysSet::ListenSyncRequests),
     SceneRenderLandSysSet::RenderLandChunks.after(SceneRenderLandSysSet::SyncLandChunks)))
         .add_systems(
@@ -61,15 +62,15 @@ impl Plugin for ScenePlugin {
 
         .add_systems(
             Update,
-            sys_update_worldmap_chunks_to_render
-                .in_set(SceneRenderLandSysSet::SyncLandChunks)
+            (sys_update_worldmap_chunks_to_render
+                .in_set(SceneRenderLandSysSet::SyncLandChunks),)
                 .run_if(in_state(AppState::InGame)),
         );
     }
 }
 
 pub fn sys_setup_scene(
-    mut writer: EventWriter<RecomputeVisibleChunksEvent>,
+    mut writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
 /*
     // Always clear out anything previously spawned!
@@ -80,7 +81,7 @@ pub fn sys_setup_scene(
     writer.write(RecomputeVisibleChunksEvent{});
 }
 
-pub fn sys_update_scene_on_window_resize(mut resize_events: EventReader<WindowResized>, mut writer: EventWriter<RecomputeVisibleChunksEvent>) {
+pub fn sys_update_scene_on_window_resize(mut resize_events: MessageReader<WindowResized>, mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
     let _event = resize_events.read().last().unwrap();
     writer.write(RecomputeVisibleChunksEvent{});
 }
@@ -152,7 +153,7 @@ fn compute_visible_chunks(
 }
 
 fn sys_update_worldmap_chunks_to_render(
-    mut _event: EventReader<RecomputeVisibleChunksEvent>,
+    mut _event: MessageReader<RecomputeVisibleChunksEvent>,
     mut commands: Commands,
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,

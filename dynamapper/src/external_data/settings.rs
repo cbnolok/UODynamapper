@@ -95,7 +95,7 @@ pub struct LogFilterSetting {
 
 // ----
 
-#[derive(Event)]
+#[derive(Message, Debug, Clone, Default, PartialEq)]
 pub struct ToggleWireframe;
 
 // ----
@@ -185,7 +185,7 @@ impl Plugin for SettingsPlugin {
         app.init_asset::<Settings>()
             //.init_asset::<SettingsAsset>()
             //.init_asset_loader::<SettingsAssetLoader>() // Register custom loader
-            .add_event::<ToggleWireframe>()
+            .add_message::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
             .insert_resource(SettingsSaveTimer(Timer::from_seconds(1.0, TimerMode::Once)))
@@ -226,7 +226,7 @@ fn sys_apply(
     mut zoom_res: ResMut<RenderZoom>,
 ){
     let mut w = windows_q.single_mut().unwrap();
-    w.resolution = WindowResolution::new(settings_res.app.window.width, settings_res.app.window.height);
+    w.resolution = WindowResolution::new(settings_res.app.window.width as u32, settings_res.app.window.height as u32);
 
     zoom_res.write_val(settings_res.app.window.zoom);
 }
@@ -321,7 +321,7 @@ fn keyboard_toggle_wireframe(
      */
 
 fn sys_evlisten_switch_wireframe(
-    mut events: EventReader<ToggleWireframe>,
+    mut events: MessageReader<ToggleWireframe>,
     mut config: ResMut<WireframeConfig>,
     //mut commands: Commands,
     //query: Query<Entity, With<Wireframe>>,
@@ -352,7 +352,7 @@ fn sys_debounced_save(
         save_timer.0.unpause();
     }
 
-    if !save_timer.0.paused() {
+    if !save_timer.0.is_paused() {
         save_timer.0.tick(time.delta());
         if save_timer.0.just_finished() {
             save_user_preferences(&settings);

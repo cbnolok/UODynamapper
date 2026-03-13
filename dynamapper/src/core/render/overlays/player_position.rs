@@ -3,6 +3,7 @@ use crate::{
     prelude::*,
 };
 use bevy::prelude::*;
+use bevy::text::LineHeight;
 
 pub struct PlayerPositionOverlayPlugin;
 
@@ -23,24 +24,20 @@ impl Plugin for PlayerPositionOverlayPlugin {
 pub struct OverlayPlayerPositionText;
 
 pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<AssetServer>) {
+    println!("DEBUG: setup_overlay_player_position running");
     let font: Handle<Font> = asset_server.load("fonts/uo/UOClassicRough.ttf");
 
-    let root_id = commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(20.0),
-            top: Val::Px(20.0),
-            ..default()
-        })
-        .id();
-
-    let bg_id = commands
+    commands
         .spawn((
             Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(20.0),
+                top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(7.0)),
                 ..default()
             },
-            BackgroundColor(Color::BLACK.with_alpha(0.65)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
+            ZIndex(200),
         ))
         .with_children(|builder| {
             builder.spawn((
@@ -50,24 +47,21 @@ pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<A
                     font_size: 15.0,
                     ..default()
                 },
+                LineHeight::Px(15.0),
                 TextColor(Color::WHITE),
                 OverlayPlayerPositionText,
             ));
-        })
-        .id();
-
-    commands.entity(root_id).add_child(bg_id);
+        });
 }
 
 pub fn update_player_position_text(
     player_query: Query<&Transform, With<Player>>,
     mut text_query: Query<&mut Text, With<OverlayPlayerPositionText>>,
 ) {
-    if let (Ok(transform), Ok(mut text)) = (player_query.single(), text_query.single_mut()) {
+    if let (Some(transform), Some(mut text)) =
+        (player_query.single().ok(), text_query.single_mut().ok())
+    {
         let pos = transform.translation.to_uo_vec3();
-        *text = Text::new(format!(
-            "Player position: [{}, {}, {}]",
-            pos.x, pos.y, pos.z
-        ));
+        text.0 = format!("Player position: [{}, {}, {}]", pos.x, pos.y, pos.z);
     }
 }

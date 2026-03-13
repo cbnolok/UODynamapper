@@ -125,14 +125,14 @@ struct LightingUniforms {
   fog_params: vec4<f32>,
 };
 
-@group(2) @binding(100) var texarray_sampler: sampler;
-@group(2) @binding(101) var texarray_small: texture_2d_array<f32>;
-@group(2) @binding(102) var texarray_big:   texture_2d_array<f32>;
-@group(2) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
-@group(2) @binding(104) var<uniform> ATLAS: AtlasParams;
-@group(2) @binding(105) var<uniform> scene:   SceneUniform;
-@group(2) @binding(106) var<uniform> effects: EffectsUniform;
-@group(2) @binding(107) var<uniform> lighting: LightingUniforms;
+@group(3) @binding(100) var tex_small_sampler: sampler;
+@group(3) @binding(101) var tex_small: texture_2d_array<f32>;
+@group(3) @binding(102) var tex_big:   texture_2d_array<f32>;
+@group(3) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
+@group(3) @binding(104) var<uniform> ATLAS: AtlasParams;
+@group(3) @binding(105) var<uniform> scene:   SceneUniform;
+@group(3) @binding(106) var<uniform> effects: EffectsUniform;
+@group(3) @binding(107) var<uniform> lighting: LightingUniforms;
 
 // ============================================================================
 // Grid helpers & utilities
@@ -493,9 +493,9 @@ fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   if (tile.texture_size == 1u) {
-    return textureSample(texarray_big, texarray_sampler, uv, layer).rgb;
+    return textureSample(tex_big, tex_small_sampler, uv, layer).rgb;
   } else {
-    return textureSample(texarray_small, texarray_sampler, uv, layer).rgb;
+    return textureSample(tex_small, tex_small_sampler, uv, layer).rgb;
   }
 }
 
@@ -504,9 +504,9 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   if (tile.texture_size == 1u) {
-    return textureSampleGrad(texarray_big,   texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    return textureSampleGrad(tex_big,   tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
   } else {
-    return textureSampleGrad(texarray_small, texarray_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    return textureSampleGrad(tex_small, tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
   }
 }
 

@@ -6,7 +6,8 @@
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
-    render::render_resource::{AsBindGroup, ShaderRef, ShaderType},
+    render::render_resource::{AsBindGroup, ShaderType},
+    shader::ShaderRef,
 };
 use serde::Deserialize;
 
@@ -15,21 +16,20 @@ pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExt
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
 pub struct LandMaterialExtension {
-    #[sampler(100)]
-    //pub tex_sampler: Sampler,
-    #[texture(101, dimension = "2d_array")]
-    pub texarray_small: Handle<Image>,
-    #[texture(102, dimension = "2d_array")]
-    pub texarray_big: Handle<Image>,
-    #[texture(103, dimension = "2d_array", sample_type = "u_int")]
+    #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
+    #[sampler(100, visibility(vertex, fragment))]
+    pub tex_small: Handle<Image>,
+    #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
+    pub tex_big: Handle<Image>,
+    #[texture(103, dimension = "2d_array", sample_type = "u_int", visibility(vertex, fragment))]
     pub tile_meta_atlas: Handle<Image>,
-    #[uniform(104)]
+    #[uniform(104, visibility(vertex, fragment))]
     pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,
-    #[uniform(105, min_binding_size = 16)]
+    #[uniform(105, visibility(vertex, fragment))]
     pub scene_uniform: SceneUniform,
-    #[uniform(106, min_binding_size = 16)]
+    #[uniform(106, visibility(vertex, fragment))]
     pub effects_uniform: LandEffectsUniform,
-    #[uniform(107, min_binding_size = 16)]
+    #[uniform(107, visibility(vertex, fragment))]
     pub lighting_uniform: LandLightingUniforms,
 }
 
@@ -39,6 +39,20 @@ impl MaterialExtension for LandMaterialExtension {
     }
     fn fragment_shader() -> ShaderRef {
         "shaders/worldmap/land_base.wgsl".into()
+    }
+
+    fn deferred_vertex_shader() -> ShaderRef {
+        "shaders/worldmap/land_base.wgsl".into()
+    }
+    fn deferred_fragment_shader() -> ShaderRef {
+        "shaders/worldmap/land_base.wgsl".into()
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+    fn enable_shadows() -> bool {
+        false
     }
 }
 
@@ -55,8 +69,6 @@ impl MaterialExtension for LandMaterialExtension {
 
 // In order to have 16-bytes (not bit!) alignment, we can use some packing helpers.
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
-
-
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
@@ -108,7 +120,6 @@ pub struct LandEffectsUniform {
     pub _pad_c3: f32,
 }
 
-
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
@@ -138,8 +149,6 @@ pub struct LandLightingUniforms {
     //   fog_color = [r,g,b, max_mix]
     //   fog_params = [distance_density, height_density, noise_scale, noise_strength]
 }
-
-
 
 #[derive(Clone, Copy, Debug)]
 pub enum LandShaderMode {

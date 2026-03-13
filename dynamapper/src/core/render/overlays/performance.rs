@@ -2,6 +2,7 @@ use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy::text::LineHeight;
 use sysinfo::{ProcessesToUpdate, System};
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
@@ -71,6 +72,7 @@ pub fn setup_overlay_performance(
     asset_server: Res<AssetServer>,
     settings: Res<Settings>,
 ) {
+    println!("DEBUG: setup_overlay_performance running");
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
 
     commands
@@ -88,18 +90,19 @@ pub fn setup_overlay_performance(
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::BLACK.with_alpha(0.7)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             ZIndex(100),
             OverlayPerformanceContainer,
         ))
         .with_children(|builder| {
             builder.spawn((
-                Text::new(""),
+                Text::new("FPS: Init..."),
                 TextFont {
                     font,
                     font_size: 14.0,
                     ..default()
                 },
+                LineHeight::Px(14.0),
                 TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
                 OverlayPerformanceText,
             ));
@@ -143,21 +146,33 @@ pub fn update_performance_text(
     entities: &bevy::ecs::entity::Entities,
     land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
     mut text_query: Query<&mut Text, With<OverlayPerformanceText>>,
-    mut node_query: Query<&mut Node, With<OverlayPerformanceContainer>>,
+    mut node_query: Query<
+        &mut Node,
+        (
+            With<OverlayPerformanceContainer>,
+            Without<OverlayPerformanceText>,
+        ),
+    >,
 ) {
     // Real-time visibility toggle from settings
-    if let Ok(mut node) = node_query.single_mut() {
+    if let Some(mut node) = node_query.single_mut().ok() {
         let target_display = if settings.app.performance.show_overlay {
             Display::Flex
         } else {
             Display::None
         };
         if node.display != target_display {
+            println!(
+                "DEBUG: performance overlay display change to {:?}",
+                target_display
+            );
             node.display = target_display;
         }
+    } else {
+        println!("DEBUG: performance overlay node NOT FOUND");
     }
 
-    if let Ok(mut text) = text_query.single_mut() {
+    if let Some(mut text) = text_query.single_mut().ok() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|diag| diag.smoothed())

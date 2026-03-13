@@ -25,8 +25,8 @@ debug-assertions = true
 
 # Settings for dependencies (incl. Bevy), but not for our main code:
 [profile.dev.package."*"]
-opt-level = 3 # Enable high optimizations
-debug = false # Disable generation of debug info
+opt-level = "s" # Selective size optimization (better for behemoths like bevy_dylib)
+debug = false   # Disable generation of debug info (save RAM/Disk)
 incremental = true
 
 # Specifically optimize uocf (workspace member) for map processing performance

@@ -3,7 +3,8 @@ use crate::core::system_sets::*;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::prelude::*;
-use bevy::render::camera::ScalingMode;
+use bevy::ui::IsDefaultUiCamera;
+use bevy::camera::ScalingMode;
 use bevy::window::Window;
 use crate::external_data::settings::Settings;
 
@@ -13,6 +14,9 @@ pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 pub const DEFAULT_ZOOM: f32 = 1.0;
 pub const MIN_ZOOM: f32 = 0.1;
 pub const MAX_ZOOM: f32 = 6.0;
+
+#[derive(Resource, Default)]
+pub struct UiCameraResource(pub Option<Entity>);
 
 /* RENDERING MAGIC CONSTANTS */
 /// Magic number found through trial and error with the aim of rendering tiles of same width and height.
@@ -54,6 +58,7 @@ impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
 }
 
+
 pub struct CameraPlugin {
     pub registered_by: &'static str,
 }
@@ -62,11 +67,12 @@ impl_tracked_plugin!(CameraPlugin);
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(
+        app.init_resource::<UiCameraResource>()
+        .insert_resource(RenderZoom::default())
+        .add_systems(
             Startup,
             sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
         )
-        .insert_resource(RenderZoom::default())
         .add_systems(Update, sys_update_camera_projection_to_view)
         .add_systems(
             Update,
@@ -97,7 +103,7 @@ fn sys_setup_cam(
     let start_p = settings.core.world.start_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
-    // Setup camera with "military"/oblique angle, looking at player start.
+    // Setup world camera
     commands.spawn((
         PlayerCamera::default(),
         Camera3d::default(),
@@ -116,6 +122,21 @@ fn sys_setup_cam(
             .looking_at(player_start_pos, Vec3::Y),
         GlobalTransform::default(),
     ));
+
+    // Setup dedicated UI camera
+    let ui_cam = commands.spawn((
+        Camera2d,
+        Camera {
+            // Render after the world camera
+            order: 1,
+            // Don't clear the screen, just overlay
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        IsDefaultUiCamera,
+    )).id();
+
+    commands.insert_resource(UiCameraResource(Some(ui_cam)));
 
     console_logger::one(None, LogSev::Debug, LogAbout::Camera, "Spawned.");
 }

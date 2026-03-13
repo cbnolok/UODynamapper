@@ -1,8 +1,9 @@
 use super::{TILE_NUM_PER_CHUNK_DIM, draw_mesh::LandMeshHandle};
 use bevy::{
-    asset::RenderAssetUsages,
     prelude::*,
-    render::mesh::{Indices, PrimitiveTopology},
+    mesh::Indices,
+    render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages,
 };
 
 /// This startup system generates a single, shared 9x9 grid mesh for all land chunks.
