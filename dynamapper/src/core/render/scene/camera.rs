@@ -138,6 +138,7 @@ fn sys_setup_cam(
             },
             IsDefaultUiCamera,
             bevy_egui::EguiContext::default(),
+            //bevy_egui::PrimaryEguiContext,
         ))
         .id();
 

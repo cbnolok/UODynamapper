@@ -198,7 +198,14 @@ pub fn run_bevy_app() -> ExitCode {
                 bevy_framepace::Limiter::Off
             },
         })
-        .add_plugins(EguiPlugin::default()) // egui UI layer (used for teleport dialog, etc.)
+        .insert_resource(bevy_egui::EguiGlobalSettings {
+            auto_create_primary_context: false, // We manually spawn PrimaryEguiContext on the UI camera
+            ..default()
+        })
+        .add_plugins(EguiPlugin {
+            //ui_render_order: bevy_egui::UiRenderOrder::BevyUiAboveEgui, // Render Bevy UI (overlays) above egui
+            ..default()
+        }) // egui UI layer (used for teleport dialog, etc.)
         .add_plugins((
             bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
             // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
