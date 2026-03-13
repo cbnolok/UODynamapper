@@ -28,4 +28,14 @@ This document lists the keyboard shortcuts used in UODynamapper.
 | Key | Action |
 |-----|--------|
 | `Ctrl + G` | Open Teleport Dialog (Planned) |
-| `Esc` | Close Dialogs / Menu (Planned) |
+| `Esc` | Close Dialogs / Menu |
+
+## Developer & Settings
+| Key | Action | Default |
+|-----|--------|---------|
+| `F1` | Keybindings Help | `F1` |
+| `F2` | Options Menu | `F2` |
+| `F3` | Terrain Shader Controls | `F3` |
+
+> [!NOTE]
+> Keybindings are configurable! You can change them by editing the `assets/keybindings.toml` file.

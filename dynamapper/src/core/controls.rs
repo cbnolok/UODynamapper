@@ -1,5 +1,4 @@
 pub mod player_movement;
-pub mod teleport;
 pub mod window_controls;
 
 use crate::prelude::*;
@@ -19,7 +18,6 @@ impl Plugin for ControlsPlugin {
             window_controls::WindowControlsPlugin {
                 registered_by: "ControlsPlugin",
             },
-            teleport::TeleportPlugin,
         ));
     }
 }

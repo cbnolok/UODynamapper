@@ -1,4 +1,7 @@
-use crate::prelude::*;
+use crate::{
+    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    prelude::*,
+};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::core::render::scene::player::Player;
@@ -13,10 +16,14 @@ pub struct TeleportDialogState {
     pub m: String,
 }
 
-pub struct TeleportPlugin;
+pub struct TeleportPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(TeleportPlugin);
 
 impl Plugin for TeleportPlugin {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.init_resource::<TeleportDialogState>()
             .add_systems(Update, sys_toggle_teleport_dialog.run_if(in_state(AppState::InGame)))
             .add_systems(EguiPrimaryContextPass, sys_render_teleport_dialog.run_if(in_state(AppState::InGame)));
@@ -26,7 +33,15 @@ impl Plugin for TeleportPlugin {
 fn sys_toggle_teleport_dialog(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<TeleportDialogState>,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
 ) {
+    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+    }
+
     if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight) {
         if keyboard.just_pressed(KeyCode::KeyG) {
             state.open = !state.open;
@@ -42,7 +57,8 @@ fn sys_toggle_teleport_dialog(
 }
 
 fn sys_render_teleport_dialog(
-    mut contexts: EguiContexts,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<TeleportDialogState>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
 ) {
@@ -50,7 +66,11 @@ fn sys_render_teleport_dialog(
         return;
     }
 
-    if let Ok(ctx) = contexts.ctx_mut() {
+    // Try to get the egui context - if it fails, skip rendering this frame
+    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+        return;
+    };
+
     egui::Window::new("Teleport (GoTo)").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label("X:");
@@ -88,5 +108,4 @@ fn sys_render_teleport_dialog(
             }
         }
     });
-    } // end ctx ok
 }

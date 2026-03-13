@@ -1,24 +1,21 @@
 // Options dialog (egui window)
 //
-// Keybinding: F2 = toggle this dialog open/closed.
-//
 // Currently contains:
 //   - Frame Limiter: checkbox to enable/disable + combobox to pick target FPS.
 //     Writes to `bevy_framepace::FramepaceSettings` directly.
 
-use crate::core::WireframeConfig;
-use crate::prelude::*;
-use bevy::prelude::*;
+use crate::{
+    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    prelude::*,
+};
+use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 use bevy_framepace::{FramepaceSettings, Limiter};
-
-// Keybinding to toggle the options dialog.
-const KEY_TOGGLE_OPTIONS: KeyCode = KeyCode::F2;
 
 /// Preset FPS values offered in the combobox.
 /// Using a fixed list keeps the UI simple and avoids having a free-form number input
 /// that could produce unrealistic or unstable values.
-const FPS_PRESETS: &[u32] = &[30, 60, 75, 120, 144, 165, 240];
+const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 
 /// Default FPS cap used when the user first enables frame limiting.
 const DEFAULT_FPS_LIMIT: u32 = 60;
@@ -63,7 +60,10 @@ impl Default for OptionsDialogState {
 
 // ---- Plugin ----
 
-pub struct OptionsDialogPlugin;
+pub struct OptionsDialogPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(OptionsDialogPlugin);
 
 impl Plugin for OptionsDialogPlugin {
     fn build(&self, app: &mut App) {
@@ -75,10 +75,7 @@ impl Plugin for OptionsDialogPlugin {
                     sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),
                 ),
             )
-            .add_systems(
-                EguiPrimaryContextPass,
-                sys_render_options_dialog.run_if(in_state(AppState::InGame)),
-            );
+            .add_systems(EguiPrimaryContextPass, sys_render_options_dialog);
     }
 }
 
@@ -111,12 +108,21 @@ fn sys_sync_settings_to_state(
 
 // ---- Systems ----
 
-/// Toggles the options dialog on F2; also allows Escape to close it.
+/// Toggles the options dialog; also allows Escape to close it.
 fn sys_toggle_options_dialog(
     keyboard: Res<ButtonInput<KeyCode>>,
+    settings: Res<Settings>,
     mut state: ResMut<OptionsDialogState>,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if keyboard.just_pressed(KEY_TOGGLE_OPTIONS) {
+    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+    }
+
+    if keyboard.just_pressed(settings.keybindings.user_settings) {
         state.open = !state.open;
     }
     // Pressing Escape closes the dialog if it is open.
@@ -127,14 +133,19 @@ fn sys_toggle_options_dialog(
 
 /// Renders the options dialog window and applies any changes to the relevant resources.
 fn sys_render_options_dialog(
-    mut contexts: EguiContexts,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<OptionsDialogState>,
     mut framepace: ResMut<FramepaceSettings>,
     mut settings: ResMut<Settings>,
 ) {
-    let ctx = match contexts.ctx_mut() {
-        Ok(c) => c,
-        Err(_) => return,
+    if !state.open {
+        return;
+    }
+
+    // Try to get the egui context - if it fails, skip rendering this frame
+    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+        return;
     };
 
     // — Borrow fix —
@@ -144,7 +155,9 @@ fn sys_render_options_dialog(
     // write the (possibly changed by egui's own close button) value back afterward.
     let mut window_open = state.open;
 
-    let response = egui::Window::new("Options [F2]")
+    let title = format!("Options [{:?}]", settings.keybindings.user_settings);
+
+    let response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
         .collapsible(false)
         .resizable(false)

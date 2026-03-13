@@ -1,3 +1,4 @@
+use crate::core::render::scene::camera::UiCameraResource;
 use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -71,6 +72,7 @@ pub fn setup_overlay_performance(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     settings: Res<Settings>,
+    ui_camera: Res<UiCameraResource>,
 ) {
     println!("DEBUG: setup_overlay_performance running");
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
@@ -93,6 +95,7 @@ pub fn setup_overlay_performance(
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             ZIndex(100),
             OverlayPerformanceContainer,
+            UiTargetCamera(ui_camera.0.unwrap()),
         ))
         .with_children(|builder| {
             builder.spawn((
@@ -104,6 +107,7 @@ pub fn setup_overlay_performance(
                 },
                 LineHeight::Px(14.0),
                 TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
+                Node::default(), // Required for Bevy UI to recognize and render the text
                 OverlayPerformanceText,
             ));
         });

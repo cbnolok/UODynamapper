@@ -18,6 +18,14 @@ pub struct Settings {
     pub core: SectCore,
     pub app: SectApp,
     pub logging: SectLogging,
+    pub keybindings: SectKeybindings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SectKeybindings {
+    pub shader_settings: KeyCode,
+    pub user_settings: KeyCode,
+    pub keybindings_help: KeyCode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -102,6 +110,7 @@ pub struct ToggleWireframe;
 
 const CORE_CONFIG_FILE: &'static str = "core_settings.toml";
 const USER_CONFIG_FILE: &'static str = "user_preferences.toml";
+const KEYBINDINGS_CONFIG_FILE: &'static str = "keybindings.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
@@ -148,17 +157,36 @@ pub fn load_from_files() -> Settings {
         }
     };
 
+    // Keybindings file
+    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
+    let kb_contents = std::fs::read_to_string(&kb_path)
+        .unwrap_or_else(|_| "".to_string());
+    
+    let keybindings: SectKeybindings = match toml::from_str(&kb_contents) {
+        Ok(s) => s,
+        Err(_) => {
+            SectKeybindings {
+                shader_settings: KeyCode::F3,
+                user_settings: KeyCode::F2,
+                keybindings_help: KeyCode::F1,
+            }
+        }
+    };
+
     Settings {
         core: core_data.core,
         app: user_app,
         logging: core_data.logging,
+        keybindings,
     }
 }
 
 pub fn save_user_preferences(settings: &Settings) {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
     let user_path = assets_path.join(USER_CONFIG_FILE);
+    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
 
+    // Save user preferences
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
@@ -169,6 +197,20 @@ pub fn save_user_preferences(settings: &Settings) {
         }
         Err(e) => {
             paris::error!("Failed to serialize user preferences: {}", e);
+        }
+    }
+
+    // Save keybindings
+    match toml::to_string_pretty(&settings.keybindings) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&kb_path, toml_str) {
+                paris::error!("Failed to save keybindings.toml: {}", e);
+            } else {
+                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved keybindings.toml");
+            }
+        }
+        Err(e) => {
+            paris::error!("Failed to serialize keybindings: {}", e);
         }
     }
 }

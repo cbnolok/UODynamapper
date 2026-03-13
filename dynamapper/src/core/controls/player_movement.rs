@@ -2,6 +2,7 @@ use crate::core::render::scene::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
+use crate::core::render::scene::camera::UiCameraResource;
 
 /// Base delay between tiles at speed multiplier 1.0 (20 steps per second).
 const BASE_MOVE_COOLDOWN: f32 = 0.05;
@@ -35,7 +36,29 @@ pub struct MoveDirection {
 fn sys_player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut move_dir: ResMut<MoveDirection>,
+    mut egui_contexts: bevy_egui::EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
 ) {
+    // If any egui context wants keyboard input, don't process movement
+    // Check primary window context
+    if let Ok(ctx) = egui_contexts.ctx_mut() {
+        if ctx.wants_keyboard_input() {
+            move_dir.dir = None;
+            move_dir.vertical_dir = 0;
+            return;
+        }
+    }
+    // Check UI camera context (stored in our resource)
+    if let Some(ui_cam) = egui_ui_camera.0 {
+        if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(ui_cam) {
+            if ctx.wants_keyboard_input() {
+                move_dir.dir = None;
+                move_dir.vertical_dir = 0;
+                return;
+            }
+        }
+    }
+
     let mut dir = IVec2::ZERO;
     if keyboard_input.pressed(KeyCode::KeyW) {
         dir.y -= 1;

@@ -1,7 +1,6 @@
-pub mod options_dialog;
+pub mod dialogs;
 pub mod overlays;
 pub mod scene;
-pub mod terrain_shader_ui;
 
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -20,10 +19,9 @@ impl Plugin for RenderPlugin {
             overlays::OverlaysPlugin {
                 registered_by: "RenderPlugin",
             },
-            terrain_shader_ui::TerrainUiPlugin {
+            dialogs::DialogsPlugin {
                 registered_by: "RenderPlugin",
             },
-            options_dialog::OptionsDialogPlugin,
         ));
     }
 }

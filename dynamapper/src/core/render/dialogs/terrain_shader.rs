@@ -5,21 +5,19 @@
 //      0 = Classic 2D (vertex/Gouraud; faithful to original)
 //      1 = Enhanced 2D (fragment; subtle improvements, still faithful)
 //      2 = KR-like     (fragment; painterly, vibrant, rim + gloom)
-//
-// Keybinding: F1 = toggle this panel open/closed.
 
 use crate::{
-    external_data::shader_presets::UniformState, impl_tracked_plugin, // prelude::*,
+    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    external_data::shader_presets::UniformState,
+    impl_tracked_plugin,
+    prelude::*,
     util_lib::tracked_plugin::*,
 };
 
+use super::super::scene::world::land::mesh_material::*;
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use super::scene::world::land::mesh_material::*;
-
-// Keybinding to toggle the terrain shader UI panel.
-const KEY_TOGGLE_TERRAIN_UI: KeyCode = KeyCode::F1;
 
 /// Resource that tracks whether the terrain shader panel is visible.
 /// Toggled by the keybinding; also closed when egui's own close button is used.
@@ -45,12 +43,21 @@ impl Plugin for TerrainUiPlugin {
     }
 }
 
-/// Toggles the terrain UI panel open/closed on each F1 press.
+/// Toggles the terrain UI panel open/closed on each key press.
 fn sys_toggle_terrain_ui(
     keyboard: Res<ButtonInput<KeyCode>>,
+    settings: Res<Settings>,
     mut state: ResMut<TerrainShaderUiState>,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if keyboard.just_pressed(KEY_TOGGLE_TERRAIN_UI) {
+    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+    }
+
+    if keyboard.just_pressed(settings.keybindings.shader_settings) {
         state.open = !state.open;
     }
 }
@@ -60,14 +67,25 @@ fn sys_toggle_terrain_ui(
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
 
 fn terrain_ui_system(
-    mut egui_ctx: EguiContexts,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
     shader_presets: Res<LandShaderModePresets>,
     mut ui_state: ResMut<TerrainShaderUiState>,
+    settings: Res<Settings>,
 ) {
-    let ctx = egui_ctx.ctx_mut().expect("No egui context?");
+    // Try to get the egui context - if it fails, skip rendering this frame
+    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+        return;
+    };
+
+    let title = format!(
+        "Terrain Shader Controls [{:?}]",
+        settings.keybindings.shader_settings
+    );
+
     // `open_mut()` lets the egui title-bar close button sync back to our resource.
-    egui::Window::new("Terrain Shader Controls [F1]")
+    egui::Window::new(title)
         .default_pos([16.0, 80.0])
         .open(&mut ui_state.open)
         .resizable(true)

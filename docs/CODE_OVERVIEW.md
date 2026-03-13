@@ -139,6 +139,8 @@ The rendering of the game world, especially the terrain, is a core feature. Here
 
 8. **User Interface and Overlays**:
     * **Refactored Overlays**: UI overlays are modularized into separate files (e.g., `performance.rs`, `player_position.rs`) for easier maintenance.
+    * **Refactored Dialogs**: eGUI-based windows are modularized in the `dialogs` subfolder (e.g., `options.rs`, `terrain_shader.rs`, `keybindings_help.rs`).
+    * **Configurable Keybindings**: Keybindings for opening dialogs and other common actions are stored in `assets/keybindings.toml` and are fully runtime-configurable.
     * **Teleport Dialog**: A specialized egui dialog (opened with `Ctrl+G`) allows for instant teleportation by entering X, Y, Z, and M (map plane) coordinates.
 
 9. **Optimization & Implementation Details**:

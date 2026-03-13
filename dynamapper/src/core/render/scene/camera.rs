@@ -1,12 +1,12 @@
 use crate::core::render::scene::player::Player;
 use crate::core::system_sets::*;
+use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
+use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 use bevy::ui::IsDefaultUiCamera;
-use bevy::camera::ScalingMode;
 use bevy::window::Window;
-use crate::external_data::settings::Settings;
 
 pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 
@@ -58,7 +58,6 @@ impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
 }
 
-
 pub struct CameraPlugin {
     pub registered_by: &'static str,
 }
@@ -68,16 +67,16 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.init_resource::<UiCameraResource>()
-        .insert_resource(RenderZoom::default())
-        .add_systems(
-            Startup,
-            sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
-        )
-        .add_systems(Update, sys_update_camera_projection_to_view)
-        .add_systems(
-            Update,
-            sys_camera_follow_player.in_set(MovementSysSet::UpdateCamera),
-        );
+            .insert_resource(RenderZoom::default())
+            .add_systems(
+                Startup,
+                sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
+            )
+            .add_systems(Update, sys_update_camera_projection_to_view)
+            .add_systems(
+                Update,
+                sys_camera_follow_player.in_set(MovementSysSet::UpdateCamera),
+            );
     }
 }
 
@@ -103,10 +102,14 @@ fn sys_setup_cam(
     let start_p = settings.core.world.start_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
-    // Setup world camera
+    // Setup world camera - order 0 to render the 3D world FIRST
     commands.spawn((
         PlayerCamera::default(),
         Camera3d::default(),
+        Camera {
+            order: 0, // Render world first
+            ..default()
+        },
         Projection::Orthographic(OrthographicProjection {
             // NOTE: You control zoom by adjusting .scale (or by adjusting orthographic width/height).
             scale: 1.0 * zoom,
@@ -123,18 +126,20 @@ fn sys_setup_cam(
         GlobalTransform::default(),
     ));
 
-    // Setup dedicated UI camera
-    let ui_cam = commands.spawn((
-        Camera2d,
-        Camera {
-            // Render after the world camera
-            order: 1,
-            // Don't clear the screen, just overlay
-            clear_color: ClearColorConfig::None,
-            ..default()
-        },
-        IsDefaultUiCamera,
-    )).id();
+    // Setup dedicated UI camera - order 1 to render UI ON TOP of the 3D world
+    // Camera2d MUST be used for Bevy UI to work, regardless of order
+    let ui_cam = commands
+        .spawn((
+            Camera2d,
+            Camera {
+                order: 10,                           // Render UI after world (on top)
+                clear_color: ClearColorConfig::None, // Don't clear, just overlay
+                ..default()
+            },
+            IsDefaultUiCamera,
+            bevy_egui::EguiContext::default(),
+        ))
+        .id();
 
     commands.insert_resource(UiCameraResource(Some(ui_cam)));
 
@@ -197,4 +202,3 @@ fn sys_camera_follow_player(
     )
     .looking_at(player_transform.translation, Vec3::Y);
 }
-

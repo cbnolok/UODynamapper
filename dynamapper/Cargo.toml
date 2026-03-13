@@ -141,5 +141,6 @@ features = [
   "jpeg", # JPEG lossy format for photos
   #"shader_format_spirv", # SPIR-V shader support
   "shader_format_wesl",  # WESL (Extended WGSL) shader support
+  "serialize",           # Support for serde (needed for KeyCode in settings)
 ]
 
