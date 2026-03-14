@@ -1,4 +1,7 @@
-use crate::{core::system_sets::StartupSysSet, prelude::*};
+use crate::{
+    core::system_sets::StartupSysSet,
+    prelude::*,
+};
 use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -71,10 +74,8 @@ pub fn setup_overlay_performance(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     settings: Res<Settings>,
-    //ui_camera: Res<UiCameraResource>,
 ) {
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
-
     commands
         .spawn((
             Node {
@@ -91,7 +92,7 @@ pub fn setup_overlay_performance(
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-            //ZIndex(100),
+            GlobalZIndex(100),
             OverlayPerformanceContainer,
         ))
         .with_children(|builder| {

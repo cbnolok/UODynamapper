@@ -289,7 +289,7 @@ impl TexMap2D {
                     bytemuck::cast_slice(&scratch).as_chunks::<16>();
 
                 for &chunk_array in pixel_data_u16_prefix {
-                    let mut chunk = u16x16::new(chunk_array);
+                    let chunk = u16x16::new(chunk_array);
 
                     #[cfg(target_endian = "big")]
                     {
@@ -303,10 +303,10 @@ impl TexMap2D {
 
                     let mut rgba_u32_array = [0u32; 16];
                     for i in 0..16 {
-                        let r_val = r_u16.as_array_ref()[i] as u32;
-                        let g_val = g_u16.as_array_ref()[i] as u32;
-                        let b_val = b_u16.as_array_ref()[i] as u32;
-                        let a_val = a_u16.as_array_ref()[i] as u32;
+                        let r_val = r_u16.as_array()[i] as u32;
+                        let g_val = g_u16.as_array()[i] as u32;
+                        let b_val = b_u16.as_array()[i] as u32;
+                        let a_val = a_u16.as_array()[i] as u32;
                         rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
                     }
                     pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));

@@ -2,7 +2,7 @@
 [package]
 name = "uocf"
 version = "0.0.1"
-edition = "2024"
+edition = "2021" #"2024"
 
 [lints.clippy]
 needless_lifetimes = "allow"
@@ -11,12 +11,12 @@ manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-byteorder = "1.5"
+byteorder = { version = "1.5", default-features = false }
 color-eyre = { version = "0.6", default-features = false, features = ["track-caller"] }
-derive-new = "0.7"
-getset = "0.1"
+derive-new = { version = "0.7", default-features = false }
+getset = { version = "0.1", default-features = false }
 glam = { version = "0.30", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "dds"] }
-wide = { version = "1", features = ["std"] }
-bytemuck = { version = "1", features = ["derive"] }
-smallvec = "1"
+wide = { version = "1", default-features = false, features = ["std"] }
+bytemuck = { version = "1", default-features = false, features = ["derive"] }
+#smallvec = "1"

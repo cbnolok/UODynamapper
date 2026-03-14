@@ -131,7 +131,7 @@ fn sys_toggle_options_dialog(
 ) {
     if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
         if ctx.wants_keyboard_input() {
-            return;
+            //return;
         }
     }
 
@@ -161,7 +161,6 @@ pub fn sys_render_options_dialog(
         return;
     };
 
-
     // — Borrow fix —
     // `egui::Window::open()` mutably borrows the bool for the lifetime of the show()
     // call, which clashes with re-borrowing `state` inside the closure.
@@ -173,6 +172,7 @@ pub fn sys_render_options_dialog(
 
     let response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
+        .fixed_size([300.0, 400.0])
         .collapsible(false)
         .resizable(false)
         .open(&mut window_open)

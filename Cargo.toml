@@ -1,16 +1,21 @@
 [workspace]
-resolver = "3"
+resolver = "2"
 members = [
     "dynamapper",
     "uocf"
 ]
 
 [profile.release]
-#lto = true         # Enable Link-Time Optimization (drops dead code)
-#codegen-units = 1  # Maximize size reduction (slower build time)
-lto = "thin"
+## Max size reduction, but slower build time.
+lto = true         # Enable Link-Time Optimization (drops dead code)
+codegen-units = 1
+## Small, acceptable size reduction, faster build time.
+#lto = "thin"
+
+## Other settings
+panic = "abort"     # Abort on panic instead of unwinding
+opt-level = "z"     # Optimize for size
 #opt-level = 3
-opt-level = "s"     # Optimize for size
 incremental = false
 debug = false
 strip = true        # Strip debug symbols
@@ -25,9 +30,9 @@ debug-assertions = true
 
 # Settings for dependencies (incl. Bevy), but not for our main code:
 [profile.dev.package."*"]
-opt-level = "s" # Selective size optimization (better for behemoths like bevy_dylib)
+opt-level = "z" # Selective size optimization (better for behemoths like bevy_dylib)
 debug = false   # Disable generation of debug info (save RAM/Disk)
-incremental = true
+incremental = false
 
 # Specifically optimize uocf (workspace member) for map processing performance
 [profile.dev.package.uocf]

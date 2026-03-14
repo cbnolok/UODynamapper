@@ -104,7 +104,7 @@ fn sys_evict_idle_land_cache(
                 ),
             );
         }
-    }
+    };
 }
 
 pub fn sys_setup_terrain_cache(
@@ -195,8 +195,8 @@ pub fn sys_setup_terrain_cache(
                 ..Default::default()
             },
             extension: LandMaterialExtension {
-                tex_small: handle_small,
-                tex_big: handle_big,
+                texarray_small: handle_small,
+                texarray_big: handle_big,
                 tile_meta_atlas: atlas_image_handle,
                 atlas_params: params,
                 scene_uniform: SceneUniform {

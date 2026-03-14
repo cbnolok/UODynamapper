@@ -26,7 +26,9 @@ impl Plugin for WorldPlugin
             .init_resource::<WorldGeoData>()
             .add_systems(
                 Startup,
-                sys_populate_world_geo_data.after(StartupSysSet::LoadStartupUOFiles),
+                sys_populate_world_geo_data
+                    .in_set(StartupSysSet::SetupSceneStage1)
+                    .after(StartupSysSet::LoadStartupUOFiles),
             )
             .add_plugins(
                 land::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
@@ -35,9 +37,12 @@ impl Plugin for WorldPlugin
 }
 
 fn sys_populate_world_geo_data(
-    map_planes_res: Res<MapPlanesRes>,
+    map_planes_res: Option<Res<MapPlanesRes>>,
     mut world_geo_data_res: ResMut<WorldGeoData>,
 ) {
+    let Some(map_planes_res) = map_planes_res else {
+        return;
+    };
     if world_geo_data_res.maps.is_empty() {
         for entry in map_planes_res.0.iter() {
             let (&id, plane) = entry.pair();

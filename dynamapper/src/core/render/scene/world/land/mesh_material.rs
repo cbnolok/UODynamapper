@@ -1,8 +1,3 @@
-// ShaderType (from the `encase` crate) generates an internal `check()` function per
-// field that validates alignment at compile time. The compiler incorrectly reports
-// these as "function `check` is never used" — suppressed here.
-#![allow(dead_code)]
-
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
@@ -18,9 +13,9 @@ pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMateria
 pub struct LandMaterialExtension {
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
-    pub tex_small: Handle<Image>,
+    pub texarray_small: Handle<Image>,
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
-    pub tex_big: Handle<Image>,
+    pub texarray_big: Handle<Image>,
     #[texture(
         103,
         dimension = "2d_array",
@@ -40,17 +35,17 @@ pub struct LandMaterialExtension {
 
 impl MaterialExtension for LandMaterialExtension {
     fn vertex_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
+        "shaders/worldmap/land/main.wgsl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
+        "shaders/worldmap/land/main.wgsl".into()
     }
 
     fn deferred_vertex_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
+        "shaders/worldmap/land/main.wgsl".into()
     }
     fn deferred_fragment_shader() -> ShaderRef {
-        "shaders/worldmap/land_base.wgsl".into()
+        "shaders/worldmap/land/main.wgsl".into()
     }
 
     fn enable_prepass() -> bool {

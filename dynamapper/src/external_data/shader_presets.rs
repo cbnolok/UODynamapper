@@ -44,7 +44,10 @@ pub fn load_from_file() -> LandShaderModePresets {
     let presets: LandShaderModePresets = match toml::from_str(&contents) {
         Ok(cont) => cont,
         Err(e) => {
-            eprintln!("Failed to parse shader presets TOML. Error: {}", e.message());
+            eprintln!(
+                "Failed to parse shader presets TOML. Error: {}",
+                e.message()
+            );
             panic!();
         }
     };

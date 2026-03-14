@@ -1,22 +1,19 @@
 use crate::{
-    core::{render::scene::player::Player, system_sets::StartupSysSet},
+    core::render::scene::player::Player,
     prelude::*,
 };
 use bevy::prelude::*;
-use bevy::text::LineHeight;
+use bevy::text::{FontSmoothing, LineHeight};
 
 pub struct PlayerPositionOverlayPlugin;
 
 impl Plugin for PlayerPositionOverlayPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Startup,
-            setup_overlay_player_position.in_set(StartupSysSet::SetupSceneStage2),
-        )
-        .add_systems(
-            Update,
-            update_player_position_text.run_if(in_state(AppState::InGame)),
-        );
+        app.add_systems(OnEnter(AppState::InGame), setup_overlay_player_position)
+            .add_systems(
+                Update,
+                update_player_position_text.run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
@@ -38,7 +35,7 @@ pub fn setup_overlay_player_position(
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.0),
-                top: Val::Px(50.0), // Move down a bit to avoid overlapping if top-left
+                top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(7.0 * settings.app.window.overlay_scale)),
                 display: if settings.app.performance.show_overlay {
                     Display::Flex
@@ -48,6 +45,7 @@ pub fn setup_overlay_player_position(
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
+            GlobalZIndex(100),
             OverlayPlayerPositionContainer,
         ))
         .with_children(|builder| {
@@ -57,6 +55,7 @@ pub fn setup_overlay_player_position(
                 TextFont {
                     font,
                     font_size: 15.0 * scale,
+                    font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
                 },
                 LineHeight::Px(15.0 * scale),

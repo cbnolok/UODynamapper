@@ -7,7 +7,7 @@ use crate::core::render::scene::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
 use crate::util_lib::tracked_plugin::*;
 use bevy::prelude::*;
-use bevy_egui::EguiContexts;
+use bevy_egui::{EguiContextSettings, EguiContexts};
 use keybindings_help::KeybindingsHelpPlugin;
 use options::OptionsDialogPlugin;
 use teleport::TeleportPlugin;
@@ -35,32 +35,42 @@ impl Plugin for DialogsPlugin {
                 registered_by: "DialogsPlugin",
             },
         ))
-        // Apply global egui scaling. We run this in PreUpdate to set the scale
-        // before any UI rendering occurs in this frame.
-        .add_systems(PreUpdate, sys_apply_global_egui_scale);
+        .add_systems(Update, sys_sync_egui_context_scale_factor);
+    }
+}
+
+fn sys_sync_egui_context_scale_factor(
+    settings: Res<crate::external_data::settings::Settings>,
+    egui_ui_camera: Res<UiCameraResource>,
+    mut egui_ctx_settings_q: Query<&mut EguiContextSettings>,
+) {
+    let Some(ui_cam) = egui_ui_camera.0 else {
+        return;
+    };
+
+    let Ok(mut egui_ctx_settings) = egui_ctx_settings_q.get_mut(ui_cam) else {
+        return;
+    };
+
+    let target_scale = if settings.app.window.egui_scale.is_finite() {
+        settings.app.window.egui_scale.clamp(0.5, 3.0)
+    } else {
+        1.0
+    };
+
+    if (egui_ctx_settings.scale_factor - target_scale).abs() > 0.001 {
+        egui_ctx_settings.scale_factor = target_scale;
     }
 }
 
 /// Standard helper to get the egui context for the primary UI camera.
-fn get_egui_context_ready<'a>(
+pub fn get_egui_context_ready<'a>(
     egui_contexts: &'a mut EguiContexts,
     egui_ui_camera: &Res<UiCameraResource>,
 ) -> Option<&'a mut bevy_egui::egui::Context> {
-    let entity = egui_ui_camera.0?;
-    egui_contexts.ctx_for_entity_mut(entity).ok()
-}
-
-fn sys_apply_global_egui_scale(
-    settings: Res<crate::external_data::settings::Settings>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
-) {
-    let target_scale = settings.app.window.egui_scale;
-    if let Some(entity) = egui_ui_camera.0 {
-        if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(entity) {
-            if (ctx.pixels_per_point() - target_scale).abs() > 0.001 {
-                ctx.set_pixels_per_point(target_scale);
-            }
-        }
-    }
+    // Use only the context explicitly attached to our UI camera entity.
+    // This avoids accidentally alternating between different contexts.
+    egui_ui_camera
+        .0
+        .and_then(|ui_cam| egui_contexts.ctx_for_entity_mut(ui_cam).ok())
 }

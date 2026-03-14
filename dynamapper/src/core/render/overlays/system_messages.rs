@@ -1,4 +1,7 @@
-use crate::prelude::*;
+use crate::{
+    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    prelude::*,
+};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::ingame_logger::{self, InGameLog};
@@ -18,10 +21,12 @@ impl Plugin for SystemMessagesPlugin {
 const LOG_MAX_AGE_SEC: u64 = 8;
 const MAX_VISIBLE_MESSAGES: usize = 5;
 
-fn sys_render_system_messages(mut contexts: EguiContexts) {
-    let ctx = match contexts.ctx_mut() {
-        Ok(c) => c,
-        Err(_) => return,
+fn sys_render_system_messages(
+    mut contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
+) {
+    let Some(ctx) = get_egui_context_ready(&mut contexts, &egui_ui_camera) else {
+        return;
     };
 
     // 1. Cleanup old logs
@@ -43,7 +48,7 @@ fn sys_render_system_messages(mut contexts: EguiContexts) {
                 .corner_radius(4.0)
                 .show(ui, |ui| {
                     ui.set_max_width(400.0);
-                    
+
                     let mut scroll_area = egui::ScrollArea::vertical()
                         .max_height(120.0) // Roughly 5 lines
                         .auto_shrink([false, true])
@@ -71,7 +76,7 @@ fn sys_render_system_messages(mut contexts: EguiContexts) {
 fn render_log_line(ui: &mut egui::Ui, log: &InGameLog) {
     let now = std::time::Instant::now();
     let age = now.duration_since(log.timestamp).as_secs_f32();
-    
+
     // Fade out in the last 1 second as requested
     let alpha = if age > (LOG_MAX_AGE_SEC as f32 - 1.0) {
         ((LOG_MAX_AGE_SEC as f32 - age) / 1.0).clamp(0.0, 1.0)

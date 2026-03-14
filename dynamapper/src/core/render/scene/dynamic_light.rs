@@ -35,9 +35,9 @@ pub fn sys_spawn_dynamic_light(
         camera_player_rel_pos,
     };
 
-    let start_p = settings.core.world.start_p;
+    let start_p: UOVec4 = settings.core.world.start_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
-    let camera_pos = light_component.camera_player_rel_pos + player_start_pos;
+    let camera_pos: Vec3 = light_component.camera_player_rel_pos + player_start_pos;
 
     // Set up a directional light (sun)
     console_logger::one(

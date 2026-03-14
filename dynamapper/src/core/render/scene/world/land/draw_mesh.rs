@@ -333,7 +333,6 @@ pub fn sys_draw_spawned_land_chunks(
     }
 }
 
-// Completed!
 fn draw_land_chunk(
     commands: &mut Commands,
     chunk_data_ref: &LandChunkConstructionData,
@@ -363,15 +362,16 @@ fn draw_land_chunk(
             // --------------------------------------------------------------------------
             // MANUAL AABB & FRUSTUM CULLING
             // --------------------------------------------------------------------------
+            // TODO: Explain what is AABB and what's frustum culling!
             // Why? In Ultima Online, land meshes are flat grids (y=0) on the CPU side.
             // However, our vertex shader displaces these vertices vertically (up to ~12.8m).
             //
             // If we let Bevy automatically compute the AABB from the flat mesh vertices,
-            // the culling system remains unaware of the height of mountains/valleys. 
-            // Result: chunks disappear ("pop") as soon as their flat base leaves the 
+            // the culling system remains unaware of the height of mountains/valleys.
+            // Result: chunks disappear ("pop") as soon as their flat base leaves the
             // camera view, even if their peaks should still be visible.
             //
-            // Solution: 
+            // Solution:
             // 1. Add `NoAutoAabb` to stop Bevy from overwriting our custom bounds.
             // 2. Insert a manual `Aabb` that covers the full possible displacement.
             //
@@ -395,9 +395,9 @@ fn draw_land_chunk(
 
 /// Enforces the correct manual AABB every frame for all LCMesh entities.
 ///
-/// While `NoAutoAabb` is set at spawn-time, Bevy's internal visibility systems can be 
-/// complex. Explicitly reinforcing the AABB every frame in `PostUpdate` ensures that 
-/// our tailored bounds are NEVER lost, even during complex map transitions or 
+/// While `NoAutoAabb` is set at spawn-time, Bevy's internal visibility systems can be
+/// complex. Explicitly reinforcing the AABB every frame in `PostUpdate` ensures that
+/// our tailored bounds are NEVER lost, even during complex map transitions or
 /// asset reloads, guaranteeing artifact-free frustum culling.
 pub fn sys_enforce_land_chunk_aabb(
     mut commands: Commands,

@@ -4,20 +4,20 @@ use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::camera::ScalingMode;
-use bevy::prelude::*;
 use bevy::ecs::message::MessageReader;
-use bevy_egui::EguiContexts;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseWheel;
+use bevy::prelude::*;
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::Window;
+use bevy_egui::EguiContexts;
 
 pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 
 /* PUBLIC CONSTANTS: ZOOM */
 pub const DEFAULT_ZOOM: f32 = 1.0;
-pub const MIN_ZOOM: f32 = 0.1;
-pub const MAX_ZOOM: f32 = 6.0;
+pub const MIN_ZOOM: f32 = 0.25;
+pub const MAX_ZOOM: f32 = 50.0;
 
 #[derive(Resource, Default)]
 pub struct UiCameraResource(pub Option<Entity>);
@@ -81,7 +81,8 @@ impl Plugin for CameraPlugin {
                 Update,
                 (
                     sys_camera_zoom,
-                    sys_camera_follow_player.run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
+                    sys_camera_follow_player
+                        .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
                     sys_free_camera_movement.run_if(|s: Res<Settings>| s.app.window.free_camera),
                 )
                     .in_set(MovementSysSet::UpdateCamera),
@@ -146,8 +147,11 @@ fn sys_setup_cam(
                 ..default()
             },
             IsDefaultUiCamera,
-            //bevy_egui::EguiContext::default(),
+            // Explicitly attach the egui context and its pass schedule to avoid
+            // relying on insertion hooks/order nuances.
             bevy_egui::PrimaryEguiContext,
+            //bevy_egui::EguiContext::default(),
+            //EguiMultipassSchedule::new(EguiPrimaryContextPass),
         ))
         .id();
 
@@ -275,7 +279,9 @@ fn sys_free_camera_movement(
         return;
     }
 
-    let Some(mut transform) = camera_q.single_mut().ok() else { return; };
+    let Some(mut transform) = camera_q.single_mut().ok() else {
+        return;
+    };
 
     let move_speed = 10.0 * time.delta_secs();
     let rotate_speed = 1.0 * time.delta_secs();

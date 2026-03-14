@@ -2,8 +2,8 @@
 #[target.'*']
 #rustflags = ["-C embed-bitcode=no"]
 
-[build]
-incremental=true
+#[build]
+#incremental=true
 
 # To set a custom build path and directory, you might want to use:
 #   * cargo --target-dir build
