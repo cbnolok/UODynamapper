@@ -362,18 +362,28 @@ fn draw_land_chunk(
                 0.0,
                 chunk_origin_tile_units_z as f32,
             ),
-            //NoFrustumCulling,
-            // NOTE: GlobalTransform is intentionally NOT re-inserted here.
-            // It was already set during initial spawn in scene.rs and Bevy's transform
-            // propagation system (PostUpdate) will keep it up to date. Re-inserting
-            // GlobalTransform::default() would reset it to identity, placing the AABB
-            // at world origin and causing incorrect frustum culling for all off-center chunks.
+            // --------------------------------------------------------------------------
+            // MANUAL AABB & FRUSTUM CULLING
+            // --------------------------------------------------------------------------
+            // Why? In Ultima Online, land meshes are flat grids (y=0) on the CPU side.
+            // However, our vertex shader displaces these vertices vertically (up to ~12.8m).
+            //
+            // If we let Bevy automatically compute the AABB from the flat mesh vertices,
+            // the culling system remains unaware of the height of mountains/valleys. 
+            // Result: chunks disappear ("pop") as soon as their flat base leaves the 
+            // camera view, even if their peaks should still be visible.
+            //
+            // Solution: 
+            // 1. Add `NoAutoAabb` to stop Bevy from overwriting our custom bounds.
+            // 2. Insert a manual `Aabb` that covers the full possible displacement.
+            //
+            // Tailored Bounds Calculation:
+            // - Mesh Size: 8x8 tiles = 9x9 vertices -> local XZ spans [0.0, 8.0].
+            // - Height Range: UO uses -128 to +127, scaled by 0.1 in shader -> [-12.8, 12.7].
+            // - Padding: We add ~1.0m padding in XZ for stitching and enough Y margin
+            //   to account for any projection distortions.
             NoAutoAabb,
-            // Manually set AABB to prevent culling when the flat mesh is off-screen
-            // but the displacements (calculated in shader) would make it visible.
-            // Mesh is 9x9, so center is 4.5 and half_extents is 4.5.
-            // We use a generous Y range to cover UO height range and isometric projection.
-            Aabb::from_min_max(Vec3::new(-2.0, -20.0, -2.0), Vec3::new(11.0, 20.0, 11.0)),
+            Aabb::from_min_max(Vec3::new(-1.0, -20.0, -1.0), Vec3::new(9.0, 20.0, 9.0)),
         ));
     } else {
         console_logger::one(
@@ -385,30 +395,22 @@ fn draw_land_chunk(
     }
 }
 
-/// Enforces the correct manual AABB every frame for all LCMesh entities that have a mesh.
-/// This is necessary because Bevy's automatic AABB system can potentially overwrite our
-/// manually set AABB (set via `NoAutoAabb` at spawn time) due to system ordering, and
-/// because the vertex shader displaces the flat mesh geometry, making the CPU-computed
-/// AABB (from flat mesh vertices) completely wrong for frustum culling.
+/// Enforces the correct manual AABB every frame for all LCMesh entities.
 ///
-/// We use commands.entity().insert() to forcefully insert/overwrite the Aabb component
-/// every frame, which is immune to timing issues.
+/// While `NoAutoAabb` is set at spawn-time, Bevy's internal visibility systems can be 
+/// complex. Explicitly reinforcing the AABB every frame in `PostUpdate` ensures that 
+/// our tailored bounds are NEVER lost, even during complex map transitions or 
+/// asset reloads, guaranteeing artifact-free frustum culling.
 pub fn sys_enforce_land_chunk_aabb(
     mut commands: Commands,
-    // Query all LCMesh entities that have a Mesh3d (i.e., have been assigned a mesh).
-    // We do NOT filter by Aabb because we want to set it even if it doesn't exist yet.
     chunk_q: Query<Entity, (With<LCMesh>, With<Mesh3d>)>,
 ) {
-    // Hard-coded generous AABB in LOCAL space covering:
-    // - XZ: -2 to +11 (mesh is 9x9, with padding for seam stitching)
-    // - Y:  -20 to +20 (well beyond UO max heights of +-12.8)
     let chunk_aabb = Aabb::from_min_max(
-        Vec3::new(-2.0, -20.0, -2.0),
-        Vec3::new(11.0,  20.0, 11.0),
+        Vec3::new(-1.0, -20.0, -1.0),
+        Vec3::new(9.0,  20.0, 9.0),
     );
     for entity in chunk_q.iter() {
         if let Ok(mut ec) = commands.get_entity(entity) {
-            // insert() overwrites any existing Aabb, bypassing auto-AABB
             ec.insert((chunk_aabb, NoAutoAabb));
         }
     }
