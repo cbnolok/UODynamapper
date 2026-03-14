@@ -18,17 +18,24 @@ This document lists the keyboard shortcuts used in UODynamapper.
 | `PageUp` | Increase Height / Altitude |
 | `PageDown` | Decrease Height / Altitude |
 
-## View Controls
-| Key | Action |
-|-----|--------|
-| `Alt + Click + Drag` | Pan camera (if applicable) |
-| `Scroll Wheel` | Zoom In / Out |
 
 ## Application
 | Key | Action |
 |-----|--------|
 | `Ctrl + G` | Open Teleport Dialog (Planned) |
 | `Esc` | Close Dialogs / Menu |
+| `Scroll Wheel` | Zoom In / Out |
+| `+` / `-` | Zoom In / Out |
+| `Alt + Click + Drag` | Pan camera (if applicable) |
+
+## Free Camera Mode (F2 -> Window -> Free Camera)
+| Key | Action |
+|-----|--------|
+| `Arrow Keys` | Pan Camera (Longitudinal/Lateral) |
+| `Shift + Arrow Up/Dn` | Change Camera Altitude |
+| `R-Shift + W / S` | Pitch (Local X-Axis) |
+| `R-Shift + A / D` | Yaw (Local Y-Axis) |
+| `R-Shift + Q / E` | Roll (Local Z-Axis) |
 
 ## Developer & Settings
 | Key | Action | Default |

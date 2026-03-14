@@ -34,24 +34,33 @@ impl Plugin for DialogsPlugin {
             TeleportPlugin {
                 registered_by: "DialogsPlugin",
             },
-        ));
+        ))
+        // Apply global egui scaling. We run this in PreUpdate to set the scale
+        // before any UI rendering occurs in this frame.
+        .add_systems(PreUpdate, sys_apply_global_egui_scale);
     }
 }
 
+/// Standard helper to get the egui context for the primary UI camera.
 fn get_egui_context_ready<'a>(
     egui_contexts: &'a mut EguiContexts,
     egui_ui_camera: &Res<UiCameraResource>,
 ) -> Option<&'a mut bevy_egui::egui::Context> {
-    let ctx = egui_ui_camera.0.expect("No stored egui context?");
-    let ctx = egui_contexts
-        .ctx_for_entity_mut(ctx)
-        .expect("Stored invalid egui context?");
-    /*
-    if ctx.wants_keyboard_input() {
-        // Don't toggle if egui wants keyboard input (e.g., typing in a text field)
-        return None;
-    }
-    */
+    let entity = egui_ui_camera.0?;
+    egui_contexts.ctx_for_entity_mut(entity).ok()
+}
 
-    Some(ctx)
+fn sys_apply_global_egui_scale(
+    settings: Res<crate::external_data::settings::Settings>,
+    mut egui_contexts: EguiContexts,
+    egui_ui_camera: Res<UiCameraResource>,
+) {
+    let target_scale = settings.app.window.egui_scale;
+    if let Some(entity) = egui_ui_camera.0 {
+        if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(entity) {
+            if (ctx.pixels_per_point() - target_scale).abs() > 0.001 {
+                ctx.set_pixels_per_point(target_scale);
+            }
+        }
+    }
 }

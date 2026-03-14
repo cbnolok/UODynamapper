@@ -251,7 +251,11 @@ impl Plugin for SettingsPlugin {
             .add_message::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
-            .insert_resource(SettingsSaveTimer(Timer::from_seconds(1.0, TimerMode::Once)))
+            .insert_resource(SettingsSaveTimer({
+                let mut t = Timer::from_seconds(1.0, TimerMode::Once);
+                t.pause();
+                t
+            }))
             .add_systems(Update, (sys_evlisten_switch_wireframe, sys_debounced_save))
             ;
     }
@@ -409,7 +413,7 @@ fn sys_debounced_save(
     settings: Res<Settings>,
     mut save_timer: ResMut<SettingsSaveTimer>,
 ) {
-    if settings.is_changed() {
+    if settings.is_changed() && !settings.is_added() {
         // Reset timer whenever a change occurs
         save_timer.0.reset();
         save_timer.0.unpause();

@@ -4,6 +4,12 @@ name = "dynamapper"
 version = "0.0.1"
 edition = "2024"
 
+[lints.clippy]
+needless_lifetimes = "allow"
+collapsible_if = "allow"
+manual_is_multiple_of = "allow"
+too_many_arguments = "allow"
+
 [dependencies]
 uocf = { path = "../uocf" }
 bevy_framepace = "0.21"

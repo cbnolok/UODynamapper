@@ -12,7 +12,7 @@ use bevy::{
 use serde::Deserialize;
 
 // ------------- Land material/shader data -------------
-pub type LandCustomMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
+pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
 pub struct LandMaterialExtension {
@@ -21,7 +21,12 @@ pub struct LandMaterialExtension {
     pub tex_small: Handle<Image>,
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
     pub tex_big: Handle<Image>,
-    #[texture(103, dimension = "2d_array", sample_type = "u_int", visibility(vertex, fragment))]
+    #[texture(
+        103,
+        dimension = "2d_array",
+        sample_type = "u_int",
+        visibility(vertex, fragment)
+    )]
     pub tile_meta_atlas: Handle<Image>,
     #[uniform(104, visibility(vertex, fragment))]
     pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,

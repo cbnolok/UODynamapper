@@ -66,7 +66,7 @@ fn sys_toggle_terrain_ui(
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
 
-fn terrain_ui_system(
+pub fn terrain_ui_system(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
@@ -526,8 +526,8 @@ fn terrain_ui_system(
 // That guarantees that materials not referenced this frame still get the new values
 // (fixes "stale lighting when moving" problem).
 fn push_uniforms_if_dirty(
-    mut mats: ResMut<Assets<LandCustomMaterial>>,
-    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMaterial>>, // kept for parity; unused
+    mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
+    _q_mat_handles: Query<&MeshMaterial3d<LandCustomMeshMaterial>>, // kept for parity; unused
     mut u: ResMut<UniformState>,
 ) {
     if !u.dirty {

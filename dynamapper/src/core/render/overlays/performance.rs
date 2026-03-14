@@ -73,7 +73,6 @@ pub fn setup_overlay_performance(
     settings: Res<Settings>,
     //ui_camera: Res<UiCameraResource>,
 ) {
-    println!("DEBUG: setup_overlay_performance running");
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
 
     commands
@@ -149,7 +148,10 @@ pub fn update_performance_text(
     metrics: Res<ProcessMetrics>,
     entities: &bevy::ecs::entity::Entities,
     land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
-    mut text_query: Query<(&mut Text, &mut TextFont, &mut LineHeight), With<OverlayPerformanceText>>,
+    mut text_query: Query<
+        (&mut Text, &mut TextFont, &mut LineHeight),
+        With<OverlayPerformanceText>,
+    >,
     mut node_query: Query<
         &mut Node,
         (

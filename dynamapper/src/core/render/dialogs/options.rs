@@ -82,6 +82,7 @@ impl Plugin for OptionsDialogPlugin {
                 (
                     sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
                     sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),
+                    sys_apply_performance_settings.run_if(in_state(AppState::InGame)),
                 ),
             )
             .add_systems(EguiPrimaryContextPass, sys_render_options_dialog);
@@ -144,7 +145,7 @@ fn sys_toggle_options_dialog(
 }
 
 /// Renders the options dialog window and applies any changes to the relevant resources.
-fn sys_render_options_dialog(
+pub fn sys_render_options_dialog(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<OptionsDialogState>,
@@ -160,8 +161,6 @@ fn sys_render_options_dialog(
         return;
     };
 
-    // Apply Egui scale to egui context
-    ctx.set_pixels_per_point(settings.app.window.egui_scale);
 
     // — Borrow fix —
     // `egui::Window::open()` mutably borrows the bool for the lifetime of the show()
@@ -170,7 +169,7 @@ fn sys_render_options_dialog(
     // write the (possibly changed by egui's own close button) value back afterward.
     let mut window_open = state.open;
 
-    let title = format!("Options [{:?}]", settings.keybindings.user_settings);
+    let title = format!("Options [{:?}]", settings.as_ref().keybindings.user_settings);
 
     let response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
@@ -282,8 +281,8 @@ fn sys_render_options_dialog(
             // We use .as_ref() for comparisons to avoid triggering change detection
             // unless we actually write a new value. This prevents the debounced save
             // timer from being reset every frame.
-            if settings.as_ref().app.input.movement_speed_multiplier
-                != state.movement_speed_multiplier
+            if (settings.as_ref().app.input.movement_speed_multiplier
+                - state.movement_speed_multiplier).abs() > 0.001
             {
                 settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
             }
@@ -303,10 +302,10 @@ fn sys_render_options_dialog(
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;
             }
-            if settings.as_ref().app.window.egui_scale != state.egui_scale {
+            if (settings.as_ref().app.window.egui_scale - state.egui_scale).abs() > 0.001 {
                 settings.app.window.egui_scale = state.egui_scale;
             }
-            if settings.as_ref().app.window.overlay_scale != state.overlay_scale {
+            if (settings.as_ref().app.window.overlay_scale - state.overlay_scale).abs() > 0.001 {
                 settings.app.window.overlay_scale = state.overlay_scale;
             }
         });
@@ -317,4 +316,21 @@ fn sys_render_options_dialog(
 
     // Suppress unused-variable warning (we don't need the inner response).
     let _ = response;
+}
+
+/// Applies performance settings (frame limiter) from the Settings resource to the FramepaceSettings resource.
+pub fn sys_apply_performance_settings(
+    settings: Res<Settings>,
+    mut framepace: ResMut<FramepaceSettings>,
+) {
+    if settings.is_changed() {
+        let target_fps = settings.app.performance.target_fps;
+        let enabled = settings.app.performance.frame_limit_enabled;
+
+        framepace.limiter = if enabled {
+            Limiter::from_framerate(target_fps as f64)
+        } else {
+            Limiter::Off
+        };
+    }
 }

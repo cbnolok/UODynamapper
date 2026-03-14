@@ -21,7 +21,12 @@ impl Plugin for PlayerMovementPlugin {
                 TimerMode::Repeating,
             )))
             .insert_resource(MoveDirection::default())
-            .add_systems(Update, (sys_player_input, sys_player_move).in_set(MovementSysSet::MovementActions));
+            .add_systems(
+                Update,
+                (sys_player_input, sys_player_move)
+                    .in_set(MovementSysSet::MovementActions)
+                    .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
+            );
     }
 }
 

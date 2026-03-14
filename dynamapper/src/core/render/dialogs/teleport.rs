@@ -56,7 +56,7 @@ fn sys_toggle_teleport_dialog(
     }
 }
 
-fn sys_render_teleport_dialog(
+pub fn sys_render_teleport_dialog(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<TeleportDialogState>,

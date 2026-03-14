@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod texture_array;
 
+use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -57,19 +58,38 @@ impl Plugin for LandTextureCachePlugin {
 fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
     map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
 ) {
-    let evicted_tex = cache_r.evict_idle_textures();
-    if evicted_tex > 0 {
+    // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
+    let evicted_gpu_layers = cache_r.evict_idle_textures();
+    if evicted_gpu_layers > 0 {
         console_logger::one(
             None,
             LogSev::Info,
             LogAbout::Performance,
-            &format!("Evicted {} idle textures from cache.", evicted_tex),
+            &format!(
+                "Evicted {} idle textures from GPU cache.",
+                evicted_gpu_layers
+            ),
         );
     }
 
-    // Also evict idle blocks from the active map plane
+    // 2. Evict idle pixel data from the raw TexMap2D cache (CPU RAM)
+    let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
+    if evicted_pixel_buffers > 0 {
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!(
+                "Evicted {} idle pixel buffers from TexMap2D cache.",
+                evicted_pixel_buffers
+            ),
+        );
+    }
+
+    // 3. Evict idle map blocks from the active map plane (CPU RAM)
     let map_planes = map_planes_r.0.clone();
     if let Some(mut plane) = map_planes.get_mut(&scene_state_r.map_id) {
         let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
@@ -79,7 +99,7 @@ fn sys_evict_idle_land_cache(
                 LogSev::Info,
                 LogAbout::Performance,
                 &format!(
-                    "Evicted {} idle blocks from map {}.",
+                    "Evicted {} idle blocks from MapPlane {}.",
                     evicted_blocks, scene_state_r.map_id
                 ),
             );
@@ -90,9 +110,7 @@ fn sys_evict_idle_land_cache(
 pub fn sys_setup_terrain_cache(
     mut cmd: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<
-        Assets<crate::core::render::scene::world::land::mesh_material::LandCustomMaterial>,
-    >,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::external_data::settings::Settings>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
@@ -119,12 +137,10 @@ pub fn sys_setup_terrain_cache(
         lossy_texture_compression: lossy,
     });
 
-    use crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial;
-    use crate::core::render::scene::world::land::mesh_material::{
-        LandMaterialExtension, SceneUniform,
-    };
-    use crate::core::render::scene::world::land::tile_atlas::{
-        AtlasParams, TileAtlas, TileAtlasImageHandle,
+    use crate::core::render::scene::world::land::{
+        draw_mesh::SharedLandMaterial,
+        mesh_material::{LandMaterialExtension, SceneUniform},
+        tile_atlas::{AtlasParams, TileAtlas, TileAtlasImageHandle},
     };
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
@@ -172,27 +188,28 @@ pub fn sys_setup_terrain_cache(
     let atlas_image_handle = images.add(image);
     cmd.insert_resource(TileAtlasImageHandle(atlas_image_handle.clone()));
 
-    let shared_mat = crate::core::render::scene::world::land::mesh_material::LandCustomMaterial {
-        base: StandardMaterial {
-            unlit: true,
-            ..Default::default()
-        },
-        extension: LandMaterialExtension {
-            tex_small: handle_small,
-            tex_big: handle_big,
-            tile_meta_atlas: atlas_image_handle,
-            atlas_params: params,
-            scene_uniform: SceneUniform {
-                camera_position:
-                    crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
-                light_direction: crate::core::constants::BAKED_GLOBAL_LIGHT.normalize(),
-                time_seconds: 0.0,
-                global_lighting: 1.0,
+    let shared_mat =
+        crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial {
+            base: StandardMaterial {
+                unlit: true,
+                ..Default::default()
             },
-            effects_uniform: Default::default(),
-            lighting_uniform: Default::default(),
-        },
-    };
+            extension: LandMaterialExtension {
+                tex_small: handle_small,
+                tex_big: handle_big,
+                tile_meta_atlas: atlas_image_handle,
+                atlas_params: params,
+                scene_uniform: SceneUniform {
+                    camera_position:
+                        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+                    light_direction: crate::core::constants::BAKED_GLOBAL_LIGHT.normalize(),
+                    time_seconds: 0.0,
+                    global_lighting: 1.0,
+                },
+                effects_uniform: Default::default(),
+                lighting_uniform: Default::default(),
+            },
+        };
 
     let shared_mat_handle = materials.add(shared_mat);
     cmd.insert_resource(SharedLandMaterial(shared_mat_handle));

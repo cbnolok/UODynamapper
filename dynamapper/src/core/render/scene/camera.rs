@@ -309,24 +309,29 @@ fn sys_free_camera_movement(
         }
     }
 
-    // Rotation (Yaw, Pitch, Roll)
-    if keyboard.pressed(KeyCode::KeyQ) {
-        transform.rotate_local_y(rotate_speed);
-    }
-    if keyboard.pressed(KeyCode::KeyE) {
-        transform.rotate_local_y(-rotate_speed);
-    }
-    if keyboard.pressed(KeyCode::KeyR) {
-        transform.rotate_local_x(rotate_speed);
-    }
-    if keyboard.pressed(KeyCode::KeyF) {
-        transform.rotate_local_x(-rotate_speed);
-    }
-    if keyboard.pressed(KeyCode::KeyZ) {
-        transform.rotate_local_z(rotate_speed);
-    }
-    if keyboard.pressed(KeyCode::KeyX) {
-        transform.rotate_local_z(-rotate_speed);
+    // Rotation (Yaw, Pitch, Roll) - Only active when Right Shift is held
+    if keyboard.pressed(KeyCode::ShiftRight) {
+        // Yaw (A/D)
+        if keyboard.pressed(KeyCode::KeyA) {
+            transform.rotate_local_y(rotate_speed);
+        }
+        if keyboard.pressed(KeyCode::KeyD) {
+            transform.rotate_local_y(-rotate_speed);
+        }
+        // Pitch (W/S)
+        if keyboard.pressed(KeyCode::KeyW) {
+            transform.rotate_local_x(rotate_speed);
+        }
+        if keyboard.pressed(KeyCode::KeyS) {
+            transform.rotate_local_x(-rotate_speed);
+        }
+        // Roll (Q/E)
+        if keyboard.pressed(KeyCode::KeyQ) {
+            transform.rotate_local_z(rotate_speed);
+        }
+        if keyboard.pressed(KeyCode::KeyE) {
+            transform.rotate_local_z(-rotate_speed);
+        }
     }
 
     if move_vec != Vec3::ZERO {

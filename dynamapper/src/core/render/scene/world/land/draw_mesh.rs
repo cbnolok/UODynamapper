@@ -40,7 +40,7 @@ pub struct LandMeshHandle(pub Handle<Mesh>);
 use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 
 #[derive(Resource)]
-pub struct SharedLandMaterial(pub Handle<LandCustomMaterial>);
+pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
 /// Enqueues the 8x8 tile data for this chunk into the TileAtlas, and preloads the textures.
 fn enqueue_chunk_to_atlas_and_preload(
@@ -344,7 +344,7 @@ fn draw_land_chunk(
 ) {
     // Use the mesh prebuilt in setup_land_mesh.
     let chunk_mesh_handle: Handle<Mesh> = land_mesh_handle_r.0.clone();
-    let chunk_material_handle: Handle<LandCustomMaterial> = shared_land_material_r.0.clone();
+    let chunk_material_handle: Handle<LandCustomMeshMaterial> = shared_land_material_r.0.clone();
 
     // Compute chunk origin (in tile units) for the transform.
     let chunk_origin_tile_units_x =
@@ -416,28 +416,3 @@ pub fn sys_enforce_land_chunk_aabb(
     }
 }
 
-pub fn sys_evict_map_blocks(
-    mut map_planes_r: ResMut<MapPlanesRes>,
-    texmap_2d_r: Res<TexMap2DRes>,
-    scene_state_data_r: Res<SceneStateData>,
-    time: Res<Time>,
-    mut evict_timer: Local<f32>,
-) {
-    *evict_timer += time.delta_secs();
-    if *evict_timer >= 5.0 {
-        *evict_timer = 0.0;
-        let current_map_id = scene_state_data_r.map_id;
-        if let Some(mut map_plane) = map_planes_r.0.get_mut(&current_map_id) {
-            let evicted_blocks = map_plane.evict_idle_blocks(std::time::Duration::from_secs(60));
-            let evicted_textures = texmap_2d_r.0.evict_idle_textures(std::time::Duration::from_secs(60));
-            if evicted_blocks > 0 || evicted_textures > 0 {
-                console_logger::one(
-                    None,
-                    LogSev::Debug,
-                    LogAbout::Performance,
-                    &format!("Evicted {} idle map blocks, {} idle textures.", evicted_blocks, evicted_textures),
-                );
-            }
-        }
-    }
-}

@@ -6,7 +6,7 @@ pub mod tile_atlas;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
-use mesh_material::LandCustomMaterial;
+use mesh_material::LandCustomMeshMaterial;
 
 /// How many tiles per chunk row/column? (chunks are squared)
 pub const TILE_NUM_PER_CHUNK_DIM: u32 = 8;
@@ -30,7 +30,7 @@ pub struct DrawLandChunkMeshPlugin {
 impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 
 pub fn sys_update_shared_land_material(
-    mut materials: ResMut<Assets<LandCustomMaterial>>,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     time: Res<Time>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
@@ -74,7 +74,7 @@ pub fn sys_update_shared_land_material(
 
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<LandCustomMaterial>::default())
+        app.add_plugins(MaterialPlugin::<LandCustomMeshMaterial>::default())
            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<tile_atlas::TileAtlasImageHandle>::default())
             .add_systems(
                 Update,
@@ -82,8 +82,6 @@ impl Plugin for DrawLandChunkMeshPlugin {
                     draw_mesh::sys_draw_spawned_land_chunks
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)
-                        .run_if(in_state(AppState::InGame)),
-                    draw_mesh::sys_evict_map_blocks
                         .run_if(in_state(AppState::InGame)),
                     sys_update_shared_land_material
                         .run_if(in_state(AppState::InGame)),

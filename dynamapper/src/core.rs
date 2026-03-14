@@ -266,7 +266,6 @@ fn advance_state_after_init_core() {
 }
 
 fn advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {
-    println!("DEBUG: Transitioning to AppState::InGame");
     log_appstate_change("InGame");
     next_state.set(AppState::InGame);
 }

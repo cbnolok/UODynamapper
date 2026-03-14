@@ -43,7 +43,7 @@ fn sys_toggle_keybindings_help(
     }
 }
 
-fn sys_render_keybindings_help(
+pub fn sys_render_keybindings_help(
     mut state: ResMut<KeybindingsHelpState>,
     settings: Res<Settings>,
     mut egui_contexts: EguiContexts,
@@ -117,18 +117,26 @@ fn sys_render_keybindings_help(
             });
 
             ui.add_space(8.0);
-            ui.heading("Camera");
+            ui.heading("Free Camera Control");
             egui::Grid::new("cam_grid").num_columns(2).spacing([40.0, 4.0]).striped(true).show(ui, |ui| {
-                ui.label("Zoom In/Out");
-                ui.label("Wheel / + / -");
+                ui.label("Pan");
+                ui.label("Arrows");
                 ui.end_row();
 
-                ui.label("Free Pan");
-                ui.label("Arrow Keys");
-                ui.end_row();
-
-                ui.label("Free Altitude");
+                ui.label("Altitude");
                 ui.label("Shift + Arrows");
+                ui.end_row();
+
+                ui.label("Pitch (X-Axis)");
+                ui.label("R-Shift + W / S");
+                ui.end_row();
+
+                ui.label("Yaw (Y-Axis)");
+                ui.label("R-Shift + A / D");
+                ui.end_row();
+
+                ui.label("Roll (Z-Axis)");
+                ui.label("R-Shift + Q / E");
                 ui.end_row();
             });
 

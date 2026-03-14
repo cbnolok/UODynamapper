@@ -259,9 +259,3 @@ WGSL is more strict than GLSL:
 - **docs/PROJECT_OVERVIEW.md**: High-level project summary and status
 - **docs/CODE_OVERVIEW.md**: Detailed architecture and design choices
 - **docs/TODO.md**: Planned features and improvements
-
----
-
-**Last Updated**: sabato 14 marzo 2026  
-**Bevy Version**: 0.18.1  
-**Rust Edition**: 2024
