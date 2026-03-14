@@ -90,7 +90,14 @@ impl Plugin for DrawLandChunkMeshPlugin {
                 ),
             )
             .add_systems(First, tile_atlas::sys_clear_atlas_uploads)
-            .add_systems(Startup, setup_base_mesh::setup_land_mesh);
+            .add_systems(Startup, setup_base_mesh::setup_land_mesh)
+            // Run after Bevy's built-in compute_bounds system to guarantee our manual
+            // AABB is never overwritten by automatic computation from the flat mesh vertices.
+            .add_systems(
+                PostUpdate,
+                draw_mesh::sys_enforce_land_chunk_aabb
+                    .run_if(in_state(crate::core::AppState::InGame)),
+            );
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
         render_app.init_resource::<tile_atlas::RenderAtlasUploads>();

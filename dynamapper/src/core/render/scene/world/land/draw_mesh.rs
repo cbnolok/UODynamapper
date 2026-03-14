@@ -1,14 +1,10 @@
 #![allow(unused_parens, unused)]
 
 use bevy::{
-    pbr::{ExtendedMaterial, MaterialExtension},
-    prelude::*,
-    render::render_resource::{AsBindGroup, ShaderType, PrimitiveTopology},
-    asset::RenderAssetUsages,
-    mesh::{Indices, MeshVertexAttribute},
-    shader::ShaderRef,
+    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling, mesh::{Indices, MeshVertexAttribute}, pbr::{ExtendedMaterial, MaterialExtension}, prelude::*, render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType}, shader::ShaderRef
 };
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::NoAutoAabb;
 use bytemuck::Zeroable;
 use std::time::Instant;
 use std::{
@@ -297,7 +293,7 @@ pub fn sys_draw_spawned_land_chunks(
     let build_time_start = Instant::now();
     for chunk_data in &spawn_targets {
         let entity = chunk_data.entity;
-        
+
         enqueue_chunk_to_atlas_and_preload(
             &mut cache_r,
             &mut tile_atlas_r,
@@ -366,13 +362,18 @@ fn draw_land_chunk(
                 0.0,
                 chunk_origin_tile_units_z as f32,
             ),
-            GlobalTransform::default(),
+            //NoFrustumCulling,
+            // NOTE: GlobalTransform is intentionally NOT re-inserted here.
+            // It was already set during initial spawn in scene.rs and Bevy's transform
+            // propagation system (PostUpdate) will keep it up to date. Re-inserting
+            // GlobalTransform::default() would reset it to identity, placing the AABB
+            // at world origin and causing incorrect frustum culling for all off-center chunks.
+            NoAutoAabb,
             // Manually set AABB to prevent culling when the flat mesh is off-screen
             // but the displacements (calculated in shader) would make it visible.
-            Aabb {
-                center: Vec3::new(4.0, 50.0, 4.0).into(),
-                half_extents: Vec3::new(4.0, 150.0, 4.0).into(),
-            },
+            // Mesh is 9x9, so center is 4.5 and half_extents is 4.5.
+            // We use a generous Y range to cover UO height range and isometric projection.
+            Aabb::from_min_max(Vec3::new(-2.0, -20.0, -2.0), Vec3::new(11.0, 20.0, 11.0)),
         ));
     } else {
         console_logger::one(
@@ -381,6 +382,35 @@ fn draw_land_chunk(
             LogAbout::RenderWorldLand,
             "Skipping drawing of invalid/unspawned entity at stage 'build_indexed_chunk_mesh'.",
         );
+    }
+}
+
+/// Enforces the correct manual AABB every frame for all LCMesh entities that have a mesh.
+/// This is necessary because Bevy's automatic AABB system can potentially overwrite our
+/// manually set AABB (set via `NoAutoAabb` at spawn time) due to system ordering, and
+/// because the vertex shader displaces the flat mesh geometry, making the CPU-computed
+/// AABB (from flat mesh vertices) completely wrong for frustum culling.
+///
+/// We use commands.entity().insert() to forcefully insert/overwrite the Aabb component
+/// every frame, which is immune to timing issues.
+pub fn sys_enforce_land_chunk_aabb(
+    mut commands: Commands,
+    // Query all LCMesh entities that have a Mesh3d (i.e., have been assigned a mesh).
+    // We do NOT filter by Aabb because we want to set it even if it doesn't exist yet.
+    chunk_q: Query<Entity, (With<LCMesh>, With<Mesh3d>)>,
+) {
+    // Hard-coded generous AABB in LOCAL space covering:
+    // - XZ: -2 to +11 (mesh is 9x9, with padding for seam stitching)
+    // - Y:  -20 to +20 (well beyond UO max heights of +-12.8)
+    let chunk_aabb = Aabb::from_min_max(
+        Vec3::new(-2.0, -20.0, -2.0),
+        Vec3::new(11.0,  20.0, 11.0),
+    );
+    for entity in chunk_q.iter() {
+        if let Ok(mut ec) = commands.get_entity(entity) {
+            // insert() overwrites any existing Aabb, bypassing auto-AABB
+            ec.insert((chunk_aabb, NoAutoAabb));
+        }
     }
 }
 

@@ -572,6 +572,7 @@ fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
         // We do FSR reconstruction by applying bicubic then sharpening, 
         // OR using a dedicated edge-aware sampler. 
         // For now, let's use the edge-adaptive one.
+        // IMPORTANT TODO !!!!! this is just a false AMD FSR! Implement the real one!
         return sample_tile_fsr(uv, tile);
     } else {
         return sample_tile_albedo(uv, tile);

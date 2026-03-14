@@ -114,7 +114,9 @@ fn compute_visible_chunks(
     map_width: u32,
     map_height: u32,
 ) -> std::collections::HashSet<(u32, u32)> {
-    let corrected_pixel_size = UO_TILE_PIXEL_SIZE * zoom;
+    // In orthographic projection, higher scale = zoomed out = each world unit takes
+    // fewer screen pixels. So pixel_size_per_tile shrinks as zoom grows.
+    let corrected_pixel_size = UO_TILE_PIXEL_SIZE / zoom;
 
     // Visible tile region (rounded up)
     // We add a significant safety factor (2.5x) to account for orthographic distortion,
@@ -213,14 +215,22 @@ fn sys_update_worldmap_chunks_to_render(
             log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
         }
         for &(gx, gy) in required_chunks.iter() {
+            let chunk_origin_tile_units_x = gx * land::TILE_NUM_PER_CHUNK_DIM;
+            let chunk_origin_tile_units_z = gy * land::TILE_NUM_PER_CHUNK_DIM;
             commands.spawn((
                 land::LCMesh {
                     parent_map_id: new_map_id,
                     gx,
                     gy,
                 },
-                Transform::default(),
+                Transform::from_xyz(
+                    chunk_origin_tile_units_x as f32,
+                    0.0,
+                    chunk_origin_tile_units_z as f32,
+                ),
                 GlobalTransform::default(),
+                Visibility::default(),
+                InheritedVisibility::default(),
             ));
             log_chunk_spawn(gx, gy, new_map_id);
         }
@@ -241,14 +251,22 @@ fn sys_update_worldmap_chunks_to_render(
     }
     for coords in required_chunks.difference(&currently_spawned) {
         let (gx, gy) = *coords;
+        let chunk_origin_tile_units_x = gx * land::TILE_NUM_PER_CHUNK_DIM;
+        let chunk_origin_tile_units_z = gy * land::TILE_NUM_PER_CHUNK_DIM;
         commands.spawn((
             land::LCMesh {
                 parent_map_id: new_map_id,
                 gx,
                 gy,
             },
-            Transform::default(),
+            Transform::from_xyz(
+                chunk_origin_tile_units_x as f32,
+                0.0,
+                chunk_origin_tile_units_z as f32,
+            ),
             GlobalTransform::default(),
+            Visibility::default(),
+            InheritedVisibility::default(),
         ));
         log_chunk_spawn(gx, gy, new_map_id);
     }
