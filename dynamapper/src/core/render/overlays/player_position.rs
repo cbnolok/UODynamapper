@@ -23,7 +23,11 @@ impl Plugin for PlayerPositionOverlayPlugin {
 #[derive(Component)]
 pub struct OverlayPlayerPositionText;
 
-pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<AssetServer>) {
+pub fn setup_overlay_player_position(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    settings: Res<crate::external_data::settings::Settings>,
+) {
     println!("DEBUG: setup_overlay_player_position running");
     let font: Handle<Font> = asset_server.load("fonts/uo/UOClassicRough.ttf");
 
@@ -32,22 +36,23 @@ pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<A
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.0),
-                top: Val::Px(20.0),
-                padding: UiRect::all(Val::Px(7.0)),
+                top: Val::Px(50.0), // Move down a bit to avoid overlapping if top-left
+                padding: UiRect::all(Val::Px(7.0 * settings.app.window.overlay_scale)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
             ZIndex(200),
         ))
         .with_children(|builder| {
+            let scale = settings.app.window.overlay_scale;
             builder.spawn((
                 Text::new("Player position: (NA, NA, NA)"),
                 TextFont {
                     font,
-                    font_size: 15.0,
+                    font_size: 15.0 * scale,
                     ..default()
                 },
-                LineHeight::Px(15.0),
+                LineHeight::Px(15.0 * scale),
                 TextColor(Color::WHITE),
                 OverlayPlayerPositionText,
             ));
@@ -55,13 +60,24 @@ pub fn setup_overlay_player_position(mut commands: Commands, asset_server: Res<A
 }
 
 pub fn update_player_position_text(
+    settings: Res<crate::external_data::settings::Settings>,
     player_query: Query<&Transform, With<Player>>,
-    mut text_query: Query<&mut Text, With<OverlayPlayerPositionText>>,
+    mut text_query: Query<(&mut Text, &mut TextFont, &mut LineHeight), With<OverlayPlayerPositionText>>,
+    mut last_scale: Local<f32>,
 ) {
-    if let (Some(transform), Some(mut text)) =
+    let current_scale = settings.app.window.overlay_scale;
+    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+
+    if let (Some(transform), Some((mut text, mut text_font, mut line_height))) =
         (player_query.single().ok(), text_query.single_mut().ok())
     {
         let pos = transform.translation.to_uo_vec3();
         text.0 = format!("Player position: [{}, {}, {}]", pos.x, pos.y, pos.z);
+
+        if scale_changed {
+            text_font.font_size = 15.0 * current_scale;
+            *line_height = LineHeight::Px(15.0 * current_scale);
+            *last_scale = current_scale;
+        }
     }
 }

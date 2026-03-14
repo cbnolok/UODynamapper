@@ -408,6 +408,33 @@ fn terrain_ui_system(
                 }
             });
 
+            // ------------------------ Graphics ------------------------------
+            ui.collapsing("Graphics Settings", |ui| {
+                let mut changed = false;
+
+                changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
+                
+                ui.horizontal(|ui| {
+                    ui.label("Reconstruction:");
+                    let mut mode = u.effects.reconstruction_mode;
+                    for (label, val) in [("None", 0u32), ("Bicubic", 1u32), ("AMD FSR 1", 2u32)] {
+                        if ui.selectable_label(mode == val, label).clicked() {
+                            mode = val;
+                        }
+                    }
+                    if mode != u.effects.reconstruction_mode {
+                        u.effects.reconstruction_mode = mode;
+                        changed = true;
+                    }
+                });
+
+                changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
+
+                if changed {
+                    u.dirty = true;
+                }
+            });
+
             // ------------------------ Fog ------------------------------
             ui.collapsing("Fog Params", |ui| {
                 let mut changed = false;

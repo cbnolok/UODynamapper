@@ -73,6 +73,10 @@ sharpness_factor = 1.0
 sharpness_mix = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [classic.morning.lighting]
 light_color = [1.05, 0.99, 0.92]   # Soft warm white
@@ -110,6 +114,10 @@ sharpness_factor = 1.0
 sharpness_mix = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [classic.afternoon.lighting]
 light_color = [1.08, 0.99, 0.9]    # Bright warm white
@@ -147,6 +155,10 @@ sharpness_factor = 1.0
 sharpness_mix = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [classic.night.lighting]
 light_color = [0.8, 0.88, 1.05]     # Cool blueish moonlight
@@ -184,6 +196,10 @@ sharpness_factor = 1.0
 sharpness_mix = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [classic.cave.lighting]
 light_color = [0.9, 0.95, 1.05]     # Faint cool light
@@ -226,6 +242,10 @@ sharpness_factor = 1.5
 sharpness_mix = 0.25
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [enhanced.morning.lighting]
 light_color = [1.05, 0.99, 0.92]
@@ -262,6 +282,10 @@ sharpness_factor = 1.5
 sharpness_mix = 0.25
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [enhanced.afternoon.lighting]
 light_color = [1.08, 0.99, 0.9]
@@ -298,6 +322,10 @@ sharpness_factor = 1.5
 sharpness_mix = 0.25
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [enhanced.night.lighting]
 light_color = [0.8, 0.88, 1.05]
@@ -334,6 +362,10 @@ sharpness_factor = 1.5
 sharpness_mix = 0.25
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [enhanced.cave.lighting]
 light_color = [0.9, 0.95, 1.05]
@@ -376,6 +408,10 @@ sharpness_factor = 2.0
 sharpness_mix = 0.55
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [kr.morning.lighting]
 light_color = [1.05, 0.99, 0.92]
@@ -412,6 +448,10 @@ sharpness_factor = 2.0
 sharpness_mix = 0.55
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [kr.afternoon.lighting]
 light_color = [1.08, 0.99, 0.9]
@@ -448,6 +488,10 @@ sharpness_factor = 2.0
 sharpness_mix = 0.55
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [kr.night.lighting]
 light_color = [0.8, 0.88, 1.05]
@@ -484,6 +528,10 @@ sharpness_factor = 2.0
 sharpness_mix = 0.55
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+_pad_graphics = 0.0
 
 [kr.cave.lighting]
 light_color = [0.9, 0.95, 1.05]

@@ -39,6 +39,12 @@ pub struct OptionsDialogState {
     pub hide_player: bool,
     /// Whether to show the performance overlay.
     pub show_overlay: bool,
+    /// Whether the camera is free.
+    pub free_camera: bool,
+    /// Egui scale factor.
+    pub egui_scale: f32,
+    /// Overlay scale factor.
+    pub overlay_scale: f32,
 }
 
 impl Default for OptionsDialogState {
@@ -54,6 +60,9 @@ impl Default for OptionsDialogState {
             movement_speed_multiplier: 1.0,
             hide_player: false,
             show_overlay: true,
+            free_camera: false,
+            egui_scale: 1.0,
+            overlay_scale: 1.0,
         }
     }
 }
@@ -98,6 +107,9 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
+        state.free_camera = settings.app.window.free_camera;
+        state.egui_scale = settings.app.window.egui_scale;
+        state.overlay_scale = settings.app.window.overlay_scale;
 
         // Also apply wireframe setting which isn't in the dialog yet but is in settings
         wireframe_config.global = settings.app.debug.map_render_wireframe;
@@ -147,6 +159,9 @@ fn sys_render_options_dialog(
     let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
+
+    // Apply Egui scale to egui context
+    ctx.set_pixels_per_point(settings.app.window.egui_scale);
 
     // — Borrow fix —
     // `egui::Window::open()` mutably borrows the bool for the lifetime of the show()
@@ -245,6 +260,24 @@ fn sys_render_options_dialog(
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
+            ui.add_space(4.0);
+            ui.checkbox(&mut state.free_camera, "Free Camera Mode");
+            ui.label(egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.").small().weak());
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Egui Scale:");
+                if ui.add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0)).changed() {
+                    settings.app.window.egui_scale = state.egui_scale;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Overlay Scale:");
+                if ui.add(egui::Slider::new(&mut state.overlay_scale, 0.5..=3.0)).changed() {
+                    settings.app.window.overlay_scale = state.overlay_scale;
+                }
+            });
+
             // ---- Sync UI state to Settings resource ----
             // We use .as_ref() for comparisons to avoid triggering change detection
             // unless we actually write a new value. This prevents the debounced save
@@ -266,6 +299,15 @@ fn sys_render_options_dialog(
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
             if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
+            }
+            if settings.as_ref().app.window.free_camera != state.free_camera {
+                settings.app.window.free_camera = state.free_camera;
+            }
+            if settings.as_ref().app.window.egui_scale != state.egui_scale {
+                settings.app.window.egui_scale = state.egui_scale;
+            }
+            if settings.as_ref().app.window.overlay_scale != state.overlay_scale {
+                settings.app.window.overlay_scale = state.overlay_scale;
             }
         });
 

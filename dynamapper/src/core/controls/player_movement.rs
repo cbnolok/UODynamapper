@@ -2,7 +2,8 @@ use crate::core::render::scene::player::Player;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
-use crate::core::render::scene::camera::UiCameraResource;
+use bevy::window::PrimaryWindow;
+use crate::core::render::scene::camera::{PlayerCamera, UiCameraResource};
 
 /// Base delay between tiles at speed multiplier 1.0 (20 steps per second).
 const BASE_MOVE_COOLDOWN: f32 = 0.05;
@@ -27,31 +28,44 @@ impl Plugin for PlayerMovementPlugin {
 #[derive(Resource, Default)]
 pub struct MoveCooldown(Timer);
 
-#[derive(Debug, Default, Resource)]
+#[derive(Debug, Resource)]
 pub struct MoveDirection {
     pub dir: Option<IVec2>,
     pub vertical_dir: i32,
+    pub speed_multiplier: f32,
 }
-// Reads WASD "intent" and stores it
+impl Default for MoveDirection {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            vertical_dir: 0,
+            speed_multiplier: 1.0,
+        }
+    }
+}
+
+// Reads WASD and Mouse "intent" and stores it
 fn sys_player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    player_q: Query<&Transform, With<Player>>,
     mut move_dir: ResMut<MoveDirection>,
     mut egui_contexts: bevy_egui::EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
 ) {
-    // If any egui context wants keyboard input, don't process movement
-    // Check primary window context
+    // If any egui context wants keyboard or mouse input, don't process movement
     if let Ok(ctx) = egui_contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
             move_dir.dir = None;
             move_dir.vertical_dir = 0;
             return;
         }
     }
-    // Check UI camera context (stored in our resource)
     if let Some(ui_cam) = egui_ui_camera.0 {
         if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(ui_cam) {
-            if ctx.wants_keyboard_input() {
+            if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
                 move_dir.dir = None;
                 move_dir.vertical_dir = 0;
                 return;
@@ -59,6 +73,20 @@ fn sys_player_input(
         }
     }
 
+    // Give priority to mouse movement
+    if let Some((mouse_dir, mouse_speed)) = parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q) {
+        move_dir.dir = Some(mouse_dir);
+        move_dir.speed_multiplier = mouse_speed;
+    } else {
+        // Fallback to WASD
+        move_dir.dir = parse_wasd_movement(&keyboard_input);
+        move_dir.speed_multiplier = 1.0;
+    }
+
+    move_dir.vertical_dir = parse_vertical_movement(&keyboard_input);
+}
+
+fn parse_wasd_movement(keyboard_input: &Res<ButtonInput<KeyCode>>) -> Option<IVec2> {
     let mut dir = IVec2::ZERO;
     if keyboard_input.pressed(KeyCode::KeyW) {
         dir.y -= 1;
@@ -72,8 +100,76 @@ fn sys_player_input(
     if keyboard_input.pressed(KeyCode::KeyD) {
         dir.x += 1;
     }
-    move_dir.dir = if dir != IVec2::ZERO { Some(dir) } else { None };
 
+    if dir != IVec2::ZERO {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+fn parse_mouse_movement(
+    mouse_input: &Res<ButtonInput<MouseButton>>,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    camera_q: &Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    player_q: &Query<&Transform, With<Player>>,
+) -> Option<(IVec2, f32)> {
+    if !mouse_input.pressed(MouseButton::Right) {
+        return None;
+    }
+
+    let window = windows.single().ok()?;
+    let cursor_pos = window.cursor_position()?;
+    let (camera, camera_transform) = camera_q.single().ok()?;
+    let player_transform = player_q.single().ok()?;
+
+    let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
+    
+    // Find intersection with the player's current ground plane (Y-level)
+    let ground_y = player_transform.translation.y;
+    if ray.direction.y.abs() <= 0.0001 {
+        return None;
+    }
+
+    let t = (ground_y - ray.origin.y) / ray.direction.y;
+    let world_pos = ray.origin + ray.direction * t;
+    
+    let diff = world_pos - player_transform.translation;
+    let diff_xz = Vec2::new(diff.x, diff.z);
+    
+    // Use Chebyshev distance for "tiles" distance (max of X or Z difference)
+    let dist = diff_xz.abs().max_element();
+    
+    // Deadzone: stop if too close to target to prevent overshooting/vibrating.
+    // In UO, you generally stop when you are "on" the tile.
+    if dist <= 0.8 {
+        return None;
+    }
+
+    let angle = diff_xz.y.atan2(diff_xz.x);
+    let octant = (angle / (std::f32::consts::PI / 4.0)).round() as i32;
+    let snapped_dir = match octant {
+        0 => IVec2::new(1, 0),
+        1 => IVec2::new(1, 1),
+        2 => IVec2::new(0, 1),
+        3 => IVec2::new(-1, 1),
+        4 | -4 => IVec2::new(-1, 0),
+        -3 => IVec2::new(-1, -1),
+        -2 => IVec2::new(0, -1),
+        -1 => IVec2::new(1, -1),
+        _ => IVec2::ZERO,
+    };
+    
+    if snapped_dir == IVec2::ZERO {
+        return None;
+    }
+
+    // UO Speed logic: >= 3 tiles away = Run (2x speed)
+    let speed_multiplier = if dist >= 3.0 { 2.0 } else { 1.0 };
+    Some((snapped_dir, speed_multiplier))
+}
+
+fn parse_vertical_movement(keyboard_input: &Res<ButtonInput<KeyCode>>) -> i32 {
     let mut v_dir = 0;
     if keyboard_input.pressed(KeyCode::PageUp) {
         v_dir += 1;
@@ -81,38 +177,47 @@ fn sys_player_input(
     if keyboard_input.pressed(KeyCode::PageDown) {
         v_dir -= 1;
     }
-    move_dir.vertical_dir = v_dir;
+    v_dir
 }
 
 fn sys_player_move(
     time: Res<Time>,
     mut cooldown: ResMut<MoveCooldown>,
     move_dir: Res<MoveDirection>,
-    mut query: Query<&mut Transform, With<Player>>,
+    mut query: Query<(&mut Transform, &mut Player)>,
     settings: Res<Settings>,
 ) {
-    let multiplier = settings.app.input.movement_speed_multiplier;
+    let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
     cooldown.0.tick(time.delta().mul_f32(multiplier));
 
     // Only move if cooldown finished and a direction is pressed
     if cooldown.0.just_finished() {
         if let Some(dir) = move_dir.dir {
-            for mut transform in query.iter_mut() {
+            for (mut transform, mut player) in query.iter_mut() {
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 transform.translation += delta;
+                
+                // Sync the UO coordinate state
+                let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
             }
-            cooldown.0.reset();
+            // NOTE: Do NOT call cooldown.0.reset() for a Repeating timer if we want to preserve 
+            // the fractional 'overflow' of the timer when the multiplier is high. 
+            // Repeating timers automatically wrap around.
         }
 
         if move_dir.vertical_dir != 0 {
-            for mut transform in query.iter_mut() {
+            for (mut transform, mut player) in query.iter_mut() {
                 // Adjust height. Use the scale utility if available or a standard step.
                 // In UO a height step is often 1, but we scale it for Bevy.
                 let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(move_dir.vertical_dir as f32);
                 transform.translation.y += delta_y;
+                
+                // Sync the UO coordinate state
+                let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
             }
-            cooldown.0.reset();
         }
     }
 }

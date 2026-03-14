@@ -94,18 +94,17 @@ pub fn setup_overlay_performance(
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             //ZIndex(100),
             OverlayPerformanceContainer,
-            //UiTargetCamera(ui_camera.0.unwrap()),
-            //TextLayout::default(),
         ))
         .with_children(|builder| {
+            let scale = settings.app.window.overlay_scale;
             builder.spawn((
                 Text::new("FPS: Init..."),
                 TextFont {
                     font,
-                    font_size: 14.0,
+                    font_size: 14.0 * scale,
                     ..default()
                 },
-                LineHeight::Px(14.0),
+                LineHeight::Px(14.0 * scale),
                 TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
                 TextLayout::default(),
                 Node::default(),
@@ -150,7 +149,7 @@ pub fn update_performance_text(
     metrics: Res<ProcessMetrics>,
     entities: &bevy::ecs::entity::Entities,
     land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
-    mut text_query: Query<&mut Text, With<OverlayPerformanceText>>,
+    mut text_query: Query<(&mut Text, &mut TextFont, &mut LineHeight), With<OverlayPerformanceText>>,
     mut node_query: Query<
         &mut Node,
         (
@@ -158,7 +157,11 @@ pub fn update_performance_text(
             Without<OverlayPerformanceText>,
         ),
     >,
+    mut last_scale: Local<f32>,
 ) {
+    let current_scale = settings.app.window.overlay_scale;
+    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+
     // Real-time visibility toggle from settings
     if let Some(mut node) = node_query.single_mut().ok() {
         let target_display = if settings.app.performance.show_overlay {
@@ -167,17 +170,11 @@ pub fn update_performance_text(
             Display::None
         };
         if node.display != target_display {
-            println!(
-                "DEBUG: performance overlay display change to {:?}",
-                target_display
-            );
             node.display = target_display;
         }
-    } else {
-        println!("DEBUG: performance overlay node NOT FOUND");
     }
 
-    if let Some(mut text) = text_query.single_mut().ok() {
+    if let Some((mut text, mut text_font, mut line_height)) = text_query.single_mut().ok() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|diag| diag.smoothed())
@@ -185,13 +182,17 @@ pub fn update_performance_text(
             .unwrap_or_else(|| "--".to_string());
 
         let entity_count = entities.len();
-        // Since land_chunks query is filtered, we still need to count,
-        // but this set is much smaller than all entities.
         let chunk_count = land_chunks.iter().count();
 
         text.0 = format!(
             "FPS: {}\nCPU: {:.1}% | RAM: {:.1} MiB\nCHKs: {} | ENTs: {}",
             fps, metrics.cpu_usage, metrics.mem_usage_mib, chunk_count, entity_count
         );
+
+        if scale_changed {
+            text_font.font_size = 14.0 * current_scale;
+            *line_height = LineHeight::Px(14.0 * current_scale);
+            *last_scale = current_scale;
+        }
     }
 }

@@ -97,6 +97,12 @@ pub struct LandEffectsUniform {
     // optional pre-shade blur of base albedo at fragment level
     pub enable_blur: u32,
 
+    // NEW: Graphics settings
+    pub enable_linear_filtering: u32,
+    pub reconstruction_mode: u32,
+    pub sharpening_amount: f32,
+    pub _pad_graphics: f32,
+
     // intensities
     pub ambient_strength: f32,
     pub diffuse_strength: f32,

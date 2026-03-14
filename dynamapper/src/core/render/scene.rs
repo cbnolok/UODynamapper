@@ -117,20 +117,21 @@ fn compute_visible_chunks(
     let corrected_pixel_size = UO_TILE_PIXEL_SIZE * zoom;
 
     // Visible tile region (rounded up)
-    let visible_tiles_x = ((window_width / corrected_pixel_size).ceil()) as i32;
-    let visible_tiles_y = ((window_height / corrected_pixel_size).ceil()) as i32;
+    // We add a significant safety factor (2.5x) to account for orthographic distortion,
+    // camera rotation, and the fact that chunks are not centered on the player.
+    let margin_factor = 2.5;
+    let visible_tiles_x = ((window_width / corrected_pixel_size).ceil() * margin_factor) as i32;
+    let visible_tiles_y = ((window_height / corrected_pixel_size).ceil() * margin_factor) as i32;
 
     // Convert player's position to TILE coordinates
     let player_tile_x = player_pos.x as i32;
     let player_tile_y = player_pos.z as i32;
 
-    // Compute chunk region to fully cover the visible area, including all overlapping
-    // Start/end in TILES (not chunks yet)
-
+    // Compute chunk region symmetrically around the player
     let tile_x0 = player_tile_x - visible_tiles_x;
-    let tile_x1 = player_tile_x + (visible_tiles_x / 2);
-    let tile_y0 = player_tile_y - (visible_tiles_y * 3 / 2);
-    let tile_y1 = player_tile_y + (visible_tiles_y / 2);
+    let tile_x1 = player_tile_x + visible_tiles_x;
+    let tile_y0 = player_tile_y - visible_tiles_y;
+    let tile_y1 = player_tile_y + visible_tiles_y;
 
     // Now convert these to chunk indices (and always round DOWN for min, UP for max)
     // so that *any partially overlapping chunk is included*.

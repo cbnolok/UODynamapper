@@ -8,6 +8,7 @@ use bevy::{
     mesh::{Indices, MeshVertexAttribute},
     shader::ShaderRef,
 };
+use bevy::camera::primitives::Aabb;
 use bytemuck::Zeroable;
 use std::time::Instant;
 use std::{
@@ -366,6 +367,12 @@ fn draw_land_chunk(
                 chunk_origin_tile_units_z as f32,
             ),
             GlobalTransform::default(),
+            // Manually set AABB to prevent culling when the flat mesh is off-screen
+            // but the displacements (calculated in shader) would make it visible.
+            Aabb {
+                center: Vec3::new(4.0, 50.0, 4.0).into(),
+                half_extents: Vec3::new(4.0, 150.0, 4.0).into(),
+            },
         ));
     } else {
         console_logger::one(

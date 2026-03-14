@@ -45,7 +45,7 @@ struct SceneUniform {
   global_lighting: f32,
 };
 
-struct EffectsUniform {
+struct LandEffectsUniform {
   // Modes / toggles
   shading_mode:   u32, // 0=Classic (vertex), 1=Enhanced (frag), 2=KR (frag)
   normal_mode:    u32, // 0=geometric, 1=bicubic
@@ -57,72 +57,47 @@ struct EffectsUniform {
   enable_grading: u32,
   enable_blur:    u32,
 
-  // Intensities (grouped to match std140-ish packing)
-  // Slot A
-  ambient_strength:  f32, // Ambient: base light in shadows
-  diffuse_strength:  f32, // Diffuse: sunlight intensity
-  specular_strength: f32, // Specular: sun glint
-  rim_strength:      f32, // Rim: silhouette highlight
+  // NEW: Graphics settings
+  enable_linear_filtering: u32,
+  reconstruction_mode:     u32,
+  sharpening_amount:       f32,
+  _pad_graphics:           f32,
 
-  // Slot B
-  fill_strength:     f32, // Env sky/ground intensity (luma + some chroma)
-  sharpness_factor:  f32, // Diffuse shaping (lambert^factor)
-  sharpness_mix:     f32, // 0=Lambert, 1=sharpened
-  blur_strength:     f32, // 0..1 mix with blurred base albedo
+  // intensities (grouped to match std140-ish packing)
+  ambient_strength:  f32, 
+  diffuse_strength:  f32, 
+  specular_strength: f32, 
+  rim_strength:      f32, 
 
-  // Slot C
-  blur_radius:       f32, // UV radius in *screen pixels* (we scale by fwidth)
+  fill_strength:     f32, 
+  sharpness_factor:  f32, 
+  sharpness_mix:     f32, 
+  blur_strength:     f32, 
+
+  blur_radius:       f32, 
   _pad_c1:           f32,
   _pad_c2:           f32,
   _pad_c3:           f32,
 };
 
-// Lighting / look controls.
-//
-// grade_params: [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
-// grade_extra:  [vibrance, saturation, contrast, split_strength]
-// gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
-//   - amount                = gloom strength (0..1)
-//   - height_falloff_height = world height where gloom fades out (0..∞)
-//   - shadow_bias           = 0 → uniform gloom, 1 → shadow-biased
-//   - fog_height_bias       = **NEW** continuous fog bias in [-1..+1]:
-//                              -1 → valley/ground fog (denser below y=0)
-//                               0 → neutral (no height fog, distance only)
-//                              +1 → high-altitude haze (denser above y=0)
-//
-// Fog params (repurposed labels for clarity):
-//   fog_color.rgb = fog tint
-//   fog_color.a   = max fog mix (0..1) — final cap
-//   fog_params.x  = distance_fog_density (0..∞)  (per unit distance)
-//   fog_params.y  = height_fog_density   (0..∞)  (per unit height)
-//   fog_params.z  = noise_scale          (~0.05..1.0)
-//   fog_params.w  = noise_strength       (0..1)
-//
-// NOTE: We intentionally keep fog uniforms ABI-compatible and place the new
-// "fog_height_bias" into gloom_params.w which was previously unused.
-struct LightingUniforms {
-  light_color:   vec3<f32>, // key light color (tints diffuse)
-  _pad0:         f32,
-  ambient_color: vec3<f32>,
-  _pad1:         f32,
-
-  exposure: f32,
-  gamma:    f32,  // unused (textures are sRGB-view), reserved
-  _pad2:    vec2<f32>,
-
-  fill_sky_color:     vec4<f32>, // rgb sky tint, a = per-color strength
-  fill_ground_color:  vec4<f32>, // rgb ground tint, a = per-color strength
-  rim_color:          vec4<f32>, // rgb rim tint,  a = rim “power” (2..4=thin edge)
-
-  grade_warm_color: vec4<f32>, // warm toning color (rgb)
-  grade_cool_color: vec4<f32>, // cool toning color (rgb)
-  grade_params:     vec4<f32>, // [grade_strength, headroom_reserve, hemi_chroma_tint, headroom_on]
-  grade_extra:      vec4<f32>, // [vibrance, saturation, contrast, split_strength]
-
-  gloom_params:     vec4<f32>, // [amount, height_falloff_height, shadow_bias, fog_height_bias]
-
-  fog_color:  vec4<f32>,
-  fog_params: vec4<f32>,
+struct LandLightingUniforms {
+    light_color: vec3<f32>,
+    _pad0: f32,
+    ambient_color: vec3<f32>,
+    _pad1: f32,
+    exposure: f32,
+    gamma: f32,
+    _pad2: vec2<f32>,
+    fill_sky_color: vec4<f32>,
+    fill_ground_color: vec4<f32>,
+    rim_color: vec4<f32>,
+    grade_warm_color: vec4<f32>,
+    grade_cool_color: vec4<f32>,
+    grade_params: vec4<f32>,
+    grade_extra: vec4<f32>,
+    gloom_params: vec4<f32>,
+    fog_color: vec4<f32>,
+    fog_params: vec4<f32>,
 };
 
 @group(3) @binding(100) var tex_small_sampler: sampler;
@@ -131,8 +106,8 @@ struct LightingUniforms {
 @group(3) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
 @group(3) @binding(104) var<uniform> ATLAS: AtlasParams;
 @group(3) @binding(105) var<uniform> scene:   SceneUniform;
-@group(3) @binding(106) var<uniform> effects: EffectsUniform;
-@group(3) @binding(107) var<uniform> lighting: LightingUniforms;
+@group(3) @binding(106) var<uniform> effects: LandEffectsUniform;
+@group(3) @binding(107) var<uniform> lighting: LandLightingUniforms;
 
 // ============================================================================
 // Grid helpers & utilities
@@ -492,21 +467,156 @@ fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
 
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
+  let use_linear = effects.enable_linear_filtering == 1u;
+  
   if (tile.texture_size == 1u) {
-    return textureSample(tex_big, tex_small_sampler, uv, layer).rgb;
+    if (use_linear) {
+      return textureSample(tex_big, tex_small_sampler, uv, layer).rgb;
+    } else {
+      let dims = vec2<f32>(textureDimensions(tex_big));
+      let iuv = vec2<i32>(uv * dims);
+      return textureLoad(tex_big, iuv, layer, 0).rgb;
+    }
   } else {
-    return textureSample(tex_small, tex_small_sampler, uv, layer).rgb;
+    if (use_linear) {
+      return textureSample(tex_small, tex_small_sampler, uv, layer).rgb;
+    } else {
+      let dims = vec2<f32>(textureDimensions(tex_small));
+      let iuv = vec2<i32>(uv * dims);
+      return textureLoad(tex_small, iuv, layer, 0).rgb;
+    }
   }
+}
+
+// Bicubic reconstruction for albedo (smooth)
+fn sample_tile_bicubic(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  let dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
+  let f_uv = uv * dims - 0.5;
+  let i_uv = floor(f_uv);
+  let f = fract(f_uv);
+  
+  var result = vec3<f32>(0.0);
+  var total_weight = 0.0;
+  
+  for (var j: i32 = -1; j <= 2; j++) {
+    let v_weight = cubic_weight(f.y, f32(j));
+    for (var i: i32 = -1; i <= 2; i++) {
+        let h_weight = cubic_weight(f.x, f32(i));
+        let weight = h_weight * v_weight;
+        let sample_uv = (i_uv + vec2<f32>(f32(i), f32(j)) + 0.5) / dims;
+        result += sample_tile_albedo(clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(1.0)), tile) * weight;
+        total_weight += weight;
+    }
+  }
+  return result / total_weight;
+}
+
+fn cubic_weight(f: f32, i: f32) -> f32 {
+    let x = abs(f - i);
+    if (x <= 1.0) {
+        return (1.5 * x - 2.5) * x * x + 1.0;
+    } else if (x <= 2.0) {
+        return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+    }
+    return 0.0;
+}
+
+// Simplified Edge-Adaptive Reconstruction (FSR-like)
+fn sample_tile_fsr(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  let dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
+  let pos = uv * dims;
+  let i_pos = vec2<i32>(floor(pos));
+  let f = fract(pos);
+  
+  // 4 main taps
+  let c00 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 0), tile);
+  let c10 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 0), tile);
+  let c01 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 1), tile);
+  let c11 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 1), tile);
+  
+  // Calculate luma-based gradients
+  let l00 = luminance(c00);
+  let l10 = luminance(c10);
+  let l01 = luminance(c01);
+  let l11 = luminance(c11);
+  
+  // Horizontal/Vertical differences
+  let gx = abs(l10 - l00) + abs(l11 - l01);
+  let gy = abs(l01 - l00) + abs(l11 - l10);
+  
+  // Edge-aware weighting
+  let wx = 1.0 / (1.0 + gx * 4.0);
+  let wy = 1.0 / (1.0 + gy * 4.0);
+  
+  // Bilinear blend biased by edges
+  let res = mix(mix(c00, c10, f.x * wx), mix(c01, c11, f.x * wx), f.y * wy);
+  return res / (mix(mix(1.0, wx, f.x), mix(1.0, wx, f.x), f.y) * wy); // approximate normalization
+}
+
+fn sample_tile_albedo_at(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
+  let layer: i32 = i32(tile.texture_layer);
+  if (tile.texture_size == 1u) {
+    let dims = vec2<i32>(textureDimensions(tex_big));
+    return textureLoad(tex_big, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
+  } else {
+    let dims = vec2<i32>(textureDimensions(tex_small));
+    return textureLoad(tex_small, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
+  }
+}
+
+fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+    let mode = effects.reconstruction_mode;
+    if (mode == 1u) {
+        return sample_tile_bicubic(uv, tile);
+    } else if (mode == 2u) {
+        // We do FSR reconstruction by applying bicubic then sharpening, 
+        // OR using a dedicated edge-aware sampler. 
+        // For now, let's use the edge-adaptive one.
+        return sample_tile_fsr(uv, tile);
+    } else {
+        return sample_tile_albedo(uv, tile);
+    }
+}
+
+// Simple sharpening filter (Unsharp Masking style)
+fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32) -> vec3<f32> {
+  if (amount <= 0.0) { return color; }
+  
+  // Approximate a 1-pixel offset in UV space
+  let fw = fwidth(uv);
+  let off = max(fw.x, fw.y);
+  
+  let s1 = sample_tile_albedo(uv + vec2<f32>(off, 0.0), tile);
+  let s2 = sample_tile_albedo(uv - vec2<f32>(off, 0.0), tile);
+  let s3 = sample_tile_albedo(uv + vec2<f32>(0.0, off), tile);
+  let s4 = sample_tile_albedo(uv - vec2<f32>(0.0, off), tile);
+  
+  let neighbor_avg = (s1 + s2 + s3 + s4) * 0.25;
+  return color + (color - neighbor_avg) * amount;
 }
 
 // Same as above, but with explicit gradients to keep LOD stable across taps.
 // NOTE: the WGSL signature is textureSampleGrad(tex, sampler, uv, layer, ddx, ddy).
 fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
+  let use_linear = effects.enable_linear_filtering == 1u;
+  
   if (tile.texture_size == 1u) {
-    return textureSampleGrad(tex_big,   tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    if (use_linear) {
+      return textureSampleGrad(tex_big,   tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    } else {
+      let dims = vec2<f32>(textureDimensions(tex_big));
+      let iuv = vec2<i32>(uv * dims);
+      return textureLoad(tex_big, iuv, layer, 0).rgb;
+    }
   } else {
-    return textureSampleGrad(tex_small, tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    if (use_linear) {
+      return textureSampleGrad(tex_small, tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+    } else {
+      let dims = vec2<f32>(textureDimensions(tex_small));
+      let iuv = vec2<i32>(uv * dims);
+      return textureLoad(tex_small, iuv, layer, 0).rgb;
+    }
   }
 }
 
@@ -806,11 +916,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
   let tile = atlas_read_meta(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
 
-  // Base albedo (optionally blurred with screen-pixel radius)
-  var base_albedo = sample_tile_albedo(uv_in_tile, tile);
+  // Base albedo (optionally reconstructed/upscaled, and optionally blurred/sharpened)
+  var base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
   if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
     let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
     base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
+  }
+  if (effects.sharpening_amount > 0.0) {
+    base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
   }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
 

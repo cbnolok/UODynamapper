@@ -58,6 +58,9 @@ pub struct SectWindow {
     pub height: f32,
     pub width: f32,
     pub zoom: f32,
+    pub egui_scale: f32,
+    pub overlay_scale: f32,
+    pub free_camera: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -82,6 +85,9 @@ pub struct SectPerformance {
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     pub reduce_unfocused_fps: bool,
+    pub texture_filtering: u32,       // 0: Point, 1: Linear
+    pub texture_reconstruction: u32,  // 0: None, 1: Bicubic, 2: FSR
+    pub sharpening_strength: f32,     // 0.0 to 1.0
 }
 
 /// Resource used to debounce saving settings to disk.
@@ -129,10 +135,25 @@ pub fn load_from_files() -> Settings {
     }
     let core_data: CoreWrapper = match toml::from_str(&core_contents) {
         Ok(s) => s,
-        Err(e) => {
-            paris::error!("\n<bold>!! TOML PARSING ERROR in core_settings.toml !!</>");
-            paris::log!("<red>Error: {}</>\n", e);
-            panic!("Configuration failure.");
+        Err(_e) => {
+            // If parsing fails, use defaults for core section
+            CoreWrapper {
+                core: SectCore {
+                    uo_files: SectUoFiles { folder: "C:\\UO".to_string() },
+                    world: SectWorld { start_p: UOVec4::default(), hide_player: false },
+                    graphics: SectGraphics {
+                        lossy_texture_compression: true,
+                        reduce_unfocused_fps: true,
+                        texture_filtering: 0,
+                        texture_reconstruction: 0,
+                        sharpening_strength: 0.0,
+                    },
+                },
+                logging: SectLogging {
+                    min_severity: LogSev::Info,
+                    filters: vec![],
+                },
+            }
         }
     };
 
@@ -146,7 +167,7 @@ pub fn load_from_files() -> Settings {
             // If it fails (maybe partial file), use defaults for app section
             SectApp {
                 input: SectInput { movement_speed_multiplier: 1.0 },
-                window: SectWindow { width: 1024.0, height: 768.0, zoom: 1.0 },
+                window: SectWindow { width: 1024.0, height: 768.0, zoom: 1.0, egui_scale: 1.0, overlay_scale: 1.0, free_camera: false },
                 debug: SectDebug { map_render_wireframe: false },
                 performance: SectPerformance { 
                     show_overlay: true,

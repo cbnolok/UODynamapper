@@ -16,6 +16,9 @@ hide_player = false
 lossy_texture_compression = false
 # Lower frame rate when the window is not focused
 reduce_unfocused_fps = true
+texture_filtering = 0
+texture_reconstruction = 0
+sharpening_strength = 0.0
 
 [logging]
 # Minimum log level to display in terminal

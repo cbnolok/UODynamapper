@@ -5,6 +5,10 @@ use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
+use bevy::ecs::message::MessageReader;
+use bevy_egui::EguiContexts;
+use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::mouse::MouseWheel;
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::Window;
 
@@ -75,7 +79,12 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, sys_update_camera_projection_to_view)
             .add_systems(
                 Update,
-                sys_camera_follow_player.in_set(MovementSysSet::UpdateCamera),
+                (
+                    sys_camera_zoom,
+                    sys_camera_follow_player.run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
+                    sys_free_camera_movement.run_if(|s: Res<Settings>| s.app.window.free_camera),
+                )
+                    .in_set(MovementSysSet::UpdateCamera),
             );
     }
 }
@@ -137,8 +146,8 @@ fn sys_setup_cam(
                 ..default()
             },
             IsDefaultUiCamera,
-            bevy_egui::EguiContext::default(),
-            //bevy_egui::PrimaryEguiContext,
+            //bevy_egui::EguiContext::default(),
+            bevy_egui::PrimaryEguiContext,
         ))
         .id();
 
@@ -195,11 +204,136 @@ fn sys_camera_follow_player(
     mut camera_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
 ) {
-    let mut camera_transform = camera_q.single_mut().unwrap();
-    let player_transform = player_q.single().unwrap();
+    let mut camera_transform = match camera_q.single_mut().ok() {
+        Some(t) => t,
+        None => return,
+    };
+    let player_transform = match player_q.single().ok() {
+        Some(t) => t,
+        None => return,
+    };
 
     *camera_transform = Transform::from_translation(
         player_transform.translation.clone() + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
     )
     .looking_at(player_transform.translation, Vec3::Y);
+}
+
+fn sys_camera_zoom(
+    mut zoom_res: ResMut<RenderZoom>,
+    mut scroll_events: MessageReader<MouseWheel>,
+    mut kbd_events: MessageReader<KeyboardInput>,
+    mut egui_contexts: EguiContexts,
+) {
+    // If egui is using the mouse/keyboard, don't zoom
+    let ctx = match egui_contexts.ctx_mut() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if ctx.wants_pointer_input() || ctx.wants_keyboard_input() {
+        return;
+    }
+
+    let mut zoom_delta = 0.0;
+
+    // Mouse scroll
+    for event in scroll_events.read() {
+        zoom_delta -= event.y * 0.1; // Invert and scale
+    }
+
+    // Keyboard +/-
+    for ev in kbd_events.read() {
+        if ev.state != bevy::input::ButtonState::Pressed {
+            continue;
+        }
+        if let Key::Character(input) = &ev.logical_key {
+            match input.as_str() {
+                "+" | "=" => zoom_delta -= 0.1,
+                "-" | "_" => zoom_delta += 0.1,
+                _ => {}
+            }
+        }
+    }
+
+    if zoom_delta != 0.0 {
+        let new_zoom = zoom_res.0 + zoom_delta;
+        zoom_res.write_val(new_zoom);
+    }
+}
+
+fn sys_free_camera_movement(
+    time: Res<Time>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut camera_q: Query<&mut Transform, With<Camera3d>>,
+    mut egui_contexts: EguiContexts,
+) {
+    let ctx = match egui_contexts.ctx_mut() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if ctx.wants_keyboard_input() {
+        return;
+    }
+
+    let Some(mut transform) = camera_q.single_mut().ok() else { return; };
+
+    let move_speed = 10.0 * time.delta_secs();
+    let rotate_speed = 1.0 * time.delta_secs();
+    let mut move_vec = Vec3::ZERO;
+
+    if keyboard.pressed(KeyCode::ArrowUp) {
+        move_vec.z -= 1.0;
+        move_vec.x -= 1.0;
+    }
+    if keyboard.pressed(KeyCode::ArrowDown) {
+        move_vec.z += 1.0;
+        move_vec.x += 1.0;
+    }
+    if keyboard.pressed(KeyCode::ArrowLeft) {
+        move_vec.x -= 1.0;
+        move_vec.z += 1.0;
+    }
+    if keyboard.pressed(KeyCode::ArrowRight) {
+        move_vec.x += 1.0;
+        move_vec.z -= 1.0;
+    }
+
+    // Altitude
+    let mut y_delta = 0.0;
+    if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+        if keyboard.pressed(KeyCode::ArrowUp) {
+            y_delta += 1.0;
+        }
+        if keyboard.pressed(KeyCode::ArrowDown) {
+            y_delta -= 1.0;
+        }
+    }
+
+    // Rotation (Yaw, Pitch, Roll)
+    if keyboard.pressed(KeyCode::KeyQ) {
+        transform.rotate_local_y(rotate_speed);
+    }
+    if keyboard.pressed(KeyCode::KeyE) {
+        transform.rotate_local_y(-rotate_speed);
+    }
+    if keyboard.pressed(KeyCode::KeyR) {
+        transform.rotate_local_x(rotate_speed);
+    }
+    if keyboard.pressed(KeyCode::KeyF) {
+        transform.rotate_local_x(-rotate_speed);
+    }
+    if keyboard.pressed(KeyCode::KeyZ) {
+        transform.rotate_local_z(rotate_speed);
+    }
+    if keyboard.pressed(KeyCode::KeyX) {
+        transform.rotate_local_z(-rotate_speed);
+    }
+
+    if move_vec != Vec3::ZERO {
+        transform.translation += move_vec.normalize() * move_speed;
+    }
+
+    if y_delta != 0.0 {
+        transform.translation.y += y_delta * move_speed;
+    }
 }
