@@ -119,8 +119,8 @@ fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
 
     // 2. Check filters
     for filter in &settings_guard.filters {
-        let sev_match = filter.sev.as_ref().map_or(true, |s| s == severity);
-        let about_match = filter.about.as_ref().map_or(true, |a| a == about);
+        let sev_match = filter.sev.as_ref().is_none_or(|s| s == severity);
+        let about_match = filter.about.as_ref().is_none_or(|a| a == about);
         if sev_match && about_match {
             return !filter.suppress;
         }

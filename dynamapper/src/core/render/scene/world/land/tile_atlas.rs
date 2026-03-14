@@ -165,7 +165,7 @@ impl TileAtlas {
     /// Enqueues a block of Rg16u metadata for upload to a specific layer and offset.
     /// This registers a `write_texture` operation that will be executed in the render world.
     pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
-        let size_bytes = texels.len() * std::mem::size_of::<Rg16u>();
+        let size_bytes = std::mem::size_of_val(texels);
         let mut data = vec![0u8; size_bytes];
         data.copy_from_slice(bytemuck::cast_slice(texels));
         

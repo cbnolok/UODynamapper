@@ -153,9 +153,7 @@ pub fn sys_draw_spawned_land_chunks(
     let cam_pos = cam_q.single().unwrap().translation;
     let player_entity = player_q.single().expect("More than 1 player!");
     let current_map_id = scene_state_data_r.map_id;
-    let map_plane_metadata = world_geo_data_r.maps.get(&current_map_id).expect(&format!(
-        "Requested metadata for uncached map {current_map_id}"
-    ));
+    let map_plane_metadata = world_geo_data_r.maps.get(&current_map_id).unwrap_or_else(|| panic!("Requested metadata for uncached map {current_map_id}"));
 
     // Step 1: Collect all primary chunks that need meshing into a HashMap.
     // Process only chunks that don't have a mesh yet.
@@ -298,7 +296,7 @@ pub fn sys_draw_spawned_land_chunks(
             &mut cache_r,
             &mut tile_atlas_r,
             texmap_2d_r.0.clone(),
-            &chunk_data,
+            chunk_data,
             &blocks_data,
             cache_settings_r.lossy_texture_compression,
         );
@@ -319,7 +317,7 @@ pub fn sys_draw_spawned_land_chunks(
 
         draw_land_chunk(
             &mut commands,
-            &chunk_data,
+            chunk_data,
             &land_mesh_handle_r,
             &shared_land_material_r,
         );

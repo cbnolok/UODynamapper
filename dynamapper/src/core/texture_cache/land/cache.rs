@@ -434,7 +434,7 @@ pub fn sys_render_upload_texture_array(
         //    A single block covers 4 pixels horizontally and costs 16 bytes.
         //    So bytes_per_row = ceil(width / 4) * 16.
         let bytes_per_row = if upload.lossy_compressed {
-            let blocks_wide = (width + 3) / 4;
+            let blocks_wide = width.div_ceil(4);
             blocks_wide * 16
         } else {
             width * 4

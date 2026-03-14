@@ -68,8 +68,8 @@ pub fn bytes_per_layer(tex_size: LandTextureSize, lossy_compression: bool) -> us
     let (w, h) = (w as usize, h as usize);
     if lossy_compression {
         // BC7: each 4×4 block = 16 bytes. Number of blocks = ceil(w/4) * ceil(h/4).
-        let block_w = (w + 3) / 4;
-        let block_h = (h + 3) / 4;
+        let block_w = w.div_ceil(4);
+        let block_h = h.div_ceil(4);
         block_w * block_h * 16
     } else {
         // Uncompressed RGBA8: 4 bytes per pixel.
@@ -152,7 +152,7 @@ pub fn get_texmap_raw_data(
 
     let tex_size_and_rgba = {
         texmap_2d_res.get_pixel_data(texture_id as usize).map(|data| {
-            let size = texmap_2d_res.element(texture_id as usize).unwrap().size().clone();
+            let size = *texmap_2d_res.element(texture_id as usize).unwrap().size();
             (size, data)
         })
     };
@@ -172,11 +172,10 @@ pub fn get_texmap_raw_data(
     let err_data = texmap_2d_res
         .get_pixel_data(DEFAULT_ERROR_TEXTURE_ID as usize)
         .expect("No UNUSED land texture?");
-    let err_size = texmap_2d_res
+    let err_size = *texmap_2d_res
         .element(DEFAULT_ERROR_TEXTURE_ID as usize)
         .unwrap()
-        .size()
-        .clone();
+        .size();
     (err_size, err_data)
 }
 

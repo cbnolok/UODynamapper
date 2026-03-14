@@ -417,7 +417,7 @@ impl MapPlane {
         ret
     }
 
-    pub fn load_blocks(&mut self, blocks_to_load: &mut Vec<MapBlockRelPos>) -> eyre::Result<()> {
+    pub fn load_blocks(&mut self, blocks_to_load: &mut [MapBlockRelPos]) -> eyre::Result<()> {
         if blocks_to_load.is_empty() {
             return Ok(());
         }

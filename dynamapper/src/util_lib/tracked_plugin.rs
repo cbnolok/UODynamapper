@@ -29,7 +29,7 @@ pub fn log_system_add_startup<T: TrackedPlugin>(sys_set: StartupSysSet, _myname:
     log_system_add_base(_myname, std::any::type_name::<T>(), "Startup", sys_set.as_ref())
 }
 pub fn log_system_add_update<T: TrackedPlugin>(_myname: &'static str) {
-    () // do nothing for now, it can be too cluttering.
+     // do nothing for now, it can be too cluttering.
     //log_system_add_base(_myname, std::any::type_name::<T>(), "Update")
 }
 

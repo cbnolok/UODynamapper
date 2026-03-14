@@ -114,9 +114,9 @@ pub struct ToggleWireframe;
 
 // ----
 
-const CORE_CONFIG_FILE: &'static str = "core_settings.toml";
-const USER_CONFIG_FILE: &'static str = "user_preferences.toml";
-const KEYBINDINGS_CONFIG_FILE: &'static str = "keybindings.toml";
+const CORE_CONFIG_FILE: &str = "core_settings.toml";
+const USER_CONFIG_FILE: &str = "user_preferences.toml";
+const KEYBINDINGS_CONFIG_FILE: &str = "keybindings.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());

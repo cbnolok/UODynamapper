@@ -86,7 +86,7 @@ pub fn update_player_position_text(
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
     // Real-time visibility toggle from settings
-    if let Some(mut node) = node_query.single_mut().ok() {
+    if let Ok(mut node) = node_query.single_mut() {
         let target_display = if settings.app.performance.show_overlay {
             Display::Flex
         } else {

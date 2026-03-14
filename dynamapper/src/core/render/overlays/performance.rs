@@ -165,7 +165,7 @@ pub fn update_performance_text(
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
     // Real-time visibility toggle from settings
-    if let Some(mut node) = node_query.single_mut().ok() {
+    if let Ok(mut node) = node_query.single_mut() {
         let target_display = if settings.app.performance.show_overlay {
             Display::Flex
         } else {
@@ -176,7 +176,7 @@ pub fn update_performance_text(
         }
     }
 
-    if let Some((mut text, mut text_font, mut line_height)) = text_query.single_mut().ok() {
+    if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
         let fps = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|diag| diag.smoothed())

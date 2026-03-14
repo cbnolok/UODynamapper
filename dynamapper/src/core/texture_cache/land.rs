@@ -118,13 +118,13 @@ pub fn sys_setup_terrain_cache(
     let lossy = settings.core.graphics.lossy_texture_compression;
     let handle_small = texture_array::create_gpu_texture_array(
         "land_small_texture_cache",
-        &mut *images,
+        &mut images,
         LandTextureSize::Small,
         lossy,
     );
     let handle_big = texture_array::create_gpu_texture_array(
         "land_big_texture_cache",
-        &mut *images,
+        &mut images,
         LandTextureSize::Big,
         lossy,
     );

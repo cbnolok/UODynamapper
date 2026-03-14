@@ -189,7 +189,7 @@ fn sys_update_worldmap_chunks_to_render(
     let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
         .maps
         .get(&new_map_id)
-        .expect(&format!("Requested metadata for uncached map {new_map_id}"));
+        .unwrap_or_else(|| panic!("Requested metadata for uncached map {new_map_id}"));
 
     // Compute correct visible chunk set
     let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(

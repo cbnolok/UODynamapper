@@ -261,14 +261,14 @@ pub fn terrain_ui_system(
                 let mut changed = false;
 
                 {
-                    let mut v = u.lighting.light_color.clone();
+                    let mut v = u.lighting.light_color;
                     if color3(ui, "Light Color", &mut v) {
                         u.lighting.light_color = v;
                         changed = true;
                     }
                 }
                 {
-                    let mut v = u.lighting.ambient_color.clone();
+                    let mut v = u.lighting.ambient_color;
                     if color3(ui, "Ambient Color", &mut v) {
                         u.lighting.ambient_color = v;
                         changed = true;
@@ -278,14 +278,14 @@ pub fn terrain_ui_system(
                 ui.separator();
 
                 {
-                    let mut v = u.lighting.fill_sky_color.clone();
+                    let mut v = u.lighting.fill_sky_color;
                     if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v) {
                         u.lighting.fill_sky_color = v;
                         changed = true;
                     }
                 }
                 {
-                    let mut v = u.lighting.fill_ground_color.clone();
+                    let mut v = u.lighting.fill_ground_color;
                     if color4(
                         ui,
                         "Fill Ground (rgb + strength.a) (fragment only)",
@@ -299,7 +299,7 @@ pub fn terrain_ui_system(
                 ui.separator();
 
                 {
-                    let mut v = u.lighting.rim_color.clone();
+                    let mut v = u.lighting.rim_color;
                     if color4(ui, "Rim (rgb + power.w) (fragment only)", &mut v) {
                         u.lighting.rim_color = v;
                         changed = true;

@@ -18,14 +18,11 @@ use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
 use wide::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum LandTextureSize {
+    #[default]
     Small,
     Big,
-}
-impl Default for LandTextureSize {
-    fn default() -> Self {
-        Self::Small
-    }
 }
 impl LandTextureSize {
     pub const SMALL_X: u32 = 64;
@@ -223,8 +220,8 @@ impl TexMap2D {
             };
 
             let cur_texture: &mut Texture2DElement = &mut texmap.file_data[i_idx_raw as usize];
-            cur_texture.id = i_idx_raw as u32; //i_idx_valid as u32;
-            cur_texture.size = tex_size_type.clone();
+            cur_texture.id = i_idx_raw; //i_idx_valid as u32;
+            cur_texture.size = tex_size_type;
 
             let pixel_qty = match tex_size_type {
                 LandTextureSize::Small => {
@@ -279,7 +276,7 @@ impl TexMap2D {
             // Convert BGRA5551 to RGBA8888 using the scratch buffer directly
             #[cfg(debug_assertions)]
             {
-                let pixels_u16: &[u16] = bytemuck::cast_slice(&scratch);
+                let pixels_u16: &[u16] = bytemuck::cast_slice(scratch);
                 for &p in pixels_u16 {
                     let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
                     pixel_16.set_a(1);

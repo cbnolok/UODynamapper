@@ -440,7 +440,7 @@ impl TileData {
             tiledata.land_tile_binary_size,
             tiledata.item_tile_binary_size,
             tiledata.max_item_rev,
-            tiledata.max_item_rev.clone() as u32
+            tiledata.max_item_rev as u32
         );
 
         let mut tiledata_file_rdr = {

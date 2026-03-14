@@ -96,8 +96,8 @@ fn sys_setup_cam(
     settings: Res<Settings>,
 ) {
     let main_window = windows.single().unwrap();
-    let window_width = main_window.resolution.width() as f32;
-    let window_height = main_window.resolution.height() as f32 / ORTHO_WIDTH_SCALE_FACTOR;
+    let window_width = main_window.resolution.width();
+    let window_height = main_window.resolution.height() / ORTHO_WIDTH_SCALE_FACTOR;
     let zoom = render_zoom.0;
     assert!(zoom.between(MIN_ZOOM, MAX_ZOOM));
 
@@ -113,7 +113,7 @@ fn sys_setup_cam(
 
     // Setup world camera - order 0 to render the 3D world FIRST
     commands.spawn((
-        PlayerCamera::default(),
+        PlayerCamera,
         Camera3d::default(),
         Camera {
             order: 0, // Render world first
@@ -180,8 +180,8 @@ fn sys_update_camera_projection_to_view(
     render_zoom: Res<RenderZoom>,
 ) {
     let main_window = windows.single().unwrap();
-    let window_width = main_window.resolution.width() as f32;
-    let window_height = main_window.resolution.height() as f32 / ORTHO_WIDTH_SCALE_FACTOR;
+    let window_width = main_window.resolution.width();
+    let window_height = main_window.resolution.height() / ORTHO_WIDTH_SCALE_FACTOR;
     let zoom = render_zoom.0;
     assert!(zoom.between(MIN_ZOOM, MAX_ZOOM));
 
@@ -214,7 +214,7 @@ fn sys_camera_follow_player(
     };
 
     *camera_transform = Transform::from_translation(
-        player_transform.translation.clone() + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+        player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
     )
     .looking_at(player_transform.translation, Vec3::Y);
 }

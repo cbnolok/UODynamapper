@@ -1,12 +1,13 @@
 use bevy::prelude::Vec3;
 
-pub const ASSET_FOLDER: &'static str = "assets/";
+pub const ASSET_FOLDER: &str = "assets/";
 
 //------------------------------------
 // World light
 //------------------------------------
 
-/// Used by shaders to calculate lighting.
+// /// Used by shaders to calculate lighting.
+
 //#[derive(Resource, Deref)]
 //pub struct LightDir(pub Vec3);
 

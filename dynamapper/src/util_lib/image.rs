@@ -4,7 +4,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-pub fn image_from_rgba8(width: u32, height: u32, rgba_buffer_ref: &Vec<u8>) -> Image {
+pub fn image_from_rgba8(width: u32, height: u32, rgba_buffer_ref: &[u8]) -> Image {
     let mut img = Image::new_fill(
         Extent3d{
             width,
@@ -12,7 +12,7 @@ pub fn image_from_rgba8(width: u32, height: u32, rgba_buffer_ref: &Vec<u8>) -> I
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &rgba_buffer_ref, // raw pixel buffer
+        rgba_buffer_ref, // raw pixel buffer
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(), // keeps the texture in MAIN + RENDER worlds
     );

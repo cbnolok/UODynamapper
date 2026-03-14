@@ -60,7 +60,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         if map_file.exists() {
             lg(&format!("Loading map plane {map_plane_index} structure (map{map_plane_index}.mul)..."));
             let map_plane = map::MapPlane::init(map_file, map_plane_index)
-                .expect(&format!("Error initializing map plane {map_plane_index}"));
+                .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
             map_planes.insert(map_plane_index, map_plane);
         }
     }
