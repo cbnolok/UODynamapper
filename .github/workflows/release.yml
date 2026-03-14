@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
+      - prereleases
   workflow_dispatch:
     inputs:
       prerelease_tag:
@@ -85,7 +88,7 @@ jobs:
 
       # On tag push: create a proper versioned GitHub Release
       - name: Create versioned GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && (github.ref_name == 'main' || github.ref_name == 'prereleases')
         uses: softprops/action-gh-release@v2
         with:
           files: dynamapper-linux-x86_64.tar.gz
@@ -113,3 +116,139 @@ jobs:
             Built on: ${{ github.event.repository.updated_at }}
 
             > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+
+  build-windows:
+    name: Build (Windows x86_64)
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "windows-x86_64-stable-sccache"
+
+      - name: Build release binary
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+          CARGO_INCREMENTAL: 0
+        run: cargo build --release --locked --bin dynamapper --package dynamapper
+
+      - name: Package binary and assets
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release_package/assets | Out-Null
+          Copy-Item -Path "target/release/dynamapper.exe" -Destination "release_package/"
+          Copy-Item -Path "assets/shaders" -Destination "release_package/assets/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
+          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64.zip"
+          Write-Host "Archive size: $(Get-Item dynamapper-windows-x86_64.zip | ForEach-Object {'{0:N2} MB' -f ($_.Length / 1MB)})"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-windows-x86_64
+          path: dynamapper-windows-x86_64.zip
+          retention-days: 30
+
+      - name: Upload to release (tagged commits on main/prereleases only)
+        if: startsWith(github.ref, 'refs/tags/') && (github.ref_name == 'main' || github.ref_name == 'prereleases')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dynamapper-windows-x86_64.zip
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+
+  build-macos:
+    name: Build (macOS x86_64 + ARM64)
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "macos-stable-sccache"
+
+      - name: Build release binary (x86_64)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+          CARGO_INCREMENTAL: 0
+        run: cargo build --release --locked --bin dynamapper --package dynamapper --target x86_64-apple-darwin
+
+      - name: Build release binary (ARM64)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+          CARGO_INCREMENTAL: 0
+        run: cargo build --release --locked --bin dynamapper --package dynamapper --target aarch64-apple-darwin
+
+      - name: Package binary and assets (x86_64)
+        run: |
+          mkdir -p release_package_x86_64/assets
+          cp target/x86_64-apple-darwin/release/dynamapper release_package_x86_64/
+          cp -r assets/shaders release_package_x86_64/assets/
+          cp README.md release_package_x86_64/ 2>/dev/null || true
+          tar -c release_package_x86_64 | gzip -1 > dynamapper-macos-x86_64.tar.gz
+          echo "Archive size: $(du -sh dynamapper-macos-x86_64.tar.gz | cut -f1)"
+
+      - name: Package binary and assets (ARM64)
+        run: |
+          mkdir -p release_package_arm64/assets
+          cp target/aarch64-apple-darwin/release/dynamapper release_package_arm64/
+          cp -r assets/shaders release_package_arm64/assets/
+          cp README.md release_package_arm64/ 2>/dev/null || true
+          tar -c release_package_arm64 | gzip -1 > dynamapper-macos-arm64.tar.gz
+          echo "Archive size: $(du -sh dynamapper-macos-arm64.tar.gz | cut -f1)"
+
+      - name: Upload artifacts (x86_64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-macos-x86_64
+          path: dynamapper-macos-x86_64.tar.gz
+          retention-days: 30
+
+      - name: Upload artifacts (ARM64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-macos-arm64
+          path: dynamapper-macos-arm64.tar.gz
+          retention-days: 30
+
+      - name: Upload to release (tagged commits on main/prereleases only)
+        if: startsWith(github.ref, 'refs/tags/') && (github.ref_name == 'main' || github.ref_name == 'prereleases')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dynamapper-macos-x86_64.tar.gz
+            dynamapper-macos-arm64.tar.gz
+          generate_release_notes: false
+          fail_on_unmatched_files: true
