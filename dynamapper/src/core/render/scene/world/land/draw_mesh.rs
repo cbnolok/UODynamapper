@@ -35,12 +35,61 @@ use crate::{
 // ---- Shared Mesh Resource and Setup ----
 
 #[derive(Resource)]
-pub struct LandMeshHandle(pub Handle<Mesh>);
+pub struct LandMeshHandles {
+    pub high: Handle<Mesh>,
+    pub medium: Handle<Mesh>,
+    pub low: Handle<Mesh>,
+}
+
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LandMeshLod {
+    #[default]
+    High,
+    Medium,
+    Low,
+}
+
+fn lod_from_zoom(zoom: f32) -> LandMeshLod {
+    if zoom >= 3.75 {
+        LandMeshLod::Low
+    } else if zoom >= 2.0 {
+        LandMeshLod::Medium
+    } else {
+        LandMeshLod::High
+    }
+}
+
+fn mesh_for_lod(handles: &LandMeshHandles, lod: LandMeshLod) -> Handle<Mesh> {
+    match lod {
+        LandMeshLod::High => handles.high.clone(),
+        LandMeshLod::Medium => handles.medium.clone(),
+        LandMeshLod::Low => handles.low.clone(),
+    }
+}
 
 use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 
 #[derive(Resource)]
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
+
+pub fn sys_update_existing_chunk_mesh_lod(
+    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    land_mesh_handles_r: Res<LandMeshHandles>,
+    mut current_lod: ResMut<LandMeshLod>,
+    mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
+) {
+    let next_lod = lod_from_zoom(render_zoom.0);
+    if *current_lod == next_lod {
+        return;
+    }
+
+    let next_mesh = mesh_for_lod(&land_mesh_handles_r, next_lod);
+    for mut mesh3d in chunk_mesh_q.iter_mut() {
+        mesh3d.0 = next_mesh.clone();
+    }
+
+    *current_lod = next_lod;
+}
 
 /// Enqueues the 8x8 tile data for this chunk into the TileAtlas, and preloads the textures.
 fn enqueue_chunk_to_atlas_and_preload(
@@ -145,7 +194,8 @@ pub fn sys_draw_spawned_land_chunks(
     cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
     visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
-    land_mesh_handle_r: Res<LandMeshHandle>,
+    land_mesh_handles_r: Res<LandMeshHandles>,
+    current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
     cache_settings_r: Res<crate::core::texture_cache::land::cache::LandTextureCacheSettings>,
 ) {
@@ -318,7 +368,8 @@ pub fn sys_draw_spawned_land_chunks(
         draw_land_chunk(
             &mut commands,
             chunk_data,
-            &land_mesh_handle_r,
+            &land_mesh_handles_r,
+            *current_lod,
             &shared_land_material_r,
         );
     }
@@ -336,11 +387,11 @@ pub fn sys_draw_spawned_land_chunks(
 fn draw_land_chunk(
     commands: &mut Commands,
     chunk_data_ref: &LandChunkConstructionData,
-    land_mesh_handle_r: &Res<LandMeshHandle>,
+    land_mesh_handles_r: &Res<LandMeshHandles>,
+    current_lod: LandMeshLod,
     shared_land_material_r: &Res<SharedLandMaterial>,
 ) {
-    // Use the mesh prebuilt in setup_land_mesh.
-    let chunk_mesh_handle: Handle<Mesh> = land_mesh_handle_r.0.clone();
+    let chunk_mesh_handle: Handle<Mesh> = mesh_for_lod(land_mesh_handles_r, current_lod);
     let chunk_material_handle: Handle<LandCustomMeshMaterial> = shared_land_material_r.0.clone();
 
     // Compute chunk origin (in tile units) for the transform.

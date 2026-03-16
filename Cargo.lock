@@ -2203,6 +2203,7 @@ dependencies = [
  "tracing-subscriber",
  "uocf",
  "wgpu",
+ "windows 0.61.3",
 ]
 
 [[package]]

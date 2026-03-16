@@ -111,6 +111,7 @@ fn compute_visible_chunks(
     window_width: f32,
     window_height: f32,
     zoom: f32,
+    adaptive_zoom_render: bool,
     map_width: u32,
     map_height: u32,
 ) -> std::collections::HashSet<(u32, u32)> {
@@ -119,9 +120,15 @@ fn compute_visible_chunks(
     let corrected_pixel_size = UO_TILE_PIXEL_SIZE / zoom;
 
     // Visible tile region (rounded up)
-    // We add a significant safety factor (2.5x) to account for orthographic distortion,
-    // camera rotation, and the fact that chunks are not centered on the player.
-    let margin_factor = 2.5;
+    // Default is conservative. When adaptive zoom rendering is enabled, shrink the
+    // safety margin as we zoom out to reduce chunk count and draw workload.
+    let margin_factor = if adaptive_zoom_render {
+        // zoom ~1.0 -> ~2.1 (safe), zoom >=3.25 -> ~1.35 (aggressive)
+        let t = ((zoom - 1.0) / (3.25 - 1.0)).clamp(0.0, 1.0);
+        2.1 - (2.1 - 1.35) * t
+    } else {
+        2.5
+    };
     let visible_tiles_x = ((window_width / corrected_pixel_size).ceil() * margin_factor) as i32;
     let visible_tiles_y = ((window_height / corrected_pixel_size).ceil() * margin_factor) as i32;
 
@@ -156,14 +163,18 @@ fn compute_visible_chunks(
 }
 
 fn sys_update_worldmap_chunks_to_render(
-    mut _event: MessageReader<RecomputeVisibleChunksEvent>,
+    mut event: MessageReader<RecomputeVisibleChunksEvent>,
     mut commands: Commands,
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,
+    settings: Res<Settings>,
     mut scene_state_data_res: ResMut<SceneStateData>,
     windows_q: Query<&Window>,
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh)>,
+    mut last_player_chunk: Local<Option<(i32, i32)>>,
+    mut last_zoom: Local<f32>,
+    mut last_window_size: Local<Option<(u32, u32)>>,
 ) {
     let (mut player_instance, player_transform) =
         player_q.single_mut().expect("More than 1 players?");
@@ -185,6 +196,25 @@ fn sys_update_worldmap_chunks_to_render(
 
     let window: &Window = windows_q.single().unwrap();
     let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
+
+    let current_player_chunk = (
+        (player_pos_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        (player_pos_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+    );
+    let current_window_size = (window.physical_width(), window.physical_height());
+    let has_recompute_event = event.read().next().is_some();
+    let player_chunk_changed = *last_player_chunk != Some(current_player_chunk);
+    let zoom_changed = (zoom - *last_zoom).abs() > 0.02;
+    let window_changed = *last_window_size != Some(current_window_size);
+
+    if !has_recompute_event && !map_switch && !player_chunk_changed && !zoom_changed && !window_changed {
+        return;
+    }
+
+    *last_player_chunk = Some(current_player_chunk);
+    *last_zoom = zoom;
+    *last_window_size = Some(current_window_size);
+
     //let current_map_id = scene_state_data_res.map_id;
     let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
         .maps
@@ -197,6 +227,7 @@ fn sys_update_worldmap_chunks_to_render(
         window.physical_width() as f32,
         window.physical_height() as f32,
         zoom,
+        settings.app.performance.adaptive_zoom_render,
         new_map_plane_metadata.width,
         new_map_plane_metadata.height,
     );

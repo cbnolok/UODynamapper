@@ -921,37 +921,47 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Local coords and tile selection
   let uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
   let tile = atlas_read_meta(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
-
-  // Base albedo (optionally reconstructed/upscaled, and optionally blurred/sharpened)
-  var base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
-  if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
-    let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
-    base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
-  }
-  if (effects.sharpening_amount > 0.0) {
-    base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
-  }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
 
   // Zoom-adaptive cheap path:
-  // - low simplification: skip expensive lighting on half pixels (checkerboard)
-  // - high simplification: keep expensive lighting only on 1/4 pixels (2x2 pattern)
-  // Skipped pixels still output an approximated lit albedo so the frame stays fully covered.
+  // IMPORTANT: this branch happens BEFORE expensive reconstruction/blur/sharpen/lighting,
+  // so skipped pixels are truly cheaper to compute.
   let adaptive = clamp(scene.adaptive_zoom_simplification, 0.0, 1.0);
+  var use_cheap_path = false;
   if (adaptive > 0.001) {
     let px = i32(in.position.x);
     let py = i32(in.position.y);
     var skip_expensive = false;
 
     if (adaptive < 0.5) {
+      // 50% checkerboard keep-rate.
       skip_expensive = ((px + py) & 1) != 0;
     } else {
+      // ~25% keep-rate: only one pixel every 2x2 quad keeps full shading.
       skip_expensive = ((px & 1) != 0) || ((py & 1) != 0);
     }
 
     if (skip_expensive) {
-      let cheap_light = clamp(0.35 + ambient_strength * 0.65, 0.0, 1.0);
-      return vec4<f32>(base_albedo * cheap_light, base_alpha);
+      use_cheap_path = true;
+    }
+  }
+
+  // Base albedo
+  var base_albedo = vec3<f32>(0.0);
+  if (use_cheap_path) {
+    // Quantize UV to a coarser grid and use direct nearest sample.
+    // We still run full lighting/fog/shadows below to keep visual consistency.
+    let cells = mix(2.0, 4.0, smoothstep(0.0, 1.0, adaptive));
+    let uv_q = (floor(uv_in_tile * cells) + vec2<f32>(0.5)) / cells;
+    base_albedo = sample_tile_albedo(uv_q, tile);
+  } else {
+    base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
+    if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
+      let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
+      base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
+    }
+    if (effects.sharpening_amount > 0.0) {
+      base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
     }
   }
 

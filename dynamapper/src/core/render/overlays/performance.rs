@@ -6,11 +6,24 @@ use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::text::LineHeight;
+use std::fs;
 use sysinfo::{ProcessesToUpdate, System};
+use uocf::geo::land_texture_2d::LandTextureSize;
+
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+    DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter1, IDXGIAdapter3, IDXGIFactory6,
+};
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
 const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
+const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
+
+// Keep these in sync with texture/atlas initialization in terrain cache startup.
+const TILE_ATLAS_TEXELS: u32 = 2048;
+const TILE_ATLAS_MAX_LAYERS: u32 = 16;
 
 /// Holds the cached sysinfo `System` instance and a cooldown timer for polling.
 /// We reuse the same `System` instead of re-creating it each frame — sysinfo reads
@@ -23,10 +36,20 @@ pub struct ProcessMetrics {
     pid: sysinfo::Pid,
     /// Timer to throttle the update frequency.
     poll_timer: Timer,
-    /// Latest CPU usage (percentage 0..100).
-    pub cpu_usage: f32,
+    /// Latest CPU usage normalized to total machine capacity (0..100%).
+    pub cpu_usage_total: f32,
+    /// Latest process CPU usage in "single core equivalents" (can exceed 100 on multicore).
+    pub cpu_usage_one_core: f32,
     /// Latest RAM usage (MiB).
     pub mem_usage_mib: f32,
+    /// Estimated terrain texture-array VRAM usage (MiB), based on selected compression.
+    pub estimated_texture_vram_mib: f32,
+    /// Estimated tile-meta-atlas VRAM usage (MiB).
+    pub estimated_atlas_vram_mib: f32,
+    /// Cross-platform tracked process VRAM usage (MiB), from app-owned GPU allocations.
+    pub process_vram_tracked_mib: f32,
+    /// Number of logical CPU cores.
+    pub core_count: usize,
 }
 
 impl Default for ProcessMetrics {
@@ -38,10 +61,129 @@ impl Default for ProcessMetrics {
             sys,
             pid,
             poll_timer: Timer::from_seconds(SYSINFO_REFRESH_INTERVAL_SEC, TimerMode::Repeating),
-            cpu_usage: 0.0,
+            cpu_usage_total: 0.0,
+            cpu_usage_one_core: 0.0,
             mem_usage_mib: 0.0,
+            estimated_texture_vram_mib: 0.0,
+            estimated_atlas_vram_mib: 0.0,
+            process_vram_tracked_mib: 0.0,
+            core_count: 0,
         }
     }
+}
+
+fn query_process_vram_mib_linux_drm(pid: sysinfo::Pid) -> Option<f32> {
+    // Linux kernel exposes per-process DRM memory stats under:
+    //   /proc/<pid>/fdinfo/<fd>
+    // We sum VRAM-like counters across all DRM fds for this process.
+    // Typical keys:
+    //   drm-memory-vram: <KiB> kB
+    //   drm-memory-local: <KiB> kB
+    // We intentionally ignore GTT/system memory because user asked VRAM.
+    let fdinfo_dir = format!("/proc/{}/fdinfo", pid);
+    let entries = fs::read_dir(fdinfo_dir).ok()?;
+
+    let mut total_kib: f32 = 0.0;
+    let mut found_any_counter = false;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+
+        for line in contents.lines() {
+            let line = line.trim();
+            // AMD: drm-memory-vram
+            // Intel (Xe/i915 variants): drm-memory-local
+            let is_vram_key = line.starts_with("drm-memory-vram:")
+                || line.starts_with("drm-memory-local:");
+            if !is_vram_key {
+                continue;
+            }
+
+            // Format is generally: "key: <number> kB"
+            let Some((_, rhs)) = line.split_once(':') else {
+                continue;
+            };
+            let mut parts = rhs.split_whitespace();
+            let Some(num_str) = parts.next() else {
+                continue;
+            };
+            if let Ok(v_kib) = num_str.parse::<f32>() {
+                total_kib += v_kib;
+                found_any_counter = true;
+            }
+        }
+    }
+
+    if found_any_counter {
+        Some(total_kib / 1024.0)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
+    // DXGI reports memory usage for the current process on the queried adapter.
+    // We read LOCAL segment usage (dedicated VRAM / local memory).
+    unsafe {
+        let factory: IDXGIFactory6 = CreateDXGIFactory1().ok()?;
+        let mut adapter_index: u32 = 0;
+        let mut best_mib = None::<f32>;
+
+        loop {
+            let adapter: IDXGIAdapter1 = match factory
+                .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
+            {
+                Ok(a) => a,
+                Err(_) => break,
+            };
+            adapter_index += 1;
+
+            let adapter3: IDXGIAdapter3 = match adapter.cast() {
+                Ok(a3) => a3,
+                Err(_) => continue,
+            };
+
+            let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            if adapter3
+                .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info)
+                .is_ok()
+            {
+                let mib = info.CurrentUsage as f32 / BYTES_PER_MIB;
+                best_mib = Some(best_mib.map_or(mib, |v| v.max(mib)));
+            }
+        }
+
+        best_mib
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
+    None
+}
+
+fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(v) = query_process_vram_mib_linux_drm(pid) {
+            return Some(v);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(v) = query_process_vram_mib_windows_dxgi(pid) {
+            return Some(v);
+        }
+    }
+
+    None
 }
 
 // ----
@@ -114,7 +256,11 @@ pub fn setup_overlay_performance(
 }
 
 /// Polls the sysinfo library to get up-to-date CPU and RAM usage for the current process.
-pub fn sys_refresh_process_metrics(time: Res<Time>, mut metrics: ResMut<ProcessMetrics>) {
+pub fn sys_refresh_process_metrics(
+    time: Res<Time>,
+    settings: Res<Settings>,
+    mut metrics: ResMut<ProcessMetrics>,
+) {
     metrics.poll_timer.tick(time.delta());
     if !metrics.poll_timer.just_finished() {
         return;
@@ -127,18 +273,44 @@ pub fn sys_refresh_process_metrics(time: Res<Time>, mut metrics: ResMut<ProcessM
 
     if let Some(process) = metrics.sys.process(pid) {
         let cpu = process.cpu_usage();
-        const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
         let mem = process.memory() as f32 / BYTES_PER_MIB;
 
         // sysinfo process cpu usage is [0..100 * num_cpus].
         // Normalize it by dividing by core count for a "standard" 0..100% total system load.
-        let core_count = metrics.sys.cpus().len() as f32;
-        metrics.cpu_usage = if core_count > 0.0 {
-            cpu / core_count
+        let core_count = metrics.sys.cpus().len();
+        let core_count_f = core_count as f32;
+        metrics.cpu_usage_total = if core_count_f > 0.0 {
+            cpu / core_count_f
         } else {
             cpu
         };
+        metrics.cpu_usage_one_core = cpu;
+        metrics.core_count = core_count;
         metrics.mem_usage_mib = mem;
+
+        let lossy = settings.core.graphics.lossy_texture_compression;
+        let small_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
+            LandTextureSize::Small,
+            lossy,
+        ) * crate::core::texture_cache::land::texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS as usize;
+        let big_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
+            LandTextureSize::Big,
+            lossy,
+        ) * crate::core::texture_cache::land::texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS as usize;
+        // Rg16Uint = 4 bytes/texel.
+        let atlas_bytes =
+            (TILE_ATLAS_TEXELS as usize * TILE_ATLAS_TEXELS as usize * TILE_ATLAS_MAX_LAYERS as usize)
+                * 4usize;
+
+        metrics.estimated_texture_vram_mib = (small_bytes + big_bytes) as f32 / BYTES_PER_MIB;
+        metrics.estimated_atlas_vram_mib = atlas_bytes as f32 / BYTES_PER_MIB;
+
+        // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
+        // Includes terrain texture arrays + tile metadata atlas.
+        // Prefer native OS/driver accounting when available.
+        let tracked_total_mib = metrics.estimated_texture_vram_mib + metrics.estimated_atlas_vram_mib;
+        metrics.process_vram_tracked_mib =
+            query_process_vram_mib_native(pid).unwrap_or(tracked_total_mib);
     }
 }
 
@@ -186,10 +358,25 @@ pub fn update_performance_text(
 
         let entity_count = entities.len();
         let chunk_count = land_chunks.iter().count();
+        let tex_mode = if settings.core.graphics.lossy_texture_compression {
+            "BC7"
+        } else {
+            "RGBA8"
+        };
 
         text.0 = format!(
-            "FPS: {}\nCPU: {:.1}% | RAM: {:.1} MiB\nCHKs: {} | ENTs: {}",
-            fps, metrics.cpu_usage, metrics.mem_usage_mib, chunk_count, entity_count
+            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}",
+            fps,
+            metrics.cpu_usage_total,
+            metrics.cpu_usage_one_core,
+            metrics.core_count,
+            metrics.mem_usage_mib,
+            tex_mode,
+            metrics.estimated_texture_vram_mib,
+            metrics.estimated_atlas_vram_mib,
+            metrics.process_vram_tracked_mib,
+            chunk_count,
+            entity_count
         );
 
         if scale_changed {

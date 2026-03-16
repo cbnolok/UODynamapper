@@ -62,7 +62,7 @@ pub fn sys_update_shared_land_material(
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
     let current_adaptive_simplification = if settings.app.performance.adaptive_zoom_render {
-        ((current_render_zoom - 1.8) / (5.0 - 1.8)).clamp(0.0, 1.0)
+        ((current_render_zoom - 1.25) / (3.25 - 1.25)).clamp(0.0, 1.0)
     } else {
         0.0
     };
@@ -110,6 +110,10 @@ impl Plugin for DrawLandChunkMeshPlugin {
             .add_systems(
                 Update,
                 (
+                    draw_mesh::sys_update_existing_chunk_mesh_lod
+                        .in_set(SceneRenderLandSysSet::RenderLandChunks)
+                        .after(SceneRenderLandSysSet::SyncLandChunks)
+                        .run_if(in_state(AppState::InGame)),
                     draw_mesh::sys_draw_spawned_land_chunks
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)

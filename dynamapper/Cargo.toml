@@ -226,3 +226,9 @@ features = [
 # but allow CI to disable it by building with `--no-default-features`.
 bevy_development_opts = ["bevy/dynamic_linking", "bevy/glam_assert", "bevy/track_location"]#, "bevy/debug", "bevy/dev_tools"]
 default = ["bevy_development_opts"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+] }
