@@ -16,8 +16,9 @@ echo "Running Linux Nightly Build (Safe Optimizations)..."
 # -Clink-arg=-Wl,--gc-sections: Removes unused code sections at link time
 
 RUSTFLAGS="-Zshare-generics=y -Zlocation-detail=none -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Clink-arg=-Wl,--gc-sections $RUSTFLAGS" \
-cargo +nightly build --release --no-default-features \
+cargo +nightly build --release --locked --no-default-features \
     -Z build-std=std,panic_abort \
-    -Z build-std-features="optimize_for_size"
+    -Z build-std-features="optimize_for_size" \
+    "$@"
 
 echo "Build complete."

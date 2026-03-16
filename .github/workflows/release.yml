@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
   # Use mold for faster linking (installed below)
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
-  RUSTFLAGS: "-C link-arg=-fuse-ld=/usr/bin/mold"
+  # RUSTFLAGS: "-C link-arg=-fuse-ld=/usr/bin/mold" # Handled by build scripts
 
 jobs:
   build-linux:
@@ -47,8 +47,10 @@ jobs:
             mold
 
       # dtolnay/rust-toolchain already sets up basic rust
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -59,31 +61,35 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "linux-x86_64-stable-sccache"
+          key: "linux-x86_64-nightly-sccache"
 
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
           CARGO_INCREMENTAL: 0
-        run: cargo build --release --locked --no-default-features --bin dynamapper --package dynamapper
+        run: |
+          chmod +x scripts/build/linux/build.sh
+          chmod +x scripts/build/common/rustc_wrapper.sh
+          ./scripts/build/linux/build.sh
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package/assets
+          mkdir -p release_package
           cp target/release/dynamapper release_package/
-          cp -r assets/shaders release_package/assets/
+          cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
-          # Use fast compression (gzip -1 or zstd)
-          tar -c release_package | gzip -1 > dynamapper-linux-x86_64.tar.gz
-          echo "Archive size: $(du -sh dynamapper-linux-x86_64.tar.gz | cut -f1)"
+          # Zip the package
+          sudo apt-get install -y zip
+          zip -r dynamapper-linux-x86_64.zip release_package
+          echo "Archive size: $(du -sh dynamapper-linux-x86_64.zip | cut -f1)"
 
       # Always upload as workflow artifact (available from the Actions UI, 30d TTL)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-linux-x86_64
-          path: dynamapper-linux-x86_64.tar.gz
+          path: dynamapper-linux-x86_64.zip
           retention-days: 30
 
       # On tag push: create a proper versioned GitHub Release
@@ -91,7 +97,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && (github.ref_name == 'main' || github.ref_name == 'prereleases')
         uses: softprops/action-gh-release@v2
         with:
-          files: dynamapper-linux-x86_64.tar.gz
+          files: dynamapper-linux-x86_64.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
 
@@ -128,8 +134,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -138,21 +146,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "windows-x86_64-stable-sccache"
+          key: "windows-x86_64-nightly-sccache"
 
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
           CARGO_INCREMENTAL: 0
-        run: cargo build --release --locked --no-default-features --bin dynamapper --package dynamapper
+        run: pwsh ./scripts/build/windows/build.ps1
 
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release_package/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path release_package | Out-Null
           Copy-Item -Path "target/release/dynamapper.exe" -Destination "release_package/"
-          Copy-Item -Path "assets/shaders" -Destination "release_package/assets/" -Recurse
+          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
           if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
           Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64.zip"
           Write-Host "Archive size: $(Get-Item dynamapper-windows-x86_64.zip | ForEach-Object {'{0:N2} MB' -f ($_.Length / 1MB)})"
@@ -183,10 +191,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-apple-darwin
+          components: rust-src
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -195,52 +204,58 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "macos-stable-sccache"
+          key: "macos-nightly-sccache"
 
       - name: Build release binary (x86_64)
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
           CARGO_INCREMENTAL: 0
-        run: cargo build --release --locked --no-default-features --bin dynamapper --package dynamapper --target x86_64-apple-darwin
+        run: |
+          chmod +x scripts/build/macos/build.sh
+          chmod +x scripts/build/common/rustc_wrapper.sh
+          # Modify script temporarily to support target or use environment
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang ./scripts/build/macos/build.sh --target x86_64-apple-darwin
 
       - name: Build release binary (ARM64)
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
           CARGO_INCREMENTAL: 0
-        run: cargo build --release --locked --no-default-features --bin dynamapper --package dynamapper --target aarch64-apple-darwin
+        run: |
+          # The script currently doesn't support arguments, I should probably update it or use RUSTFLAGS
+          ./scripts/build/macos/build.sh --target aarch64-apple-darwin
 
       - name: Package binary and assets (x86_64)
         run: |
-          mkdir -p release_package_x86_64/assets
+          mkdir -p release_package_x86_64
           cp target/x86_64-apple-darwin/release/dynamapper release_package_x86_64/
-          cp -r assets/shaders release_package_x86_64/assets/
+          cp -r assets release_package_x86_64/
           cp README.md release_package_x86_64/ 2>/dev/null || true
-          tar -c release_package_x86_64 | gzip -1 > dynamapper-macos-x86_64.tar.gz
-          echo "Archive size: $(du -sh dynamapper-macos-x86_64.tar.gz | cut -f1)"
+          zip -r dynamapper-macos-x86_64.zip release_package_x86_64
+          echo "Archive size: $(du -sh dynamapper-macos-x86_64.zip | cut -f1)"
 
       - name: Package binary and assets (ARM64)
         run: |
-          mkdir -p release_package_arm64/assets
+          mkdir -p release_package_arm64
           cp target/aarch64-apple-darwin/release/dynamapper release_package_arm64/
-          cp -r assets/shaders release_package_arm64/assets/
+          cp -r assets release_package_arm64/
           cp README.md release_package_arm64/ 2>/dev/null || true
-          tar -c release_package_arm64 | gzip -1 > dynamapper-macos-arm64.tar.gz
-          echo "Archive size: $(du -sh dynamapper-macos-arm64.tar.gz | cut -f1)"
+          zip -r dynamapper-macos-arm64.zip release_package_arm64
+          echo "Archive size: $(du -sh dynamapper-macos-arm64.zip | cut -f1)"
 
       - name: Upload artifacts (x86_64)
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-macos-x86_64
-          path: dynamapper-macos-x86_64.tar.gz
+          path: dynamapper-macos-x86_64.zip
           retention-days: 30
 
       - name: Upload artifacts (ARM64)
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-macos-arm64
-          path: dynamapper-macos-arm64.tar.gz
+          path: dynamapper-macos-arm64.zip
           retention-days: 30
 
       - name: Upload to release (tagged commits on main/prereleases only)
@@ -248,7 +263,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dynamapper-macos-x86_64.tar.gz
-            dynamapper-macos-arm64.tar.gz
+            dynamapper-macos-x86_64.zip
+            dynamapper-macos-arm64.zip
           generate_release_notes: false
           fail_on_unmatched_files: true

@@ -9,8 +9,9 @@ echo "Running macOS Nightly Build..."
 
 # macOS uses -Wl,-dead_strip instead of --gc-sections
 RUSTFLAGS="-Zshare-generics=y -Zlocation-detail=none -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Clink-arg=-Wl,-dead_strip $RUSTFLAGS" \
-cargo +nightly build --release --no-default-features \
+cargo +nightly build --release --locked --no-default-features \
     -Z build-std=std,panic_abort \
-    -Z build-std-features="optimize_for_size"
+    -Z build-std-features="optimize_for_size" \
+    "$@"
 
 echo "Build complete."
