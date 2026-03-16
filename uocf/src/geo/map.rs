@@ -14,6 +14,16 @@
 //!   - **Altitude** (1 byte, i8): The Z-coordinate of the tile.
 //!
 //! The blocks are stored in column-major order (top to bottom, then left to right).
+//!
+//! ## Design Choices
+//!
+//! - **4-Byte Alignment**: `MapCell` is aligned to 4 bytes in memory (using 1 byte of padding). 
+//!   While the file format uses 3 bytes, 4-byte alignment significantly improves CPU cache performance 
+//!   and enables more efficient SIMD processing during texture mapping.
+//! - **Inlined Cells**: `MapBlock` stores its cells in a fixed-size array instead of a `Box`. 
+//!   This removes thousands of small heap allocations, reducing memory fragmentation and pressure on the allocator.
+//! - **Fast Parsing**: We use a `RawMapBlock` struct that matches the disk format for initial loading, 
+//!   then convert to the aligned `MapCell` format in a tight loop.
 
 #![allow(dead_code)]
 
@@ -24,11 +34,11 @@ use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, cast_slice, cast_slice_mut, from_bytes};
 use std::path::PathBuf;
 
 /// Represents a single cell (or tile) in the map.
-#[repr(C, packed)]
+#[repr(C, align(4))]
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 pub struct MapCell {
     // Cells are loaded from blocks in the mul file: left-to-right then top-to-bottom.
@@ -36,12 +46,10 @@ pub struct MapCell {
     pub id: u16,
     /// The altitude of the tile.
     pub z: i8,
+    /// Padding for 4-byte alignment
+    pub _pad: i8,
 }
 impl MapCell {
-    // Cells are loaded from blocks left-to-right then top-to-bottom.
-    // Cell = Tile.
-    pub const PACKED_SIZE: usize = 2 + 1;
-
     // Relative position of the cell inside the block
     #[inline(always)]
     pub fn coords_in_block_x(cell_x: u32) -> u32 {
@@ -79,6 +87,9 @@ impl MapCell {
     }
 }
 
+/// Size of a map block in the file (4 bytes header + 64 * 3 bytes cells)
+const MAP_BLOCK_FILE_SIZE: usize = 196;
+
 /// Represents a block of 8x8 cells.
 #[derive(Clone)]
 pub struct MapBlock {
@@ -87,14 +98,7 @@ pub struct MapBlock {
     pub internal_coords: MapBlockRelPos,
     //header: u32, // unused
     /// The cells in the block.
-    cells: Box<[MapCell; Self::CELLS_PER_BLOCK as usize]>,
-}
-
-#[repr(C, packed)] // Ensure C-compatible layout and no padding
-#[derive(Copy, Clone, Pod, Zeroable)] // Add bytemuck traits
-struct RawMapBlock {
-    header: u32,
-    cells: [RawMapCell; MapBlock::CELLS_PER_BLOCK as usize],
+    pub cells: [MapCell; Self::CELLS_PER_BLOCK as usize],
 }
 
 #[repr(C, packed)]
@@ -104,11 +108,18 @@ struct RawMapCell {
     z: i8,
 }
 
+#[repr(C, packed)] // Ensure C-compatible layout and no padding
+#[derive(Copy, Clone, Pod, Zeroable)] // Add bytemuck traits
+struct RawMapBlock {
+    header: u32,
+    cells: [RawMapCell; MapBlock::CELLS_PER_BLOCK as usize],
+}
+
 impl Default for MapBlock {
     fn default() -> Self {
         Self {
             internal_coords: MapBlockRelPos::default(),
-            cells: Box::new([MapCell::default(); Self::CELLS_PER_BLOCK as usize]),
+            cells: [MapCell::default(); Self::CELLS_PER_BLOCK as usize],
         }
     }
 }
@@ -117,7 +128,7 @@ impl MapBlock {
     pub const CELLS_PER_ROW: u32 = 8;
     pub const CELLS_PER_COLUMN: u32 = 8;
     pub const CELLS_PER_BLOCK: u32 = Self::CELLS_PER_ROW * Self::CELLS_PER_COLUMN;
-    pub const PACKED_SIZE: usize = 4 + (Self::CELLS_PER_BLOCK as usize * MapCell::PACKED_SIZE);
+    pub const PACKED_SIZE: usize = MAP_BLOCK_FILE_SIZE;
 
     #[inline(always)]
     pub fn coords_first_cell(block_coords: &MapBlockRelPos) -> MapCellCoords {
@@ -161,24 +172,21 @@ impl MapBlock {
         let bytes = rdr.get_ref();
         let offset = rdr.position() as usize;
 
-        let raw_block_bytes = &bytes[offset..offset + MapBlock::PACKED_SIZE];
+        let raw_block_bytes = &bytes[offset..offset + MAP_BLOCK_FILE_SIZE];
         let raw_block: &RawMapBlock = bytemuck::from_bytes(raw_block_bytes);
 
-        // MapCell is packed and identical to RawMapCell
-        // We can bulk copy cells
-        new_block.cells.copy_from_slice(bytemuck::cast_slice(&raw_block.cells));
-
-        // Handle endianness for IDs in bulk using SIMD if target is Big Endian.
-        // On LE systems (most PCs), UO data is already LE, so this is just a check.
-        #[cfg(target_endian = "big")]
-        {
-            use wide::*;
-            let cells_slice: &mut [MapCell] = &mut new_block.cells;
-            // MapCell is 3 bytes (packed). Vectorizing this is tricky due to 3-byte stride.
-            // However, most CPUs are LE, so we just do a fallback loop if BE.
-            for cell in cells_slice.iter_mut() {
-                cell.id = cell.id.swap_bytes();
-            }
+        // We can't cast_slice because memory layout differs (3 bytes vs 4 bytes)
+        // Extract cells individually or in bulk if we use a specialized loop
+        for (i, raw_cell) in raw_block.cells.iter().enumerate() {
+            let id = raw_cell.id;
+            #[cfg(target_endian = "big")]
+            let id = id.swap_bytes();
+            
+            new_block.cells[i] = MapCell {
+                id,
+                z: raw_cell.z,
+                _pad: 0,
+            };
         }
 
         rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;

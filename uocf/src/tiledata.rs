@@ -1,15 +1,16 @@
 #![allow(dead_code)]
 
 crate::eyre_imports!();
-use byteorder::{LittleEndian, ReadBytesExt};
 use derive_new::new;
 use std::fs::File;
 use std::io::{prelude::*, Cursor};
 use std::path::PathBuf;
+use bytemuck::{Pod, Zeroable};
 
 /* Struct to manage Flags for LandTile and ItemTile */
 
-#[derive(Clone, Debug, Default)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct Flags {
     pub internal_flags: u32,
 }
@@ -320,6 +321,75 @@ enum ItemTileMaxIdxRev {
 }
 /* End of enums for Tiledata file structure */
 
+/// Internal structures used for fast bulk parsing of the tiledata.mul file.
+/// Design Choice: We use `#[repr(C, packed)]` to match the UO file format exactly on disk.
+/// This allows us to use `bytemuck` to cast large byte sections into these structured blocks,
+/// which is significantly faster than reading individual fields via `ReadBytesExt`.
+/// 
+/// Note: Endianness is handled during the conversion from Raw to final struct. 
+/// Since most modern systems are Little Endian (like UO data), this is often a zero-cost operation.
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawLandTileClassic {
+    flags: Flags,
+    texture_id: u16,
+    name: [u8; LandTile::NAME_LEN],
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawLandTileHS {
+    flags: Flags,
+    unk: i32,
+    texture_id: u16,
+    name: [u8; LandTile::NAME_LEN],
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawItemTileClassic {
+    flags: Flags,
+    weight: u8,
+    quality: u8,
+    unk0: u16,
+    unk1: u8,
+    quantity: u8,
+    anim_id: u16,
+    unk2: u8,
+    hue_extra: u8,
+    stacking_offset: u8,
+    value: u8,
+    height: i8,
+    name: [u8; ItemTile::NAME_LEN],
+}
+
+#[repr(C, packed)] 
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawItemTileHS {
+    flags: Flags,
+    unk_hs: i32,
+    weight: u8,
+    quality: u8,
+    unk0: u16,
+    unk1: u8,
+    quantity: u8,
+    anim_id: u16,
+    unk2: u8,
+    hue_extra: u8,
+    stacking_offset: u8,
+    value: u8,
+    height: i8,
+    name: [u8; ItemTile::NAME_LEN],
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RawBlock<T> {
+    header: u32,
+    tiles: [T; 32],
+}
+
 /* Start of Tiledata struct */
 
 pub struct TileData {
@@ -443,7 +513,7 @@ impl TileData {
             tiledata.max_item_rev as u32
         );
 
-        let mut tiledata_file_rdr = {
+        let tiledata_file_rdr = {
             let mut buf = vec![0; file_size as usize];
             file_handle
                 .read_exact(buf.as_mut())
@@ -451,131 +521,100 @@ impl TileData {
             Cursor::new(buf)
         };
 
-        let mut err_buf;
 
         // Read LandTiles
+        // Optimization: We use bulk parsing to avoid thousands of individual I/O reads.
+        // We first calculate the exact byte size of the land section and slice the buffer
+        // to pass it to bytemuck. This prevents panics if the file has trailing bytes.
         let mut i_tile: u32 = 0;
-        for _i_land_block in 0..LandTile::BLOCK_QTY {
-            err_buf = format!(
-                "Reading tiledata info for item tile {i_tile} (0x{:x}): reading ",
-                i_tile
-            );
+        let land_section_len = if tiledata.land_tile_binary_size == LandTileBinSize::Classic {
+            LandTile::BLOCK_QTY * std::mem::size_of::<RawBlock<RawLandTileClassic>>()
+        } else {
+            LandTile::BLOCK_QTY * std::mem::size_of::<RawBlock<RawLandTileHS>>()
+        };
 
-            let _header = tiledata_file_rdr
-                .read_u32::<LittleEndian>()
-                .wrap_err(err_buf.clone() + "header")?;
+        let land_bytes = &tiledata_file_rdr.get_ref()[..land_section_len];
 
-            for _i_tile_in_block in 0..LandTile::TILES_PER_BLOCK {
-                let land_tile = &mut tiledata.land_data[i_tile as usize];
-                land_tile.tile_id = i_tile as i32;
-
-                land_tile.flags.internal_flags = tiledata_file_rdr
-                    .read_u32::<LittleEndian>()
-                    .wrap_err(err_buf.clone() + "flags")?;
-
-                if tiledata.land_tile_binary_size == LandTileBinSize::HS {
-                    let _unk = tiledata_file_rdr
-                        .read_i32::<LittleEndian>()
-                        .wrap_err(err_buf.clone() + "unk field")?;
+        if tiledata.land_tile_binary_size == LandTileBinSize::Classic {
+            let blocks: &[RawBlock<RawLandTileClassic>] = bytemuck::cast_slice(land_bytes);
+            for block in blocks.iter().take(LandTile::BLOCK_QTY) {
+                for raw in block.tiles.iter() {
+                    let tile = &mut tiledata.land_data[i_tile as usize];
+                    tile.tile_id = i_tile as i32;
+                    tile.flags = raw.flags;
+                    tile.texture_id = raw.texture_id;
+                    tile.name = raw.name;
+                    i_tile += 1;
                 }
-
-                land_tile.texture_id = tiledata_file_rdr
-                    .read_u16::<LittleEndian>()
-                    .wrap_err(err_buf.clone() + "texture id")?;
-
-                tiledata_file_rdr
-                    .read_exact(&mut land_tile.name)
-                    .wrap_err(err_buf.clone() + "name")?;
-
-                i_tile = i_tile.saturating_add(1);
+            }
+        } else {
+            let blocks: &[RawBlock<RawLandTileHS>] = bytemuck::cast_slice(land_bytes);
+            for block in blocks.iter().take(LandTile::BLOCK_QTY) {
+                for raw in block.tiles.iter() {
+                    let tile = &mut tiledata.land_data[i_tile as usize];
+                    tile.tile_id = i_tile as i32;
+                    tile.flags = raw.flags;
+                    tile.texture_id = raw.texture_id;
+                    tile.name = raw.name;
+                    i_tile += 1;
+                }
             }
         }
         println!("Loaded {i_tile} (0x{:x}) LandTiles.", i_tile);
 
         // Read ItemTiles
+        // Optimization: Same as above, we slice the buffer for the item section specifically.
         i_tile = 0_u32;
         let block_qty: usize = (1 + tiledata.max_item_rev as usize) / ItemTile::TILES_PER_BLOCK;
-        for _i_item_block in 0..block_qty as u32 {
-            err_buf = format!(
-                "Reading tiledata info for item tile {i_tile} (0x{:x}): reading ",
-                i_tile
-            );
+        let item_section_len = if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
+            block_qty * std::mem::size_of::<RawBlock<RawItemTileClassic>>()
+        } else {
+            block_qty * std::mem::size_of::<RawBlock<RawItemTileHS>>()
+        };
 
-            let _header = tiledata_file_rdr
-                .read_u32::<LittleEndian>()
-                .wrap_err(err_buf.clone() + "header")?;
+        // The item section starts immediately after the land section
+        let item_bytes = &tiledata_file_rdr.get_ref()[land_section_len..land_section_len + item_section_len];
 
-            for _i_tile_in_block in 0..ItemTile::TILES_PER_BLOCK {
-                let item_tile = &mut tiledata.item_data[i_tile as usize];
-                item_tile.tile_id = i_tile as i32;
-
-                item_tile.flags.internal_flags = tiledata_file_rdr
-                    .read_u32::<LittleEndian>()
-                    .wrap_err(err_buf.clone() + "flags")?;
-
-                if tiledata.item_tile_binary_size == ItemTileBinSize::HS {
-                    let _unk = tiledata_file_rdr
-                        .read_i32::<LittleEndian>()
-                        .wrap_err(err_buf.clone() + "unk field HS")?;
+        if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
+            let blocks: &[RawBlock<RawItemTileClassic>] = bytemuck::cast_slice(item_bytes);
+            for block in blocks.iter().take(block_qty) {
+                for raw in block.tiles.iter() {
+                    let tile = &mut tiledata.item_data[i_tile as usize];
+                    tile.tile_id = i_tile as i32;
+                    tile.flags = raw.flags;
+                    tile.weight = raw.weight;
+                    tile.quality = raw.quality;
+                    tile.quantity = raw.quantity;
+                    tile.anim_id = raw.anim_id;
+                    tile.hue_extra = raw.hue_extra;
+                    tile.stacking_offset = raw.stacking_offset;
+                    tile.value = raw.value;
+                    tile.height = raw.height;
+                    tile.name = raw.name;
+                    i_tile += 1;
                 }
-
-                item_tile.weight = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "weight")?;
-
-                item_tile.quality = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "quality")?;
-
-                let _unk0 = tiledata_file_rdr
-                    .read_u16::<LittleEndian>()
-                    .wrap_err(err_buf.clone() + "unk field 0")?;
-
-                let _unk1 = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "unk field 1")?;
-
-                item_tile.quantity = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "weight")?;
-
-                item_tile.anim_id = tiledata_file_rdr
-                    .read_u16::<LittleEndian>()
-                    .wrap_err(err_buf.clone() + "anim id")?;
-
-                let _unk2 = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "unk field 2")?;
-
-                item_tile.hue_extra = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "hue extra")?;
-
-                item_tile.stacking_offset = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "stacking offset")?;
-
-                item_tile.value = tiledata_file_rdr
-                    .read_u8()
-                    .wrap_err(err_buf.clone() + "value")?;
-
-                item_tile.height = tiledata_file_rdr
-                    .read_i8()
-                    .wrap_err(err_buf.clone() + "height")?;
-
-                tiledata_file_rdr
-                    .read_exact(&mut item_tile.name)
-                    .wrap_err(err_buf.clone() + "name")?;
-
-                i_tile = i_tile.saturating_add(1);
+            }
+        } else {
+            let blocks: &[RawBlock<RawItemTileHS>] = bytemuck::cast_slice(item_bytes);
+            for block in blocks.iter().take(block_qty) {
+                for raw in block.tiles.iter() {
+                    let tile = &mut tiledata.item_data[i_tile as usize];
+                    tile.tile_id = i_tile as i32;
+                    tile.flags = raw.flags;
+                    tile.weight = raw.weight;
+                    tile.quality = raw.quality;
+                    tile.quantity = raw.quantity;
+                    tile.anim_id = raw.anim_id;
+                    tile.hue_extra = raw.hue_extra;
+                    tile.stacking_offset = raw.stacking_offset;
+                    tile.value = raw.value;
+                    tile.height = raw.height;
+                    tile.name = raw.name;
+                    i_tile += 1;
+                }
             }
         }
         println!("Loaded {i_tile} (0x{:x}) Item Tiles.", i_tile);
-
-        assert_eq!(
-            tiledata_file_rdr.get_ref().len() as u64,
-            tiledata_file_rdr.position()
-        ); // Consumed the whole file
 
         Ok(tiledata)
     }

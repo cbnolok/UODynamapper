@@ -79,15 +79,11 @@ impl IndexFile {
         let file_size = downcast_ceil_usize(file_metadata.len());
 
         let index_element_qty = file_size / IndexElement::PACKED_SIZE as usize;
-        let valid_byte_size = index_element_qty * IndexElement::PACKED_SIZE as usize;
-
-        let mut rdr_buf = vec![0; file_size];
+        let mut file_data: Vec<IndexElement> = vec![IndexElement::default(); index_element_qty];
+        
         file_handle
-            .read_exact(rdr_buf.as_mut())
+            .read_exact(bytemuck::cast_slice_mut(&mut file_data))
             .wrap_err("Read index file")?;
-
-        // Bulk cast only the valid portion of the buffer to IndexElement slice to avoid "slop" panic
-        let file_data: Vec<IndexElement> = bytemuck::cast_slice::<u8, IndexElement>(&rdr_buf[..valid_byte_size]).to_vec();
 
         // Handle endianness if strictly necessary, though UO data is always LE.
         // On LE systems, this is a no-op if optimized.
