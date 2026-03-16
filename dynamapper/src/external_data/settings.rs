@@ -81,10 +81,22 @@ pub struct SectPerformance {
     pub target_fps: u32,
     #[serde(default = "default_adaptive_zoom_render")]
     pub adaptive_zoom_render: bool,
+    #[serde(default = "default_chunk_mesh_reduction_factor")]
+    pub chunk_mesh_reduction_factor: u32,
+    #[serde(default = "default_chunk_visibility_overscan")]
+    pub chunk_visibility_overscan: f32,
 }
 
 fn default_adaptive_zoom_render() -> bool {
     false
+}
+
+fn default_chunk_mesh_reduction_factor() -> u32 {
+    1
+}
+
+fn default_chunk_visibility_overscan() -> f32 {
+    1.6
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -180,6 +192,8 @@ pub fn load_from_files() -> Settings {
                     frame_limit_enabled: true,
                     target_fps: 60,
                     adaptive_zoom_render: false,
+                    chunk_mesh_reduction_factor: 1,
+                    chunk_visibility_overscan: 1.6,
                 },
             }
         }

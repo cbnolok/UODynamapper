@@ -47,6 +47,10 @@ pub struct OptionsDialogState {
     pub overlay_scale: f32,
     /// Enables zoom-based adaptive render simplification.
     pub adaptive_zoom_render: bool,
+    /// Manual terrain mesh reduction factor (1/2/4).
+    pub chunk_mesh_reduction_factor: u32,
+    /// Multiplier for visible-area safety margin (higher = more chunks spawned).
+    pub chunk_visibility_overscan: f32,
 }
 
 impl Default for OptionsDialogState {
@@ -66,6 +70,8 @@ impl Default for OptionsDialogState {
             egui_scale: 1.0,
             overlay_scale: 1.0,
             adaptive_zoom_render: false,
+            chunk_mesh_reduction_factor: 1,
+            chunk_visibility_overscan: 1.6,
         }
     }
 }
@@ -112,6 +118,8 @@ fn sys_sync_settings_to_state(
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
         state.adaptive_zoom_render = settings.app.performance.adaptive_zoom_render;
+        state.chunk_mesh_reduction_factor = settings.app.performance.chunk_mesh_reduction_factor;
+        state.chunk_visibility_overscan = settings.app.performance.chunk_visibility_overscan;
         state.free_camera = settings.app.window.free_camera;
         state.egui_scale = settings.app.window.egui_scale;
         state.overlay_scale = settings.app.window.overlay_scale;
@@ -272,6 +280,28 @@ pub fn sys_render_options_dialog(
                     .weak(),
             );
 
+            ui.horizontal(|ui| {
+                ui.label("Mesh Quality Reduction:");
+                egui::ComboBox::from_id_salt("mesh_quality_reduction")
+                    .selected_text(match state.chunk_mesh_reduction_factor {
+                        2 => "1/2",
+                        4 => "1/4",
+                        _ => "1/1",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 1, "1/1 (full)");
+                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 2, "1/2");
+                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 4, "1/4");
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Chunk Visibility Overscan:");
+                ui.add(egui::Slider::new(
+                    &mut state.chunk_visibility_overscan,
+                    1.0..=2.5,
+                ));
+            });
+
             ui.add_space(4.0);
             ui.checkbox(&mut state.free_camera, "Free Camera Mode");
             ui.label(egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.").small().weak());
@@ -316,6 +346,20 @@ pub fn sys_render_options_dialog(
                 != state.adaptive_zoom_render
             {
                 settings.app.performance.adaptive_zoom_render = state.adaptive_zoom_render;
+            }
+            if settings.as_ref().app.performance.chunk_mesh_reduction_factor
+                != state.chunk_mesh_reduction_factor
+            {
+                settings.app.performance.chunk_mesh_reduction_factor =
+                    state.chunk_mesh_reduction_factor;
+            }
+            if (settings.as_ref().app.performance.chunk_visibility_overscan
+                - state.chunk_visibility_overscan)
+                .abs()
+                > 0.001
+            {
+                settings.app.performance.chunk_visibility_overscan =
+                    state.chunk_visibility_overscan;
             }
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;

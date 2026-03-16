@@ -49,13 +49,11 @@ pub enum LandMeshLod {
     Low,
 }
 
-fn lod_from_zoom(zoom: f32) -> LandMeshLod {
-    if zoom >= 3.75 {
-        LandMeshLod::Low
-    } else if zoom >= 2.0 {
-        LandMeshLod::Medium
-    } else {
-        LandMeshLod::High
+fn lod_from_reduction_factor(reduction: u32) -> LandMeshLod {
+    match reduction {
+        4.. => LandMeshLod::Low,
+        2 => LandMeshLod::Medium,
+        _ => LandMeshLod::High,
     }
 }
 
@@ -73,12 +71,12 @@ use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
 pub fn sys_update_existing_chunk_mesh_lod(
-    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    settings: Res<Settings>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     mut current_lod: ResMut<LandMeshLod>,
     mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
 ) {
-    let next_lod = lod_from_zoom(render_zoom.0);
+    let next_lod = lod_from_reduction_factor(settings.app.performance.chunk_mesh_reduction_factor);
     if *current_lod == next_lod {
         return;
     }

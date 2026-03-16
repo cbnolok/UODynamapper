@@ -111,7 +111,7 @@ fn compute_visible_chunks(
     window_width: f32,
     window_height: f32,
     zoom: f32,
-    adaptive_zoom_render: bool,
+    overscan: f32,
     map_width: u32,
     map_height: u32,
 ) -> std::collections::HashSet<(u32, u32)> {
@@ -119,16 +119,9 @@ fn compute_visible_chunks(
     // fewer screen pixels. So pixel_size_per_tile shrinks as zoom grows.
     let corrected_pixel_size = UO_TILE_PIXEL_SIZE / zoom;
 
-    // Visible tile region (rounded up)
-    // Default is conservative. When adaptive zoom rendering is enabled, shrink the
-    // safety margin as we zoom out to reduce chunk count and draw workload.
-    let margin_factor = if adaptive_zoom_render {
-        // zoom ~1.0 -> ~2.1 (safe), zoom >=3.25 -> ~1.35 (aggressive)
-        let t = ((zoom - 1.0) / (3.25 - 1.0)).clamp(0.0, 1.0);
-        2.1 - (2.1 - 1.35) * t
-    } else {
-        2.5
-    };
+    // Visible tile region (rounded up). Overscan is user-controlled and applied
+    // uniformly to all chunks (no center/distance prioritization).
+    let margin_factor = overscan.clamp(1.0, 2.5);
     let visible_tiles_x = ((window_width / corrected_pixel_size).ceil() * margin_factor) as i32;
     let visible_tiles_y = ((window_height / corrected_pixel_size).ceil() * margin_factor) as i32;
 
@@ -201,7 +194,7 @@ fn sys_update_worldmap_chunks_to_render(
         (player_pos_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
         (player_pos_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
     );
-    let current_window_size = (window.physical_width(), window.physical_height());
+    let current_window_size = (window.width() as u32, window.height() as u32);
     let has_recompute_event = event.read().next().is_some();
     let player_chunk_changed = *last_player_chunk != Some(current_player_chunk);
     let zoom_changed = (zoom - *last_zoom).abs() > 0.02;
@@ -224,10 +217,10 @@ fn sys_update_worldmap_chunks_to_render(
     // Compute correct visible chunk set
     let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
         player_pos_translation,
-        window.physical_width() as f32,
-        window.physical_height() as f32,
+        window.width(),
+        window.height(),
         zoom,
-        settings.app.performance.adaptive_zoom_render,
+        settings.app.performance.chunk_visibility_overscan,
         new_map_plane_metadata.width,
         new_map_plane_metadata.height,
     );
