@@ -45,6 +45,8 @@ pub struct OptionsDialogState {
     pub egui_scale: f32,
     /// Overlay scale factor.
     pub overlay_scale: f32,
+    /// Enables zoom-based adaptive render simplification.
+    pub adaptive_zoom_render: bool,
 }
 
 impl Default for OptionsDialogState {
@@ -63,6 +65,7 @@ impl Default for OptionsDialogState {
             free_camera: false,
             egui_scale: 1.0,
             overlay_scale: 1.0,
+            adaptive_zoom_render: false,
         }
     }
 }
@@ -108,6 +111,7 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
+        state.adaptive_zoom_render = settings.app.performance.adaptive_zoom_render;
         state.free_camera = settings.app.window.free_camera;
         state.egui_scale = settings.app.window.egui_scale;
         state.overlay_scale = settings.app.window.overlay_scale;
@@ -258,6 +262,15 @@ pub fn sys_render_options_dialog(
             // ---- Visibility/Graphics ----
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
+            ui.checkbox(
+                &mut state.adaptive_zoom_render,
+                "Adaptive zoom-out render simplification",
+            );
+            ui.label(
+                egui::RichText::new("When zoomed out heavily, uses checkerboard-style cheap shading on part of the pixels.")
+                    .small()
+                    .weak(),
+            );
 
             ui.add_space(4.0);
             ui.checkbox(&mut state.free_camera, "Free Camera Mode");
@@ -298,6 +311,11 @@ pub fn sys_render_options_dialog(
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
             if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
+            }
+            if settings.as_ref().app.performance.adaptive_zoom_render
+                != state.adaptive_zoom_render
+            {
+                settings.app.performance.adaptive_zoom_render = state.adaptive_zoom_render;
             }
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;

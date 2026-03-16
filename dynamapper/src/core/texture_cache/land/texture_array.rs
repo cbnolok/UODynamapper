@@ -32,8 +32,8 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 //     Big:   2048 layers × 128×128/2 B =   16 MB
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
-// offline or on-the-fly on the CPU — they cannot be written to a BC format texture at run-
-// time without first compressing the data. We use `intel_tex_2` for fast CPU-side BC7 encoding.
+// offline or on-the-fly. We previously used `intel_tex_2` (CPU-side), but now use 
+// `block_compression` (GPU compute) for better performance and smaller binary size.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 pub const TEXARRAY_SMALL_MAX_TILE_LAYERS: u32 = 2_048;
 pub const TEXARRAY_BIG_MAX_TILE_LAYERS: u32 = 2_048;
@@ -183,26 +183,7 @@ pub fn get_texmap_raw_data(
 // 3. Optional BC7 Compression
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Compress a slice of raw `Rgba8UnormSrgb` pixels into BC7 block-compressed data.
-///
-/// Output size = `bytes_per_layer(tex_size, true)`.
-/// This is a CPU-only operation using Intel's ISPC Texture Compressor via `intel_tex_2`.
-/// Typical timing: <1ms for a 64×64 tile, ~2ms for 128×128. Billed once per unique texture
-/// (the result is stored in `TextureArrayUpload.bytes` and sent to the render world).
-pub fn compress_rgba8_to_bc7(rgba8_data: &[u8], tex_size: LandTextureSize) -> Vec<u8> {
-    use intel_tex_2::{bc7, RgbaSurface};
-
-    let (width, height) = tex_size.dimensions();
-
-    // intel_tex_2 expects a `RgbaSurface` descriptor.
-    let surface = RgbaSurface {
-        width,
-        height,
-        stride: width * 4, // 4 bytes per pixel (RGBA8)
-        data: rgba8_data,
-    };
-
-    // `alpha_basic_settings` gives near-lossless quality while handling the alpha channel
-    // in the A8R8G8B8 terrain textures. `opaque_basic_settings` would ignore alpha entirely.
-    bc7::compress_blocks(&bc7::alpha_basic_settings(), &surface)
+/// Returns raw RGBA8 data. BC7 compression is now handled by the renderer via GPU compute.
+pub fn compress_rgba8_to_bc7(rgba8_data: &[u8], _tex_size: LandTextureSize) -> Vec<u8> {
+    rgba8_data.to_vec()
 }

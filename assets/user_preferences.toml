@@ -16,3 +16,4 @@ map_render_wireframe = false
 show_overlay = true
 frame_limit_enabled = true
 target_fps = 60
+adaptive_zoom_render = false

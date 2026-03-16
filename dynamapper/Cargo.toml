@@ -38,8 +38,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 dashmap = { version = "6", default-features = false }
 #parking_lot = "0.12"
 #smallvec = "1"
-# BC7 texture compression for GPU VRAM reduction (lossy, enables via settings).
-intel_tex_2 = { version = "0.5", default-features = false }
+# BC7 texture compression for GPU VRAM reduction (GPU compute).
+block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
 # System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
 # fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).

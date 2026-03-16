@@ -78,6 +78,9 @@ pub struct SceneUniform {
     pub time_seconds: f32,
     pub light_direction: Vec3,
     pub global_lighting: f32,
+    pub render_zoom: f32,
+    pub adaptive_zoom_simplification: f32,
+    pub _pad0: Vec2,
 }
 
 #[repr(C, align(16))]

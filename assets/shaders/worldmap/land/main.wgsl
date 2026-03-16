@@ -43,6 +43,11 @@ struct SceneUniform {
   light_direction: vec3<f32>, // expected normalized by CPU
   // global scene light scaler (pre-tonemap). Default 1.0 from CPU/UI.
   global_lighting: f32,
+  // Camera orthographic scale factor.
+  render_zoom: f32,
+  // 0..1 simplification amount used for zoomed-out checkerboard shading.
+  adaptive_zoom_simplification: f32,
+  _pad0: vec2<f32>,
 };
 
 struct LandEffectsUniform {
@@ -64,17 +69,17 @@ struct LandEffectsUniform {
   _pad_graphics:           f32,
 
   // intensities (grouped to match std140-ish packing)
-  ambient_strength:  f32, 
-  diffuse_strength:  f32, 
-  specular_strength: f32, 
-  rim_strength:      f32, 
+  ambient_strength:  f32,
+  diffuse_strength:  f32,
+  specular_strength: f32,
+  rim_strength:      f32,
 
-  fill_strength:     f32, 
-  sharpness_factor:  f32, 
-  sharpness_mix:     f32, 
-  blur_strength:     f32, 
+  fill_strength:     f32,
+  sharpness_factor:  f32,
+  sharpness_mix:     f32,
+  blur_strength:     f32,
 
-  blur_radius:       f32, 
+  blur_radius:       f32,
   _pad_c1:           f32,
   _pad_c2:           f32,
   _pad_c3:           f32,
@@ -144,7 +149,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
     layer = ATLAS.page_to_layer[arr_idx][comp];
   }
 
-  if (layer >= ATLAS.max_layers) { 
+  if (layer >= ATLAS.max_layers) {
     return TileUniform(0.0, 0u, 0u, 0u);
   }
 
@@ -154,11 +159,11 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   let g = packed.y;
 
   let layer_idx = r; // contains only texture layer index (16 bit)
-  
+
   let height_biased = g & 0xFFu;
   let z_i32 = i32(height_biased) - 128;
   let tile_height = f32(z_i32) * 0.1;
-  
+
   let tex_size = (g >> 8u) & 1u;
 
   return TileUniform(tile_height, tex_size, layer_idx, 0u);
@@ -468,7 +473,7 @@ fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
-  
+
   if (tile.texture_size == 1u) {
     if (use_linear) {
       return textureSample(tex_big, tex_small_sampler, uv, layer).rgb;
@@ -494,10 +499,10 @@ fn sample_tile_bicubic(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let f_uv = uv * dims - 0.5;
   let i_uv = floor(f_uv);
   let f = fract(f_uv);
-  
+
   var result = vec3<f32>(0.0);
   var total_weight = 0.0;
-  
+
   for (var j: i32 = -1; j <= 2; j++) {
     let v_weight = cubic_weight(f.y, f32(j));
     for (var i: i32 = -1; i <= 2; i++) {
@@ -527,27 +532,27 @@ fn sample_tile_fsr(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let pos = uv * dims;
   let i_pos = vec2<i32>(floor(pos));
   let f = fract(pos);
-  
+
   // 4 main taps
   let c00 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 0), tile);
   let c10 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 0), tile);
   let c01 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 1), tile);
   let c11 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 1), tile);
-  
+
   // Calculate luma-based gradients
   let l00 = luminance(c00);
   let l10 = luminance(c10);
   let l01 = luminance(c01);
   let l11 = luminance(c11);
-  
+
   // Horizontal/Vertical differences
   let gx = abs(l10 - l00) + abs(l11 - l01);
   let gy = abs(l01 - l00) + abs(l11 - l10);
-  
+
   // Edge-aware weighting
   let wx = 1.0 / (1.0 + gx * 4.0);
   let wy = 1.0 / (1.0 + gy * 4.0);
-  
+
   // Bilinear blend biased by edges
   let res = mix(mix(c00, c10, f.x * wx), mix(c01, c11, f.x * wx), f.y * wy);
   return res / (mix(mix(1.0, wx, f.x), mix(1.0, wx, f.x), f.y) * wy); // approximate normalization
@@ -569,8 +574,8 @@ fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
     if (mode == 1u) {
         return sample_tile_bicubic(uv, tile);
     } else if (mode == 2u) {
-        // We do FSR reconstruction by applying bicubic then sharpening, 
-        // OR using a dedicated edge-aware sampler. 
+        // We do FSR reconstruction by applying bicubic then sharpening,
+        // OR using a dedicated edge-aware sampler.
         // For now, let's use the edge-adaptive one.
         // IMPORTANT TODO !!!!! this is just a false AMD FSR! Implement the real one!
         return sample_tile_fsr(uv, tile);
@@ -582,16 +587,16 @@ fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 // Simple sharpening filter (Unsharp Masking style)
 fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32) -> vec3<f32> {
   if (amount <= 0.0) { return color; }
-  
+
   // Approximate a 1-pixel offset in UV space
   let fw = fwidth(uv);
   let off = max(fw.x, fw.y);
-  
+
   let s1 = sample_tile_albedo(uv + vec2<f32>(off, 0.0), tile);
   let s2 = sample_tile_albedo(uv - vec2<f32>(off, 0.0), tile);
   let s3 = sample_tile_albedo(uv + vec2<f32>(0.0, off), tile);
   let s4 = sample_tile_albedo(uv - vec2<f32>(0.0, off), tile);
-  
+
   let neighbor_avg = (s1 + s2 + s3 + s4) * 0.25;
   return color + (color - neighbor_avg) * amount;
 }
@@ -601,7 +606,7 @@ fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: 
 fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
-  
+
   if (tile.texture_size == 1u) {
     if (use_linear) {
       return textureSampleGrad(tex_big,   tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
@@ -927,6 +932,28 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
   }
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
+
+  // Zoom-adaptive cheap path:
+  // - low simplification: skip expensive lighting on half pixels (checkerboard)
+  // - high simplification: keep expensive lighting only on 1/4 pixels (2x2 pattern)
+  // Skipped pixels still output an approximated lit albedo so the frame stays fully covered.
+  let adaptive = clamp(scene.adaptive_zoom_simplification, 0.0, 1.0);
+  if (adaptive > 0.001) {
+    let px = i32(in.position.x);
+    let py = i32(in.position.y);
+    var skip_expensive = false;
+
+    if (adaptive < 0.5) {
+      skip_expensive = ((px + py) & 1) != 0;
+    } else {
+      skip_expensive = ((px & 1) != 0) || ((py & 1) != 0);
+    }
+
+    if (skip_expensive) {
+      let cheap_light = clamp(0.35 + ambient_strength * 0.65, 0.0, 1.0);
+      return vec4<f32>(base_albedo * cheap_light, base_alpha);
+    }
+  }
 
   // Normals: we already computed in vertex and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.

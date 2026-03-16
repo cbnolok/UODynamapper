@@ -33,40 +33,71 @@ pub fn sys_update_shared_land_material(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     time: Res<Time>,
+    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    settings: Res<Settings>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::external_data::shader_presets::UniformState>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_time: Local<f32>,
     mut last_global_lighting: Local<f32>,
+    mut last_render_zoom: Local<f32>,
+    mut last_adaptive_simplification: Local<f32>,
 ) {
-    if let Some(shared_mat) = shared_mat {
-        // We only use get_mut if we actually intend to change something.
-        // Even for time, we check if it changed.
-        let current_time = time.elapsed().as_secs_f32();
-        let current_global_lighting = uniform_state.global_lighting;
-        
-        // AtlasParams update check
-        let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
-        let time_changed = (current_time - *last_time).abs() > 0.0001;
-        let lighting_changed = (current_global_lighting - *last_global_lighting).abs() > 0.0001;
+    let Some(shared_mat) = shared_mat else { return; };
 
-        if atlas_changed || time_changed || lighting_changed {
-            if let Some(mat) = materials.get_mut(&shared_mat.0) {
-                if time_changed {
-                    mat.extension.scene_uniform.time_seconds = current_time;
-                    *last_time = current_time;
-                }
-                if lighting_changed {
-                    mat.extension.scene_uniform.global_lighting = current_global_lighting;
-                    *last_global_lighting = current_global_lighting;
-                }
-                if atlas_changed {
-                    mat.extension.atlas_params = tile_atlas.params;
-                    *last_atlas_params = Some(tile_atlas.params);
-                }
-                
-                // Note: effects_uniform and lighting_uniform are handled by TerrainUiPlugin::push_uniforms_if_dirty
-                // which monitors the UniformState resource and its 'dirty' flag.
+    // 1. Calculate dynamic threshold based on "medium FPS" + 10%.
+    // We use the frame time (delta) rather than FPS directly for cleaner math.
+    let avg_fps = diagnostics
+        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|d| d.average())
+        .unwrap_or(60.0);
+
+    // Threshold = (1.0 / FPS) * 1.1.
+    // This allows the material to "skip" frames if the CPU/GPU is struggling,
+    // reducing re-extraction overhead precisely when it's most needed.
+    let update_threshold = ((1.0 / avg_fps) * 1.1) as f32;
+
+    let current_time = time.elapsed().as_secs_f32();
+    let current_global_lighting = uniform_state.global_lighting;
+    let current_render_zoom = render_zoom.0;
+    let current_adaptive_simplification = if settings.app.performance.adaptive_zoom_render {
+        ((current_render_zoom - 1.8) / (5.0 - 1.8)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    // 2. Strict value checks
+    let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
+    let time_expired = (current_time - *last_time) >= update_threshold;
+    let lighting_meaningfully_changed = (current_global_lighting - *last_global_lighting).abs() > 0.005;
+    let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.001;
+    let adaptive_changed = (current_adaptive_simplification - *last_adaptive_simplification).abs() > 0.001;
+
+    // 3. ONLY get_mut if we have a reason to change something.
+    // This is the CRITICAL fix for the 50% GPU idle.
+    if atlas_changed || time_expired || lighting_meaningfully_changed || zoom_changed || adaptive_changed {
+        if let Some(mat) = materials.get_mut(&shared_mat.0) {
+            if time_expired {
+                mat.extension.scene_uniform.time_seconds = current_time;
+                *last_time = current_time;
+            }
+            if lighting_meaningfully_changed {
+                mat.extension.scene_uniform.global_lighting = current_global_lighting;
+                *last_global_lighting = current_global_lighting;
+            }
+            if zoom_changed {
+                mat.extension.scene_uniform.render_zoom = current_render_zoom;
+                *last_render_zoom = current_render_zoom;
+            }
+            if adaptive_changed {
+                mat.extension.scene_uniform.adaptive_zoom_simplification =
+                    current_adaptive_simplification;
+                *last_adaptive_simplification = current_adaptive_simplification;
+            }
+            if atlas_changed {
+                mat.extension.atlas_params = tile_atlas.params;
+                *last_atlas_params = Some(tile_atlas.params);
             }
         }
     }
@@ -88,14 +119,13 @@ impl Plugin for DrawLandChunkMeshPlugin {
                 ),
             )
             .add_systems(First, tile_atlas::sys_clear_atlas_uploads)
-            .add_systems(Startup, setup_base_mesh::setup_land_mesh)
-            // Run after Bevy's built-in compute_bounds system to guarantee our manual
-            // AABB is never overwritten by automatic computation from the flat mesh vertices.
-            .add_systems(
-                PostUpdate,
-                draw_mesh::sys_enforce_land_chunk_aabb
-                    .run_if(in_state(crate::core::AppState::InGame)),
-            );
+            .add_systems(Startup, setup_base_mesh::setup_land_mesh);
+            // Redundant AABB enforcement removed to save CPU/GPU cycles.
+            // .add_systems(
+            //     PostUpdate,
+            //     draw_mesh::sys_enforce_land_chunk_aabb
+            //         .run_if(in_state(crate::core::AppState::InGame)),
+            // );
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
         render_app.init_resource::<tile_atlas::RenderAtlasUploads>();

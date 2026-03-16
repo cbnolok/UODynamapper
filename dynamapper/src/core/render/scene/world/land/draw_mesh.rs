@@ -393,24 +393,4 @@ fn draw_land_chunk(
     }
 }
 
-/// Enforces the correct manual AABB every frame for all LCMesh entities.
-///
-/// While `NoAutoAabb` is set at spawn-time, Bevy's internal visibility systems can be
-/// complex. Explicitly reinforcing the AABB every frame in `PostUpdate` ensures that
-/// our tailored bounds are NEVER lost, even during complex map transitions or
-/// asset reloads, guaranteeing artifact-free frustum culling.
-pub fn sys_enforce_land_chunk_aabb(
-    mut commands: Commands,
-    chunk_q: Query<Entity, (With<LCMesh>, With<Mesh3d>)>,
-) {
-    let chunk_aabb = Aabb::from_min_max(
-        Vec3::new(-1.0, -20.0, -1.0),
-        Vec3::new(9.0,  20.0, 9.0),
-    );
-    for entity in chunk_q.iter() {
-        if let Ok(mut ec) = commands.get_entity(entity) {
-            ec.insert((chunk_aabb, NoAutoAabb));
-        }
-    }
-}
 

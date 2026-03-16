@@ -45,7 +45,7 @@ pub struct SectApp {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectUoFiles {
-    pub folder: String, 
+    pub folder: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -79,6 +79,12 @@ pub struct SectPerformance {
     pub show_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
+    #[serde(default = "default_adaptive_zoom_render")]
+    pub adaptive_zoom_render: bool,
+}
+
+fn default_adaptive_zoom_render() -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,13 +126,13 @@ const KEYBINDINGS_CONFIG_FILE: &str = "keybindings.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
-    
+
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let user_path = assets_path.join(USER_CONFIG_FILE);
 
     let core_contents = std::fs::read_to_string(&core_path)
         .expect("Failed to read core_settings.toml");
-    
+
     // Core settings file contains top-level core and logging sections
     #[derive(Deserialize)]
     struct CoreWrapper {
@@ -160,7 +166,7 @@ pub fn load_from_files() -> Settings {
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
         .unwrap_or_else(|_| "".to_string());
-    
+
     let user_app: SectApp = match toml::from_str(&user_contents) {
         Ok(s) => s,
         Err(_e) => {
@@ -169,10 +175,11 @@ pub fn load_from_files() -> Settings {
                 input: SectInput { movement_speed_multiplier: 1.0 },
                 window: SectWindow { width: 1024.0, height: 768.0, zoom: 1.0, egui_scale: 1.0, overlay_scale: 1.0, free_camera: false },
                 debug: SectDebug { map_render_wireframe: false },
-                performance: SectPerformance { 
+                performance: SectPerformance {
                     show_overlay: true,
                     frame_limit_enabled: true,
                     target_fps: 60,
+                    adaptive_zoom_render: false,
                 },
             }
         }
@@ -182,7 +189,7 @@ pub fn load_from_files() -> Settings {
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
     let kb_contents = std::fs::read_to_string(&kb_path)
         .unwrap_or_else(|_| "".to_string());
-    
+
     let keybindings: SectKeybindings = match toml::from_str(&kb_contents) {
         Ok(s) => s,
         Err(_) => {
@@ -263,7 +270,7 @@ impl Plugin for SettingsPlugin {
 
 fn sys_startup_load_file(mut commands: Commands) {
     let data = load_from_files();
-    
+
     // Initialize logger settings
     let mut filters = Vec::new();
     for f in &data.logging.filters {
