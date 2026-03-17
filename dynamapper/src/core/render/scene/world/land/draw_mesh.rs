@@ -226,6 +226,9 @@ pub fn sys_draw_spawned_land_chunks(
         (-1,  1), (0,  1), (1,  1),
     ];
 
+    let max_chunk_x = (map_plane_metadata.width / TILE_NUM_PER_CHUNK_DIM) as i32;
+    let max_chunk_y = (map_plane_metadata.height / TILE_NUM_PER_CHUNK_DIM) as i32;
+
     // Iterate through the primary chunks. Add them to the target list,
     // then add any neighbors that are not already primary chunks themselves.
     for (&(gx, gy), &entity) in primary_chunks.iter() {
@@ -243,11 +246,11 @@ pub fn sys_draw_spawned_land_chunks(
             let nx = gx as i32 + dx;
             let ny = gy as i32 + dy;
 
-            // Ensure the neighbor is within map boundaries.
+            // Ensure the neighbor is within map boundaries (CHUNK units).
             if nx >= 0
-                && nx < map_plane_metadata.width as i32
+                && nx < max_chunk_x
                 && ny >= 0
-                && ny < map_plane_metadata.height as i32
+                && ny < max_chunk_y
             {
                 let neighbor_coords = (nx as u32, ny as u32);
 
@@ -296,9 +299,18 @@ pub fn sys_draw_spawned_land_chunks(
             );
         }
         for block_coords in blocks_to_draw {
-            let block_ref = uo_data_map_plane
-                .block(block_coords)
-                .expect("Requested map block is uncached?");
+            let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
+                console_logger::one(
+                    None,
+                    LogSev::Warn,
+                    LogAbout::RenderWorldLand,
+                    &format!(
+                        "Skipping missing map block x={}, y={} (map={}).",
+                        block_coords.x, block_coords.y, current_map_id
+                    ),
+                );
+                continue;
+            };
             let unique = blocks_data
                 .insert(block_coords, block_ref.clone())
                 .is_none();

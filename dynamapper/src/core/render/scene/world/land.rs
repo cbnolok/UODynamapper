@@ -34,7 +34,6 @@ pub fn sys_update_shared_land_material(
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     time: Res<Time>,
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
-    settings: Res<Settings>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::external_data::shader_presets::UniformState>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
@@ -42,7 +41,6 @@ pub fn sys_update_shared_land_material(
     mut last_time: Local<f32>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
-    mut last_adaptive_simplification: Local<f32>,
 ) {
     let Some(shared_mat) = shared_mat else { return; };
 
@@ -61,22 +59,16 @@ pub fn sys_update_shared_land_material(
     let current_time = time.elapsed().as_secs_f32();
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
-    let current_adaptive_simplification = if settings.app.performance.adaptive_zoom_render {
-        ((current_render_zoom - 1.25) / (3.25 - 1.25)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
 
     // 2. Strict value checks
     let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
     let time_expired = (current_time - *last_time) >= update_threshold;
     let lighting_meaningfully_changed = (current_global_lighting - *last_global_lighting).abs() > 0.005;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.001;
-    let adaptive_changed = (current_adaptive_simplification - *last_adaptive_simplification).abs() > 0.001;
 
     // 3. ONLY get_mut if we have a reason to change something.
     // This is the CRITICAL fix for the 50% GPU idle.
-    if atlas_changed || time_expired || lighting_meaningfully_changed || zoom_changed || adaptive_changed {
+    if atlas_changed || time_expired || lighting_meaningfully_changed || zoom_changed {
         if let Some(mat) = materials.get_mut(&shared_mat.0) {
             if time_expired {
                 mat.extension.scene_uniform.time_seconds = current_time;
@@ -89,11 +81,6 @@ pub fn sys_update_shared_land_material(
             if zoom_changed {
                 mat.extension.scene_uniform.render_zoom = current_render_zoom;
                 *last_render_zoom = current_render_zoom;
-            }
-            if adaptive_changed {
-                mat.extension.scene_uniform.adaptive_zoom_simplification =
-                    current_adaptive_simplification;
-                *last_adaptive_simplification = current_adaptive_simplification;
             }
             if atlas_changed {
                 mat.extension.atlas_params = tile_atlas.params;

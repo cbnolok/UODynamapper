@@ -104,10 +104,15 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     );
 }
 
-/// Calculates the set of visible chunk coordinates around the player,
-/// sized so that the window is covered, even after padding, based on window size and zoom.
+/// Calculates the visible chunk set from the camera projection and transform.
+///
+/// We project the viewport corners onto the ground plane (Y=0), derive an XZ AABB,
+/// then convert that area to chunk coordinates. This is much more accurate than
+/// player-centered width/height estimates at high zoom-out.
 fn compute_visible_chunks(
-    player_pos: Vec3,
+    camera_transform: &Transform,
+    projection: &Projection,
+    player_pos_fallback: Vec3,
     window_width: f32,
     window_height: f32,
     zoom: f32,
@@ -115,36 +120,88 @@ fn compute_visible_chunks(
     map_width: u32,
     map_height: u32,
 ) -> std::collections::HashSet<(u32, u32)> {
+    let chunk_size = TILE_NUM_PER_CHUNK_DIM;
+    let map_chunks_x = (map_width / chunk_size) as i32;
+    let map_chunks_y = (map_height / chunk_size) as i32;
+
+    let margin_factor = overscan.clamp(1.0, 2.5);
+
+    // Preferred path: camera/projection-based footprint on ground plane.
+    if let Projection::Orthographic(ortho) = projection {
+        if let bevy::camera::ScalingMode::Fixed { width, height } = ortho.scaling_mode {
+            let half_w = width * ortho.scale * 0.5 * margin_factor;
+            let half_h = height * ortho.scale * 0.5 * margin_factor;
+
+            let cam_pos = camera_transform.translation;
+            let cam_right = camera_transform.rotation * Vec3::X;
+            let cam_up = camera_transform.rotation * Vec3::Y;
+            let cam_forward = camera_transform.rotation * -Vec3::Z;
+
+            // Avoid division by very small numbers if camera becomes near-parallel to ground.
+            if cam_forward.y.abs() > 1e-5 {
+                let corners = [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+
+                let mut min_x = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut min_z = f32::INFINITY;
+                let mut max_z = f32::NEG_INFINITY;
+
+                for (sx, sy) in corners {
+                    let ray_origin = cam_pos + cam_right * (sx * half_w) + cam_up * (sy * half_h);
+                    let t = (0.0 - ray_origin.y) / cam_forward.y;
+                    let hit = ray_origin + cam_forward * t;
+
+                    min_x = min_x.min(hit.x);
+                    max_x = max_x.max(hit.x);
+                    min_z = min_z.min(hit.z);
+                    max_z = max_z.max(hit.z);
+                }
+
+                // Conservative 1-tile safety pad avoids precision-edge misses
+                // at extreme zoom/window sizes.
+                let edge_pad_tiles = 1.0_f32;
+                let tile_x0 = (min_x - edge_pad_tiles).floor() as i32;
+                let tile_x1 = (max_x + edge_pad_tiles).ceil() as i32;
+                let tile_y0 = (min_z - edge_pad_tiles).floor() as i32;
+                let tile_y1 = (max_z + edge_pad_tiles).ceil() as i32;
+
+                let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
+                let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
+                let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);
+                let chunk_y1 = ((tile_y1 as f32) / chunk_size as f32).ceil() as i32;
+
+                let mut set = std::collections::HashSet::new();
+                for gx in chunk_x0..=chunk_x1.min(map_chunks_x - 1) {
+                    for gy in chunk_y0..=chunk_y1.min(map_chunks_y - 1) {
+                        set.insert((gx as u32, gy as u32));
+                    }
+                }
+                return set;
+            }
+        }
+    }
+
+    // Fallback path (should be rare): player-centered approximation.
     // In orthographic projection, higher scale = zoomed out = each world unit takes
     // fewer screen pixels. So pixel_size_per_tile shrinks as zoom grows.
     let corrected_pixel_size = UO_TILE_PIXEL_SIZE / zoom;
+    let half_visible_tiles_x = (((window_width / corrected_pixel_size).ceil() * margin_factor) * 0.5) as i32;
+    let half_visible_tiles_y = (((window_height / corrected_pixel_size).ceil() * margin_factor) * 0.5) as i32;
 
-    // Visible tile region (rounded up). Overscan is user-controlled and applied
-    // uniformly to all chunks (no center/distance prioritization).
-    let margin_factor = overscan.clamp(1.0, 2.5);
-    let visible_tiles_x = ((window_width / corrected_pixel_size).ceil() * margin_factor) as i32;
-    let visible_tiles_y = ((window_height / corrected_pixel_size).ceil() * margin_factor) as i32;
+    let player_tile_x = player_pos_fallback.x as i32;
+    let player_tile_y = player_pos_fallback.z as i32;
 
-    // Convert player's position to TILE coordinates
-    let player_tile_x = player_pos.x as i32;
-    let player_tile_y = player_pos.z as i32;
-
-    // Compute chunk region symmetrically around the player
-    let tile_x0 = player_tile_x - visible_tiles_x;
-    let tile_x1 = player_tile_x + visible_tiles_x;
-    let tile_y0 = player_tile_y - visible_tiles_y;
-    let tile_y1 = player_tile_y + visible_tiles_y;
+    let tile_x0 = player_tile_x - half_visible_tiles_x;
+    let tile_x1 = player_tile_x + half_visible_tiles_x;
+    let tile_y0 = player_tile_y - half_visible_tiles_y;
+    let tile_y1 = player_tile_y + half_visible_tiles_y;
 
     // Now convert these to chunk indices (and always round DOWN for min, UP for max)
     // so that *any partially overlapping chunk is included*.
-    let chunk_size = TILE_NUM_PER_CHUNK_DIM;
     let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
     let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
     let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);
     let chunk_y1 = ((tile_y1 as f32) / chunk_size as f32).ceil() as i32;
-
-    let map_chunks_x = (map_width / chunk_size) as i32;
-    let map_chunks_y = (map_height / chunk_size) as i32;
 
     let mut set = std::collections::HashSet::new();
     for gx in chunk_x0..=chunk_x1.min(map_chunks_x - 1) {
@@ -163,11 +220,13 @@ fn sys_update_worldmap_chunks_to_render(
     settings: Res<Settings>,
     mut scene_state_data_res: ResMut<SceneStateData>,
     windows_q: Query<&Window>,
+    camera_q: Query<(&Transform, &Projection), With<camera::PlayerCamera>>,
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh)>,
-    mut last_player_chunk: Local<Option<(i32, i32)>>,
+    mut last_camera_chunk: Local<Option<(i32, i32)>>,
     mut last_zoom: Local<f32>,
     mut last_window_size: Local<Option<(u32, u32)>>,
+    mut pending_resize_recomputes: Local<u8>,
 ) {
     let (mut player_instance, player_transform) =
         player_q.single_mut().expect("More than 1 players?");
@@ -188,25 +247,41 @@ fn sys_update_worldmap_chunks_to_render(
     player_instance.prev_rendered_pos = Some(player_pos);
 
     let window: &Window = windows_q.single().unwrap();
+    let (camera_transform, camera_projection) = camera_q.single().unwrap();
     let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
 
-    let current_player_chunk = (
-        (player_pos_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-        (player_pos_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+    let current_camera_chunk = (
+        (camera_transform.translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        (camera_transform.translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
     );
     let current_window_size = (window.width() as u32, window.height() as u32);
     let has_recompute_event = event.read().next().is_some();
-    let player_chunk_changed = *last_player_chunk != Some(current_player_chunk);
+    let camera_chunk_changed = *last_camera_chunk != Some(current_camera_chunk);
     let zoom_changed = (zoom - *last_zoom).abs() > 0.02;
     let window_changed = *last_window_size != Some(current_window_size);
+    if window_changed {
+        // Camera projection update may land in a different frame/order.
+        // Recompute a couple of frames to avoid stale-projection holes.
+        *pending_resize_recomputes = 2;
+    }
+    let has_pending_resize_recompute = *pending_resize_recomputes > 0;
 
-    if !has_recompute_event && !map_switch && !player_chunk_changed && !zoom_changed && !window_changed {
+    if !has_recompute_event
+        && !map_switch
+        && !camera_chunk_changed
+        && !zoom_changed
+        && !window_changed
+        && !has_pending_resize_recompute
+    {
         return;
     }
 
-    *last_player_chunk = Some(current_player_chunk);
+    *last_camera_chunk = Some(current_camera_chunk);
     *last_zoom = zoom;
     *last_window_size = Some(current_window_size);
+    if *pending_resize_recomputes > 0 {
+        *pending_resize_recomputes -= 1;
+    }
 
     //let current_map_id = scene_state_data_res.map_id;
     let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
@@ -216,6 +291,8 @@ fn sys_update_worldmap_chunks_to_render(
 
     // Compute correct visible chunk set
     let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
+        camera_transform,
+        camera_projection,
         player_pos_translation,
         window.width(),
         window.height(),
@@ -223,6 +300,12 @@ fn sys_update_worldmap_chunks_to_render(
         settings.app.performance.chunk_visibility_overscan,
         new_map_plane_metadata.width,
         new_map_plane_metadata.height,
+    );
+    console_logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::RenderWorldLand,
+        &format!("Visible chunk target: {}", required_chunks.len()),
     );
 
     // If map plane changes, brute-force despawn all and respawn

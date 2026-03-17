@@ -21,7 +21,7 @@ pub struct Settings {
     pub keybindings: SectKeybindings,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct SectKeybindings {
     pub shader_settings: KeyCode,
     pub user_settings: KeyCode,
@@ -79,16 +79,10 @@ pub struct SectPerformance {
     pub show_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
-    #[serde(default = "default_adaptive_zoom_render")]
-    pub adaptive_zoom_render: bool,
     #[serde(default = "default_chunk_mesh_reduction_factor")]
     pub chunk_mesh_reduction_factor: u32,
     #[serde(default = "default_chunk_visibility_overscan")]
     pub chunk_visibility_overscan: f32,
-}
-
-fn default_adaptive_zoom_render() -> bool {
-    false
 }
 
 fn default_chunk_mesh_reduction_factor() -> u32 {
@@ -191,7 +185,6 @@ pub fn load_from_files() -> Settings {
                     show_overlay: true,
                     frame_limit_enabled: true,
                     target_fps: 60,
-                    adaptive_zoom_render: false,
                     chunk_mesh_reduction_factor: 1,
                     chunk_visibility_overscan: 1.6,
                 },
@@ -223,12 +216,10 @@ pub fn load_from_files() -> Settings {
     }
 }
 
-pub fn save_user_preferences(settings: &Settings) {
+pub fn save_app_settings(settings: &Settings) {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
     let user_path = assets_path.join(USER_CONFIG_FILE);
-    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
 
-    // Save user preferences
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
@@ -241,8 +232,12 @@ pub fn save_user_preferences(settings: &Settings) {
             paris::error!("Failed to serialize user preferences: {}", e);
         }
     }
+}
 
-    // Save keybindings
+pub fn save_keybindings(settings: &Settings) {
+    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
+
     match toml::to_string_pretty(&settings.keybindings) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&kb_path, toml_str) {
@@ -433,6 +428,7 @@ fn sys_debounced_save(
     time: Res<Time>,
     settings: Res<Settings>,
     mut save_timer: ResMut<SettingsSaveTimer>,
+    mut last_saved_keybindings: Local<Option<SectKeybindings>>,
 ) {
     if settings.is_changed() && !settings.is_added() {
         // Reset timer whenever a change occurs
@@ -443,7 +439,17 @@ fn sys_debounced_save(
     if !save_timer.0.is_paused() {
         save_timer.0.tick(time.delta());
         if save_timer.0.just_finished() {
-            save_user_preferences(&settings);
+            save_app_settings(&settings);
+
+            // Only save keybindings when they have actually changed
+            let kb_changed = last_saved_keybindings
+                .as_ref()
+                .map_or(true, |last| last != &settings.keybindings);
+            if kb_changed {
+                save_keybindings(&settings);
+                *last_saved_keybindings = Some(settings.keybindings.clone());
+            }
+
             save_timer.0.pause();
         }
     }

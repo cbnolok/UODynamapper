@@ -1,8 +1,4 @@
 // Options dialog (egui window)
-//
-// Currently contains:
-//   - Frame Limiter: checkbox to enable/disable + combobox to pick target FPS.
-//     Writes to `bevy_framepace::FramepaceSettings` directly.
 
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
@@ -45,8 +41,6 @@ pub struct OptionsDialogState {
     pub egui_scale: f32,
     /// Overlay scale factor.
     pub overlay_scale: f32,
-    /// Enables zoom-based adaptive render simplification.
-    pub adaptive_zoom_render: bool,
     /// Manual terrain mesh reduction factor (1/2/4).
     pub chunk_mesh_reduction_factor: u32,
     /// Multiplier for visible-area safety margin (higher = more chunks spawned).
@@ -69,7 +63,6 @@ impl Default for OptionsDialogState {
             free_camera: false,
             egui_scale: 1.0,
             overlay_scale: 1.0,
-            adaptive_zoom_render: false,
             chunk_mesh_reduction_factor: 1,
             chunk_visibility_overscan: 1.6,
         }
@@ -117,7 +110,6 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
-        state.adaptive_zoom_render = settings.app.performance.adaptive_zoom_render;
         state.chunk_mesh_reduction_factor = settings.app.performance.chunk_mesh_reduction_factor;
         state.chunk_visibility_overscan = settings.app.performance.chunk_visibility_overscan;
         state.free_camera = settings.app.window.free_camera;
@@ -263,22 +255,13 @@ pub fn sys_render_options_dialog(
                 ui.label("Move Speed:");
                 ui.add(egui::Slider::new(
                     &mut state.movement_speed_multiplier,
-                    0.1..=40.0,
+                    0.1..=500.0,
                 ));
             });
 
             // ---- Visibility/Graphics ----
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
-            ui.checkbox(
-                &mut state.adaptive_zoom_render,
-                "Adaptive zoom-out render simplification",
-            );
-            ui.label(
-                egui::RichText::new("When zoomed out heavily, uses checkerboard-style cheap shading on part of the pixels.")
-                    .small()
-                    .weak(),
-            );
 
             ui.horizontal(|ui| {
                 ui.label("Mesh Quality Reduction:");
@@ -341,11 +324,6 @@ pub fn sys_render_options_dialog(
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
             if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
-            }
-            if settings.as_ref().app.performance.adaptive_zoom_render
-                != state.adaptive_zoom_render
-            {
-                settings.app.performance.adaptive_zoom_render = state.adaptive_zoom_render;
             }
             if settings.as_ref().app.performance.chunk_mesh_reduction_factor
                 != state.chunk_mesh_reduction_factor
