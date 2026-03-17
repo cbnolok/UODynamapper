@@ -32,18 +32,13 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 //     Big:   2048 layers × 128×128/2 B =   16 MB
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
-// offline or on-the-fly. We previously used `intel_tex_2` (CPU-side), but now use 
+// offline or on-the-fly. We previously used `intel_tex_2` (CPU-side), but now use
 // `block_compression` (GPU compute) for better performance and smaller binary size.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
+pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
+pub const TEXARRAY_BIG_INITIAL_TILE_LAYERS: u32 = 256;
 pub const TEXARRAY_SMALL_MAX_TILE_LAYERS: u32 = 2_048;
 pub const TEXARRAY_BIG_MAX_TILE_LAYERS: u32 = 2_048;
-
-fn max_layers_per_texture_size(tex_size: LandTextureSize) -> u32 {
-    match tex_size {
-        LandTextureSize::Small => TEXARRAY_SMALL_MAX_TILE_LAYERS,
-        LandTextureSize::Big => TEXARRAY_BIG_MAX_TILE_LAYERS,
-    }
-}
 
 /// Returns the GPU TextureFormat to use for terrain texture arrays, based on whether
 /// lossy BC7 compression has been requested by the user in the settings.
@@ -83,9 +78,9 @@ pub fn create_gpu_texture_array(
     image_assets: &mut Assets<Image>,
     tex_size: LandTextureSize,
     lossy_compression: bool,
+    layers: u32,
 ) -> Handle<Image> {
     let (width, height) = tex_size.dimensions();
-    let layers = max_layers_per_texture_size(tex_size);
     let format = terrain_texarray_format(lossy_compression);
 
     // Pre-allocate zeroed data to trigger a full initial GPU upload (clearing all layers).

@@ -17,4 +17,4 @@ show_overlay = true
 frame_limit_enabled = true
 target_fps = 60
 chunk_mesh_reduction_factor = 1
-chunk_visibility_overscan = 1.6
+chunk_visibility_overscan = 1.0

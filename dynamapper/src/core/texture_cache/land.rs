@@ -52,6 +52,7 @@ impl Plugin for LandTextureCachePlugin {
             Update,
             sys_evict_idle_land_cache.run_if(on_timer(Duration::from_secs(5))),
         );
+        app.add_systems(Update, sys_apply_texture_array_expansion);
     }
 }
 
@@ -121,16 +122,19 @@ pub fn sys_setup_terrain_cache(
         &mut images,
         LandTextureSize::Small,
         lossy,
+        texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
     );
     let handle_big = texture_array::create_gpu_texture_array(
         "land_big_texture_cache",
         &mut images,
         LandTextureSize::Big,
         lossy,
+        texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
     );
     cmd.insert_resource(cache::LandTextureCache::new(
         handle_small.clone(),
         handle_big.clone(),
+        texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
     ));
     // Store the compression setting so the per-tile upload path can encode BC7 when enabled.
     cmd.insert_resource(cache::LandTextureCacheSettings {
@@ -151,7 +155,8 @@ pub fn sys_setup_terrain_cache(
 
     let page_texels = UVec2::new(2048, 2048);
     let tiles_per_page = UVec2::new(2048, 2048);
-    let max_layers = 16;
+    // Reduce startup VRAM: 16 -> 8 layers halves atlas allocation.
+    let max_layers = 8;
     let params = AtlasParams {
         page_texels,
         tiles_per_page,
@@ -216,4 +221,88 @@ pub fn sys_setup_terrain_cache(
 
     let shared_mat_handle = materials.add(shared_mat);
     cmd.insert_resource(SharedLandMaterial(shared_mat_handle));
+}
+
+fn sys_apply_texture_array_expansion(
+    mut images: ResMut<Assets<Image>>,
+    mut cache_r: ResMut<cache::LandTextureCache>,
+    mut handles_r: ResMut<cache::TextureArrayImageHandles>,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
+    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    cache_settings_r: Res<cache::LandTextureCacheSettings>,
+) {
+    let (small_req, big_req) = cache_r.take_resize_requests();
+    if small_req.is_none() && big_req.is_none() {
+        return;
+    }
+
+    let mut resized_small = None;
+    let mut resized_big = None;
+
+    if let Some(req) = small_req {
+        let new_layers = req.clamp(
+            cache_r.small.active_layers,
+            texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
+        );
+        if new_layers > cache_r.small.active_layers {
+            let new_handle = texture_array::create_gpu_texture_array(
+                "land_small_texture_cache",
+                &mut images,
+                LandTextureSize::Small,
+                cache_settings_r.lossy_texture_compression,
+                new_layers,
+            );
+            handles_r.small = new_handle.clone();
+            cache_r.apply_array_resize(LandTextureSize::Small, new_handle, new_layers);
+            cache_r.enqueue_reupload_for_size(
+                LandTextureSize::Small,
+                texmap_2d_r.0.clone(),
+                cache_settings_r.lossy_texture_compression,
+            );
+            resized_small = Some(new_layers);
+        }
+    }
+
+    if let Some(req) = big_req {
+        let new_layers = req.clamp(
+            cache_r.big.active_layers,
+            texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
+        );
+        if new_layers > cache_r.big.active_layers {
+            let new_handle = texture_array::create_gpu_texture_array(
+                "land_big_texture_cache",
+                &mut images,
+                LandTextureSize::Big,
+                cache_settings_r.lossy_texture_compression,
+                new_layers,
+            );
+            handles_r.big = new_handle.clone();
+            cache_r.apply_array_resize(LandTextureSize::Big, new_handle, new_layers);
+            cache_r.enqueue_reupload_for_size(
+                LandTextureSize::Big,
+                texmap_2d_r.0.clone(),
+                cache_settings_r.lossy_texture_compression,
+            );
+            resized_big = Some(new_layers);
+        }
+    }
+
+    if let Some(mat) = materials.get_mut(&shared_mat.0) {
+        mat.extension.texarray_small = handles_r.small.clone();
+        mat.extension.texarray_big = handles_r.big.clone();
+    }
+
+    if resized_small.is_some() || resized_big.is_some() {
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!(
+                "Expanded terrain texture arrays: small={} layers, big={} layers.",
+                cache_r.small.active_layers,
+                cache_r.big.active_layers
+            ),
+        );
+    }
 }

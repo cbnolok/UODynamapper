@@ -15,7 +15,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 use bevy::tasks::ComputeTaskPool;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -40,6 +40,7 @@ pub struct TextureArrayUpload {
 pub struct RenderTextureArrayUploads(pub Vec<TextureArrayUpload>);
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
+const FALLBACK_BLACK_LAYER: u32 = 0;
 
 /// Runtime settings for the land texture cache, inserted at startup.
 /// Holds values read from `settings.toml` that affect how tiles are uploaded to the GPU.
@@ -59,14 +60,23 @@ pub struct LandTextureEntry {
 /// A single TextureArray data (we use one for each size)
 pub struct LandTextureArrayWrapper {
     pub image_handle: Handle<Image>,
+    pub active_layers: u32,
+    pub max_layers: u32,
+    pub requested_resize_to: Option<u32>,
+    pub last_requested_resize_logged: Option<u32>,
     free_layers: Vec<u32>,
     lru: VecDeque<u16>, // texture_id queue
 }
 impl LandTextureArrayWrapper {
-    fn new(image_handle: Handle<Image>, max_layers: u32) -> Self {
+    fn new(image_handle: Handle<Image>, initial_layers: u32, max_layers: u32) -> Self {
         Self {
             image_handle,
-            free_layers: (0..max_layers).rev().collect(),
+            active_layers: initial_layers,
+            max_layers,
+            requested_resize_to: None,
+            last_requested_resize_logged: None,
+            // Reserve layer 0 as a permanent black fallback tile.
+            free_layers: (1..initial_layers).rev().collect(),
             lru: VecDeque::default(),
         }
     }
@@ -77,23 +87,52 @@ pub struct LandTextureCache {
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
     entry_by_id: HashMap<u16, (LandTextureSize, LandTextureEntry)>,
+    pinned_visible_ids: HashSet<u16>,
+    visible_hint_count: usize,
     pub pending_uploads: Vec<TextureArrayUpload>,
 }
 
 impl LandTextureCache {
-    pub fn new(small_tex_image_handle: Handle<Image>, big_tex_image_handle: Handle<Image>) -> Self {
+    pub fn new(
+        small_tex_image_handle: Handle<Image>,
+        big_tex_image_handle: Handle<Image>,
+        initial_layers: u32,
+    ) -> Self {
         Self {
             small: LandTextureArrayWrapper::new(
                 small_tex_image_handle,
+                initial_layers,
                 texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
             ),
             big: LandTextureArrayWrapper::new(
                 big_tex_image_handle,
+                initial_layers,
                 texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
             ),
             entry_by_id: HashMap::default(),
+            pinned_visible_ids: HashSet::default(),
+            visible_hint_count: 0,
             pending_uploads: Vec::new(),
         }
+    }
+
+    pub fn set_visible_texture_usage_hint(&mut self, visible_texture_ids: &HashSet<u16>) {
+        self.pinned_visible_ids.clear();
+        self.pinned_visible_ids.extend(visible_texture_ids.iter().copied());
+        self.visible_hint_count = visible_texture_ids.len();
+
+        console_logger::one(
+            None,
+            LogSev::Debug,
+            LogAbout::Performance,
+            &format!(
+                "Texture usage hint: visible_ids={}, active_layers(small={}, big={}), resident_textures={}",
+                self.visible_hint_count,
+                self.small.active_layers,
+                self.big.active_layers,
+                self.entry_by_id.len()
+            ),
+        );
     }
 
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
@@ -109,15 +148,28 @@ impl LandTextureCache {
             return (entry.0, entry.1.layer);
         }
 
-        let prepared = self
-            .prepare_texture_residency(texture_id, &texmap_2d, lossy_compression)
-            .unwrap();
+        // Not resident: load metadata/data and attempt to allocate a cache layer.
+        let (texture_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d);
+        let Some(layer) = self.allocate_layer(texture_size) else {
+            // Expansion requested but not applied yet: render with black fallback layer.
+            return (texture_size, FALLBACK_BLACK_LAYER);
+        };
 
-        self.pending_uploads.push(prepared.clone());
+        let tile_bytes: Vec<u8> = if lossy_compression {
+            texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+        } else {
+            raw_rgba8.to_vec()
+        };
+        self.pending_uploads.push(TextureArrayUpload {
+            layer,
+            size: texture_size,
+            bytes: std::sync::Arc::new(tile_bytes),
+            lossy_compressed: lossy_compression,
+        });
 
         // Update bookkeeping and return.
-        self.update_bookkeeping(texture_id, prepared.size, prepared.layer);
-        (prepared.size, prepared.layer)
+        self.update_bookkeeping(texture_id, texture_size, layer);
+        (texture_size, layer)
     }
 
     /// Optimized batch pre-caching with multithreaded BC7 compression.
@@ -181,8 +233,12 @@ impl LandTextureCache {
             });
 
             // Associate layers and update bookkeeping
+            let mut skipped_due_to_pressure = 0usize;
             for (i, (id, size, _)) in raw_data.into_iter().enumerate() {
-                let layer = self.allocate_layer(size);
+                let Some(layer) = self.allocate_layer(size) else {
+                    skipped_due_to_pressure += 1;
+                    continue;
+                };
                 let (bytes, compressed) = compressed_results[i].clone();
                 let upload = TextureArrayUpload {
                     layer,
@@ -192,6 +248,18 @@ impl LandTextureCache {
                 };
                 self.pending_uploads.push(upload);
                 self.update_bookkeeping(id, size, layer);
+            }
+
+            if skipped_due_to_pressure > 0 {
+                console_logger::one(
+                    None,
+                    LogSev::Warn,
+                    LogAbout::Performance,
+                    &format!(
+                        "Skipped precache for {} textures this frame due to cache pressure (expansion pending).",
+                        skipped_due_to_pressure
+                    ),
+                );
             }
         } else {
             // Normal sequential loading
@@ -221,7 +289,7 @@ impl LandTextureCache {
         let (texture_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, texmap_2d);
 
         // 2. Allocate a layer, evicting an old one if necessary.
-        let layer = self.allocate_layer(texture_size);
+        let layer = self.allocate_layer(texture_size)?;
 
         // 3. Optionally compress to BC7 before storing the upload bytes.
         //    Compression is done once per texture; the result is cached implicitly
@@ -241,30 +309,130 @@ impl LandTextureCache {
     }
 
     /// Allocates a layer for a new texture, handling LRU eviction if the array is full.
-    fn allocate_layer(&mut self, texture_size: LandTextureSize) -> u32 {
+    fn allocate_layer(&mut self, texture_size: LandTextureSize) -> Option<u32> {
         let array = match texture_size {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
         };
 
         if let Some(l) = array.free_layers.pop() {
-            l
-        } else {
-            let victim_id = loop {
-                let oldest = array
-                    .lru
-                    .pop_front()
-                    .expect("LRU should not be empty at this stage");
-                if let Some(still) = self.entry_by_id.get(&oldest) {
-                    if Instant::now() - still.1.last_touch >= CACHE_EVICT_AFTER {
-                        break oldest;
-                    }
-                }
-                array.lru.push_back(oldest);
+            return Some(l);
+        }
+
+        // 1) Prefer evicting oldest NON-visible texture.
+        let lru_len = array.lru.len();
+        for _ in 0..lru_len {
+            let Some(oldest) = array.lru.pop_front() else { break; };
+            let Some((size, _)) = self.entry_by_id.get(&oldest) else {
+                continue;
             };
+
+            if *size != texture_size {
+                array.lru.push_back(oldest);
+                continue;
+            }
+
+            if self.pinned_visible_ids.contains(&oldest) {
+                array.lru.push_back(oldest);
+                continue;
+            }
+
             let victim_entry: (LandTextureSize, LandTextureEntry) =
-                self.entry_by_id.remove(&victim_id).unwrap();
-            victim_entry.1.layer
+                self.entry_by_id.remove(&oldest).unwrap();
+            return Some(victim_entry.1.layer);
+        }
+
+        // 2) No evictable non-visible texture found: request GPU array expansion.
+        let desired = ((self.visible_hint_count as f32) * 1.25).ceil() as u32;
+        let target_layers = desired
+            .max(array.active_layers + 64)
+            .min(array.max_layers);
+        if target_layers > array.active_layers {
+            let previous_request = array.requested_resize_to;
+            array.requested_resize_to = Some(previous_request.unwrap_or(target_layers).max(target_layers));
+
+            if array.last_requested_resize_logged != Some(target_layers) {
+                array.last_requested_resize_logged = Some(target_layers);
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::Performance,
+                    &format!(
+                        "Texture cache pressure ({:?}): requested array expansion {} -> {} layers (visible hint: {}, desired={}).",
+                        texture_size,
+                        array.active_layers,
+                        target_layers,
+                        self.visible_hint_count,
+                        desired
+                    ),
+                );
+            }
+        }
+
+        // 3) No eviction fallback here: caller can skip/black-fallback until expansion is applied.
+        None
+    }
+
+    pub fn take_resize_requests(&mut self) -> (Option<u32>, Option<u32>) {
+        let small = self.small.requested_resize_to.take();
+        let big = self.big.requested_resize_to.take();
+        (small, big)
+    }
+
+    pub fn apply_array_resize(
+        &mut self,
+        size: LandTextureSize,
+        new_handle: Handle<Image>,
+        new_layers: u32,
+    ) {
+        let array = match size {
+            LandTextureSize::Small => &mut self.small,
+            LandTextureSize::Big => &mut self.big,
+        };
+        if new_layers <= array.active_layers {
+            return;
+        }
+
+        let old_layers = array.active_layers;
+        array.image_handle = new_handle;
+        array.active_layers = new_layers;
+        array.last_requested_resize_logged = None;
+        for layer in (old_layers..new_layers).rev() {
+            array.free_layers.push(layer);
+        }
+    }
+
+    pub fn enqueue_reupload_for_size(
+        &mut self,
+        size: LandTextureSize,
+        texmap_2d: Arc<TexMap2D>,
+        lossy_compression: bool,
+    ) {
+        let ids_to_restore: Vec<(u16, u32)> = self
+            .entry_by_id
+            .iter()
+            .filter_map(|(id, (s, e))| {
+                if *s == size {
+                    Some((*id, e.layer))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (texture_id, layer) in ids_to_restore {
+            let (_actual_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d);
+            let tile_bytes: Vec<u8> = if lossy_compression {
+                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), size)
+            } else {
+                raw_rgba8.to_vec()
+            };
+            self.pending_uploads.push(TextureArrayUpload {
+                size,
+                layer,
+                bytes: Arc::new(tile_bytes),
+                lossy_compressed: lossy_compression,
+            });
         }
     }
 

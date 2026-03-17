@@ -268,6 +268,19 @@ pub fn sys_draw_spawned_land_chunks(
         }
     }
 
+    // Also include currently visible chunks as data-only targets.
+    // This keeps the texture usage hint proportional to the actual render area,
+    // reducing the chance of evicting still-visible textures during zoom-out.
+    for (chunk_data, _mesh) in visible_chunk_q.iter() {
+        if (chunk_data.gx as i32) < max_chunk_x && (chunk_data.gy as i32) < max_chunk_y {
+            spawn_targets.insert(LandChunkConstructionData {
+                entity: None,
+                chunk_origin_chunk_units_x: chunk_data.gx,
+                chunk_origin_chunk_units_z: chunk_data.gy,
+            });
+        }
+    }
+
     // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
     let mut blocks_to_draw: Vec<MapBlockRelPos> = spawn_targets
         .iter()
@@ -340,6 +353,8 @@ pub fn sys_draw_spawned_land_chunks(
         }
 
         let ids: Vec<u16> = missing_tile_ids.into_iter().collect();
+        let ids_set: HashSet<u16> = ids.iter().copied().collect();
+        cache_r.set_visible_texture_usage_hint(&ids_set);
         cache_r.precache_textures_parallel(
             &ids,
             texmap_2d_r.0.clone(),
