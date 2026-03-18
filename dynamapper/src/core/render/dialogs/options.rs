@@ -41,8 +41,6 @@ pub struct OptionsDialogState {
     pub egui_scale: f32,
     /// Overlay scale factor.
     pub overlay_scale: f32,
-    /// Multiplier for visible-area safety margin (higher = more chunks spawned).
-    pub chunk_visibility_overscan: f32,
 }
 
 impl Default for OptionsDialogState {
@@ -61,7 +59,6 @@ impl Default for OptionsDialogState {
             free_camera: false,
             egui_scale: 1.0,
             overlay_scale: 1.0,
-            chunk_visibility_overscan: 1.6,
         }
     }
 }
@@ -107,7 +104,6 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
-        state.chunk_visibility_overscan = settings.app.performance.chunk_visibility_overscan;
         state.free_camera = settings.app.window.free_camera;
         state.egui_scale = settings.app.window.egui_scale;
         state.overlay_scale = settings.app.window.overlay_scale;
@@ -259,14 +255,6 @@ pub fn sys_render_options_dialog(
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
-            ui.horizontal(|ui| {
-                ui.label("Chunk Visibility Overscan:");
-                ui.add(egui::Slider::new(
-                    &mut state.chunk_visibility_overscan,
-                    1.0..=2.5,
-                ));
-            });
-
             ui.add_space(4.0);
             ui.checkbox(&mut state.free_camera, "Free Camera Mode");
             ui.label(egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.").small().weak());
@@ -306,14 +294,6 @@ pub fn sys_render_options_dialog(
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
             if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
-            }
-            if (settings.as_ref().app.performance.chunk_visibility_overscan
-                - state.chunk_visibility_overscan)
-                .abs()
-                > 0.001
-            {
-                settings.app.performance.chunk_visibility_overscan =
-                    state.chunk_visibility_overscan;
             }
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;
