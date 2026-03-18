@@ -1,7 +1,4 @@
-use crate::{
-    core::system_sets::StartupSysSet,
-    prelude::*,
-};
+use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -12,8 +9,9 @@ use uocf::geo::land_texture_2d::LandTextureSize;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
-    DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter1, IDXGIAdapter3, IDXGIFactory6,
+    CreateDXGIFactory1, IDXGIAdapter1, IDXGIAdapter3, IDXGIFactory6,
+    DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+    DXGI_QUERY_VIDEO_MEMORY_INFO,
 };
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
@@ -72,6 +70,14 @@ impl Default for ProcessMetrics {
     }
 }
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+    target_os = "macos"
+))]
 fn query_process_vram_mib_linux_drm(pid: sysinfo::Pid) -> Option<f32> {
     // Linux kernel exposes per-process DRM memory stats under:
     //   /proc/<pid>/fdinfo/<fd>
@@ -79,7 +85,7 @@ fn query_process_vram_mib_linux_drm(pid: sysinfo::Pid) -> Option<f32> {
     // Typical keys:
     //   drm-memory-vram: <KiB> kB
     //   drm-memory-local: <KiB> kB
-    // We intentionally ignore GTT/system memory because user asked VRAM.
+    // TODO: can we extract anything else from here? GTT/system memory? More precise than other ways?
     let fdinfo_dir = format!("/proc/{}/fdinfo", pid);
     let entries = fs::read_dir(fdinfo_dir).ok()?;
 
@@ -96,8 +102,8 @@ fn query_process_vram_mib_linux_drm(pid: sysinfo::Pid) -> Option<f32> {
             let line = line.trim();
             // AMD: drm-memory-vram
             // Intel (Xe/i915 variants): drm-memory-local
-            let is_vram_key = line.starts_with("drm-memory-vram:")
-                || line.starts_with("drm-memory-local:");
+            let is_vram_key =
+                line.starts_with("drm-memory-vram:") || line.starts_with("drm-memory-local:");
             if !is_vram_key {
                 continue;
             }
@@ -169,7 +175,14 @@ fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
 }
 
 fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "macos"
+    ))]
     {
         if let Some(v) = query_process_vram_mib_linux_drm(pid) {
             return Some(v);
@@ -243,10 +256,10 @@ pub fn setup_overlay_performance(
                 Text::new("FPS: Init..."),
                 TextFont {
                     font,
-                    font_size: 14.0 * scale,
+                    font_size: 12.0 * scale,
                     ..default()
                 },
-                LineHeight::Px(14.0 * scale),
+                LineHeight::Px(12.0 * scale),
                 TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
                 TextLayout::default(),
                 Node::default(),
@@ -292,15 +305,20 @@ pub fn sys_refresh_process_metrics(
         let small_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
             LandTextureSize::Small,
             lossy,
-        ) * crate::core::texture_cache::land::texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS as usize;
+        )
+            * crate::core::texture_cache::land::texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS
+                as usize;
         let big_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
             LandTextureSize::Big,
             lossy,
-        ) * crate::core::texture_cache::land::texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS as usize;
+        )
+            * crate::core::texture_cache::land::texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS
+                as usize;
         // Rg16Uint = 4 bytes/texel.
-        let atlas_bytes =
-            (TILE_ATLAS_TEXELS as usize * TILE_ATLAS_TEXELS as usize * TILE_ATLAS_MAX_LAYERS as usize)
-                * 4usize;
+        let atlas_bytes = (TILE_ATLAS_TEXELS as usize
+            * TILE_ATLAS_TEXELS as usize
+            * TILE_ATLAS_MAX_LAYERS as usize)
+            * 4usize;
 
         metrics.estimated_texture_vram_mib = (small_bytes + big_bytes) as f32 / BYTES_PER_MIB;
         metrics.estimated_atlas_vram_mib = atlas_bytes as f32 / BYTES_PER_MIB;
@@ -308,7 +326,8 @@ pub fn sys_refresh_process_metrics(
         // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
         // Includes terrain texture arrays + tile metadata atlas.
         // Prefer native OS/driver accounting when available.
-        let tracked_total_mib = metrics.estimated_texture_vram_mib + metrics.estimated_atlas_vram_mib;
+        let tracked_total_mib =
+            metrics.estimated_texture_vram_mib + metrics.estimated_atlas_vram_mib;
         metrics.process_vram_tracked_mib =
             query_process_vram_mib_native(pid).unwrap_or(tracked_total_mib);
     }
@@ -368,14 +387,15 @@ pub fn update_performance_text(
         // Paths are dynamic strings: "render/{span_name}/{stat}".
         // The span names are logged at startup via LogDiagnosticsPlugin.
         // On Vulkan, these are populated via GPU pipeline query objects.
+        let vert_invoc = find_render_stat(&diagnostics, "vertex_shader_invocations");
         let frag_invoc = find_render_stat(&diagnostics, "fragment_shader_invocations");
         let clipper_in = find_render_stat(&diagnostics, "clipper_invocations");
         let clipper_out = find_render_stat(&diagnostics, "clipper_primitives_out");
         let gpu_elapsed = find_render_stat(&diagnostics, "elapsed_gpu");
 
         let render_stats = format!(
-            "GPU elapsed: {} | Clipper in/out: {}/{} | Frag calls: {}",
-            gpu_elapsed, clipper_in, clipper_out, frag_invoc,
+            "GPU elapsed: {} | Clipper in/out: {}/{} | Vert/Frag calls: {}/{}",
+            gpu_elapsed, clipper_in, clipper_out, vert_invoc, frag_invoc,
         );
 
         text.0 = format!(

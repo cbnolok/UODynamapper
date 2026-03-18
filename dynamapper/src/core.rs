@@ -15,7 +15,7 @@ use crate::{
 use bevy::{
     //ecs::schedule::ExecutorKind,
     diagnostic::LogDiagnosticsPlugin,
-    log::{BoxedLayer, LogPlugin},
+    log::{BoxedFmtLayer, BoxedLayer, LogPlugin},
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
     render::{
@@ -32,41 +32,88 @@ use std::{process::ExitCode, time::Duration};
 use system_sets::*;
 use tracing_subscriber::fmt;
 
-#[allow(unused)]
-fn bevy_logging_custom_layer(_app: &mut App) -> Option<BoxedLayer> {
+/// Replaces Bevy's default fmt layer with a compact one that uses HH:MM:SS
+/// timestamps instead of the verbose ISO-8601 default.
+/// This is wired into LogPlugin::fmt_layer (not custom_layer), which means it
+/// fully replaces the default formatter rather than being added on top of it.
+fn bevy_logging_fmt_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
     Some(Box::new(
         fmt::layer()
-            .with_ansi(true) // colored output like Bevy default
+            .with_ansi(true)
             .with_level(true)
             .with_target(true)
-            // Use chrono for timestamp, format with NO milliseconds
+            // Compact HH:MM:SS format — avoids the verbose 2026-03-18T09:50:34.068944Z default.
             .with_timer(fmt::time::ChronoLocal::new("%H:%M:%S".into()))
-            // compact() looks a lot like Bevy default
             .compact(),
     ))
 }
 
-/*
-// Work in progress for a new Bevy version?
-#[allow(unused)]
-fn bevy_logging_fmt_layer(_app: &mut App) -> Option<BoxedFmtLayer> {
-    Some(Box::new(
-        fmt::Layer::default()
-            .without_time()
-            .with_writer(std::io::stderr),
-    ))
+/// Additive layer (runs alongside the fmt layer, can't replace it).
+/// Intercepts tracing events whose target starts with "uocf" — emitted by the
+/// `uocf` crate via the standard `log` facade → `tracing-log` bridge — and
+/// re-emits them through `console_logger::one` for consistent formatting.
+fn bevy_logging_custom_layer(_app: &mut App) -> Option<BoxedLayer> {
+    use tracing_subscriber::{Layer, registry::LookupSpan};
+    use crate::console_logger::{LogAbout, LogSev};
+    use tracing::{Level, Subscriber};
+
+    struct UocfLogLayer;
+
+    impl<S> Layer<S> for UocfLogLayer
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if !event.metadata().target().starts_with("uocf") {
+                return;
+            }
+
+            let sev = match *event.metadata().level() {
+                Level::ERROR => LogSev::Error,
+                Level::WARN  => LogSev::Warn,
+                Level::DEBUG => LogSev::Debug,
+                Level::TRACE => LogSev::DebugVerbose,
+                _            => LogSev::Info,
+            };
+
+            struct MsgVisitor(String);
+            impl tracing::field::Visit for MsgVisitor {
+                fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
+                    if f.name() == "message" { self.0 = v.to_string(); }
+                }
+                fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+                    if f.name() == "message" { self.0 = format!("{v:?}"); }
+                }
+            }
+            let mut vis = MsgVisitor(String::new());
+            event.record(&mut vis);
+
+            // `Some(false)` suppresses caller location: it would point here
+            // rather than the actual call site inside uocf.
+            crate::console_logger::one(Some(false), sev, LogAbout::UoFiles, &vis.0);
+        }
+    }
+
+    Some(UocfLogLayer.boxed())
 }
-*/
 
 fn custom_bevy_log_config() -> LogPlugin {
     LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
         filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,calloop=error,bevy_framepace=warn"
             .into(),
+        // Replace the default ISO-8601 formatter with our compact HH:MM:SS one.
+        fmt_layer: bevy_logging_fmt_layer,
+        // Add the UocfLogLayer on top (intercepts uocf log events only).
         custom_layer: bevy_logging_custom_layer,
         ..Default::default()
     }
 }
+
 
 fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
     // Use Continuous mode: render every frame unconditionally.

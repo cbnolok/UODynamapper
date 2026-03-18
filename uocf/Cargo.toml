@@ -19,4 +19,7 @@ glam = { version = "0.30", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "dds"] }
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
+# Standard Rust log facade — allows uocf to emit log events without
+# coupling to any specific logger implementation (the app provides the backend).
+log = { version = "0.4", default-features = false }
 #smallvec = "1"

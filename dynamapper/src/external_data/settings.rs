@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use crate::prelude::*;
 use crate::core::render::scene::camera::RenderZoom;
@@ -93,6 +94,36 @@ pub struct SectGraphics {
 /// Resource used to debounce saving settings to disk.
 #[derive(Resource)]
 pub struct SettingsSaveTimer(pub Timer);
+
+/// Tracks file modification times for hot-reload detection.
+/// Checked at 1-second intervals so we never run read_dir or stat on every frame.
+#[derive(Resource)]
+pub struct SettingsFileWatcher {
+    /// Polling timer — checked once per second to avoid expensive stat calls every frame.
+    pub poll_timer: Timer,
+    /// Last-known mtime for each watched file.
+    pub core_mtime: Option<SystemTime>,
+    pub user_mtime: Option<SystemTime>,
+    pub kb_mtime: Option<SystemTime>,
+}
+
+impl Default for SettingsFileWatcher {
+    fn default() -> Self {
+        let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+        // Snapshot the initial mtimes so we don't trigger a reload immediately on startup.
+        let mtime_of = |name: &str| -> Option<SystemTime> {
+            std::fs::metadata(assets_path.join(name))
+                .ok()
+                .and_then(|m| m.modified().ok())
+        };
+        Self {
+            poll_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
+            core_mtime: mtime_of(CORE_CONFIG_FILE),
+            user_mtime: mtime_of(USER_CONFIG_FILE),
+            kb_mtime: mtime_of(KEYBINDINGS_CONFIG_FILE),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectLogging {
@@ -258,7 +289,8 @@ impl Plugin for SettingsPlugin {
                 t.pause();
                 t
             }))
-            .add_systems(Update, (sys_evlisten_switch_wireframe, sys_debounced_save))
+            .init_resource::<SettingsFileWatcher>()
+            .add_systems(Update, (sys_evlisten_switch_wireframe, sys_debounced_save, sys_hotreload_settings))
             ;
     }
 }
@@ -288,6 +320,65 @@ fn sys_startup_load_file(mut commands: Commands) {
         "Loaded settings file for global access.",
     );
 }
+
+/// Hot-reload system: polls file modification times every second, and updates the
+/// Settings resource in-place if any watched file has changed on disk.
+/// This is intentionally a mtime poll rather than Bevy's AssetLoader because
+/// settings are spread across three files with custom multi-file merging logic.
+fn sys_hotreload_settings(
+    time: Res<Time>,
+    mut watcher: ResMut<SettingsFileWatcher>,
+    mut settings: ResMut<Settings>,
+) {
+    // Only check once per second — stat syscalls are cheap but redundant every frame.
+    watcher.poll_timer.tick(time.delta());
+    if !watcher.poll_timer.just_finished() {
+        return;
+    }
+
+    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let mtime_of = |name: &str| -> Option<SystemTime> {
+        std::fs::metadata(assets_path.join(name))
+            .ok()
+            .and_then(|m| m.modified().ok())
+    };
+
+    let new_core = mtime_of(CORE_CONFIG_FILE);
+    let new_user = mtime_of(USER_CONFIG_FILE);
+    let new_kb   = mtime_of(KEYBINDINGS_CONFIG_FILE);
+
+    let core_changed = new_core != watcher.core_mtime;
+    let user_changed = new_user != watcher.user_mtime;
+    let kb_changed   = new_kb   != watcher.kb_mtime;
+
+    if !(core_changed || user_changed || kb_changed) {
+        return;
+    }
+
+    // At least one file changed. Re-read the full settings bundle.
+    let new_data = load_from_files();
+
+    if core_changed {
+        settings.core = new_data.core.clone();
+        settings.logging = new_data.logging.clone();
+        watcher.core_mtime = new_core;
+        console_logger::one(None, LogSev::Info, LogAbout::General,
+            "Hot-reloaded: core_settings.toml");
+    }
+    if user_changed {
+        settings.app = new_data.app.clone();
+        watcher.user_mtime = new_user;
+        console_logger::one(None, LogSev::Info, LogAbout::General,
+            "Hot-reloaded: user_preferences.toml");
+    }
+    if kb_changed {
+        settings.keybindings = new_data.keybindings.clone();
+        watcher.kb_mtime = new_kb;
+        console_logger::one(None, LogSev::Info, LogAbout::General,
+            "Hot-reloaded: keybindings.toml");
+    }
+}
+
 
 fn sys_apply(
     settings_res: Res<Settings>,

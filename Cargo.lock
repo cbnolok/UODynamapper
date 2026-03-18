@@ -2230,6 +2230,7 @@ dependencies = [
  "sysinfo",
  "time",
  "toml",
+ "tracing",
  "tracing-subscriber",
  "uocf",
  "wgpu",
@@ -5263,6 +5264,7 @@ dependencies = [
  "getset",
  "glam",
  "image",
+ "log",
  "wide",
 ]
 

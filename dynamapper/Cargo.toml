@@ -44,6 +44,7 @@ block_compression = { version = "0.7", default-features = false, features = ["bc
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
 # fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+tracing = "0.1.44"
 
 [dependencies.bevy]
 version = "0.18.1"
