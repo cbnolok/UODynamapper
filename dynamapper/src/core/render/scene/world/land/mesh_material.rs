@@ -75,7 +75,7 @@ impl MaterialExtension for LandMaterialExtension {
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct SceneUniform {
     pub camera_position: Vec3,
-    pub time_seconds: f32,
+    pub _pad_cam: f32,
     pub light_direction: Vec3,
     pub global_lighting: f32,
     pub render_zoom: f32,

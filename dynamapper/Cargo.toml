@@ -79,7 +79,7 @@ features = [
   #"bevy_audio",         # Provides audio functionality
   #"bevy_camera_controller", # Provides a collection of prebuilt camera controllers
   #"bevy_ci_testing",    # Enable systems that allow for automated testing on CI
-  #"bevy_dev_tools",     # Provides a collection of developer tools
+  "bevy_dev_tools",     # Provides a collection of developer tools
   #"bevy_gilrs",         # Adds gamepad support
   #"bevy_gizmos_render", # Adds support for rendering gizmos
   #"bevy_gltf",          # glTF support

@@ -36,7 +36,7 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 // `block_compression` (GPU compute) for better performance and smaller binary size.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
-pub const TEXARRAY_BIG_INITIAL_TILE_LAYERS: u32 = 256;
+pub const TEXARRAY_BIG_INITIAL_TILE_LAYERS: u32 = 128;
 pub const TEXARRAY_SMALL_MAX_TILE_LAYERS: u32 = 2_048;
 pub const TEXARRAY_BIG_MAX_TILE_LAYERS: u32 = 2_048;
 

@@ -32,48 +32,33 @@ impl_tracked_plugin!(DrawLandChunkMeshPlugin);
 pub fn sys_update_shared_land_material(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
-    time: Res<Time>,
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::external_data::shader_presets::UniformState>,
-    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
-    mut last_time: Local<f32>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
 ) {
     let Some(shared_mat) = shared_mat else { return; };
 
-    // 1. Calculate dynamic threshold based on "medium FPS" + 10%.
-    // We use the frame time (delta) rather than FPS directly for cleaner math.
-    let avg_fps = diagnostics
-        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.average())
-        .unwrap_or(60.0);
+    // Time is now handled by Bevy's built-in `globals.time` uniform in the shader,
+    // which is updated automatically every frame WITHOUT triggering material change
+    // detection. This eliminates the catastrophic feedback loop where get_mut()
+    // marked the material as changed every frame, causing Bevy to re-extract
+    // all ~12K chunk bind groups.
 
-    // Threshold = (1.0 / FPS) * 1.1.
-    // This allows the material to "skip" frames if the CPU/GPU is struggling,
-    // reducing re-extraction overhead precisely when it's most needed.
-    let update_threshold = ((1.0 / avg_fps) * 1.1) as f32;
-
-    let current_time = time.elapsed().as_secs_f32();
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
 
-    // 2. Strict value checks
     let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
-    let time_expired = (current_time - *last_time) >= update_threshold;
     let lighting_meaningfully_changed = (current_global_lighting - *last_global_lighting).abs() > 0.005;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.001;
 
-    // 3. ONLY get_mut if we have a reason to change something.
-    // This is the CRITICAL fix for the 50% GPU idle.
-    if atlas_changed || time_expired || lighting_meaningfully_changed || zoom_changed {
+    // ONLY call get_mut() when something actually changed.
+    // This avoids triggering Bevy's asset change detection, which would force
+    // re-extraction of the material bind group for all chunk entities.
+    if atlas_changed || lighting_meaningfully_changed || zoom_changed {
         if let Some(mat) = materials.get_mut(&shared_mat.0) {
-            if time_expired {
-                mat.extension.scene_uniform.time_seconds = current_time;
-                *last_time = current_time;
-            }
             if lighting_meaningfully_changed {
                 mat.extension.scene_uniform.global_lighting = current_global_lighting;
                 *last_global_lighting = current_global_lighting;

@@ -8,6 +8,7 @@
 #import bevy_pbr::{
   forward_io::{Vertex, VertexOutput},
   mesh_functions,
+  mesh_view_bindings::globals,
   view_transformations,
 }
 
@@ -39,7 +40,7 @@ struct AtlasParams {
 
 struct SceneUniform {
   camera_position: vec3<f32>,
-  time_seconds: f32,
+  _pad_cam: f32,
   light_direction: vec3<f32>, // expected normalized by CPU
   // global scene light scaler (pre-tonemap). Default 1.0 from CPU/UI.
   global_lighting: f32,
@@ -896,13 +897,38 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let shading_mode   = effects.shading_mode;
-  let normal_mode    = effects.normal_mode;
-  let enable_bent    = effects.enable_bent;
-  let enable_fog     = effects.enable_fog;
-  let enable_gloom   = effects.enable_gloom;
   let enable_tonemap = effects.enable_tonemap;
   let enable_grading = effects.enable_grading;
-  let enable_blur    = effects.enable_blur;
+
+  // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
+  let zoom = scene.render_zoom;
+  // zoom > 5  : bicubic/FSR reconstruction → nearest (saves ~15 tex reads)
+  // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)
+  // zoom > 20 : disable bent normals (saves ~4 tex reads)
+  // zoom > 30 : disable volumetric fog → flat fog (saves heavy FBM ALU)
+  var normal_mode    = effects.normal_mode;
+  var enable_bent    = effects.enable_bent;
+  var enable_fog     = effects.enable_fog;
+  var enable_gloom   = effects.enable_gloom;
+  var enable_blur    = effects.enable_blur;
+  var force_nearest  = false;
+  var disable_sharpen = false;
+  var disable_volumetric = false;
+
+  if (zoom > 5.0) {
+    force_nearest = true;  // skip bicubic/FSR, use direct nearest sample
+  }
+  if (zoom > 10.0) {
+    enable_blur = 0u;      // skip 9-tap blur
+    disable_sharpen = true; // skip sharpening (4 extra taps)
+    normal_mode = 0u;       // geometric normals only (skip bicubic 4×4 kernel)
+  }
+  if (zoom > 20.0) {
+    enable_bent = 0u;       // skip bent normals (4 extra height reads)
+  }
+  if (zoom > 30.0) {
+    disable_volumetric = true; // fall back to flat fog (skip domain-warp FBM)
+  }
 
   let ambient_strength  = effects.ambient_strength;
   let diffuse_strength  = effects.diffuse_strength;
@@ -955,12 +981,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv_q = (floor(uv_in_tile * cells) + vec2<f32>(0.5)) / cells;
     base_albedo = sample_tile_albedo(uv_q, tile);
   } else {
-    base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
+    // force_nearest: skip bicubic/FSR at high zoom to save ~15 tex reads per pixel
+    if (force_nearest) {
+      base_albedo = sample_tile_albedo(uv_in_tile, tile);
+    } else {
+      base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
+    }
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
       let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
     }
-    if (effects.sharpening_amount > 0.0) {
+    if (!disable_sharpen && effects.sharpening_amount > 0.0) {
       base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
     }
   }
@@ -1058,10 +1089,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let noise_strength = noise_strength_ui;
 
     // Build wind & time for animation.
-    // If scene.time_seconds isn't being updated by the CPU, clouds won't move — see note below.
+    // Uses Bevy's built-in globals.time (auto-updated every frame, wraps at 1h).
     let base_time_speed = 0.02; // base slow speed
     let time_speed = base_time_speed + noise_strength * 0.08;
-    let t = scene.time_seconds * time_speed;
+    let t = globals.time * time_speed;
 
     // Wind derived from sun direction (perpendicular flow across sun)
     let sun2 = normalize(vec2<f32>(L.x, L.z));
@@ -1101,14 +1132,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var fog_factor = clamp(base_fog * cloud_mod, 0.0, 1.0);
 
     // Subtle breathing so it doesn't look totally static; scaled by noise_strength
-    let breath = 0.5 + 0.5 * sin(scene.time_seconds * (0.06 + 0.02 * noise_strength) + (hash(in.world_position.xz * 0.11) * 6.2831));
+    let breath = 0.5 + 0.5 * sin(globals.time * (0.06 + 0.02 * noise_strength) + (hash(in.world_position.xz * 0.11) * 6.2831));
     fog_factor = clamp(fog_factor * mix(0.97, 1.03, (breath - 0.5) * 0.6 * noise_strength), 0.0, 1.0);
 
     // Final cap set by UI alpha
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
 
-    // If user opted out of volumetric noise, fallback to smooth (flat) fog:
-    if (USE_VOLUMETRIC_NOISE == 1u) {
+    // If user opted out of volumetric noise OR zoom-LOD disabled it, use flat fog:
+    if (USE_VOLUMETRIC_NOISE == 1u && !disable_volumetric) {
       hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
     } else {
       // simple fallback: linearized distance*height blend capped by alpha

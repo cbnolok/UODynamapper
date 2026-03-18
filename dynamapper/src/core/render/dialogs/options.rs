@@ -41,8 +41,6 @@ pub struct OptionsDialogState {
     pub egui_scale: f32,
     /// Overlay scale factor.
     pub overlay_scale: f32,
-    /// Manual terrain mesh reduction factor (1/2/4).
-    pub chunk_mesh_reduction_factor: u32,
     /// Multiplier for visible-area safety margin (higher = more chunks spawned).
     pub chunk_visibility_overscan: f32,
 }
@@ -63,7 +61,6 @@ impl Default for OptionsDialogState {
             free_camera: false,
             egui_scale: 1.0,
             overlay_scale: 1.0,
-            chunk_mesh_reduction_factor: 1,
             chunk_visibility_overscan: 1.6,
         }
     }
@@ -110,7 +107,6 @@ fn sys_sync_settings_to_state(
             .iter()
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
-        state.chunk_mesh_reduction_factor = settings.app.performance.chunk_mesh_reduction_factor;
         state.chunk_visibility_overscan = settings.app.performance.chunk_visibility_overscan;
         state.free_camera = settings.app.window.free_camera;
         state.egui_scale = settings.app.window.egui_scale;
@@ -264,20 +260,6 @@ pub fn sys_render_options_dialog(
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
             ui.horizontal(|ui| {
-                ui.label("Mesh Quality Reduction:");
-                egui::ComboBox::from_id_salt("mesh_quality_reduction")
-                    .selected_text(match state.chunk_mesh_reduction_factor {
-                        2 => "1/2",
-                        4 => "1/4",
-                        _ => "1/1",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 1, "1/1 (full)");
-                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 2, "1/2");
-                        ui.selectable_value(&mut state.chunk_mesh_reduction_factor, 4, "1/4");
-                    });
-            });
-            ui.horizontal(|ui| {
                 ui.label("Chunk Visibility Overscan:");
                 ui.add(egui::Slider::new(
                     &mut state.chunk_visibility_overscan,
@@ -324,12 +306,6 @@ pub fn sys_render_options_dialog(
             let target_fps = FPS_PRESETS[state.fps_preset_idx];
             if settings.as_ref().app.performance.target_fps != target_fps {
                 settings.app.performance.target_fps = target_fps;
-            }
-            if settings.as_ref().app.performance.chunk_mesh_reduction_factor
-                != state.chunk_mesh_reduction_factor
-            {
-                settings.app.performance.chunk_mesh_reduction_factor =
-                    state.chunk_mesh_reduction_factor;
             }
             if (settings.as_ref().app.performance.chunk_visibility_overscan
                 - state.chunk_visibility_overscan)

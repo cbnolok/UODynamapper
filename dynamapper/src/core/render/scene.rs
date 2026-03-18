@@ -21,6 +21,11 @@ pub struct SceneStateData {
     pub map_id: u32,
 }
 
+/// Cached count of spawned land chunk entities, updated when chunks are spawned/despawned.
+/// Used by the performance overlay to avoid a full ECS query scan every frame.
+#[derive(Resource, Default)]
+pub struct LandChunkCount(pub u32);
+
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct RecomputeVisibleChunksEvent;
 
@@ -52,6 +57,7 @@ impl Plugin for ScenePlugin {
         .insert_resource(SceneStateData {
             map_id: 0xFFFF, // placeholder
         })
+        .init_resource::<LandChunkCount>()
         .add_message::<RecomputeVisibleChunksEvent>()
         .configure_sets(Update, (SceneRenderLandSysSet::SyncLandChunks.after(SceneRenderLandSysSet::ListenSyncRequests),
     SceneRenderLandSysSet::RenderLandChunks.after(SceneRenderLandSysSet::SyncLandChunks)))
@@ -219,6 +225,7 @@ fn sys_update_worldmap_chunks_to_render(
     render_zoom_res: Res<RenderZoom>,
     settings: Res<Settings>,
     mut scene_state_data_res: ResMut<SceneStateData>,
+    mut land_chunk_count: ResMut<LandChunkCount>,
     windows_q: Query<&Window>,
     camera_q: Query<(&Transform, &Projection), With<camera::PlayerCamera>>,
     mut player_q: Query<(&mut Player, &Transform)>,
@@ -342,6 +349,7 @@ fn sys_update_worldmap_chunks_to_render(
             log_chunk_spawn(gx, gy, new_map_id);
         }
         scene_state_data_res.map_id = new_map_id;
+        land_chunk_count.0 = required_chunks.len() as u32;
         return;
     }
 
@@ -377,4 +385,5 @@ fn sys_update_worldmap_chunks_to_render(
         ));
         log_chunk_spawn(gx, gy, new_map_id);
     }
+    land_chunk_count.0 = required_chunks.len() as u32;
 }

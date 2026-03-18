@@ -49,11 +49,16 @@ pub enum LandMeshLod {
     Low,
 }
 
-fn lod_from_reduction_factor(reduction: u32) -> LandMeshLod {
-    match reduction {
-        4.. => LandMeshLod::Low,
-        2 => LandMeshLod::Medium,
-        _ => LandMeshLod::High,
+/// Automatic LOD selection based on camera zoom level.
+/// At higher zoom (more zoomed out), fewer vertices are needed because each
+/// chunk covers fewer screen pixels.
+fn lod_from_zoom(zoom: f32) -> LandMeshLod {
+    if zoom >= 10.0 {
+        LandMeshLod::Low      // 9 verts, step=4  — chunks are tiny on screen
+    } else if zoom >= 4.0 {
+        LandMeshLod::Medium   // 25 verts, step=2
+    } else {
+        LandMeshLod::High     // 81 verts, step=1  — full detail up close
     }
 }
 
@@ -71,12 +76,12 @@ use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
 pub fn sys_update_existing_chunk_mesh_lod(
-    settings: Res<Settings>,
+    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     mut current_lod: ResMut<LandMeshLod>,
     mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
 ) {
-    let next_lod = lod_from_reduction_factor(settings.app.performance.chunk_mesh_reduction_factor);
+    let next_lod = lod_from_zoom(render_zoom.0);
     if *current_lod == next_lod {
         return;
     }
@@ -454,10 +459,9 @@ fn draw_land_chunk(
             // Tailored Bounds Calculation:
             // - Mesh Size: 8x8 tiles = 9x9 vertices -> local XZ spans [0.0, 8.0].
             // - Height Range: UO uses -128 to +127, scaled by 0.1 in shader -> [-12.8, 12.7].
-            // - Padding: We add ~1.0m padding in XZ for stitching and enough Y margin
-            //   to account for any projection distortions.
+            // - Padding: We add ~1.0m padding in XZ for stitching and ~0.3m Y margin.
             NoAutoAabb,
-            Aabb::from_min_max(Vec3::new(-1.0, -20.0, -1.0), Vec3::new(9.0, 20.0, 9.0)),
+            Aabb::from_min_max(Vec3::new(-1.0, -13.0, -1.0), Vec3::new(9.0, 13.0, 9.0)),
         ));
     } else {
         console_logger::one(

@@ -79,14 +79,8 @@ pub struct SectPerformance {
     pub show_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
-    #[serde(default = "default_chunk_mesh_reduction_factor")]
-    pub chunk_mesh_reduction_factor: u32,
     #[serde(default = "default_chunk_visibility_overscan")]
     pub chunk_visibility_overscan: f32,
-}
-
-fn default_chunk_mesh_reduction_factor() -> u32 {
-    1
 }
 
 fn default_chunk_visibility_overscan() -> f32 {
@@ -185,7 +179,6 @@ pub fn load_from_files() -> Settings {
                     show_overlay: true,
                     frame_limit_enabled: true,
                     target_fps: 60,
-                    chunk_mesh_reduction_factor: 1,
                     chunk_visibility_overscan: 1.6,
                 },
             }

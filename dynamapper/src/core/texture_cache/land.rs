@@ -207,8 +207,8 @@ pub fn sys_setup_terrain_cache(
                 scene_uniform: SceneUniform {
                     camera_position:
                         crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER,
+                    _pad_cam: 0.0,
                     light_direction: crate::core::constants::BAKED_GLOBAL_LIGHT.normalize(),
-                    time_seconds: 0.0,
                     global_lighting: 1.0,
                     render_zoom: 1.0,
                     adaptive_zoom_simplification: 0.0,

@@ -320,7 +320,7 @@ pub fn update_performance_text(
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
     entities: &bevy::ecs::entity::Entities,
-    land_chunks: Query<&crate::core::render::scene::world::land::LCMesh>,
+    land_chunk_count: Res<crate::core::render::scene::LandChunkCount>,
     mut text_query: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),
         With<OverlayPerformanceText>,
@@ -357,15 +357,29 @@ pub fn update_performance_text(
             .unwrap_or_else(|| "--".to_string());
 
         let entity_count = entities.len();
-        let chunk_count = land_chunks.iter().count();
+        let chunk_count = land_chunk_count.0;
         let tex_mode = if settings.core.graphics.lossy_texture_compression {
             "BC7"
         } else {
             "RGBA8"
         };
 
+        // Read render pipeline statistics from RenderDiagnosticsPlugin.
+        // Paths are dynamic strings: "render/{span_name}/{stat}".
+        // The span names are logged at startup via LogDiagnosticsPlugin.
+        // On Vulkan, these are populated via GPU pipeline query objects.
+        let frag_invoc = find_render_stat(&diagnostics, "fragment_shader_invocations");
+        let clipper_in = find_render_stat(&diagnostics, "clipper_invocations");
+        let clipper_out = find_render_stat(&diagnostics, "clipper_primitives_out");
+        let gpu_elapsed = find_render_stat(&diagnostics, "elapsed_gpu");
+
+        let render_stats = format!(
+            "GPU elapsed: {} | Clipper in/out: {}/{} | Frag calls: {}",
+            gpu_elapsed, clipper_in, clipper_out, frag_invoc,
+        );
+
         text.0 = format!(
-            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}",
+            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n{}",
             fps,
             metrics.cpu_usage_total,
             metrics.cpu_usage_one_core,
@@ -376,7 +390,8 @@ pub fn update_performance_text(
             metrics.estimated_atlas_vram_mib,
             metrics.process_vram_tracked_mib,
             chunk_count,
-            entity_count
+            entity_count,
+            render_stats,
         );
 
         if scale_changed {
@@ -384,5 +399,39 @@ pub fn update_performance_text(
             *line_height = LineHeight::Px(14.0 * current_scale);
             *last_scale = current_scale;
         }
+    }
+}
+
+/// Sums all render diagnostics whose path ends with `stat_suffix` across all render spans.
+/// Returns a formatted string with the total, or "--" if no data is available.
+/// This is needed because Bevy 0.18 uses dynamic path strings for render diagnostics
+/// (e.g. "render/main_opaque_pass/fragment_shader_invocations") with no public constants.
+fn find_render_stat(diagnostics: &DiagnosticsStore, stat_suffix: &str) -> String {
+    let mut total: f64 = 0.0;
+    let mut found = false;
+    for diag in diagnostics.iter() {
+        let path = diag.path().as_str();
+        if path.starts_with("render/") && path.ends_with(stat_suffix) {
+            if let Some(val) = diag.value() {
+                total += val;
+                found = true;
+            }
+        }
+    }
+    if found {
+        if stat_suffix.contains("elapsed") {
+            format!("{total:.2}ms")
+        } else {
+            // Large numbers: format with K/M suffix for readability
+            if total >= 1_000_000.0 {
+                format!("{:.1}M", total / 1_000_000.0)
+            } else if total >= 1_000.0 {
+                format!("{:.1}K", total / 1_000.0)
+            } else {
+                format!("{total:.0}")
+            }
+        }
+    } else {
+        "--".to_string()
     }
 }

@@ -14,10 +14,15 @@ use crate::{
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
+    diagnostic::LogDiagnosticsPlugin,
     log::{BoxedLayer, LogPlugin},
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
-    render::settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+    render::{
+        diagnostic::RenderDiagnosticsPlugin,
+        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+        RenderApp, RenderStartup,
+    },
     window::WindowResolution,
     winit::{UpdateMode, WinitSettings},
 };
@@ -163,7 +168,7 @@ pub fn run_bevy_app() -> ExitCode {
     let wireframe_enabled: bool = settings_data.app.debug.map_render_wireframe;
 
     let mut app = App::new();
-    let result = app
+    app
         .insert_resource(custom_winit_settings(
             settings_data.core.graphics.reduce_unfocused_fps,
         ))
@@ -209,6 +214,22 @@ pub fn run_bevy_app() -> ExitCode {
             // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
             // warning and returns no data). We read CPU/RAM directly via `sysinfo` instead
             // (see `core/render/overlays/performance.rs`).
+
+            // GPU pipeline statistics (vertex/fragment invocations, clipper primitives).
+            // On Vulkan/DX12 also provides GPU elapsed time per pass.
+            // NOTE: no public DiagnosticPath constants in 0.18 — paths are dynamic strings
+            // like "render/{span_name}/fragment_shader_invocations".
+            // Use LogDiagnosticsPlugin below to discover the exact span names.
+            RenderDiagnosticsPlugin,
+
+            // Temporary: dump all render/* diagnostics to console every 2 seconds.
+            // filter=None means log ALL diagnostics (FPS + render stats).
+            // Once we know the exact span names, narrow to just the render/* ones.
+            LogDiagnosticsPlugin {
+                filter: None,
+                wait_duration: std::time::Duration::from_secs(2),
+                ..default()
+            },
         ))
         .add_plugins((
             ExternalDataPlugin {
@@ -249,13 +270,31 @@ pub fn run_bevy_app() -> ExitCode {
         .add_systems(
             Startup,
             advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
-        )
-        .run();
+        );
+        // One-shot render-world startup: log whether GPU indirect draw is active.
+        // GpuPreprocessingSupport lives only in the render world, not the main world.
+        app.sub_app_mut(RenderApp)
+            .add_systems(RenderStartup, sys_log_gpu_preprocessing_mode);
+        let result = app.run();
 
     match result {
         AppExit::Success => ExitCode::SUCCESS,
         AppExit::Error(value) => ExitCode::from(value.get()),
     }
+}
+
+/// One-shot system (render world) that logs the active GPU preprocessing mode.
+/// Helps verify whether Bevy is using full GPU culling + indirect draw.
+fn sys_log_gpu_preprocessing_mode(
+    support: Res<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>,
+) {
+    use bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode;
+    let mode_str = match support.max_supported_mode {
+        GpuPreprocessingMode::None => "None (CPU-only, WebGL2 / no compute)",
+        GpuPreprocessingMode::PreprocessingOnly => "PreprocessingOnly (GPU uniforms, CPU draw calls — DX12)",
+        GpuPreprocessingMode::Culling => "Culling (full GPU frustum culling + multi_draw_indirect)",
+    };
+    bevy::log::info!("[GPU Batching] GpuPreprocessingMode = {mode_str}");
 }
 
 fn advance_state_after_init_core() {
