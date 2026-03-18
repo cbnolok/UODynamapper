@@ -14,12 +14,16 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_QUERY_VIDEO_MEMORY_INFO,
 };
 
+const FONT_SIZE: f32 = 12.0;
+
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
 const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
+const FPS_TEXT_REFRESH_INTERVAL_SEC: f32 = 0.5;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
-// Keep these in sync with texture/atlas initialization in terrain cache startup.
+// Keep these in sync with texture/atlas initialization in terrain cache startup. // TODO: make the code directly use the real ones,
+//  do not have different magic numbers to keep synchronized.
 const TILE_ATLAS_TEXELS: u32 = 2048;
 const TILE_ATLAS_MAX_LAYERS: u32 = 16;
 
@@ -256,10 +260,10 @@ pub fn setup_overlay_performance(
                 Text::new("FPS: Init..."),
                 TextFont {
                     font,
-                    font_size: 12.0 * scale,
+                    font_size: FONT_SIZE * scale,
                     ..default()
                 },
-                LineHeight::Px(12.0 * scale),
+                LineHeight::Px(FONT_SIZE * scale),
                 TextColor(Srgba::hex("00FF00").unwrap().into()), // Retro green
                 TextLayout::default(),
                 Node::default(),
@@ -335,6 +339,7 @@ pub fn sys_refresh_process_metrics(
 
 /// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
+    time: Res<Time>,
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
@@ -352,7 +357,11 @@ pub fn update_performance_text(
         ),
     >,
     mut last_scale: Local<f32>,
+    mut fps_acc: Local<f32>,
+    mut last_fps_cached: Local<String>,
 ) {
+    // Accumulate time and only refresh the FPS string periodically to make it readable.
+    *fps_acc += time.delta().as_secs_f32();
     let current_scale = settings.app.window.overlay_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
@@ -369,11 +378,19 @@ pub fn update_performance_text(
     }
 
     if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
-        let fps = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|diag| diag.smoothed())
-            .map(|val| format!("{:.0}", val))
-            .unwrap_or_else(|| "--".to_string());
+        let mut fps = last_fps_cached.clone();
+        if *fps_acc >= FPS_TEXT_REFRESH_INTERVAL_SEC {
+            fps = diagnostics
+                .get(&FrameTimeDiagnosticsPlugin::FPS)
+                .and_then(|diag| diag.smoothed())
+                .map(|val| format!("{:.0}", val))
+                .unwrap_or_else(|| "--".to_string());
+            *last_fps_cached = fps.clone();
+            *fps_acc = 0.0;
+        }
+        if fps.is_empty() {
+            fps = "--".to_string();
+        }
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
@@ -394,7 +411,7 @@ pub fn update_performance_text(
         let gpu_elapsed = find_render_stat(&diagnostics, "elapsed_gpu");
 
         let render_stats = format!(
-            "GPU elapsed: {} | Clipper in/out: {}/{} | Vert/Frag calls: {}/{}",
+            "GPU elapsed: {} | Clipper in/out: {}/{}\nVert/Frag calls: {}/{}",
             gpu_elapsed, clipper_in, clipper_out, vert_invoc, frag_invoc,
         );
 
@@ -415,8 +432,8 @@ pub fn update_performance_text(
         );
 
         if scale_changed {
-            text_font.font_size = 14.0 * current_scale;
-            *line_height = LineHeight::Px(14.0 * current_scale);
+            text_font.font_size = FONT_SIZE * current_scale;
+            *line_height = LineHeight::Px(FONT_SIZE * current_scale);
             *last_scale = current_scale;
         }
     }

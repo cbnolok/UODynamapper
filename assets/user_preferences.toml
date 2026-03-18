@@ -6,7 +6,7 @@ height = 768.0
 width = 1024.0
 zoom = 1.0
 egui_scale = 1.0
-overlay_scale = 2.0
+overlay_scale = 1.0
 free_camera = false
 
 [debug]

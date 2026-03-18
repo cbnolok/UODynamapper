@@ -4,6 +4,9 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
+use bevy::window::Window;
+use crate::core::render::scene::camera::RenderZoom;
+use crate::core::render::scene::camera::PlayerCamera;
 
 pub struct PlayerPositionOverlayPlugin;
 
@@ -80,6 +83,9 @@ pub fn update_player_position_text(
         ),
     >,
     mut last_scale: Local<f32>,
+    windows: Query<&Window>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    render_zoom: Res<RenderZoom>,
 ) {
     let current_scale = settings.app.window.overlay_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
@@ -100,7 +106,54 @@ pub fn update_player_position_text(
         (player_query.single().ok(), text_query.single_mut().ok())
     {
         let pos = transform.translation.to_uo_vec3();
-        text.0 = format!("Player position: [{}, {}, {}]", pos.x, pos.y, pos.z);
+        // Compute viewport tile coverage by sampling the camera frustum
+        let mut viewport_tiles = "-- x --".to_string();
+        if let (Ok(window), Ok((cam, cam_tf))) = (windows.single(), camera_q.single()) {
+            let window_w = window.width();
+            let window_h = window.height();
+            let sample_points = [
+                Vec2::new(0.0, 0.0),
+                Vec2::new(window_w, 0.0),
+                Vec2::new(window_w, window_h),
+                Vec2::new(0.0, window_h),
+                Vec2::new(window_w * 0.5, 0.0),
+                Vec2::new(window_w, window_h * 0.5),
+                Vec2::new(window_w * 0.5, window_h),
+                Vec2::new(0.0, window_h * 0.5),
+            ];
+
+            let mut min_x = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut min_z = f32::INFINITY;
+            let mut max_z = f32::NEG_INFINITY;
+            let mut any_hit = false;
+
+            for &screen_pt in &sample_points {
+                if let Ok(ray) = cam.viewport_to_world(cam_tf, screen_pt) {
+                    let dir_y = ray.direction.y;
+                    if dir_y.abs() > 1e-6 {
+                        let t = -ray.origin.y / dir_y;
+                        let hit = ray.origin + *ray.direction * t;
+                        min_x = min_x.min(hit.x);
+                        max_x = max_x.max(hit.x);
+                        min_z = min_z.min(hit.z);
+                        max_z = max_z.max(hit.z);
+                        any_hit = true;
+                    }
+                }
+            }
+
+            if any_hit {
+                let tiles_w = ((max_x - min_x).abs().ceil()) as i32;
+                let tiles_h = ((max_z - min_z).abs().ceil()) as i32;
+                viewport_tiles = format!("{} x {}", tiles_w, tiles_h);
+            }
+        }
+
+        text.0 = format!(
+            "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: {} tiles",
+            pos.x, pos.y, pos.z, render_zoom.0, viewport_tiles
+        );
 
         if scale_changed {
             text_font.font_size = 15.0 * current_scale;
