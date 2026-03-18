@@ -9,9 +9,9 @@ Quick reference document for contributors and AI agents to quickly locate releva
 ### By Task Type
 
 | I want to... | Look in... |
-|--------------|------------|
-| **Modify terrain visuals** | `assets/shaders/worldmap/land_base.wgsl` |
-| **Add a new uniform** | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` (Rust) + `land_base.wgsl` (shader) |
+| ------------ | ---------- |
+| **Modify terrain visuals** | `assets/shaders/worldmap/land/main.wgsl` |
+| **Add a new uniform** | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` (Rust) + `main.wgsl` (shader) |
 | **Change UI overlays** | `dynamapper/src/core/render/overlays/` |
 | **Modify dialogs (F3, F1, etc.)** | `dynamapper/src/core/render/dialogs/` |
 | **Adjust keybindings** | `assets/keybindings.toml` |
@@ -26,7 +26,7 @@ Quick reference document for contributors and AI agents to quickly locate releva
 ### Core Architecture Files
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `dynamapper/src/main.rs` | Application entry point |
 | `dynamapper/src/core.rs` | Bevy app setup, plugin registration |
 | `dynamapper/src/core/app_states.rs` | State machine (Startup → InGame) |
@@ -35,18 +35,21 @@ Quick reference document for contributors and AI agents to quickly locate releva
 ### Terrain Rendering Pipeline
 
 | File | Purpose |
-|------|---------|
-| `assets/shaders/worldmap/land_base.wgsl` | WGSL terrain shader |
+| ---- | ------- |
+| `assets/shaders/worldmap/land/main.wgsl` | WGSL terrain shader |
 | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` | Rust uniform structs (must match WGSL) |
-| `dynamapper/src/core/render/scene/world/land/draw_mesh.rs` | Chunk mesh creation, atlas uploads |
-| `dynamapper/src/core/render/scene/world/land/tile_atlas.rs` | LRU cache, paged atlas management |
-| `dynamapper/src/core/render/scene/world/land/setup_base_mesh.rs` | Base mesh geometry |
+| `dynamapper/src/core/render/scene/world/land/draw_mesh.rs` | Chunk data collection, atlas uploads, scale-aware mesh assignment |
+| `dynamapper/src/core/render/scene/world/land/tile_atlas.rs` | Metadata atlas paging and LRU layer management |
+| `dynamapper/src/core/render/scene/world/land/setup_base_mesh.rs` | Shared LOD and wide-mesh generation |
 | `dynamapper/src/core/render/terrain_shader_ui.rs` | F3 shader uniform controls |
+| `dynamapper/src/core/render/scene.rs` | Visible chunk set computation, throttled spawn/despawn orchestration |
+| `dynamapper/src/core/texture_cache/land.rs` | Terrain texture cache setup, eviction, dynamic array resize |
+| `dynamapper/src/core/texture_cache/land/cache.rs` | Small/big texture-array residency and GPU uploads |
 
 ### UO File Parsing (uocf crate)
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `uocf/src/geo/map.rs` | `map.mul` parser (MapBlock, MapCell) |
 | `uocf/src/geo/land_texture_2d.rs` | `TexMap2D` lazy texture loading |
 | `uocf/src/tiledata.rs` | `tiledata.mul` parser |
@@ -61,7 +64,7 @@ Quick reference document for contributors and AI agents to quickly locate releva
 
 Terrain metadata is stored in a **layered Rg16Uint texture array** instead of per-chunk uniforms:
 
-```
+```text
 Format: 4 bytes per tile
 ├─ R16: tile_id (0..65535)
 └─ G16: packed [height_biased:low 8 | tex_size:high 8]
@@ -74,7 +77,7 @@ Format: 4 bytes per tile
 ### Shader Presets
 
 | Mode | Value | Features |
-|------|-------|----------|
+| ---- | ----- | -------- |
 | Classic 2D | 0 | Faceted normals, Gouraud (vertex) lighting |
 | Enhanced Classic | 1 | Smooth normals, per-fragment lighting, fill light |
 | KR-like | 2 | Full suite: rim/spec highlights, fog, color grading, tonemapping |
@@ -83,7 +86,7 @@ Format: 4 bytes per tile
 
 **CRITICAL**: Rust `#[uniform(10X)]` must match WGSL `@binding(10X)`:
 
-```
+```text
 @binding(104) → AtlasParams
 @binding(105) → SceneUniform
 @binding(106) → EffectsUniform
@@ -95,6 +98,19 @@ Format: 4 bytes per tile
 - **What**: MapBlocks + texture pixel data
 - **When**: Not accessed for 60 seconds
 - **Check**: Every 5 seconds via `sys_evict_map_blocks`
+
+### Zoom-Driven Chunk Scaling
+
+Visible terrain is rendered at different chunk granularities depending on zoom:
+
+| Zoom Range | Scale | Coverage |
+| ---------- | ----- | -------- |
+| `< 10` | 1 | 8x8 tiles |
+| `10-25` | 2 | 16x16 tiles |
+| `25-50` | 4 | 32x32 tiles |
+| `>= 50` | 8 | 64x64 tiles |
+
+The renderer still loads base 8x8 map blocks internally, but combines them into fewer entities at high zoom.
 
 ### BC7 Compression
 
@@ -110,13 +126,13 @@ Format: 4 bytes per tile
 
 1. Add field to Rust struct in `mesh_material.rs` (respect `std140` alignment)
 2. Populate uniform in `draw_mesh.rs` (`create_land_chunk_material`)
-3. Add field to WGSL struct in `land_base.wgsl`
+3. Add field to WGSL struct in `main.wgsl`
 4. Use uniform in shader logic
 5. **Verify**: Binding indices match between Rust and WGSL
 
 ### Modify a Visual Effect
 
-1. Open `assets/shaders/worldmap/land_base.wgsl`
+1. Open `assets/shaders/worldmap/land/main.wgsl`
 2. Find relevant section (e.g., "Lighting composition", "KR-style fog")
 3. Use F3 UI to test changes without recompiling Rust
 4. Verify all three shader presets (Classic, Enhanced, KR-like)
@@ -124,11 +140,13 @@ Format: 4 bytes per tile
 ### Debug Common Issues
 
 | Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
+| ------- | ------------ | --- |
 | `Binding is missing from pipeline layout` | Binding index mismatch | Verify `#[uniform(10X)]` = `@binding(10X)` |
 | Colors washed out / grayish | Double gamma correction | Remove manual `pow(color, 1.0/2.2)` |
 | Shader compile error | WGSL syntax/alignment | Read wgpu error (points to exact line) |
-| High GPU usage (70%+) idle | `get_mut()` in hot path | Use `get()` or `write_texture` to atlas |
+| High GPU usage (70%+) idle | `get_mut()` or unnecessary asset mutation in hot path | Use `get()` or change-only `get_mut()` |
+| Missing far edge chunks | Visible-set math drift or bad super-chunk bounds | Inspect `scene.rs::compute_visible_chunks()` |
+| WGPU Z-layer overrun | Texture cache layer mismatch or out-of-bounds chunk requests | Check texture-array initial sizes and map-edge bounds guards |
 | Dialog/overlay not showing | Wrong Bevy schedule | Use `EguiPrimaryContextPass`, not `Update` |
 
 ---
@@ -136,7 +154,7 @@ Format: 4 bytes per tile
 ## 4. Configuration Files
 
 | File | Purpose |
-|------|---------|
+| ---- | ------- |
 | `config.toml` | Cargo build settings, linker config |
 | `assets/settings.toml` | UO paths, window settings, debug options, power saving |
 | `assets/shader_presets.toml` | Shader uniform presets (Classic/Enhanced/KR) |
@@ -174,12 +192,14 @@ cargo fmt                # Format
 
 ### CRITICAL: Avoid `get_mut()` in Hot Paths
 
-**Problem**: Calling `get_mut()` on Materials triggers Bevy's change detection → expensive re-extraction + re-binding every frame → 70%+ GPU usage even idle.
+**Problem**: Calling `get_mut()` on Materials triggers Bevy's change detection → expensive re-extraction + re-binding every frame → high idle GPU/CPU usage.
 
 **Solution**: 
+
 - Use `get()` for read-only checks
 - For terrain metadata: use `write_texture` directly to Tile Atlas
 - Only use `get_mut()` if comparison proves data actually changed
+- Prefer built-in shader globals like `globals.time` over CPU-side time uniforms when possible
 
 ### Memory Management
 
@@ -195,6 +215,7 @@ cargo fmt                # Format
 **Why**: Hidden defaults in Rust code are hard to discover and lead to configuration drift.
 
 **Pattern**:
+
 ```rust
 // CORRECT - fails with clear error if missing
 let value = settings
@@ -239,12 +260,15 @@ let value = settings.get("my_setting").unwrap_or(42);
 TILE_NUM_PER_CHUNK_DIM = 8       // 8x8 tiles per chunk
 TILE_NUM_PER_CHUNK_TOTAL = 64
 
-DATA_GRID_BORDER = 2
-DATA_GRID_SIDE = 13              // 2 + 8 + 2 + 1 (bicubic + bent normals)
-MESH_GRID_SIDE = 9               // 8 + 1 (vertex grid)
+scale 1 -> 8x8 tiles
+scale 2 -> 16x16 tiles
+scale 4 -> 32x32 tiles
+scale 8 -> 64x64 tiles
 
 PAGE_TEXELS = 2048               // World page size
-MAX_LAYERS = 64                  // GPU texture array layers
+MAX_LAYERS = 8                   // Metadata atlas layers
+SMALL_INITIAL_LAYERS = 256
+BIG_INITIAL_LAYERS = 128
 ```
 
 ---
@@ -257,6 +281,6 @@ MAX_LAYERS = 64                  // GPU texture array layers
 
 ---
 
-**Last Updated**: sabato 14 marzo 2026  
+**Last Updated**: mercoledì 18 marzo 2026  
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024
