@@ -242,7 +242,7 @@ fn sys_camera_zoom(
 
     // Mouse scroll
     for event in scroll_events.read() {
-        zoom_delta -= event.y * 0.1; // Invert and scale
+        zoom_delta -= event.y; // Accumulate raw scroll ticks (typically ±1)
     }
 
     // Keyboard +/-
@@ -252,15 +252,20 @@ fn sys_camera_zoom(
         }
         if let Key::Character(input) = &ev.logical_key {
             match input.as_str() {
-                "+" | "=" => zoom_delta -= 0.1,
-                "-" | "_" => zoom_delta += 0.1,
+                "+" | "=" => zoom_delta -= 1.0,
+                "-" | "_" => zoom_delta += 1.0,
                 _ => {}
             }
         }
     }
 
     if zoom_delta != 0.0 {
-        let new_zoom = zoom_res.0 + zoom_delta;
+        // Exponential zoom: each scroll tick multiplies/divides by a constant factor.
+        // This gives perceptually uniform zoom steps — big jumps when zoomed out,
+        // fine control when zoomed in. ~25 ticks to go from 1× to 50×.
+        let factor = 1.15_f32; // ~15% per tick
+        let multiplier = factor.powf(zoom_delta);
+        let new_zoom = zoom_res.0 * multiplier;
         zoom_res.write_val(new_zoom);
     }
 }

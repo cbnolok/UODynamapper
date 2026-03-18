@@ -913,7 +913,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var enable_blur    = effects.enable_blur;
   var force_nearest  = false;
   var disable_sharpen = false;
-  var disable_volumetric = false;
 
   if (zoom > 5.0) {
     force_nearest = true;  // skip bicubic/FSR, use direct nearest sample
@@ -925,9 +924,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   if (zoom > 20.0) {
     enable_bent = 0u;       // skip bent normals (4 extra height reads)
-  }
-  if (zoom > 30.0) {
-    disable_volumetric = true; // fall back to flat fog (skip domain-warp FBM)
   }
 
   let ambient_strength  = effects.ambient_strength;
@@ -1138,8 +1134,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Final cap set by UI alpha
     let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
 
-    // If user opted out of volumetric noise OR zoom-LOD disabled it, use flat fog:
-    if (USE_VOLUMETRIC_NOISE == 1u && !disable_volumetric) {
+    // If user opted out of volumetric noise, fallback to smooth (flat) fog:
+    if (USE_VOLUMETRIC_NOISE == 1u) {
       hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
     } else {
       // simple fallback: linearized distance*height blend capped by alpha

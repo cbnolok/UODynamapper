@@ -19,8 +19,11 @@ pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
 pub struct LCMesh {
     #[allow(unused)]
     pub parent_map_id: u32,
-    pub gx: u32, // chunk grid coordinates
+    pub gx: u32, // chunk grid coordinates (in base 8×8 grid)
     pub gy: u32,
+    /// Chunk scale: 1 = standard 8×8, 2 = wide 16×16, 4 = wide 32×32.
+    /// Determines which mesh and AABB are used.
+    pub scale: u32,
 }
 
 /// Establishes material, buffer pool, diagnostics, and the draw system.

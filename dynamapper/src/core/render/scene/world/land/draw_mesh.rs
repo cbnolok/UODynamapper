@@ -39,6 +39,10 @@ pub struct LandMeshHandles {
     pub high: Handle<Mesh>,
     pub medium: Handle<Mesh>,
     pub low: Handle<Mesh>,
+    /// 16×16 tile mesh (step=2, 81 verts) for zoom 10–25.
+    pub wide16: Handle<Mesh>,
+    /// 32×32 tile mesh (step=4, 81 verts) for zoom 25+.
+    pub wide32: Handle<Mesh>,
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -70,6 +74,33 @@ fn mesh_for_lod(handles: &LandMeshHandles, lod: LandMeshLod) -> Handle<Mesh> {
     }
 }
 
+/// Active chunk scale: how many base 8×8 blocks each entity covers per dimension.
+/// 1 = standard (8×8 tiles), 2 = wide (16×16), 4 = extra-wide (32×32).
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkScale(pub u32);
+impl Default for ChunkScale {
+    fn default() -> Self { Self(1) }
+}
+
+/// Choose chunk scale from zoom level.  Higher zoom → larger chunks → fewer entities.
+///  - zoom <  10 → scale 1  (standard 8×8,  entity count ×1)
+///  - zoom 10–25 → scale 2  (wide 16×16,    entity count ÷4)
+///  - zoom ≥  25 → scale 4  (extra-wide 32×32, entity count ÷16)
+pub fn scale_from_zoom(zoom: f32) -> u32 {
+    if zoom >= 25.0 { 4 }
+    else if zoom >= 10.0 { 2 }
+    else { 1 }
+}
+
+/// Select the correct mesh handle for a given chunk scale and LOD.
+fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Handle<Mesh> {
+    match scale {
+        4 => handles.wide32.clone(),
+        2 => handles.wide16.clone(),
+        _ => mesh_for_lod(handles, lod),
+    }
+}
+
 use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 
 #[derive(Resource)]
@@ -79,8 +110,12 @@ pub fn sys_update_existing_chunk_mesh_lod(
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     mut current_lod: ResMut<LandMeshLod>,
+    current_scale: Res<ChunkScale>,
     mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
 ) {
+    // Scale > 1 uses fixed wide meshes; LOD swaps only matter at scale=1.
+    if current_scale.0 != 1 { return; }
+
     let next_lod = lod_from_zoom(render_zoom.0);
     if *current_lod == next_lod {
         return;
@@ -210,9 +245,10 @@ pub fn sys_draw_spawned_land_chunks(
 
     // Step 1: Collect all primary chunks that need meshing into a HashMap.
     // Process only chunks that don't have a mesh yet.
+    // Stores (entity, scale) per chunk coordinate.
     let mut primary_chunks = std::collections::HashMap::new();
     for (entity, chunk_data, _) in chunk_q.iter().filter(|(_, _, mesh)| mesh.is_none()) {
-        primary_chunks.insert((chunk_data.gx, chunk_data.gy), entity);
+        primary_chunks.insert((chunk_data.gx, chunk_data.gy), (entity, chunk_data.scale));
     }
 
     if primary_chunks.is_empty() {
@@ -224,50 +260,56 @@ pub fn sys_draw_spawned_land_chunks(
     // (to get data for mesh stitching).
     let mut spawn_targets = HashSet::<LandChunkConstructionData>::new();
 
-    #[rustfmt::skip]
-    const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
-        (-1, -1), (0, -1), (1, -1),
-        (-1,  0),          (1,  0), // The primary chunk (0,0) is handled separately.
-        (-1,  1), (0,  1), (1,  1),
-    ];
-
     let max_chunk_x = (map_plane_metadata.width / TILE_NUM_PER_CHUNK_DIM) as i32;
     let max_chunk_y = (map_plane_metadata.height / TILE_NUM_PER_CHUNK_DIM) as i32;
 
-    // Iterate through the primary chunks. Add them to the target list,
-    // then add any neighbors that are not already primary chunks themselves.
-    for (&(gx, gy), &entity) in primary_chunks.iter() {
-        // Add the primary chunk itself. Its entity is guaranteed to be Some(entity).
+    // Iterate through the primary chunks. Add them and all sub-blocks (for super-chunks
+    // at scale > 1) to the target list, then add border neighbors for data stitching.
+    for (&(gx, gy), &(entity, scale)) in primary_chunks.iter() {
+        // For a super-chunk at (gx,gy) covering `scale × scale` base blocks,
+        // we need data for every sub-block inside it plus a 1-block border.
+        let base_blocks_dim = scale as i32;
+
+        // Insert the primary entity block (the one that gets the mesh).
         spawn_targets.insert(LandChunkConstructionData {
             entity: Some(entity),
             chunk_origin_chunk_units_x: gx,
             chunk_origin_chunk_units_z: gy,
         });
 
-        // Add its valid neighbors that ARE NOT already primary chunks.
-        // This ensures we get their data for seamless mesh generation without
-        // overwriting a primary chunk's entity reference.
-        for (dx, dy) in NEIGHBOR_OFFSETS {
-            let nx = gx as i32 + dx;
-            let ny = gy as i32 + dy;
-
-            // Ensure the neighbor is within map boundaries (CHUNK units).
-            if nx >= 0
-                && nx < max_chunk_x
-                && ny >= 0
-                && ny < max_chunk_y
-            {
-                let neighbor_coords = (nx as u32, ny as u32);
-
-                // If the neighbor is not a primary chunk, we need its data for the mesh.
-                // Since `spawn_targets` is a HashSet, duplicate inserts of the same
-                // neighbor from different primary chunks are handled automatically.
-                if !primary_chunks.contains_key(&neighbor_coords) {
+        // Insert remaining sub-blocks inside this super-chunk (data-only).
+        for sx in 0..base_blocks_dim {
+            for sz in 0..base_blocks_dim {
+                if sx == 0 && sz == 0 { continue; } // Already added as primary.
+                let bx = gx as i32 + sx;
+                let bz = gy as i32 + sz;
+                if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
                     spawn_targets.insert(LandChunkConstructionData {
-                        entity: None, // It's just a neighbor, not a spawned entity.
-                        chunk_origin_chunk_units_x: neighbor_coords.0,
-                        chunk_origin_chunk_units_z: neighbor_coords.1,
+                        entity: None,
+                        chunk_origin_chunk_units_x: bx as u32,
+                        chunk_origin_chunk_units_z: bz as u32,
                     });
+                }
+            }
+        }
+
+        // 1-block border ring around the super-chunk for edge stitching.
+        for edge in -1..=(base_blocks_dim) {
+            for &(bx, bz) in &[
+                (gx as i32 + edge, gy as i32 - 1),              // top row
+                (gx as i32 + edge, gy as i32 + base_blocks_dim), // bottom row
+                (gx as i32 - 1,    gy as i32 + edge),            // left col
+                (gx as i32 + base_blocks_dim, gy as i32 + edge), // right col
+            ] {
+                if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
+                    let nc = (bx as u32, bz as u32);
+                    if !primary_chunks.contains_key(&nc) {
+                        spawn_targets.insert(LandChunkConstructionData {
+                            entity: None,
+                            chunk_origin_chunk_units_x: nc.0,
+                            chunk_origin_chunk_units_z: nc.1,
+                        });
+                    }
                 }
             }
         }
@@ -401,6 +443,9 @@ pub fn sys_draw_spawned_land_chunks(
             &land_mesh_handles_r,
             *current_lod,
             &shared_land_material_r,
+            primary_chunks.get(&(chunk_data.chunk_origin_chunk_units_x, chunk_data.chunk_origin_chunk_units_z))
+                .map(|&(_, s)| s)
+                .unwrap_or(1),
         );
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();
@@ -420,8 +465,9 @@ fn draw_land_chunk(
     land_mesh_handles_r: &Res<LandMeshHandles>,
     current_lod: LandMeshLod,
     shared_land_material_r: &Res<SharedLandMaterial>,
+    chunk_scale: u32,
 ) {
-    let chunk_mesh_handle: Handle<Mesh> = mesh_for_lod(land_mesh_handles_r, current_lod);
+    let chunk_mesh_handle: Handle<Mesh> = mesh_for_scale(land_mesh_handles_r, chunk_scale, current_lod);
     let chunk_material_handle: Handle<LandCustomMeshMaterial> = shared_land_material_r.0.clone();
 
     // Compute chunk origin (in tile units) for the transform.
@@ -429,6 +475,13 @@ fn draw_land_chunk(
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
     let chunk_origin_tile_units_z =
         chunk_data_ref.chunk_origin_chunk_units_z * TILE_NUM_PER_CHUNK_DIM;
+
+    // Scale-aware AABB.
+    let tile_span = (TILE_NUM_PER_CHUNK_DIM * chunk_scale) as f32;
+    let aabb = Aabb::from_min_max(
+        Vec3::new(-1.0, -13.0, -1.0),
+        Vec3::new(tile_span + 1.0, 13.0, tile_span + 1.0),
+    );
 
     // 7) Attach to entity
     if let Ok(mut entity_commands) = commands.get_entity(chunk_data_ref.entity.unwrap()) {
@@ -443,25 +496,14 @@ fn draw_land_chunk(
             // --------------------------------------------------------------------------
             // MANUAL AABB & FRUSTUM CULLING
             // --------------------------------------------------------------------------
-            // TODO: Explain what is AABB and what's frustum culling!
-            // Why? In Ultima Online, land meshes are flat grids (y=0) on the CPU side.
-            // However, our vertex shader displaces these vertices vertically (up to ~12.8m).
+            // Vertex shader displaces Y by up to ±12.8m.  Without a manual AABB that
+            // covers this range, Bevy would compute bounds from the flat mesh and cull
+            // chunks whose displaced peaks/valleys are still visible.
             //
-            // If we let Bevy automatically compute the AABB from the flat mesh vertices,
-            // the culling system remains unaware of the height of mountains/valleys.
-            // Result: chunks disappear ("pop") as soon as their flat base leaves the
-            // camera view, even if their peaks should still be visible.
-            //
-            // Solution:
-            // 1. Add `NoAutoAabb` to stop Bevy from overwriting our custom bounds.
-            // 2. Insert a manual `Aabb` that covers the full possible displacement.
-            //
-            // Tailored Bounds Calculation:
-            // - Mesh Size: 8x8 tiles = 9x9 vertices -> local XZ spans [0.0, 8.0].
-            // - Height Range: UO uses -128 to +127, scaled by 0.1 in shader -> [-12.8, 12.7].
-            // - Padding: We add ~1.0m padding in XZ for stitching and ~0.3m Y margin.
+            // The AABB XZ span scales with chunk_scale:
+            //   scale 1 → 8 tiles, scale 2 → 16, scale 4 → 32.
             NoAutoAabb,
-            Aabb::from_min_max(Vec3::new(-1.0, -13.0, -1.0), Vec3::new(9.0, 13.0, 9.0)),
+            aabb,
         ));
     } else {
         console_logger::one(

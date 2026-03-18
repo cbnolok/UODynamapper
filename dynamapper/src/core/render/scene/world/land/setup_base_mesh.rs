@@ -1,7 +1,4 @@
-use super::{
-    TILE_NUM_PER_CHUNK_DIM,
-    draw_mesh::{LandMeshHandles, LandMeshLod},
-};
+use super::draw_mesh::{ChunkScale, LandMeshHandles, LandMeshLod};
 use bevy::{
     prelude::*,
     mesh::Indices,
@@ -9,9 +6,9 @@ use bevy::{
     asset::RenderAssetUsages,
 };
 
-fn build_chunk_mesh(step_tiles: usize) -> Mesh {
-    let core_w: usize = TILE_NUM_PER_CHUNK_DIM as usize;
-    let core_h: usize = TILE_NUM_PER_CHUNK_DIM as usize;
+fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
+    let core_w: usize = chunk_tiles;
+    let core_h: usize = chunk_tiles;
 
     assert!(step_tiles > 0);
     assert!(core_w.is_multiple_of(step_tiles));
@@ -63,12 +60,17 @@ fn build_chunk_mesh(step_tiles: usize) -> Mesh {
     mesh
 }
 
-/// This startup system generates shared terrain meshes for multiple LODs.
+/// This startup system generates shared terrain meshes for multiple LODs and scales.
 pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    let high = meshes.add(build_chunk_mesh(1)); // 8x8 quads, 9x9 vertices
-    let medium = meshes.add(build_chunk_mesh(2)); // 4x4 quads, 5x5 vertices
-    let low = meshes.add(build_chunk_mesh(4)); // 2x2 quads, 3x3 vertices
+    // Standard 8×8 tile meshes at three vertex-density LODs:
+    let high = meshes.add(build_chunk_mesh(8, 1));   // 81 verts  (zoom < 4)
+    let medium = meshes.add(build_chunk_mesh(8, 2)); // 25 verts  (zoom 4–10)
+    let low = meshes.add(build_chunk_mesh(8, 4));    //  9 verts  (zoom 10+ fallback)
+    // Wide meshes for reduced entity count at high zoom:
+    let wide16 = meshes.add(build_chunk_mesh(16, 2)); // 81 verts, covers 16×16 tiles (zoom 10–25)
+    let wide32 = meshes.add(build_chunk_mesh(32, 4)); // 81 verts, covers 32×32 tiles (zoom 25+)
 
-    commands.insert_resource(LandMeshHandles { high, medium, low });
+    commands.insert_resource(LandMeshHandles { high, medium, low, wide16, wide32 });
     commands.insert_resource(LandMeshLod::default());
+    commands.insert_resource(ChunkScale::default());
 }

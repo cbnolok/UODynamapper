@@ -11,9 +11,10 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::window::{Window, WindowResized};
-use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom, UO_TILE_PIXEL_SIZE};
+use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom};
 use player::Player;
 use world::land::TILE_NUM_PER_CHUNK_DIM;
+use world::land::draw_mesh::{ChunkScale, scale_from_zoom};
 use world::{WorldGeoData, land};
 
 #[derive(Resource)]
@@ -110,110 +111,110 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     );
 }
 
-/// Calculates the visible chunk set from the camera projection and transform.
+/// Calculates the visible chunk set using Bevy's own Camera projection API.
 ///
-/// We project the viewport corners onto the ground plane (Y=0), derive an XZ AABB,
-/// then convert that area to chunk coordinates. No overscan — the projection is exact.
+/// Uses `Camera::viewport_to_world()` to cast rays from the 4 screen corners plus
+/// mid-edges, intersects them with the Y=0 ground plane, then derives an XZ AABB.
+/// This is exact — no manual ortho math that can drift from Bevy's actual rendering.
+///
+/// When `chunk_scale > 1`, the grid is iterated at a coarser granularity:
+///   scale 2 → 16×16 tile super-chunks (4× fewer entities)
+///   scale 4 → 32×32 tile super-chunks (16× fewer entities)
+/// Returned coordinates are in the base 8×8 grid, aligned to `chunk_scale` boundaries.
 fn compute_visible_chunks(
-    camera_transform: &Transform,
-    projection: &Projection,
-    player_pos_fallback: Vec3,
+    camera: &Camera,
+    camera_global_transform: &GlobalTransform,
     window_width: f32,
     window_height: f32,
-    zoom: f32,
     map_width: u32,
     map_height: u32,
+    chunk_scale: u32,
 ) -> std::collections::HashSet<(u32, u32)> {
-    let chunk_size = TILE_NUM_PER_CHUNK_DIM;
-    let map_chunks_x = (map_width / chunk_size) as i32;
-    let map_chunks_y = (map_height / chunk_size) as i32;
+    let base_chunk_size = TILE_NUM_PER_CHUNK_DIM;
+    let scaled_tile_span = base_chunk_size * chunk_scale;
+    let map_base_chunks_x = (map_width / base_chunk_size) as i32;
+    let map_base_chunks_y = (map_height / base_chunk_size) as i32;
 
-    // Preferred path: camera/projection-based footprint on ground plane.
-    if let Projection::Orthographic(ortho) = projection {
-        if let bevy::camera::ScalingMode::Fixed { width, height } = ortho.scaling_mode {
-            let half_w = width * ortho.scale * 0.5;
-            let half_h = height * ortho.scale * 0.5;
+    // Sample 8 points: 4 corners + 4 mid-edges (mid-edges catch aspect-ratio distortions).
+    let sample_points = [
+        Vec2::new(0.0, 0.0),
+        Vec2::new(window_width, 0.0),
+        Vec2::new(window_width, window_height),
+        Vec2::new(0.0, window_height),
+        Vec2::new(window_width * 0.5, 0.0),
+        Vec2::new(window_width, window_height * 0.5),
+        Vec2::new(window_width * 0.5, window_height),
+        Vec2::new(0.0, window_height * 0.5),
+    ];
 
-            let cam_pos = camera_transform.translation;
-            let cam_right = camera_transform.rotation * Vec3::X;
-            let cam_up = camera_transform.rotation * Vec3::Y;
-            let cam_forward = camera_transform.rotation * -Vec3::Z;
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_z = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    let mut any_hit = false;
 
-            // Avoid division by very small numbers if camera becomes near-parallel to ground.
-            if cam_forward.y.abs() > 1e-5 {
-                let corners = [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
-
-                let mut min_x = f32::INFINITY;
-                let mut max_x = f32::NEG_INFINITY;
-                let mut min_z = f32::INFINITY;
-                let mut max_z = f32::NEG_INFINITY;
-
-                for (sx, sy) in corners {
-                    let ray_origin = cam_pos + cam_right * (sx * half_w) + cam_up * (sy * half_h);
-                    let t = (0.0 - ray_origin.y) / cam_forward.y;
-                    let hit = ray_origin + cam_forward * t;
-
-                    min_x = min_x.min(hit.x);
-                    max_x = max_x.max(hit.x);
-                    min_z = min_z.min(hit.z);
-                    max_z = max_z.max(hit.z);
-                }
-
-                // One-chunk safety pad (8 tiles): the projection is exact for Y=0,
-                // but vertex-displaced peaks (up to ±12.8m) on a neighboring chunk
-                // can peek into the viewport.  One extra chunk ring is cheap and
-                // eliminates the corner gaps visible at top-right / top-left.
-                let edge_pad_tiles = TILE_NUM_PER_CHUNK_DIM as f32;
-                let tile_x0 = (min_x - edge_pad_tiles).floor() as i32;
-                let tile_x1 = (max_x + edge_pad_tiles).ceil() as i32;
-                let tile_y0 = (min_z - edge_pad_tiles).floor() as i32;
-                let tile_y1 = (max_z + edge_pad_tiles).ceil() as i32;
-
-                let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
-                let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
-                let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);
-                let chunk_y1 = ((tile_y1 as f32) / chunk_size as f32).ceil() as i32;
-
-                let mut set = std::collections::HashSet::new();
-                for gx in chunk_x0..=chunk_x1.min(map_chunks_x - 1) {
-                    for gy in chunk_y0..=chunk_y1.min(map_chunks_y - 1) {
-                        set.insert((gx as u32, gy as u32));
-                    }
-                }
-                return set;
+    for &screen_pt in &sample_points {
+        if let Ok(ray) = camera.viewport_to_world(camera_global_transform, screen_pt) {
+            let dir_y = ray.direction.y;
+            if dir_y.abs() > 1e-6 {
+                let t = -ray.origin.y / dir_y;
+                let hit = ray.origin + *ray.direction * t;
+                min_x = min_x.min(hit.x);
+                max_x = max_x.max(hit.x);
+                min_z = min_z.min(hit.z);
+                max_z = max_z.max(hit.z);
+                any_hit = true;
             }
         }
     }
 
-    // Fallback path (should be rare): player-centered approximation.
-    // In orthographic projection, higher scale = zoomed out = each world unit takes
-    // fewer screen pixels. So pixel_size_per_tile shrinks as zoom grows.
-    let corrected_pixel_size = UO_TILE_PIXEL_SIZE / zoom;
-    let half_visible_tiles_x = ((window_width / corrected_pixel_size).ceil() * 0.5) as i32;
-    let half_visible_tiles_y = ((window_height / corrected_pixel_size).ceil() * 0.5) as i32;
+    if !any_hit {
+        // Fallback: return an empty set if the camera can't see the ground.
+        return std::collections::HashSet::new();
+    }
 
-    let player_tile_x = player_pos_fallback.x as i32;
-    let player_tile_y = player_pos_fallback.z as i32;
+    // Safety pad: 2 chunk rings (16 tiles) to account for vertex-displaced
+    // mountain peaks (up to ±12.8m) that can peek into the viewport from
+    // chunks whose Y=0 base is just outside the computed footprint.
+    let edge_pad_tiles = (TILE_NUM_PER_CHUNK_DIM * 2) as f32;
+    let tile_x0 = (min_x - edge_pad_tiles).floor() as i32;
+    let tile_x1 = (max_x + edge_pad_tiles).ceil() as i32;
+    let tile_y0 = (min_z - edge_pad_tiles).floor() as i32;
+    let tile_y1 = (max_z + edge_pad_tiles).ceil() as i32;
 
-    let tile_x0 = player_tile_x - half_visible_tiles_x;
-    let tile_x1 = player_tile_x + half_visible_tiles_x;
-    let tile_y0 = player_tile_y - half_visible_tiles_y;
-    let tile_y1 = player_tile_y + half_visible_tiles_y;
-
-    // Now convert these to chunk indices (and always round DOWN for min, UP for max)
-    // so that *any partially overlapping chunk is included*.
-    let chunk_x0 = (tile_x0.div_euclid(chunk_size as i32)).max(0);
-    let chunk_x1 = ((tile_x1 as f32) / chunk_size as f32).ceil() as i32;
-    let chunk_y0 = (tile_y0.div_euclid(chunk_size as i32)).max(0);
-    let chunk_y1 = ((tile_y1 as f32) / chunk_size as f32).ceil() as i32;
+    // Convert tile AABB to scaled chunk grid.
+    // At scale > 1, iterate at coarser granularity (16- or 32-tile steps).
+    let s = scaled_tile_span as i32;
+    let chunk_x0 = (tile_x0 as f32 / s as f32).floor() as i32;
+    let chunk_x1 = (tile_x1 as f32 / s as f32).ceil() as i32;
+    let chunk_y0 = (tile_y0 as f32 / s as f32).floor() as i32;
+    let chunk_y1 = (tile_y1 as f32 / s as f32).ceil() as i32;
 
     let mut set = std::collections::HashSet::new();
-    for gx in chunk_x0..=chunk_x1.min(map_chunks_x - 1) {
-        for gy in chunk_y0..=chunk_y1.min(map_chunks_y - 1) {
-            set.insert((gx as u32, gy as u32));
+    for gx in chunk_x0.max(0)..chunk_x1 {
+        for gy in chunk_y0.max(0)..chunk_y1 {
+            // Coordinates in the base 8×8 grid, aligned to chunk_scale boundaries.
+            let base_gx = (gx as u32) * chunk_scale;
+            let base_gy = (gy as u32) * chunk_scale;
+            if (base_gx as i32) < map_base_chunks_x && (base_gy as i32) < map_base_chunks_y {
+                set.insert((base_gx, base_gy));
+            }
         }
     }
     set
+}
+
+/// Bundled local state for `sys_update_worldmap_chunks_to_render` to stay within
+/// Bevy's 16-parameter system limit.
+#[derive(Default)]
+struct ChunkRenderLocals {
+    last_camera_chunk: Option<(i32, i32)>,
+    last_zoom: f32,
+    last_window_size: Option<(u32, u32)>,
+    pending_resize_recomputes: u8,
+    last_chunk_scale: u32,
+    /// Pending spawn queue: chunks to spawn, sorted center-out, drained up to MAX_SPAWNS_PER_FRAME.
+    pending_spawns: Vec<(u32, u32)>,
 }
 
 fn sys_update_worldmap_chunks_to_render(
@@ -223,28 +224,23 @@ fn sys_update_worldmap_chunks_to_render(
     render_zoom_res: Res<RenderZoom>,
     mut scene_state_data_res: ResMut<SceneStateData>,
     mut land_chunk_count: ResMut<LandChunkCount>,
+    mut chunk_scale_res: ResMut<ChunkScale>,
     windows_q: Query<&Window>,
-    camera_q: Query<(&Transform, &Projection), With<camera::PlayerCamera>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<camera::PlayerCamera>>,
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh)>,
-    mut last_camera_chunk: Local<Option<(i32, i32)>>,
-    mut last_zoom: Local<f32>,
-    mut last_window_size: Local<Option<(u32, u32)>>,
-    mut pending_resize_recomputes: Local<u8>,
-    // Pending spawn queue: chunks to spawn, sorted center-out, drained up to MAX_SPAWNS_PER_FRAME.
-    mut pending_spawns: Local<Vec<(u32, u32)>>,
+    mut locals: Local<ChunkRenderLocals>,
 ) {
     /// Maximum number of chunk entities spawned per frame to avoid burst stalls.
     const MAX_SPAWNS_PER_FRAME: usize = 512;
 
-    let (mut player_instance, player_transform) =
+    let (mut player_instance, _player_transform) =
         player_q.single_mut().expect("More than 1 players?");
     let player_pos: Option<UOVec4> = player_instance.current_pos;
     if player_pos.is_none() {
         return;
     }
     let player_pos: UOVec4 = player_pos.unwrap();
-    let player_pos_translation: Vec3 = player_transform.translation;
 
     let new_map_id: u32 = player_pos.m as u32;
     let map_switch: bool = {
@@ -256,24 +252,25 @@ fn sys_update_worldmap_chunks_to_render(
     player_instance.prev_rendered_pos = Some(player_pos);
 
     let window: &Window = windows_q.single().unwrap();
-    let (camera_transform, camera_projection) = camera_q.single().unwrap();
+    let (camera, camera_global_transform) = camera_q.single().unwrap();
     let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
 
+    let cam_translation = camera_global_transform.translation();
     let current_camera_chunk = (
-        (camera_transform.translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-        (camera_transform.translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
     );
     let current_window_size = (window.width() as u32, window.height() as u32);
     let has_recompute_event = event.read().next().is_some();
-    let camera_chunk_changed = *last_camera_chunk != Some(current_camera_chunk);
-    let zoom_changed = (zoom - *last_zoom).abs() > 0.02;
-    let window_changed = *last_window_size != Some(current_window_size);
+    let camera_chunk_changed = locals.last_camera_chunk != Some(current_camera_chunk);
+    let zoom_changed = (zoom - locals.last_zoom).abs() > 0.02;
+    let window_changed = locals.last_window_size != Some(current_window_size);
     if window_changed {
         // Camera projection update may land in a different frame/order.
         // Recompute a couple of frames to avoid stale-projection holes.
-        *pending_resize_recomputes = 2;
+        locals.pending_resize_recomputes = 2;
     }
-    let has_pending_resize_recompute = *pending_resize_recomputes > 0;
+    let has_pending_resize_recompute = locals.pending_resize_recomputes > 0;
 
     let needs_recompute = has_recompute_event
         || map_switch
@@ -283,17 +280,17 @@ fn sys_update_worldmap_chunks_to_render(
         || has_pending_resize_recompute;
 
     // Even if no recompute is needed, drain pending spawns from previous frames.
-    if !needs_recompute && pending_spawns.is_empty() {
+    if !needs_recompute && locals.pending_spawns.is_empty() {
         return;
     }
 
     // If a recompute is needed, rebuild the required set and recompute the pending queue.
     if needs_recompute {
-        *last_camera_chunk = Some(current_camera_chunk);
-        *last_zoom = zoom;
-        *last_window_size = Some(current_window_size);
-        if *pending_resize_recomputes > 0 {
-            *pending_resize_recomputes -= 1;
+        locals.last_camera_chunk = Some(current_camera_chunk);
+        locals.last_zoom = zoom;
+        locals.last_window_size = Some(current_window_size);
+        if locals.pending_resize_recomputes > 0 {
+            locals.pending_resize_recomputes -= 1;
         }
 
         let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
@@ -301,41 +298,57 @@ fn sys_update_worldmap_chunks_to_render(
             .get(&new_map_id)
             .unwrap_or_else(|| panic!("Requested metadata for uncached map {new_map_id}"));
 
-        // Compute exact visible chunk set (no overscan)
+        // Determine chunk scale from current zoom.
+        let chunk_scale = scale_from_zoom(zoom);
+        let scale_changed = chunk_scale != locals.last_chunk_scale;
+        locals.last_chunk_scale = chunk_scale;
+        chunk_scale_res.0 = chunk_scale;
+
+        // Compute exact visible chunk set at the current scale granularity.
         let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
-            camera_transform,
-            camera_projection,
-            player_pos_translation,
+            camera,
+            camera_global_transform,
             window.width(),
             window.height(),
-            zoom,
             new_map_plane_metadata.width,
             new_map_plane_metadata.height,
+            chunk_scale,
         );
         console_logger::one(
             None,
             LogSev::Debug,
             LogAbout::RenderWorldLand,
-            &format!("Visible chunk target: {}", required_chunks.len()),
+            &format!("Visible chunk target: {} (scale={})", required_chunks.len(), chunk_scale),
         );
 
-        // If map plane changes, brute-force despawn all and respawn
-        if map_switch {
-            console_logger::one(
-                None,
-                LogSev::Info,
-                LogAbout::RenderWorldLand,
-                "Detected Map Plane change: despawn previously rendered land chunks and spawn new ones.",
-            );
+        // If map plane OR chunk scale changes, brute-force despawn all and respawn.
+        // Scale changes alter the grid granularity, so old entities don't match.
+        if map_switch || scale_changed {
+            if map_switch {
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::RenderWorldLand,
+                    "Detected Map Plane change: despawn previously rendered land chunks and spawn new ones.",
+                );
+            }
+            if scale_changed {
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::RenderWorldLand,
+                    &format!("Chunk scale changed to {chunk_scale}: despawn all and respawn at new granularity."),
+                );
+            }
 
             for (entity, tcm) in existing_chunks_q.iter() {
                 commands.entity(entity).despawn();
                 log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
             }
             // All chunks go into the pending queue, sorted center-out.
-            pending_spawns.clear();
-            pending_spawns.extend(required_chunks.iter());
-            sort_center_out(&mut pending_spawns, current_camera_chunk);
+            locals.pending_spawns.clear();
+            locals.pending_spawns.extend(required_chunks.iter());
+            sort_center_out(&mut locals.pending_spawns, current_camera_chunk);
             scene_state_data_res.map_id = new_map_id;
         } else {
             // Incremental update: despawn chunks no longer needed, queue new ones.
@@ -351,18 +364,19 @@ fn sys_update_worldmap_chunks_to_render(
             }
 
             // Build sorted pending spawn list: only chunks not yet spawned.
-            pending_spawns.clear();
+            locals.pending_spawns.clear();
             for &coords in required_chunks.difference(&currently_spawned) {
-                pending_spawns.push(coords);
+                locals.pending_spawns.push(coords);
             }
-            sort_center_out(&mut pending_spawns, current_camera_chunk);
+            sort_center_out(&mut locals.pending_spawns, current_camera_chunk);
         }
     }
 
     // Drain up to MAX_SPAWNS_PER_FRAME from the front (closest to camera first).
     let new_map_id = scene_state_data_res.map_id;
-    let batch_size = pending_spawns.len().min(MAX_SPAWNS_PER_FRAME);
-    for &(gx, gy) in pending_spawns[..batch_size].iter() {
+    let active_scale = chunk_scale_res.0;
+    let batch_size = locals.pending_spawns.len().min(MAX_SPAWNS_PER_FRAME);
+    for &(gx, gy) in locals.pending_spawns[..batch_size].iter() {
         let chunk_origin_tile_units_x = gx * land::TILE_NUM_PER_CHUNK_DIM;
         let chunk_origin_tile_units_z = gy * land::TILE_NUM_PER_CHUNK_DIM;
         commands.spawn((
@@ -370,6 +384,7 @@ fn sys_update_worldmap_chunks_to_render(
                 parent_map_id: new_map_id,
                 gx,
                 gy,
+                scale: active_scale,
             },
             Transform::from_xyz(
                 chunk_origin_tile_units_x as f32,
@@ -382,7 +397,7 @@ fn sys_update_worldmap_chunks_to_render(
         ));
         log_chunk_spawn(gx, gy, new_map_id);
     }
-    pending_spawns.drain(..batch_size);
+    locals.pending_spawns.drain(..batch_size);
 
     // Update chunk count: existing entities + what we just spawned - what we despawned.
     // Simplest accurate count: count remaining entities.

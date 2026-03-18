@@ -15,4 +15,4 @@ map_render_wireframe = false
 [performance]
 show_overlay = true
 frame_limit_enabled = true
-target_fps = 144
+target_fps = 60
