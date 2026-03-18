@@ -135,6 +135,7 @@ pub fn sys_setup_terrain_cache(
         handle_small.clone(),
         handle_big.clone(),
         texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
+        texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
     ));
     // Store the compression setting so the per-tile upload path can encode BC7 when enabled.
     cmd.insert_resource(cache::LandTextureCacheSettings {

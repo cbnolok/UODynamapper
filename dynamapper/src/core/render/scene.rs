@@ -196,7 +196,12 @@ fn compute_visible_chunks(
             // Coordinates in the base 8×8 grid, aligned to chunk_scale boundaries.
             let base_gx = (gx as u32) * chunk_scale;
             let base_gy = (gy as u32) * chunk_scale;
-            if (base_gx as i32) < map_base_chunks_x && (base_gy as i32) < map_base_chunks_y {
+            // Ensure the ENTIRE super-chunk fits within map bounds.
+            // A super-chunk at (base_gx, base_gy) covers base_gx..(base_gx+chunk_scale),
+            // so the last base block is (base_gx + chunk_scale - 1).
+            if (base_gx + chunk_scale) as i32 <= map_base_chunks_x
+                && (base_gy + chunk_scale) as i32 <= map_base_chunks_y
+            {
                 set.insert((base_gx, base_gy));
             }
         }

@@ -41,8 +41,10 @@ pub struct LandMeshHandles {
     pub low: Handle<Mesh>,
     /// 16×16 tile mesh (step=2, 81 verts) for zoom 10–25.
     pub wide16: Handle<Mesh>,
-    /// 32×32 tile mesh (step=4, 81 verts) for zoom 25+.
+    /// 32×32 tile mesh (step=4, 81 verts) for zoom 25–50.
     pub wide32: Handle<Mesh>,
+    /// 64×64 tile mesh (step=8, 81 verts) for zoom ≥50.
+    pub wide64: Handle<Mesh>,
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -75,7 +77,7 @@ fn mesh_for_lod(handles: &LandMeshHandles, lod: LandMeshLod) -> Handle<Mesh> {
 }
 
 /// Active chunk scale: how many base 8×8 blocks each entity covers per dimension.
-/// 1 = standard (8×8 tiles), 2 = wide (16×16), 4 = extra-wide (32×32).
+/// 1 = standard (8×8 tiles), 2 = wide (16×16), 4 = extra-wide (32×32), 8 = ultra (64×64).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChunkScale(pub u32);
 impl Default for ChunkScale {
@@ -83,11 +85,13 @@ impl Default for ChunkScale {
 }
 
 /// Choose chunk scale from zoom level.  Higher zoom → larger chunks → fewer entities.
-///  - zoom <  10 → scale 1  (standard 8×8,  entity count ×1)
-///  - zoom 10–25 → scale 2  (wide 16×16,    entity count ÷4)
-///  - zoom ≥  25 → scale 4  (extra-wide 32×32, entity count ÷16)
+///  - zoom <  10 → scale 1  (standard 8×8,   entity count ×1)
+///  - zoom 10–25 → scale 2  (wide 16×16,     entity count ÷4)
+///  - zoom 25–50 → scale 4  (extra-wide 32×32, entity count ÷16)
+///  - zoom ≥  50 → scale 8  (ultra 64×64,    entity count ÷64)
 pub fn scale_from_zoom(zoom: f32) -> u32 {
-    if zoom >= 25.0 { 4 }
+    if zoom >= 50.0 { 8 }
+    else if zoom >= 25.0 { 4 }
     else if zoom >= 10.0 { 2 }
     else { 1 }
 }
@@ -95,6 +99,7 @@ pub fn scale_from_zoom(zoom: f32) -> u32 {
 /// Select the correct mesh handle for a given chunk scale and LOD.
 fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Handle<Mesh> {
     match scale {
+        8 => handles.wide64.clone(),
         4 => handles.wide32.clone(),
         2 => handles.wide16.clone(),
         _ => mesh_for_lod(handles, lod),
@@ -147,7 +152,10 @@ fn enqueue_chunk_to_atlas_and_preload(
         x: chunk_data_ref.chunk_origin_chunk_units_x,
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
-    let block = blocks_data_map.get(&chunk_rel_coords).unwrap();
+    let Some(block) = blocks_data_map.get(&chunk_rel_coords) else {
+        // Block not available (e.g. at map edge or missing data) — skip silently.
+        return;
+    };
 
     let mut unique_tile_ids = HashSet::new();
     let mut texels = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL);

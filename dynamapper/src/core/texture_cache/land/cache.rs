@@ -96,17 +96,18 @@ impl LandTextureCache {
     pub fn new(
         small_tex_image_handle: Handle<Image>,
         big_tex_image_handle: Handle<Image>,
-        initial_layers: u32,
+        small_initial_layers: u32,
+        big_initial_layers: u32,
     ) -> Self {
         Self {
             small: LandTextureArrayWrapper::new(
                 small_tex_image_handle,
-                initial_layers,
+                small_initial_layers,
                 texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
             ),
             big: LandTextureArrayWrapper::new(
                 big_tex_image_handle,
-                initial_layers,
+                big_initial_layers,
                 texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
             ),
             entry_by_id: HashMap::default(),

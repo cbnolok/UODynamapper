@@ -68,9 +68,10 @@ pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>)
     let low = meshes.add(build_chunk_mesh(8, 4));    //  9 verts  (zoom 10+ fallback)
     // Wide meshes for reduced entity count at high zoom:
     let wide16 = meshes.add(build_chunk_mesh(16, 2)); // 81 verts, covers 16×16 tiles (zoom 10–25)
-    let wide32 = meshes.add(build_chunk_mesh(32, 4)); // 81 verts, covers 32×32 tiles (zoom 25+)
+    let wide32 = meshes.add(build_chunk_mesh(32, 4)); // 81 verts, covers 32×32 tiles (zoom 25–50)
+    let wide64 = meshes.add(build_chunk_mesh(64, 8)); // 81 verts, covers 64×64 tiles (zoom ≥50)
 
-    commands.insert_resource(LandMeshHandles { high, medium, low, wide16, wide32 });
+    commands.insert_resource(LandMeshHandles { high, medium, low, wide16, wide32, wide64 });
     commands.insert_resource(LandMeshLod::default());
     commands.insert_resource(ChunkScale::default());
 }
