@@ -8,6 +8,8 @@ use bevy::window::Window;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::camera::PlayerCamera;
 
+const FONT_SIZE: f32 = 22.0;
+
 pub struct PlayerPositionOverlayPlugin;
 
 impl Plugin for PlayerPositionOverlayPlugin {
@@ -39,7 +41,7 @@ pub fn setup_overlay_player_position(
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.0),
                 top: Val::Px(20.0),
-                padding: UiRect::all(Val::Px(7.0 * settings.app.window.overlay_scale)),
+                padding: UiRect::all(Val::Px(7.0 * settings.app.window.player_position_scale)),
                 display: if settings.app.performance.show_overlay {
                     Display::Flex
                 } else {
@@ -52,16 +54,16 @@ pub fn setup_overlay_player_position(
             OverlayPlayerPositionContainer,
         ))
         .with_children(|builder| {
-            let scale = settings.app.window.overlay_scale;
+            let scale = settings.app.window.player_position_scale;
             builder.spawn((
                 Text::new("Player position: (NA, NA, NA)"),
                 TextFont {
                     font,
-                    font_size: 15.0 * scale,
+                    font_size: FONT_SIZE * scale,
                     font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
                 },
-                LineHeight::Px(15.0 * scale),
+                LineHeight::Px(FONT_SIZE * scale),
                 TextColor(Color::WHITE),
                 OverlayPlayerPositionText,
             ));
@@ -87,7 +89,7 @@ pub fn update_player_position_text(
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     render_zoom: Res<RenderZoom>,
 ) {
-    let current_scale = settings.app.window.overlay_scale;
+    let current_scale = settings.app.window.player_position_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
     // Real-time visibility toggle from settings
@@ -156,8 +158,8 @@ pub fn update_player_position_text(
         );
 
         if scale_changed {
-            text_font.font_size = 15.0 * current_scale;
-            *line_height = LineHeight::Px(15.0 * current_scale);
+            text_font.font_size = FONT_SIZE * current_scale;
+            *line_height = LineHeight::Px(FONT_SIZE * current_scale);
             *last_scale = current_scale;
         }
     }

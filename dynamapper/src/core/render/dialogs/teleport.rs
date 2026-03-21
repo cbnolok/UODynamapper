@@ -1,5 +1,5 @@
 use crate::core::render::scene::player::Player;
-use crate::ingame_logger;
+use crate::ingame_sysmessage_logger;
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
     prelude::*,
@@ -112,7 +112,7 @@ pub fn sys_render_teleport_dialog(
                         let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();
                         transform.translation = bevy_pos;
 
-                        ingame_logger::normal(format!(
+                        ingame_sysmessage_logger::normal(format!(
                             "Teleported to [{}, {}, {}, {}]",
                             x, y, z, m
                         ));

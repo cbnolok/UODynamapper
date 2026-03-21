@@ -8,7 +8,7 @@ use bevy::camera::visibility::NoAutoAabb;
 use bytemuck::Zeroable;
 use std::time::Instant;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 use uocf::geo::{
@@ -111,6 +111,17 @@ use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 #[derive(Resource)]
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
+#[derive(Resource, Default)]
+pub struct LandMeshScratch {
+    primary_chunks: HashMap<(u32, u32), (Entity, u32)>,
+    spawn_targets: HashSet<LandChunkConstructionData>,
+    blocks_to_draw: Vec<MapBlockRelPos>,
+    blocks_data: HashMap<MapBlockRelPos, MapBlock>,
+    missing_tile_bits: Vec<u64>,
+    ids: Vec<u16>,
+    texture_lookup_cache: HashMap<u16, (LandTextureSize, u32)>,
+}
+
 pub fn sys_update_existing_chunk_mesh_lod(
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     land_mesh_handles_r: Res<LandMeshHandles>,
@@ -118,6 +129,8 @@ pub fn sys_update_existing_chunk_mesh_lod(
     current_scale: Res<ChunkScale>,
     mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
 ) {
+    // TODO: add a log message when we change the LOD level because of the zoom level.
+
     // Scale > 1 uses fixed wide meshes; LOD swaps only matter at scale=1.
     if current_scale.0 != 1 { return; }
 
@@ -140,7 +153,8 @@ fn enqueue_chunk_to_atlas_and_preload(
     tile_atlas: &mut ResMut<TileAtlas>,
     texmap_2d_r: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_map: &BTreeMap<MapBlockRelPos, MapBlock>,
+    blocks_data_map: &HashMap<MapBlockRelPos, MapBlock>,
+    texture_lookup_cache: &mut HashMap<u16, (LandTextureSize, u32)>,
     lossy_compression: bool,
 ) {
     let chunk_origin_tile_units_x =
@@ -157,34 +171,32 @@ fn enqueue_chunk_to_atlas_and_preload(
         return;
     };
 
-    let mut unique_tile_ids = HashSet::new();
+    texture_lookup_cache.clear();
+    texture_lookup_cache.reserve(64);
     let mut texels = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL);
 
-    for tz in 0..TILE_NUM_PER_CHUNK_DIM {
-        for tx in 0..TILE_NUM_PER_CHUNK_DIM {
-            let cell = block.cell(tx, tz).unwrap();
-            unique_tile_ids.insert(cell.id);
-
-            let (texture_size, layer) = texture_cache.get_texture_size_layer(
+    for cell in &block.cells {
+        let (texture_size, layer) = *texture_lookup_cache.entry(cell.id).or_insert_with(|| {
+            texture_cache.get_texture_size_layer(
                 texmap_2d_r.clone(),
                 cell.id,
                 lossy_compression,
-            );
+            )
+        });
 
-            let tex_size_bits = match texture_size {
-                LandTextureSize::Small => 0,
-                LandTextureSize::Big => 1,
-            };
+        let tex_size_bits = match texture_size {
+            LandTextureSize::Small => 0,
+            LandTextureSize::Big => 1,
+        };
 
-            // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
-            texels.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
-        }
+        // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
+        texels.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
     }
 
 
     let page_w = tile_atlas.params.page_texels.x;
     let page_h = tile_atlas.params.page_texels.y;
-    assert!(
+    debug_assert!(
         page_w % TILE_NUM_PER_CHUNK_DIM == 0 && page_h % TILE_NUM_PER_CHUNK_DIM == 0,
         "Page size must be a multiple of chunk size to avoid split logic"
     );
@@ -224,20 +236,19 @@ struct LandChunkConstructionData {
     entity: Option<Entity>,
     chunk_origin_chunk_units_x: u32,
     chunk_origin_chunk_units_z: u32,
+    chunk_scale: u32,
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
-    mut meshes_r: ResMut<Assets<Mesh>>,
     mut cache_r: ResMut<LandTextureCache>,
     mut tile_atlas_r: ResMut<TileAtlas>,
+    mut land_mesh_scratch_r: ResMut<LandMeshScratch>,
     mut map_planes_r: ResMut<MapPlanesRes>,
     texmap_2d_r: Res<TexMap2DRes>,
     world_geo_data_r: Res<WorldGeoData>,
     scene_state_data_r: Res<SceneStateData>,
-    player_q: Query<&Player>,
-    cam_q: Query<&Transform, With<Camera3d>>,
     chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
     visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
     land_mesh_handles_r: Res<LandMeshHandles>,
@@ -246,15 +257,27 @@ pub fn sys_draw_spawned_land_chunks(
     cache_settings_r: Res<crate::core::texture_cache::land::cache::LandTextureCacheSettings>,
 ) {
     // Step 1: Get camera/player state.
-    let cam_pos = cam_q.single().unwrap().translation;
-    let player_entity = player_q.single().expect("More than 1 player!");
     let current_map_id = scene_state_data_r.map_id;
     let map_plane_metadata = world_geo_data_r.maps.get(&current_map_id).unwrap_or_else(|| panic!("Requested metadata for uncached map {current_map_id}"));
+
+    let scratch = &mut *land_mesh_scratch_r;
+
+    scratch.primary_chunks.clear();
+    scratch.spawn_targets.clear();
+    scratch.blocks_to_draw.clear();
+    scratch.blocks_data.clear();
+    if scratch.missing_tile_bits.len() != 1024 {
+        scratch.missing_tile_bits.resize(1024, 0);
+    } else {
+        scratch.missing_tile_bits.fill(0);
+    }
+    scratch.ids.clear();
+    scratch.texture_lookup_cache.clear();
 
     // Step 1: Collect all primary chunks that need meshing into a HashMap.
     // Process only chunks that don't have a mesh yet.
     // Stores (entity, scale) per chunk coordinate.
-    let mut primary_chunks = std::collections::HashMap::new();
+    let primary_chunks = &mut scratch.primary_chunks;
     for (entity, chunk_data, _) in chunk_q.iter().filter(|(_, _, mesh)| mesh.is_none()) {
         primary_chunks.insert((chunk_data.gx, chunk_data.gy), (entity, chunk_data.scale));
     }
@@ -266,7 +289,7 @@ pub fn sys_draw_spawned_land_chunks(
     // Step 2: Build the final set of chunks whose data we need to construct.
     // This includes the primary chunks and their immediate non-primary neighbors
     // (to get data for mesh stitching).
-    let mut spawn_targets = HashSet::<LandChunkConstructionData>::new();
+    let spawn_targets = &mut scratch.spawn_targets;
 
     let max_chunk_x = (map_plane_metadata.width / TILE_NUM_PER_CHUNK_DIM) as i32;
     let max_chunk_y = (map_plane_metadata.height / TILE_NUM_PER_CHUNK_DIM) as i32;
@@ -283,6 +306,7 @@ pub fn sys_draw_spawned_land_chunks(
             entity: Some(entity),
             chunk_origin_chunk_units_x: gx,
             chunk_origin_chunk_units_z: gy,
+            chunk_scale: scale,
         });
 
         // Insert remaining sub-blocks inside this super-chunk (data-only).
@@ -296,6 +320,7 @@ pub fn sys_draw_spawned_land_chunks(
                         entity: None,
                         chunk_origin_chunk_units_x: bx as u32,
                         chunk_origin_chunk_units_z: bz as u32,
+                        chunk_scale: 1,
                     });
                 }
             }
@@ -316,6 +341,7 @@ pub fn sys_draw_spawned_land_chunks(
                             entity: None,
                             chunk_origin_chunk_units_x: nc.0,
                             chunk_origin_chunk_units_z: nc.1,
+                            chunk_scale: 1,
                         });
                     }
                 }
@@ -332,21 +358,22 @@ pub fn sys_draw_spawned_land_chunks(
                 entity: None,
                 chunk_origin_chunk_units_x: chunk_data.gx,
                 chunk_origin_chunk_units_z: chunk_data.gy,
+                chunk_scale: 1,
             });
         }
     }
 
     // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
-    let mut blocks_to_draw: Vec<MapBlockRelPos> = spawn_targets
-        .iter()
+    let blocks_to_draw = &mut scratch.blocks_to_draw;
+    blocks_to_draw.extend(spawn_targets.iter()
         .map(|d| MapBlockRelPos {
             x: d.chunk_origin_chunk_units_x,
             y: d.chunk_origin_chunk_units_z,
-        })
-        .collect();
+        }));
     //blocks_to_draw.sort();    // Already done by load_blocks.
 
-    let mut blocks_data = BTreeMap::<MapBlockRelPos, MapBlock>::new();
+    let blocks_data = &mut scratch.blocks_data;
+    let missing_tile_bits = &mut scratch.missing_tile_bits;
     {
         // This lock only needed during the block loading from disk/memory.
         let mut uo_data_map_planes_arc = map_planes_r.0.clone();
@@ -355,7 +382,7 @@ pub fn sys_draw_spawned_land_chunks(
             .expect("Requested map plane metadata is uncached?");
         let load_blocks_start = Instant::now();
         uo_data_map_plane
-            .load_blocks(&mut blocks_to_draw)
+            .load_blocks(blocks_to_draw.as_mut_slice())
             .expect("Can't load map blocks");
         let load_blocks_us = load_blocks_start.elapsed().as_micros();
         if load_blocks_us > 1000 {
@@ -366,7 +393,7 @@ pub fn sys_draw_spawned_land_chunks(
                 &format!("Perf: load_blocks took {} µs for {} blocks.", load_blocks_us, blocks_to_draw.len()),
             );
         }
-        for block_coords in blocks_to_draw {
+        for block_coords in blocks_to_draw.iter().copied() {
             let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
                 console_logger::one(
                     None,
@@ -385,31 +412,35 @@ pub fn sys_draw_spawned_land_chunks(
             if !unique {
                 panic!("Adding again the same key?");
             }
+
+            for tz in 0..8 {
+                for tx in 0..8 {
+                    if let Ok(cell) = block_ref.cell(tx, tz) {
+                        let cell_id = cell.id as usize;
+                        let word = cell_id >> 6;
+                        let bit = cell_id & 63;
+                        missing_tile_bits[word] |= 1u64 << bit;
+                    }
+                }
+            }
         }
     }
     // Step 4: Aggregate all tile IDs needed for the primary chunks and their neighbors,
     // and perform a batch pre-cache (using MT compression if > 1000).
     {
-        let mut missing_tile_ids = HashSet::new();
-        for chunk_data in &spawn_targets {
-            let chunk_rel_coords = MapBlockRelPos {
-                x: chunk_data.chunk_origin_chunk_units_x,
-                y: chunk_data.chunk_origin_chunk_units_z,
-            };
-            if let Some(block) = blocks_data.get(&chunk_rel_coords) {
-                for tz in 0..8 {
-                    for tx in 0..8 {
-                        if let Ok(cell) = block.cell(tx, tz) {
-                            missing_tile_ids.insert(cell.id);
-                        }
-                    }
-                }
+        scratch.ids.clear();
+        for (word_idx, &word) in scratch.missing_tile_bits.iter().enumerate() {
+            let mut bits = word;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                scratch.ids.push((word_idx * 64 + bit) as u16);
+                bits &= bits - 1;
             }
         }
 
-        let ids: Vec<u16> = missing_tile_ids.into_iter().collect();
-        let ids_set: HashSet<u16> = ids.iter().copied().collect();
-        cache_r.set_visible_texture_usage_hint(&ids_set);
+        cache_r.set_visible_texture_usage_hint(&scratch.ids);
+
+        let ids: &[u16] = scratch.ids.as_slice();
         cache_r.precache_textures_parallel(
             &ids,
             texmap_2d_r.0.clone(),
@@ -419,7 +450,7 @@ pub fn sys_draw_spawned_land_chunks(
 
     // Step 5: For every chunk that corresponds to a current entity (not filler neighbors), spawn the prebuilt map chunk mesh.
     let build_time_start = Instant::now();
-    for chunk_data in &spawn_targets {
+    for chunk_data in spawn_targets.iter() {
         let entity = chunk_data.entity;
 
         enqueue_chunk_to_atlas_and_preload(
@@ -428,6 +459,7 @@ pub fn sys_draw_spawned_land_chunks(
             texmap_2d_r.0.clone(),
             chunk_data,
             &blocks_data,
+            &mut scratch.texture_lookup_cache,
             cache_settings_r.lossy_texture_compression,
         );
 
@@ -451,9 +483,7 @@ pub fn sys_draw_spawned_land_chunks(
             &land_mesh_handles_r,
             *current_lod,
             &shared_land_material_r,
-            primary_chunks.get(&(chunk_data.chunk_origin_chunk_units_x, chunk_data.chunk_origin_chunk_units_z))
-                .map(|&(_, s)| s)
-                .unwrap_or(1),
+            chunk_data.chunk_scale,
         );
     }
     let build_time: u128 = build_time_start.elapsed().as_micros();

@@ -1,4 +1,19 @@
 fn main() {
+    // Force full location detail for workspace crates on nightly.
+    // This overrides any global `-Zlocation-detail=none` set in wrapper scripts.
+    // Only has effect on nightly; silently ignored on stable/beta.
+    let is_nightly = std::env::var("CFG_RELEASE_CHANNEL")
+        .map(|channel| channel == "nightly")
+        .unwrap_or(false);
+
+    if is_nightly {
+        println!("cargo:rustc-flag=-Zlocation-detail=full");
+    }
+
+
+    /*  CRATE: intel_tex_2  */
+    // Preface: we aren't using this crate anymore, but we might use in the future crates with similar issues.
+
     // `intel_tex_2` uses ISPC-compiled code (ASTC texture compression) that references
     // C++ exception-handling symbols (e.g. `__gxx_personality_v0`) from libstdc++.
     // The `mold` linker is stricter than GNU ld and won't resolve these automatically,

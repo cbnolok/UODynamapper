@@ -4,7 +4,7 @@ use bevy::{
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
 };
-use serde::Deserialize;
+use serde::{self, Deserialize};
 
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
@@ -80,7 +80,7 @@ pub struct SceneUniform {
     pub global_lighting: f32,
     pub render_zoom: f32,
     pub adaptive_zoom_simplification: f32,
-    pub _pad0: Vec2,
+    pub _pad: Vec2,
 }
 
 #[repr(C, align(16))]
@@ -122,11 +122,11 @@ pub struct LandEffectsUniform {
     // blur radius in UV units (very small numbers like 0.001..0.005)
     pub blur_radius: f32,
     #[serde(default)]
-    pub _pad_c1: f32,
+    pub _pad_c1_: f32,
     #[serde(default)]
-    pub _pad_c2: f32,
+    pub _pad_c2_: f32,
     #[serde(default)]
-    pub _pad_c3: f32,
+    pub _pad_c3_: f32,
 }
 
 #[repr(C, align(16))]
@@ -136,14 +136,14 @@ pub struct LandLightingUniforms {
     // vec3 + pad
     pub light_color: Vec3,
     #[serde(default)]
-    pub _pad0: f32,
+    pub _pad0_: f32,
     pub ambient_color: Vec3,
     #[serde(default)]
-    pub _pad1: f32,
+    pub _pad1_: f32,
     pub exposure: f32,
     pub gamma: f32,
     #[serde(default)]
-    pub _pad2: Vec2,
+    pub _pad2_: Vec2,
     pub fill_sky_color: Vec4,
     pub fill_ground_color: Vec4,
     pub rim_color: Vec4,
@@ -171,6 +171,7 @@ pub struct LandShaderModePresets {
     pub classic: LandRenderStylePresetsPerMode,
     pub enhanced: LandRenderStylePresetsPerMode,
     pub kr: LandRenderStylePresetsPerMode,
+    pub default_preset: String,
 }
 
 #[derive(Debug, Deserialize)]

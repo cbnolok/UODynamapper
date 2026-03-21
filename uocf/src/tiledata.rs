@@ -3,7 +3,7 @@
 crate::eyre_imports!();
 use derive_new::new;
 use std::fs::File;
-use std::io::{prelude::*, Cursor};
+use std::io::prelude::*;
 use std::path::PathBuf;
 use bytemuck::{Pod, Zeroable};
 
@@ -17,108 +17,113 @@ pub struct Flags {
 
 #[allow(unused)]
 impl Flags {
+    #[inline(always)]
+    fn has(&self, mask: u32) -> bool {
+        0 != (self.internal_flags & mask)
+    }
+
     fn value(&self) -> u32 {
         self.internal_flags
     }
 
     pub fn background(&self) -> bool {
-        0 != (self.internal_flags & 0x01)
+        self.has(0x01)
     }
     pub fn weapon(&self) -> bool {
-        0 != ((self.internal_flags & 0x02) >> 1)
+        self.has(0x02)
     }
     pub fn transparent(&self) -> bool {
-        0 != ((self.internal_flags & 0x04) >> 2)
+        self.has(0x04)
     }
     pub fn translucent(&self) -> bool {
-        0 != ((self.internal_flags & 0x08) >> 3)
+        self.has(0x08)
     }
     pub fn wall(&self) -> bool {
-        0 != ((self.internal_flags & 0x10) >> 4)
+        self.has(0x10)
     }
     pub fn damaging(&self) -> bool {
-        0 != ((self.internal_flags & 0x20) >> 5)
+        self.has(0x20)
     }
     pub fn impassable(&self) -> bool {
-        0 != ((self.internal_flags & 0x40) >> 6)
+        self.has(0x40)
     }
     pub fn wet(&self) -> bool {
-        0 != ((self.internal_flags & 0x80) >> 7)
+        self.has(0x80)
     }
     /*pub fn unknown(&self) -> bool {
         0 != ((self.internal_flags & 0x100) >> 8)
     }*/
     pub fn surface(&self) -> bool {
-        0 != ((self.internal_flags & 0x200) >> 9)
+        self.has(0x200)
     }
     pub fn bridge(&self) -> bool {
-        0 != ((self.internal_flags & 0x400) >> 10)
+        self.has(0x400)
     }
     pub fn generic(&self) -> bool {
-        0 != ((self.internal_flags & 0x800) >> 11)
+        self.has(0x800)
     }
     pub fn stackable(&self) -> bool {
         self.generic()
     }
     pub fn window(&self) -> bool {
-        0 != ((self.internal_flags & 0x1000) >> 12)
+        self.has(0x1000)
     }
     pub fn noshoot(&self) -> bool {
-        0 != ((self.internal_flags & 0x2000) >> 13)
+        self.has(0x2000)
     }
     pub fn prefixa(&self) -> bool {
-        0 != ((self.internal_flags & 0x4000) >> 14)
+        self.has(0x4000)
     }
     pub fn prefixan(&self) -> bool {
-        0 != ((self.internal_flags & 0x8000) >> 15)
+        self.has(0x8000)
     }
     pub fn internal(&self) -> bool {
-        0 != ((self.internal_flags & 0x10000) >> 16)
+        self.has(0x10000)
     }
     pub fn foliage(&self) -> bool {
-        0 != ((self.internal_flags & 0x20000) >> 17)
+        self.has(0x20000)
     }
     pub fn partialhue(&self) -> bool {
-        0 != ((self.internal_flags & 0x40000) >> 18)
+        self.has(0x40000)
     }
     /*pub fn unknown1(&self) -> bool {
         0 != ((self.internal_flags & 0x80000) >> 19)
     }*/
     pub fn map(&self) -> bool {
-        0 != ((self.internal_flags & 0x100000) >> 20)
+        self.has(0x100000)
     }
     pub fn container(&self) -> bool {
-        0 != ((self.internal_flags & 0x200000) >> 21)
+        self.has(0x200000)
     }
     pub fn wearable(&self) -> bool {
-        0 != ((self.internal_flags & 0x400000) >> 22)
+        self.has(0x400000)
     }
     pub fn lightsource(&self) -> bool {
-        0 != ((self.internal_flags & 0x800000) >> 23)
+        self.has(0x800000)
     }
     pub fn animated(&self) -> bool {
-        0 != ((self.internal_flags & 0x1000000) >> 24)
+        self.has(0x1000000)
     }
     pub fn nodiagonal(&self) -> bool {
-        0 != ((self.internal_flags & 0x2000000) >> 25)
+        self.has(0x2000000)
     }
     /*pub fn unknown2(&self) -> bool {
         0 != ((self.internal_flags & 0x4000000) >> 26)
     }*/
     pub fn armor(&self) -> bool {
-        0 != ((self.internal_flags & 0x8000000) >> 27)
+        self.has(0x8000000)
     }
     pub fn roof(&self) -> bool {
-        0 != ((self.internal_flags & 0x10000000) >> 28)
+        self.has(0x10000000)
     }
     pub fn door(&self) -> bool {
-        0 != ((self.internal_flags & 0x20000000) >> 29)
+        self.has(0x20000000)
     }
     pub fn stairback(&self) -> bool {
-        0 != ((self.internal_flags & 0x40000000) >> 30)
+        self.has(0x40000000)
     }
     pub fn stairright(&self) -> bool {
-        0 != ((self.internal_flags & 0x80000000) >> 31)
+        self.has(0x80000000)
     }
 }
 /* End of Flags struct */
@@ -325,8 +330,8 @@ enum ItemTileMaxIdxRev {
 /// Design Choice: We use `#[repr(C, packed)]` to match the UO file format exactly on disk.
 /// This allows us to use `bytemuck` to cast large byte sections into these structured blocks,
 /// which is significantly faster than reading individual fields via `ReadBytesExt`.
-/// 
-/// Note: Endianness is handled during the conversion from Raw to final struct. 
+///
+/// Note: Endianness is handled during the conversion from Raw to final struct.
 /// Since most modern systems are Little Endian (like UO data), this is often a zero-cost operation.
 
 #[repr(C, packed)]
@@ -364,7 +369,7 @@ struct RawItemTileClassic {
     name: [u8; ItemTile::NAME_LEN],
 }
 
-#[repr(C, packed)] 
+#[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct RawItemTileHS {
     flags: Flags,
@@ -404,6 +409,28 @@ impl TileData {
     //const ITEM_TILE_MAX: usize = ItemTileMaxIdxRev::Revision3 as usize;
 
     /* Methods */
+
+    #[inline(always)]
+    fn push_tiles_from_blocks<RawTile, Tile, F>(
+        out: &mut Vec<Tile>,
+        blocks: &[RawBlock<RawTile>],
+        mut make_tile: F,
+    ) where
+        RawTile: Pod,
+        F: FnMut(i32, &RawTile) -> Tile,
+    {
+        const TILES_PER_BLOCK: usize = 32;
+        out.reserve(blocks.len() * TILES_PER_BLOCK);
+        let mut tile_id = out.len() as i32;
+        for block in blocks {
+            let tiles_ptr = std::ptr::addr_of!(block.tiles) as *const RawTile;
+            for tile_idx in 0..TILES_PER_BLOCK {
+                let raw = unsafe { std::ptr::read_unaligned(tiles_ptr.add(tile_idx)) };
+                out.push(make_tile(tile_id, &raw));
+                tile_id += 1;
+            }
+        }
+    }
 
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
         let file_path = file_path
@@ -472,8 +499,8 @@ impl TileData {
             land_tile_binary_size: LandTileBinSize::Classic,
             item_tile_binary_size: ItemTileBinSize::Classic,
             max_item_rev: ItemTileMaxIdxRev::Revision1,
-            land_data: vec![LandTile::default(); TileData::LAND_TILE_MAX],
-            item_data: vec![],
+            land_data: Vec::with_capacity(TileData::LAND_TILE_MAX),
+            item_data: Vec::new(),
         };
 
         if file_size == FILE_SIZE_REV1 {
@@ -502,10 +529,10 @@ impl TileData {
                 format!("Malformed tiledata.mul? Size: {file_size}").to_owned()
             ));
         }
-        tiledata.item_data = vec![ItemTile::default(); 1 + tiledata.max_item_rev as usize];
+        tiledata.item_data = Vec::with_capacity(1 + tiledata.max_item_rev as usize);
 
-        println!(
-            "Found Tiledata with size: {file_size}. \n\
+        log::info!(
+        "Found Tiledata with size: {file_size}. \n\
         Detected LandTile size: {:?}, ItemTile size: {:?}, Max Item count: {:?} (0x{:X})",
             tiledata.land_tile_binary_size,
             tiledata.item_tile_binary_size,
@@ -513,12 +540,12 @@ impl TileData {
             tiledata.max_item_rev as u32
         );
 
-        let tiledata_file_rdr = {
+        let tiledata_file_bytes = {
             let mut buf = vec![0; file_size as usize];
             file_handle
                 .read_exact(buf.as_mut())
                 .wrap_err("Read tiledata.mul")?;
-            Cursor::new(buf)
+            buf
         };
 
 
@@ -526,45 +553,40 @@ impl TileData {
         // Optimization: We use bulk parsing to avoid thousands of individual I/O reads.
         // We first calculate the exact byte size of the land section and slice the buffer
         // to pass it to bytemuck. This prevents panics if the file has trailing bytes.
-        let mut i_tile: u32 = 0;
         let land_section_len = if tiledata.land_tile_binary_size == LandTileBinSize::Classic {
             LandTile::BLOCK_QTY * std::mem::size_of::<RawBlock<RawLandTileClassic>>()
         } else {
             LandTile::BLOCK_QTY * std::mem::size_of::<RawBlock<RawLandTileHS>>()
         };
 
-        let land_bytes = &tiledata_file_rdr.get_ref()[..land_section_len];
+        let land_bytes = &tiledata_file_bytes[..land_section_len];
 
         if tiledata.land_tile_binary_size == LandTileBinSize::Classic {
             let blocks: &[RawBlock<RawLandTileClassic>] = bytemuck::cast_slice(land_bytes);
-            for block in blocks.iter().take(LandTile::BLOCK_QTY) {
-                for raw in block.tiles.iter() {
-                    let tile = &mut tiledata.land_data[i_tile as usize];
-                    tile.tile_id = i_tile as i32;
-                    tile.flags = raw.flags;
-                    tile.texture_id = raw.texture_id;
-                    tile.name = raw.name;
-                    i_tile += 1;
+            Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
+                LandTile {
+                    tile_id,
+                    flags: raw.flags,
+                    texture_id: raw.texture_id,
+                    name: raw.name,
                 }
-            }
+            });
         } else {
             let blocks: &[RawBlock<RawLandTileHS>] = bytemuck::cast_slice(land_bytes);
-            for block in blocks.iter().take(LandTile::BLOCK_QTY) {
-                for raw in block.tiles.iter() {
-                    let tile = &mut tiledata.land_data[i_tile as usize];
-                    tile.tile_id = i_tile as i32;
-                    tile.flags = raw.flags;
-                    tile.texture_id = raw.texture_id;
-                    tile.name = raw.name;
-                    i_tile += 1;
+            Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
+                LandTile {
+                    tile_id,
+                    flags: raw.flags,
+                    texture_id: raw.texture_id,
+                    name: raw.name,
                 }
-            }
+            });
         }
-        println!("Loaded {i_tile} (0x{:x}) LandTiles.", i_tile);
+        let i_tile = tiledata.land_data.len() as u32;
+        log::info!("Loaded {i_tile} (0x{:x}) LandTiles.", i_tile);
 
         // Read ItemTiles
         // Optimization: Same as above, we slice the buffer for the item section specifically.
-        i_tile = 0_u32;
         let block_qty: usize = (1 + tiledata.max_item_rev as usize) / ItemTile::TILES_PER_BLOCK;
         let item_section_len = if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
             block_qty * std::mem::size_of::<RawBlock<RawItemTileClassic>>()
@@ -573,48 +595,45 @@ impl TileData {
         };
 
         // The item section starts immediately after the land section
-        let item_bytes = &tiledata_file_rdr.get_ref()[land_section_len..land_section_len + item_section_len];
+        let item_bytes = &tiledata_file_bytes[land_section_len..land_section_len + item_section_len];
 
         if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
             let blocks: &[RawBlock<RawItemTileClassic>] = bytemuck::cast_slice(item_bytes);
-            for block in blocks.iter().take(block_qty) {
-                for raw in block.tiles.iter() {
-                    let tile = &mut tiledata.item_data[i_tile as usize];
-                    tile.tile_id = i_tile as i32;
-                    tile.flags = raw.flags;
-                    tile.weight = raw.weight;
-                    tile.quality = raw.quality;
-                    tile.quantity = raw.quantity;
-                    tile.anim_id = raw.anim_id;
-                    tile.hue_extra = raw.hue_extra;
-                    tile.stacking_offset = raw.stacking_offset;
-                    tile.value = raw.value;
-                    tile.height = raw.height;
-                    tile.name = raw.name;
-                    i_tile += 1;
+            Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
+                ItemTile {
+                    tile_id,
+                    flags: raw.flags,
+                    weight: raw.weight,
+                    quality: raw.quality,
+                    quantity: raw.quantity,
+                    anim_id: raw.anim_id,
+                    hue_extra: raw.hue_extra,
+                    stacking_offset: raw.stacking_offset,
+                    value: raw.value,
+                    height: raw.height,
+                    name: raw.name,
                 }
-            }
+            });
         } else {
             let blocks: &[RawBlock<RawItemTileHS>] = bytemuck::cast_slice(item_bytes);
-            for block in blocks.iter().take(block_qty) {
-                for raw in block.tiles.iter() {
-                    let tile = &mut tiledata.item_data[i_tile as usize];
-                    tile.tile_id = i_tile as i32;
-                    tile.flags = raw.flags;
-                    tile.weight = raw.weight;
-                    tile.quality = raw.quality;
-                    tile.quantity = raw.quantity;
-                    tile.anim_id = raw.anim_id;
-                    tile.hue_extra = raw.hue_extra;
-                    tile.stacking_offset = raw.stacking_offset;
-                    tile.value = raw.value;
-                    tile.height = raw.height;
-                    tile.name = raw.name;
-                    i_tile += 1;
+            Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
+                ItemTile {
+                    tile_id,
+                    flags: raw.flags,
+                    weight: raw.weight,
+                    quality: raw.quality,
+                    quantity: raw.quantity,
+                    anim_id: raw.anim_id,
+                    hue_extra: raw.hue_extra,
+                    stacking_offset: raw.stacking_offset,
+                    value: raw.value,
+                    height: raw.height,
+                    name: raw.name,
                 }
-            }
+            });
         }
-        println!("Loaded {i_tile} (0x{:x}) Item Tiles.", i_tile);
+        let i_tile = tiledata.item_data.len() as u32;
+        log::info!("Loaded {i_tile} (0x{:x}) Item Tiles.", i_tile);
 
         Ok(tiledata)
     }

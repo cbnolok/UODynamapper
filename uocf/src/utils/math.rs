@@ -16,7 +16,7 @@ where
 pub fn downcast_ceil_usize(from: u64) -> usize
 {
     if from > usize::MAX as u64 {
-        eprintln!("Warning: downcasting u64 to usize required ceiling the value to usize maximum value");
+        log::warn!("Downcasting u64 to usize required ceiling the value to usize maximum value");
         usize::MAX
     } else {
         from as usize

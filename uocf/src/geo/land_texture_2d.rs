@@ -5,13 +5,13 @@
 //!
 //! ## Design Choices
 //!
-//! - **Centralized Texture Cache**: Instead of each texture element having its own `Mutex` (which costs 
-//!   significant memory when there are thousands of textures), we use a single `Mutex` protecting 
+//! - **Centralized Texture Cache**: Instead of each texture element having its own `Mutex` (which costs
+//!   significant memory when there are thousands of textures), we use a single `Mutex` protecting
 //!   a centralized `HashMap` cache in `TexMap2D`. This reduces synchronization overhead and memory usage.
-//! - **SIMD-Optimized Conversion**: UO textures are stored in `Bgra5551` format. We use `wide` crate SIMD 
-//!   intrinsics to process 16 pixels at a time, converting them to `Rgba8888` for the GPU. This 
+//! - **SIMD-Optimized Conversion**: UO textures are stored in `Bgra5551` format. We use `wide` crate SIMD
+//!   intrinsics to process 16 pixels at a time, converting them to `Rgba8888` for the GPU. This
 //!   path is highly optimized for modern CPUs.
-//! - **Zero-Copy Intent**: Pixel data is stored in `Arc<Vec<u8>>` to allow O(1) sharing between 
+//! - **Zero-Copy Intent**: Pixel data is stored in `Arc<Vec<u8>>` to allow O(1) sharing between
 //!   the loading worker and the rendering system.
 
 crate::eyre_imports!();
@@ -190,6 +190,7 @@ impl TexMap2D {
         // Loop on each entry of texidx
         let mut i_idx_valid: usize = 0;
 
+        /*
         #[cfg(debug_assertions)]
         let _lut: Vec<[u8; 4]> = {
             let mut table = Vec::with_capacity(65536);
@@ -201,6 +202,7 @@ impl TexMap2D {
             }
             table
         };
+        */
         for i_idx_raw in 0..TEXMAP_MAX_ID {
             // 0..texidx.element_count() {
             // Fill texmap
@@ -264,7 +266,7 @@ impl TexMap2D {
 
         texmap.file_data.shrink_to_fit();
 
-        println!(
+        log::info!(
             "Parsed {} (0x{:x}) Map Tile texture slots, loaded {} (0x{:x}) valid.",
             texidx.element_count(),
             texidx.element_count(),
@@ -276,8 +278,8 @@ impl TexMap2D {
     }
 
     pub fn get_pixel_data(&self, element_index: usize) -> Option<std::sync::Arc<Vec<u8>>> {
-        let element = self.element(element_index)?;
-        
+        let element: &Texture2DElement = self.element(element_index)?;
+
         {
             let mut shared = self.shared_data.lock().unwrap();
             if let Some((data, time)) = shared.cache.get_mut(&element_index) {
@@ -286,15 +288,15 @@ impl TexMap2D {
             }
         }
 
-        let mut pixel_data = Vec::with_capacity(element.pixel_qty * 4);
+        let mut pixel_data: Vec<u8> = Vec::with_capacity(element.pixel_qty * 4);
 
         {
             let mut shared = self.shared_data.lock().unwrap();
-            let shared = &mut *shared;
-            
+            let shared: &mut TexMapShared = &mut *shared;
+
             shared.file_reader.seek(SeekFrom::Start(element.file_offset)).ok()?;
             let pixel_qty_bytes = element.pixel_qty * 2;
-            
+
             shared.scratch_buffer.resize(pixel_qty_bytes, 0);
             shared.file_reader.read_exact(&mut shared.scratch_buffer).ok()?;
 
@@ -303,7 +305,7 @@ impl TexMap2D {
             {
                 let pixels_u16: &[u16] = bytemuck::cast_slice(&shared.scratch_buffer);
                 for &p in pixels_u16 {
-                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                    let mut pixel_16: Bgra5551 = crate::utils::color::Bgra5551::new_from_val(p);
                     pixel_16.set_a(1);
                     pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
                 }
@@ -319,18 +321,23 @@ impl TexMap2D {
                     #[cfg(target_endian = "big")]
                     let chunk = chunk.swap_bytes();
 
-                    let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
-                    let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
-                    let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
+                    let b_u16: u16x16 = (chunk          & u16x16::splat(0x1F)) << 3;
+                    let g_u16: u16x16 = ((chunk >> 5)   & u16x16::splat(0x1F)) << 3;
+                    let r_u16: u16x16 = ((chunk >> 10)  & u16x16::splat(0x1F)) << 3;
                     let a_u16: u16x16 = u16x16::splat(0xFF);
+
+                    let b_u16: &[u16; 16] = b_u16.as_array();
+                    let g_u16: &[u16; 16] = g_u16.as_array();
+                    let r_u16: &[u16; 16] = r_u16.as_array();
+                    let a_u16: &[u16; 16] = a_u16.as_array();
 
                     // Re-interleave using SIMD if possible, or just be efficient
                     let mut rgba_u32_array = [0u32; 16];
                     for i in 0..16 {
-                        let r_val = r_u16.as_array_ref()[i] as u32;
-                        let g_val = g_u16.as_array_ref()[i] as u32;
-                        let b_val = b_u16.as_array_ref()[i] as u32;
-                        let a_val = a_u16.as_array_ref()[i] as u32;
+                        let r_val = r_u16[i] as u32;
+                        let g_val = g_u16[i] as u32;
+                        let b_val = b_u16[i] as u32;
+                        let a_val = a_u16[i] as u32;
                         rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
                     }
                     pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
@@ -353,11 +360,11 @@ impl TexMap2D {
         let now = std::time::Instant::now();
         let mut shared = self.shared_data.lock().unwrap();
         let initial_len = shared.cache.len();
-        
+
         shared.cache.retain(|_, (_, time)| {
             now.duration_since(*time) <= timeout
         });
-        
+
         initial_len - shared.cache.len()
     }
 }

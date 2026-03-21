@@ -5,7 +5,7 @@ use crate::{
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
-use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use bevy_framepace::{FramepaceSettings, Limiter};
 
 /// Preset FPS values offered in the combobox.
@@ -39,8 +39,14 @@ pub struct OptionsDialogState {
     pub free_camera: bool,
     /// Egui scale factor.
     pub egui_scale: f32,
-    /// Overlay scale factor.
-    pub overlay_scale: f32,
+    /// Whether settings hot-reload is enabled.
+    pub hot_reload_enabled: bool,
+    /// Player position overlay scale.
+    pub player_position_scale: f32,
+    /// System messages (in-game log) scale.
+    pub sysmessages_scale: f32,
+    /// Performance overlay scale.
+    pub performance_overlay_scale: f32,
 }
 
 impl Default for OptionsDialogState {
@@ -58,7 +64,10 @@ impl Default for OptionsDialogState {
             show_overlay: true,
             free_camera: false,
             egui_scale: 1.0,
-            overlay_scale: 1.0,
+            hot_reload_enabled: false,
+            player_position_scale: 1.0,
+            sysmessages_scale: 1.0,
+            performance_overlay_scale: 1.0,
         }
     }
 }
@@ -106,7 +115,10 @@ fn sys_sync_settings_to_state(
             .unwrap_or(0);
         state.free_camera = settings.app.window.free_camera;
         state.egui_scale = settings.app.window.egui_scale;
-        state.overlay_scale = settings.app.window.overlay_scale;
+        state.hot_reload_enabled = settings.app.debug.hot_reload_enabled;
+        state.player_position_scale = settings.app.window.player_position_scale;
+        state.sysmessages_scale = settings.app.window.sysmessages_scale;
+        state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
 
         // Also apply wireframe setting which isn't in the dialog yet but is in settings
         wireframe_config.global = settings.app.debug.map_render_wireframe;
@@ -164,7 +176,10 @@ pub fn sys_render_options_dialog(
     // write the (possibly changed by egui's own close button) value back afterward.
     let mut window_open = state.open;
 
-    let title = format!("Options [{:?}]", settings.as_ref().keybindings.user_settings);
+    let title = format!(
+        "Options [{:?}]",
+        settings.as_ref().keybindings.user_settings
+    );
 
     let response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
@@ -239,6 +254,16 @@ pub fn sys_render_options_dialog(
             );
 
             ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label("Hot-reload settings:");
+                if ui
+                    .checkbox(&mut state.hot_reload_enabled, "Enable")
+                    .changed()
+                {
+                    settings.app.debug.hot_reload_enabled = state.hot_reload_enabled;
+                }
+            });
+            ui.add_space(8.0);
             ui.heading("World & Input");
             ui.separator();
 
@@ -257,19 +282,53 @@ pub fn sys_render_options_dialog(
 
             ui.add_space(4.0);
             ui.checkbox(&mut state.free_camera, "Free Camera Mode");
-            ui.label(egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.").small().weak());
+            ui.label(
+                egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
+                    .small()
+                    .weak(),
+            );
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Egui Scale:");
-                if ui.add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0)).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0))
+                    .changed()
+                {
                     settings.app.window.egui_scale = state.egui_scale;
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Overlay Scale:");
-                if ui.add(egui::Slider::new(&mut state.overlay_scale, 0.5..=3.0)).changed() {
-                    settings.app.window.overlay_scale = state.overlay_scale;
+                ui.label("Player Position Scale:");
+                if ui
+                    .add(egui::Slider::new(
+                        &mut state.player_position_scale,
+                        0.5..=3.0,
+                    ))
+                    .changed()
+                {
+                    settings.app.window.player_position_scale = state.player_position_scale;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("System Messages Scale:");
+                if ui
+                    .add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0))
+                    .changed()
+                {
+                    settings.app.window.sysmessages_scale = state.sysmessages_scale;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Performance Overlay Scale:");
+                if ui
+                    .add(egui::Slider::new(
+                        &mut state.performance_overlay_scale,
+                        0.5..=3.0,
+                    ))
+                    .changed()
+                {
+                    settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
                 }
             });
 
@@ -278,7 +337,9 @@ pub fn sys_render_options_dialog(
             // unless we actually write a new value. This prevents the debounced save
             // timer from being reset every frame.
             if (settings.as_ref().app.input.movement_speed_multiplier
-                - state.movement_speed_multiplier).abs() > 0.001
+                - state.movement_speed_multiplier)
+                .abs()
+                > 0.001
             {
                 settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
             }
@@ -301,8 +362,23 @@ pub fn sys_render_options_dialog(
             if (settings.as_ref().app.window.egui_scale - state.egui_scale).abs() > 0.001 {
                 settings.app.window.egui_scale = state.egui_scale;
             }
-            if (settings.as_ref().app.window.overlay_scale - state.overlay_scale).abs() > 0.001 {
-                settings.app.window.overlay_scale = state.overlay_scale;
+            if (settings.as_ref().app.window.player_position_scale - state.player_position_scale)
+                .abs()
+                > 0.001
+            {
+                settings.app.window.player_position_scale = state.player_position_scale;
+            }
+            if (settings.as_ref().app.window.performance_overlay_scale
+                - state.performance_overlay_scale)
+                .abs()
+                > 0.001
+            {
+                settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
+            }
+            if (settings.as_ref().app.window.sysmessages_scale - state.sysmessages_scale).abs()
+                > 0.001
+            {
+                settings.app.window.sysmessages_scale = state.sysmessages_scale;
             }
         });
 

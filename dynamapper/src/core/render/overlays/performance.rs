@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_QUERY_VIDEO_MEMORY_INFO,
 };
 
-const FONT_SIZE: f32 = 12.0;
+const FONT_SIZE: f32 = 16.0;
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
@@ -22,7 +22,9 @@ const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
 const FPS_TEXT_REFRESH_INTERVAL_SEC: f32 = 0.5;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
-// Keep these in sync with texture/atlas initialization in terrain cache startup. // TODO: make the code directly use the real ones,
+// TODO: make the code directly use the real ones from the other module,
+// TODO: explain what is a texel.
+// Keep these in sync with texture/atlas initialization in terrain cache startup.
 //  do not have different magic numbers to keep synchronized.
 const TILE_ATLAS_TEXELS: u32 = 2048;
 const TILE_ATLAS_MAX_LAYERS: u32 = 16;
@@ -74,6 +76,8 @@ impl Default for ProcessMetrics {
     }
 }
 
+// TODO: Add Android, iOS, iPadOS etc.
+// TODO: double check and ensure that this is legit and works also for MacOS and similar, since they do not have perfect posix compliance.
 #[cfg(any(
     target_os = "linux",
     target_os = "freebsd",
@@ -255,7 +259,7 @@ pub fn setup_overlay_performance(
             OverlayPerformanceContainer,
         ))
         .with_children(|builder| {
-            let scale = settings.app.window.overlay_scale;
+            let scale = settings.app.window.performance_overlay_scale;
             builder.spawn((
                 Text::new("FPS: Init..."),
                 TextFont {
@@ -329,11 +333,8 @@ pub fn sys_refresh_process_metrics(
 
         // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
         // Includes terrain texture arrays + tile metadata atlas.
-        // Prefer native OS/driver accounting when available.
-        let tracked_total_mib =
-            metrics.estimated_texture_vram_mib + metrics.estimated_atlas_vram_mib;
         metrics.process_vram_tracked_mib =
-            query_process_vram_mib_native(pid).unwrap_or(tracked_total_mib);
+            query_process_vram_mib_native(pid).unwrap_or(0.0);
     }
 }
 
@@ -362,7 +363,7 @@ pub fn update_performance_text(
 ) {
     // Accumulate time and only refresh the FPS string periodically to make it readable.
     *fps_acc += time.delta().as_secs_f32();
-    let current_scale = settings.app.window.overlay_scale;
+    let current_scale = settings.app.window.performance_overlay_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
     // Real-time visibility toggle from settings

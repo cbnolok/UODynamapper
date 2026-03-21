@@ -17,12 +17,12 @@
 //!
 //! ## Design Choices
 //!
-//! - **4-Byte Alignment**: `MapCell` is aligned to 4 bytes in memory (using 1 byte of padding). 
-//!   While the file format uses 3 bytes, 4-byte alignment significantly improves CPU cache performance 
+//! - **4-Byte Alignment**: `MapCell` is aligned to 4 bytes in memory (using 1 byte of padding).
+//!   While the file format uses 3 bytes, 4-byte alignment significantly improves CPU cache performance
 //!   and enables more efficient SIMD processing during texture mapping.
-//! - **Inlined Cells**: `MapBlock` stores its cells in a fixed-size array instead of a `Box`. 
+//! - **Inlined Cells**: `MapBlock` stores its cells in a fixed-size array instead of a `Box`.
 //!   This removes thousands of small heap allocations, reducing memory fragmentation and pressure on the allocator.
-//! - **Fast Parsing**: We use a `RawMapBlock` struct that matches the disk format for initial loading, 
+//! - **Fast Parsing**: We use a `RawMapBlock` struct that matches the disk format for initial loading,
 //!   then convert to the aligned `MapCell` format in a tight loop.
 
 #![allow(dead_code)]
@@ -31,10 +31,10 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::Section;
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
-use bytemuck::{Pod, Zeroable, cast_slice, cast_slice_mut, from_bytes};
+use std::io::{BufReader, SeekFrom, prelude::*};
+use bytemuck::{cast_slice, Pod, Zeroable};
 use std::path::PathBuf;
 
 /// Represents a single cell (or tile) in the map.
@@ -168,20 +168,15 @@ impl MapBlock {
         }
     }
 
-    pub fn from_reader(rdr: &mut Cursor<&[u8]>, new_block: &mut MapBlock) -> eyre::Result<()> {
-        let bytes = rdr.get_ref();
-        let offset = rdr.position() as usize;
-
-        let raw_block_bytes = &bytes[offset..offset + MAP_BLOCK_FILE_SIZE];
-        let raw_block: &RawMapBlock = bytemuck::from_bytes(raw_block_bytes);
-
-        // We can't cast_slice because memory layout differs (3 bytes vs 4 bytes)
-        // Extract cells individually or in bulk if we use a specialized loop
+    #[inline(always)]
+    fn from_raw_block(raw_block: &RawMapBlock, new_block: &mut MapBlock) -> eyre::Result<()> {
+        // We can't cast_slice the cells because memory layout differs (3 bytes vs 4 bytes).
+        // Extract cells individually in a tight loop.
         for (i, raw_cell) in raw_block.cells.iter().enumerate() {
             let id = raw_cell.id;
             #[cfg(target_endian = "big")]
             let id = id.swap_bytes();
-            
+
             new_block.cells[i] = MapCell {
                 id,
                 z: raw_cell.z,
@@ -189,7 +184,6 @@ impl MapBlock {
             };
         }
 
-        rdr.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;
         Ok(())
     }
 }
@@ -199,7 +193,7 @@ pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
     map_file_mul_rdr: BufReader<File>,
-    cached_blocks: BTreeMap<MapBlockRelPos, CachedBlock>,
+    cached_blocks: HashMap<MapBlockRelPos, CachedBlock>,
 }
 
 pub struct CachedBlock {
@@ -388,7 +382,7 @@ impl MapPlane {
             index: map_index,
             size_blocks: map_size_blocks,
             map_file_mul_rdr,
-            cached_blocks: BTreeMap::new(),
+            cached_blocks: HashMap::new(),
         };
         Ok(map_plane)
     }
@@ -432,35 +426,50 @@ impl MapPlane {
 
         // Sort the blocks to load by their coordinates.
         // This makes it more likely that sequential blocks are next to each other in the vector.
+        let mut blocks_to_load = blocks_to_load.to_vec();
         blocks_to_load.sort_unstable();
+        blocks_to_load.dedup();
+
+        #[derive(Clone, Copy)]
+        struct IndexedBlock {
+            pos: MapBlockRelPos,
+            idx: u32,
+        }
+
+        let indexed_blocks: Vec<IndexedBlock> = blocks_to_load
+            .iter()
+            .map(|&pos| IndexedBlock {
+                pos,
+                idx: MapBlock::idx_from_coords(&pos, self.size_blocks.height),
+            })
+            .collect();
 
         // Group the blocks into ranges of sequential blocks.
-        let mut ranges = Vec::new();
-        if !blocks_to_load.is_empty() {
-            let mut current_range_start = blocks_to_load[0];
-            let mut current_range_end = blocks_to_load[0];
+        let mut ranges = Vec::with_capacity(indexed_blocks.len());
+        if !indexed_blocks.is_empty() {
+            let mut current_range_start = 0usize;
+            let mut current_range_end = 0usize;
 
-            for i in 1..blocks_to_load.len() {
-                let prev_idx =
-                    MapBlock::idx_from_coords(&blocks_to_load[i - 1], self.size_blocks.height);
-                let current_idx =
-                    MapBlock::idx_from_coords(&blocks_to_load[i], self.size_blocks.height);
+            for i in 1..indexed_blocks.len() {
+                let prev_idx = indexed_blocks[i - 1].idx;
+                let current_idx = indexed_blocks[i].idx;
 
                 if current_idx == prev_idx + 1 {
-                    current_range_end = blocks_to_load[i];
+                    current_range_end = i;
                 } else {
                     ranges.push((current_range_start, current_range_end));
-                    current_range_start = blocks_to_load[i];
-                    current_range_end = blocks_to_load[i];
+                    current_range_start = i;
+                    current_range_end = i;
                 }
             }
             ranges.push((current_range_start, current_range_end));
         }
 
-        // Read each range of blocks in a single operation.
-        for (start_block, end_block) in ranges {
-            let start_idx = MapBlock::idx_from_coords(&start_block, self.size_blocks.height);
-            let end_idx = MapBlock::idx_from_coords(&end_block, self.size_blocks.height);
+        // Read each range of blocks in a single operation, then decode the batch in-place.
+        let mut read_buffer: Vec<u8> = Vec::new();
+        for (range_start, range_end) in ranges {
+            let start_idx = indexed_blocks[range_start].idx;
+            let end_idx = indexed_blocks[range_end].idx;
             let num_blocks = (end_idx - start_idx + 1) as usize;
 
             let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
@@ -473,9 +482,10 @@ impl MapPlane {
                     )
                 })?;
 
-            let mut buffer = vec![0; num_blocks * MapBlock::PACKED_SIZE];
+            let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
+            read_buffer.resize(buffer_len, 0);
             self.map_file_mul_rdr
-                .read_exact(&mut buffer)
+                .read_exact(&mut read_buffer)
                 .wrap_err_with(|| {
                     format!(
                         "Failed to read {} blocks from offset {}",
@@ -483,22 +493,20 @@ impl MapPlane {
                     )
                 })?;
 
-            let mut cursor = Cursor::new(buffer.as_slice());
-            for i in 0..num_blocks {
-                let block_pos =
-                    MapBlock::coords_from_idx(start_idx + i as u32, self.size_blocks.height);
-                if self.cached_blocks.contains_key(&block_pos) {
-                    cursor.seek(SeekFrom::Current(MapBlock::PACKED_SIZE as i64))?;
-                    continue;
+            let raw_blocks: &[RawMapBlock] = cast_slice(&read_buffer);
+            for (i, raw_block) in raw_blocks.iter().enumerate() {
+                let block_pos = indexed_blocks[range_start + i].pos;
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.cached_blocks.entry(block_pos)
+                {
+                    let mut new_block = MapBlock::default();
+                    MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                    new_block.internal_coords = block_pos;
+                    entry.insert(CachedBlock {
+                        block: new_block,
+                        last_accessed: std::time::Instant::now(),
+                    });
                 }
-
-                let mut new_block = MapBlock::default();
-                MapBlock::from_reader(&mut cursor, &mut new_block)?;
-                new_block.internal_coords = block_pos;
-                self.cached_blocks.insert(block_pos, CachedBlock {
-                    block: new_block,
-                    last_accessed: std::time::Instant::now(),
-                });
             }
         }
 

@@ -46,6 +46,7 @@ pub enum LogAbout {
     Input,
     InternalAssets,
     Performance,
+    Bevy,
     Player,
     Plugins,
     Renderer,
@@ -100,7 +101,7 @@ fn enum_about_variant_name_validate(val: &str) -> bool {
 #[allow(unused)]
 fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
     let settings_guard = LOG_SETTINGS.get_or_init(|| RwLock::new(LogSettings::default())).read().unwrap();
-    
+
     // 1. Check min severity
     if let Some(min_sev) = &settings_guard.min_severity {
         // Simple ordinal comparison if we had one, but we use match for now
@@ -131,7 +132,7 @@ fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
 
 #[track_caller]
 pub fn one(
-    show_caller_location_override: Option<bool>,
+    _show_caller_location_override: Option<bool>,
     severity: LogSev,
     about: LogAbout,
     msg: &str,
@@ -141,7 +142,6 @@ pub fn one(
     }
 
     use std::fmt::Write;
-    let show_location = show_caller_location_override.unwrap_or(true);
 
     //let now: OffsetDateTime = SystemTime::now().into(); // not adjusted by time zone
     let now = chrono::Local::now();
@@ -149,26 +149,34 @@ pub fn one(
 
     // Format time without allocation
     let mut full_msg = String::with_capacity(256);
-    write!(full_msg, "<d>{h:02}:{m:02}:{s:02} {{ ").unwrap();
+    write!(full_msg, "<d>{h:02}:{m:02}:{s:02}").unwrap();
 
     // Add file:line if enabled
-    if show_location {
-        let caller = std::panic::Location::caller();
-        let loc_str: String = format!("{}:{}", caller.file(), caller.line());
+    #[cfg(debug_assertions)]
+    {
+        let show_location: bool = _show_caller_location_override.unwrap_or(true);
+        if show_location {
+            let caller = std::panic::Location::caller();
+            let loc_str: String = format!("{}:{}", caller.file(), caller.line());
 
-        const PAD_WIDTH: usize = 46;
-        let loc_trimmed: String = if loc_str.len() > PAD_WIDTH {
-            let slice: &str = &loc_str[loc_str.len() - (PAD_WIDTH - 2)..];
-            format!("..{}", slice)
-        } else {
-            loc_str
-        };
+            const PAD_WIDTH: usize = 46;
+            let loc_trimmed: String = if loc_str.len() > PAD_WIDTH {
+                let slice: &str = &loc_str[loc_str.len() - (PAD_WIDTH - 2)..];
+                format!("..{}", slice)
+            } else {
+                loc_str
+            };
 
-        // Right-pad or truncate to PAD_WIDTH
-        write!(full_msg, "{:width$}", loc_trimmed, width = PAD_WIDTH).unwrap();
+            // Right-pad or truncate to PAD_WIDTH
+            write!(full_msg, " {{ {:width$} }}", loc_trimmed, width = PAD_WIDTH).unwrap();
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        full_msg.push_str(" Dynamapper: ");
     }
 
-    full_msg.push_str(" }}</d> ");
+    full_msg.push_str("</d> ");
 
     // About tag, pad to fixed width (18)
     let about_str = format!("[{about}]");

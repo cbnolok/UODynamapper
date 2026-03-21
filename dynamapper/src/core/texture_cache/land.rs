@@ -116,7 +116,7 @@ pub fn sys_setup_terrain_cache(
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let lossy = settings.core.graphics.lossy_texture_compression;
+    let lossy: bool = settings.core.graphics.lossy_texture_compression;
     let handle_small = texture_array::create_gpu_texture_array(
         "land_small_texture_cache",
         &mut images,
@@ -176,7 +176,7 @@ pub fn sys_setup_terrain_cache(
         depth_or_array_layers: max_layers,
     };
     let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers * 4) as usize;
-    let data = vec![0u8; size_bytes];
+    let data: Vec<u8> = vec![0u8; size_bytes];
 
     let mut image = Image::new(
         extent,
@@ -213,7 +213,7 @@ pub fn sys_setup_terrain_cache(
                     global_lighting: 1.0,
                     render_zoom: 1.0,
                     adaptive_zoom_simplification: 0.0,
-                    _pad0: Vec2::ZERO,
+                    _pad: Vec2::ZERO,
                 },
                 effects_uniform: Default::default(),
                 lighting_uniform: Default::default(),
@@ -238,8 +238,8 @@ fn sys_apply_texture_array_expansion(
         return;
     }
 
-    let mut resized_small = None;
-    let mut resized_big = None;
+    let mut resized_small: Option<u32> = None;
+    let mut resized_big: Option<u32> = None;
 
     if let Some(req) = small_req {
         let new_layers = req.clamp(

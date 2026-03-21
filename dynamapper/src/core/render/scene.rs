@@ -268,7 +268,7 @@ fn sys_update_worldmap_chunks_to_render(
     let current_window_size = (window.width() as u32, window.height() as u32);
     let has_recompute_event = event.read().next().is_some();
     let camera_chunk_changed = locals.last_camera_chunk != Some(current_camera_chunk);
-    let zoom_changed = (zoom - locals.last_zoom).abs() > 0.02;
+    let zoom_changed = (zoom - locals.last_zoom).abs() > 0.05;
     let window_changed = locals.last_window_size != Some(current_window_size);
     if window_changed {
         // Camera projection update may land in a different frame/order.

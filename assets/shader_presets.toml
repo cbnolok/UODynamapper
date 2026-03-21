@@ -1,6 +1,8 @@
 # Shader Presets.
 # This file defines the lighting and tuning parameters for different rendering styles and times of day.
-#
+
+default_preset = "classic.morning"
+
 # ------------------
 # --- LEGEND ---
 # ------------------

@@ -60,7 +60,12 @@ pub struct SectWindow {
     pub width: f32,
     pub zoom: f32,
     pub egui_scale: f32,
-    pub overlay_scale: f32,
+    /// Per-overlay scale for the player position overlay.
+    pub player_position_scale: f32,
+    /// Per-overlay scale for system messages rendered via egui.
+    pub sysmessages_scale: f32,
+    /// Per-overlay scale for the performance overlay.
+    pub performance_overlay_scale: f32,
     pub free_camera: bool,
 }
 
@@ -73,6 +78,9 @@ pub struct SectWorld {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
+    /// Whether settings hot-reload from disk is enabled. Disabled by default until
+    /// all systems correctly respond to runtime changes.
+    pub hot_reload_enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -164,66 +172,23 @@ pub fn load_from_files() -> Settings {
         core: SectCore,
         logging: SectLogging,
     }
-    let core_data: CoreWrapper = match toml::from_str(&core_contents) {
-        Ok(s) => s,
-        Err(_e) => {
-            // If parsing fails, use defaults for core section
-            CoreWrapper {
-                core: SectCore {
-                    uo_files: SectUoFiles { folder: "C:\\UO".to_string() },
-                    world: SectWorld { start_p: UOVec4::default(), hide_player: false },
-                    graphics: SectGraphics {
-                        lossy_texture_compression: true,
-                        reduce_unfocused_fps: true,
-                        texture_filtering: 0,
-                        texture_reconstruction: 0,
-                        sharpening_strength: 0.0,
-                    },
-                },
-                logging: SectLogging {
-                    min_severity: LogSev::Info,
-                    filters: vec![],
-                },
-            }
-        }
-    };
+    let core_data: CoreWrapper = toml::from_str(&core_contents)
+        .expect("Failed to parse core_settings.toml — please fix the file in assets/core_settings.toml");
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
-        .unwrap_or_else(|_| "".to_string());
+        .expect("Failed to read user_preferences.toml — please ensure assets/user_preferences.toml exists and is valid");
 
-    let user_app: SectApp = match toml::from_str(&user_contents) {
-        Ok(s) => s,
-        Err(_e) => {
-            // If it fails (maybe partial file), use defaults for app section
-            SectApp {
-                input: SectInput { movement_speed_multiplier: 1.0 },
-                window: SectWindow { width: 1024.0, height: 768.0, zoom: 1.0, egui_scale: 1.0, overlay_scale: 1.0, free_camera: false },
-                debug: SectDebug { map_render_wireframe: false },
-                performance: SectPerformance {
-                    show_overlay: true,
-                    frame_limit_enabled: true,
-                    target_fps: 60,
-                },
-            }
-        }
-    };
+    let user_app: SectApp = toml::from_str(&user_contents)
+        .expect("Failed to parse user_preferences.toml — please fix the file in assets/user_preferences.toml");
 
     // Keybindings file
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
     let kb_contents = std::fs::read_to_string(&kb_path)
-        .unwrap_or_else(|_| "".to_string());
+        .expect("Failed to read keybindings.toml — please ensure assets/keybindings.toml exists and is valid");
 
-    let keybindings: SectKeybindings = match toml::from_str(&kb_contents) {
-        Ok(s) => s,
-        Err(_) => {
-            SectKeybindings {
-                shader_settings: KeyCode::F3,
-                user_settings: KeyCode::F2,
-                keybindings_help: KeyCode::F1,
-            }
-        }
-    };
+    let keybindings: SectKeybindings = toml::from_str(&kb_contents)
+        .expect("Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml");
 
     Settings {
         core: core_data.core,
@@ -330,6 +295,10 @@ fn sys_hotreload_settings(
     mut watcher: ResMut<SettingsFileWatcher>,
     mut settings: ResMut<Settings>,
 ) {
+    // Respect Settings toggle: if hot-reload is globally disabled, skip checking.
+    if !settings.app.debug.hot_reload_enabled {
+        return;
+    }
     // Only check once per second — stat syscalls are cheap but redundant every frame.
     watcher.poll_timer.tick(time.delta());
     if !watcher.poll_timer.just_finished() {

@@ -5,35 +5,63 @@ members = [
     "uocf"
 ]
 
+
+# --------- Release
+
 [profile.release]
-## Max size reduction, but slower build time.
-lto = true         # Enable Link-Time Optimization (drops dead code)
-codegen-units = 1
-## Small, acceptable size reduction, faster build time.
-#lto = "thin"
+opt-level = 2       # Optimize for speed with reasonable size increase (opt-level = 3 gives fastest possible code "z" smallest possible code)
+codegen-units = 1   # Great impact on binary size (when combined with lto), and often improves performance as well
+lto = "thin"        # Enable Link-Time Optimization (binary reduction size, often increases performance)
+#lto = "fat"        # Slightly better than thin lto but at least twice slower (saves 1 mb more)
 
 ## Other settings
-panic = "abort"     # Abort on panic instead of unwinding
-opt-level = "z"     # Optimize for size
-#opt-level = 3
+panic = "abort"     # Abort on panic instead of unwinding (saves executable size)
 incremental = false
 debug = false
 strip = true        # Strip debug symbols
 
+[profile.release.package.uocf]
+opt-level = 3
+
+# Target the "loggers" and infrastructure: no reasonable difference, < 1 mb.
+#[profile.release.package.tracing]
+#opt-level = "z"
+#[profile.release.package.tracing-subscriber]
+#opt-level = "z"
+#[profile.release.package.tracing-core]
+#opt-level = "z"
+#[profile.release.package.bevy_log]
+#opt-level = "z"
+#[profile.release.package.bevy_ui]
+#opt-level = "z"
+#[profile.release.package.bevy_dev_tools]
+#opt-level = "z"
+
+
+# --------- Debug
+
 # Enable a small amount of optimization in debug mode for our crate.
 [profile.dev]
 opt-level = 1
-# Incremental compilation. The project is fairly small, for now we don't need it.
+# codegen-units = = 16      # Default, faster compilation
 incremental = true
-# Additional safety checks (including arithmetic overflow).
-debug-assertions = true
-
-# Settings for dependencies (incl. Bevy), but not for our main code:
-[profile.dev.package."*"]
-opt-level = "z" # Selective size optimization (better for behemoths like bevy_dylib)
-debug = false   # Disable generation of debug info (save RAM/Disk)
-incremental = false
+debug = true
+debug-assertions = true     # Additional safety checks (including arithmetic overflow).
 
 # Specifically optimize uocf (workspace member) for map processing performance
 [profile.dev.package.uocf]
 opt-level = 3
+codegen-units = 1
+incremental = true
+debug = true
+debug-assertions = true
+
+# Settings for dependencies (incl. Bevy), but not for our main code:
+[profile.dev.package."*"]
+opt-level = "z"         # Selective size optimization (better for behemoths like bevy_dylib)
+codegen-units = 1
+#lto = "thin"           # `lto` may not be specified in a `package` profile
+incremental = false
+debug = false           # Disable generation of debug info (save RAM/Disk)
+strip = true            # Strip debug symbols
+

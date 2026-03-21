@@ -84,7 +84,38 @@ pub fn load_from_file() -> LandShaderModePresets {
 
 fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderModePresets>) {
     log_system_add_startup::<ShaderPresetsPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
-    let preset = &shader_presets.classic.morning; // TODO: move this in the presets file?
+    // Select initial preset. Prefer `default_preset` if present in the TOML file.
+    let preset = {
+        let parts: Vec<&str> = shader_presets.default_preset.split('.').collect();
+        if parts.len() == 2 {
+            match parts[0] {
+                "classic" => match parts[1] {
+                    "morning" => &shader_presets.classic.morning,
+                    "afternoon" => &shader_presets.classic.afternoon,
+                    "night" => &shader_presets.classic.night,
+                    "cave" => &shader_presets.classic.cave,
+                    _ => &shader_presets.classic.morning,
+                },
+                "enhanced" => match parts[1] {
+                    "morning" => &shader_presets.enhanced.morning,
+                    "afternoon" => &shader_presets.enhanced.afternoon,
+                    "night" => &shader_presets.enhanced.night,
+                    "cave" => &shader_presets.enhanced.cave,
+                    _ => &shader_presets.classic.morning,
+                },
+                "kr" => match parts[1] {
+                    "morning" => &shader_presets.kr.morning,
+                    "afternoon" => &shader_presets.kr.afternoon,
+                    "night" => &shader_presets.kr.night,
+                    "cave" => &shader_presets.kr.cave,
+                    _ => &shader_presets.classic.morning,
+                },
+                _ => &shader_presets.classic.morning,
+            }
+        } else {
+            &shader_presets.classic.morning
+        }
+    };
     commands.insert_resource(UniformState {
         effects: preset.effects,
         lighting: preset.lighting,

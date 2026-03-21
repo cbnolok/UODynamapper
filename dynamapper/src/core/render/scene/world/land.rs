@@ -21,7 +21,7 @@ pub struct LCMesh {
     pub parent_map_id: u32,
     pub gx: u32, // chunk grid coordinates (in base 8×8 grid)
     pub gy: u32,
-    /// Chunk scale: 1 = standard 8×8, 2 = wide 16×16, 4 = wide 32×32.
+    /// Chunk scale: 1 = standard 8×8, 2 = 16×16, 4 = 32×32, etc. Used to reduce chunks number when using massive zoom-outs.
     /// Determines which mesh and AABB are used.
     pub scale: u32,
 }
@@ -48,14 +48,15 @@ pub fn sys_update_shared_land_material(
     // which is updated automatically every frame WITHOUT triggering material change
     // detection. This eliminates the catastrophic feedback loop where get_mut()
     // marked the material as changed every frame, causing Bevy to re-extract
-    // all ~12K chunk bind groups.
+    // all of the thousands of chunk bind groups.
 
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
 
     let atlas_changed = *last_atlas_params != Some(tile_atlas.params);
     let lighting_meaningfully_changed = (current_global_lighting - *last_global_lighting).abs() > 0.005;
-    let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.001;
+    // TODO: isn't 0.05 too sensitive?
+    let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.05;
 
     // ONLY call get_mut() when something actually changed.
     // This avoids triggering Bevy's asset change detection, which would force
@@ -80,7 +81,9 @@ pub fn sys_update_shared_land_material(
 
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<LandCustomMeshMaterial>::default())
+        app.init_resource::<draw_mesh::LandMeshScratch>()
+            .add_plugins(MaterialPlugin::<LandCustomMeshMaterial>::default())
+            // TODO: explain what ExtractResourcePlugin is.
            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<tile_atlas::TileAtlasImageHandle>::default())
             .add_systems(
                 Update,
@@ -107,6 +110,7 @@ impl Plugin for DrawLandChunkMeshPlugin {
             // );
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
+        // TODO: explain why it is needed, where is this resource used.
         render_app.init_resource::<tile_atlas::RenderAtlasUploads>();
         render_app.add_systems(bevy::render::ExtractSchedule, tile_atlas::sys_extract_atlas_uploads);
         render_app.add_systems(bevy::render::Render, tile_atlas::sys_render_upload_tile_atlas.in_set(bevy::render::RenderSystems::Queue));

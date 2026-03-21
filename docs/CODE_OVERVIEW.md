@@ -335,7 +335,7 @@ error(msg)     // ✖ Red
 custom(...)    // Custom severity/color
 ```
 
-**Overlay** (`system_messages.rs`):
+**Overlay** (`sysmessages.rs`):
 
 - Bottom-left corner
 - Max 5 messages visible
@@ -358,7 +358,7 @@ Located in `dynamapper/src/core/render/overlays/`:
 |------|---------|----------|
 | `performance.rs` | FPS, CPU%, RAM (RSS) | Top-right |
 | `player_position.rs` | Player coordinates | Top-left |
-| `system_messages.rs` | Log messages | Bottom-left |
+| `sysmessages.rs` | Log messages | Bottom-left |
 
 ### 5.2 Dialogs (Egui-based)
 

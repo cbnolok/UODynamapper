@@ -98,7 +98,7 @@ impl IndexFile {
 
         let i_elem = file_data.len();
         let index_file = IndexFile { file_data };
-        println!(
+        log::info!(
             "Loaded {i_elem} (0x{:x}) Index Elements from '{file_name}'.",
             i_elem
         );

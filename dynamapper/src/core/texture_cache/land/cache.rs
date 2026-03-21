@@ -117,7 +117,7 @@ impl LandTextureCache {
         }
     }
 
-    pub fn set_visible_texture_usage_hint(&mut self, visible_texture_ids: &HashSet<u16>) {
+    pub fn set_visible_texture_usage_hint(&mut self, visible_texture_ids: &[u16]) {
         self.pinned_visible_ids.clear();
         self.pinned_visible_ids.extend(visible_texture_ids.iter().copied());
         self.visible_hint_count = visible_texture_ids.len();
