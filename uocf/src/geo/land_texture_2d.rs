@@ -123,6 +123,9 @@ pub struct TexMap2D {
 struct TexMapShared {
     file_reader: BufReader<File>,
     scratch_buffer: Vec<u8>,
+    /// Cache stores the raw BGRA5551 file data (2 bytes/pixel) rather than
+    /// decoded RGBA8 (4 bytes/pixel), halving RAM usage.  Decode to RGBA8
+    /// happens on-the-fly in `get_pixel_data` via SIMD and is very fast.
     cache: HashMap<usize, (std::sync::Arc<Vec<u8>>, std::time::Instant)>,
 }
 
@@ -280,80 +283,83 @@ impl TexMap2D {
     pub fn get_pixel_data(&self, element_index: usize) -> Option<std::sync::Arc<Vec<u8>>> {
         let element: &Texture2DElement = self.element(element_index)?;
 
-        {
+        let raw_bgra5551: std::sync::Arc<Vec<u8>> = {
             let mut shared = self.shared_data.lock().unwrap();
+
+            // Check if the raw BGRA5551 data is already cached.
             if let Some((data, time)) = shared.cache.get_mut(&element_index) {
                 *time = std::time::Instant::now();
-                return Some(std::sync::Arc::clone(data));
-            }
-        }
+                std::sync::Arc::clone(data)
+            } else {
+                // Read raw BGRA5551 from file and cache it (2 bytes/pixel).
+                let pixel_qty_bytes = element.pixel_qty * 2;
+                let shared = &mut *shared;
+                shared.file_reader.seek(SeekFrom::Start(element.file_offset)).ok()?;
+                shared.scratch_buffer.resize(pixel_qty_bytes, 0);
+                shared.file_reader.read_exact(&mut shared.scratch_buffer).ok()?;
 
+                let arc_raw = std::sync::Arc::new(shared.scratch_buffer.clone());
+                shared.cache.insert(
+                    element_index,
+                    (std::sync::Arc::clone(&arc_raw), std::time::Instant::now()),
+                );
+                arc_raw
+            }
+        };
+
+        // Decode BGRA5551 → RGBA8888 (done outside the lock so other threads
+        // can access the cache concurrently).
         let mut pixel_data: Vec<u8> = Vec::with_capacity(element.pixel_qty * 4);
 
+        #[cfg(debug_assertions)]
         {
-            let mut shared = self.shared_data.lock().unwrap();
-            let shared: &mut TexMapShared = &mut *shared;
-
-            shared.file_reader.seek(SeekFrom::Start(element.file_offset)).ok()?;
-            let pixel_qty_bytes = element.pixel_qty * 2;
-
-            shared.scratch_buffer.resize(pixel_qty_bytes, 0);
-            shared.file_reader.read_exact(&mut shared.scratch_buffer).ok()?;
-
-            // Convert BGRA5551 to RGBA8888 using the scratch buffer directly
-            #[cfg(debug_assertions)]
-            {
-                let pixels_u16: &[u16] = bytemuck::cast_slice(&shared.scratch_buffer);
-                for &p in pixels_u16 {
-                    let mut pixel_16: Bgra5551 = crate::utils::color::Bgra5551::new_from_val(p);
-                    pixel_16.set_a(1);
-                    pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
-                }
+            let pixels_u16: &[u16] = bytemuck::cast_slice(&raw_bgra5551);
+            for &p in pixels_u16 {
+                let mut pixel_16: Bgra5551 = crate::utils::color::Bgra5551::new_from_val(p);
+                pixel_16.set_a(1);
+                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
             }
-            #[cfg(not(debug_assertions))]
-            {
-                let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
-                    bytemuck::cast_slice(&shared.scratch_buffer).as_chunks::<16>();
-
-                for &chunk_array in pixel_data_u16_prefix {
-                    let chunk = u16x16::new(chunk_array);
-
-                    #[cfg(target_endian = "big")]
-                    let chunk = chunk.swap_bytes();
-
-                    let b_u16: u16x16 = (chunk          & u16x16::splat(0x1F)) << 3;
-                    let g_u16: u16x16 = ((chunk >> 5)   & u16x16::splat(0x1F)) << 3;
-                    let r_u16: u16x16 = ((chunk >> 10)  & u16x16::splat(0x1F)) << 3;
-                    let a_u16: u16x16 = u16x16::splat(0xFF);
-
-                    let b_u16: &[u16; 16] = b_u16.as_array();
-                    let g_u16: &[u16; 16] = g_u16.as_array();
-                    let r_u16: &[u16; 16] = r_u16.as_array();
-                    let a_u16: &[u16; 16] = a_u16.as_array();
-
-                    // Re-interleave using SIMD if possible, or just be efficient
-                    let mut rgba_u32_array = [0u32; 16];
-                    for i in 0..16 {
-                        let r_val = r_u16[i] as u32;
-                        let g_val = g_u16[i] as u32;
-                        let b_val = b_u16[i] as u32;
-                        let a_val = a_u16[i] as u32;
-                        rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
-                    }
-                    pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
-                }
-
-                for &p in pixel_data_u16_suffix {
-                    let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
-                    pixel_16.set_a(1);
-                    pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
-                }
-            }
-
-            let arc_data = std::sync::Arc::new(pixel_data);
-            shared.cache.insert(element_index, (std::sync::Arc::clone(&arc_data), std::time::Instant::now()));
-            Some(arc_data)
         }
+        #[cfg(not(debug_assertions))]
+        {
+            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
+                bytemuck::cast_slice(&raw_bgra5551).as_chunks::<16>();
+
+            for &chunk_array in pixel_data_u16_prefix {
+                let chunk = u16x16::new(chunk_array);
+
+                #[cfg(target_endian = "big")]
+                let chunk = chunk.swap_bytes();
+
+                let b_u16: u16x16 = (chunk          & u16x16::splat(0x1F)) << 3;
+                let g_u16: u16x16 = ((chunk >> 5)   & u16x16::splat(0x1F)) << 3;
+                let r_u16: u16x16 = ((chunk >> 10)  & u16x16::splat(0x1F)) << 3;
+                let a_u16: u16x16 = u16x16::splat(0xFF);
+
+                let b_u16: &[u16; 16] = b_u16.as_array();
+                let g_u16: &[u16; 16] = g_u16.as_array();
+                let r_u16: &[u16; 16] = r_u16.as_array();
+                let a_u16: &[u16; 16] = a_u16.as_array();
+
+                let mut rgba_u32_array = [0u32; 16];
+                for i in 0..16 {
+                    let r_val = r_u16[i] as u32;
+                    let g_val = g_u16[i] as u32;
+                    let b_val = b_u16[i] as u32;
+                    let a_val = a_u16[i] as u32;
+                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                }
+                pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+            }
+
+            for &p in pixel_data_u16_suffix {
+                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
+                pixel_16.set_a(1);
+                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
+            }
+        }
+
+        Some(std::sync::Arc::new(pixel_data))
     }
 
     pub fn evict_idle_textures(&self, timeout: std::time::Duration) -> usize {

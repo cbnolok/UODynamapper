@@ -53,6 +53,7 @@ impl Plugin for LandTextureCachePlugin {
             sys_evict_idle_land_cache.run_if(on_timer(Duration::from_secs(5))),
         );
         app.add_systems(Update, sys_apply_texture_array_expansion);
+        app.add_systems(Update, sys_apply_tile_atlas_expansion);
     }
 }
 
@@ -61,6 +62,9 @@ fn sys_evict_idle_land_cache(
     map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
+    mut tile_atlas: ResMut<
+        crate::core::render::scene::world::land::tile_atlas::TileAtlas,
+    >,
 ) {
     // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
     let evicted_gpu_layers = cache_r.evict_idle_textures();
@@ -106,6 +110,65 @@ fn sys_evict_idle_land_cache(
             );
         }
     };
+
+    // 4. Check whether the texture arrays can be shrunk (usage low for >2 min).
+    let (shrink_small, shrink_big) = cache_r.check_shrink_opportunity();
+    if let Some(target) = shrink_small {
+        cache_r.small.requested_resize_to = Some(target);
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!(
+                "Requesting texture array shrink (Small): {} → {} layers.",
+                cache_r.small.active_layers, target
+            ),
+        );
+    }
+    if let Some(target) = shrink_big {
+        cache_r.big.requested_resize_to = Some(target);
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!(
+                "Requesting texture array shrink (Big): {} → {} layers.",
+                cache_r.big.active_layers, target
+            ),
+        );
+    }
+
+    // 5. Check whether the tile metadata atlas can be shrunk.
+    {
+        let timeout = Duration::from_secs(texture_array::RESOURCE_SHRINK_TIMEOUT_SECS);
+        let mapped = tile_atlas.mapped_page_count();
+        let capacity = tile_atlas.params.max_layers;
+        let usage_ratio = mapped as f32 / capacity.max(1) as f32;
+        let elapsed = std::time::Instant::now()
+            .duration_since(tile_atlas.last_high_usage_instant);
+
+        if usage_ratio < texture_array::RESOURCE_SHRINK_THRESHOLD
+            && elapsed >= timeout
+            && capacity > texture_array::TILE_ATLAS_INITIAL_LAYERS
+            && tile_atlas.requested_expansion.is_none()
+        {
+            let target = ((mapped as f32 * 1.5).ceil() as u32)
+                .next_power_of_two()
+                .max(texture_array::TILE_ATLAS_INITIAL_LAYERS)
+                .min(capacity);
+            if target < capacity {
+                tile_atlas.requested_expansion = Some(target);
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::Performance,
+                    &format!(
+                        "Requesting tile atlas shrink: {capacity} → {target} layers.",
+                    ),
+                );
+            }
+        }
+    }
 }
 
 pub fn sys_setup_terrain_cache(
@@ -154,22 +217,21 @@ pub fn sys_setup_terrain_cache(
         big: handle_big.clone(),
     });
 
-    let page_texels = UVec2::new(2048, 2048);
-    let tiles_per_page = UVec2::new(2048, 2048);
-    // 16 layers gives breathing room for LRU paging; Britannia (7168x4096)
-    // needs 4×2 = 8 pages, so 16 leaves room for border-ring page touches
-    // and prevents eviction thrashing at high zoom-out.
-    let max_layers = 16;
+    let page_texels = UVec2::splat(texture_array::TILE_ATLAS_PAGE_TEXELS);
+    let tiles_per_page = UVec2::splat(texture_array::TILE_ATLAS_TILES_PER_PAGE);
+    // Start small — the runtime will grow the atlas on demand if more pages
+    // are needed (see sys_apply_tile_atlas_expansion).
+    let max_layers = texture_array::TILE_ATLAS_INITIAL_LAYERS;
     let params = AtlasParams {
         page_texels,
         tiles_per_page,
         max_layers,
-        world_pages_x: 16, // Fixed stride for up to 32k x 32k maps
+        world_pages_x: texture_array::TILE_ATLAS_WORLD_PAGES_X,
         _pad: UVec2::ZERO,
         page_to_layer: [bevy::math::UVec4::MAX; 64],
     };
 
-    let tile_atlas = TileAtlas::new(params);
+    let tile_atlas = TileAtlas::new(params, texture_array::TILE_ATLAS_MAX_LAYERS);
     cmd.insert_resource(tile_atlas);
 
     let extent = Extent3d {
@@ -177,7 +239,8 @@ pub fn sys_setup_terrain_cache(
         height: page_texels.y,
         depth_or_array_layers: max_layers,
     };
-    let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers * 4) as usize;
+    let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers
+        * texture_array::TILE_ATLAS_BYTES_PER_TEXEL) as usize;
     let data: Vec<u8> = vec![0u8; size_bytes];
 
     let mut image = Image::new(
@@ -245,10 +308,10 @@ fn sys_apply_texture_array_expansion(
 
     if let Some(req) = small_req {
         let new_layers = req.clamp(
-            cache_r.small.active_layers,
+            texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
             texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
         );
-        if new_layers > cache_r.small.active_layers {
+        if new_layers != cache_r.small.active_layers {
             let new_handle = texture_array::create_gpu_texture_array(
                 "land_small_texture_cache",
                 &mut images,
@@ -269,10 +332,10 @@ fn sys_apply_texture_array_expansion(
 
     if let Some(req) = big_req {
         let new_layers = req.clamp(
-            cache_r.big.active_layers,
+            texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
             texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
         );
-        if new_layers > cache_r.big.active_layers {
+        if new_layers != cache_r.big.active_layers {
             let new_handle = texture_array::create_gpu_texture_array(
                 "land_big_texture_cache",
                 &mut images,
@@ -302,10 +365,90 @@ fn sys_apply_texture_array_expansion(
             LogSev::Info,
             LogAbout::Performance,
             &format!(
-                "Expanded terrain texture arrays: small={} layers, big={} layers.",
+                "Resized terrain texture arrays: small={} layers, big={} layers.",
                 cache_r.small.active_layers,
                 cache_r.big.active_layers
             ),
         );
     }
+}
+
+/// Grows (or shrinks) the tile metadata atlas when `TileAtlas::requested_expansion`
+/// has been set by the LRU paging logic (or when the shrink heuristic fires).
+fn sys_apply_tile_atlas_expansion(
+    mut images: ResMut<Assets<Image>>,
+    mut tile_atlas: ResMut<
+        crate::core::render::scene::world::land::tile_atlas::TileAtlas,
+    >,
+    mut atlas_handle: ResMut<
+        crate::core::render::scene::world::land::tile_atlas::TileAtlasImageHandle,
+    >,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
+    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+) {
+    let Some(new_layers) = tile_atlas.requested_expansion else {
+        return;
+    };
+    let new_layers = new_layers.clamp(
+        texture_array::TILE_ATLAS_INITIAL_LAYERS,
+        tile_atlas.max_layers_limit,
+    );
+    if new_layers == tile_atlas.params.max_layers {
+        tile_atlas.requested_expansion = None;
+        return;
+    }
+
+    let old_layers = tile_atlas.params.max_layers;
+    let page_texels = tile_atlas.params.page_texels;
+
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+
+    let extent = Extent3d {
+        width: page_texels.x,
+        height: page_texels.y,
+        depth_or_array_layers: new_layers,
+    };
+    let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers
+        * texture_array::TILE_ATLAS_BYTES_PER_TEXEL) as usize;
+    let data: Vec<u8> = vec![0u8; size_bytes];
+
+    let mut image = Image::new(
+        extent,
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rg16Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage |= TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
+    image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+        dimension: Some(bevy::render::render_resource::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let new_handle = images.add(image);
+    atlas_handle.0 = new_handle.clone();
+
+    // Clear all page mappings — the mesh renderer will re-populate them.
+    tile_atlas.apply_resize(new_layers);
+
+    // Update the shared material so the shader sees the new texture.
+    if let Some(mat) = materials.get_mut(&shared_mat.0) {
+        mat.extension.tile_meta_atlas = new_handle;
+        mat.extension.atlas_params = tile_atlas.params;
+    }
+
+    let direction = if new_layers > old_layers { "Expanded" } else { "Shrunk" };
+    console_logger::one(
+        None,
+        LogSev::Info,
+        LogAbout::Performance,
+        &format!(
+            "{direction} tile metadata atlas: {old_layers} → {new_layers} layers \
+             ({} MB VRAM).",
+            (page_texels.x as u64 * page_texels.y as u64
+                * new_layers as u64
+                * texture_array::TILE_ATLAS_BYTES_PER_TEXEL as u64)
+                / (1024 * 1024)
+        ),
+    );
 }

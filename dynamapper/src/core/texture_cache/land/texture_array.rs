@@ -35,10 +35,36 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 // offline or on-the-fly. We previously used `intel_tex_2` (CPU-side), but now use
 // `block_compression` (GPU compute) for better performance and smaller binary size.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
+// ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
 pub const TEXARRAY_BIG_INITIAL_TILE_LAYERS: u32 = 128;
 pub const TEXARRAY_SMALL_MAX_TILE_LAYERS: u32 = 2_048;
 pub const TEXARRAY_BIG_MAX_TILE_LAYERS: u32 = 2_048;
+
+// ── Tile Metadata Atlas sizing constants ───────────────────────────────────
+/// Texels per atlas page (width & height).  Each texel encodes one tile's
+/// metadata in Rg16Uint (4 bytes), so one page = PAGE² × 4 bytes.
+pub const TILE_ATLAS_PAGE_TEXELS: u32 = 2_048;
+/// Tiles stored per atlas page along each axis (matches page texels 1:1).
+pub const TILE_ATLAS_TILES_PER_PAGE: u32 = 2_048;
+/// Number of atlas layers allocated at startup.  Britannia (7168×4096 tiles)
+/// needs 4×2 = 8 pages; starting with 4 keeps VRAM low and lets the runtime
+/// grow on demand.
+pub const TILE_ATLAS_INITIAL_LAYERS: u32 = 4;
+/// Hard upper limit for atlas layers.  32 pages covers huge custom maps.
+pub const TILE_ATLAS_MAX_LAYERS: u32 = 32;
+/// World-page stride along X used for flat page-index calculation.
+/// Supports maps up to 32 k × 32 k tiles.
+pub const TILE_ATLAS_WORLD_PAGES_X: u32 = 16;
+/// Bytes per texel in the Rg16Uint format used by the tile metadata atlas.
+pub const TILE_ATLAS_BYTES_PER_TEXEL: u32 = 4;
+
+// ── Shrink / grow hysteresis ───────────────────────────────────────────────
+/// How long (seconds) usage must stay below the shrink threshold before we
+/// actually downsize a texture array or the tile atlas.
+pub const RESOURCE_SHRINK_TIMEOUT_SECS: u64 = 120;
+/// Fraction of capacity below which we consider shrinking.
+pub const RESOURCE_SHRINK_THRESHOLD: f32 = 0.40;
 
 /// Returns the GPU TextureFormat to use for terrain texture arrays, based on whether
 /// lossy BC7 compression has been requested by the user in the settings.

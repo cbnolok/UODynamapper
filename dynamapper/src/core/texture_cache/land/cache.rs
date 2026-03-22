@@ -66,6 +66,8 @@ pub struct LandTextureArrayWrapper {
     pub last_requested_resize_logged: Option<u32>,
     free_layers: Vec<u32>,
     lru: VecDeque<u16>, // texture_id queue
+    /// Timestamp of the last time usage was above `RESOURCE_SHRINK_THRESHOLD`.
+    pub last_high_usage_instant: Instant,
 }
 impl LandTextureArrayWrapper {
     fn new(image_handle: Handle<Image>, initial_layers: u32, max_layers: u32) -> Self {
@@ -78,7 +80,13 @@ impl LandTextureArrayWrapper {
             // Reserve layer 0 as a permanent black fallback tile.
             free_layers: (1..initial_layers).rev().collect(),
             lru: VecDeque::default(),
+            last_high_usage_instant: Instant::now(),
         }
+    }
+
+    /// Number of layers currently in use (allocated – free).
+    pub fn used_layers(&self) -> u32 {
+        self.active_layers - self.free_layers.len() as u32
     }
 }
 
@@ -328,6 +336,11 @@ impl LandTextureCache {
         };
 
         if let Some(l) = array.free_layers.pop() {
+            // Track high usage for shrink heuristic.
+            let usage = array.used_layers() as f32 / array.active_layers.max(1) as f32;
+            if usage > texture_array::RESOURCE_SHRINK_THRESHOLD {
+                array.last_high_usage_instant = Instant::now();
+            }
             return Some(l);
         }
 
@@ -401,7 +414,7 @@ impl LandTextureCache {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
         };
-        if new_layers <= array.active_layers {
+        if new_layers == array.active_layers {
             return;
         }
 
@@ -409,8 +422,50 @@ impl LandTextureCache {
         array.image_handle = new_handle;
         array.active_layers = new_layers;
         array.last_requested_resize_logged = None;
-        for layer in (old_layers..new_layers).rev() {
-            array.free_layers.push(layer);
+
+        if new_layers > old_layers {
+            // Growing: add newly available layers to the free list.
+            for layer in (old_layers..new_layers).rev() {
+                array.free_layers.push(layer);
+            }
+        } else {
+            // Shrinking: evict entries whose layer index exceeds the new size,
+            // rebuild the free list, and purge the LRU queue.
+            let evicted: Vec<u16> = self
+                .entry_by_id
+                .iter()
+                .filter_map(|(&id, (s, e))| {
+                    if *s == size && e.layer >= new_layers { Some(id) } else { None }
+                })
+                .collect();
+            for id in &evicted {
+                self.entry_by_id.remove(id);
+            }
+
+            // Rebuild the free list from layers not occupied by surviving entries.
+            let occupied: std::collections::HashSet<u32> = self
+                .entry_by_id
+                .iter()
+                .filter_map(|(_, (s, e))| {
+                    if *s == size { Some(e.layer) } else { None }
+                })
+                .collect();
+            let arr = match size {
+                LandTextureSize::Small => &mut self.small,
+                LandTextureSize::Big => &mut self.big,
+            };
+            arr.free_layers.clear();
+            // Layer 0 is reserved as fallback black.
+            for l in (1..new_layers).rev() {
+                if !occupied.contains(&l) {
+                    arr.free_layers.push(l);
+                }
+            }
+
+            // Purge LRU queue of evicted entries.
+            arr.lru.retain(|id| !evicted.contains(id));
+            // Reset high-usage timestamp so we don't immediately re-shrink.
+            arr.last_high_usage_instant = Instant::now();
         }
     }
 
@@ -496,6 +551,40 @@ impl LandTextureCache {
         array.free_layers.push(entry.layer);
         // Note: we don't bother scouring the LRU VecDeque for the ID.
         // allocate_layer handles stale/missing entries in its loop.
+    }
+
+    /// Returns a requested shrink target for each texture array if usage has
+    /// been well below capacity for longer than `RESOURCE_SHRINK_TIMEOUT_SECS`.
+    /// The caller is responsible for creating the new GPU image and calling
+    /// `apply_array_resize` + `enqueue_reupload_for_size`.
+    pub fn check_shrink_opportunity(&self) -> (Option<u32>, Option<u32>) {
+        let timeout = Duration::from_secs(texture_array::RESOURCE_SHRINK_TIMEOUT_SECS);
+        let now = Instant::now();
+
+        let check = |arr: &LandTextureArrayWrapper, initial: u32| -> Option<u32> {
+            let used = arr.used_layers();
+            let usage_ratio = used as f32 / arr.active_layers.max(1) as f32;
+            if usage_ratio >= texture_array::RESOURCE_SHRINK_THRESHOLD {
+                return None; // still busy
+            }
+            if now.duration_since(arr.last_high_usage_instant) < timeout {
+                return None; // haven't been idle long enough
+            }
+            // Target: next power-of-two above (used * 1.5), but not below initial.
+            let target = ((used as f32 * 1.5).ceil() as u32)
+                .next_power_of_two()
+                .max(initial)
+                .min(arr.active_layers); // never grow
+            if target < arr.active_layers {
+                Some(target)
+            } else {
+                None
+            }
+        };
+
+        let small = check(&self.small, texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS);
+        let big = check(&self.big, texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS);
+        (small, big)
     }
 }
 

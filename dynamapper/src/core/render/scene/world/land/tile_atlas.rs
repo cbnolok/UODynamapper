@@ -92,10 +92,20 @@ pub struct TileAtlas {
     /// Staging buffer swapped into place by the clear system so that
     /// the extract system can take ownership without cloning.
     extract_staging: Vec<AtlasUpload>,
+
+    /// When set, `sys_apply_tile_atlas_expansion` will create a new GPU image
+    /// with this many layers, then clear all page mappings so they are
+    /// re-populated by the mesh renderer on subsequent frames.
+    pub requested_expansion: Option<u32>,
+    /// Hard upper limit for atlas layers (from `TILE_ATLAS_MAX_LAYERS`).
+    pub max_layers_limit: u32,
+    /// Timestamp of the last time the atlas was at high utilisation (> 75%).
+    /// Used by the shrink heuristic to avoid premature downsizing.
+    pub last_high_usage_instant: std::time::Instant,
 }
 
 impl TileAtlas {
-    pub fn new(params: AtlasParams) -> Self {
+    pub fn new(params: AtlasParams, max_layers_limit: u32) -> Self {
         Self {
             params,
             page_to_layer: Default::default(),
@@ -104,6 +114,9 @@ impl TileAtlas {
             current_tick: 0,
             pending_uploads: Vec::new(),
             extract_staging: Vec::new(),
+            requested_expansion: None,
+            max_layers_limit,
+            last_high_usage_instant: std::time::Instant::now(),
         }
     }
 
@@ -125,6 +138,15 @@ impl TileAtlas {
             // Unused layer available
             self.page_to_layer.len() as u32
         } else {
+            // All layers occupied — request expansion so the next frame has
+            // more headroom, then evict the LRU page for this frame.
+            if self.params.max_layers < self.max_layers_limit {
+                let target = (self.params.max_layers * 2).min(self.max_layers_limit);
+                if self.requested_expansion.map_or(true, |r| target > r) {
+                    self.requested_expansion = Some(target);
+                }
+            }
+
             // Evict least recently used layer
             let lru_layer = *self.layer_access_tick
                 .iter()
@@ -163,6 +185,12 @@ impl TileAtlas {
             self.params.page_to_layer[idx] = bevy::math::UVec4::from_array(arr);
         }
 
+        // Track high utilisation for the shrink heuristic.
+        let usage_ratio = self.page_to_layer.len() as f32 / self.params.max_layers.max(1) as f32;
+        if usage_ratio > 0.75 {
+            self.last_high_usage_instant = std::time::Instant::now();
+        }
+
         (layer, evicted_page)
     }
 
@@ -183,6 +211,29 @@ impl TileAtlas {
 
     pub fn drain_pending_uploads(&mut self) -> Vec<AtlasUpload> {
         std::mem::take(&mut self.pending_uploads)
+    }
+
+    /// Number of currently mapped pages.
+    pub fn mapped_page_count(&self) -> u32 {
+        self.page_to_layer.len() as u32
+    }
+
+    /// Clears all page ↔ layer associations and resets the LRU state.
+    /// Called after the atlas GPU image is replaced so mappings are rebuilt
+    /// by the mesh renderer.
+    pub fn clear_all_mappings(&mut self) {
+        self.page_to_layer.clear();
+        self.layer_to_page.clear();
+        self.layer_access_tick.clear();
+        self.current_tick = 0;
+        self.params.page_to_layer = [bevy::math::UVec4::MAX; 64];
+    }
+
+    /// Applies a new layer count after the GPU image has been replaced.
+    pub fn apply_resize(&mut self, new_max_layers: u32) {
+        self.params.max_layers = new_max_layers;
+        self.requested_expansion = None;
+        self.clear_all_mappings();
     }
 }
 

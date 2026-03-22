@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-const SHADER_PRESETS_FILE_NAME: &str = "shader_presets.toml";
+const SHADER_PRESETS_FILE_NAME: &str = "defaults/shader_presets.toml";
 
 // Holds current values and a dirty flag.
 // Bevy detects asset changes and re-uploads uniforms automatically.
