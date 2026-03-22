@@ -1,4 +1,5 @@
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
@@ -67,6 +68,7 @@ pub fn sys_render_teleport_dialog(
     egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<TeleportDialogState>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     if !state.open {
         return;
@@ -108,9 +110,13 @@ pub fn sys_render_teleport_dialog(
                 ) {
                     if let Ok((mut player, mut transform)) = player_q.single_mut() {
                         let uo_pos = UOVec4::new(x, y, z, m);
+                        let map_changed = player.current_pos.map(|p| p.m) != Some(m);
                         player.current_pos = Some(uo_pos);
                         let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();
                         transform.translation = bevy_pos;
+                        if map_changed {
+                            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+                        }
 
                         ingame_sysmessage_logger::normal(format!(
                             "Teleported to [{}, {}, {}, {}]",

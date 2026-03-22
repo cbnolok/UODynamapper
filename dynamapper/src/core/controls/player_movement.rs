@@ -1,4 +1,5 @@
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -191,6 +192,7 @@ fn sys_player_move(
     move_dir: Res<MoveDirection>,
     mut query: Query<(&mut Transform, &mut Player)>,
     settings: Res<Settings>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
     cooldown.0.tick(time.delta().mul_f32(multiplier));
@@ -205,7 +207,11 @@ fn sys_player_move(
                 
                 // Sync the UO coordinate state
                 let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                let old_map = player.current_pos.map(|p| p.m);
                 player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
+                if old_map != player.current_pos.map(|p| p.m) {
+                    chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+                }
             }
             // NOTE: Do NOT call cooldown.0.reset() for a Repeating timer if we want to preserve 
             // the fractional 'overflow' of the timer when the multiplier is high. 
@@ -221,7 +227,11 @@ fn sys_player_move(
                 
                 // Sync the UO coordinate state
                 let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                let old_map = player.current_pos.map(|p| p.m);
                 player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
+                if old_map != player.current_pos.map(|p| p.m) {
+                    chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+                }
             }
         }
     }

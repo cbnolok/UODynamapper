@@ -358,7 +358,11 @@ pub fn run_bevy_app() -> ExitCode {
     )
     .configure_sets(
         Update,
-        MovementSysSet::UpdateCamera.after(MovementSysSet::MovementActions),
+        (
+            MovementSysSet::UpdateCamera
+                .after(MovementSysSet::MovementActions)
+                .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),
+        ),
     )
     .add_systems(
         PreStartup,

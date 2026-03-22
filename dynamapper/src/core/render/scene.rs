@@ -69,6 +69,12 @@ impl Plugin for ScenePlugin {
 
         .add_systems(
             Update,
+            sys_update_scene_on_window_resize
+                .in_set(SceneRenderLandSysSet::ListenSyncRequests)
+                .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(
+            Update,
             (sys_update_worldmap_chunks_to_render
                 .in_set(SceneRenderLandSysSet::SyncLandChunks),)
                 .run_if(in_state(AppState::InGame)),
@@ -88,9 +94,18 @@ pub fn sys_setup_scene(
     writer.write(RecomputeVisibleChunksEvent{});
 }
 
-pub fn sys_update_scene_on_window_resize(mut resize_events: MessageReader<WindowResized>, mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
-    let _event = resize_events.read().last().unwrap();
-    writer.write(RecomputeVisibleChunksEvent{});
+pub fn sys_update_scene_on_window_resize(
+    mut resize_events: MessageReader<WindowResized>,
+    mut writer: MessageWriter<RecomputeVisibleChunksEvent>,
+) {
+    let mut saw_resize = false;
+    for _ in resize_events.read() {
+        saw_resize = true;
+    }
+
+    if saw_resize {
+        writer.write(RecomputeVisibleChunksEvent {});
+    }
 }
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
@@ -213,11 +228,6 @@ fn compute_visible_chunks(
 /// Bevy's 16-parameter system limit.
 #[derive(Default)]
 struct ChunkRenderLocals {
-    last_camera_chunk: Option<(i32, i32)>,
-    last_zoom: f32,
-    last_window_size: Option<(u32, u32)>,
-    pending_resize_recomputes: u8,
-    last_chunk_scale: u32,
     /// Pending spawn queue: chunks to spawn, sorted center-out, drained up to MAX_SPAWNS_PER_FRAME.
     pending_spawns: Vec<(u32, u32)>,
 }
@@ -256,33 +266,8 @@ fn sys_update_worldmap_chunks_to_render(
     // TODO: move the rendered player position to another system, when we'll render more stuff (not only the land chunks).
     player_instance.prev_rendered_pos = Some(player_pos);
 
-    let window: &Window = windows_q.single().unwrap();
-    let (camera, camera_global_transform) = camera_q.single().unwrap();
-    let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
-
-    let cam_translation = camera_global_transform.translation();
-    let current_camera_chunk = (
-        (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-        (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-    );
-    let current_window_size = (window.width() as u32, window.height() as u32);
     let has_recompute_event = event.read().next().is_some();
-    let camera_chunk_changed = locals.last_camera_chunk != Some(current_camera_chunk);
-    let zoom_changed = (zoom - locals.last_zoom).abs() > 0.05;
-    let window_changed = locals.last_window_size != Some(current_window_size);
-    if window_changed {
-        // Camera projection update may land in a different frame/order.
-        // Recompute a couple of frames to avoid stale-projection holes.
-        locals.pending_resize_recomputes = 2;
-    }
-    let has_pending_resize_recompute = locals.pending_resize_recomputes > 0;
-
-    let needs_recompute = has_recompute_event
-        || map_switch
-        || camera_chunk_changed
-        || zoom_changed
-        || window_changed
-        || has_pending_resize_recompute;
+    let needs_recompute = has_recompute_event || map_switch;
 
     // Even if no recompute is needed, drain pending spawns from previous frames.
     if !needs_recompute && locals.pending_spawns.is_empty() {
@@ -291,12 +276,14 @@ fn sys_update_worldmap_chunks_to_render(
 
     // If a recompute is needed, rebuild the required set and recompute the pending queue.
     if needs_recompute {
-        locals.last_camera_chunk = Some(current_camera_chunk);
-        locals.last_zoom = zoom;
-        locals.last_window_size = Some(current_window_size);
-        if locals.pending_resize_recomputes > 0 {
-            locals.pending_resize_recomputes -= 1;
-        }
+        let window: &Window = windows_q.single().unwrap();
+        let (camera, camera_global_transform) = camera_q.single().unwrap();
+        let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
+        let cam_translation = camera_global_transform.translation();
+        let current_camera_chunk = (
+            (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+        );
 
         let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
             .maps
@@ -305,8 +292,7 @@ fn sys_update_worldmap_chunks_to_render(
 
         // Determine chunk scale from current zoom.
         let chunk_scale = scale_from_zoom(zoom);
-        let scale_changed = chunk_scale != locals.last_chunk_scale;
-        locals.last_chunk_scale = chunk_scale;
+        let scale_changed = chunk_scale != chunk_scale_res.0;
         chunk_scale_res.0 = chunk_scale;
 
         // Compute exact visible chunk set at the current scale granularity.
@@ -326,8 +312,7 @@ fn sys_update_worldmap_chunks_to_render(
             &format!("Visible chunk target: {} (scale={})", required_chunks.len(), chunk_scale),
         );
 
-        // If map plane OR chunk scale changes, brute-force despawn all and respawn.
-        // Scale changes alter the grid granularity, so old entities don't match.
+        // If map plane or chunk scale changes, brute-force despawn all and respawn.
         if map_switch || scale_changed {
             if map_switch {
                 console_logger::one(

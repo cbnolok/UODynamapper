@@ -1,10 +1,11 @@
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
 use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::camera::ScalingMode;
-use bevy::ecs::message::MessageReader;
+use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
@@ -182,6 +183,7 @@ fn sys_update_camera_projection_to_view(
     mut camera_q: Query<&mut Projection, With<Camera3d>>,
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width();
@@ -196,17 +198,42 @@ fn sys_update_camera_projection_to_view(
 
     let mut proj = camera_q.single_mut().unwrap();
     if let Projection::Orthographic(ref mut ortho) = *proj {
-        ortho.scaling_mode = ScalingMode::Fixed {
-            width: ortho_width,
-            height: ortho_height,
-        };
-        ortho.scale = 1.0 * zoom;
+        let mut projection_changed = false;
+        match ortho.scaling_mode {
+            ScalingMode::Fixed { width, height } => {
+                if (width - ortho_width).abs() > f32::EPSILON || (height - ortho_height).abs() > f32::EPSILON {
+                    ortho.scaling_mode = ScalingMode::Fixed {
+                        width: ortho_width,
+                        height: ortho_height,
+                    };
+                    projection_changed = true;
+                }
+            }
+            _ => {
+                ortho.scaling_mode = ScalingMode::Fixed {
+                    width: ortho_width,
+                    height: ortho_height,
+                };
+                projection_changed = true;
+            }
+        }
+
+        if (ortho.scale - zoom).abs() > f32::EPSILON {
+            ortho.scale = 1.0 * zoom;
+            projection_changed = true;
+        }
+
+        if projection_changed {
+            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+        }
     }
 }
 
 fn sys_camera_follow_player(
     mut camera_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    mut last_camera_chunk: Local<Option<(i32, i32)>>,
 ) {
     let mut camera_transform = match camera_q.single_mut().ok() {
         Some(t) => t,
@@ -217,10 +244,24 @@ fn sys_camera_follow_player(
         None => return,
     };
 
-    *camera_transform = Transform::from_translation(
+    let desired_transform = Transform::from_translation(
         player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
     )
     .looking_at(player_transform.translation, Vec3::Y);
+
+    if *camera_transform != desired_transform {
+        *camera_transform = desired_transform;
+
+        let cam_translation = camera_transform.translation;
+        let current_camera_chunk = (
+            (cam_translation.x.floor() as i32).div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_translation.z.floor() as i32).div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+        );
+        if *last_camera_chunk != Some(current_camera_chunk) {
+            *last_camera_chunk = Some(current_camera_chunk);
+            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
+        }
+    }
 }
 
 fn sys_camera_zoom(
@@ -275,6 +316,7 @@ fn sys_free_camera_movement(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut camera_q: Query<&mut Transform, With<Camera3d>>,
     mut egui_contexts: EguiContexts,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     let ctx = match egui_contexts.ctx_mut() {
         Ok(c) => c,
@@ -345,11 +387,30 @@ fn sys_free_camera_movement(
         }
     }
 
+    let mut camera_changed = false;
+
     if move_vec != Vec3::ZERO {
         transform.translation += move_vec.normalize() * move_speed;
+        camera_changed = true;
     }
 
     if y_delta != 0.0 {
         transform.translation.y += y_delta * move_speed;
+        camera_changed = true;
+    }
+
+    if keyboard.pressed(KeyCode::ShiftRight)
+        && (keyboard.pressed(KeyCode::KeyA)
+            || keyboard.pressed(KeyCode::KeyD)
+            || keyboard.pressed(KeyCode::KeyW)
+            || keyboard.pressed(KeyCode::KeyS)
+            || keyboard.pressed(KeyCode::KeyQ)
+            || keyboard.pressed(KeyCode::KeyE))
+    {
+        camera_changed = true;
+    }
+
+    if camera_changed {
+        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
     }
 }
