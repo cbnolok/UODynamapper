@@ -14,14 +14,9 @@ use crate::{
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
-    pbr::wireframe::{WireframeConfig, WireframePlugin},
-    prelude::*,
-    render::{
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
-        RenderApp, RenderStartup,
-    },
-    window::WindowResolution,
-    winit::{UpdateMode, WinitSettings},
+    pbr::wireframe::{WireframeConfig, WireframePlugin}, prelude::*, render::{
+        RenderApp, RenderStartup, settings::{RenderCreation, WgpuFeatures, WgpuSettings}
+    }, window::WindowResolution, winit::{UpdateMode, WinitSettings}
 };
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
@@ -150,10 +145,38 @@ fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
 }
 
 fn custom_threadpool_settings() -> TaskPoolPlugin {
+    /*
     TaskPoolPlugin {
-        //task_pool_options: TaskPoolOptions::with_num_threads(3),
-        ..default()
-    }
+            task_pool_options: TaskPoolOptions {
+                // Minimum threads for system computation (already limited by the feature)
+                compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 3,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                // Limit the pool for asset loading (I/O)
+                io: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 1,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                // Limit the pool for asynchronous computation
+                async_compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 1,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                ..default()
+            }
+        }
+        */
+        TaskPoolPlugin::default()
 }
 
 fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
@@ -227,6 +250,7 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
     bevy::render::RenderPlugin {
         render_creation: RenderCreation::Automatic(WgpuSettings {
             features: WgpuFeatures::POLYGON_MODE_LINE, // Required for wireframe
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
             ..Default::default()
         }),
         ..Default::default()

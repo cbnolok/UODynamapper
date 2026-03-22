@@ -22,12 +22,7 @@ const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
 const FPS_TEXT_REFRESH_INTERVAL_SEC: f32 = 0.5;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
-// TODO: make the code directly use the real ones from the other module,
-// TODO: explain what is a texel.
-// Keep these in sync with texture/atlas initialization in terrain cache startup.
-//  do not have different magic numbers to keep synchronized.
-const TILE_ATLAS_TEXELS: u32 = 2048;
-const TILE_ATLAS_MAX_LAYERS: u32 = 16;
+use crate::core::texture_cache::land::texture_array as tex_consts;
 
 /// Holds the cached sysinfo `System` instance and a cooldown timer for polling.
 /// We reuse the same `System` instead of re-creating it each frame — sysinfo reads
@@ -281,6 +276,8 @@ pub fn sys_refresh_process_metrics(
     time: Res<Time>,
     settings: Res<Settings>,
     mut metrics: ResMut<ProcessMetrics>,
+    tex_cache: Res<crate::core::texture_cache::land::cache::LandTextureCache>,
+    tile_atlas: Res<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
 ) {
     metrics.poll_timer.tick(time.delta());
     if !metrics.poll_timer.just_finished() {
@@ -309,24 +306,19 @@ pub fn sys_refresh_process_metrics(
         metrics.core_count = core_count;
         metrics.mem_usage_mib = mem;
 
+        // Use ACTUAL current layer counts, not theoretical maximums.
         let lossy = settings.core.graphics.lossy_texture_compression;
-        let small_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
-            LandTextureSize::Small,
-            lossy,
-        )
-            * crate::core::texture_cache::land::texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS
-                as usize;
-        let big_bytes = crate::core::texture_cache::land::texture_array::bytes_per_layer(
-            LandTextureSize::Big,
-            lossy,
-        )
-            * crate::core::texture_cache::land::texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS
-                as usize;
-        // Rg16Uint = 4 bytes/texel.
-        let atlas_bytes = (TILE_ATLAS_TEXELS as usize
-            * TILE_ATLAS_TEXELS as usize
-            * TILE_ATLAS_MAX_LAYERS as usize)
-            * 4usize;
+        let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, lossy)
+            * tex_cache.small.active_layers as usize;
+        let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, lossy)
+            * tex_cache.big.active_layers as usize;
+
+        // Tile metadata atlas: Rg16Uint = TILE_ATLAS_BYTES_PER_TEXEL bytes/texel.
+        let atlas_layers = tile_atlas.params.max_layers as usize;
+        let atlas_bytes = (tex_consts::TILE_ATLAS_PAGE_TEXELS as usize)
+            * (tex_consts::TILE_ATLAS_PAGE_TEXELS as usize)
+            * atlas_layers
+            * (tex_consts::TILE_ATLAS_BYTES_PER_TEXEL as usize);
 
         metrics.estimated_texture_vram_mib = (small_bytes + big_bytes) as f32 / BYTES_PER_MIB;
         metrics.estimated_atlas_vram_mib = atlas_bytes as f32 / BYTES_PER_MIB;
