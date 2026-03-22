@@ -188,10 +188,13 @@ fn compute_visible_chunks(
         return std::collections::HashSet::new();
     }
 
-    // Safety pad: 2 chunk rings (16 tiles) to account for vertex-displaced
+    // Safety pad: 1 super-chunk ring to account for vertex-displaced
     // mountain peaks (up to ±12.8m) that can peek into the viewport from
     // chunks whose Y=0 base is just outside the computed footprint.
-    let edge_pad_tiles = (TILE_NUM_PER_CHUNK_DIM * 2) as f32;
+    // At scale 1–2 keep the original 2-base-chunk (16 tile) pad; at higher
+    // scales use one full super-chunk ring.
+    let scaled_pad = (chunk_scale).max(2);
+    let edge_pad_tiles = (TILE_NUM_PER_CHUNK_DIM * scaled_pad) as f32;
     let tile_x0 = (min_x - edge_pad_tiles).floor() as i32;
     let tile_x1 = (max_x + edge_pad_tiles).ceil() as i32;
     let tile_y0 = (min_z - edge_pad_tiles).floor() as i32;

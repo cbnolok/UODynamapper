@@ -192,6 +192,7 @@ impl MapBlock {
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
+    map_file_path: PathBuf,
     map_file_mul_rdr: BufReader<File>,
     cached_blocks: HashMap<MapBlockRelPos, CachedBlock>,
     read_buffer: Vec<u8>,
@@ -232,6 +233,28 @@ impl MapPlane {
             now.duration_since(cached.last_accessed) <= timeout // Keep if newer than timeout
         });
         initial_len - self.cached_blocks.len()
+    }
+
+    /// Returns the canonical path to the map file.
+    pub fn file_path(&self) -> &std::path::Path {
+        &self.map_file_path
+    }
+
+    /// Returns true if the block at `pos` is already loaded in the in-memory cache.
+    pub fn is_block_cached(&self, pos: &MapBlockRelPos) -> bool {
+        self.cached_blocks.contains_key(pos)
+    }
+
+    /// Inserts blocks that were loaded externally (e.g. by a background thread)
+    /// into the in-memory cache.  Existing entries are NOT overwritten.
+    pub fn insert_preloaded_blocks(&mut self, blocks: Vec<(MapBlockRelPos, MapBlock)>) {
+        let now = std::time::Instant::now();
+        for (pos, block) in blocks {
+            self.cached_blocks.entry(pos).or_insert(CachedBlock {
+                block,
+                last_accessed: now,
+            });
+        }
     }
 }
 
@@ -382,6 +405,7 @@ impl MapPlane {
         let map_plane = MapPlane {
             index: map_index,
             size_blocks: map_size_blocks,
+            map_file_path: map_file_mul_path.clone(),
             map_file_mul_rdr,
             cached_blocks: HashMap::new(),
             read_buffer: Vec::new(),
@@ -513,4 +537,87 @@ impl MapPlane {
 
         Ok(())
     }
+}
+
+/// Loads map blocks from an arbitrary [`Read`]+[`Seek`] source, returning them
+/// without inserting into any cache.  Designed for the background chunk-loader
+/// thread which opens its own file handle to avoid holding a lock on the
+/// main-thread [`MapPlane`].
+///
+/// `read_buffer` is a caller-owned scratch buffer that is reused across calls
+/// to avoid repeated heap allocation.
+pub fn load_blocks_from_reader<R: Read + Seek>(
+    reader: &mut R,
+    blocks_to_load: &[MapBlockRelPos],
+    size_blocks_height: u32,
+    read_buffer: &mut Vec<u8>,
+) -> eyre::Result<Vec<(MapBlockRelPos, MapBlock)>> {
+    if blocks_to_load.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut sorted = blocks_to_load.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    #[derive(Clone, Copy)]
+    struct IndexedBlock {
+        pos: MapBlockRelPos,
+        idx: u32,
+    }
+
+    let indexed_blocks: Vec<IndexedBlock> = sorted
+        .iter()
+        .map(|&pos| IndexedBlock {
+            pos,
+            idx: MapBlock::idx_from_coords(&pos, size_blocks_height),
+        })
+        .collect();
+
+    // Group into contiguous index ranges for coalesced I/O.
+    let mut ranges = Vec::with_capacity(indexed_blocks.len());
+    if !indexed_blocks.is_empty() {
+        let mut start = 0usize;
+        let mut end = 0usize;
+        for i in 1..indexed_blocks.len() {
+            if indexed_blocks[i].idx == indexed_blocks[i - 1].idx + 1 {
+                end = i;
+            } else {
+                ranges.push((start, end));
+                start = i;
+                end = i;
+            }
+        }
+        ranges.push((start, end));
+    }
+
+    let mut result = Vec::with_capacity(sorted.len());
+
+    for (range_start, range_end) in ranges {
+        let start_idx = indexed_blocks[range_start].idx;
+        let end_idx = indexed_blocks[range_end].idx;
+        let num_blocks = (end_idx - start_idx + 1) as usize;
+
+        let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
+        reader
+            .seek(SeekFrom::Start(offset))
+            .wrap_err_with(|| format!("bg-loader: seek to offset {offset}"))?;
+
+        let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
+        read_buffer.resize(buffer_len, 0);
+        reader
+            .read_exact(read_buffer)
+            .wrap_err_with(|| format!("bg-loader: read {num_blocks} blocks at offset {offset}"))?;
+
+        let raw_blocks: &[RawMapBlock] = cast_slice(read_buffer);
+        for (i, raw_block) in raw_blocks.iter().enumerate() {
+            let block_pos = indexed_blocks[range_start + i].pos;
+            let mut new_block = MapBlock::default();
+            MapBlock::from_raw_block(raw_block, &mut new_block)?;
+            new_block.internal_coords = block_pos;
+            result.push((block_pos, new_block));
+        }
+    }
+
+    Ok(result)
 }

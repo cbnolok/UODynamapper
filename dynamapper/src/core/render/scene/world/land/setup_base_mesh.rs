@@ -70,8 +70,19 @@ pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>)
     let wide16 = meshes.add(build_chunk_mesh(16, 2)); // 81 verts, covers 16×16 tiles (zoom 10–25)
     let wide32 = meshes.add(build_chunk_mesh(32, 4)); // 81 verts, covers 32×32 tiles (zoom 25–50)
     let wide64 = meshes.add(build_chunk_mesh(64, 8)); // 81 verts, covers 64×64 tiles (zoom ≥50)
+    let wide128 = meshes.add(build_chunk_mesh(128, 16)); // 81 verts, covers 128×128 tiles (extreme zoom-out)
+    let wide256 = meshes.add(build_chunk_mesh(256, 32)); // 81 verts, covers 256×256 tiles (maximum zoom-out)
 
-    commands.insert_resource(LandMeshHandles { high, medium, low, wide16, wide32, wide64 });
+    commands.insert_resource(LandMeshHandles {
+        high,
+        medium,
+        low,
+        wide16,
+        wide32,
+        wide64,
+        wide128,
+        wide256,
+    });
     commands.insert_resource(LandMeshLod::default());
     commands.insert_resource(ChunkScale::default());
 }

@@ -118,7 +118,10 @@ impl LandTextureCache {
     }
 
     pub fn set_visible_texture_usage_hint(&mut self, visible_texture_ids: &[u16]) {
-        self.pinned_visible_ids.clear();
+        // Accumulate across frames: textures from previously-budgeted chunks
+        // must stay pinned so their atlas texels (which encode layer indices)
+        // remain valid.  The set is cleared explicitly via clear_pinned_textures()
+        // when all chunks are despawned (scale / map change).
         self.pinned_visible_ids.extend(visible_texture_ids.iter().copied());
         self.visible_hint_count = visible_texture_ids.len();
 
@@ -127,13 +130,21 @@ impl LandTextureCache {
             LogSev::Debug,
             LogAbout::Performance,
             &format!(
-                "Texture usage hint: visible_ids={}, active_layers(small={}, big={}), resident_textures={}",
+                "Texture usage hint: this_frame={}, total_pinned={}, active_layers(small={}, big={}), resident_textures={}",
                 self.visible_hint_count,
+                self.pinned_visible_ids.len(),
                 self.small.active_layers,
                 self.big.active_layers,
                 self.entry_by_id.len()
             ),
         );
+    }
+
+    /// Clears all pinned texture IDs.  Call when the entire chunk set is
+    /// invalidated (scale change, map switch) so stale pins don’t prevent
+    /// the LRU from reclaiming layers that are no longer atlas-referenced.
+    pub fn clear_pinned_textures(&mut self) {
+        self.pinned_visible_ids.clear();
     }
 
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.

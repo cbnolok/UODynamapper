@@ -156,8 +156,10 @@ pub fn sys_setup_terrain_cache(
 
     let page_texels = UVec2::new(2048, 2048);
     let tiles_per_page = UVec2::new(2048, 2048);
-    // Reduce startup VRAM: 16 -> 8 layers halves atlas allocation.
-    let max_layers = 8;
+    // 16 layers gives breathing room for LRU paging; Britannia (7168x4096)
+    // needs 4×2 = 8 pages, so 16 leaves room for border-ring page touches
+    // and prevents eviction thrashing at high zoom-out.
+    let max_layers = 16;
     let params = AtlasParams {
         page_texels,
         tiles_per_page,

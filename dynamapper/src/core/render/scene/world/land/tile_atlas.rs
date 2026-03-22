@@ -43,7 +43,7 @@ pub struct AtlasParams {
     pub _pad: UVec2,
     /// A flattened array mapping page indices to physical layer indices.
     /// Each u32 stores the layer index, or u32::MAX if not mapped.
-    pub page_to_layer: [bevy::math::UVec4; 64], // Stores mapping for up to 256 pages! 
+    pub page_to_layer: [bevy::math::UVec4; 64], // Stores mapping for up to 256 pages!
 }
 
 impl Default for AtlasParams {
@@ -72,7 +72,7 @@ pub struct AtlasUpload {
     pub data: Vec<u8>,
 }
 
-/// Resource managing the paged metadata atlas. 
+/// Resource managing the paged metadata atlas.
 /// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
 pub struct TileAtlas {
@@ -86,9 +86,12 @@ pub struct TileAtlas {
     layer_access_tick: std::collections::HashMap<u32, u64>,
     /// Monotonically increasing counter for LRU tracking.
     current_tick: u64,
-    
+
     /// Collects dirty regions to be uploaded to the GPU via `write_texture`.
     pending_uploads: Vec<AtlasUpload>,
+    /// Staging buffer swapped into place by the clear system so that
+    /// the extract system can take ownership without cloning.
+    extract_staging: Vec<AtlasUpload>,
 }
 
 impl TileAtlas {
@@ -100,6 +103,7 @@ impl TileAtlas {
             layer_access_tick: Default::default(),
             current_tick: 0,
             pending_uploads: Vec::new(),
+            extract_staging: Vec::new(),
         }
     }
 
@@ -127,7 +131,7 @@ impl TileAtlas {
                 .min_by_key(|&(_, &tick)| tick)
                 .map(|(layer, _)| layer)
                 .unwrap();
-            
+
             let old_page = self.layer_to_page.remove(&lru_layer).unwrap();
             self.page_to_layer.remove(&old_page);
             evicted_page = Some(old_page);
@@ -168,7 +172,7 @@ impl TileAtlas {
         let size_bytes = std::mem::size_of_val(texels);
         let mut data = vec![0u8; size_bytes];
         data.copy_from_slice(bytemuck::cast_slice(texels));
-        
+
         self.pending_uploads.push(AtlasUpload {
             layer,
             offset,
@@ -197,24 +201,30 @@ pub fn sys_extract_atlas_uploads(
     tile_atlas: Extract<Res<TileAtlas>>,
     mut render_uploads: ResMut<RenderAtlasUploads>,
 ) {
-    if !tile_atlas.pending_uploads.is_empty() {
-        let count = tile_atlas.pending_uploads.len();
+    if !tile_atlas.extract_staging.is_empty() {
+        let count = tile_atlas.extract_staging.len();
         console_logger::one(
             None,
             LogSev::Debug,
             LogAbout::Performance,
             &format!("[DBG-extract] Extracting {count} texture array uploads"),
         );
-        render_uploads.0.extend(tile_atlas.pending_uploads.clone());
+        render_uploads.0.extend_from_slice(&tile_atlas.extract_staging);
     }
 }
 
-/// System that clears the main world's pending uploads after they have been extracted.
+/// System that moves pending_uploads into the staging buffer for extract,
+/// then clears pending_uploads for the next frame.
 pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
+    // Move current pending into staging (reuses staging Vec's capacity).
+    let new_staging = std::mem::take(&mut tile_atlas.pending_uploads);
+    let old_staging = std::mem::replace(&mut tile_atlas.extract_staging, new_staging);
+    // Reuse old staging's capacity for next frame's pending_uploads.
+    tile_atlas.pending_uploads = old_staging;
     tile_atlas.pending_uploads.clear();
 }
 
-/// System running in the Render world that drains `RenderAtlasUploads` and issues 
+/// System running in the Render world that drains `RenderAtlasUploads` and issues
 /// `write_texture` commands to the GPU queue to update the metadata atlas.
 pub fn sys_render_upload_tile_atlas(
     mut uploads: ResMut<RenderAtlasUploads>,
@@ -255,7 +265,7 @@ pub fn sys_render_upload_tile_atlas(
 
         let data_layout = TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(upload.size.x * 4), 
+            bytes_per_row: Some(upload.size.x * 4),
             rows_per_image: Some(upload.size.y),
         };
 

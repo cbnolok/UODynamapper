@@ -16,6 +16,8 @@ use uocf::geo::{
     map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos},
 };
 
+use super::chunk_loader;
+
 use super::TILE_NUM_PER_CHUNK_DIM;
 use super::{LCMesh, mesh_material::*, TILE_NUM_PER_CHUNK_TOTAL};
 use crate::{
@@ -45,6 +47,10 @@ pub struct LandMeshHandles {
     pub wide32: Handle<Mesh>,
     /// 64×64 tile mesh (step=8, 81 verts) for zoom ≥50.
     pub wide64: Handle<Mesh>,
+    /// 128×128 tile mesh (step=16, 81 verts) for extreme zoom-out.
+    pub wide128: Handle<Mesh>,
+    /// 256×256 tile mesh (step=32, 81 verts) for maximum zoom-out.
+    pub wide256: Handle<Mesh>,
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -88,9 +94,13 @@ impl Default for ChunkScale {
 ///  - zoom <  10 → scale 1  (standard 8×8,   entity count ×1)
 ///  - zoom 10–25 → scale 2  (wide 16×16,     entity count ÷4)
 ///  - zoom 25–50 → scale 4  (extra-wide 32×32, entity count ÷16)
-///  - zoom ≥  50 → scale 8  (ultra 64×64,    entity count ÷64)
+///  - zoom 50–64 → scale 8  (ultra 64×64,    entity count ÷64)
+///  - zoom 64–80 → scale 16 (huge 128×128,   entity count ÷256)
+///  - zoom ≥ 80  → scale 32 (massive 256×256, entity count ÷1024)
 pub fn scale_from_zoom(zoom: f32) -> u32 {
-    if zoom >= 50.0 { 8 }
+    if zoom >= 80.0 { 32 }
+    else if zoom >= 64.0 { 16 }
+    else if zoom >= 50.0 { 8 }
     else if zoom >= 25.0 { 4 }
     else if zoom >= 10.0 { 2 }
     else { 1 }
@@ -99,6 +109,8 @@ pub fn scale_from_zoom(zoom: f32) -> u32 {
 /// Select the correct mesh handle for a given chunk scale and LOD.
 fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Handle<Mesh> {
     match scale {
+        32 => handles.wide256.clone(),
+        16 => handles.wide128.clone(),
         8 => handles.wide64.clone(),
         4 => handles.wide32.clone(),
         2 => handles.wide16.clone(),
@@ -120,6 +132,8 @@ pub struct LandMeshScratch {
     missing_tile_bits: Vec<u64>,
     ids: Vec<u16>,
     texture_lookup_cache: HashMap<u16, (LandTextureSize, u32)>,
+    /// Reusable buffer for atlas texel packing (avoids per-sub-block allocation).
+    texels: Vec<Rg16u>,
 }
 
 pub fn sys_update_existing_chunk_mesh_lod(
@@ -155,6 +169,7 @@ fn enqueue_chunk_to_atlas_and_preload(
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_map: &HashMap<MapBlockRelPos, MapBlock>,
     texture_lookup_cache: &mut HashMap<u16, (LandTextureSize, u32)>,
+    texels_buf: &mut Vec<Rg16u>,
     lossy_compression: bool,
 ) {
     let chunk_origin_tile_units_x =
@@ -171,9 +186,10 @@ fn enqueue_chunk_to_atlas_and_preload(
         return;
     };
 
-    texture_lookup_cache.clear();
-    texture_lookup_cache.reserve(64);
-    let mut texels = Vec::with_capacity(TILE_NUM_PER_CHUNK_TOTAL);
+    // NOTE: texture_lookup_cache is NOT cleared here — it persists across
+    // all sub-blocks within a frame, ensuring consistent layer assignments
+    // and avoiding redundant get_texture_size_layer lookups.
+    texels_buf.clear();
 
     for cell in &block.cells {
         let (texture_size, layer) = *texture_lookup_cache.entry(cell.id).or_insert_with(|| {
@@ -190,7 +206,7 @@ fn enqueue_chunk_to_atlas_and_preload(
         };
 
         // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
-        texels.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
+        texels_buf.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
     }
 
 
@@ -213,7 +229,7 @@ fn enqueue_chunk_to_atlas_and_preload(
         layer,
         UVec2::new(off_x_in_page, off_y_in_page),
         UVec2::new(TILE_NUM_PER_CHUNK_DIM, TILE_NUM_PER_CHUNK_DIM),
-        &texels,
+        texels_buf,
     );
 }
 
@@ -239,6 +255,20 @@ struct LandChunkConstructionData {
     chunk_scale: u32,
 }
 
+/// Local state for the background chunk-data loader.
+#[derive(Default)]
+pub struct DrawMeshLocals {
+    loader: Option<chunk_loader::ChunkLoaderThread>,
+    pending: bool,
+    /// Expanded block coordinates needed for a pending background load.
+    /// Kept alive so we can skip re-expanding on the poll frame.
+    pending_blocks: Vec<MapBlockRelPos>,
+    /// Entity targets that were deferred because their blocks weren't cached yet.
+    deferred_targets: Vec<LandChunkConstructionData>,
+    /// Track the last observed scale to detect scale changes and clear pinned textures.
+    last_scale: u32,
+}
+
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
@@ -247,170 +277,289 @@ pub fn sys_draw_spawned_land_chunks(
     mut land_mesh_scratch_r: ResMut<LandMeshScratch>,
     mut map_planes_r: ResMut<MapPlanesRes>,
     texmap_2d_r: Res<TexMap2DRes>,
-    world_geo_data_r: Res<WorldGeoData>,
     scene_state_data_r: Res<SceneStateData>,
-    chunk_q: Query<(Entity, &LCMesh, Option<&Mesh3d>)>,
-    visible_chunk_q: Query<(&LCMesh, &Mesh3d)>,
+    world_geo_data_r: Res<WorldGeoData>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    chunk_q: Query<(Entity, &LCMesh), Without<Mesh3d>>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
     cache_settings_r: Res<crate::core::texture_cache::land::cache::LandTextureCacheSettings>,
+    mut locals: Local<DrawMeshLocals>,
 ) {
-    // Step 1: Get camera/player state.
     let current_map_id = scene_state_data_r.map_id;
-    let map_plane_metadata = world_geo_data_r.maps.get(&current_map_id).unwrap_or_else(|| panic!("Requested metadata for uncached map {current_map_id}"));
 
-    let scratch = &mut *land_mesh_scratch_r;
+    // ── Initialize background loader thread (once) ─────────────────────
+    if locals.loader.is_none() {
+        locals.loader = Some(chunk_loader::ChunkLoaderThread::new());
+    }
 
-    scratch.primary_chunks.clear();
-    scratch.spawn_targets.clear();
+    // ── Detect scale / map changes ─────────────────────────────────
+    // When all chunks are despawned (scale or map switch), clear the
+    // accumulated texture pins so the LRU can reclaim layers.
+    {
+        // Grab the current scale from any chunk in the query, or 0 if empty.
+        let current_scale = chunk_q.iter().next().map_or(0, |(_, lc)| lc.scale);
+        if current_scale != 0 && current_scale != locals.last_scale {
+            cache_r.clear_pinned_textures();
+            locals.deferred_targets.clear();
+            locals.last_scale = current_scale;
+        }
+    }
+
+    // ── Poll for completed background load sub-batches ───────────────
+    // The loader now sends results in sub-batches.  Drain all available
+    // results each frame so deferred targets become ready progressively.
+    if locals.pending {
+        let results = locals.loader.as_ref().unwrap().drain_results();
+        if !results.is_empty() {
+            let planes_arc = map_planes_r.0.clone();
+            let mut plane = planes_arc.get_mut(&current_map_id)
+                .expect("Requested map plane metadata is uncached?");
+            for result in results {
+                plane.insert_preloaded_blocks(result.loaded_blocks);
+                if result.is_final {
+                    locals.pending = false;
+                }
+            }
+            drop(plane);
+        }
+        // If still loading, DON'T return — process any chunks we CAN render.
+    }
+
+    let mut scratch = land_mesh_scratch_r;
     scratch.blocks_to_draw.clear();
     scratch.blocks_data.clear();
+    scratch.texture_lookup_cache.clear();
     if scratch.missing_tile_bits.len() != 1024 {
         scratch.missing_tile_bits.resize(1024, 0);
     } else {
         scratch.missing_tile_bits.fill(0);
     }
     scratch.ids.clear();
-    scratch.texture_lookup_cache.clear();
 
-    // Step 1: Collect all primary chunks that need meshing into a HashMap.
-    // Process only chunks that don't have a mesh yet.
-    // Stores (entity, scale) per chunk coordinate.
-    let primary_chunks = &mut scratch.primary_chunks;
-    for (entity, chunk_data, _) in chunk_q.iter().filter(|(_, _, mesh)| mesh.is_none()) {
-        primary_chunks.insert((chunk_data.gx, chunk_data.gy), (entity, chunk_data.scale));
-    }
+    let mut targets: Vec<LandChunkConstructionData> = chunk_q
+        .iter()
+        .map(|(entity, chunk_data)| LandChunkConstructionData {
+            entity: Some(entity),
+            chunk_origin_chunk_units_x: chunk_data.gx,
+            chunk_origin_chunk_units_z: chunk_data.gy,
+            chunk_scale: chunk_data.scale,
+        })
+        .collect();
 
-    if primary_chunks.is_empty() {
+    if targets.is_empty() && locals.deferred_targets.is_empty() {
         return;
     }
 
-    // Step 2: Build the final set of chunks whose data we need to construct.
-    // This includes the primary chunks and their immediate non-primary neighbors
-    // (to get data for mesh stitching).
-    let spawn_targets = &mut scratch.spawn_targets;
+    let current_camera_chunk = camera_q
+        .single()
+        .ok()
+        .map(|(_, camera_tf)| {
+            let cam_translation = camera_tf.translation();
+            (
+                (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+                (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+            )
+        })
+        .unwrap_or((0, 0));
+    sort_construction_targets(&mut targets, current_camera_chunk);
 
-    let max_chunk_x = (map_plane_metadata.width / TILE_NUM_PER_CHUNK_DIM) as i32;
-    let max_chunk_y = (map_plane_metadata.height / TILE_NUM_PER_CHUNK_DIM) as i32;
-
-    // Iterate through the primary chunks. Add them and all sub-blocks (for super-chunks
-    // at scale > 1) to the target list, then add border neighbors for data stitching.
-    for (&(gx, gy), &(entity, scale)) in primary_chunks.iter() {
-        // For a super-chunk at (gx,gy) covering `scale × scale` base blocks,
-        // we need data for every sub-block inside it plus a 1-block border.
-        let base_blocks_dim = scale as i32;
-
-        // Insert the primary entity block (the one that gets the mesh).
-        spawn_targets.insert(LandChunkConstructionData {
-            entity: Some(entity),
-            chunk_origin_chunk_units_x: gx,
-            chunk_origin_chunk_units_z: gy,
-            chunk_scale: scale,
+    // Re-add deferred targets from a previous frame's background load.
+    // Then deduplicate: chunk_q may re-report entities that were deferred last frame.
+    {
+        let mut deferred = std::mem::take(&mut locals.deferred_targets);
+        targets.append(&mut deferred);
+        let mut seen_entities: HashSet<Entity> = HashSet::with_capacity(targets.len());
+        targets.retain(|t| {
+            if let Some(e) = t.entity {
+                seen_entities.insert(e)
+            } else {
+                true
+            }
         });
+    }
 
-        // Insert remaining sub-blocks inside this super-chunk (data-only).
-        for sx in 0..base_blocks_dim {
-            for sz in 0..base_blocks_dim {
-                if sx == 0 && sz == 0 { continue; } // Already added as primary.
-                let bx = gx as i32 + sx;
-                let bz = gy as i32 + sz;
-                if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
-                    spawn_targets.insert(LandChunkConstructionData {
-                        entity: None,
-                        chunk_origin_chunk_units_x: bx as u32,
-                        chunk_origin_chunk_units_z: bz as u32,
-                        chunk_scale: 1,
-                    });
+    // Expand each primary chunk target into all required base-block coordinates.
+    // For scale>1 super-chunks this includes all scale×scale sub-blocks.
+    // Border ring is NOT needed here — the shader samples from the atlas which
+    // is populated per-block; edge stitching is handled by enqueuing +1 border
+    // blocks to the atlas in the rendering loop below.
+    let map_meta = world_geo_data_r.maps.get(&current_map_id)
+        .expect("Requested metadata for uncached map");
+    let max_chunk_x = (map_meta.width / TILE_NUM_PER_CHUNK_DIM) as i32;
+    let max_chunk_y = (map_meta.height / TILE_NUM_PER_CHUNK_DIM) as i32;
+
+    // ── Partition targets: ready (all blocks cached) vs deferred ────────
+    // Chunks whose data is already in the MapPlane cache render immediately.
+    // Chunks with missing blocks are deferred and their blocks dispatched to
+    // the background loader.
+    let mut ready_targets: Vec<LandChunkConstructionData> = Vec::with_capacity(targets.len());
+    let mut new_deferred: Vec<LandChunkConstructionData> = Vec::new();
+    let mut uncached_blocks: Vec<MapBlockRelPos> = Vec::new();
+
+    {
+        let planes_arc = map_planes_r.0.clone();
+        let plane_ref = planes_arc
+            .get(&current_map_id)
+            .expect("Requested map plane metadata is uncached?");
+
+        for target in &targets {
+            let gx = target.chunk_origin_chunk_units_x;
+            let gy = target.chunk_origin_chunk_units_z;
+            let scale = target.chunk_scale as i32;
+
+            // Readiness: only CORE blocks (0..scale) must be cached.
+            // Border blocks (-1 and +scale) are dispatched to the loader
+            // but don't block rendering — they'll be picked up for atlas
+            // enqueue when available.
+            let mut all_cached = true;
+            for sx in 0..scale {
+                for sz in 0..scale {
+                    let bx = gx as i32 + sx;
+                    let bz = gy as i32 + sz;
+                    if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
+                        continue;
+                    }
+                    let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
+                    if !plane_ref.is_block_cached(&pos) {
+                        all_cached = false;
+                        uncached_blocks.push(pos);
+                    }
                 }
             }
-        }
 
-        // 1-block border ring around the super-chunk for edge stitching.
-        for edge in -1..=(base_blocks_dim) {
-            for &(bx, bz) in &[
-                (gx as i32 + edge, gy as i32 - 1),              // top row
-                (gx as i32 + edge, gy as i32 + base_blocks_dim), // bottom row
-                (gx as i32 - 1,    gy as i32 + edge),            // left col
-                (gx as i32 + base_blocks_dim, gy as i32 + edge), // right col
-            ] {
-                if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
-                    let nc = (bx as u32, bz as u32);
-                    if !primary_chunks.contains_key(&nc) {
-                        spawn_targets.insert(LandChunkConstructionData {
-                            entity: None,
-                            chunk_origin_chunk_units_x: nc.0,
-                            chunk_origin_chunk_units_z: nc.1,
-                            chunk_scale: 1,
-                        });
+            // Also dispatch border ring blocks to the loader (but don't
+            // gate readiness on them).
+            for sx in -1..=scale {
+                for sz in -1..=scale {
+                    // Skip the interior — already handled above.
+                    if sx >= 0 && sx < scale && sz >= 0 && sz < scale {
+                        continue;
+                    }
+                    let bx = gx as i32 + sx;
+                    let bz = gy as i32 + sz;
+                    if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
+                        continue;
+                    }
+                    let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
+                    if !plane_ref.is_block_cached(&pos) {
+                        uncached_blocks.push(pos);
+                    }
+                }
+            }
+
+            if all_cached {
+                ready_targets.push(*target);
+            } else {
+                new_deferred.push(*target);
+            }
+        }
+    }
+
+    // Dispatch uncached blocks to background loader (if any and not already pending).
+    if !uncached_blocks.is_empty() && !locals.pending {
+        // Deduplicate
+        uncached_blocks.sort_unstable();
+        uncached_blocks.dedup();
+
+        let planes_arc = map_planes_r.0.clone();
+        let plane_ref = planes_arc
+            .get(&current_map_id)
+            .expect("Requested map plane metadata is uncached?");
+
+        locals.loader.as_ref().unwrap().send_request(chunk_loader::LoadRequest {
+            map_file_path: plane_ref.file_path().to_path_buf(),
+            size_blocks_height: plane_ref.size_blocks.height,
+            blocks_to_load: uncached_blocks,
+            texmap_2d: texmap_2d_r.0.clone(),
+        });
+        locals.pending = true;
+    }
+
+    // Stash deferred targets for next frame.
+    locals.deferred_targets = new_deferred;
+
+    // ── Per-frame chunk budget ─────────────────────────────────────────
+    // Cap the amount of atlas-enqueue + texture-precache + mesh work we
+    // do in a single frame.  Without this, zooming out to scale 32 with
+    // hundreds of ready chunks causes a multi-millisecond stall.
+    // Closest-to-camera chunks are processed first; the remainder will
+    // naturally re-appear in chunk_q next frame (they still lack Mesh3d).
+    //
+    // Budget unit = "equivalent base blocks" ≈ (scale + 2)² per chunk
+    // (sub-blocks + border ring that the atlas-enqueue loop iterates).
+    const MAX_ATLAS_BLOCKS_PER_FRAME: usize = 4096;
+
+    sort_construction_targets(&mut ready_targets, current_camera_chunk);
+    {
+        let mut remaining = MAX_ATLAS_BLOCKS_PER_FRAME;
+        let mut count = 0usize;
+        for t in ready_targets.iter() {
+            let cost = (t.chunk_scale as usize + 2).pow(2);
+            // Always process at least one chunk to guarantee forward progress.
+            if count > 0 && remaining < cost {
+                break;
+            }
+            remaining = remaining.saturating_sub(cost);
+            count += 1;
+        }
+        ready_targets.truncate(count);
+    }
+
+    if ready_targets.is_empty() {
+        return;
+    }
+
+    // ── Build blocks_to_draw for the ready targets only ─────────────────
+    {
+        let mut block_set: HashSet<MapBlockRelPos> = HashSet::with_capacity(ready_targets.len() * 4);
+        for target in &ready_targets {
+            let gx = target.chunk_origin_chunk_units_x;
+            let gy = target.chunk_origin_chunk_units_z;
+            let scale = target.chunk_scale as i32;
+
+            // All sub-blocks inside the super-chunk + 1-block border for atlas edge data.
+            for sx in -1..=scale {
+                for sz in -1..=scale {
+                    let bx = gx as i32 + sx;
+                    let bz = gy as i32 + sz;
+                    if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
+                        block_set.insert(MapBlockRelPos { x: bx as u32, y: bz as u32 });
                     }
                 }
             }
         }
+        scratch.blocks_to_draw.extend(block_set.iter());
     }
 
-    // Also include currently visible chunks as data-only targets.
-    // This keeps the texture usage hint proportional to the actual render area,
-    // reducing the chance of evicting still-visible textures during zoom-out.
-    for (chunk_data, _mesh) in visible_chunk_q.iter() {
-        if (chunk_data.gx as i32) < max_chunk_x && (chunk_data.gy as i32) < max_chunk_y {
-            spawn_targets.insert(LandChunkConstructionData {
-                entity: None,
-                chunk_origin_chunk_units_x: chunk_data.gx,
-                chunk_origin_chunk_units_z: chunk_data.gy,
-                chunk_scale: 1,
-            });
-        }
-    }
+    let mut blocks_to_draw = std::mem::take(&mut scratch.blocks_to_draw);
+    let LandMeshScratch {
+        blocks_data,
+        missing_tile_bits,
+        texture_lookup_cache,
+        ids,
+        texels: texels_buf,
+        ..
+    } = &mut *scratch;
 
-    // Step 3: Collect the MapBlockRelPos for all target chunks and load them from UO data.
-    let blocks_to_draw = &mut scratch.blocks_to_draw;
-    blocks_to_draw.extend(spawn_targets.iter()
-        .map(|d| MapBlockRelPos {
-            x: d.chunk_origin_chunk_units_x,
-            y: d.chunk_origin_chunk_units_z,
-        }));
-    //blocks_to_draw.sort();    // Already done by load_blocks.
-
-    let blocks_data = &mut scratch.blocks_data;
-    let missing_tile_bits = &mut scratch.missing_tile_bits;
+    // ── Populate blocks_data from the in-memory cache only ──────────────
+    // All core blocks for ready_targets are guaranteed cached (readiness check).
+    // Border ring blocks may or may not be cached yet — if not, they're
+    // simply skipped here and the atlas enqueue will skip them too.
+    // NO DISK I/O on the main thread.
     {
-        // This lock only needed during the block loading from disk/memory.
-        let mut uo_data_map_planes_arc = map_planes_r.0.clone();
+        let uo_data_map_planes_arc = map_planes_r.0.clone();
         let mut uo_data_map_plane = uo_data_map_planes_arc
             .get_mut(&current_map_id)
             .expect("Requested map plane metadata is uncached?");
-        let load_blocks_start = Instant::now();
-        uo_data_map_plane
-            .load_blocks(blocks_to_draw.as_mut_slice())
-            .expect("Can't load map blocks");
-        let load_blocks_us = load_blocks_start.elapsed().as_micros();
-        if load_blocks_us > 1000 {
-            console_logger::one(
-                None,
-                LogSev::Diagnostics,
-                LogAbout::Performance,
-                &format!("Perf: load_blocks took {} µs for {} blocks.", load_blocks_us, blocks_to_draw.len()),
-            );
-        }
+
         for block_coords in blocks_to_draw.iter().copied() {
             let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
-                console_logger::one(
-                    None,
-                    LogSev::Warn,
-                    LogAbout::RenderWorldLand,
-                    &format!(
-                        "Skipping missing map block x={}, y={} (map={}).",
-                        block_coords.x, block_coords.y, current_map_id
-                    ),
-                );
-                continue;
+                continue; // Not cached (border block still loading) — skip.
             };
-            let unique = blocks_data
-                .insert(block_coords, block_ref.clone())
-                .is_none();
-            if !unique {
-                panic!("Adding again the same key?");
+            if blocks_data.insert(block_coords, block_ref.clone()).is_some() {
+                continue;
             }
 
             for tz in 0..8 {
@@ -425,76 +574,83 @@ pub fn sys_draw_spawned_land_chunks(
             }
         }
     }
-    // Step 4: Aggregate all tile IDs needed for the primary chunks and their neighbors,
-    // and perform a batch pre-cache (using MT compression if > 1000).
-    {
-        scratch.ids.clear();
-        for (word_idx, &word) in scratch.missing_tile_bits.iter().enumerate() {
-            let mut bits = word;
-            while bits != 0 {
-                let bit = bits.trailing_zeros() as usize;
-                scratch.ids.push((word_idx * 64 + bit) as u16);
-                bits &= bits - 1;
+
+    for (word_idx, &word) in missing_tile_bits.iter().enumerate() {
+        let mut bits = word;
+        while bits != 0 {
+            let bit = bits.trailing_zeros() as usize;
+            ids.push((word_idx * 64 + bit) as u16);
+            bits &= bits - 1;
+        }
+    }
+
+    cache_r.set_visible_texture_usage_hint(ids);
+    cache_r.precache_textures_parallel(
+        ids.as_slice(),
+        texmap_2d_r.0.clone(),
+        cache_settings_r.lossy_texture_compression,
+    );
+
+    let build_time_start = Instant::now();
+    for chunk_data in ready_targets.iter() {
+        // For super-chunks (scale > 1), enqueue ALL sub-blocks into the tile atlas,
+        // PLUS a +1 border ring so the edge vertices can sample neighbor heights.
+        let gx = chunk_data.chunk_origin_chunk_units_x as i32;
+        let gy = chunk_data.chunk_origin_chunk_units_z as i32;
+        let scale = chunk_data.chunk_scale as i32;
+        for sx in -1..=scale {
+            for sz in -1..=scale {
+                let bx = gx + sx;
+                let bz = gy + sz;
+                if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
+                    continue;
+                }
+                let sub = LandChunkConstructionData {
+                    entity: None,
+                    chunk_origin_chunk_units_x: bx as u32,
+                    chunk_origin_chunk_units_z: bz as u32,
+                    chunk_scale: 1,
+                };
+                enqueue_chunk_to_atlas_and_preload(
+                    &mut cache_r,
+                    &mut tile_atlas_r,
+                    texmap_2d_r.0.clone(),
+                    &sub,
+                    blocks_data,
+                    texture_lookup_cache,
+                    texels_buf,
+                    cache_settings_r.lossy_texture_compression,
+                );
             }
         }
 
-        cache_r.set_visible_texture_usage_hint(&scratch.ids);
-
-        let ids: &[u16] = scratch.ids.as_slice();
-        cache_r.precache_textures_parallel(
-            &ids,
-            texmap_2d_r.0.clone(),
-            cache_settings_r.lossy_texture_compression,
-        );
+        if let Some(entity) = chunk_data.entity {
+            if commands.get_entity(entity).is_ok() {
+                draw_land_chunk(
+                    &mut commands,
+                    chunk_data,
+                    &land_mesh_handles_r,
+                    *current_lod,
+                    &shared_land_material_r,
+                    chunk_data.chunk_scale,
+                );
+            }
+        }
     }
 
-    // Step 5: For every chunk that corresponds to a current entity (not filler neighbors), spawn the prebuilt map chunk mesh.
-    let build_time_start = Instant::now();
-    for chunk_data in spawn_targets.iter() {
-        let entity = chunk_data.entity;
-
-        enqueue_chunk_to_atlas_and_preload(
-            &mut cache_r,
-            &mut tile_atlas_r,
-            texmap_2d_r.0.clone(),
-            chunk_data,
-            &blocks_data,
-            &mut scratch.texture_lookup_cache,
-            cache_settings_r.lossy_texture_compression,
-        );
-
-        if entity.is_none() {
-            continue;
-        }
-        // Paranoid check, shouldn't ever happen.
-        if commands.get_entity(entity.unwrap()).is_err() {
-            console_logger::one(
-                None,
-                LogSev::Warn,
-                LogAbout::RenderWorldLand,
-                "Skipping drawing of invalid/unspawned entity at stage 'sys_draw_spawned_land_chunks'.",
-            );
-            continue;
-        }
-
-        draw_land_chunk(
-            &mut commands,
-            chunk_data,
-            &land_mesh_handles_r,
-            *current_lod,
-            &shared_land_material_r,
-            chunk_data.chunk_scale,
-        );
-    }
     let build_time: u128 = build_time_start.elapsed().as_micros();
     if build_time > 1000 {
         console_logger::one(
             None,
             LogSev::Diagnostics,
             LogAbout::Performance,
-            &format!("Perf: chunk rendering preloader took {build_time} µs for {} chunks.", spawn_targets.len()),
+            &format!("Perf: chunk rendering preloader took {build_time} µs for {} chunks.", ready_targets.len()),
         );
     }
+
+    // Return the blocks_to_draw Vec to scratch so its capacity is reused next frame.
+    blocks_to_draw.clear();
+    scratch.blocks_to_draw = blocks_to_draw;
 }
 
 fn draw_land_chunk(
@@ -551,6 +707,19 @@ fn draw_land_chunk(
             "Skipping drawing of invalid/unspawned entity at stage 'build_indexed_chunk_mesh'.",
         );
     }
+}
+
+/// Sort construction targets so the closest primary chunks are processed first,
+/// followed by their dependent filler targets.
+fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_chunk: (i32, i32)) {
+    let cx = camera_chunk.0;
+    let cy = camera_chunk.1;
+    chunks.sort_unstable_by_key(|target| {
+        let dx = target.chunk_origin_chunk_units_x as i32 - cx;
+        let dy = target.chunk_origin_chunk_units_z as i32 - cy;
+        // Primary chunks (entity: Some) before filler targets.
+        (target.entity.is_none(), dx.abs().max(dy.abs()), dx.abs() + dy.abs())
+    });
 }
 
 
