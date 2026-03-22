@@ -1,40 +1,33 @@
-// Deprecated: renamed to `preferences.rs`.
-// Kept as a harmless placeholder to avoid accidental breakage during refactors.
+// Preferences dialog (egui window) — renamed from options.rs
 
-pub const DEPRECATED_OPTIONS_RS: &str = "use preferences.rs instead";
+use crate::{
+    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    prelude::*,
+};
+use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use bevy_framepace::{FramepaceSettings, Limiter};
 
-/// Holds the UI state for the options dialog.
-/// All fields are the "UI representation" of the settings; actual values are applied
-/// to their respective Bevy resources on change.
+const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
+const DEFAULT_FPS_LIMIT: u32 = 60;
+
 #[derive(Resource)]
-pub struct OptionsDialogState {
-    /// Whether the dialog window is open.
+pub struct PreferencesDialogState {
     pub open: bool,
-    /// Whether frame limiting is active.
     pub frame_limit_enabled: bool,
-    /// The target FPS when frame limiting is enabled.
     pub fps_preset_idx: usize,
-    /// Speed multiplier for player movement.
     pub movement_speed_multiplier: f32,
-    /// Whether to hide the player mesh.
     pub hide_player: bool,
-    /// Whether to show the performance overlay.
     pub show_overlay: bool,
-    /// Whether the camera is free.
     pub free_camera: bool,
-    /// Egui scale factor.
     pub egui_scale: f32,
-    /// Whether settings hot-reload is enabled.
     pub hot_reload_enabled: bool,
-    /// Player position overlay scale.
     pub player_position_scale: f32,
-    /// System messages (in-game log) scale.
     pub sysmessages_scale: f32,
-    /// Performance overlay scale.
     pub performance_overlay_scale: f32,
 }
 
-impl Default for OptionsDialogState {
+impl Default for PreferencesDialogState {
     fn default() -> Self {
         let fps_preset_idx = FPS_PRESETS
             .iter()
@@ -57,16 +50,14 @@ impl Default for OptionsDialogState {
     }
 }
 
-// ---- Plugin ----
-
-pub struct OptionsDialogPlugin {
+pub struct PreferencesDialogPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(OptionsDialogPlugin);
+impl_tracked_plugin!(PreferencesDialogPlugin);
 
-impl Plugin for OptionsDialogPlugin {
+impl Plugin for PreferencesDialogPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OptionsDialogState>()
+        app.init_resource::<PreferencesDialogState>()
             .add_systems(
                 Update,
                 (
@@ -79,11 +70,9 @@ impl Plugin for OptionsDialogPlugin {
     }
 }
 
-/// Syncs from Settings resource to UI state.
-/// We sync if it's the first initialization, or if the settings resource changed while the dialog is closed.
 fn sys_sync_settings_to_state(
     settings: Res<Settings>,
-    mut state: ResMut<OptionsDialogState>,
+    mut state: ResMut<PreferencesDialogState>,
     mut initialized: Local<bool>,
     mut wireframe_config: ResMut<WireframeConfig>,
 ) {
@@ -105,20 +94,16 @@ fn sys_sync_settings_to_state(
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
 
-        // Also apply wireframe setting which isn't in the dialog yet but is in settings
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
         *initialized = true;
     }
 }
 
-// ---- Systems ----
-
-/// Toggles the options dialog; also allows Escape to close it.
 fn sys_toggle_options_dialog(
     keyboard: Res<ButtonInput<KeyCode>>,
     settings: Res<Settings>,
-    mut state: ResMut<OptionsDialogState>,
+    mut state: ResMut<PreferencesDialogState>,
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
 ) {
@@ -131,17 +116,15 @@ fn sys_toggle_options_dialog(
     if keyboard.just_pressed(settings.keybindings.user_settings) {
         state.open = !state.open;
     }
-    // Pressing Escape closes the dialog if it is open.
     if keyboard.just_pressed(KeyCode::Escape) && state.open {
         state.open = false;
     }
 }
 
-/// Renders the options dialog window and applies any changes to the relevant resources.
 pub fn sys_render_options_dialog(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
-    mut state: ResMut<OptionsDialogState>,
+    mut state: ResMut<PreferencesDialogState>,
     mut framepace: ResMut<FramepaceSettings>,
     mut settings: ResMut<Settings>,
 ) {
@@ -149,16 +132,10 @@ pub fn sys_render_options_dialog(
         return;
     }
 
-    // Try to get the egui context - if it fails, skip rendering this frame
     let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 
-    // — Borrow fix —
-    // `egui::Window::open()` mutably borrows the bool for the lifetime of the show()
-    // call, which clashes with re-borrowing `state` inside the closure.
-    // Solution: stage the value in a local, pass a reference to that local, then
-    // write the (possibly changed by egui's own close button) value back afterward.
     let mut window_open = state.open;
 
     let title = format!(
@@ -176,15 +153,9 @@ pub fn sys_render_options_dialog(
             ui.heading("Performance");
             ui.separator();
 
-            // ---- Frame limiter toggle ----
-            // The checkbox enables or disables the bevy_framepace limiter.
-            // When disabled we set Limiter::Off so the GPU renders as fast as it can.
             let prev_enabled = state.frame_limit_enabled;
             ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter");
 
-            // ---- FPS combobox (greyed out when frame limiting is off) ----
-            // `add_enabled` renders controls in a visually disabled state when the
-            // first argument is `false`, preventing interaction without extra logic.
             ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
                 let current_fps = FPS_PRESETS[state.fps_preset_idx];
                 egui::ComboBox::from_label("Target FPS")
@@ -192,20 +163,12 @@ pub fn sys_render_options_dialog(
                     .show_ui(ui, |ui| {
                         for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
                             let label = format!("{} fps", fps);
-                            // `selectable_value` automatically updates `state.fps_preset_idx`
-                            // and returns whether the selection changed.
                             ui.selectable_value(&mut state.fps_preset_idx, idx, label);
                         }
                     });
             });
 
-            // ---- Apply changes to FramepaceSettings ----
-            // We apply whenever either the toggle or the combobox selection changed.
-            // Comparing against the previous state avoids writing every frame.
             let fps_changed = state.fps_preset_idx != {
-                // Derive what the previous index would have been from the current limiter.
-                // If we can't determine it (e.g. limiter was Off), we just use usize::MAX
-                // so the comparison always triggers a write on first open — harmless.
                 match framepace.limiter {
                     Limiter::Manual(d) => {
                         let current_fps_hz = 1.0 / d.as_secs_f64();
@@ -220,12 +183,8 @@ pub fn sys_render_options_dialog(
 
             if prev_enabled != state.frame_limit_enabled || fps_changed {
                 framepace.limiter = if state.frame_limit_enabled {
-                    // `Limiter::from_framerate` converts the FPS value to a `Duration` and
-                    // returns `Limiter::Manual(duration)`.
                     Limiter::from_framerate(FPS_PRESETS[state.fps_preset_idx] as f64)
                 } else {
-                    // `Limiter::Off` disables sleep entirely; bevy_framepace stays loaded
-                    // (for frame pacing) but applies no artificial limit.
                     Limiter::Off
                 };
             }
@@ -252,7 +211,6 @@ pub fn sys_render_options_dialog(
             ui.heading("World & Input");
             ui.separator();
 
-            // ---- Movement Speed ----
             ui.horizontal(|ui| {
                 ui.label("Move Speed:");
                 ui.add(egui::Slider::new(
@@ -261,7 +219,6 @@ pub fn sys_render_options_dialog(
                 ));
             });
 
-            // ---- Visibility/Graphics ----
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
@@ -317,10 +274,6 @@ pub fn sys_render_options_dialog(
                 }
             });
 
-            // ---- Sync UI state to Settings resource ----
-            // We use .as_ref() for comparisons to avoid triggering change detection
-            // unless we actually write a new value. This prevents the debounced save
-            // timer from being reset every frame.
             if (settings.as_ref().app.input.movement_speed_multiplier
                 - state.movement_speed_multiplier)
                 .abs()
@@ -367,15 +320,10 @@ pub fn sys_render_options_dialog(
             }
         });
 
-    // Write back: if egui's close button was pressed, window_open is now false.
-    // Sync that back into our resource so the window stays closed next frame.
     state.open = window_open;
-
-    // Suppress unused-variable warning (we don't need the inner response).
     let _ = response;
 }
 
-/// Applies performance settings (frame limiter) from the Settings resource to the FramepaceSettings resource.
 pub fn sys_apply_performance_settings(
     settings: Res<Settings>,
     mut framepace: ResMut<FramepaceSettings>,

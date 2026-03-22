@@ -1,0 +1,21 @@
+[input]
+movement_speed_multiplier = 1.0
+
+[window]
+height = 768.0
+width = 1024.0
+zoom = 1.0
+egui_scale = 1.0
+player_position_scale = 1.0
+sysmessages_scale = 1.0
+performance_overlay_scale = 1.0
+free_camera = false
+
+[debug]
+map_render_wireframe = false
+hot_reload_enabled = false
+
+[performance]
+show_overlay = true
+frame_limit_enabled = true
+target_fps = 60

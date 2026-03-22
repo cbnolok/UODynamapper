@@ -28,6 +28,9 @@ pub struct OverlayPlayerPositionContainer;
 #[derive(Component)]
 pub struct OverlayPlayerPositionText;
 
+#[derive(Component)]
+pub struct OverlayCursorBehaviorText;
+
 pub fn setup_overlay_player_position(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -58,7 +61,7 @@ pub fn setup_overlay_player_position(
             builder.spawn((
                 Text::new("Player position: (NA, NA, NA)"),
                 TextFont {
-                    font,
+                    font: font.clone(),
                     font_size: FONT_SIZE * scale,
                     font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
@@ -66,6 +69,19 @@ pub fn setup_overlay_player_position(
                 LineHeight::Px(FONT_SIZE * scale),
                 TextColor(Color::WHITE),
                 OverlayPlayerPositionText,
+            ));
+            // Cursor behavior text (below player position)
+            builder.spawn((
+                Text::new("Cursor: Select"),
+                TextFont {
+                    font,
+                    font_size: FONT_SIZE * scale,
+                    font_smoothing: FontSmoothing::AntiAliased,
+                    ..default()
+                },
+                LineHeight::Px(FONT_SIZE * scale),
+                TextColor(Color::WHITE),
+                OverlayCursorBehaviorText,
             ));
         });
 }
@@ -75,7 +91,17 @@ pub fn update_player_position_text(
     player_query: Query<&Transform, With<Player>>,
     mut text_query: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),
-        With<OverlayPlayerPositionText>,
+        (
+            With<OverlayPlayerPositionText>,
+            Without<OverlayCursorBehaviorText>,
+        ),
+    >,
+    mut cursor_query: Query<
+        &mut Text,
+        (
+            With<OverlayCursorBehaviorText>,
+            Without<OverlayPlayerPositionText>,
+        ),
     >,
     mut node_query: Query<
         &mut Node,
@@ -88,6 +114,7 @@ pub fn update_player_position_text(
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     render_zoom: Res<RenderZoom>,
+    cursor: Res<crate::core::render::overlays::cursor_behavior::CursorBehavior>,
 ) {
     let current_scale = settings.app.window.player_position_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
@@ -156,6 +183,14 @@ pub fn update_player_position_text(
             "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: {} tiles",
             pos.x, pos.y, pos.z, render_zoom.0, viewport_tiles
         );
+
+        if let Ok(mut cursor_text) = cursor_query.single_mut() {
+            let cursor_mode_label = match cursor.mode {
+                crate::core::render::overlays::cursor_behavior::CursorMode::Teleport => "Teleport",
+                _ => "Select",
+            };
+            cursor_text.0 = format!("Cursor: {}", cursor_mode_label);
+        }
 
         if scale_changed {
             text_font.font_size = FONT_SIZE * current_scale;

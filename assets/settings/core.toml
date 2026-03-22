@@ -1,0 +1,34 @@
+# Core settings for UODynamapper
+# These are strictly engine/system level and usually don't change often.
+
+[core.uo_files]
+# Path to your UO client folder containing .mul or .uop files
+folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
+
+[core.world]
+# Default starting position in UO coordinates [X, Y, Z, MapID]
+start_p = [1100, 1800, 20, 0]
+# Whether to hide the player cube on startup
+hide_player = false
+
+[core.graphics]
+# Use BC7 texture compression to save VRAM
+lossy_texture_compression = true
+# Lower frame rate when the window is not focused
+reduce_unfocused_fps = true
+texture_filtering = 0
+texture_reconstruction = 0
+sharpening_strength = 0.0
+
+[logging]
+# Minimum log level to display in terminal
+min_severity = "Info"
+
+# Custom filters for specific modules or severities
+[[logging.filters]]
+about = "RenderWorldLand"
+suppress = true
+
+[[logging.filters]]
+sev = "Debug"
+suppress = true

@@ -1,5 +1,5 @@
 pub mod keybindings_help;
-pub mod options;
+pub mod preferences;
 pub mod teleport;
 pub mod terrain_shader;
 
@@ -9,7 +9,7 @@ use crate::util_lib::tracked_plugin::*;
 use bevy::prelude::*;
 use bevy_egui::{EguiContextSettings, EguiContexts};
 use keybindings_help::KeybindingsHelpPlugin;
-use options::OptionsDialogPlugin;
+use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
 use terrain_shader::TerrainUiPlugin;
 
@@ -22,7 +22,7 @@ impl Plugin for DialogsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_plugins((
-            OptionsDialogPlugin {
+            PreferencesDialogPlugin {
                 registered_by: "DialogsPlugin",
             },
             TerrainUiPlugin {

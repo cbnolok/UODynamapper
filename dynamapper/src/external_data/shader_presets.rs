@@ -113,6 +113,8 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
                 _ => &shader_presets.classic.morning,
             }
         } else {
+            let msg = format!("Invalid default preset: {}", shader_presets.default_preset);
+            console_logger::one(None, LogSev::Warn, LogAbout::Settings, &msg);
             &shader_presets.classic.morning
         }
     };

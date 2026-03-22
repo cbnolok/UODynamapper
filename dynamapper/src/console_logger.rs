@@ -52,6 +52,7 @@ pub enum LogAbout {
     Renderer,
     RenderWorldArt,
     RenderWorldLand,
+    Settings,
     Startup,
     SystemsGeneral,
     UoFiles,

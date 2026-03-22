@@ -153,9 +153,10 @@ pub struct ToggleWireframe;
 
 // ----
 
-const CORE_CONFIG_FILE: &str = "core_settings.toml";
-const USER_CONFIG_FILE: &str = "user_preferences.toml";
-const KEYBINDINGS_CONFIG_FILE: &str = "keybindings.toml";
+const CORE_CONFIG_FILE: &str = "settings/core.toml";
+const USER_CONFIG_FILE: &str = "settings/preferences.toml";
+const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
+const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
@@ -164,23 +165,48 @@ pub fn load_from_files() -> Settings {
     let user_path = assets_path.join(USER_CONFIG_FILE);
 
     let core_contents = std::fs::read_to_string(&core_path)
-        .expect("Failed to read core_settings.toml");
+        .expect("Failed to read settings/core.toml");
 
-    // Core settings file contains top-level core and logging sections
+    // Core settings file contains top-level core and logging sections.
     #[derive(Deserialize)]
     struct CoreWrapper {
         core: SectCore,
         logging: SectLogging,
     }
     let core_data: CoreWrapper = toml::from_str(&core_contents)
-        .expect("Failed to parse core_settings.toml — please fix the file in assets/core_settings.toml");
+        .expect("Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml");
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
-        .expect("Failed to read user_preferences.toml — please ensure assets/user_preferences.toml exists and is valid");
+        .expect("Failed to read settings/preferences.toml — please ensure assets/settings/preferences.toml exists and is valid");
 
     let user_app: SectApp = toml::from_str(&user_contents)
-        .expect("Failed to parse user_preferences.toml — please fix the file in assets/user_preferences.toml");
+        .expect("Failed to parse settings/preferences.toml — please fix the file in assets/settings/preferences.toml");
+
+    // Optionally load graphics overrides from a dedicated graphics.toml.
+    // If present, its [core.graphics] table will replace the core.graphics
+    // block parsed from core.toml. This lets users split graphics tuning
+    // into a separate file (assets/settings/graphics.toml).
+    let mut core = core_data.core;
+    let gfx_path = assets_path.join(GRAPHICS_CONFIG_FILE);
+    if let Ok(gfx_contents) = std::fs::read_to_string(&gfx_path) {
+        if let Ok(val) = toml::from_str::<toml::Value>(&gfx_contents) {
+            // Try common layouts: either [core.graphics] or top-level [graphics.effects_defaults]
+            if let Some(core_tbl) = val.get("core") {
+                if let Some(graphics_val) = core_tbl.get("graphics") {
+                    if let Ok(gfx) = graphics_val.clone().try_into::<SectGraphics>() {
+                        core.graphics = gfx;
+                    } else {
+                        eprintln!("Failed to parse core.graphics in settings/graphics.toml");
+                    }
+                }
+            } else if let Some(graphics_val) = val.get("graphics") {
+                if let Ok(gfx) = graphics_val.clone().try_into::<SectGraphics>() {
+                    core.graphics = gfx;
+                }
+            }
+        }
+    }
 
     // Keybindings file
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
@@ -191,7 +217,7 @@ pub fn load_from_files() -> Settings {
         .expect("Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml");
 
     Settings {
-        core: core_data.core,
+        core,
         app: user_app,
         logging: core_data.logging,
         keybindings,
@@ -205,9 +231,9 @@ pub fn save_app_settings(settings: &Settings) {
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
-                paris::error!("Failed to save user_preferences.toml: {}", e);
+                paris::error!("Failed to save preferences.toml: {}", e);
             } else {
-                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved user_preferences.toml");
+                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved preferences.toml");
             }
         }
         Err(e) => {
@@ -338,7 +364,7 @@ fn sys_hotreload_settings(
         settings.app = new_data.app.clone();
         watcher.user_mtime = new_user;
         console_logger::one(None, LogSev::Info, LogAbout::General,
-            "Hot-reloaded: user_preferences.toml");
+            "Hot-reloaded: preferences.toml");
     }
     if kb_changed {
         settings.keybindings = new_data.keybindings.clone();

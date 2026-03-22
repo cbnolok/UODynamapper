@@ -1,0 +1,18 @@
+[core.graphics]
+# Use BC7 texture compression to save VRAM
+lossy_texture_compression = true
+# Lower frame rate when the window is not focused
+reduce_unfocused_fps = true
+texture_filtering = 0
+texture_reconstruction = 0
+sharpening_strength = 0.0
+
+# Default values for terrain-shader graphics-related uniforms. These
+# map to fields in `LandEffectsUniform` and are tunable from the UI.
+[graphics.effects_defaults]
+# 0 = disabled, 1 = enabled
+enable_linear_filtering = 0
+# 0 = None, 1 = Bicubic, 2 = FSR
+reconstruction_mode = 0
+# Per-frame sharpening applied by shader
+sharpening_amount = 0.0

@@ -1,11 +1,13 @@
 pub mod performance;
 pub mod player_position;
+pub mod cursor_behavior;
 pub mod sysmessages;
 
 use crate::prelude::*;
 use bevy::prelude::*;
 use performance::PerformanceOverlayPlugin;
 use player_position::PlayerPositionOverlayPlugin;
+use cursor_behavior::CursorBehaviorOverlayPlugin;
 use sysmessages::SystemMessagesPlugin;
 
 pub struct OverlaysPlugin {
@@ -19,6 +21,9 @@ impl Plugin for OverlaysPlugin {
         app.add_plugins((
             PerformanceOverlayPlugin,
             PlayerPositionOverlayPlugin,
+            CursorBehaviorOverlayPlugin {
+                registered_by: "OverlaysPlugin",
+            },
             SystemMessagesPlugin,
         ));
     }

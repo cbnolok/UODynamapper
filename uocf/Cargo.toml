@@ -12,7 +12,7 @@ too_many_arguments = "allow"
 
 [dependencies]
 byteorder = { version = "1.5", features = ["std"] }
-color-eyre = { version = "0.6", default-features = false, features = ["track-caller"] }
+color-eyre = { version = "0.6", features = ["track-caller"] }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
 glam = { version = "0.30", default-features = false, features = ["std"] }
