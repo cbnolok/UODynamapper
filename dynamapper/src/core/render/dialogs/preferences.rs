@@ -17,6 +17,7 @@ pub struct PreferencesDialogState {
     pub frame_limit_enabled: bool,
     pub fps_preset_idx: usize,
     pub movement_speed_multiplier: f32,
+    pub smooth_movement: bool,
     pub hide_player: bool,
     pub show_overlay: bool,
     pub free_camera: bool,
@@ -38,6 +39,7 @@ impl Default for PreferencesDialogState {
             frame_limit_enabled: true,
             fps_preset_idx,
             movement_speed_multiplier: 1.0,
+            smooth_movement: false,
             hide_player: false,
             show_overlay: true,
             free_camera: false,
@@ -80,6 +82,7 @@ fn sys_sync_settings_to_state(
 
     if should_sync {
         state.movement_speed_multiplier = settings.app.input.movement_speed_multiplier;
+        state.smooth_movement = settings.app.input.smooth_movement;
         state.hide_player = settings.core.world.hide_player;
         state.show_overlay = settings.app.performance.show_overlay;
         state.frame_limit_enabled = settings.app.performance.frame_limit_enabled;
@@ -219,6 +222,13 @@ pub fn sys_render_options_dialog(
                 ));
             });
 
+            ui.checkbox(&mut state.smooth_movement, "Smooth movement");
+            ui.label(
+                egui::RichText::new("Interpolates the player between integer tile steps.")
+                    .small()
+                    .weak(),
+            );
+
             ui.checkbox(&mut state.hide_player, "Hide Player Object");
             ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
 
@@ -280,6 +290,9 @@ pub fn sys_render_options_dialog(
                 > 0.001
             {
                 settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
+            }
+            if settings.as_ref().app.input.smooth_movement != state.smooth_movement {
+                settings.app.input.smooth_movement = state.smooth_movement;
             }
             if settings.as_ref().core.world.hide_player != state.hide_player {
                 settings.core.world.hide_player = state.hide_player;

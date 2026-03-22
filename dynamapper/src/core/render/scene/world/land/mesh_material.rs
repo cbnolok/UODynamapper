@@ -183,6 +183,12 @@ pub struct LandRenderStylePresetsPerMode {
 }
 #[derive(Debug, Deserialize)]
 pub struct LandMaterialUniformsPresets {
+    #[serde(default = "default_global_lighting")]
+    pub global_lighting: f32,
     pub effects: LandEffectsUniform,
     pub lighting: LandLightingUniforms,
+}
+
+fn default_global_lighting() -> f32 {
+    1.0
 }

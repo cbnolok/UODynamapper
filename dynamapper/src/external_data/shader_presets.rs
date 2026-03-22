@@ -121,7 +121,7 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
     commands.insert_resource(UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
-        global_lighting: 1.0,
+        global_lighting: preset.global_lighting,
         dirty: true,
     });
 }

@@ -413,7 +413,7 @@ pub fn terrain_ui_system(
                 let mut changed = false;
 
                 changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Reconstruction:");
                     let mut mode = u.effects.reconstruction_mode;
@@ -482,7 +482,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
-                    u.global_lighting = 1.0;
+                    u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
                 if ui.button("Afternoon").clicked() {
@@ -493,7 +493,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
-                    u.global_lighting = 1.0;
+                    u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
                 if ui.button("Night").clicked() {
@@ -504,7 +504,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
-                    u.global_lighting = 1.0;
+                    u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
                 if ui.button("Cave").clicked() {
@@ -515,7 +515,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
-                    u.global_lighting = 1.0;
+                    u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
             });

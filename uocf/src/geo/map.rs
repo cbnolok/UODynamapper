@@ -335,6 +335,14 @@ pub struct MapRectBlocks {
 
 impl MapPlane {
     pub fn init(map_file_mul_path: PathBuf, map_index: u32) -> eyre::Result<MapPlane> {
+        Self::init_with_size(map_file_mul_path, map_index, None)
+    }
+
+    pub fn init_with_size(
+        map_file_mul_path: PathBuf,
+        map_index: u32,
+        map_size_tiles_override: Option<MapSizeCells>,
+    ) -> eyre::Result<MapPlane> {
         // We need to use PathBuf instead of String, because the latter has a UTF-8 encoding, while the former
         //  can have different encodings, even not valid UTF-*, which can be valid for the used OS.
         let map_file_mul_path = map_file_mul_path
@@ -354,38 +362,41 @@ impl MapPlane {
         let map_file_mul_rdr = BufReader::new(map_file_mul_handle);
 
         // The dimensions of the maps are hardcoded based on the map index.
-        let map_size_tiles = match map_index {
-            0..=1 => {
-                // Determine if this is a pre-ML (6144x4096) or post-ML (7168x4096) map by checking file size.
-                if map_file_mul_metadata.len() < 77070336 {
-                    Ok(MapSizeCells {
-                        width: 6144,
-                        height: 4096,
-                    }) // pre-ML
-                } else {
-                    Ok(MapSizeCells {
-                        width: 7168,
-                        height: 4096,
-                    })
+        let map_size_tiles = match map_size_tiles_override {
+            Some(size) => Ok(size),
+            None => match map_index {
+                0..=1 => {
+                    // Determine if this is a pre-ML (6144x4096) or post-ML (7168x4096) map by checking file size.
+                    if map_file_mul_metadata.len() < 77070336 {
+                        Ok(MapSizeCells {
+                            width: 6144,
+                            height: 4096,
+                        }) // pre-ML
+                    } else {
+                        Ok(MapSizeCells {
+                            width: 7168,
+                            height: 4096,
+                        })
+                    }
                 }
-            }
-            2 => Ok(MapSizeCells {
-                width: 2304,
-                height: 1600,
-            }),
-            3 => Ok(MapSizeCells {
-                width: 2560,
-                height: 2048,
-            }),
-            4 => Ok(MapSizeCells {
-                width: 1448,
-                height: 1448,
-            }),
-            5 => Ok(MapSizeCells {
-                width: 1280,
-                height: 4096,
-            }),
-            _ => Err(eyre!("Invalid map number")),
+                2 => Ok(MapSizeCells {
+                    width: 2304,
+                    height: 1600,
+                }),
+                3 => Ok(MapSizeCells {
+                    width: 2560,
+                    height: 2048,
+                }),
+                4 => Ok(MapSizeCells {
+                    width: 1448,
+                    height: 1448,
+                }),
+                5 => Ok(MapSizeCells {
+                    width: 1280,
+                    height: 4096,
+                }),
+                _ => Err(eyre!("Invalid map number")),
+            },
         }?;
 
         let map_size_blocks = MapSizeBlocks {

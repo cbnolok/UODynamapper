@@ -1,6 +1,7 @@
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
+use crate::util_lib::uo_coords::UOVec4;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -24,7 +25,8 @@ impl Plugin for PlayerMovementPlugin {
             .insert_resource(MoveDirection::default())
             .add_systems(
                 Update,
-                (sys_player_input, sys_player_move)
+                (sys_player_input, sys_player_move, sys_smooth_player_transform)
+                    .chain()
                     .in_set(MovementSysSet::MovementActions)
                     .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
             );
@@ -61,9 +63,9 @@ fn sys_player_input(
     mut egui_contexts: bevy_egui::EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
 ) {
-    // If any egui context wants keyboard or mouse input, don't process movement
+    // Keep movement and mouse cursor input separate.
     if let Ok(ctx) = egui_contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
+        if ctx.wants_pointer_input() {
             move_dir.dir = None;
             move_dir.vertical_dir = 0;
             return;
@@ -71,7 +73,7 @@ fn sys_player_input(
     }
     if let Some(ui_cam) = egui_ui_camera.0 {
         if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(ui_cam) {
-            if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
+            if ctx.wants_pointer_input() {
                 move_dir.dir = None;
                 move_dir.vertical_dir = 0;
                 return;
@@ -79,17 +81,28 @@ fn sys_player_input(
         }
     }
 
-    // Give priority to mouse movement
+    // Mouse-driven movement still works even if movement keys are held.
     if let Some((mouse_dir, mouse_speed)) = parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q) {
         move_dir.dir = Some(mouse_dir);
         move_dir.speed_multiplier = mouse_speed;
     } else {
-        // Fallback to WASD
+        // Fallback to WASD.
         move_dir.dir = parse_wasd_movement(&keyboard_input);
         move_dir.speed_multiplier = 1.0;
     }
 
     move_dir.vertical_dir = parse_vertical_movement(&keyboard_input);
+}
+
+fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2) -> UOVec4 {
+    let next_x = (i32::from(current_pos.x) + dir.x).clamp(0, u16::MAX as i32) as u16;
+    let next_y = (i32::from(current_pos.y) + dir.y).clamp(0, u16::MAX as i32) as u16;
+    UOVec4::new(next_x, next_y, current_pos.z, current_pos.m)
+}
+
+fn advance_vertical_position(current_pos: UOVec4, vertical_dir: i32) -> UOVec4 {
+    let next_z = (i32::from(current_pos.z) + vertical_dir).clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+    UOVec4::new(current_pos.x, current_pos.y, next_z, current_pos.m)
 }
 
 fn parse_wasd_movement(keyboard_input: &Res<ButtonInput<KeyCode>>) -> Option<IVec2> {
@@ -199,17 +212,23 @@ fn sys_player_move(
 
     // Only move if cooldown finished and a direction is pressed
     if cooldown.0.just_finished() {
+        let smooth_movement = settings.app.input.smooth_movement;
         if let Some(dir) = move_dir.dir {
             for (mut transform, mut player) in query.iter_mut() {
+                let current_pos = player.current_pos.unwrap_or_else(|| {
+                    UOVec4::new(0, 0, 0, 0)
+                });
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
-                transform.translation += delta;
+                if !smooth_movement {
+                    transform.translation += delta;
+                }
 
                 // Sync the UO coordinate state
-                let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                let next_pos = advance_horizontal_position(current_pos, dir);
                 let old_map = player.current_pos.map(|p| p.m);
-                player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
-                if old_map != player.current_pos.map(|p| p.m) {
+                player.current_pos = Some(next_pos);
+                if old_map != Some(next_pos.m) {
                     chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
                 }
             }
@@ -220,19 +239,52 @@ fn sys_player_move(
 
         if move_dir.vertical_dir != 0 {
             for (mut transform, mut player) in query.iter_mut() {
+                let current_pos = player.current_pos.unwrap_or_else(|| {
+                    UOVec4::new(0, 0, 0, 0)
+                });
                 // Adjust height. Use the scale utility if available or a standard step.
                 // In UO a height step is often 1, but we scale it for Bevy.
                 let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(move_dir.vertical_dir as f32);
-                transform.translation.y += delta_y;
+                if !smooth_movement {
+                    transform.translation.y += delta_y;
+                }
 
                 // Sync the UO coordinate state
-                let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
+                let next_pos = advance_vertical_position(current_pos, move_dir.vertical_dir);
                 let old_map = player.current_pos.map(|p| p.m);
-                player.current_pos = Some(transform.translation.to_uo_vec4(current_map));
-                if old_map != player.current_pos.map(|p| p.m) {
+                player.current_pos = Some(next_pos);
+                if old_map != Some(next_pos.m) {
                     chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
                 }
             }
         }
     }
+}
+
+fn sys_smooth_player_transform(
+    time: Res<Time>,
+    settings: Res<Settings>,
+    mut query: Query<(&mut Transform, &Player)>,
+) {
+    if !settings.app.input.smooth_movement {
+        return;
+    }
+
+    let Ok((mut transform, player)) = query.single_mut() else {
+        return;
+    };
+
+    let Some(current_pos) = player.current_pos else {
+        return;
+    };
+
+    let target = current_pos.to_bevy_vec3_ignore_map();
+    let delta = target - transform.translation;
+    if delta.length_squared() <= 0.000_001 {
+        transform.translation = target;
+        return;
+    }
+
+    let smoothing = (time.delta_secs() * 14.0).clamp(0.0, 1.0);
+    transform.translation = transform.translation.lerp(target, smoothing);
 }

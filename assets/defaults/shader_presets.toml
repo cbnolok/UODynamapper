@@ -55,6 +55,7 @@ default_preset = "classic.morning"
 # Key features like grading, gloom, specular, and rim lighting are disabled.
 
 [classic.morning]
+global_lighting = 1.02
 # Morning: soft warm sun, cool ambient.
 [classic.morning.effects]
 shading_mode = 0
@@ -96,6 +97,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.afternoon]
+global_lighting = 1.08
 # Afternoon: brighter sun, rich colors.
 [classic.afternoon.effects]
 shading_mode = 0
@@ -137,6 +139,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.night]
+global_lighting = 0.82
 # Night: cool light, low ambient.
 [classic.night.effects]
 shading_mode = 0
@@ -178,6 +181,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [classic.cave]
+global_lighting = 0.60
 # Cave: very low ambient, cool tones.
 [classic.cave.effects]
 shading_mode = 0
@@ -225,6 +229,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 # A more modern look with smooth lighting, fill lights, and basic grading.
 
 [enhanced.morning]
+global_lighting = 1.08
 [enhanced.morning.effects]
 shading_mode = 1
 normal_mode = 1
@@ -265,6 +270,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon]
+global_lighting = 1.14
 [enhanced.afternoon.effects]
 shading_mode = 1
 normal_mode = 1
@@ -305,6 +311,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.night]
+global_lighting = 0.88
 [enhanced.night.effects]
 shading_mode = 1
 normal_mode = 1
@@ -345,6 +352,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [enhanced.cave]
+global_lighting = 0.66
 [enhanced.cave.effects]
 shading_mode = 1
 normal_mode = 1
@@ -391,6 +399,7 @@ fog_params = [0.02, 0.0, 0.0, 0.0]
 # Full-featured rendering with all effects enabled for a modern look.
 
 [kr.morning]
+global_lighting = 1.10
 [kr.morning.effects]
 shading_mode = 2
 normal_mode = 1
@@ -431,6 +440,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.afternoon]
+global_lighting = 1.16
 [kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
@@ -471,6 +481,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.night]
+global_lighting = 0.90
 [kr.night.effects]
 shading_mode = 2
 normal_mode = 1
@@ -511,6 +522,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 
 [kr.cave]
+global_lighting = 0.68
 [kr.cave.effects]
 shading_mode = 2
 normal_mode = 1

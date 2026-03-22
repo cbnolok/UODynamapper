@@ -20,6 +20,7 @@ pub struct Settings {
     pub app: SectApp,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
+    pub maps: SectMaps,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -52,6 +53,7 @@ pub struct SectUoFiles {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
+    pub smooth_movement: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -73,6 +75,24 @@ pub struct SectWindow {
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SectMaps {
+    pub maps: Vec<SectMapSize>,
+}
+
+impl SectMaps {
+    pub fn map_size(&self, map_id: u32) -> Option<&SectMapSize> {
+        self.maps.iter().find(|map| map.id == map_id)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SectMapSize {
+    pub id: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -157,12 +177,14 @@ const CORE_CONFIG_FILE: &str = "settings/core.toml";
 const USER_CONFIG_FILE: &str = "settings/preferences.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
+const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let user_path = assets_path.join(USER_CONFIG_FILE);
+    let maps_path = assets_path.join(MAPS_CONFIG_FILE);
 
     let core_contents = std::fs::read_to_string(&core_path)
         .expect("Failed to read settings/core.toml");
@@ -216,11 +238,18 @@ pub fn load_from_files() -> Settings {
     let keybindings: SectKeybindings = toml::from_str(&kb_contents)
         .expect("Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml");
 
+    let maps_contents = std::fs::read_to_string(&maps_path)
+        .expect("Failed to read maps.toml — please ensure assets/settings/maps.toml exists and is valid");
+
+    let maps: SectMaps = toml::from_str(&maps_contents)
+        .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
+
     Settings {
         core,
         app: user_app,
         logging: core_data.logging,
         keybindings,
+        maps,
     }
 }
 

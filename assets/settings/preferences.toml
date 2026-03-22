@@ -1,5 +1,6 @@
 [input]
 movement_speed_multiplier = 1.0
+smooth_movement = true
 
 [window]
 height = 768.0

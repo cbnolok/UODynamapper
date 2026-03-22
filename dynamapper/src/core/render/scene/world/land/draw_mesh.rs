@@ -459,9 +459,11 @@ pub fn sys_draw_spawned_land_chunks(
 
     // Dispatch uncached blocks to background loader (if any and not already pending).
     if !uncached_blocks.is_empty() && !locals.pending {
-        // Deduplicate
-        uncached_blocks.sort_unstable();
-        uncached_blocks.dedup();
+        // Deduplicate while preserving the priority order produced by the
+        // camera-distance sort above. This keeps nearby chunks at the front
+        // of the background-loading queue after teleports.
+        let mut seen_uncached_blocks: HashSet<MapBlockRelPos> = HashSet::with_capacity(uncached_blocks.len());
+        uncached_blocks.retain(|pos| seen_uncached_blocks.insert(*pos));
 
         let planes_arc = map_planes_r.0.clone();
         let plane_ref = planes_arc
