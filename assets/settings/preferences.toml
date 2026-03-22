@@ -11,11 +11,11 @@ sysmessages_scale = 1.0
 performance_overlay_scale = 1.0
 free_camera = false
 
-[performance]
-show_overlay = true
-frame_limit_enabled = true
-target_fps = 60
-
 [debug]
 map_render_wireframe = false
 hot_reload_enabled = false
+
+[performance]
+show_overlay = true
+frame_limit_enabled = false
+target_fps = 60
