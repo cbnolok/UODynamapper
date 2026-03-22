@@ -22,6 +22,13 @@ pub fn get_logs() -> Vec<InGameLog> {
         .collect()
 }
 
+pub fn len() -> usize {
+    IN_GAME_LOGS.get_or_init(|| RwLock::new(VecDeque::new()))
+        .read()
+        .unwrap()
+        .len()
+}
+
 pub fn clear_expired(max_age: Duration) {
     let mut logs = IN_GAME_LOGS.get_or_init(|| RwLock::new(VecDeque::new()))
         .write()

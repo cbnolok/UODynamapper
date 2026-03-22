@@ -135,50 +135,84 @@ pub fn update_cursor_behavior_text(
         ),
     >,
     mut node_q: Query<&mut Node, With<OverlayCursorBehaviorContainer>>,
+    mut last_show_overlay: Local<bool>,
+    mut last_mode: Local<Option<CursorMode>>,
+    mut last_cursor_pos: Local<Option<Vec2>>,
+    mut last_window_size: Local<Option<(f32, f32)>>,
+    mut last_camera_translation: Local<Option<Vec3>>,
+    mut last_player_map_id: Local<Option<u8>>,
 ) {
-    if let Ok(mut node) = node_q.single_mut() {
-        node.display = if settings.app.performance.show_overlay {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
-    if let Ok(mut mode_text) = mode_text_q.single_mut() {
-        mode_text.0 = format!(
-            "Cursor mode: {}",
-            match cursor.mode {
-                CursorMode::Select => "Select",
-                CursorMode::Teleport => "Teleport",
-            }
-        );
-    }
-
-    let cursor_position_label = match (windows.single().ok(), camera_q.single().ok(), player_q.single().ok()) {
-        (Some(window), Some((camera, camera_tf)), Some(player)) => {
-            let Some(cursor_pos) = window.cursor_position() else {
-                return;
+    let show_overlay = settings.app.performance.show_overlay;
+    if *last_show_overlay != show_overlay {
+        if let Ok(mut node) = node_q.single_mut() {
+            node.display = if show_overlay {
+                Display::Flex
+            } else {
+                Display::None
             };
+        }
+        *last_show_overlay = show_overlay;
+    }
 
-            match camera.viewport_to_world(camera_tf, cursor_pos).ok() {
-                Some(ray) if ray.direction.y.abs() > 1e-6 => {
-                    let t = -ray.origin.y / ray.direction.y;
-                    let hit = ray.origin + ray.direction * t;
-                    let cursor_x = hit.x.round().max(0.0) as u16;
-                    let cursor_y = hit.z.round().max(0.0) as u16;
-                    let map_id = player.current_pos.map(|p| p.m).unwrap_or(settings.core.world.start_p.m);
-                    let cursor_z = resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
-                        .unwrap_or(0);
-                    format!("Cursor position:\n[{}, {}, {}]", cursor_x, cursor_y, cursor_z)
+    if *last_mode != Some(cursor.mode) {
+        if let Ok(mut mode_text) = mode_text_q.single_mut() {
+            let next_text = format!(
+                "Cursor mode: {}",
+                match cursor.mode {
+                    CursorMode::Select => "Select",
+                    CursorMode::Teleport => "Teleport",
                 }
-                _ => "Cursor position:\n[NA, NA, NA]".to_string(),
+            );
+            if mode_text.0 != next_text {
+                mode_text.0 = next_text;
             }
         }
-        _ => "Cursor position:\n[NA, NA, NA]".to_string(),
-    };
+        *last_mode = Some(cursor.mode);
+    }
 
-    if let Ok(mut position_text) = position_text_q.single_mut() {
-        position_text.0 = cursor_position_label;
+    let window_size = windows.single().ok().map(|window| (window.width(), window.height()));
+    let camera_translation = camera_q.single().ok().map(|(_, camera_tf)| camera_tf.translation());
+    let cursor_pos = windows.single().ok().and_then(|window| window.cursor_position());
+    let player_map_id = player_q
+        .single()
+        .ok()
+        .and_then(|player| player.current_pos.map(|p| p.m));
+
+    let needs_rebuild = *last_cursor_pos != cursor_pos
+        || *last_window_size != window_size
+        || *last_camera_translation != camera_translation
+        || *last_player_map_id != player_map_id;
+
+    if needs_rebuild {
+        let cursor_position_label = match (cursor_pos, camera_q.single().ok(), player_q.single().ok()) {
+            (Some(cursor_pos), Some((camera, camera_tf)), Some(player)) => {
+                match camera.viewport_to_world(camera_tf, cursor_pos).ok() {
+                    Some(ray) if ray.direction.y.abs() > 1e-6 => {
+                        let t = -ray.origin.y / ray.direction.y;
+                        let hit = ray.origin + ray.direction * t;
+                        let cursor_x = hit.x.round().max(0.0) as u16;
+                        let cursor_y = hit.z.round().max(0.0) as u16;
+                        let map_id = player.current_pos.map(|p| p.m).unwrap_or(settings.core.world.start_p.m);
+                        let cursor_z = resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
+                            .unwrap_or(0);
+                        format!("Cursor position:\n[{}, {}, {}]", cursor_x, cursor_y, cursor_z)
+                    }
+                    _ => "Cursor position:\n[NA, NA, NA]".to_string(),
+                }
+            }
+            _ => "Cursor position:\n[NA, NA, NA]".to_string(),
+        };
+
+        if let Ok(mut position_text) = position_text_q.single_mut() {
+            if position_text.0 != cursor_position_label {
+                position_text.0 = cursor_position_label;
+            }
+        }
+
+        *last_cursor_pos = cursor_pos;
+        *last_window_size = window_size;
+        *last_camera_translation = camera_translation;
+        *last_player_map_id = player_map_id;
     }
 }
 

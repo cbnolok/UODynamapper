@@ -249,6 +249,8 @@ fn sys_update_worldmap_chunks_to_render(
     /// Maximum number of chunk entities spawned per frame to avoid burst stalls.
     const MAX_SPAWNS_PER_FRAME: usize = 512;
 
+    let mut current_chunk_count: i32 = land_chunk_count.0 as i32;
+
     let (mut player_instance, _player_transform) =
         player_q.single_mut().expect("More than 1 players?");
     let player_pos: Option<UOVec4> = player_instance.current_pos;
@@ -331,10 +333,13 @@ fn sys_update_worldmap_chunks_to_render(
                 );
             }
 
+            let mut despawned_count = 0i32;
             for (entity, tcm) in existing_chunks_q.iter() {
                 commands.entity(entity).despawn();
                 log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
+                despawned_count += 1;
             }
+            current_chunk_count = current_chunk_count.saturating_sub(despawned_count);
             // All chunks go into the pending queue, sorted center-out.
             locals.pending_spawns.clear();
             locals.pending_spawns.extend(required_chunks.iter());
@@ -343,6 +348,7 @@ fn sys_update_worldmap_chunks_to_render(
         } else {
             // Incremental update: despawn chunks no longer needed, queue new ones.
             let mut currently_spawned = HashSet::with_capacity(required_chunks.len());
+            let mut despawned_count = 0i32;
             for (entity, tcm) in existing_chunks_q.iter() {
                 let coords: (u32, u32) = (tcm.gx, tcm.gy);
                 if required_chunks.contains(&coords) {
@@ -350,8 +356,10 @@ fn sys_update_worldmap_chunks_to_render(
                 } else {
                     commands.entity(entity).despawn();
                     log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
+                    despawned_count += 1;
                 }
             }
+            current_chunk_count = current_chunk_count.saturating_sub(despawned_count);
 
             // Build sorted pending spawn list: only chunks not yet spawned.
             locals.pending_spawns.clear();
@@ -387,11 +395,11 @@ fn sys_update_worldmap_chunks_to_render(
         ));
         log_chunk_spawn(gx, gy, new_map_id);
     }
+    current_chunk_count += batch_size as i32;
     locals.pending_spawns.drain(..batch_size);
 
-    // Update chunk count: existing entities + what we just spawned - what we despawned.
-    // Simplest accurate count: count remaining entities.
-    land_chunk_count.0 = existing_chunks_q.iter().count() as u32;
+    // Update chunk count incrementally; this avoids a full ECS scan every frame.
+    land_chunk_count.0 = current_chunk_count.max(0) as u32;
 }
 
 /// Sort chunk coordinates so that chunks closest to the camera are first.

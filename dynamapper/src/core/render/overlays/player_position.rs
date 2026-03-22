@@ -85,6 +85,10 @@ pub fn update_player_position_text(
         ),
     >,
     mut last_scale: Local<f32>,
+    mut last_player_pos: Local<Option<Vec3>>,
+    mut last_camera_translation: Local<Option<Vec3>>,
+    mut last_window_size: Local<Option<(f32, f32)>>,
+    mut last_render_zoom: Local<f32>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     render_zoom: Res<RenderZoom>,
@@ -107,55 +111,78 @@ pub fn update_player_position_text(
     if let (Some(transform), Some((mut text, mut text_font, mut line_height))) =
         (player_query.single().ok(), text_query.single_mut().ok())
     {
-        let pos = transform.translation.to_uo_vec3();
-        // Compute viewport tile coverage by sampling the camera frustum
-        let mut viewport_tiles = "-- x --".to_string();
-        if let (Ok(window), Ok((cam, cam_tf))) = (windows.single(), camera_q.single()) {
-            let window_w = window.width();
-            let window_h = window.height();
-            let sample_points = [
-                Vec2::new(0.0, 0.0),
-                Vec2::new(window_w, 0.0),
-                Vec2::new(window_w, window_h),
-                Vec2::new(0.0, window_h),
-                Vec2::new(window_w * 0.5, 0.0),
-                Vec2::new(window_w, window_h * 0.5),
-                Vec2::new(window_w * 0.5, window_h),
-                Vec2::new(0.0, window_h * 0.5),
-            ];
+        let pos = transform.translation;
 
-            let mut min_x = f32::INFINITY;
-            let mut max_x = f32::NEG_INFINITY;
-            let mut min_z = f32::INFINITY;
-            let mut max_z = f32::NEG_INFINITY;
-            let mut any_hit = false;
+        let window_size = windows
+            .single()
+            .ok()
+            .map(|window| (window.width(), window.height()));
+        let camera_translation = camera_q
+            .single()
+            .ok()
+            .map(|(_, camera_tf)| camera_tf.translation());
 
-            for &screen_pt in &sample_points {
-                if let Ok(ray) = cam.viewport_to_world(cam_tf, screen_pt) {
-                    let dir_y = ray.direction.y;
-                    if dir_y.abs() > 1e-6 {
-                        let t = -ray.origin.y / dir_y;
-                        let hit = ray.origin + *ray.direction * t;
-                        min_x = min_x.min(hit.x);
-                        max_x = max_x.max(hit.x);
-                        min_z = min_z.min(hit.z);
-                        max_z = max_z.max(hit.z);
-                        any_hit = true;
+        let needs_rebuild = *last_player_pos != Some(pos)
+            || *last_window_size != window_size
+            || *last_camera_translation != camera_translation
+            || (render_zoom.0 - *last_render_zoom).abs() > f32::EPSILON;
+
+        if needs_rebuild {
+            let pos_uo = pos.to_uo_vec3();
+            let mut viewport_tiles = "-- x --".to_string();
+            if let (Some((window_w, window_h)), Ok((cam, cam_tf))) = (window_size, camera_q.single()) {
+                let sample_points = [
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(window_w, 0.0),
+                    Vec2::new(window_w, window_h),
+                    Vec2::new(0.0, window_h),
+                    Vec2::new(window_w * 0.5, 0.0),
+                    Vec2::new(window_w, window_h * 0.5),
+                    Vec2::new(window_w * 0.5, window_h),
+                    Vec2::new(0.0, window_h * 0.5),
+                ];
+
+                let mut min_x = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut min_z = f32::INFINITY;
+                let mut max_z = f32::NEG_INFINITY;
+                let mut any_hit = false;
+
+                for &screen_pt in &sample_points {
+                    if let Ok(ray) = cam.viewport_to_world(cam_tf, screen_pt) {
+                        let dir_y = ray.direction.y;
+                        if dir_y.abs() > 1e-6 {
+                            let t = -ray.origin.y / dir_y;
+                            let hit = ray.origin + *ray.direction * t;
+                            min_x = min_x.min(hit.x);
+                            max_x = max_x.max(hit.x);
+                            min_z = min_z.min(hit.z);
+                            max_z = max_z.max(hit.z);
+                            any_hit = true;
+                        }
                     }
+                }
+
+                if any_hit {
+                    let tiles_w = ((max_x - min_x).abs().ceil()) as i32;
+                    let tiles_h = ((max_z - min_z).abs().ceil()) as i32;
+                    viewport_tiles = format!("{} x {}", tiles_w, tiles_h);
                 }
             }
 
-            if any_hit {
-                let tiles_w = ((max_x - min_x).abs().ceil()) as i32;
-                let tiles_h = ((max_z - min_z).abs().ceil()) as i32;
-                viewport_tiles = format!("{} x {}", tiles_w, tiles_h);
+            let next_text = format!(
+                "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: {} tiles",
+                pos_uo.x, pos_uo.y, pos_uo.z, render_zoom.0, viewport_tiles
+            );
+            if text.0 != next_text {
+                text.0 = next_text;
             }
-        }
 
-        text.0 = format!(
-            "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: {} tiles",
-            pos.x, pos.y, pos.z, render_zoom.0, viewport_tiles
-        );
+            *last_player_pos = Some(pos);
+            *last_window_size = window_size;
+            *last_camera_translation = camera_translation;
+            *last_render_zoom = render_zoom.0;
+        }
 
         if scale_changed {
             text_font.font_size = FONT_SIZE * current_scale;

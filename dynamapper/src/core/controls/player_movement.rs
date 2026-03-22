@@ -130,7 +130,7 @@ fn parse_mouse_movement(
     let player_transform = player_q.single().ok()?;
 
     let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
-    
+
     // Find intersection with the player's current ground plane (Y-level)
     let ground_y = player_transform.translation.y;
     if ray.direction.y.abs() <= 0.0001 {
@@ -139,13 +139,13 @@ fn parse_mouse_movement(
 
     let t = (ground_y - ray.origin.y) / ray.direction.y;
     let world_pos = ray.origin + ray.direction * t;
-    
+
     let diff = world_pos - player_transform.translation;
     let diff_xz = Vec2::new(diff.x, diff.z);
-    
+
     // Use Chebyshev distance for "tiles" distance (max of X or Z difference)
     let dist = diff_xz.abs().max_element();
-    
+
     // Deadzone: stop if too close to target to prevent overshooting/vibrating.
     // In UO, you generally stop when you are "on" the tile.
     if dist <= 0.8 {
@@ -165,7 +165,7 @@ fn parse_mouse_movement(
         -1 => IVec2::new(1, -1),
         _ => IVec2::ZERO,
     };
-    
+
     if snapped_dir == IVec2::ZERO {
         return None;
     }
@@ -204,7 +204,7 @@ fn sys_player_move(
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 transform.translation += delta;
-                
+
                 // Sync the UO coordinate state
                 let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
                 let old_map = player.current_pos.map(|p| p.m);
@@ -213,8 +213,8 @@ fn sys_player_move(
                     chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
                 }
             }
-            // NOTE: Do NOT call cooldown.0.reset() for a Repeating timer if we want to preserve 
-            // the fractional 'overflow' of the timer when the multiplier is high. 
+            // NOTE: Do NOT call cooldown.0.reset() for a Repeating timer if we want to preserve
+            // the fractional 'overflow' of the timer when the multiplier is high.
             // Repeating timers automatically wrap around.
         }
 
@@ -224,7 +224,7 @@ fn sys_player_move(
                 // In UO a height step is often 1, but we scale it for Bevy.
                 let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(move_dir.vertical_dir as f32);
                 transform.translation.y += delta_y;
-                
+
                 // Sync the UO coordinate state
                 let current_map = player.current_pos.map(|p| p.m).unwrap_or(0);
                 let old_map = player.current_pos.map(|p| p.m);

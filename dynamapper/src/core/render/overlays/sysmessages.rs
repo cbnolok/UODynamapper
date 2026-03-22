@@ -20,22 +20,36 @@ impl Plugin for SystemMessagesPlugin {
 
 const LOG_MAX_AGE_SEC: u64 = 8;
 const MAX_VISIBLE_MESSAGES: usize = 5;
+const LOG_CLEANUP_INTERVAL_SEC: f32 = 0.5;
 
 fn sys_render_sysmessages(
     mut contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     settings: Res<crate::external_data::settings::Settings>,
+    time: Res<Time>,
+    mut last_cleanup_acc: Local<f32>,
+    mut cached_logs: Local<Vec<InGameLog>>,
+    mut cached_log_count: Local<usize>,
 ) {
     let Some(ctx) = get_egui_context_ready(&mut contexts, &egui_ui_camera) else {
         return;
     };
 
-    // 1. Cleanup old logs
-    ingame_sysmessage_logger::clear_expired(Duration::from_secs(LOG_MAX_AGE_SEC));
+    *last_cleanup_acc += time.delta_secs();
+    let mut refreshed_logs = false;
+    if *last_cleanup_acc >= LOG_CLEANUP_INTERVAL_SEC {
+        ingame_sysmessage_logger::clear_expired(Duration::from_secs(LOG_MAX_AGE_SEC));
+        *last_cleanup_acc = 0.0;
+        refreshed_logs = true;
+    }
 
-    // 2. Fetch current logs
-    let logs = ingame_sysmessage_logger::get_logs();
-    if logs.is_empty() {
+    let current_log_count = ingame_sysmessage_logger::len();
+    if refreshed_logs || *cached_log_count != current_log_count {
+        *cached_logs = ingame_sysmessage_logger::get_logs();
+        *cached_log_count = current_log_count;
+    }
+
+    if cached_logs.is_empty() {
         return;
     }
 
@@ -57,7 +71,7 @@ fn sys_render_sysmessages(
 
                     // If we exceed 5 messages, show the scrollbar
                     use egui::scroll_area::ScrollBarVisibility;
-                    if logs.len() <= MAX_VISIBLE_MESSAGES {
+                    if cached_logs.len() <= MAX_VISIBLE_MESSAGES {
                         scroll_area =
                             scroll_area.scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden);
                     } else {
@@ -68,7 +82,7 @@ fn sys_render_sysmessages(
                     let scale = settings.app.window.sysmessages_scale;
                     scroll_area.show(ui, |ui| {
                         ui.vertical(|ui| {
-                            for log in &logs {
+                            for log in cached_logs.iter() {
                                 render_log_line(ui, log, scale);
                             }
                         });

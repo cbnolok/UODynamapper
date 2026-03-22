@@ -360,6 +360,7 @@ pub fn update_performance_text(
     mut last_scale: Local<f32>,
     mut fps_acc: Local<f32>,
     mut last_fps_cached: Local<String>,
+    mut last_text_cached: Local<String>,
 ) {
     // Accumulate time and only refresh the FPS string periodically to make it readable.
     *fps_acc += time.delta().as_secs_f32();
@@ -380,6 +381,7 @@ pub fn update_performance_text(
 
     if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
         let mut fps = last_fps_cached.clone();
+        let mut should_rebuild_text = scale_changed || last_text_cached.is_empty();
         if *fps_acc >= FPS_TEXT_REFRESH_INTERVAL_SEC {
             fps = diagnostics
                 .get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -387,10 +389,30 @@ pub fn update_performance_text(
                 .map(|val| format!("{:.0}", val))
                 .unwrap_or_else(|| "--".to_string());
             *last_fps_cached = fps.clone();
+            should_rebuild_text = true;
             *fps_acc = 0.0;
         }
         if fps.is_empty() {
             fps = "--".to_string();
+        }
+
+        if !should_rebuild_text {
+            if let Ok(mut node) = node_query.single_mut() {
+                let target_display = if settings.app.performance.show_overlay {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+                if node.display != target_display {
+                    node.display = target_display;
+                }
+            }
+            if scale_changed {
+                text_font.font_size = FONT_SIZE * current_scale;
+                *line_height = LineHeight::Px(FONT_SIZE * current_scale);
+                *last_scale = current_scale;
+            }
+            return;
         }
 
         let entity_count = entities.len();
@@ -416,7 +438,7 @@ pub fn update_performance_text(
             gpu_elapsed, clipper_in, clipper_out, vert_invoc, frag_invoc,
         );
 
-        text.0 = format!(
+        let next_text = format!(
             "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n{}",
             fps,
             metrics.cpu_usage_total,
@@ -431,6 +453,11 @@ pub fn update_performance_text(
             entity_count,
             render_stats,
         );
+
+        if *last_text_cached != next_text {
+            text.0 = next_text.clone();
+            *last_text_cached = next_text;
+        }
 
         if scale_changed {
             text_font.font_size = FONT_SIZE * current_scale;

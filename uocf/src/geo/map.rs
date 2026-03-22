@@ -194,6 +194,7 @@ pub struct MapPlane {
     pub size_blocks: MapSizeBlocks,
     map_file_mul_rdr: BufReader<File>,
     cached_blocks: HashMap<MapBlockRelPos, CachedBlock>,
+    read_buffer: Vec<u8>,
 }
 
 pub struct CachedBlock {
@@ -383,6 +384,7 @@ impl MapPlane {
             size_blocks: map_size_blocks,
             map_file_mul_rdr,
             cached_blocks: HashMap::new(),
+            read_buffer: Vec::new(),
         };
         Ok(map_plane)
     }
@@ -466,7 +468,6 @@ impl MapPlane {
         }
 
         // Read each range of blocks in a single operation, then decode the batch in-place.
-        let mut read_buffer: Vec<u8> = Vec::new();
         for (range_start, range_end) in ranges {
             let start_idx = indexed_blocks[range_start].idx;
             let end_idx = indexed_blocks[range_end].idx;
@@ -483,9 +484,9 @@ impl MapPlane {
                 })?;
 
             let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
-            read_buffer.resize(buffer_len, 0);
+            self.read_buffer.resize(buffer_len, 0);
             self.map_file_mul_rdr
-                .read_exact(&mut read_buffer)
+                .read_exact(&mut self.read_buffer)
                 .wrap_err_with(|| {
                     format!(
                         "Failed to read {} blocks from offset {}",
@@ -493,7 +494,7 @@ impl MapPlane {
                     )
                 })?;
 
-            let raw_blocks: &[RawMapBlock] = cast_slice(&read_buffer);
+            let raw_blocks: &[RawMapBlock] = cast_slice(&self.read_buffer);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
                 if let std::collections::hash_map::Entry::Vacant(entry) =
