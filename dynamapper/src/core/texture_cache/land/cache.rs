@@ -13,7 +13,7 @@ use bevy::render::renderer::RenderDevice;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
-use bevy::tasks::ComputeTaskPool;
+use bevy::tasks::AsyncComputeTaskPool;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -98,6 +98,19 @@ pub struct LandTextureCache {
     pinned_visible_ids: HashSet<u16>,
     visible_hint_count: usize,
     pub pending_uploads: Vec<TextureArrayUpload>,
+    pub upload_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<TextureArrayUpload>>,
+    pub upload_sender: std::sync::mpsc::Sender<TextureArrayUpload>,
+}
+
+pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) {
+    let mut batch = Vec::new();
+    {
+        let receiver = cache.upload_receiver.lock().unwrap();
+        while let Ok(upload) = receiver.try_recv() {
+            batch.push(upload);
+        }
+    }
+    cache.pending_uploads.extend(batch);
 }
 
 impl LandTextureCache {
@@ -107,6 +120,7 @@ impl LandTextureCache {
         small_initial_layers: u32,
         big_initial_layers: u32,
     ) -> Self {
+        let (upload_sender, upload_receiver) = std::sync::mpsc::channel();
         Self {
             small: LandTextureArrayWrapper::new(
                 small_tex_image_handle,
@@ -122,6 +136,8 @@ impl LandTextureCache {
             pinned_visible_ids: HashSet::default(),
             visible_hint_count: 0,
             pending_uploads: Vec::new(),
+            upload_receiver: std::sync::Mutex::new(upload_receiver),
+            upload_sender,
         }
     }
 
@@ -168,24 +184,31 @@ impl LandTextureCache {
             return (entry.0, entry.1.layer);
         }
 
-        // Not resident: load metadata/data and attempt to allocate a cache layer.
-        let (texture_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d);
+        // Not resident: load metadata and attempt to allocate a cache layer.
+        let texture_size = texture_array::get_texmap_size_only(texture_id, &texmap_2d);
         let Some(layer) = self.allocate_layer(texture_size) else {
             // Expansion requested but not applied yet: render with black fallback layer.
             return (texture_size, FALLBACK_BLACK_LAYER);
         };
 
-        let tile_bytes: Vec<u8> = if lossy_compression {
-            texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
-        } else {
-            raw_rgba8.to_vec()
-        };
-        self.pending_uploads.push(TextureArrayUpload {
-            layer,
-            size: texture_size,
-            bytes: std::sync::Arc::new(tile_bytes),
-            lossy_compressed: lossy_compression,
+        let pool = AsyncComputeTaskPool::get();
+        let texmap_2d_arc = texmap_2d.clone();
+        let sender = self.upload_sender.clone();
+        let task = pool.spawn(async move {
+            let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
+            let tile_bytes = if lossy_compression {
+                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+            } else {
+                raw_rgba8.to_vec()
+            };
+            let _ = sender.send(TextureArrayUpload {
+                layer,
+                size: texture_size,
+                bytes: std::sync::Arc::new(tile_bytes),
+                lossy_compressed: lossy_compression,
+            });
         });
+        task.detach();
 
         // Update bookkeeping and return.
         self.update_bookkeeping(texture_id, texture_size, layer);
@@ -200,7 +223,7 @@ impl LandTextureCache {
         texmap_2d: Arc<TexMap2D>,
         lossy_compression: bool,
     ) {
-        let pool = ComputeTaskPool::get();
+        let pool = AsyncComputeTaskPool::get();
         let mut to_load = Vec::new();
 
         for &id in texture_ids {
@@ -213,79 +236,53 @@ impl LandTextureCache {
             return;
         }
 
-        // Determine if we should use multithreading based on the count (user threshold: 1000)
-        let use_mt = to_load.len() > 1000;
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!("Pre-caching {} textures (Async BC7={})...", to_load.len(), lossy_compression),
+        );
 
-        if use_mt {
-            console_logger::one(
-                None,
-                LogSev::Info,
-                LogAbout::Performance,
-                &format!("Par-compressing {} textures to BC7...", to_load.len()),
-            );
+        let mut skipped_due_to_pressure = 0usize;
 
-            // Collect raw data for all textures first (CPU work, can be parallelized too but mostly I/O or mem copy)
-            let raw_data: Vec<_> = to_load
-                .iter()
-                .map(|&id| {
-                    let (size, rgba8) = super::texture_array::get_texmap_raw_data(id, &texmap_2d);
-                    (id, size, rgba8)
-                })
-                .collect();
+        for id in to_load {
+            let size = super::texture_array::get_texmap_size_only(id, &texmap_2d);
+            let Some(layer) = self.allocate_layer(size) else {
+                skipped_due_to_pressure += 1;
+                continue;
+            };
 
-            // Compress in parallel
-            let compressed_results: Vec<_> = pool.scope(|s| {
-                for (_, size, rgba8) in &raw_data {
-                    s.spawn(async move {
-                        if lossy_compression {
-                            (
-                                super::texture_array::compress_rgba8_to_bc7(
-                                    rgba8.as_slice(),
-                                    *size,
-                                ),
-                                true,
-                            )
-                        } else {
-                            (rgba8.to_vec(), false)
-                        }
-                    });
-                }
-            });
-
-            // Associate layers and update bookkeeping
-            let mut skipped_due_to_pressure = 0usize;
-            for (i, (id, size, _)) in raw_data.into_iter().enumerate() {
-                let Some(layer) = self.allocate_layer(size) else {
-                    skipped_due_to_pressure += 1;
-                    continue;
+            self.update_bookkeeping(id, size, layer);
+            
+            let texmap_2d_arc = texmap_2d.clone();
+            let sender = self.upload_sender.clone();
+            let task = pool.spawn(async move {
+                let (_, rgba8) = super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc);
+                let tile_bytes = if lossy_compression {
+                    super::texture_array::compress_rgba8_to_bc7(rgba8.as_slice(), size)
+                } else {
+                    rgba8.to_vec()
                 };
-                let (bytes, compressed) = compressed_results[i].clone();
-                let upload = TextureArrayUpload {
+                let _ = sender.send(TextureArrayUpload {
                     layer,
                     size,
-                    bytes: std::sync::Arc::new(bytes),
-                    lossy_compressed: compressed,
-                };
-                self.pending_uploads.push(upload);
-                self.update_bookkeeping(id, size, layer);
-            }
+                    bytes: std::sync::Arc::new(tile_bytes),
+                    lossy_compressed: lossy_compression,
+                });
+            });
+            task.detach();
+        }
 
-            if skipped_due_to_pressure > 0 {
-                console_logger::one(
-                    None,
-                    LogSev::Warn,
-                    LogAbout::Performance,
-                    &format!(
-                        "Skipped precache for {} textures this frame due to cache pressure (expansion pending).",
-                        skipped_due_to_pressure
-                    ),
-                );
-            }
-        } else {
-            // Normal sequential loading
-            for id in to_load {
-                self.get_texture_size_layer(texmap_2d.clone(), id, lossy_compression);
-            }
+        if skipped_due_to_pressure > 0 {
+            console_logger::one(
+                None,
+                LogSev::Warn,
+                LogAbout::Performance,
+                &format!(
+                    "Skipped precache for {} textures this frame due to cache pressure (expansion pending).",
+                    skipped_due_to_pressure
+                ),
+            );
         }
     }
 
@@ -303,29 +300,30 @@ impl LandTextureCache {
             return None;
         }
 
-        // --- If not resident, perform CPU-side work ---
-
-        // 1. Get the new texture data and metadata.
-        let (texture_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, texmap_2d);
-
-        // 2. Allocate a layer, evicting an old one if necessary.
+        // --- If not resident, perform CPU-side metadata lookup ---
+        let texture_size = texture_array::get_texmap_size_only(texture_id, texmap_2d);
         let layer = self.allocate_layer(texture_size)?;
 
-        // 3. Optionally compress to BC7 before storing the upload bytes.
-        //    Compression is done once per texture; the result is cached implicitly
-        //    because the LRU keeps the entry alive until eviction.
-        let tile_bytes: Vec<u8> = if lossy_compression {
-            texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
-        } else {
-            raw_rgba8.to_vec()
-        };
-
-        Some(TextureArrayUpload {
-            layer,
-            size: texture_size,
-            bytes: std::sync::Arc::new(tile_bytes),
-            lossy_compressed: lossy_compression,
-        })
+        let pool = AsyncComputeTaskPool::get();
+        let texmap_2d_arc = texmap_2d.clone();
+        let sender = self.upload_sender.clone();
+        let task = pool.spawn(async move {
+            let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
+            let tile_bytes = if lossy_compression {
+                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+            } else {
+                raw_rgba8.to_vec()
+            };
+            let _ = sender.send(TextureArrayUpload {
+                layer,
+                size: texture_size,
+                bytes: std::sync::Arc::new(tile_bytes),
+                lossy_compressed: lossy_compression,
+            });
+        });
+        task.detach();
+        
+        None
     }
 
     /// Allocates a layer for a new texture, handling LRU eviction if the array is full.
@@ -488,18 +486,26 @@ impl LandTextureCache {
             .collect();
 
         for (texture_id, layer) in ids_to_restore {
-            let (_actual_size, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d);
-            let tile_bytes: Vec<u8> = if lossy_compression {
-                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), size)
-            } else {
-                raw_rgba8.to_vec()
-            };
-            self.pending_uploads.push(TextureArrayUpload {
-                size,
-                layer,
-                bytes: Arc::new(tile_bytes),
-                lossy_compressed: lossy_compression,
+            let actual_size = texture_array::get_texmap_size_only(texture_id, &texmap_2d);
+            let texmap_2d_arc = texmap_2d.clone();
+            
+            let pool = AsyncComputeTaskPool::get();
+            let sender = self.upload_sender.clone();
+            let task = pool.spawn(async move {
+                let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
+                let tile_bytes = if lossy_compression {
+                    texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), actual_size)
+                } else {
+                    raw_rgba8.to_vec()
+                };
+                let _ = sender.send(TextureArrayUpload {
+                    layer,
+                    size: actual_size,
+                    bytes: std::sync::Arc::new(tile_bytes),
+                    lossy_compressed: lossy_compression,
+                });
             });
+            task.detach();
         }
     }
 
@@ -641,58 +647,93 @@ pub fn sys_extract_texture_array_uploads(
 pub fn sys_clear_texture_array_uploads(mut cache: ResMut<LandTextureCache>) {
     cache.pending_uploads.clear();
 }
-pub struct StagingResources {
-    texture: wgpu::Texture,
-    buffer: wgpu::Buffer,
+#[derive(Default)]
+pub struct PersistentStaging {
+    pub buffer: Option<wgpu::Buffer>,
+    pub capacity: usize,
 }
 
 pub fn sys_render_upload_texture_array(
     mut uploads: ResMut<RenderTextureArrayUploads>,
     handles: Res<TextureArrayImageHandles>,
     gpu_images: Res<RenderAssets<GpuImage>>,
-    render_queue: ResMut<RenderQueue>,
+    render_queue: Res<RenderQueue>,
     render_device: Res<RenderDevice>,
-    mut bc7_encoder: Local<Option<block_compression::GpuBlockCompressor>>,
-    mut staging_cache: Local<HashMap<LandTextureSize, StagingResources>>,
+    mut staging: Local<PersistentStaging>,
 ) {
     if uploads.0.is_empty() {
         return;
     }
 
-    console_logger::one(
-        None,
-        LogSev::Debug,
-        LogAbout::Performance,
-        &format!(
-            "[DBG-render] Processing {} texture array uploads",
-            uploads.0.len()
-        ),
-    );
-
     let small_gpu = gpu_images.get(&handles.small);
     let big_gpu = gpu_images.get(&handles.big);
-
-    if small_gpu.is_none() {
-        console_logger::one(
-            None,
-            LogSev::Warn,
-            LogAbout::Performance,
-            "[DBG-render] small_gpu image NOT FOUND in RenderAssets",
-        );
-    }
-    if big_gpu.is_none() {
-        console_logger::one(
-            None,
-            LogSev::Warn,
-            LogAbout::Performance,
-            "[DBG-render] big_gpu image NOT FOUND in RenderAssets",
-        );
-    }
 
     if small_gpu.is_none() && big_gpu.is_none() {
         uploads.0.clear();
         return;
     }
+
+    let device = render_device.wgpu_device();
+
+    let mut required_capacity = 0;
+    for upload in &uploads.0 {
+        let (width, height) = upload.size.dimensions();
+        let row_bytes = if upload.lossy_compressed {
+            (width.div_ceil(4) * 16) as usize
+        } else {
+            (width * 4) as usize
+        };
+        let padded_row_bytes = (row_bytes + 255) & !255;
+        let rows = if upload.lossy_compressed {
+            height.div_ceil(4) as usize
+        } else {
+            height as usize
+        };
+        required_capacity += padded_row_bytes * rows;
+    }
+
+    if staging.capacity < required_capacity {
+        let new_cap = required_capacity.next_power_of_two().max(4 * 1024 * 1024);
+        staging.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Persistent Texture Staging Buffer"),
+            size: new_cap as u64,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        staging.capacity = new_cap;
+    }
+
+    let mut staging_bytes = Vec::with_capacity(required_capacity);
+
+    for upload in &uploads.0 {
+        let (width, height) = upload.size.dimensions();
+        let row_bytes = if upload.lossy_compressed {
+            (width.div_ceil(4) * 16) as usize
+        } else {
+            (width * 4) as usize
+        };
+        let padded_row_bytes = (row_bytes + 255) & !255;
+        let rows = if upload.lossy_compressed {
+            height.div_ceil(4) as usize
+        } else {
+            height as usize
+        };
+
+        for r in 0..rows {
+            let src_start = r * row_bytes;
+            let src_end = src_start + row_bytes;
+            staging_bytes.extend_from_slice(&upload.bytes[src_start..src_end]);
+            staging_bytes.resize(staging_bytes.len() + (padded_row_bytes - row_bytes), 0);
+        }
+    }
+
+    render_queue.write_buffer(staging.buffer.as_ref().unwrap(), 0, &staging_bytes);
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Batched Texture Uploads Encoder"),
+    });
+
+    let mut current_offset = 0;
 
     use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
@@ -706,137 +747,31 @@ pub fn sys_render_upload_texture_array(
         };
 
         let (width, height) = upload.size.dimensions();
+        let row_bytes = if upload.lossy_compressed {
+            (width.div_ceil(4) * 16) as usize
+        } else {
+            (width * 4) as usize
+        };
+        let padded_row_bytes = (row_bytes + 255) & !255;
+        let rows = if upload.lossy_compressed {
+            height.div_ceil(4) as usize
+        } else {
+            height as usize
+        };
 
-        if upload.lossy_compressed {
-            // --- GPU-based BC7 Compression ---
-            let device = render_device.wgpu_device();
-            // Bevy's RenderQueue derefs to the underlying wgpu::Queue
-            let queue = &render_queue;
+        let offset = current_offset as u64;
+        current_offset += padded_row_bytes * rows;
 
-            if bc7_encoder.is_none() {
-                // block_compression 0.7 needs device AND queue in new()
-                // Use explicit wgpu types to avoid mismatch between bevy/block_compression
-                // Reach deep into Bevy's wrappers to get an owned wgpu::Queue
-                let wgpu_device = render_device.wgpu_device().clone();
-                let wgpu_queue = (***render_queue).clone();
-                *bc7_encoder = Some(block_compression::GpuBlockCompressor::new(
-                    wgpu_device,
-                    wgpu_queue.into_inner(),
-                ));
-            }
-            let compressor = bc7_encoder.as_mut().unwrap();
-
-            // --- GPU-based BC7 Compression ---
-            let variant = block_compression::CompressionVariant::BC7(
-                block_compression::BC7Settings::alpha_basic(),
-            );
-
-            // Recycle or create the source texture and destination buffer for this size
-            let resources = staging_cache.entry(upload.size).or_insert_with(|| {
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("BC7 Compression Source Staging"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm, // BC7 needs raw data, not Srgb
-                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                });
-
-                let required_buffer_size = variant.blocks_byte_size(width, height);
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("BC7 Compression Destination Staging"),
-                    size: required_buffer_size as u64,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-
-                StagingResources { texture, buffer }
-            });
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &resources.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &**upload.bytes,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(width * 4),
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: staging.buffer.as_ref().unwrap(),
+                layout: TexelCopyBufferLayout {
+                    offset,
+                    bytes_per_row: Some(padded_row_bytes as u32),
                     rows_per_image: Some(height),
                 },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            let src_view = resources
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-
-            // Add task to compressor
-            compressor.add_compression_task(
-                variant,
-                &src_view,
-                width,
-                height,
-                &resources.buffer,
-                None,
-                None,
-            );
-
-            // Execute compression on GPU
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("BC7 Compression Encoder"),
-            });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("BC7 Compression Pass"),
-                    timestamp_writes: None,
-                });
-                compressor.compress(&mut pass);
-            }
-
-            // Copy from staging buffer to final texture array
-            encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &resources.buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(variant.bytes_per_row(width)),
-                        rows_per_image: Some(height),
-                    },
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &*gpu_image.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: upload.layer,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            queue.submit(Some(encoder.finish()));
-        } else {
-            // --- Direct Copy (uncompressed) ---
-            let destination = TexelCopyTextureInfo {
+            },
+            TexelCopyTextureInfo {
                 texture: &*gpu_image.texture,
                 mip_level: 0,
                 origin: Origin3d {
@@ -844,21 +779,15 @@ pub fn sys_render_upload_texture_array(
                     y: 0,
                     z: upload.layer,
                 },
-                aspect: bevy::render::render_resource::TextureAspect::All,
-            };
-
-            let data_layout = TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            };
-
-            let extent = Extent3d {
+                aspect: wgpu::TextureAspect::All,
+            },
+            Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
-            };
-            render_queue.write_texture(destination, &**upload.bytes, data_layout, extent);
-        }
+            },
+        );
     }
+
+    render_queue.submit(Some(encoder.finish()));
 }

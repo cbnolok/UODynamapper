@@ -33,6 +33,7 @@ impl Plugin for LandTextureCachePlugin {
         // First of the next frame, the previous frame's uploads have already been consumed by Extract.
         // Clearing here ensures Update fills a fresh list for the current frame.
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
+        app.add_systems(Update, cache::sys_drain_texture_compression_tasks);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
             return;
@@ -200,10 +201,7 @@ pub fn sys_setup_terrain_cache(
         texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
         texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
     ));
-    // Store the compression setting so the per-tile upload path can encode BC7 when enabled.
-    cmd.insert_resource(cache::LandTextureCacheSettings {
-        lossy_texture_compression: lossy,
-    });
+
 
     use crate::core::render::scene::world::land::{
         draw_mesh::SharedLandMaterial,
@@ -296,8 +294,10 @@ fn sys_apply_texture_array_expansion(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
-    cache_settings_r: Res<cache::LandTextureCacheSettings>,
+    settings: Res<crate::external_data::settings::Settings>,
 ) {
+    let lossy_compression = settings.core.graphics.lossy_texture_compression;
+
     let (small_req, big_req) = cache_r.take_resize_requests();
     if small_req.is_none() && big_req.is_none() {
         return;
@@ -316,7 +316,7 @@ fn sys_apply_texture_array_expansion(
                 "land_small_texture_cache",
                 &mut images,
                 LandTextureSize::Small,
-                cache_settings_r.lossy_texture_compression,
+                lossy_compression,
                 new_layers,
             );
             handles_r.small = new_handle.clone();
@@ -324,7 +324,7 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Small,
                 texmap_2d_r.0.clone(),
-                cache_settings_r.lossy_texture_compression,
+                lossy_compression,
             );
             resized_small = Some(new_layers);
         }
@@ -340,7 +340,7 @@ fn sys_apply_texture_array_expansion(
                 "land_big_texture_cache",
                 &mut images,
                 LandTextureSize::Big,
-                cache_settings_r.lossy_texture_compression,
+                lossy_compression,
                 new_layers,
             );
             handles_r.big = new_handle.clone();
@@ -348,7 +348,7 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Big,
                 texmap_2d_r.0.clone(),
-                cache_settings_r.lossy_texture_compression,
+                lossy_compression,
             );
             resized_big = Some(new_layers);
         }

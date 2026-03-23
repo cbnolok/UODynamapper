@@ -39,7 +39,7 @@ dashmap = { version = "6", default-features = false }
 #parking_lot = "0.12"
 #smallvec = "1"
 # BC7 texture compression for GPU VRAM reduction (GPU compute).
-block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
+#block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
 # System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
 # fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
@@ -48,6 +48,8 @@ tracing = "0.1.44"
 mimalloc = { version = "*", features = ["v3"] }
 #jemallocator = "0.5.4"
 multiversion = "0.8.0"
+intel_tex_2 = "0.5.0"
+futures-lite = "2.6.1"
 
 [dependencies.bevy]
 version = "0.18.1"
@@ -100,9 +102,9 @@ features = [
 
   # --- Low-level Tunables ---
   "std",                 # Allows access to the std crate.
-  "async-io",            # Use async-io’s implementation of block_on instead of futures-lite’s implementation.
+  #"async-io",            # Use async-io’s implementation of block_on instead of futures-lite’s implementation.
   "async_executor",      # Uses async-executor as a task execution backend.
-  #"multi_threaded",      # Enables multithreaded parallelism in the engine.
+  "multi_threaded",      # Enables multithreaded parallelism in the engine.
   "custom_cursor",       # Enable winit custom cursor support
   #"critical-section",   # critical-section provides the building blocks for synchronization primitives on all platforms.
   #"libm",               # Uses the libm maths library instead of the one provided in std and core.

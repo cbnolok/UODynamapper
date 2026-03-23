@@ -163,6 +163,21 @@ const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C; // Sea floor
 
 /// Try to get actual texture for provided texture_id.
 /// If invalid, return UNUSED texture.
+pub fn get_texmap_size_only(
+    texture_id: u16,
+    texmap_2d_res: &TexMap2D,
+) -> LandTextureSize {
+    if let Some(element) = texmap_2d_res.element(texture_id as usize) {
+        return *element.size();
+    }
+    
+    let err_size = *texmap_2d_res
+        .element(DEFAULT_ERROR_TEXTURE_ID as usize)
+        .unwrap()
+        .size();
+    err_size
+}
+
 pub fn get_texmap_raw_data(
     texture_id: u16,
     texmap_2d_res: &TexMap2D,
@@ -204,7 +219,15 @@ pub fn get_texmap_raw_data(
 // 3. Optional BC7 Compression
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Returns raw RGBA8 data. BC7 compression is now handled by the renderer via GPU compute.
-pub fn compress_rgba8_to_bc7(rgba8_data: &[u8], _tex_size: LandTextureSize) -> Vec<u8> {
-    rgba8_data.to_vec()
+/// Returns BC7 compressed bytes. BC7 compression is perfectly handled by intel_tex_2 on the CPU.
+pub fn compress_rgba8_to_bc7(rgba8_data: &[u8], tex_size: LandTextureSize) -> Vec<u8> {
+    let (width, height) = tex_size.dimensions();
+    let surface = intel_tex_2::RgbaSurface {
+        data: rgba8_data,
+        width,
+        height,
+        stride: width * 4,
+    };
+    let settings = intel_tex_2::bc7::alpha_basic_settings();
+    intel_tex_2::bc7::compress_blocks(&settings, &surface)
 }

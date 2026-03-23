@@ -72,6 +72,14 @@ pub struct AtlasUpload {
     pub data: Vec<u8>,
 }
 
+#[derive(Default, Clone, Copy, Debug)]
+pub struct LayerDirtyRegion {
+    pub min_x: u32,
+    pub min_y: u32,
+    pub max_x: u32,
+    pub max_y: u32,
+}
+
 /// Resource managing the paged metadata atlas.
 /// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
@@ -87,8 +95,10 @@ pub struct TileAtlas {
     /// Monotonically increasing counter for LRU tracking.
     current_tick: u64,
 
-    /// Collects dirty regions to be uploaded to the GPU via `write_texture`.
-    pending_uploads: Vec<AtlasUpload>,
+    /// CPU mirror of mapped layer data.
+    pub cpu_mirror: std::collections::HashMap<u32, Vec<Rg16u>>,
+    /// Tracks modified bounding box per layer.
+    pub dirty_regions: std::collections::HashMap<u32, LayerDirtyRegion>,
     /// Staging buffer swapped into place by the clear system so that
     /// the extract system can take ownership without cloning.
     extract_staging: Vec<AtlasUpload>,
@@ -112,7 +122,8 @@ impl TileAtlas {
             layer_to_page: Default::default(),
             layer_access_tick: Default::default(),
             current_tick: 0,
-            pending_uploads: Vec::new(),
+            cpu_mirror: Default::default(),
+            dirty_regions: Default::default(),
             extract_staging: Vec::new(),
             requested_expansion: None,
             max_layers_limit,
@@ -194,23 +205,31 @@ impl TileAtlas {
         (layer, evicted_page)
     }
 
-    /// Enqueues a block of Rg16u metadata for upload to a specific layer and offset.
-    /// This registers a `write_texture` operation that will be executed in the render world.
     pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
-        let size_bytes = std::mem::size_of_val(texels);
-        let mut data = vec![0u8; size_bytes];
-        data.copy_from_slice(bytemuck::cast_slice(texels));
-
-        self.pending_uploads.push(AtlasUpload {
-            layer,
-            offset,
-            size,
-            data,
+        let page_width = self.params.page_texels.x;
+        
+        let mirror = self.cpu_mirror.entry(layer).or_insert_with(|| {
+            vec![Rg16u { r: 0, g: 0 }; (page_width * self.params.page_texels.y) as usize]
         });
-    }
+        
+        for y in 0..size.y {
+            let src_start = (y * size.x) as usize;
+            let src_end = src_start + size.x as usize;
+            let dst_start = ((offset.y + y) * page_width + offset.x) as usize;
+            let dst_end = dst_start + size.x as usize;
+            mirror[dst_start..dst_end].copy_from_slice(&texels[src_start..src_end]);
+        }
 
-    pub fn drain_pending_uploads(&mut self) -> Vec<AtlasUpload> {
-        std::mem::take(&mut self.pending_uploads)
+        let region = self.dirty_regions.entry(layer).or_insert(LayerDirtyRegion {
+            min_x: u32::MAX,
+            min_y: u32::MAX,
+            max_x: 0,
+            max_y: 0,
+        });
+        region.min_x = region.min_x.min(offset.x);
+        region.min_y = region.min_y.min(offset.y);
+        region.max_x = region.max_x.max(offset.x + size.x);
+        region.max_y = region.max_y.max(offset.y + size.y);
     }
 
     /// Number of currently mapped pages.
@@ -227,6 +246,8 @@ impl TileAtlas {
         self.layer_access_tick.clear();
         self.current_tick = 0;
         self.params.page_to_layer = [bevy::math::UVec4::MAX; 64];
+        self.cpu_mirror.clear();
+        self.dirty_regions.clear();
     }
 
     /// Applies a new layer count after the GPU image has been replaced.
@@ -264,15 +285,38 @@ pub fn sys_extract_atlas_uploads(
     }
 }
 
-/// System that moves pending_uploads into the staging buffer for extract,
-/// then clears pending_uploads for the next frame.
 pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
-    // Move current pending into staging (reuses staging Vec's capacity).
-    let new_staging = std::mem::take(&mut tile_atlas.pending_uploads);
-    let old_staging = std::mem::replace(&mut tile_atlas.extract_staging, new_staging);
-    // Reuse old staging's capacity for next frame's pending_uploads.
-    tile_atlas.pending_uploads = old_staging;
-    tile_atlas.pending_uploads.clear();
+    let mut extracted_uploads = std::mem::take(&mut tile_atlas.extract_staging);
+    extracted_uploads.clear();
+
+    let page_width = tile_atlas.params.page_texels.x;
+    
+    for (&layer, region) in &tile_atlas.dirty_regions {
+        let width = region.max_x.saturating_sub(region.min_x);
+        let height = region.max_y.saturating_sub(region.min_y);
+        if width == 0 || height == 0 { continue; }
+        
+        let mirror = &tile_atlas.cpu_mirror[&layer];
+        let size_bytes = (width * height * 4) as usize;
+        let mut data = Vec::with_capacity(size_bytes);
+        
+        for y in region.min_y..region.max_y {
+            let start = (y * page_width + region.min_x) as usize;
+            let end = start + width as usize;
+            let row_slice: &[u8] = bytemuck::cast_slice(&mirror[start..end]);
+            data.extend_from_slice(row_slice);
+        }
+        
+        extracted_uploads.push(AtlasUpload {
+            layer,
+            offset: UVec2::new(region.min_x, region.min_y),
+            size: UVec2::new(width, height),
+            data,
+        });
+    }
+
+    tile_atlas.dirty_regions.clear();
+    tile_atlas.extract_staging = extracted_uploads;
 }
 
 /// System running in the Render world that drains `RenderAtlasUploads` and issues

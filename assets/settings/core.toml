@@ -13,7 +13,7 @@ hide_player = false
 
 [core.graphics]
 # Use BC7 texture compression to save VRAM
-lossy_texture_compression = true
+lossy_texture_compression = false
 # Lower frame rate when the window is not focused
 reduce_unfocused_fps = true
 texture_filtering = 0

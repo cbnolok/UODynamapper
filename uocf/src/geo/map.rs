@@ -31,7 +31,8 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::Section;
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
-use std::collections::HashMap;
+use hashbrown::HashMap;
+use nohash_hasher::BuildNoHashHasher;
 use std::fs::File;
 use std::io::{BufReader, SeekFrom, prelude::*};
 use bytemuck::{cast_slice, Pod, Zeroable};
@@ -194,7 +195,8 @@ pub struct MapPlane {
     pub size_blocks: MapSizeBlocks,
     map_file_path: PathBuf,
     map_file_mul_rdr: BufReader<File>,
-    cached_blocks: HashMap<MapBlockRelPos, CachedBlock>,
+    cached_blocks: HashMap<u64, CachedBlock, BuildNoHashHasher<u64>>,
+    cached_blocks_bitmask: Vec<u64>,
     read_buffer: Vec<u8>,
 }
 
@@ -207,7 +209,8 @@ impl MapPlane {
     pub const EXTRA_BLOCKS_TO_CACHE_PER_SIDE: u32 = 8;
 
     pub fn block(&mut self, pos: MapBlockRelPos) -> Option<&MapBlock> {
-        if let Some(cached) = self.cached_blocks.get_mut(&pos) {
+        let key = pos.as_u64();
+        if let Some(cached) = self.cached_blocks.get_mut(&key) {
             cached.last_accessed = std::time::Instant::now();
             // We have to return an immutable borrow to the block now
             let block_ptr = &cached.block as *const MapBlock;
@@ -218,7 +221,8 @@ impl MapPlane {
     }
 
     pub fn block_as_mut(&mut self, pos: MapBlockRelPos) -> Option<&mut MapBlock> {
-        if let Some(cached) = self.cached_blocks.get_mut(&pos) {
+        let key = pos.as_u64();
+        if let Some(cached) = self.cached_blocks.get_mut(&key) {
             cached.last_accessed = std::time::Instant::now();
             Some(&mut cached.block)
         } else {
@@ -229,8 +233,21 @@ impl MapPlane {
     pub fn evict_idle_blocks(&mut self, timeout: std::time::Duration) -> usize {
         let now = std::time::Instant::now();
         let initial_len = self.cached_blocks.len();
-        self.cached_blocks.retain(|_, cached| {
-            now.duration_since(cached.last_accessed) <= timeout // Keep if newer than timeout
+        let h = self.size_blocks.height;
+        let bitmask = &mut self.cached_blocks_bitmask;
+        self.cached_blocks.retain(|key, cached| {
+            let keep = now.duration_since(cached.last_accessed) <= timeout;
+            if !keep {
+                let x = (*key & 0xFFFFFFFF) as u32;
+                let y = (*key >> 32) as u32;
+                let idx = (x * h) + y;
+                let word = (idx / 64) as usize;
+                let bit = (idx % 64) as usize;
+                if word < bitmask.len() {
+                    bitmask[word] &= !(1 << bit);
+                }
+            }
+            keep
         });
         initial_len - self.cached_blocks.len()
     }
@@ -241,8 +258,15 @@ impl MapPlane {
     }
 
     /// Returns true if the block at `pos` is already loaded in the in-memory cache.
+    #[inline(always)]
     pub fn is_block_cached(&self, pos: &MapBlockRelPos) -> bool {
-        self.cached_blocks.contains_key(pos)
+        let idx = (pos.x * self.size_blocks.height) + pos.y;
+        let word_idx = (idx / 64) as usize;
+        if word_idx >= self.cached_blocks_bitmask.len() {
+            return false;
+        }
+        let bit_idx = (idx % 64) as usize;
+        (self.cached_blocks_bitmask[word_idx] & (1 << bit_idx)) != 0
     }
 
     /// Inserts blocks that were loaded externally (e.g. by a background thread)
@@ -250,10 +274,16 @@ impl MapPlane {
     pub fn insert_preloaded_blocks(&mut self, blocks: Vec<(MapBlockRelPos, MapBlock)>) {
         let now = std::time::Instant::now();
         for (pos, block) in blocks {
-            self.cached_blocks.entry(pos).or_insert(CachedBlock {
-                block,
-                last_accessed: now,
-            });
+            let key = pos.as_u64();
+            if let hashbrown::hash_map::Entry::Vacant(entry) = self.cached_blocks.entry(key) {
+                entry.insert(CachedBlock { block, last_accessed: now });
+                let idx = (pos.x * self.size_blocks.height) + pos.y;
+                let word_idx = (idx / 64) as usize;
+                let bit_idx = (idx % 64) as usize;
+                if word_idx < self.cached_blocks_bitmask.len() {
+                    self.cached_blocks_bitmask[word_idx] |= 1 << bit_idx;
+                }
+            }
         }
     }
 }
@@ -278,6 +308,12 @@ impl MapCellCoords {
 pub struct MapBlockRelPos {
     pub x: u32,
     pub y: u32,
+}
+impl MapBlockRelPos {
+    #[inline(always)]
+    pub fn as_u64(&self) -> u64 {
+        (self.x as u64) | ((self.y as u64) << 32)
+    }
 }
 // Position of a cell relative to the parent block.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
@@ -418,7 +454,11 @@ impl MapPlane {
             size_blocks: map_size_blocks,
             map_file_path: map_file_mul_path.clone(),
             map_file_mul_rdr,
-            cached_blocks: HashMap::new(),
+            cached_blocks: HashMap::with_hasher(BuildNoHashHasher::default()),
+            cached_blocks_bitmask: vec![
+                0;
+                (((map_size_blocks.width * map_size_blocks.height) + 63) / 64) as usize
+            ],
             read_buffer: Vec::new(),
         };
         Ok(map_plane)
@@ -445,7 +485,7 @@ impl MapPlane {
         for x in block_x_start..=block_x_end {
             for y in block_y_start..=block_y_end {
                 let p = MapBlockRelPos { x, y };
-                if !self.cached_blocks.contains_key(&p) {
+                if !self.cached_blocks.contains_key(&p.as_u64()) {
                     ret.push(p);
                     //println!("Block {:?} marked to be LOADED", p);
                 } else {
@@ -532,8 +572,8 @@ impl MapPlane {
             let raw_blocks: &[RawMapBlock] = cast_slice(&self.read_buffer);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    self.cached_blocks.entry(block_pos)
+                if let hashbrown::hash_map::Entry::Vacant(entry) =
+                    self.cached_blocks.entry(block_pos.as_u64())
                 {
                     let mut new_block = MapBlock::default();
                     MapBlock::from_raw_block(raw_block, &mut new_block)?;
@@ -542,6 +582,13 @@ impl MapPlane {
                         block: new_block,
                         last_accessed: std::time::Instant::now(),
                     });
+                    
+                    let idx = (block_pos.x * self.size_blocks.height) + block_pos.y;
+                    let word_idx = (idx / 64) as usize;
+                    let bit_idx = (idx % 64) as usize;
+                    if word_idx < self.cached_blocks_bitmask.len() {
+                        self.cached_blocks_bitmask[word_idx] |= 1 << bit_idx;
+                    }
                 }
             }
         }

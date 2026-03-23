@@ -120,6 +120,9 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 
 use crate::core::render::scene::world::land::tile_atlas::{TileAtlas, Rg16u};
 
+#[derive(Component)]
+pub struct PendingTextureBake;
+
 #[derive(Resource)]
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
@@ -171,7 +174,7 @@ fn enqueue_chunk_to_atlas_and_preload(
     texture_lookup_cache: &mut HashMap<u16, (LandTextureSize, u32)>,
     texels_buf: &mut Vec<Rg16u>,
     lossy_compression: bool,
-) {
+) -> bool {
     let chunk_origin_tile_units_x =
         chunk_data_ref.chunk_origin_chunk_units_x * TILE_NUM_PER_CHUNK_DIM;
     let chunk_origin_tile_units_z =
@@ -183,13 +186,14 @@ fn enqueue_chunk_to_atlas_and_preload(
     };
     let Some(block) = blocks_data_map.get(&chunk_rel_coords) else {
         // Block not available (e.g. at map edge or missing data) — skip silently.
-        return;
+        return false;
     };
 
     // NOTE: texture_lookup_cache is NOT cleared here — it persists across
     // all sub-blocks within a frame, ensuring consistent layer assignments
     // and avoiding redundant get_texture_size_layer lookups.
     texels_buf.clear();
+    let mut has_fallback = false;
 
     for cell in &block.cells {
         let (texture_size, layer) = *texture_lookup_cache.entry(cell.id).or_insert_with(|| {
@@ -199,6 +203,10 @@ fn enqueue_chunk_to_atlas_and_preload(
                 lossy_compression,
             )
         });
+
+        if layer == 0 {
+            has_fallback = true;
+        }
 
         let tex_size_bits = match texture_size {
             LandTextureSize::Small => 0,
@@ -231,6 +239,8 @@ fn enqueue_chunk_to_atlas_and_preload(
         UVec2::new(TILE_NUM_PER_CHUNK_DIM, TILE_NUM_PER_CHUNK_DIM),
         texels_buf,
     );
+
+    has_fallback
 }
 
 // ---- HELPER TRAITS / UTILS
@@ -253,6 +263,7 @@ struct LandChunkConstructionData {
     chunk_origin_chunk_units_x: u32,
     chunk_origin_chunk_units_z: u32,
     chunk_scale: u32,
+    has_mesh: bool,
 }
 
 /// Local state for the background chunk-data loader.
@@ -280,11 +291,11 @@ pub fn sys_draw_spawned_land_chunks(
     scene_state_data_r: Res<SceneStateData>,
     world_geo_data_r: Res<WorldGeoData>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
-    chunk_q: Query<(Entity, &LCMesh), Without<Mesh3d>>,
+    chunk_q: Query<(Entity, &LCMesh, Has<Mesh3d>), Or<(Without<Mesh3d>, With<PendingTextureBake>)>>,
     land_mesh_handles_r: Res<LandMeshHandles>,
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
-    cache_settings_r: Res<crate::core::texture_cache::land::cache::LandTextureCacheSettings>,
+    settings: Res<crate::external_data::settings::Settings>,
     mut locals: Local<DrawMeshLocals>,
 ) {
     let current_map_id = scene_state_data_r.map_id;
@@ -299,7 +310,7 @@ pub fn sys_draw_spawned_land_chunks(
     // accumulated texture pins so the LRU can reclaim layers.
     {
         // Grab the current scale from any chunk in the query, or 0 if empty.
-        let current_scale = chunk_q.iter().next().map_or(0, |(_, lc)| lc.scale);
+        let current_scale = chunk_q.iter().next().map_or(0, |(_, lc, _)| lc.scale);
         if current_scale != 0 && current_scale != locals.last_scale {
             cache_r.clear_pinned_textures();
             locals.deferred_targets.clear();
@@ -340,11 +351,12 @@ pub fn sys_draw_spawned_land_chunks(
 
     let mut targets: Vec<LandChunkConstructionData> = chunk_q
         .iter()
-        .map(|(entity, chunk_data)| LandChunkConstructionData {
+        .map(|(entity, chunk_data, has_mesh)| LandChunkConstructionData {
             entity: Some(entity),
             chunk_origin_chunk_units_x: chunk_data.gx,
             chunk_origin_chunk_units_z: chunk_data.gy,
             chunk_scale: chunk_data.scale,
+            has_mesh,
         })
         .collect();
 
@@ -424,27 +436,36 @@ pub fn sys_draw_spawned_land_chunks(
                     let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
                     if !plane_ref.is_block_cached(&pos) {
                         all_cached = false;
-                        uncached_blocks.push(pos);
+                        if !locals.pending {
+                            uncached_blocks.push(pos);
+                        } else {
+                            break;
+                        }
                     }
+                }
+                if !all_cached && locals.pending {
+                    break;
                 }
             }
 
             // Also dispatch border ring blocks to the loader (but don't
             // gate readiness on them).
-            for sx in -1..=scale {
-                for sz in -1..=scale {
-                    // Skip the interior — already handled above.
-                    if sx >= 0 && sx < scale && sz >= 0 && sz < scale {
-                        continue;
-                    }
-                    let bx = gx as i32 + sx;
-                    let bz = gy as i32 + sz;
-                    if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
-                        continue;
-                    }
-                    let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
-                    if !plane_ref.is_block_cached(&pos) {
-                        uncached_blocks.push(pos);
+            if !locals.pending {
+                for sx in -1..=scale {
+                    for sz in -1..=scale {
+                        // Skip the interior — already handled above.
+                        if sx >= 0 && sx < scale && sz >= 0 && sz < scale {
+                            continue;
+                        }
+                        let bx = gx as i32 + sx;
+                        let bz = gy as i32 + sz;
+                        if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
+                            continue;
+                        }
+                        let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
+                        if !plane_ref.is_block_cached(&pos) {
+                            uncached_blocks.push(pos);
+                        }
                     }
                 }
             }
@@ -590,7 +611,7 @@ pub fn sys_draw_spawned_land_chunks(
     cache_r.precache_textures_parallel(
         ids.as_slice(),
         texmap_2d_r.0.clone(),
-        cache_settings_r.lossy_texture_compression,
+        settings.core.graphics.lossy_texture_compression,
     );
 
     let build_time_start = Instant::now();
@@ -600,6 +621,8 @@ pub fn sys_draw_spawned_land_chunks(
         let gx = chunk_data.chunk_origin_chunk_units_x as i32;
         let gy = chunk_data.chunk_origin_chunk_units_z as i32;
         let scale = chunk_data.chunk_scale as i32;
+        let mut overall_has_fallback = false;
+        
         for sx in -1..=scale {
             for sz in -1..=scale {
                 let bx = gx + sx;
@@ -612,8 +635,9 @@ pub fn sys_draw_spawned_land_chunks(
                     chunk_origin_chunk_units_x: bx as u32,
                     chunk_origin_chunk_units_z: bz as u32,
                     chunk_scale: 1,
+                    has_mesh: false,
                 };
-                enqueue_chunk_to_atlas_and_preload(
+                let fallback = enqueue_chunk_to_atlas_and_preload(
                     &mut cache_r,
                     &mut tile_atlas_r,
                     texmap_2d_r.0.clone(),
@@ -621,21 +645,32 @@ pub fn sys_draw_spawned_land_chunks(
                     blocks_data,
                     texture_lookup_cache,
                     texels_buf,
-                    cache_settings_r.lossy_texture_compression,
+                    settings.core.graphics.lossy_texture_compression,
                 );
+                if fallback {
+                    overall_has_fallback = true;
+                }
             }
         }
 
         if let Some(entity) = chunk_data.entity {
-            if commands.get_entity(entity).is_ok() {
-                draw_land_chunk(
-                    &mut commands,
-                    chunk_data,
-                    &land_mesh_handles_r,
-                    *current_lod,
-                    &shared_land_material_r,
-                    chunk_data.chunk_scale,
-                );
+            if let Ok(mut entity_cmds) = commands.get_entity(entity) {
+                if overall_has_fallback {
+                    entity_cmds.insert(PendingTextureBake);
+                } else {
+                    entity_cmds.remove::<PendingTextureBake>();
+                }
+                
+                if !chunk_data.has_mesh {
+                    draw_land_chunk(
+                        &mut commands,
+                        chunk_data,
+                        &land_mesh_handles_r,
+                        *current_lod,
+                        &shared_land_material_r,
+                        chunk_data.chunk_scale,
+                    );
+                }
             }
         }
     }
