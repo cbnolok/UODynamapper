@@ -1,4 +1,5 @@
-use crate::core::render::{dialogs::get_egui_context_ready, scene::camera::{PlayerCamera, UiCameraResource}};
+use crate::core::render::{dialogs::get_egui_context_ready, scene::{RecomputeVisibleChunksEvent, camera::{PlayerCamera, UiCameraResource}}};
+use bevy::ecs::message::MessageWriter;
 use crate::core::uo_files_loader::MapPlanesRes;
 use crate::core::render::scene::player::Player;
 use crate::ingame_sysmessage_logger;
@@ -271,6 +272,7 @@ fn sys_teleport_on_click(
     settings: Res<crate::external_data::settings::Settings>,
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
+    mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
 ) {
     if cursor.mode != CursorMode::Teleport {
         return;
@@ -315,6 +317,8 @@ fn sys_teleport_on_click(
         let uo_pos = hit.to_uo_vec4(map);
         player.current_pos = Some(uo_pos);
         transform.translation = uo_pos.to_bevy_vec3_ignore_map();
+        // Always force a full recompute so the new visible area loads immediately.
+        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
 
         ingame_sysmessage_logger::normal(format!(
             "Teleported to [{}, {}, {}, {}] via cursor",

@@ -11,7 +11,7 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::window::{Window, WindowResized};
-use camera::{MAX_ZOOM, MIN_ZOOM, RenderZoom};
+use camera::{MAX_ZOOM, MIN_ZOOM, PlayerCamera, RenderZoom};
 use player::Player;
 use world::land::TILE_NUM_PER_CHUNK_DIM;
 use world::land::draw_mesh::{ChunkScale, scale_from_zoom};
@@ -126,19 +126,21 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     );
 }
 
-/// Calculates the visible chunk set using Bevy's own Camera projection API.
+/// Calculates the visible chunk set from current-frame parameters only.
 ///
-/// Uses `Camera::viewport_to_world()` to cast rays from the 4 screen corners plus
-/// mid-edges, intersects them with the Y=0 ground plane, then derives an XZ AABB.
-/// This is exact — no manual ortho math that can drift from Bevy's actual rendering.
+/// Computes the orthographic camera footprint on the Y=0 ground plane
+/// using the known isometric camera geometry (fixed offset `(5,5,5)`),
+/// current zoom level, and window dimensions.  This avoids using
+/// `Camera::viewport_to_world()` which relies on Bevy's internal
+/// view-projection matrices that are 1 frame stale during `Update`.
 ///
 /// When `chunk_scale > 1`, the grid is iterated at a coarser granularity:
 ///   scale 2 → 16×16 tile super-chunks (4× fewer entities)
 ///   scale 4 → 32×32 tile super-chunks (16× fewer entities)
 /// Returned coordinates are in the base 8×8 grid, aligned to `chunk_scale` boundaries.
 fn compute_visible_chunks(
-    camera: &Camera,
-    camera_global_transform: &GlobalTransform,
+    player_translation: Vec3,
+    zoom: f32,
     window_width: f32,
     window_height: f32,
     map_width: u32,
@@ -150,57 +152,48 @@ fn compute_visible_chunks(
     let map_base_chunks_x = (map_width / base_chunk_size) as i32;
     let map_base_chunks_y = (map_height / base_chunk_size) as i32;
 
-    // Sample 8 points: 4 corners + 4 mid-edges (mid-edges catch aspect-ratio distortions).
-    let sample_points = [
-        Vec2::new(0.0, 0.0),
-        Vec2::new(window_width, 0.0),
-        Vec2::new(window_width, window_height),
-        Vec2::new(0.0, window_height),
-        Vec2::new(window_width * 0.5, 0.0),
-        Vec2::new(window_width, window_height * 0.5),
-        Vec2::new(window_width * 0.5, window_height),
-        Vec2::new(0.0, window_height * 0.5),
-    ];
+    // Compute orthographic half-extents in world/tile units, matching
+    // sys_update_camera_projection_to_view exactly.
+    let ortho_width = window_width / camera::ORTHO_SIZE_FACTOR;
+    let ortho_height = (window_height / camera::ORTHO_WIDTH_SCALE_FACTOR) / camera::ORTHO_SIZE_FACTOR;
+    let hw = ortho_width * zoom / 2.0;
+    let hh = ortho_height * zoom / 2.0;
 
-    let mut min_x = f32::INFINITY;
-    let mut max_x = f32::NEG_INFINITY;
-    let mut min_z = f32::INFINITY;
-    let mut max_z = f32::NEG_INFINITY;
-    let mut any_hit = false;
+    // Camera basis vectors for the fixed isometric angle
+    // (Transform::from_translation(player + (5,5,5)).looking_at(player, Vec3::Y)):
+    //   right = (-1/√2,  0,     1/√2)      → only XZ component
+    //   up    = ( 1/√6, -2/√6,  1/√6)
+    //   fwd   = (-1/√3, -1/√3, -1/√3)
+    //
+    // For an ortho frustum corner at camera-local (u, v):
+    //   P = cam_pos + u*right + v*up
+    //   Ray along fwd hits Y=0 at:  hit = P - P.y * (1, 1, 1)
+    //     ⟹ hit.x = P.x - P.y = (cam.x - cam.y) + u*(-1/√2) + v*(3/√6)
+    //     ⟹ hit.z = P.z - P.y = (cam.z - cam.y) + u*( 1/√2) + v*(3/√6)
+    //
+    // AABB half-extent = hw/√2 + hh * 3/√6
+    let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    let three_over_sqrt6: f32 = 3.0 / 6.0_f32.sqrt();
 
-    for &screen_pt in &sample_points {
-        if let Ok(ray) = camera.viewport_to_world(camera_global_transform, screen_pt) {
-            let dir_y = ray.direction.y;
-            if dir_y.abs() > 1e-6 {
-                let t = -ray.origin.y / dir_y;
-                let hit = ray.origin + *ray.direction * t;
-                min_x = min_x.min(hit.x);
-                max_x = max_x.max(hit.x);
-                min_z = min_z.min(hit.z);
-                max_z = max_z.max(hit.z);
-                any_hit = true;
-            }
-        }
-    }
+    let cam_pos = player_translation + camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER;
+    let center_x = cam_pos.x - cam_pos.y;
+    let center_z = cam_pos.z - cam_pos.y;
 
-    if !any_hit {
-        // Fallback: return an empty set if the camera can't see the ground.
-        return std::collections::HashSet::new();
-    }
+    let half_extent = hw * inv_sqrt2 + hh * three_over_sqrt6;
 
     // Safety pad: at least 2 base chunks, with a small extra cushion at
-    // wider scales to avoid edge gaps when the camera teleports or when
-    // the orthographic footprint changes subtly within the same LOD range.
+    // wider scales to avoid edge gaps.
     let scaled_pad = if chunk_scale <= 2 {
         2
     } else {
         chunk_scale + (chunk_scale / 4).max(1)
     };
     let edge_pad_tiles = (TILE_NUM_PER_CHUNK_DIM * scaled_pad) as f32;
-    let tile_x0 = (min_x - edge_pad_tiles).floor() as i32;
-    let tile_x1 = (max_x + edge_pad_tiles).ceil() as i32;
-    let tile_y0 = (min_z - edge_pad_tiles).floor() as i32;
-    let tile_y1 = (max_z + edge_pad_tiles).ceil() as i32;
+
+    let tile_x0 = (center_x - half_extent - edge_pad_tiles).floor() as i32;
+    let tile_x1 = (center_x + half_extent + edge_pad_tiles).ceil() as i32;
+    let tile_y0 = (center_z - half_extent - edge_pad_tiles).floor() as i32;
+    let tile_y1 = (center_z + half_extent + edge_pad_tiles).ceil() as i32;
 
     // Convert tile AABB to scaled chunk grid.
     // At scale > 1, iterate at coarser granularity (16- or 32-tile steps).
@@ -246,7 +239,6 @@ fn sys_update_worldmap_chunks_to_render(
     mut land_chunk_count: ResMut<LandChunkCount>,
     mut chunk_scale_res: ResMut<ChunkScale>,
     windows_q: Query<&Window>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<camera::PlayerCamera>>,
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh)>,
     mut locals: Local<ChunkRenderLocals>,
@@ -256,7 +248,7 @@ fn sys_update_worldmap_chunks_to_render(
 
     let mut current_chunk_count: i32 = land_chunk_count.0 as i32;
 
-    let (mut player_instance, _player_transform) =
+    let (mut player_instance, player_transform) =
         player_q.single_mut().expect("More than 1 players?");
     let player_pos: Option<UOVec4> = player_instance.current_pos;
     if player_pos.is_none() {
@@ -270,11 +262,22 @@ fn sys_update_worldmap_chunks_to_render(
         old_map_id.is_none() || (new_map_id != old_map_id.unwrap().m as u32)
     };
 
+    let has_recompute_event = event.read().next().is_some();
+    // Detect a large position jump (teleport without an explicit event, e.g. cursor-click
+    // teleport that forgot to send the event, or any future path).  Any move of more than
+    // 256 tiles in one frame is unambiguously a teleport, not normal walking.
+    // NOTE: Must read prev_rendered_pos BEFORE overwriting it below.
+    let large_jump = if let Some(prev) = player_instance.prev_rendered_pos {
+        let dx = (player_pos.x as i32 - prev.x as i32).abs();
+        let dy = (player_pos.y as i32 - prev.y as i32).abs();
+        dx > 256 || dy > 256
+    } else {
+        false
+    };
+    let needs_recompute = has_recompute_event || map_switch || large_jump;
+
     // TODO: move the rendered player position to another system, when we'll render more stuff (not only the land chunks).
     player_instance.prev_rendered_pos = Some(player_pos);
-
-    let has_recompute_event = event.read().next().is_some();
-    let needs_recompute = has_recompute_event || map_switch;
 
     // Even if no recompute is needed, drain pending spawns from previous frames.
     if !needs_recompute && locals.pending_spawns.is_empty() {
@@ -284,12 +287,11 @@ fn sys_update_worldmap_chunks_to_render(
     // If a recompute is needed, rebuild the required set and recompute the pending queue.
     if needs_recompute {
         let window: &Window = windows_q.single().unwrap();
-        let (camera, camera_global_transform) = camera_q.single().unwrap();
         let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
-        let cam_translation = camera_global_transform.translation();
+        let cam_pos = player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER;
         let current_camera_chunk = (
-            (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-            (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_pos.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_pos.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
         );
 
         let new_map_plane_metadata: &MapPlaneMetadata = world_geo_data_res
@@ -304,8 +306,8 @@ fn sys_update_worldmap_chunks_to_render(
 
         // Compute exact visible chunk set at the current scale granularity.
         let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
-            camera,
-            camera_global_transform,
+            player_transform.translation,
+            zoom,
             window.width(),
             window.height(),
             new_map_plane_metadata.width,
@@ -319,8 +321,9 @@ fn sys_update_worldmap_chunks_to_render(
             &format!("Visible chunk target: {} (scale={})", required_chunks.len(), chunk_scale),
         );
 
-        // If map plane or chunk scale changes, brute-force despawn all and respawn.
-        if map_switch || scale_changed {
+        // If map plane, chunk scale, or a large position jump (teleport), brute-force
+        // despawn all and respawn so no stale out-of-view entities remain on screen.
+        if map_switch || scale_changed || large_jump {
             if map_switch {
                 console_logger::one(
                     None,
@@ -337,6 +340,14 @@ fn sys_update_worldmap_chunks_to_render(
                     &format!("Chunk scale changed to {chunk_scale}: despawn all and respawn at new granularity."),
                 );
             }
+            if large_jump {
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::RenderWorldLand,
+                    "Large position jump detected (teleport): despawn all and respawn at new position.",
+                );
+            }
 
             let mut despawned_count = 0i32;
             for (entity, tcm) in existing_chunks_q.iter() {
@@ -348,7 +359,7 @@ fn sys_update_worldmap_chunks_to_render(
             // All chunks go into the pending queue, sorted center-out.
             locals.pending_spawns.clear();
             locals.pending_spawns.extend(required_chunks.iter());
-            sort_center_out(&mut locals.pending_spawns, current_camera_chunk);
+            sort_visible_chunks(&mut locals.pending_spawns, &required_chunks, current_camera_chunk);
             scene_state_data_res.map_id = new_map_id;
         } else {
             // Incremental update: despawn chunks no longer needed, queue new ones.
@@ -371,7 +382,7 @@ fn sys_update_worldmap_chunks_to_render(
             for &coords in required_chunks.difference(&currently_spawned) {
                 locals.pending_spawns.push(coords);
             }
-            sort_center_out(&mut locals.pending_spawns, current_camera_chunk);
+            sort_visible_chunks(&mut locals.pending_spawns, &required_chunks, current_camera_chunk);
         }
     }
 
@@ -407,14 +418,45 @@ fn sys_update_worldmap_chunks_to_render(
     land_chunk_count.0 = current_chunk_count.max(0) as u32;
 }
 
-/// Sort chunk coordinates so that chunks closest to the camera are first.
-fn sort_center_out(chunks: &mut [(u32, u32)], camera_chunk: (i32, i32)) {
+/// Sort chunk coordinates so the visible corner tiles are spawned first,
+/// then the rest of the border, then the interior.
+///
+/// This keeps the four screen corners from staying empty during large
+/// zoom-outs without increasing the per-frame spawn budget.
+fn sort_visible_chunks(
+    chunks: &mut [(u32, u32)],
+    required_chunks: &HashSet<(u32, u32)>,
+    camera_chunk: (i32, i32),
+) {
+    let mut min_x = u32::MAX;
+    let mut max_x = 0u32;
+    let mut min_y = u32::MAX;
+    let mut max_y = 0u32;
+    for &(gx, gy) in required_chunks.iter() {
+        min_x = min_x.min(gx);
+        max_x = max_x.max(gx);
+        min_y = min_y.min(gy);
+        max_y = max_y.max(gy);
+    }
+
     let cx = camera_chunk.0;
     let cy = camera_chunk.1;
     chunks.sort_unstable_by_key(|&(gx, gy)| {
         let dx = gx as i32 - cx;
         let dy = gy as i32 - cy;
-        // Chebyshev distance: sort by "ring" from camera, then by Manhattan for stability.
-        (dx.abs().max(dy.abs()), dx.abs() + dy.abs())
+        let corner_distance = [
+            gx.abs_diff(min_x).max(gy.abs_diff(min_y)),
+            gx.abs_diff(max_x).max(gy.abs_diff(min_y)),
+            gx.abs_diff(min_x).max(gy.abs_diff(max_y)),
+            gx.abs_diff(max_x).max(gy.abs_diff(max_y)),
+        ]
+        .into_iter()
+        .min()
+        .unwrap_or(0);
+
+        // Spawn the exact visible corners first, then the rest of the
+        // border ring, and only then the interior.  Tie-break by camera
+        // distance so the center still converges quickly.
+        (corner_distance, dx.abs().max(dy.abs()), dx.abs() + dy.abs())
     });
 }

@@ -25,7 +25,7 @@ pub struct UiCameraResource(pub Option<Entity>);
 
 /* RENDERING MAGIC CONSTANTS */
 /// Magic number found through trial and error with the aim of rendering tiles of same width and height.
-const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.79;
+pub(crate) const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.79;
 
 /// Factor to correct the rendered tile size to our desired size.
 /// Due to the orthographic projection, pixel size is not 1:1 but it will be distorted.
@@ -37,7 +37,7 @@ pub const TILE_SIZE_FACTOR: f32 = {
     MEASURED_TILE_PIXEL_SIZE / DESIRED_TILE_PIXEL_SIZE
 };
 
-const ORTHO_SIZE_FACTOR: f32 = {
+pub(crate) const ORTHO_SIZE_FACTOR: f32 = {
     const DESIRED_TILE_PIXEL_SIZE: f32 = UO_TILE_PIXEL_SIZE;
     // Calculate correction factor to scale down the rendered size via the projection settings.
     DESIRED_TILE_PIXEL_SIZE / TILE_SIZE_FACTOR

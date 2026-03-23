@@ -567,9 +567,16 @@ pub fn load_blocks_from_reader<R: Read + Seek>(
         return Ok(Vec::new());
     }
 
-    let mut sorted = blocks_to_load.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
+    // Keep the caller's order so higher-priority visible blocks are loaded and
+    // emitted first. We still sort *within* each batch for coalesced disk I/O.
+    let mut ordered = blocks_to_load.to_vec();
+    {
+        use std::collections::HashSet;
+        let mut seen = HashSet::with_capacity(ordered.len());
+        ordered.retain(|pos| seen.insert(*pos));
+    }
+
+    const PRIORITY_BATCH_SIZE: usize = 512;
 
     #[derive(Clone, Copy)]
     struct IndexedBlock {
@@ -577,56 +584,59 @@ pub fn load_blocks_from_reader<R: Read + Seek>(
         idx: u32,
     }
 
-    let indexed_blocks: Vec<IndexedBlock> = sorted
-        .iter()
-        .map(|&pos| IndexedBlock {
-            pos,
-            idx: MapBlock::idx_from_coords(&pos, size_blocks_height),
-        })
-        .collect();
+    let mut result = Vec::with_capacity(ordered.len());
 
-    // Group into contiguous index ranges for coalesced I/O.
-    let mut ranges = Vec::with_capacity(indexed_blocks.len());
-    if !indexed_blocks.is_empty() {
-        let mut start = 0usize;
-        let mut end = 0usize;
-        for i in 1..indexed_blocks.len() {
-            if indexed_blocks[i].idx == indexed_blocks[i - 1].idx + 1 {
-                end = i;
-            } else {
-                ranges.push((start, end));
-                start = i;
-                end = i;
+    for batch in ordered.chunks(PRIORITY_BATCH_SIZE) {
+        let mut indexed_blocks: Vec<IndexedBlock> = batch
+            .iter()
+            .map(|&pos| IndexedBlock {
+                pos,
+                idx: MapBlock::idx_from_coords(&pos, size_blocks_height),
+            })
+            .collect();
+        indexed_blocks.sort_unstable_by_key(|b| b.idx);
+
+        // Group into contiguous index ranges for coalesced I/O.
+        let mut ranges = Vec::with_capacity(indexed_blocks.len());
+        if !indexed_blocks.is_empty() {
+            let mut start = 0usize;
+            let mut end = 0usize;
+            for i in 1..indexed_blocks.len() {
+                if indexed_blocks[i].idx == indexed_blocks[i - 1].idx + 1 {
+                    end = i;
+                } else {
+                    ranges.push((start, end));
+                    start = i;
+                    end = i;
+                }
             }
+            ranges.push((start, end));
         }
-        ranges.push((start, end));
-    }
 
-    let mut result = Vec::with_capacity(sorted.len());
+        for (range_start, range_end) in ranges {
+            let start_idx = indexed_blocks[range_start].idx;
+            let end_idx = indexed_blocks[range_end].idx;
+            let num_blocks = (end_idx - start_idx + 1) as usize;
 
-    for (range_start, range_end) in ranges {
-        let start_idx = indexed_blocks[range_start].idx;
-        let end_idx = indexed_blocks[range_end].idx;
-        let num_blocks = (end_idx - start_idx + 1) as usize;
+            let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
+            reader
+                .seek(SeekFrom::Start(offset))
+                .wrap_err_with(|| format!("bg-loader: seek to offset {offset}"))?;
 
-        let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
-        reader
-            .seek(SeekFrom::Start(offset))
-            .wrap_err_with(|| format!("bg-loader: seek to offset {offset}"))?;
+            let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
+            read_buffer.resize(buffer_len, 0);
+            reader
+                .read_exact(read_buffer)
+                .wrap_err_with(|| format!("bg-loader: read {num_blocks} blocks at offset {offset}"))?;
 
-        let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
-        read_buffer.resize(buffer_len, 0);
-        reader
-            .read_exact(read_buffer)
-            .wrap_err_with(|| format!("bg-loader: read {num_blocks} blocks at offset {offset}"))?;
-
-        let raw_blocks: &[RawMapBlock] = cast_slice(read_buffer);
-        for (i, raw_block) in raw_blocks.iter().enumerate() {
-            let block_pos = indexed_blocks[range_start + i].pos;
-            let mut new_block = MapBlock::default();
-            MapBlock::from_raw_block(raw_block, &mut new_block)?;
-            new_block.internal_coords = block_pos;
-            result.push((block_pos, new_block));
+            let raw_blocks: &[RawMapBlock] = cast_slice(read_buffer);
+            for (i, raw_block) in raw_blocks.iter().enumerate() {
+                let block_pos = indexed_blocks[range_start + i].pos;
+                let mut new_block = MapBlock::default();
+                MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                new_block.internal_coords = block_pos;
+                result.push((block_pos, new_block));
+            }
         }
     }
 

@@ -110,13 +110,12 @@ pub fn sys_render_teleport_dialog(
                 ) {
                     if let Ok((mut player, mut transform)) = player_q.single_mut() {
                         let uo_pos = UOVec4::new(x, y, z, m);
-                        let map_changed = player.current_pos.map(|p| p.m) != Some(m);
                         player.current_pos = Some(uo_pos);
                         let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();
                         transform.translation = bevy_pos;
-                        if map_changed {
-                            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-                        }
+                        // Always force a full recompute — same-map teleports must also
+                        // despawn the old chunks and spawn the new visible set.
+                        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
 
                         ingame_sysmessage_logger::normal(format!(
                             "Teleported to [{}, {}, {}, {}]",

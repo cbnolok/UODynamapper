@@ -711,16 +711,26 @@ fn draw_land_chunk(
     }
 }
 
-/// Sort construction targets so the closest primary chunks are processed first,
-/// followed by their dependent filler targets.
+/// Sort construction targets so the closest primary chunks (near the camera)
+/// are processed first, expanding outward.  This ensures the centre of the
+/// viewport fills in first within the per-frame budget.
+///
+/// After an incremental walk, only a thin strip of newly-spawned edge/corner
+/// chunks enters the `Without<Mesh3d>` query, and they easily fit within the
+/// budget — so the sort order rarely matters for walking.  After a full
+/// respawn (teleport / scale change) we want the player's surroundings
+/// rendered before distant edges.
 fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_chunk: (i32, i32)) {
     let cx = camera_chunk.0;
     let cy = camera_chunk.1;
     chunks.sort_unstable_by_key(|target| {
         let dx = target.chunk_origin_chunk_units_x as i32 - cx;
         let dy = target.chunk_origin_chunk_units_z as i32 - cy;
-        // Primary chunks (entity: Some) before filler targets.
-        (target.entity.is_none(), dx.abs().max(dy.abs()), dx.abs() + dy.abs())
+        let chebyshev = dx.abs().max(dy.abs());
+        let manhattan = dx.abs() + dy.abs();
+        // Filler targets (entity: None) always come last.
+        // Among primary chunks: nearest to camera first → centre fills first.
+        (target.entity.is_none() as u8, chebyshev, manhattan)
     });
 }
 
