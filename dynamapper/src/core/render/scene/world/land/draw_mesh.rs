@@ -147,6 +147,7 @@ pub struct LandMeshScratch {
     primary_chunks: HashMap<(u32, u32), (Entity, u32)>,
     spawn_targets: HashSet<LandChunkConstructionData>,
     blocks_to_draw: Vec<MapBlockRelPos>,
+    block_seen_bits: Vec<u64>,
     blocks_data: HashMap<MapBlockRelPos, MapBlock>,
     missing_tile_bits: Vec<u64>,
     ids: Vec<u16>,
@@ -563,8 +564,13 @@ pub fn sys_draw_spawned_land_chunks(
 
     // ── Build blocks_to_draw for the ready targets only ─────────────────
     {
-        let mut block_set: HashSet<MapBlockRelPos> =
-            HashSet::with_capacity(ready_targets.len() * 4);
+        let seen_bits_len = (((max_chunk_x as usize) * (max_chunk_y as usize)) + 63) / 64;
+        if scratch.block_seen_bits.len() != seen_bits_len {
+            scratch.block_seen_bits.resize(seen_bits_len, 0);
+        } else {
+            scratch.block_seen_bits.fill(0);
+        }
+
         for target in &ready_targets {
             let gx = target.chunk_origin_chunk_units_x;
             let gy = target.chunk_origin_chunk_units_z;
@@ -576,15 +582,21 @@ pub fn sys_draw_spawned_land_chunks(
                     let bx = gx as i32 + sx;
                     let bz = gy as i32 + sz;
                     if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
-                        block_set.insert(MapBlockRelPos {
-                            x: bx as u32,
-                            y: bz as u32,
-                        });
+                        let idx = (bx as usize * max_chunk_y as usize) + bz as usize;
+                        let word = idx >> 6;
+                        let bit = idx & 63;
+                        let mask = 1u64 << bit;
+                        if (scratch.block_seen_bits[word] & mask) == 0 {
+                            scratch.block_seen_bits[word] |= mask;
+                            scratch.blocks_to_draw.push(MapBlockRelPos {
+                                x: bx as u32,
+                                y: bz as u32,
+                            });
+                        }
                     }
                 }
             }
         }
-        scratch.blocks_to_draw.extend(block_set.iter());
     }
 
     let mut blocks_to_draw = std::mem::take(&mut scratch.blocks_to_draw);
