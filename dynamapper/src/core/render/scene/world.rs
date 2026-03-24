@@ -44,8 +44,8 @@ fn sys_populate_world_geo_data(
         return;
     };
     if world_geo_data_res.maps.is_empty() {
-        for entry in map_planes_res.0.iter() {
-            let (&id, plane) = entry.pair();
+        for (id, plane) in map_planes_res.0.iter() {
+            let id = *id;
             world_geo_data_res.maps.insert(id, MapPlaneMetadata {
                 id: id as u8,
                 width: plane.size_blocks.width * 8, 

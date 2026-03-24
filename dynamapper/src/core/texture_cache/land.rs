@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use std::time::Duration;
 use uocf::geo::land_texture_2d::LandTextureSize;
+use uocf::geo::map::{MapBlockRelPos, MapPlane};
 
 pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,
@@ -51,21 +52,66 @@ impl Plugin for LandTextureCachePlugin {
 
         app.add_systems(
             Update,
-            sys_evict_idle_land_cache.run_if(on_timer(Duration::from_secs(5))),
+            (sys_pin_active_textures, sys_evict_idle_land_cache)
+                .chain()
+                .run_if(on_timer(Duration::from_secs(5))),
         );
         app.add_systems(Update, sys_apply_texture_array_expansion);
         app.add_systems(Update, sys_apply_tile_atlas_expansion);
     }
 }
 
+fn sys_pin_active_textures(
+    mut cache_r: ResMut<cache::LandTextureCache>,
+    mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    scene_state_r: Res<crate::core::render::scene::SceneStateData>,
+    chunk_q: Query<&crate::core::render::scene::world::land::LCMesh>,
+) {
+    cache_r.clear_pinned_textures();
+
+    let mut plane = map_planes_r.0.iter_mut().find_map(|(id, plane)| {
+        if *id == scene_state_r.map_id {
+            Some(plane)
+        } else {
+            None
+        }
+    }).expect("Uncached Map in sys_pin_active_textures");
+
+    let h = plane.size_blocks.height;
+    for mesh in chunk_q.iter() {
+        let gx = mesh.gx as i32;
+        let gy = mesh.gy as i32;
+        let scale = mesh.scale as i32;
+
+        for sx in -1..=scale {
+            for sz in -1..=scale {
+                let bx = gx + sx;
+                let bz = gy + sz;
+                if bx >= 0 && bx < plane.size_blocks.width as i32 && bz >= 0 && bz < plane.size_blocks.height as i32 {
+                    let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
+                    if let Some(block) = plane.block(pos) {
+                        for cell in &block.cells {
+                            let cell_id = cell.id as usize;
+                            let word = cell_id >> 6;
+                            if word < cache_r.pinned_visible_bits.len() {
+                                cache_r.pinned_visible_bits[word] |= 1u64 << (cell_id & 63);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    cache_r.visible_hint_count = cache_r.pinned_visible_bits.iter().map(|w| w.count_ones() as usize).sum();
+}
+
 fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
-    map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
+    mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
-    mut tile_atlas: ResMut<
-        crate::core::render::scene::world::land::tile_atlas::TileAtlas,
-    >,
+    mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
 ) {
     // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
     let evicted_gpu_layers = cache_r.evict_idle_textures();
@@ -96,8 +142,14 @@ fn sys_evict_idle_land_cache(
     }
 
     // 3. Evict idle map blocks from the active map plane (CPU RAM)
-    let map_planes = map_planes_r.0.clone();
-    if let Some(mut plane) = map_planes.get_mut(&scene_state_r.map_id) {
+    let map_planes: &mut Vec<(u32, MapPlane)> = &mut map_planes_r.0;
+    if let Some(plane) = map_planes.iter_mut().find_map(|(id, plane)| {
+        if *id == scene_state_r.map_id {
+            Some(plane)
+        } else {
+            None
+        }
+    }) {
         let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
         if evicted_blocks > 0 {
             console_logger::one(
@@ -145,8 +197,7 @@ fn sys_evict_idle_land_cache(
         let mapped = tile_atlas.mapped_page_count();
         let capacity = tile_atlas.params.max_layers;
         let usage_ratio = mapped as f32 / capacity.max(1) as f32;
-        let elapsed = std::time::Instant::now()
-            .duration_since(tile_atlas.last_high_usage_instant);
+        let elapsed = std::time::Instant::now().duration_since(tile_atlas.last_high_usage_instant);
 
         if usage_ratio < texture_array::RESOURCE_SHRINK_THRESHOLD
             && elapsed >= timeout
@@ -163,9 +214,7 @@ fn sys_evict_idle_land_cache(
                     None,
                     LogSev::Info,
                     LogAbout::Performance,
-                    &format!(
-                        "Requesting tile atlas shrink: {capacity} → {target} layers.",
-                    ),
+                    &format!("Requesting tile atlas shrink: {capacity} → {target} layers.",),
                 );
             }
         }
@@ -202,7 +251,6 @@ pub fn sys_setup_terrain_cache(
         texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
     ));
 
-
     use crate::core::render::scene::world::land::{
         draw_mesh::SharedLandMaterial,
         mesh_material::{LandMaterialExtension, SceneUniform},
@@ -237,7 +285,9 @@ pub fn sys_setup_terrain_cache(
         height: page_texels.y,
         depth_or_array_layers: max_layers,
     };
-    let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers
+    let size_bytes = (extent.width
+        * extent.height
+        * extent.depth_or_array_layers
         * texture_array::TILE_ATLAS_BYTES_PER_TEXEL) as usize;
     let data: Vec<u8> = vec![0u8; size_bytes];
 
@@ -366,8 +416,7 @@ fn sys_apply_texture_array_expansion(
             LogAbout::Performance,
             &format!(
                 "Resized terrain texture arrays: small={} layers, big={} layers.",
-                cache_r.small.active_layers,
-                cache_r.big.active_layers
+                cache_r.small.active_layers, cache_r.big.active_layers
             ),
         );
     }
@@ -377,14 +426,14 @@ fn sys_apply_texture_array_expansion(
 /// has been set by the LRU paging logic (or when the shrink heuristic fires).
 fn sys_apply_tile_atlas_expansion(
     mut images: ResMut<Assets<Image>>,
-    mut tile_atlas: ResMut<
-        crate::core::render::scene::world::land::tile_atlas::TileAtlas,
-    >,
+    mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
     mut atlas_handle: ResMut<
         crate::core::render::scene::world::land::tile_atlas::TileAtlasImageHandle,
     >,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
+    mut commands: Commands,
+    chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
 ) {
     let Some(new_layers) = tile_atlas.requested_expansion else {
         return;
@@ -408,7 +457,9 @@ fn sys_apply_tile_atlas_expansion(
         height: page_texels.y,
         depth_or_array_layers: new_layers,
     };
-    let size_bytes = (extent.width * extent.height * extent.depth_or_array_layers
+    let size_bytes = (extent.width
+        * extent.height
+        * extent.depth_or_array_layers
         * texture_array::TILE_ATLAS_BYTES_PER_TEXEL) as usize;
     let data: Vec<u8> = vec![0u8; size_bytes];
 
@@ -431,13 +482,21 @@ fn sys_apply_tile_atlas_expansion(
     // Clear all page mappings — the mesh renderer will re-populate them.
     tile_atlas.apply_resize(new_layers);
 
+    for e in chunks.iter() {
+        commands.entity(e).insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
+    }
+
     // Update the shared material so the shader sees the new texture.
     if let Some(mat) = materials.get_mut(&shared_mat.0) {
         mat.extension.tile_meta_atlas = new_handle;
         mat.extension.atlas_params = tile_atlas.params;
     }
 
-    let direction = if new_layers > old_layers { "Expanded" } else { "Shrunk" };
+    let direction = if new_layers > old_layers {
+        "Expanded"
+    } else {
+        "Shrunk"
+    };
     console_logger::one(
         None,
         LogSev::Info,
@@ -445,7 +504,8 @@ fn sys_apply_tile_atlas_expansion(
         &format!(
             "{direction} tile metadata atlas: {old_layers} → {new_layers} layers \
              ({} MB VRAM).",
-            (page_texels.x as u64 * page_texels.y as u64
+            (page_texels.x as u64
+                * page_texels.y as u64
                 * new_layers as u64
                 * texture_array::TILE_ATLAS_BYTES_PER_TEXEL as u64)
                 / (1024 * 1024)

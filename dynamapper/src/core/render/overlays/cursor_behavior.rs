@@ -1,13 +1,19 @@
-use crate::core::render::{dialogs::get_egui_context_ready, scene::{RecomputeVisibleChunksEvent, camera::{PlayerCamera, UiCameraResource}}};
-use bevy::ecs::message::MessageWriter;
-use crate::core::uo_files_loader::MapPlanesRes;
 use crate::core::render::scene::player::Player;
+use crate::core::render::{
+    dialogs::get_egui_context_ready,
+    scene::{
+        camera::{PlayerCamera, UiCameraResource},
+        RecomputeVisibleChunksEvent,
+    },
+};
+use crate::core::uo_files_loader::MapPlanesRes;
 use crate::ingame_sysmessage_logger;
 use crate::prelude::*;
+use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
+use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
-use bevy::text::{FontSmoothing, LineHeight};
 use uocf::geo::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 22.0;
@@ -52,8 +58,14 @@ impl Plugin for CursorBehaviorOverlayPlugin {
                 Update,
                 update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
             )
-            .add_systems(Update, sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)))
-            .add_systems(Update, sys_teleport_on_click.run_if(in_state(AppState::InGame)));
+            .add_systems(
+                Update,
+                sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                sys_teleport_on_click.run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
@@ -171,9 +183,18 @@ pub fn update_cursor_behavior_text(
         *last_mode = Some(cursor.mode);
     }
 
-    let window_size = windows.single().ok().map(|window| (window.width(), window.height()));
-    let camera_translation = camera_q.single().ok().map(|(_, camera_tf)| camera_tf.translation());
-    let cursor_pos = windows.single().ok().and_then(|window| window.cursor_position());
+    let window_size = windows
+        .single()
+        .ok()
+        .map(|window| (window.width(), window.height()));
+    let camera_translation = camera_q
+        .single()
+        .ok()
+        .map(|(_, camera_tf)| camera_tf.translation());
+    let cursor_pos = windows
+        .single()
+        .ok()
+        .and_then(|window| window.cursor_position());
     let player_map_id = player_q
         .single()
         .ok()
@@ -185,24 +206,32 @@ pub fn update_cursor_behavior_text(
         || *last_player_map_id != player_map_id;
 
     if needs_rebuild {
-        let cursor_position_label = match (cursor_pos, camera_q.single().ok(), player_q.single().ok()) {
-            (Some(cursor_pos), Some((camera, camera_tf)), Some(player)) => {
-                match camera.viewport_to_world(camera_tf, cursor_pos).ok() {
-                    Some(ray) if ray.direction.y.abs() > 1e-6 => {
-                        let t = -ray.origin.y / ray.direction.y;
-                        let hit = ray.origin + ray.direction * t;
-                        let cursor_x = hit.x.round().max(0.0) as u16;
-                        let cursor_y = hit.z.round().max(0.0) as u16;
-                        let map_id = player.current_pos.map(|p| p.m).unwrap_or(settings.core.world.start_p.m);
-                        let cursor_z = resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
-                            .unwrap_or(0);
-                        format!("Cursor position:\n[{}, {}, {}]", cursor_x, cursor_y, cursor_z)
+        let cursor_position_label =
+            match (cursor_pos, camera_q.single().ok(), player_q.single().ok()) {
+                (Some(cursor_pos), Some((camera, camera_tf)), Some(player)) => {
+                    match camera.viewport_to_world(camera_tf, cursor_pos).ok() {
+                        Some(ray) if ray.direction.y.abs() > 1e-6 => {
+                            let t = -ray.origin.y / ray.direction.y;
+                            let hit = ray.origin + ray.direction * t;
+                            let cursor_x = hit.x.round().max(0.0) as u16;
+                            let cursor_y = hit.z.round().max(0.0) as u16;
+                            let map_id = player
+                                .current_pos
+                                .map(|p| p.m)
+                                .unwrap_or(settings.core.world.start_p.m);
+                            let cursor_z =
+                                resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
+                                    .unwrap_or(0);
+                            format!(
+                                "Cursor position:\n[{}, {}, {}]",
+                                cursor_x, cursor_y, cursor_z
+                            )
+                        }
+                        _ => "Cursor position:\n[NA, NA, NA]".to_string(),
                     }
-                    _ => "Cursor position:\n[NA, NA, NA]".to_string(),
                 }
-            }
-            _ => "Cursor position:\n[NA, NA, NA]".to_string(),
-        };
+                _ => "Cursor position:\n[NA, NA, NA]".to_string(),
+            };
 
         if let Ok(mut position_text) = position_text_q.single_mut() {
             if position_text.0 != cursor_position_label {
@@ -217,19 +246,24 @@ pub fn update_cursor_behavior_text(
     }
 }
 
-fn resolve_cursor_map_z(
-    map_planes_r: &MapPlanesRes,
-    map_id: u8,
-    x: u16,
-    y: u16,
-) -> Option<i8> {
-    let mut plane = map_planes_r.0.get_mut(&(map_id as u32))?;
+fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16) -> Option<i8> {
+    let plane = map_planes_r
+        .0
+        .iter()
+        .find_map(|(id, plane)| {
+            if *id == map_id as u32 {
+                Some(plane)
+            } else {
+                None
+            }
+        })
+        .expect("Uncached Map in resolve_cursor_map_z");
     let cell = MapCellCoords {
         x: x as u32,
         y: y as u32,
     };
     let block_pos = MapCell::coords_of_parent_block(&cell);
-    let block = plane.block(block_pos)?;
+    let block = plane.block_no_update(block_pos)?;
     let rel = MapCell::coords_in_block(&cell);
     Some(block.cell(rel.x, rel.y).ok()?.z)
 }
@@ -298,7 +332,9 @@ fn sys_teleport_on_click(
         None => return,
     };
 
-    let Ok((cam, cam_tf)) = camera_q.single() else { return };
+    let Ok((cam, cam_tf)) = camera_q.single() else {
+        return;
+    };
     let ray = match cam.viewport_to_world(cam_tf, cursor_pos).ok() {
         Some(ray) => ray,
         None => return,
@@ -313,7 +349,10 @@ fn sys_teleport_on_click(
     let hit = ray.origin + ray.direction * t;
 
     if let Ok((mut player, mut transform)) = player_q.single_mut() {
-        let map = player.current_pos.map(|p| p.m).unwrap_or(settings.core.world.start_p.m);
+        let map = player
+            .current_pos
+            .map(|p| p.m)
+            .unwrap_or(settings.core.world.start_p.m);
         let uo_pos = hit.to_uo_vec4(map);
         player.current_pos = Some(uo_pos);
         transform.translation = uo_pos.to_bevy_vec3_ignore_map();

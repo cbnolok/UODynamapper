@@ -34,8 +34,7 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 serde_derive = { version = "1.0.228", default-features = false }
 #getset = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-#futures-lite = "2"
-dashmap = { version = "6", default-features = false }
+futures-lite = "2.6.1"
 #parking_lot = "0.12"
 #smallvec = "1"
 # BC7 texture compression for GPU VRAM reduction (GPU compute).
@@ -49,7 +48,6 @@ mimalloc = { version = "*", features = ["v3"] }
 #jemallocator = "0.5.4"
 multiversion = "0.8.0"
 intel_tex_2 = "0.5.0"
-futures-lite = "2.6.1"
 
 [dependencies.bevy]
 version = "0.18.1"

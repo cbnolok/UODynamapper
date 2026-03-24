@@ -28,11 +28,10 @@ use crate::generic_index;
 use crate::utils::color::*;
 use crate::utils::math::*;
 use bytemuck;
-use std::io::{BufReader, Cursor, SeekFrom, prelude::*};
+use std::io::{prelude::*, BufReader, Cursor, SeekFrom};
 use wide::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum LandTextureSize {
     #[default]
     Small,
@@ -110,7 +109,6 @@ impl Texture2DElement {
     pub fn size_y(&self) -> u32 {
         Self::size_type_y(self.size)
     }
-
 }
 
 #[derive(Debug)]
@@ -211,7 +209,7 @@ impl TexMap2D {
             // Fill texmap
             let cur_idx_elem: &generic_index::IndexElement = texidx
                 .element(i_idx_raw as usize)
-                .expect("Reading lookup value for element {i_idx}");
+                .expect(format!("Reading lookup value for element {i_idx_raw}").as_str());
 
             let tex_lookup = match cur_idx_elem.lookup() {
                 None => continue,
@@ -280,6 +278,38 @@ impl TexMap2D {
         Ok(texmap)
     }
 
+    /// Caches the raw BGRA5551 data file slice into memory, without decoding it to RGBA8888.
+    /// This is strictly used by background preloader threads to warm up the OS filesystem.
+    pub fn preload_pixel_data(&self, element_index: usize) -> Option<()> {
+        let element: &Texture2DElement = self.element(element_index)?;
+        let mut shared = self.shared_data.lock().unwrap();
+
+        if let Some((_, time)) = shared.cache.get_mut(&element_index) {
+            *time = std::time::Instant::now();
+            return Some(());
+        }
+
+        let pixel_qty_bytes = element.pixel_qty * 2;
+        let shared = &mut *shared;
+        shared
+            .file_reader
+            .seek(SeekFrom::Start(element.file_offset))
+            .ok()?;
+        shared.scratch_buffer.resize(pixel_qty_bytes, 0);
+        shared
+            .file_reader
+            .read_exact(&mut shared.scratch_buffer)
+            .ok()?;
+
+        let arc_raw = std::sync::Arc::new(shared.scratch_buffer.clone());
+        shared.cache.insert(
+            element_index,
+            (std::sync::Arc::clone(&arc_raw), std::time::Instant::now()),
+        );
+
+        Some(())
+    }
+
     pub fn get_pixel_data(&self, element_index: usize) -> Option<std::sync::Arc<Vec<u8>>> {
         let element: &Texture2DElement = self.element(element_index)?;
 
@@ -294,9 +324,15 @@ impl TexMap2D {
                 // Read raw BGRA5551 from file and cache it (2 bytes/pixel).
                 let pixel_qty_bytes = element.pixel_qty * 2;
                 let shared = &mut *shared;
-                shared.file_reader.seek(SeekFrom::Start(element.file_offset)).ok()?;
+                shared
+                    .file_reader
+                    .seek(SeekFrom::Start(element.file_offset))
+                    .ok()?;
                 shared.scratch_buffer.resize(pixel_qty_bytes, 0);
-                shared.file_reader.read_exact(&mut shared.scratch_buffer).ok()?;
+                shared
+                    .file_reader
+                    .read_exact(&mut shared.scratch_buffer)
+                    .ok()?;
 
                 let arc_raw = std::sync::Arc::new(shared.scratch_buffer.clone());
                 shared.cache.insert(
@@ -331,9 +367,9 @@ impl TexMap2D {
                 #[cfg(target_endian = "big")]
                 let chunk = chunk.swap_bytes();
 
-                let b_u16: u16x16 = (chunk          & u16x16::splat(0x1F)) << 3;
-                let g_u16: u16x16 = ((chunk >> 5)   & u16x16::splat(0x1F)) << 3;
-                let r_u16: u16x16 = ((chunk >> 10)  & u16x16::splat(0x1F)) << 3;
+                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
+                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
+                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
                 let a_u16: u16x16 = u16x16::splat(0xFF);
 
                 let b_u16: &[u16; 16] = b_u16.as_array();
@@ -367,9 +403,9 @@ impl TexMap2D {
         let mut shared = self.shared_data.lock().unwrap();
         let initial_len = shared.cache.len();
 
-        shared.cache.retain(|_, (_, time)| {
-            now.duration_since(*time) <= timeout
-        });
+        shared
+            .cache
+            .retain(|_, (_, time)| now.duration_since(*time) <= timeout);
 
         initial_len - shared.cache.len()
     }

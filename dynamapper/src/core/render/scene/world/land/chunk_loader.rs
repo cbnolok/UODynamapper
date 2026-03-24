@@ -42,7 +42,7 @@ pub struct LoadRequest {
 }
 
 pub struct LoadResult {
-    pub loaded_blocks: Vec<(MapBlockRelPos, MapBlock)>,
+    pub loaded_blocks: Vec<MapBlock>,
     /// True when this is the last sub-batch of the current request.
     pub is_final: bool,
 }
@@ -154,10 +154,10 @@ fn loader_thread_main(
             total_loaded += loaded_blocks.len();
 
             // Warm texture cache for this sub-batch's tile IDs.
-            for (_, block) in &loaded_blocks {
+            for block in &loaded_blocks {
                 for cell in &block.cells {
                     if seen_ids.insert(cell.id) {
-                        let _ = req.texmap_2d.get_pixel_data(cell.id as usize);
+                        let _ = req.texmap_2d.preload_pixel_data(cell.id as usize);
                     }
                 }
             }

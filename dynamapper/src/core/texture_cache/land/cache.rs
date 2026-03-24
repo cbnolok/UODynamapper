@@ -94,9 +94,9 @@ impl LandTextureArrayWrapper {
 pub struct LandTextureCache {
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
-    entry_by_id: HashMap<u16, (LandTextureSize, LandTextureEntry)>,
-    pinned_visible_ids: HashSet<u16>,
-    visible_hint_count: usize,
+    pub entry_by_id: Vec<Option<(LandTextureSize, LandTextureEntry)>>,
+    pub pinned_visible_bits: Vec<u64>,
+    pub visible_hint_count: usize,
     pub pending_uploads: Vec<TextureArrayUpload>,
     pub upload_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<TextureArrayUpload>>,
     pub upload_sender: std::sync::mpsc::Sender<TextureArrayUpload>,
@@ -132,8 +132,8 @@ impl LandTextureCache {
                 big_initial_layers,
                 texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
             ),
-            entry_by_id: HashMap::default(),
-            pinned_visible_ids: HashSet::default(),
+            entry_by_id: vec![None; 16384],
+            pinned_visible_bits: vec![0u64; 256],
             visible_hint_count: 0,
             pending_uploads: Vec::new(),
             upload_receiver: std::sync::Mutex::new(upload_receiver),
@@ -141,34 +141,13 @@ impl LandTextureCache {
         }
     }
 
-    pub fn set_visible_texture_usage_hint(&mut self, visible_texture_ids: &[u16]) {
-        // Accumulate across frames: textures from previously-budgeted chunks
-        // must stay pinned so their atlas texels (which encode layer indices)
-        // remain valid.  The set is cleared explicitly via clear_pinned_textures()
-        // when all chunks are despawned (scale / map change).
-        self.pinned_visible_ids.extend(visible_texture_ids.iter().copied());
-        self.visible_hint_count = visible_texture_ids.len();
 
-        console_logger::one(
-            None,
-            LogSev::Debug,
-            LogAbout::Performance,
-            &format!(
-                "Texture usage hint: this_frame={}, total_pinned={}, active_layers(small={}, big={}), resident_textures={}",
-                self.visible_hint_count,
-                self.pinned_visible_ids.len(),
-                self.small.active_layers,
-                self.big.active_layers,
-                self.entry_by_id.len()
-            ),
-        );
-    }
 
     /// Clears all pinned texture IDs.  Call when the entire chunk set is
     /// invalidated (scale change, map switch) so stale pins don’t prevent
     /// the LRU from reclaiming layers that are no longer atlas-referenced.
     pub fn clear_pinned_textures(&mut self) {
-        self.pinned_visible_ids.clear();
+        self.pinned_visible_bits.fill(0);
     }
 
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
@@ -179,7 +158,7 @@ impl LandTextureCache {
         lossy_compression: bool,
     ) -> (LandTextureSize, u32) {
         // If texture is already resident, just return its info.
-        if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
+        if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
             entry.1.last_touch = Instant::now();
             return (entry.0, entry.1.layer);
         }
@@ -227,7 +206,7 @@ impl LandTextureCache {
         let mut to_load = Vec::new();
 
         for &id in texture_ids {
-            if !self.entry_by_id.contains_key(&id) {
+            if self.entry_by_id[id as usize].is_none() {
                 to_load.push(id);
             }
         }
@@ -295,7 +274,7 @@ impl LandTextureCache {
         lossy_compression: bool,
     ) -> Option<TextureArrayUpload> {
         // If resident, touch timestamp and return None as no upload is needed.
-        if let Some(entry) = self.entry_by_id.get_mut(&texture_id) {
+        if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
             entry.1.last_touch = Instant::now();
             return None;
         }
@@ -346,22 +325,23 @@ impl LandTextureCache {
         let lru_len = array.lru.len();
         for _ in 0..lru_len {
             let Some(oldest) = array.lru.pop_front() else { break; };
-            let Some((size, _)) = self.entry_by_id.get(&oldest) else {
+            let Some(val) = &self.entry_by_id[oldest as usize] else {
                 continue;
             };
 
-            if *size != texture_size {
+            if val.0 != texture_size {
                 array.lru.push_back(oldest);
                 continue;
             }
 
-            if self.pinned_visible_ids.contains(&oldest) {
+            let word = (oldest as usize) >> 6;
+            let bit = (oldest as usize) & 63;
+            if (self.pinned_visible_bits[word] & (1u64 << bit)) != 0 {
                 array.lru.push_back(oldest);
                 continue;
             }
 
-            let victim_entry: (LandTextureSize, LandTextureEntry) =
-                self.entry_by_id.remove(&oldest).unwrap();
+            let victim_entry = self.entry_by_id[oldest as usize].take().unwrap();
             return Some(victim_entry.1.layer);
         }
 
@@ -432,20 +412,25 @@ impl LandTextureCache {
             let evicted: Vec<u16> = self
                 .entry_by_id
                 .iter()
-                .filter_map(|(&id, (s, e))| {
-                    if *s == size && e.layer >= new_layers { Some(id) } else { None }
+                .enumerate()
+                .filter_map(|(id, entry)| {
+                    if let Some((s, e)) = entry {
+                        if *s == size && e.layer >= new_layers { Some(id as u16) } else { None }
+                    } else { None }
                 })
                 .collect();
             for id in &evicted {
-                self.entry_by_id.remove(id);
+                self.entry_by_id[*id as usize] = None;
             }
 
             // Rebuild the free list from layers not occupied by surviving entries.
             let occupied: std::collections::HashSet<u32> = self
                 .entry_by_id
                 .iter()
-                .filter_map(|(_, (s, e))| {
-                    if *s == size { Some(e.layer) } else { None }
+                .filter_map(|entry| {
+                    if let Some((s, e)) = entry {
+                        if *s == size { Some(e.layer) } else { None }
+                    } else { None }
                 })
                 .collect();
             let arr = match size {
@@ -476,12 +461,15 @@ impl LandTextureCache {
         let ids_to_restore: Vec<(u16, u32)> = self
             .entry_by_id
             .iter()
-            .filter_map(|(id, (s, e))| {
-                if *s == size {
-                    Some((*id, e.layer))
-                } else {
-                    None
-                }
+            .enumerate()
+            .filter_map(|(id, entry)| {
+                if let Some((s, e)) = entry {
+                    if *s == size {
+                        Some((id as u16, e.layer))
+                    } else {
+                        None
+                    }
+                } else { None }
             })
             .collect();
 
@@ -516,15 +504,14 @@ impl LandTextureCache {
             LandTextureSize::Big => &mut self.big,
         };
 
-        self.entry_by_id.insert(
-            texture_id,
+        self.entry_by_id[texture_id as usize] = Some(
             (
                 texture_size,
                 LandTextureEntry {
                     layer,
                     last_touch: Instant::now(),
                 },
-            ),
+            )
         );
         array.lru.push_back(texture_id);
     }
@@ -534,14 +521,22 @@ impl LandTextureCache {
         let mut evicted_count = 0;
         let mut to_remove = Vec::new();
 
-        for (&id, (size, entry)) in &self.entry_by_id {
-            if now - entry.last_touch >= CACHE_EVICT_AFTER {
-                to_remove.push((id, *size, *entry));
+        for id in 0..self.entry_by_id.len() {
+            if let Some((size, entry)) = &self.entry_by_id[id] {
+                let word = id >> 6;
+                let bit = id & 63;
+                let is_pinned = (self.pinned_visible_bits[word] & (1u64 << bit)) != 0;
+
+                if is_pinned {
+                    self.entry_by_id[id].as_mut().unwrap().1.last_touch = now;
+                } else if now - entry.last_touch >= CACHE_EVICT_AFTER {
+                    to_remove.push((id as u16, *size, *entry));
+                }
             }
         }
 
         for (id, size, entry) in to_remove {
-            self.entry_by_id.remove(&id);
+            self.entry_by_id[id as usize] = None;
             self.free_layer_for_entry(size, entry);
             evicted_count += 1;
         }
