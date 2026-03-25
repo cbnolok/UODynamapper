@@ -88,6 +88,7 @@ pub struct TileAtlas {
     pub params: AtlasParams,
     /// LRU Cache: Maps logical Page Coordinate (packed u64) to physical Layer Index (u32).
     /// Using a small Vec with linear search is faster than HashMap for the typical number of layers.
+    /// mapping: page_u64 -> layer_idx. Sorted by page_u64 for binary search.
     page_to_layer: Vec<(u64, u32)>,
     /// Reverse mapping for eviction logic. Indexed by layer.
     layer_to_page: Vec<IVec2>,
@@ -141,8 +142,8 @@ impl TileAtlas {
         let page_u64 = (page.x as u32 as u64) | ((page.y as u32 as u64) << 32);
 
         // If it's already in the cache, return it
-        if let Some((_, layer)) = self.page_to_layer.iter().find(|(p, _)| *p == page_u64) {
-            let layer = *layer;
+        if let Ok(pos) = self.page_to_layer.binary_search_by_key(&page_u64, |(p, _)| *p) {
+            let layer = self.page_to_layer[pos].1;
             self.layer_access_tick[layer as usize] = self.current_tick;
             return (layer, None);
         }
@@ -163,26 +164,25 @@ impl TileAtlas {
             }
 
             // Evict least recently used layer
-            let mut lru_layer = 0;
-            let mut min_tick = u64::MAX;
-            for (idx, &tick) in self.layer_access_tick.iter().enumerate() {
-                if tick < min_tick {
-                    min_tick = tick;
-                    lru_layer = idx as u32;
-                }
-            }
+            let (lru_layer, _) = self.layer_access_tick.iter()
+                .enumerate()
+                .min_by_key(|&(_, tick)| tick)
+                .expect("At least one layer must exist");
+            let lru_layer = lru_layer as u32;
 
             let old_page = self.layer_to_page[lru_layer as usize];
             let old_page_u64 = (old_page.x as u32 as u64) | ((old_page.y as u32 as u64) << 32);
-            if let Some(pos) = self.page_to_layer.iter().position(|(p, _)| *p == old_page_u64) {
+            if let Ok(pos) = self.page_to_layer.binary_search_by_key(&old_page_u64, |(p, _)| *p) {
                 self.page_to_layer.remove(pos);
             }
             evicted_page = Some(old_page);
             lru_layer
         };
 
-        // Insert new association
-        self.page_to_layer.push((page_u64, layer));
+        // Insert new entry and keep sorted
+        let insert_pos = self.page_to_layer.binary_search_by_key(&page_u64, |(p, _)| *p)
+            .unwrap_err();
+        self.page_to_layer.insert(insert_pos, (page_u64, layer));
         self.layer_to_page[layer as usize] = page;
         self.layer_access_tick[layer as usize] = self.current_tick;
 

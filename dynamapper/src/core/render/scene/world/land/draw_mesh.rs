@@ -156,9 +156,9 @@ impl Default for LandMeshScratch {
             blocks_to_draw: Vec::new(),
             block_seen_bits: Vec::new(),
             blocks_data: Vec::new(),
-            missing_tile_bits: vec![0; 1024],
+            missing_tile_bits: vec![0; LandTextureCache::TILE_BITSET_SIZE],
             ids: Vec::new(),
-            texture_lookup_cache: vec![u32::MAX; 65536],
+            texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
             texels: Vec::new(),
         }
     }
@@ -402,9 +402,11 @@ pub fn sys_draw_spawned_land_chunks(
         .ok()
         .map(|(_, camera_tf)| {
             let cam_translation = camera_tf.translation();
+            // OPTIMIZATION: Using bitshift (>> 3) as a faster equivalent to 
+            // .div_euclid(8) for the tile-to-chunk coordinate conversion.
             (
-                (cam_translation.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
-                (cam_translation.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
+                (cam_translation.x.floor() as i32) >> 3,
+                (cam_translation.z.floor() as i32) >> 3,
             )
         })
         .unwrap_or((0, 0));
@@ -508,14 +510,17 @@ pub fn sys_draw_spawned_land_chunks(
         // Deduplicate while preserving the priority order produced by the
         // camera-distance sort above. This keeps nearby chunks at the front
         // of the background-loading queue after teleports.
-        let mut bitmask = vec![0u64; ((max_chunk_x * max_chunk_y) as usize / 64) + 1];
+        // OPTIMIZATION: Replacing HashMap with a bitmask-based deduplication.
+        // Bitmasks provide O(1) membership testing and insertion with zero
+        // heap allocation after the initial vector is created.
+        let mut bitmask = vec![0u64; (((max_chunk_x * max_chunk_y) as usize) >> LandTextureCache::TILE_ID_WORD_SHIFT) + 1]; // Equivalent to / 64
         uncached_blocks.retain(|pos| {
             let idx = (pos.x * max_chunk_y as u32) + pos.y;
-            let word = (idx / 64) as usize;
+            let word = (idx >> (LandTextureCache::TILE_ID_WORD_SHIFT as u32)) as usize; // idx / 64
             if word >= bitmask.len() {
                 return true;
             }
-            let bit = (idx % 64) as usize;
+            let bit = (idx as usize & LandTextureCache::TILE_ID_BIT_MASK); // idx % 64
             if (bitmask[word] & (1 << bit)) == 0 {
                 bitmask[word] |= 1 << bit;
                 true
@@ -582,7 +587,7 @@ pub fn sys_draw_spawned_land_chunks(
 
     // ── Build blocks_to_draw for the ready targets only ─────────────────
     {
-        let seen_bits_len = (((max_chunk_x as usize) * (max_chunk_y as usize)) + 63) / 64;
+        let seen_bits_len = (((max_chunk_x as usize) * (max_chunk_y as usize)) >> LandTextureCache::TILE_ID_WORD_SHIFT) + 1;
         if scratch.block_seen_bits.len() != seen_bits_len {
             scratch.block_seen_bits.resize(seen_bits_len, 0);
         } else {
@@ -653,8 +658,8 @@ pub fn sys_draw_spawned_land_chunks(
                     // if let Ok(cell) = block_ref.cell(tx, tz) {
                         let cell = &block_ref.cells[((MapBlock::CELLS_PER_COLUMN * tz) + tx) as usize];
                         let cell_id = cell.id as usize;
-                        let word = cell_id >> 6;
-                        let bit = cell_id & 63;
+                        let word = cell_id >> LandTextureCache::TILE_ID_WORD_SHIFT;
+                        let bit = cell_id & LandTextureCache::TILE_ID_BIT_MASK;
                         missing_tile_bits[word] |= 1u64 << bit;
 
                 }
@@ -668,9 +673,11 @@ pub fn sys_draw_spawned_land_chunks(
         let mut bits = word;
         while bits != 0 {
             let bit = bits.trailing_zeros() as usize;
-            let id = (word_idx * 64 + bit) as u16;
-            ids.push(id);
-            cache_r.pinned_visible_bits[word_idx] |= 1u64 << bit;
+            let id = (word_idx << LandTextureCache::TILE_ID_WORD_SHIFT) + bit;
+            ids.push(id as u16);
+            if word_idx < cache_r.pinned_visible_bits.len() {
+                cache_r.pinned_visible_bits[word_idx] |= 1u64 << bit;
+            }
             bits &= bits - 1;
         }
     }

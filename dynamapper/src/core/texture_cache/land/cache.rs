@@ -114,6 +114,13 @@ pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) 
 }
 
 impl LandTextureCache {
+    pub const MAX_TILE_ID: usize = 65536;
+    /// Shift by 6 is equivalent to division by 64 (the number of bits in a `u64`).
+    pub const TILE_ID_WORD_SHIFT: u8 = 6;
+    /// Masking with 63 (0x3F) is equivalent to modulo 64.
+    pub const TILE_ID_BIT_MASK: usize = 63;
+    pub const TILE_BITSET_SIZE: usize = Self::MAX_TILE_ID >> Self::TILE_ID_WORD_SHIFT;
+
     pub fn new(
         small_tex_image_handle: Handle<Image>,
         big_tex_image_handle: Handle<Image>,
@@ -132,8 +139,8 @@ impl LandTextureCache {
                 big_initial_layers,
                 texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
             ),
-            entry_by_id: vec![None; 16384],
-            pinned_visible_bits: vec![0u64; 256],
+            entry_by_id: vec![None; Self::MAX_TILE_ID],
+            pinned_visible_bits: vec![0u64; Self::TILE_BITSET_SIZE],
             visible_hint_count: 0,
             pending_uploads: Vec::new(),
             upload_receiver: std::sync::Mutex::new(upload_receiver),

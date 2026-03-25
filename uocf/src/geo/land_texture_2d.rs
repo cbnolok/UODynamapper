@@ -364,28 +364,53 @@ impl TexMap2D {
             for &chunk_array in pixel_data_u16_prefix {
                 let chunk = u16x16::new(chunk_array);
 
+                // PERFORMANCE NOTE:
+                // We keep the entire decoding and packing process in SIMD registers to avoid
+                // "SIMD-to-scalar spills". The original implementation moved data to a stack array
+                // to loop over it, which forced the CPU to wait on high-latency extraction moves.
+                //
+                // ALGORITHM:
+                // We extract the 5-6-5 bits into separate registers, then perform vectorized
+                // bit-packing using wide bitwise shifts and ORs. This processes 8 pixels at
+                // a time in parallel per register (16 per total chunk).
+
+                let [lo, hi]: [u16x8; 2] = bytemuck::cast(chunk);
+
+                // Extract components into u32 registers for bit-packing.
+                // 1) Mask 5 bits (0x1F) for R, G, B channels.
+                // 2) Shift right to extract (for G and R).
+                // 3) Shift left by 3 to scale 5-bit to 8-bit (nearly, 0..31 -> 0..248).
+                let b_u16_lo: u32x8 = u32x8::from((lo & u16x8::splat(0x1F)) << 3);
+                let g_u16_lo: u32x8 = u32x8::from(((lo >> 5) & u16x8::splat(0x1F)) << 3);
+                let r_u16_lo: u32x8 = u32x8::from(((lo >> 10) & u16x8::splat(0x1F)) << 3);
+                let a_u16_lo: u32x8 = u32x8::splat(0xFF); // Full opacity for land tiles
+
+                let b_u16_hi: u32x8 = u32x8::from((hi & u16x8::splat(0x1F)) << 3);
+                let g_u16_hi: u32x8 = u32x8::from(((hi >> 5) & u16x8::splat(0x1F)) << 3);
+                let r_u16_hi: u32x8 = u32x8::from(((hi >> 10) & u16x8::splat(0x1F)) << 3);
+                let a_u16_hi: u32x8 = u32x8::splat(0xFF);
+
+                // ENDIANNESS & PACKING:
+                // Bit-packing as (A << 24 | B << 16 | G << 8 | R) results in memory bytes [R, G, B, A]
+                // on Little-Endian systems (x86_64, aarch64), which is the standard RGBA8888
+                // format expected by modern GPUs (Vulkan/Metal/DXR).
+                #[allow(unused_mut)]
+                let mut rgba_lo: u32x8 =
+                    (a_u16_lo << 24) | (b_u16_lo << 16) | (g_u16_lo << 8) | r_u16_lo;
+                #[allow(unused_mut)]
+                let mut rgba_hi: u32x8 =
+                    (a_u16_hi << 24) | (b_u16_hi << 16) | (g_u16_hi << 8) | r_u16_hi;
+
+                // Handle host endianness: we want Little-Endian memory layout for RGBA [R, G, B, A]
                 #[cfg(target_endian = "big")]
-                let chunk = chunk.swap_bytes();
-
-                let b_u16: u16x16 = (chunk & u16x16::splat(0x1F)) << 3;
-                let g_u16: u16x16 = ((chunk >> 5) & u16x16::splat(0x1F)) << 3;
-                let r_u16: u16x16 = ((chunk >> 10) & u16x16::splat(0x1F)) << 3;
-                let a_u16: u16x16 = u16x16::splat(0xFF);
-
-                let b_u16: &[u16; 16] = b_u16.as_array();
-                let g_u16: &[u16; 16] = g_u16.as_array();
-                let r_u16: &[u16; 16] = r_u16.as_array();
-                let a_u16: &[u16; 16] = a_u16.as_array();
-
-                let mut rgba_u32_array = [0u32; 16];
-                for i in 0..16 {
-                    let r_val = r_u16[i] as u32;
-                    let g_val = g_u16[i] as u32;
-                    let b_val = b_u16[i] as u32;
-                    let a_val = a_u16[i] as u32;
-                    rgba_u32_array[i] = (a_val << 24) | (b_val << 16) | (g_val << 8) | r_val;
+                {
+                    rgba_lo = rgba_lo.swap_bytes();
+                    rgba_hi = rgba_hi.swap_bytes();
                 }
-                pixel_data.extend_from_slice(bytemuck::cast_slice(&rgba_u32_array));
+
+                // Efficient large stores (32-bytes at a time) instead of 16 individual 4-byte pushes.
+                pixel_data.extend_from_slice(bytemuck::cast_slice(rgba_lo.as_array()));
+                pixel_data.extend_from_slice(bytemuck::cast_slice(rgba_hi.as_array()));
             }
 
             for &p in pixel_data_u16_suffix {

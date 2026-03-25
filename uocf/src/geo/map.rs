@@ -171,14 +171,42 @@ impl MapBlock {
     fn from_raw_block(raw_block: &RawMapBlock, new_block: &mut MapBlock) -> eyre::Result<()> {
         // We can't cast_slice the cells because memory layout differs (3 bytes vs 4 bytes).
         // Extract cells individually in a tight loop.
-        for (i, raw_cell) in raw_block.cells.iter().enumerate() {
-            let id = raw_cell.id;
-            #[cfg(target_endian = "big")]
-            let id = id.swap_bytes();
-
-            new_block.cells[i] = MapCell {
-                id,
-                z: raw_cell.z,
+        // OPTIMIZATION: Unrolled processing of 4 tiles at a time (12 bytes -> 16 bytes).
+        // This avoids loop overhead and provides the compiler with a clear structure 
+        // to apply auto-vectorization and instruction-level parallelism.
+        //
+        // ENDIANNESS: We use `u16::from_le_bytes` to explicitly handle the Little-Endian
+        // format of UO .mul files. This ensures correct data extraction regardless 
+        // of whether the host CPU is Little-Endian (x86/ARM) or Big-Endian.
+        let raw_bytes: &[u8] = bytemuck::cast_slice(&raw_block.cells);
+        let out_cells: &mut [MapCell; 64] = &mut new_block.cells;
+        
+        for i in 0..16 {
+            let base_in = (i << 2) + (i << 3); // Correctly calculate i * 12
+            let base_out = i << 2;            // i * 4
+            
+            // Tile 0: Extract 2-byte ID and 1-byte Z. Skip 1-byte pad in output.
+            out_cells[base_out + 0] = MapCell {
+                id: u16::from_le_bytes([raw_bytes[base_in + 0], raw_bytes[base_in + 1]]),
+                z: raw_bytes[base_in + 2] as i8,
+                _pad: 0,
+            };
+            // Tile 1
+            out_cells[base_out + 1] = MapCell {
+                id: u16::from_le_bytes([raw_bytes[base_in + 3], raw_bytes[base_in + 4]]),
+                z: raw_bytes[base_in + 5] as i8,
+                _pad: 0,
+            };
+            // Tile 2
+            out_cells[base_out + 2] = MapCell {
+                id: u16::from_le_bytes([raw_bytes[base_in + 6], raw_bytes[base_in + 7]]),
+                z: raw_bytes[base_in + 8] as i8,
+                _pad: 0,
+            };
+            // Tile 3
+            out_cells[base_out + 3] = MapCell {
+                id: u16::from_le_bytes([raw_bytes[base_in + 9], raw_bytes[base_in + 10]]),
+                z: raw_bytes[base_in + 11] as i8,
                 _pad: 0,
             };
         }
