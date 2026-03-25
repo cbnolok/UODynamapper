@@ -209,6 +209,9 @@ impl MapPlane {
     pub const EXTRA_BLOCKS_TO_CACHE_PER_SIDE: u32 = 8;
 
     pub fn block(&mut self, pos: MapBlockRelPos) -> Option<&MapBlock> {
+        if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
+            return None;
+        }
         let idx = (pos.x * self.size_blocks.height) + pos.y;
         let arena_idx = self.cached_block_indices[idx as usize];
         if arena_idx != u32::MAX {
@@ -223,6 +226,9 @@ impl MapPlane {
     }
 
     pub fn block_no_update(&self, pos: MapBlockRelPos) -> Option<&MapBlock> {
+        if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
+            return None;
+        }
         let idx = (pos.x * self.size_blocks.height) + pos.y;
         let arena_idx = self.cached_block_indices[idx as usize];
         if arena_idx != u32::MAX {
@@ -233,6 +239,9 @@ impl MapPlane {
     }
 
     pub fn block_as_mut(&mut self, pos: MapBlockRelPos) -> Option<&mut MapBlock> {
+        if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
+            return None;
+        }
         let idx = (pos.x * self.size_blocks.height) + pos.y;
         let arena_idx = self.cached_block_indices[idx as usize];
         if arena_idx != u32::MAX {
@@ -254,6 +263,11 @@ impl MapPlane {
             while bits != 0 {
                 let bit = bits.trailing_zeros() as usize;
                 let idx = (word_idx * 64 + bit) as u32;
+
+                if idx >= self.size_blocks.width * self.size_blocks.height {
+                    bits &= bits - 1;
+                    continue;
+                }
 
                 let arena_idx = self.cached_block_indices[idx as usize];
                 if arena_idx != u32::MAX {
@@ -616,6 +630,9 @@ impl MapPlane {
             let raw_blocks: &[RawMapBlock] = cast_slice(&self.read_buffer);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
+                if block_pos.x >= self.size_blocks.width || block_pos.y >= self.size_blocks.height {
+                    continue;
+                }
                 let idx = (block_pos.x * self.size_blocks.height) + block_pos.y;
                 let arena_idx = self.cached_block_indices[idx as usize];
                 if arena_idx == u32::MAX {
@@ -672,10 +689,25 @@ pub fn load_blocks_from_reader<R: Read + Seek>(
     // Keep the caller's order so higher-priority visible blocks are loaded and
     // emitted first. We still sort *within* each batch for coalesced disk I/O.
     let mut ordered = blocks_to_load.to_vec();
-    {
-        use std::collections::HashSet;
-        let mut seen = HashSet::with_capacity(ordered.len());
-        ordered.retain(|pos| seen.insert(*pos));
+    if ordered.len() > 1 {
+        // Use a bitmask for deduplication to avoid HashSet overhead while preserving order.
+        let mut max_idx = 0;
+        for pos in &ordered {
+            let idx = (pos.x * size_blocks_height) + pos.y;
+            if idx > max_idx { max_idx = idx; }
+        }
+        let mut bitmask = vec![0u64; (max_idx as usize / 64) + 1];
+        ordered.retain(|pos| {
+            let idx = (pos.x * size_blocks_height) + pos.y;
+            let word = (idx / 64) as usize;
+            let bit = (idx % 64) as usize;
+            if (bitmask[word] & (1 << bit)) == 0 {
+                bitmask[word] |= 1 << bit;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     const PRIORITY_BATCH_SIZE: usize = 512;

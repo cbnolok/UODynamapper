@@ -86,19 +86,20 @@ pub struct LayerDirtyRegion {
 pub struct TileAtlas {
     /// Parameters shared with the GPU.
     pub params: AtlasParams,
-    /// LRU Cache: Maps logical Page Coordinate (IVec2) to physical Layer Index (u32).
-    page_to_layer: std::collections::HashMap<IVec2, u32>,
-    /// Reverse mapping for eviction logic.
-    layer_to_page: std::collections::HashMap<u32, IVec2>,
-    /// Tracks the 'last used' tick for each layer for LRU eviction.
-    layer_access_tick: std::collections::HashMap<u32, u64>,
+    /// LRU Cache: Maps logical Page Coordinate (packed u64) to physical Layer Index (u32).
+    /// Using a small Vec with linear search is faster than HashMap for the typical number of layers.
+    page_to_layer: Vec<(u64, u32)>,
+    /// Reverse mapping for eviction logic. Indexed by layer.
+    layer_to_page: Vec<IVec2>,
+    /// Tracks the 'last used' tick for each layer for LRU eviction. Indexed by layer.
+    layer_access_tick: Vec<u64>,
     /// Monotonically increasing counter for LRU tracking.
     current_tick: u64,
 
-    /// CPU mirror of mapped layer data.
-    pub cpu_mirror: std::collections::HashMap<u32, Vec<Rg16u>>,
-    /// Tracks modified bounding box per layer.
-    pub dirty_regions: std::collections::HashMap<u32, LayerDirtyRegion>,
+    /// CPU mirror of mapped layer data. Indexed by layer.
+    pub cpu_mirror: Vec<Option<Vec<Rg16u>>>,
+    /// Tracks modified bounding box per layer. Indexed by layer.
+    pub dirty_regions: Vec<Option<LayerDirtyRegion>>,
     /// Staging buffer swapped into place by the clear system so that
     /// the extract system can take ownership without cloning.
     extract_staging: Vec<AtlasUpload>,
@@ -116,14 +117,15 @@ pub struct TileAtlas {
 
 impl TileAtlas {
     pub fn new(params: AtlasParams, max_layers_limit: u32) -> Self {
+        let max_layers = params.max_layers as usize;
         Self {
             params,
-            page_to_layer: Default::default(),
-            layer_to_page: Default::default(),
-            layer_access_tick: Default::default(),
+            page_to_layer: Vec::with_capacity(max_layers),
+            layer_to_page: vec![IVec2::ZERO; max_layers],
+            layer_access_tick: vec![0; max_layers],
             current_tick: 0,
-            cpu_mirror: Default::default(),
-            dirty_regions: Default::default(),
+            cpu_mirror: vec![None; max_layers],
+            dirty_regions: vec![None; max_layers],
             extract_staging: Vec::new(),
             requested_expansion: None,
             max_layers_limit,
@@ -136,10 +138,12 @@ impl TileAtlas {
     /// Returns the layer index and the optionally evicted page coordinate.
     pub fn ensure_layer_for_page(&mut self, page: IVec2) -> (u32, Option<IVec2>) {
         self.current_tick += 1;
+        let page_u64 = (page.x as u32 as u64) | ((page.y as u32 as u64) << 32);
 
         // If it's already in the cache, return it
-        if let Some(&layer) = self.page_to_layer.get(&page) {
-            self.layer_access_tick.insert(layer, self.current_tick);
+        if let Some((_, layer)) = self.page_to_layer.iter().find(|(p, _)| *p == page_u64) {
+            let layer = *layer;
+            self.layer_access_tick[layer as usize] = self.current_tick;
             return (layer, None);
         }
 
@@ -159,22 +163,28 @@ impl TileAtlas {
             }
 
             // Evict least recently used layer
-            let lru_layer = *self.layer_access_tick
-                .iter()
-                .min_by_key(|&(_, &tick)| tick)
-                .map(|(layer, _)| layer)
-                .unwrap();
+            let mut lru_layer = 0;
+            let mut min_tick = u64::MAX;
+            for (idx, &tick) in self.layer_access_tick.iter().enumerate() {
+                if tick < min_tick {
+                    min_tick = tick;
+                    lru_layer = idx as u32;
+                }
+            }
 
-            let old_page = self.layer_to_page.remove(&lru_layer).unwrap();
-            self.page_to_layer.remove(&old_page);
+            let old_page = self.layer_to_page[lru_layer as usize];
+            let old_page_u64 = (old_page.x as u32 as u64) | ((old_page.y as u32 as u64) << 32);
+            if let Some(pos) = self.page_to_layer.iter().position(|(p, _)| *p == old_page_u64) {
+                self.page_to_layer.remove(pos);
+            }
             evicted_page = Some(old_page);
             lru_layer
         };
 
         // Insert new association
-        self.page_to_layer.insert(page, layer);
-        self.layer_to_page.insert(layer, page);
-        self.layer_access_tick.insert(layer, self.current_tick);
+        self.page_to_layer.push((page_u64, layer));
+        self.layer_to_page[layer as usize] = page;
+        self.layer_access_tick[layer as usize] = self.current_tick;
 
         if let Some(old_page) = evicted_page {
             let evicted_page_index = (old_page.y as u32) * self.params.world_pages_x + (old_page.x as u32);
@@ -207,10 +217,12 @@ impl TileAtlas {
 
     pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
         let page_width = self.params.page_texels.x;
+        let layer_idx = layer as usize;
         
-        let mirror = self.cpu_mirror.entry(layer).or_insert_with(|| {
-            vec![Rg16u { r: 0, g: 0 }; (page_width * self.params.page_texels.y) as usize]
-        });
+        if self.cpu_mirror[layer_idx].is_none() {
+            self.cpu_mirror[layer_idx] = Some(vec![Rg16u { r: 0, g: 0 }; (page_width * self.params.page_texels.y) as usize]);
+        }
+        let mirror = self.cpu_mirror[layer_idx].as_mut().unwrap();
         
         for y in 0..size.y {
             let src_start = (y * size.x) as usize;
@@ -220,12 +232,15 @@ impl TileAtlas {
             mirror[dst_start..dst_end].copy_from_slice(&texels[src_start..src_end]);
         }
 
-        let region = self.dirty_regions.entry(layer).or_insert(LayerDirtyRegion {
-            min_x: u32::MAX,
-            min_y: u32::MAX,
-            max_x: 0,
-            max_y: 0,
-        });
+        if self.dirty_regions[layer_idx].is_none() {
+            self.dirty_regions[layer_idx] = Some(LayerDirtyRegion {
+                min_x: u32::MAX,
+                min_y: u32::MAX,
+                max_x: 0,
+                max_y: 0,
+            });
+        }
+        let region = self.dirty_regions[layer_idx].as_mut().unwrap();
         region.min_x = region.min_x.min(offset.x);
         region.min_y = region.min_y.min(offset.y);
         region.max_x = region.max_x.max(offset.x + size.x);
@@ -242,18 +257,25 @@ impl TileAtlas {
     /// by the mesh renderer.
     pub fn clear_all_mappings(&mut self) {
         self.page_to_layer.clear();
-        self.layer_to_page.clear();
-        self.layer_access_tick.clear();
+        self.layer_to_page.fill(IVec2::ZERO);
+        self.layer_access_tick.fill(0);
         self.current_tick = 0;
         self.params.page_to_layer = [bevy::math::UVec4::MAX; 64];
-        self.cpu_mirror.clear();
-        self.dirty_regions.clear();
+        self.cpu_mirror.fill(None);
+        self.dirty_regions.fill(None);
     }
 
     /// Applies a new layer count after the GPU image has been replaced.
     pub fn apply_resize(&mut self, new_max_layers: u32) {
         self.params.max_layers = new_max_layers;
         self.requested_expansion = None;
+
+        let new_len = new_max_layers as usize;
+        self.layer_to_page.resize(new_len, IVec2::ZERO);
+        self.layer_access_tick.resize(new_len, 0);
+        self.cpu_mirror.resize(new_len, None);
+        self.dirty_regions.resize(new_len, None);
+
         self.clear_all_mappings();
     }
 }
@@ -291,12 +313,15 @@ pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
 
     let page_width = tile_atlas.params.page_texels.x;
     
-    for (&layer, region) in &tile_atlas.dirty_regions {
+    for (layer, opt_region) in tile_atlas.dirty_regions.iter().enumerate() {
+        let Some(region) = opt_region else { continue; };
+        let layer = layer as u32;
+        
         let width = region.max_x.saturating_sub(region.min_x);
         let height = region.max_y.saturating_sub(region.min_y);
         if width == 0 || height == 0 { continue; }
         
-        let mirror = &tile_atlas.cpu_mirror[&layer];
+        let mirror = tile_atlas.cpu_mirror[layer as usize].as_ref().unwrap();
         let size_bytes = (width * height * 4) as usize;
         let mut data = Vec::with_capacity(size_bytes);
         
@@ -315,7 +340,7 @@ pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
         });
     }
 
-    tile_atlas.dirty_regions.clear();
+    tile_atlas.dirty_regions.fill(None);
     tile_atlas.extract_staging = extracted_uploads;
 }
 

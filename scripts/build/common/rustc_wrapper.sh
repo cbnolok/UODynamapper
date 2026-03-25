@@ -24,9 +24,17 @@ done
 
 if [ "$IS_MY_CRATE" = true ]; then
     # Compile your code with whatever is in Cargo.toml (standard abort)
-    exec "$RUSTC" "$@"
+    if command -v sccache >/dev/null 2>&1; then
+        exec sccache "$RUSTC" "$@"
+    else
+        exec "$RUSTC" "$@"
+    fi
 else
     # Prune dependencies with no-fmt-debug.
     # We removed immediate-abort because it is binary-incompatible with standard abort.
-    exec "$RUSTC" "$@" -Zfmt-debug=none
+    if command -v sccache >/dev/null 2>&1; then
+        exec sccache "$RUSTC" "$@" -Zfmt-debug=none
+    else
+        exec "$RUSTC" "$@" -Zfmt-debug=none
+    fi
 fi

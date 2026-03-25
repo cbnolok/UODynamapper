@@ -141,8 +141,6 @@ impl LandTextureCache {
         }
     }
 
-
-
     /// Clears all pinned texture IDs.  Call when the entire chunk set is
     /// invalidated (scale change, map switch) so stale pins don’t prevent
     /// the LRU from reclaiming layers that are no longer atlas-referenced.
@@ -219,7 +217,11 @@ impl LandTextureCache {
             None,
             LogSev::Info,
             LogAbout::Performance,
-            &format!("Pre-caching {} textures (Async BC7={})...", to_load.len(), lossy_compression),
+            &format!(
+                "Pre-caching {} textures (Async BC7={})...",
+                to_load.len(),
+                lossy_compression
+            ),
         );
 
         let mut skipped_due_to_pressure = 0usize;
@@ -232,7 +234,7 @@ impl LandTextureCache {
             };
 
             self.update_bookkeeping(id, size, layer);
-            
+
             let texmap_2d_arc = texmap_2d.clone();
             let sender = self.upload_sender.clone();
             let task = pool.spawn(async move {
@@ -301,7 +303,7 @@ impl LandTextureCache {
             });
         });
         task.detach();
-        
+
         None
     }
 
@@ -324,7 +326,9 @@ impl LandTextureCache {
         // 1) Prefer evicting oldest NON-visible texture.
         let lru_len = array.lru.len();
         for _ in 0..lru_len {
-            let Some(oldest) = array.lru.pop_front() else { break; };
+            let Some(oldest) = array.lru.pop_front() else {
+                break;
+            };
             let Some(val) = &self.entry_by_id[oldest as usize] else {
                 continue;
             };
@@ -346,13 +350,12 @@ impl LandTextureCache {
         }
 
         // 2) No evictable non-visible texture found: request GPU array expansion.
-        let desired = ((self.visible_hint_count as f32) * 1.25).ceil() as u32;
-        let target_layers = desired
-            .max(array.active_layers + 64)
-            .min(array.max_layers);
+        let desired = ((self.visible_hint_count as f32) * 1.5).ceil() as u32;
+        let target_layers = desired.max(array.active_layers + 64).min(array.max_layers);
         if target_layers > array.active_layers {
             let previous_request = array.requested_resize_to;
-            array.requested_resize_to = Some(previous_request.unwrap_or(target_layers).max(target_layers));
+            array.requested_resize_to =
+                Some(previous_request.unwrap_or(target_layers).max(target_layers));
 
             if array.last_requested_resize_logged != Some(target_layers) {
                 array.last_requested_resize_logged = Some(target_layers);
@@ -415,8 +418,14 @@ impl LandTextureCache {
                 .enumerate()
                 .filter_map(|(id, entry)| {
                     if let Some((s, e)) = entry {
-                        if *s == size && e.layer >= new_layers { Some(id as u16) } else { None }
-                    } else { None }
+                        if *s == size && e.layer >= new_layers {
+                            Some(id as u16)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             for id in &evicted {
@@ -429,8 +438,14 @@ impl LandTextureCache {
                 .iter()
                 .filter_map(|entry| {
                     if let Some((s, e)) = entry {
-                        if *s == size { Some(e.layer) } else { None }
-                    } else { None }
+                        if *s == size {
+                            Some(e.layer)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             let arr = match size {
@@ -469,14 +484,16 @@ impl LandTextureCache {
                     } else {
                         None
                     }
-                } else { None }
+                } else {
+                    None
+                }
             })
             .collect();
 
         for (texture_id, layer) in ids_to_restore {
             let actual_size = texture_array::get_texmap_size_only(texture_id, &texmap_2d);
             let texmap_2d_arc = texmap_2d.clone();
-            
+
             let pool = AsyncComputeTaskPool::get();
             let sender = self.upload_sender.clone();
             let task = pool.spawn(async move {
@@ -504,15 +521,13 @@ impl LandTextureCache {
             LandTextureSize::Big => &mut self.big,
         };
 
-        self.entry_by_id[texture_id as usize] = Some(
-            (
-                texture_size,
-                LandTextureEntry {
-                    layer,
-                    last_touch: Instant::now(),
-                },
-            )
-        );
+        self.entry_by_id[texture_id as usize] = Some((
+            texture_size,
+            LandTextureEntry {
+                layer,
+                last_touch: Instant::now(),
+            },
+        ));
         array.lru.push_back(texture_id);
     }
 
@@ -583,7 +598,10 @@ impl LandTextureCache {
             }
         };
 
-        let small = check(&self.small, texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS);
+        let small = check(
+            &self.small,
+            texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
+        );
         let big = check(&self.big, texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS);
         (small, big)
     }

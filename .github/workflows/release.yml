@@ -66,12 +66,14 @@ jobs:
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
+          # RUSTC_WRAPPER must be set to the wrapper script.
+          # The wrapper script will then call sccache + rustc.
+          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
           CARGO_INCREMENTAL: 0
         run: |
-          chmod +x scripts/build/linux/build.sh
+          chmod +x scripts/build/linux/build-release-nightly.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build.sh
+          ./scripts/build/linux/build-release-nightly.sh
 
       - name: Package binary and assets
         run: |
@@ -172,13 +174,35 @@ jobs:
           path: dynamapper-windows-x86_64.zip
           retention-days: 30
 
-      - name: Upload to release (tagged commits on main/prereleases only)
+      - name: Upload to release (tagged commits)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: dynamapper-windows-x86_64.zip
-          generate_release_notes: false
+          generate_release_notes: true
           fail_on_unmatched_files: true
+
+      # On manual dispatch: create/overwrite the "nightly" (or custom) prerelease
+      - name: Compute nightly tag name
+        if: github.event_name == 'workflow_dispatch'
+        id: nightly_tag
+        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update prerelease
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.nightly_tag.outputs.tag }}
+          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
+          prerelease: true
+          files: dynamapper-windows-x86_64.zip
+          generate_release_notes: false
+          body: |
+            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
+
+            Built on: ${{ github.event.repository.updated_at }}
+
+            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
 
   build-macos:
     name: Build (macOS x86_64 + ARM64)

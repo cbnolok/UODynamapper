@@ -14,9 +14,19 @@ for ($i = 0; $i -lt $remainingArgs.Count; $i++) {
 $myCrates = @("dynamapper", "uocf")
 $isMyCrate = $myCrates -contains $crateName
 
+$sccacheBin = Get-Command sccache -ErrorAction SilentlyContinue
+
 if ($isMyCrate) {
-    & $rustc @remainingArgs
+    if ($sccacheBin) {
+        & sccache $rustc @remainingArgs
+    } else {
+        & $rustc @remainingArgs
+    }
 } else {
     # Prune dependencies with no-fmt-debug.
-    & $rustc @remainingArgs -Zfmt-debug=none
+    if ($sccacheBin) {
+        & sccache $rustc @remainingArgs -Zfmt-debug=none
+    } else {
+        & $rustc @remainingArgs -Zfmt-debug=none
+    }
 }

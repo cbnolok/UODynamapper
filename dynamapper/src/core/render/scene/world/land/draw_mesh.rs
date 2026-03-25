@@ -13,10 +13,7 @@ use bevy::{
 };
 use bytemuck::Zeroable;
 use std::time::Instant;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 use uocf::geo::map::MapPlane;
 use uocf::geo::{
     land_texture_2d::{LandTextureSize, TexMap2D},
@@ -142,18 +139,29 @@ pub struct PendingTextureBake;
 #[derive(Resource)]
 pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct LandMeshScratch {
-    primary_chunks: HashMap<(u32, u32), (Entity, u32)>,
-    spawn_targets: HashSet<LandChunkConstructionData>,
     blocks_to_draw: Vec<MapBlockRelPos>,
     block_seen_bits: Vec<u64>,
-    blocks_data: HashMap<MapBlockRelPos, MapBlock>,
+    blocks_data: Vec<(u64, MapBlock)>,
     missing_tile_bits: Vec<u64>,
     ids: Vec<u16>,
-    texture_lookup_cache: HashMap<u16, (LandTextureSize, u32)>,
+    texture_lookup_cache: Vec<u32>,
     /// Reusable buffer for atlas texel packing (avoids per-sub-block allocation).
     texels: Vec<Rg16u>,
+}
+impl Default for LandMeshScratch {
+    fn default() -> Self {
+        Self {
+            blocks_to_draw: Vec::new(),
+            block_seen_bits: Vec::new(),
+            blocks_data: Vec::new(),
+            missing_tile_bits: vec![0; 1024],
+            ids: Vec::new(),
+            texture_lookup_cache: vec![u32::MAX; 65536],
+            texels: Vec::new(),
+        }
+    }
 }
 
 pub fn sys_update_existing_chunk_mesh_lod(
@@ -189,8 +197,8 @@ fn enqueue_chunk_to_atlas_and_preload(
     tile_atlas: &mut ResMut<TileAtlas>,
     texmap_2d_r: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_map: &HashMap<MapBlockRelPos, MapBlock>,
-    texture_lookup_cache: &mut HashMap<u16, (LandTextureSize, u32)>,
+    blocks_data_map: &[(u64, MapBlock)],
+    texture_lookup_cache: &mut [u32],
     texels_buf: &mut Vec<Rg16u>,
     lossy_compression: bool,
 ) -> bool {
@@ -203,9 +211,10 @@ fn enqueue_chunk_to_atlas_and_preload(
         x: chunk_data_ref.chunk_origin_chunk_units_x,
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
-    let Some(block) = blocks_data_map.get(&chunk_rel_coords) else {
-        // Block not available (e.g. at map edge or missing data) — skip silently.
-        return false;
+    
+    let block = match blocks_data_map.binary_search_by_key(&chunk_rel_coords.as_u64(), |(k, _)| *k) {
+        Ok(idx) => &blocks_data_map[idx].1,
+        Err(_) => return false,
     };
 
     // NOTE: texture_lookup_cache is NOT cleared here — it persists across
@@ -215,9 +224,18 @@ fn enqueue_chunk_to_atlas_and_preload(
     let mut has_fallback = false;
 
     for cell in &block.cells {
-        let (texture_size, layer) = *texture_lookup_cache.entry(cell.id).or_insert_with(|| {
-            texture_cache.get_texture_size_layer(texmap_2d_r.clone(), cell.id, lossy_compression)
-        });
+        let packed = texture_lookup_cache[cell.id as usize];
+        let (texture_size, layer) = if packed != u32::MAX {
+            let size_bit = packed & 1;
+            let layer = packed >> 1;
+            let size = if size_bit == 0 { LandTextureSize::Small } else { LandTextureSize::Big };
+            (size, layer)
+        } else {
+            let (size, layer) = texture_cache.get_texture_size_layer(texmap_2d_r.clone(), cell.id, lossy_compression);
+            let size_bit = match size { LandTextureSize::Small => 0, LandTextureSize::Big => 1 };
+            texture_lookup_cache[cell.id as usize] = (layer << 1) | size_bit;
+            (size, layer)
+        };
 
         if layer == 0 {
             has_fallback = true;
@@ -287,7 +305,7 @@ pub struct DrawMeshLocals {
     loader: Option<chunk_loader::ChunkLoaderThread>,
     pending: bool,
     /// Expanded block coordinates needed for a pending background load.
-    /// Kept alive so we can skip re-expanding on the poll frame.
+    /// Kept alive so we can skip re-expanded on the poll frame.
     pending_blocks: Vec<MapBlockRelPos>,
     /// Track the last observed scale to detect scale changes and clear pinned textures.
     last_scale: u32,
@@ -356,7 +374,7 @@ pub fn sys_draw_spawned_land_chunks(
     let mut scratch = land_mesh_scratch_r;
     scratch.blocks_to_draw.clear();
     scratch.blocks_data.clear();
-    scratch.texture_lookup_cache.clear();
+    scratch.texture_lookup_cache.fill(u32::MAX);
     if scratch.missing_tile_bits.len() != 1024 {
         scratch.missing_tile_bits.resize(1024, 0);
     } else {
@@ -626,24 +644,24 @@ pub fn sys_draw_spawned_land_chunks(
             let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
                 continue; // Not cached (border block still loading) — skip.
             };
-            if blocks_data
-                .insert(block_coords, block_ref.clone())
-                .is_some()
-            {
-                continue;
-            }
+            
+            blocks_data.push((block_coords.as_u64(), block_ref.clone()));
 
             for tz in 0..8 {
                 for tx in 0..8 {
-                    if let Ok(cell) = block_ref.cell(tx, tz) {
+                    // Extract the logic to speed up this function call
+                    // if let Ok(cell) = block_ref.cell(tx, tz) {
+                        let cell = &block_ref.cells[((MapBlock::CELLS_PER_COLUMN * tz) + tx) as usize];
                         let cell_id = cell.id as usize;
                         let word = cell_id >> 6;
                         let bit = cell_id & 63;
                         missing_tile_bits[word] |= 1u64 << bit;
-                    }
+
                 }
             }
         }
+        // Important: Sort for binary search later in enqueue_chunk_to_atlas_and_preload
+        blocks_data.sort_unstable_by_key(|(k, _)| *k);
     }
 
     for (word_idx, &word) in missing_tile_bits.iter().enumerate() {

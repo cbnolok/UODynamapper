@@ -1,0 +1,8 @@
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+
+[target.'cfg(all(target_os = "linux", debug_assertions))']
+# Use the 'wild' linker for faster debug builds on Linux.
+# Since release builds are driven by scripts that set -fuse-ld=mold,
+# this will be the default for local development.
+rustflags = ["-Clink-arg=-fuse-ld=wild"]
