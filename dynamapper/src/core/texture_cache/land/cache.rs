@@ -15,7 +15,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 use bevy::tasks::AsyncComputeTaskPool;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
 };

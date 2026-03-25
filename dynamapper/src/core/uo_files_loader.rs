@@ -10,7 +10,6 @@ use uocf::eyre_imports;
 use uocf::geo::{land_texture_2d, map};
 use uocf::tiledata;
 eyre_imports!();
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;

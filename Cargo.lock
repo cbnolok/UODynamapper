@@ -2209,9 +2209,11 @@ dependencies = [
  "config",
  "futures-lite",
  "image",
+ "indexmap",
  "intel_tex_2",
  "mimalloc",
  "multiversion",
+ "nohash-hasher",
  "paris",
  "regex",
  "serde",
@@ -5335,7 +5337,9 @@ dependencies = [
  "getset",
  "glam",
  "image",
+ "indexmap",
  "log",
+ "nohash-hasher",
  "wide",
 ]
 

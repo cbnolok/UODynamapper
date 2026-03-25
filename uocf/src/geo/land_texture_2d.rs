@@ -18,8 +18,9 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use getset::Getters;
 use image::{DynamicImage, ImageBuffer, RgbaImage};
+use indexmap::IndexMap;
+use nohash_hasher::BuildNoHashHasher;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fs::File;
 
 use std::path::PathBuf;
@@ -113,7 +114,7 @@ impl Texture2DElement {
 
 #[derive(Debug)]
 pub struct TexMap2D {
-    file_data: Vec<Texture2DElement>, //HashMap<u32, Texture2DElement>,
+    file_data: Vec<Texture2DElement>,
     shared_data: std::sync::Mutex<TexMapShared>,
 }
 
@@ -121,10 +122,9 @@ pub struct TexMap2D {
 struct TexMapShared {
     file_reader: BufReader<File>,
     scratch_buffer: Vec<u8>,
-    /// Cache stores the raw BGRA5551 file data (2 bytes/pixel) rather than
-    /// decoded RGBA8 (4 bytes/pixel), halving RAM usage.  Decode to RGBA8
-    /// happens on-the-fly in `get_pixel_data` via SIMD and is very fast.
-    cache: HashMap<usize, (std::sync::Arc<Vec<u8>>, std::time::Instant)>,
+    /// Cache stores the raw BGRA5551 file data (2 bytes/pixel).
+    /// Using a non-hashing FastMap for rapid indexed lookups.
+    cache: IndexMap<usize, (std::sync::Arc<Vec<u8>>, std::time::Instant), BuildNoHashHasher<usize>>,
 }
 
 impl TexMap2D {
@@ -184,7 +184,7 @@ impl TexMap2D {
             shared_data: std::sync::Mutex::new(TexMapShared {
                 file_reader: BufReader::new(texmap_file_handle),
                 scratch_buffer: Vec::new(),
-                cache: HashMap::new(),
+                cache: IndexMap::with_capacity_and_hasher(64, BuildNoHashHasher::default()),
             }),
         };
 
@@ -374,7 +374,7 @@ impl TexMap2D {
                 // bit-packing using wide bitwise shifts and ORs. This processes 8 pixels at
                 // a time in parallel per register (16 per total chunk).
 
-                let [lo, hi]: [u16x8; 2] = bytemuck::cast(chunk);
+                let [lo, hi]: [u16x8; 2] = unsafe { std::mem::transmute(chunk) };
 
                 // Extract components into u32 registers for bit-packing.
                 // 1) Mask 5 bits (0x1F) for R, G, B channels.

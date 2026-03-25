@@ -1,6 +1,7 @@
 pub mod land;
 
-use std::collections::HashMap;
+use nohash_hasher::BuildNoHashHasher;
+use indexmap::IndexMap;
 use bevy::prelude::*;
 use crate::prelude::*;
 use crate::core::maps::MapPlaneMetadata;
@@ -11,7 +12,7 @@ use crate::core::system_sets::StartupSysSet;
 
 #[derive(Resource, Default)]
 pub struct WorldGeoData {
-    pub maps: HashMap<u32, MapPlaneMetadata>,
+    pub maps: IndexMap<u32, MapPlaneMetadata, BuildNoHashHasher<u32>>,
 }
 
 pub struct WorldPlugin {

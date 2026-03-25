@@ -69,15 +69,18 @@ fn sys_pin_active_textures(
 ) {
     cache_r.clear_pinned_textures();
 
-    let mut plane = map_planes_r.0.iter_mut().find_map(|(id, plane)| {
-        if *id == scene_state_r.map_id {
-            Some(plane)
-        } else {
-            None
-        }
-    }).expect("Uncached Map in sys_pin_active_textures");
+    let plane = map_planes_r
+        .0
+        .iter_mut()
+        .find_map(|(id, plane)| {
+            if *id == scene_state_r.map_id {
+                Some(plane)
+            } else {
+                None
+            }
+        })
+        .expect("Uncached Map in sys_pin_active_textures");
 
-    let h = plane.size_blocks.height;
     for mesh in chunk_q.iter() {
         let gx = mesh.gx as i32;
         let gy = mesh.gy as i32;
@@ -87,8 +90,15 @@ fn sys_pin_active_textures(
             for sz in -1..=scale {
                 let bx = gx + sx;
                 let bz = gy + sz;
-                if bx >= 0 && bx < plane.size_blocks.width as i32 && bz >= 0 && bz < plane.size_blocks.height as i32 {
-                    let pos = MapBlockRelPos { x: bx as u32, y: bz as u32 };
+                if bx >= 0
+                    && bx < plane.size_blocks.width as i32
+                    && bz >= 0
+                    && bz < plane.size_blocks.height as i32
+                {
+                    let pos = MapBlockRelPos {
+                        x: bx as u32,
+                        y: bz as u32,
+                    };
                     if let Some(block) = plane.block(pos) {
                         for cell in &block.cells {
                             let cell_id = cell.id as usize;
@@ -103,7 +113,11 @@ fn sys_pin_active_textures(
         }
     }
 
-    cache_r.visible_hint_count = cache_r.pinned_visible_bits.iter().map(|w| w.count_ones() as usize).sum();
+    cache_r.visible_hint_count = cache_r
+        .pinned_visible_bits
+        .iter()
+        .map(|w| w.count_ones() as usize)
+        .sum();
 }
 
 fn sys_evict_idle_land_cache(
@@ -483,7 +497,9 @@ fn sys_apply_tile_atlas_expansion(
     tile_atlas.apply_resize(new_layers);
 
     for e in chunks.iter() {
-        commands.entity(e).insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
+        commands
+            .entity(e)
+            .insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
     }
 
     // Update the shared material so the shader sees the new texture.

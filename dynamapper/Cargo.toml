@@ -48,6 +48,8 @@ mimalloc = { version = "*", features = ["v3"] }
 #jemallocator = "0.5.4"
 multiversion = "0.8.0"
 intel_tex_2 = "0.5.0"
+nohash-hasher = "0.2.0"
+indexmap = "2.13.0"
 
 [dependencies.bevy]
 version = "0.18.1"
