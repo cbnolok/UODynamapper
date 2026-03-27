@@ -31,7 +31,7 @@ pub struct TextureArrayImageHandles {
 pub struct TextureArrayUpload {
     pub size: LandTextureSize,
     pub layer: u32,
-    pub bytes: std::sync::Arc<Vec<u8>>,
+    pub bytes: std::sync::Arc<[u8]>,
     /// True if `bytes` contains BC7-compressed data instead of raw RGBA8.
     pub lossy_compressed: bool,
 }
@@ -41,6 +41,9 @@ pub struct RenderTextureArrayUploads(pub Vec<TextureArrayUpload>);
 
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 const FALLBACK_BLACK_LAYER: u32 = 0;
+/// Number of textures to process per task in `precache_textures_parallel`.
+/// Reduces task scheduling overhead vs. one task per texture.
+const PRECACHE_BATCH_SIZE: usize = 100;
 
 /// Runtime settings for the land texture cache, inserted at startup.
 /// Holds values read from `settings.toml` that affect how tiles are uploaded to the GPU.
@@ -161,10 +164,11 @@ impl LandTextureCache {
         texmap_2d: Arc<TexMap2D>,
         texture_id: u16,
         lossy_compression: bool,
+        now: Instant,
     ) -> (LandTextureSize, u32) {
         // If texture is already resident, just return its info.
         if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
-            entry.1.last_touch = Instant::now();
+            entry.1.last_touch = now;
             return (entry.0, entry.1.layer);
         }
 
@@ -179,23 +183,24 @@ impl LandTextureCache {
         let texmap_2d_arc = texmap_2d.clone();
         let sender = self.upload_sender.clone();
         let task = pool.spawn(async move {
-            let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
-            let tile_bytes = if lossy_compression {
-                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+            let (_, raw_rgba8) =
+                texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+            let (tile_bytes, is_compressed) = if lossy_compression {
+                (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, texture_size)), true)
             } else {
-                raw_rgba8.to_vec()
+                (raw_rgba8, false)
             };
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
-                bytes: std::sync::Arc::new(tile_bytes),
-                lossy_compressed: lossy_compression,
+                bytes: tile_bytes,
+                lossy_compressed: is_compressed,
             });
         });
         task.detach();
 
         // Update bookkeeping and return.
-        self.update_bookkeeping(texture_id, texture_size, layer);
+        self.update_bookkeeping(texture_id, texture_size, layer, now);
         (texture_size, layer)
     }
 
@@ -206,6 +211,7 @@ impl LandTextureCache {
         texture_ids: &[u16],
         texmap_2d: Arc<TexMap2D>,
         lossy_compression: bool,
+        now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
         let mut to_load = Vec::new();
@@ -231,6 +237,10 @@ impl LandTextureCache {
             ),
         );
 
+        // Collect the set of (id, size, layer) tuples for textures that need loading.
+        // We do all allocations first (on the main thread, where we have `&mut self`),
+        // then spawn the async work for each chunk of PRECACHE_BATCH_SIZE textures.
+        let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::with_capacity(to_load.len());
         let mut skipped_due_to_pressure = 0usize;
 
         for id in to_load {
@@ -240,23 +250,37 @@ impl LandTextureCache {
                 continue;
             };
 
-            self.update_bookkeeping(id, size, layer);
+            self.update_bookkeeping(id, size, layer, now);
+            to_upload.push((id, size, layer));
+        }
 
+        // Spawn one task per PRECACHE_BATCH_SIZE textures rather than one task per texture.
+        // Reduces scheduling and allocation overhead by ~100x (100 spawns → 1).
+        for chunk in to_upload.chunks(PRECACHE_BATCH_SIZE) {
+            let chunk: Vec<(u16, LandTextureSize, u32)> = chunk.to_vec();
             let texmap_2d_arc = texmap_2d.clone();
             let sender = self.upload_sender.clone();
             let task = pool.spawn(async move {
-                let (_, rgba8) = super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc);
-                let tile_bytes = if lossy_compression {
-                    super::texture_array::compress_rgba8_to_bc7(rgba8.as_slice(), size)
-                } else {
-                    rgba8.to_vec()
-                };
-                let _ = sender.send(TextureArrayUpload {
-                    layer,
-                    size,
-                    bytes: std::sync::Arc::new(tile_bytes),
-                    lossy_compressed: lossy_compression,
-                });
+                for (id, size, layer) in chunk {
+                    let (_, rgba8) =
+                        super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
+                    let (tile_bytes, is_compressed) = if lossy_compression {
+                        (
+                            std::sync::Arc::from(
+                                super::texture_array::compress_rgba8_to_bc7(&rgba8, size),
+                            ),
+                            true,
+                        )
+                    } else {
+                        (rgba8, false)
+                    };
+                    let _ = sender.send(TextureArrayUpload {
+                        layer,
+                        size,
+                        bytes: tile_bytes,
+                        lossy_compressed: is_compressed,
+                    });
+                }
             });
             task.detach();
         }
@@ -281,10 +305,11 @@ impl LandTextureCache {
         texture_id: u16,
         texmap_2d: &Arc<TexMap2D>,
         lossy_compression: bool,
+        now: Instant,
     ) -> Option<TextureArrayUpload> {
         // If resident, touch timestamp and return None as no upload is needed.
         if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
-            entry.1.last_touch = Instant::now();
+            entry.1.last_touch = now;
             return None;
         }
 
@@ -296,17 +321,18 @@ impl LandTextureCache {
         let texmap_2d_arc = texmap_2d.clone();
         let sender = self.upload_sender.clone();
         let task = pool.spawn(async move {
-            let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
-            let tile_bytes = if lossy_compression {
-                texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), texture_size)
+            let (_, raw_rgba8) =
+                texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+            let (tile_bytes, is_compressed) = if lossy_compression {
+                (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, texture_size)), true)
             } else {
-                raw_rgba8.to_vec()
+                (raw_rgba8, false)
             };
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
-                bytes: std::sync::Arc::new(tile_bytes),
-                lossy_compressed: lossy_compression,
+                bytes: tile_bytes,
+                lossy_compressed: is_compressed,
             });
         });
         task.detach();
@@ -440,21 +466,19 @@ impl LandTextureCache {
             }
 
             // Rebuild the free list from layers not occupied by surviving entries.
-            let occupied: std::collections::HashSet<u32> = self
-                .entry_by_id
-                .iter()
-                .filter_map(|entry| {
-                    if let Some((s, e)) = entry {
-                        if *s == size {
-                            Some(e.layer)
-                        } else {
-                            None
+            // Using a bitmask instead of HashSet for higher performance and less allocation.
+            let mut occupied_bitset = vec![0u64; (new_layers as usize >> 6) + 1];
+            for entry in &self.entry_by_id {
+                if let Some((s, e)) = entry {
+                    if *s == size {
+                        let word = e.layer as usize >> 6;
+                        let bit = e.layer as usize & 63;
+                        if word < occupied_bitset.len() {
+                            occupied_bitset[word] |= 1 << bit;
                         }
-                    } else {
-                        None
                     }
-                })
-                .collect();
+                }
+            }
             let arr = match size {
                 LandTextureSize::Small => &mut self.small,
                 LandTextureSize::Big => &mut self.big,
@@ -462,7 +486,9 @@ impl LandTextureCache {
             arr.free_layers.clear();
             // Layer 0 is reserved as fallback black.
             for l in (1..new_layers).rev() {
-                if !occupied.contains(&l) {
+                let word = l as usize >> 6;
+                let bit = l as usize & 63;
+                if (occupied_bitset[word] & (1 << bit)) == 0 {
                     arr.free_layers.push(l);
                 }
             }
@@ -479,18 +505,16 @@ impl LandTextureCache {
         size: LandTextureSize,
         texmap_2d: Arc<TexMap2D>,
         lossy_compression: bool,
+        now: Instant,
     ) {
         let ids_to_restore: Vec<(u16, u32)> = self
             .entry_by_id
             .iter()
             .enumerate()
             .filter_map(|(id, entry)| {
-                if let Some((s, e)) = entry {
-                    if *s == size {
-                        Some((id as u16, e.layer))
-                    } else {
-                        None
-                    }
+                let (e_size, e_data) = entry.as_ref()?;
+                if *e_size == size {
+                    Some((id as u16, e_data.layer))
                 } else {
                     None
                 }
@@ -504,17 +528,18 @@ impl LandTextureCache {
             let pool = AsyncComputeTaskPool::get();
             let sender = self.upload_sender.clone();
             let task = pool.spawn(async move {
-                let (_, raw_rgba8) = texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc);
-                let tile_bytes = if lossy_compression {
-                    texture_array::compress_rgba8_to_bc7(raw_rgba8.as_slice(), actual_size)
+                let (_, raw_rgba8) =
+                    texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+                let (tile_bytes, is_compressed) = if lossy_compression {
+                    (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, actual_size)), true)
                 } else {
-                    raw_rgba8.to_vec()
+                    (raw_rgba8, false)
                 };
                 let _ = sender.send(TextureArrayUpload {
                     layer,
                     size: actual_size,
-                    bytes: std::sync::Arc::new(tile_bytes),
-                    lossy_compressed: lossy_compression,
+                    bytes: tile_bytes,
+                    lossy_compressed: is_compressed,
                 });
             });
             task.detach();
@@ -522,7 +547,13 @@ impl LandTextureCache {
     }
 
     /// Updates the cache's internal maps after a texture has been uploaded.
-    fn update_bookkeeping(&mut self, texture_id: u16, texture_size: LandTextureSize, layer: u32) {
+    fn update_bookkeeping(
+        &mut self,
+        texture_id: u16,
+        texture_size: LandTextureSize,
+        layer: u32,
+        now: Instant,
+    ) {
         let array = match texture_size {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
@@ -532,14 +563,13 @@ impl LandTextureCache {
             texture_size,
             LandTextureEntry {
                 layer,
-                last_touch: Instant::now(),
+                last_touch: now,
             },
         ));
         array.lru.push_back(texture_id);
     }
 
-    pub fn evict_idle_textures(&mut self) -> usize {
-        let now = Instant::now();
+    pub fn evict_idle_textures(&mut self, now: Instant) -> usize {
         let mut evicted_count = 0;
         let mut to_remove = Vec::new();
 
@@ -580,9 +610,8 @@ impl LandTextureCache {
     /// been well below capacity for longer than `RESOURCE_SHRINK_TIMEOUT_SECS`.
     /// The caller is responsible for creating the new GPU image and calling
     /// `apply_array_resize` + `enqueue_reupload_for_size`.
-    pub fn check_shrink_opportunity(&self) -> (Option<u32>, Option<u32>) {
+    pub fn check_shrink_opportunity(&self, now: Instant) -> (Option<u32>, Option<u32>) {
         let timeout = Duration::from_secs(texture_array::RESOURCE_SHRINK_TIMEOUT_SECS);
-        let now = Instant::now();
 
         let check = |arr: &LandTextureArrayWrapper, initial: u32| -> Option<u32> {
             let used = arr.used_layers();

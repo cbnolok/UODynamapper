@@ -1,18 +1,17 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::prelude::*;
-use crate::core::render::scene::camera::RenderZoom;
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::render::scene::camera::RenderZoom;
+use crate::prelude::*;
 use crate::util_lib::uo_coords::*;
 use bevy::{
     //asset::{AssetLoader, LoadContext, io::Reader},
     pbr::wireframe::WireframeConfig,
     prelude::*,
-    window::WindowResolution
+    window::WindowResolution,
 };
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Asset, Clone, Debug, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
@@ -114,9 +113,9 @@ pub struct SectPerformance {
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     pub reduce_unfocused_fps: bool,
-    pub texture_filtering: u32,       // 0: Point, 1: Linear
-    pub texture_reconstruction: u32,  // 0: None, 1: Bicubic, 2: FSR
-    pub sharpening_strength: f32,     // 0.0 to 1.0
+    pub texture_filtering: u32,      // 0: Point, 1: Linear
+    pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
+    pub sharpening_strength: f32,    // 0.0 to 1.0
 }
 
 /// Resource used to debounce saving settings to disk.
@@ -186,8 +185,8 @@ pub fn load_from_files() -> Settings {
     let user_path = assets_path.join(USER_CONFIG_FILE);
     let maps_path = assets_path.join(MAPS_CONFIG_FILE);
 
-    let core_contents = std::fs::read_to_string(&core_path)
-        .expect("Failed to read settings/core.toml");
+    let core_contents =
+        std::fs::read_to_string(&core_path).expect("Failed to read settings/core.toml");
 
     // Core settings file contains top-level core and logging sections.
     #[derive(Deserialize)]
@@ -195,8 +194,9 @@ pub fn load_from_files() -> Settings {
         core: SectCore,
         logging: SectLogging,
     }
-    let core_data: CoreWrapper = toml::from_str(&core_contents)
-        .expect("Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml");
+    let core_data: CoreWrapper = toml::from_str(&core_contents).expect(
+        "Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml",
+    );
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
@@ -235,11 +235,13 @@ pub fn load_from_files() -> Settings {
     let kb_contents = std::fs::read_to_string(&kb_path)
         .expect("Failed to read keybindings.toml — please ensure assets/keybindings.toml exists and is valid");
 
-    let keybindings: SectKeybindings = toml::from_str(&kb_contents)
-        .expect("Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml");
+    let keybindings: SectKeybindings = toml::from_str(&kb_contents).expect(
+        "Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml",
+    );
 
-    let maps_contents = std::fs::read_to_string(&maps_path)
-        .expect("Failed to read maps.toml — please ensure assets/settings/maps.toml exists and is valid");
+    let maps_contents = std::fs::read_to_string(&maps_path).expect(
+        "Failed to read maps.toml — please ensure assets/settings/maps.toml exists and is valid",
+    );
 
     let maps: SectMaps = toml::from_str(&maps_contents)
         .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
@@ -262,7 +264,12 @@ pub fn save_app_settings(settings: &Settings) {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
                 paris::error!("Failed to save preferences.toml: {}", e);
             } else {
-                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved preferences.toml");
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved preferences.toml",
+                );
             }
         }
         Err(e) => {
@@ -280,7 +287,12 @@ pub fn save_keybindings(settings: &Settings) {
             if let Err(e) = std::fs::write(&kb_path, toml_str) {
                 paris::error!("Failed to save keybindings.toml: {}", e);
             } else {
-                console_logger::one(None, LogSev::Info, LogAbout::General, "Saved keybindings.toml");
+                console_logger::one(
+                    None,
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved keybindings.toml",
+                );
             }
         }
         Err(e) => {
@@ -310,8 +322,14 @@ impl Plugin for SettingsPlugin {
                 t
             }))
             .init_resource::<SettingsFileWatcher>()
-            .add_systems(Update, (sys_evlisten_switch_wireframe, sys_debounced_save, sys_hotreload_settings))
-            ;
+            .add_systems(
+                FixedUpdate,
+                (
+                    sys_evlisten_switch_wireframe,
+                    sys_debounced_save,
+                    sys_hotreload_settings,
+                ),
+            );
     }
 }
 
@@ -369,11 +387,11 @@ fn sys_hotreload_settings(
 
     let new_core = mtime_of(CORE_CONFIG_FILE);
     let new_user = mtime_of(USER_CONFIG_FILE);
-    let new_kb   = mtime_of(KEYBINDINGS_CONFIG_FILE);
+    let new_kb = mtime_of(KEYBINDINGS_CONFIG_FILE);
 
     let core_changed = new_core != watcher.core_mtime;
     let user_changed = new_user != watcher.user_mtime;
-    let kb_changed   = new_kb   != watcher.kb_mtime;
+    let kb_changed = new_kb != watcher.kb_mtime;
 
     if !(core_changed || user_changed || kb_changed) {
         return;
@@ -386,31 +404,45 @@ fn sys_hotreload_settings(
         settings.core = new_data.core.clone();
         settings.logging = new_data.logging.clone();
         watcher.core_mtime = new_core;
-        console_logger::one(None, LogSev::Info, LogAbout::General,
-            "Hot-reloaded: core_settings.toml");
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: core_settings.toml",
+        );
     }
     if user_changed {
         settings.app = new_data.app.clone();
         watcher.user_mtime = new_user;
-        console_logger::one(None, LogSev::Info, LogAbout::General,
-            "Hot-reloaded: preferences.toml");
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: preferences.toml",
+        );
     }
     if kb_changed {
         settings.keybindings = new_data.keybindings.clone();
         watcher.kb_mtime = new_kb;
-        console_logger::one(None, LogSev::Info, LogAbout::General,
-            "Hot-reloaded: keybindings.toml");
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: keybindings.toml",
+        );
     }
 }
-
 
 fn sys_apply(
     settings_res: Res<Settings>,
     mut windows_q: Query<&mut Window>,
     mut zoom_res: ResMut<RenderZoom>,
-){
+) {
     let mut w = windows_q.single_mut().unwrap();
-    w.resolution = WindowResolution::new(settings_res.app.window.width as u32, settings_res.app.window.height as u32);
+    w.resolution = WindowResolution::new(
+        settings_res.app.window.width as u32,
+        settings_res.app.window.height as u32,
+    );
 
     zoom_res.write_val(settings_res.app.window.zoom);
 }

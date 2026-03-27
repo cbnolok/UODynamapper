@@ -45,8 +45,10 @@ fn sys_populate_world_geo_data(
         return;
     };
     if world_geo_data_res.maps.is_empty() {
-        for (id, plane) in map_planes_res.0.iter() {
-            let id = *id;
+        for (id, plane) in map_planes_res.0.iter().enumerate() {
+            // MapPlanesRes now contains Option<MapPlane> indexed by map ID.
+            let Some(plane) = plane else { continue; };
+            let id = id as u32;
             world_geo_data_res.maps.insert(id, MapPlaneMetadata {
                 id: id as u8,
                 width: plane.size_blocks.width * 8, 

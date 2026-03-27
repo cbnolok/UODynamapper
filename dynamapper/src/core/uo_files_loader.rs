@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub struct UoInterfaceSettingsRes(pub Arc<UoInterfaceSettings>);
 
 #[derive(Resource)]
-pub struct MapPlanesRes(pub Vec<(u32, map::MapPlane)>);
+pub struct MapPlanesRes(pub Vec<Option<map::MapPlane>>);
 
 #[derive(Resource)]
 pub struct TileDataRes(pub Arc<tiledata::TileData>);
@@ -60,7 +60,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Start loading UO Data.");
 
-    let mut map_planes = Vec::<(u32, map::MapPlane)>::new();
+    let mut map_planes = std::iter::repeat_with(|| None).take(8).collect::<Vec<_>>();
     for map_plane_index in 0..6 {
         let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
         if map_file.exists() {
@@ -78,7 +78,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             let map_plane =
                 map::MapPlane::init_with_size(map_file, map_plane_index, map_size_override)
                     .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
-            map_planes.push((map_plane_index, map_plane));
+            map_planes[map_plane_index as usize] = Some(map_plane);
         }
     }
 

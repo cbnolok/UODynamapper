@@ -172,19 +172,19 @@ impl MapBlock {
         // We can't cast_slice the cells because memory layout differs (3 bytes vs 4 bytes).
         // Extract cells individually in a tight loop.
         // OPTIMIZATION: Unrolled processing of 4 tiles at a time (12 bytes -> 16 bytes).
-        // This avoids loop overhead and provides the compiler with a clear structure 
+        // This avoids loop overhead and provides the compiler with a clear structure
         // to apply auto-vectorization and instruction-level parallelism.
         //
         // ENDIANNESS: We use `u16::from_le_bytes` to explicitly handle the Little-Endian
-        // format of UO .mul files. This ensures correct data extraction regardless 
+        // format of UO .mul files. This ensures correct data extraction regardless
         // of whether the host CPU is Little-Endian (x86/ARM) or Big-Endian.
         let raw_bytes: &[u8] = bytemuck::cast_slice(&raw_block.cells);
         let out_cells: &mut [MapCell; 64] = &mut new_block.cells;
-        
+
         for i in 0..16 {
             let base_in = (i << 2) + (i << 3); // Correctly calculate i * 12
-            let base_out = i << 2;            // i * 4
-            
+            let base_out = i << 2; // i * 4
+
             // Tile 0: Extract 2-byte ID and 1-byte Z. Skip 1-byte pad in output.
             out_cells[base_out + 0] = MapCell {
                 id: u16::from_le_bytes([raw_bytes[base_in + 0], raw_bytes[base_in + 1]]),
@@ -325,11 +325,11 @@ impl MapPlane {
     #[inline(always)]
     pub fn is_block_cached(&self, pos: &MapBlockRelPos) -> bool {
         let idx = (pos.x * self.size_blocks.height) + pos.y;
-        let word_idx = (idx / 64) as usize;
+        let word_idx = (idx / 64) as usize; // TODO: use bit shifting
         if word_idx >= self.cached_blocks_bitmask.len() {
             return false;
         }
-        let bit_idx = (idx % 64) as usize;
+        let bit_idx = (idx % 64) as usize; // TODO: use bit shifting
         (self.cached_blocks_bitmask[word_idx] & (1 << bit_idx)) != 0
     }
 
@@ -477,9 +477,16 @@ impl MapPlane {
 
         let map_file_mul_rdr = BufReader::new(map_file_mul_handle);
 
-        // The dimensions of the maps are hardcoded based on the map index.
         let map_size_tiles = match map_size_tiles_override {
-            Some(size) => Ok(size),
+            Some(size) => {
+                if size.width % MapBlock::CELLS_PER_ROW != 0
+                    || size.height % MapBlock::CELLS_PER_COLUMN != 0
+                {
+                    Err(eyre!("Invalid manual map size"))
+                } else {
+                    Ok(size)
+                }
+            }
             None => match map_index {
                 0..=1 => {
                     // Determine if this is a pre-ML (6144x4096) or post-ML (7168x4096) map by checking file size.
@@ -525,7 +532,7 @@ impl MapPlane {
             * map_size_blocks.height as u64;
         if map_file_mul_metadata.len() != map_file_expected_size {
             return Err(eyre!(
-                "Malformed map file: expected size doesn't match the real file size".to_owned()
+                "Malformed map file: expected size doesn't match the real file size"
             ));
         }
 
@@ -722,7 +729,9 @@ pub fn load_blocks_from_reader<R: Read + Seek>(
         let mut max_idx = 0;
         for pos in &ordered {
             let idx = (pos.x * size_blocks_height) + pos.y;
-            if idx > max_idx { max_idx = idx; }
+            if idx > max_idx {
+                max_idx = idx;
+            }
         }
         let mut bitmask = vec![0u64; (max_idx as usize / 64) + 1];
         ordered.retain(|pos| {

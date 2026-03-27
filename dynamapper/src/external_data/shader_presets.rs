@@ -34,7 +34,7 @@ pub struct ShaderPresetsFileWatcher {
 impl Default for ShaderPresetsFileWatcher {
     fn default() -> Self {
         let path = PathBuf::from(
-            crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME
+            crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME,
         );
         let mtime = std::fs::metadata(&path)
             .ok()
@@ -58,7 +58,7 @@ impl Plugin for ShaderPresetsPlugin {
         app.insert_resource(load_from_file())
             .init_resource::<ShaderPresetsFileWatcher>()
             .add_systems(Startup, setup_uniform_state)
-            .add_systems(Update, sys_hotreload_shader_presets);
+            .add_systems(FixedUpdate, sys_hotreload_shader_presets);
     }
 }
 
@@ -144,9 +144,8 @@ fn sys_hotreload_shader_presets(
         return;
     }
 
-    let path = PathBuf::from(
-        crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME
-    );
+    let path =
+        PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME);
     let new_mtime = std::fs::metadata(&path)
         .ok()
         .and_then(|m| m.modified().ok());
@@ -166,7 +165,10 @@ fn sys_hotreload_shader_presets(
     let new_presets: LandShaderModePresets = match toml::from_str(&contents) {
         Ok(p) => p,
         Err(e) => {
-            bevy::log::warn!("shader_presets.toml hot-reload failed (parse): {}", e.message());
+            bevy::log::warn!(
+                "shader_presets.toml hot-reload failed (parse): {}",
+                e.message()
+            );
             return;
         }
     };
@@ -175,4 +177,3 @@ fn sys_hotreload_shader_presets(
     watcher.last_mtime = new_mtime;
     bevy::log::info!("Hot-reloaded: shader_presets.toml");
 }
-

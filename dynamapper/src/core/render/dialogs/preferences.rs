@@ -61,7 +61,7 @@ impl Plugin for PreferencesDialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PreferencesDialogState>()
             .add_systems(
-                Update,
+                FixedUpdate,
                 (
                     sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
                     sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),

@@ -12,8 +12,8 @@ use bevy::{
     shader::ShaderRef,
 };
 use bytemuck::Zeroable;
-use std::time::Instant;
 use std::sync::Arc;
+use std::time::Instant;
 use uocf::geo::map::MapPlane;
 use uocf::geo::{
     land_texture_2d::{LandTextureSize, TexMap2D},
@@ -198,6 +198,7 @@ fn enqueue_chunk_to_atlas_and_preload(
     texmap_2d_r: Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
     blocks_data_map: &[(u64, MapBlock)],
+    now: Instant,
     texture_lookup_cache: &mut [u32],
     texels_buf: &mut Vec<Rg16u>,
     lossy_compression: bool,
@@ -211,8 +212,15 @@ fn enqueue_chunk_to_atlas_and_preload(
         x: chunk_data_ref.chunk_origin_chunk_units_x,
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
-    
-    let block = match blocks_data_map.binary_search_by_key(&chunk_rel_coords.as_u64(), |(k, _)| *k) {
+
+    // TODO: since cells are known to have 8x8 size, shouldn't we simply use a stack-allocated plain array
+    //  instead of relying on texels_buf, which is heap allocated? It would be faster (data locality)
+    //  and we could avoid the clear() call.
+
+    // TODO: Is there a faster way to do this binary search? Or is there a better data structure for this?
+    //  We can have up to 500.000 blocks.
+    let block = match blocks_data_map.binary_search_by_key(&chunk_rel_coords.as_u64(), |(k, _)| *k)
+    {
         Ok(idx) => &blocks_data_map[idx].1,
         Err(_) => return false,
     };
@@ -228,11 +236,23 @@ fn enqueue_chunk_to_atlas_and_preload(
         let (texture_size, layer) = if packed != u32::MAX {
             let size_bit = packed & 1;
             let layer = packed >> 1;
-            let size = if size_bit == 0 { LandTextureSize::Small } else { LandTextureSize::Big };
+            let size = if size_bit == 0 {
+                LandTextureSize::Small
+            } else {
+                LandTextureSize::Big
+            };
             (size, layer)
         } else {
-            let (size, layer) = texture_cache.get_texture_size_layer(texmap_2d_r.clone(), cell.id, lossy_compression);
-            let size_bit = match size { LandTextureSize::Small => 0, LandTextureSize::Big => 1 };
+            let (size, layer) = texture_cache.get_texture_size_layer(
+                texmap_2d_r.clone(),
+                cell.id,
+                lossy_compression,
+                now,
+            );
+            let size_bit = match size {
+                LandTextureSize::Small => 0,
+                LandTextureSize::Big => 1,
+            };
             texture_lookup_cache[cell.id as usize] = (layer << 1) | size_bit;
             (size, layer)
         };
@@ -257,6 +277,7 @@ fn enqueue_chunk_to_atlas_and_preload(
         "Page size must be a multiple of chunk size to avoid split logic"
     );
 
+    // TODO: assert page_w and page_h are multiples of 2, so that we can use bitwise operations.
     let page_x = chunk_origin_tile_units_x / page_w;
     let page_y = chunk_origin_tile_units_z / page_h;
 
@@ -327,8 +348,13 @@ pub fn sys_draw_spawned_land_chunks(
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
     settings: Res<crate::external_data::settings::Settings>,
+    time: Res<Time<Real>>,
     mut locals: Local<DrawMeshLocals>,
 ) {
+    // TODO: check if there's more room for cpu optimization, this is a huge system here.
+    // Also, drop briefly-used variables enclosing them in a block.
+
+    let now = time.last_update().unwrap_or_else(|| Instant::now());
     let current_map_id = scene_state_data_r.map_id;
 
     // ── Initialize background loader thread (once) ─────────────────────
@@ -353,10 +379,10 @@ pub fn sys_draw_spawned_land_chunks(
     if locals.pending {
         let results = locals.loader.as_ref().unwrap().drain_results();
         if !results.is_empty() {
-            if let Some((_, plane)) = map_planes_r
+            if let Some(plane) = map_planes_r
                 .0
-                .iter_mut()
-                .find(|(id, _)| *id == current_map_id)
+                .get_mut(current_map_id as usize)
+                .and_then(|opt| opt.as_mut())
             {
                 for result in results {
                     plane.insert_preloaded_blocks(result.loaded_blocks);
@@ -402,7 +428,7 @@ pub fn sys_draw_spawned_land_chunks(
         .ok()
         .map(|(_, camera_tf)| {
             let cam_translation = camera_tf.translation();
-            // OPTIMIZATION: Using bitshift (>> 3) as a faster equivalent to 
+            // OPTIMIZATION: Using bitshift (>> 3) as a faster equivalent to
             // .div_euclid(8) for the tile-to-chunk coordinate conversion.
             (
                 (cam_translation.x.floor() as i32) >> 3,
@@ -434,10 +460,9 @@ pub fn sys_draw_spawned_land_chunks(
     {
         let plane_ref = map_planes_r
             .0
-            .iter()
-            .find(|(id, _)| *id == current_map_id)
-            .map(|(_, p)| p)
-            .expect("Requested map plane metadata is uncached?");
+            .get(current_map_id as usize)
+            .and_then(|opt| opt.as_ref())
+            .expect("Requested map plane not found in MapPlanesRes");
 
         for target in &targets {
             let gx = target.chunk_origin_chunk_units_x;
@@ -513,7 +538,12 @@ pub fn sys_draw_spawned_land_chunks(
         // OPTIMIZATION: Replacing HashMap with a bitmask-based deduplication.
         // Bitmasks provide O(1) membership testing and insertion with zero
         // heap allocation after the initial vector is created.
-        let mut bitmask = vec![0u64; (((max_chunk_x * max_chunk_y) as usize) >> LandTextureCache::TILE_ID_WORD_SHIFT) + 1]; // Equivalent to / 64
+        let mut bitmask = vec![
+            0u64;
+            (((max_chunk_x * max_chunk_y) as usize)
+                >> LandTextureCache::TILE_ID_WORD_SHIFT)
+                + 1
+        ]; // Equivalent to / 64
         uncached_blocks.retain(|pos| {
             let idx = (pos.x * max_chunk_y as u32) + pos.y;
             let word = (idx >> (LandTextureCache::TILE_ID_WORD_SHIFT as u32)) as usize; // idx / 64
@@ -531,14 +561,8 @@ pub fn sys_draw_spawned_land_chunks(
 
         let plane_ref: &MapPlane = map_planes_r
             .0
-            .iter()
-            .find_map(|(id, map_plane)| {
-                if *id == current_map_id {
-                    Some(map_plane)
-                } else {
-                    None
-                }
-            })
+            .get(current_map_id as usize)
+            .and_then(|opt| opt.as_ref())
             .expect("Requested map plane metadata is uncached?");
 
         locals
@@ -587,7 +611,9 @@ pub fn sys_draw_spawned_land_chunks(
 
     // ── Build blocks_to_draw for the ready targets only ─────────────────
     {
-        let seen_bits_len = (((max_chunk_x as usize) * (max_chunk_y as usize)) >> LandTextureCache::TILE_ID_WORD_SHIFT) + 1;
+        let seen_bits_len = (((max_chunk_x as usize) * (max_chunk_y as usize))
+            >> LandTextureCache::TILE_ID_WORD_SHIFT)
+            + 1;
         if scratch.block_seen_bits.len() != seen_bits_len {
             scratch.block_seen_bits.resize(seen_bits_len, 0);
         } else {
@@ -640,28 +666,26 @@ pub fn sys_draw_spawned_land_chunks(
     {
         let uo_data_map_plane = map_planes_r
             .0
-            .iter_mut()
-            .find(|(id, _)| *id == current_map_id)
-            .map(|(_, p)| p)
+            .get_mut(current_map_id as usize)
+            .and_then(|opt| opt.as_mut())
             .expect("Requested map plane metadata is uncached?");
 
         for block_coords in blocks_to_draw.iter().copied() {
             let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
                 continue; // Not cached (border block still loading) — skip.
             };
-            
+
             blocks_data.push((block_coords.as_u64(), block_ref.clone()));
 
             for tz in 0..8 {
                 for tx in 0..8 {
                     // Extract the logic to speed up this function call
                     // if let Ok(cell) = block_ref.cell(tx, tz) {
-                        let cell = &block_ref.cells[((MapBlock::CELLS_PER_COLUMN * tz) + tx) as usize];
-                        let cell_id = cell.id as usize;
-                        let word = cell_id >> LandTextureCache::TILE_ID_WORD_SHIFT;
-                        let bit = cell_id & LandTextureCache::TILE_ID_BIT_MASK;
-                        missing_tile_bits[word] |= 1u64 << bit;
-
+                    let cell = &block_ref.cells[((MapBlock::CELLS_PER_COLUMN * tz) + tx) as usize];
+                    let cell_id = cell.id as usize;
+                    let word = cell_id >> LandTextureCache::TILE_ID_WORD_SHIFT;
+                    let bit = cell_id & LandTextureCache::TILE_ID_BIT_MASK;
+                    missing_tile_bits[word] |= 1u64 << bit;
                 }
             }
         }
@@ -687,6 +711,7 @@ pub fn sys_draw_spawned_land_chunks(
         ids.as_slice(),
         texmap_2d_r.0.clone(),
         settings.core.graphics.lossy_texture_compression,
+        now,
     );
 
     let build_time_start = Instant::now();
@@ -712,12 +737,14 @@ pub fn sys_draw_spawned_land_chunks(
                     chunk_scale: 1,
                     has_mesh: false,
                 };
+                // This function call is cpu intensive: enqueue_chunk_to_atlas_and_preload.
                 let fallback = enqueue_chunk_to_atlas_and_preload(
                     &mut cache_r,
                     &mut tile_atlas_r,
                     texmap_2d_r.0.clone(),
                     &sub,
                     blocks_data,
+                    now,
                     texture_lookup_cache,
                     texels_buf,
                     settings.core.graphics.lossy_texture_compression,

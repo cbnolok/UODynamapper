@@ -3,6 +3,7 @@ use bevy::color::Srgba;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::text::LineHeight;
+//use bevy::time::common_conditions::on_timer;
 use std::fs;
 use sysinfo::{ProcessesToUpdate, System};
 use uocf::geo::land_texture_2d::LandTextureSize;
@@ -214,10 +215,14 @@ impl Plugin for PerformanceOverlayPlugin {
                 setup_overlay_performance.in_set(StartupSysSet::SetupSceneStage2),
             )
             .add_systems(
-                Update,
-                (sys_refresh_process_metrics, update_performance_text)
-                    .chain()
+                FixedUpdate, // Update
+                sys_refresh_process_metrics
+                    //.run_if(on_timer(std::time::Duration::from_secs(1))) // Doesn't appear to work
                     .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                FixedUpdate,
+                update_performance_text.run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -325,8 +330,7 @@ pub fn sys_refresh_process_metrics(
 
         // Cross-platform tracked process VRAM: app-owned persistent GPU allocations.
         // Includes terrain texture arrays + tile metadata atlas.
-        metrics.process_vram_tracked_mib =
-            query_process_vram_mib_native(pid).unwrap_or(0.0);
+        metrics.process_vram_tracked_mib = query_process_vram_mib_native(pid).unwrap_or(0.0);
     }
 }
 

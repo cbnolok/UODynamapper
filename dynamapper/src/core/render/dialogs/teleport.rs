@@ -27,7 +27,7 @@ impl Plugin for TeleportPlugin {
         log_plugin_build(self);
         app.init_resource::<TeleportDialogState>()
             .add_systems(
-                Update,
+                FixedUpdate,
                 sys_toggle_teleport_dialog.run_if(in_state(AppState::InGame)),
             )
             .add_systems(

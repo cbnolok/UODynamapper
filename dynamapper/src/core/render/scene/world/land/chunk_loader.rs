@@ -14,7 +14,7 @@
 //! 3. The final sub-batch has `is_final = true`, signalling to the main thread
 //!    that the request is complete and a new one can be dispatched.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -103,10 +103,7 @@ struct MapFileState {
     read_buffer: Vec<u8>,
 }
 
-fn loader_thread_main(
-    rx: mpsc::Receiver<LoadRequest>,
-    tx: mpsc::Sender<LoadResult>,
-) {
+fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResult>) {
     let mut open_maps: HashMap<PathBuf, MapFileState> = HashMap::new();
 
     while let Ok(req) = rx.recv() {
@@ -135,7 +132,8 @@ fn loader_thread_main(
         let num_sub_batches = (total_blocks + SUB_BATCH_SIZE - 1) / SUB_BATCH_SIZE;
         let mut batch_idx = 0usize;
         let mut total_loaded = 0usize;
-        let mut seen_ids: HashSet<u16> = HashSet::with_capacity(512);
+        let mut seen_ids = vec![0u64; 1024]; // bitmask for 65536 u16 IDs
+        let mut seen_count = 0usize;
 
         for batch_slice in chunks_iter {
             batch_idx += 1;
@@ -153,32 +151,40 @@ fn loader_thread_main(
             });
             total_loaded += loaded_blocks.len();
 
+            // TODO: is this even needed? why?
             // Warm texture cache for this sub-batch's tile IDs.
             for block in &loaded_blocks {
                 for cell in &block.cells {
-                    if seen_ids.insert(cell.id) {
+                    let word = (cell.id as usize) >> 6;
+                    let bit = (cell.id as usize) & 63;
+                    if (seen_ids[word] & (1 << bit)) == 0 {
+                        seen_ids[word] |= 1 << bit;
+                        seen_count += 1;
                         let _ = req.texmap_2d.preload_pixel_data(cell.id as usize);
                     }
                 }
             }
 
             // Send this sub-batch to the main thread immediately.
-            let _ = tx.send(LoadResult { loaded_blocks, is_final });
+            let _ = tx.send(LoadResult {
+                loaded_blocks,
+                is_final,
+            });
         }
 
         // Handle empty request edge case.
         if total_blocks == 0 {
-            let _ = tx.send(LoadResult { loaded_blocks: Vec::new(), is_final: true });
+            let _ = tx.send(LoadResult {
+                loaded_blocks: Vec::new(),
+                is_final: true,
+            });
         }
 
         let elapsed_us = t0.elapsed().as_micros();
         if elapsed_us > 500 {
             eprintln!(
                 "chunk-loader: loaded {} blocks ({} sub-batches) + warmed {} textures in {} µs",
-                total_loaded,
-                num_sub_batches,
-                seen_ids.len(),
-                elapsed_us,
+                total_loaded, num_sub_batches, seen_count, elapsed_us,
             );
         }
     }

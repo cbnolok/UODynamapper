@@ -181,13 +181,14 @@ pub fn get_texmap_size_only(
 pub fn get_texmap_raw_data(
     texture_id: u16,
     texmap_2d_res: &TexMap2D,
-) -> (LandTextureSize, std::sync::Arc<Vec<u8>>) {
+    now: std::time::Instant,
+) -> (LandTextureSize, std::sync::Arc<[u8]>) {
     fn local_log_warn(msg: &str) {
         console_logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
     }
 
     let tex_size_and_rgba = {
-        texmap_2d_res.get_pixel_data(texture_id as usize).map(|data| {
+        texmap_2d_res.get_pixel_data(texture_id as usize, now).map(|data| {
             let size = *texmap_2d_res.element(texture_id as usize).unwrap().size();
             (size, data)
         })
@@ -206,7 +207,7 @@ pub fn get_texmap_raw_data(
 
     // Fallback error texture
     let err_data = texmap_2d_res
-        .get_pixel_data(DEFAULT_ERROR_TEXTURE_ID as usize)
+        .get_pixel_data(DEFAULT_ERROR_TEXTURE_ID as usize, now)
         .expect("No UNUSED land texture?");
     let err_size = *texmap_2d_res
         .element(DEFAULT_ERROR_TEXTURE_ID as usize)

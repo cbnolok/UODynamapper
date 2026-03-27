@@ -55,15 +55,15 @@ impl Plugin for CursorBehaviorOverlayPlugin {
         app.init_resource::<CursorBehavior>()
             .add_systems(OnEnter(AppState::InGame), setup_overlay_cursor_behavior)
             .add_systems(
-                Update,
+                FixedUpdate,
                 update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
             )
             .add_systems(
-                Update,
+                FixedUpdate,
                 sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)),
             )
             .add_systems(
-                Update,
+                FixedUpdate,
                 sys_teleport_on_click.run_if(in_state(AppState::InGame)),
             );
     }
@@ -249,14 +249,8 @@ pub fn update_cursor_behavior_text(
 fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16) -> Option<i8> {
     let plane = map_planes_r
         .0
-        .iter()
-        .find_map(|(id, plane)| {
-            if *id == map_id as u32 {
-                Some(plane)
-            } else {
-                None
-            }
-        })
+        .get(map_id as usize)
+        .and_then(|opt| opt.as_ref())
         .expect("Uncached Map in resolve_cursor_map_z");
     let cell = MapCellCoords {
         x: x as u32,

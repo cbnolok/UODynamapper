@@ -13,7 +13,12 @@ pub mod util_lib;
 //  When Bevy is compiled as a shared library, it gets its own copy of the Rust standard library
 //  with the system allocator. The #[global_allocator] only applies to the main binary's allocation context.
 
-#[cfg(not(feature = "bevy_development_opts"))]
+#[cfg(all(
+    not(debug_assertions),
+    not(feature = "bevy_development_opts"),
+//    not(feature = "trace_tracy"),
+//    not(feature = "profiling")
+))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 //static GLOBAL_ALLOCATOR: jemallocator::Jemalloc = jemallocator::Jemalloc;

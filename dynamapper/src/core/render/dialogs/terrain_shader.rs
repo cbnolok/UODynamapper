@@ -17,7 +17,7 @@ use crate::{
 use super::super::scene::world::land::mesh_material::*;
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
 /// Resource that tracks whether the terrain shader panel is visible.
 /// Toggled by the keybinding; also closed when egui's own close button is used.
@@ -36,7 +36,7 @@ impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
         app.init_resource::<TerrainShaderUiState>()
-            .add_systems(Update, sys_toggle_terrain_ui)
+            .add_systems(FixedUpdate, sys_toggle_terrain_ui)
             .add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);

@@ -201,7 +201,9 @@ fn sys_update_camera_projection_to_view(
         let mut projection_changed = false;
         match ortho.scaling_mode {
             ScalingMode::Fixed { width, height } => {
-                if (width - ortho_width).abs() > f32::EPSILON || (height - ortho_height).abs() > f32::EPSILON {
+                if (width - ortho_width).abs() > f32::EPSILON
+                    || (height - ortho_height).abs() > f32::EPSILON
+                {
                     ortho.scaling_mode = ScalingMode::Fixed {
                         width: ortho_width,
                         height: ortho_height,
@@ -254,8 +256,10 @@ fn sys_camera_follow_player(
 
         let cam_translation = camera_transform.translation;
         let current_camera_chunk = (
-            (cam_translation.x.floor() as i32).div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
-            (cam_translation.z.floor() as i32).div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_translation.x.floor() as i32)
+                .div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
+            (cam_translation.z.floor() as i32)
+                .div_euclid(crate::core::render::scene::world::land::TILE_NUM_PER_CHUNK_DIM as i32),
         );
         if *last_camera_chunk != Some(current_camera_chunk) {
             *last_camera_chunk = Some(current_camera_chunk);

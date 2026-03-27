@@ -6,9 +6,9 @@ use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uocf::geo::land_texture_2d::LandTextureSize;
-use uocf::geo::map::{MapBlockRelPos, MapPlane};
+use uocf::geo::map::MapBlockRelPos;
 
 pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,
@@ -33,7 +33,7 @@ impl Plugin for LandTextureCachePlugin {
         // This is correct: Extract runs AFTER Last (end of previous frame), so by the time we reach
         // First of the next frame, the previous frame's uploads have already been consumed by Extract.
         // Clearing here ensures Update fills a fresh list for the current frame.
-        app.add_systems(First, cache::sys_clear_texture_array_uploads);
+        app.add_systems(First, cache::sys_clear_texture_array_uploads); // TODO: is the "First" schedule correct?
         app.add_systems(Update, cache::sys_drain_texture_compression_tasks);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
@@ -51,7 +51,7 @@ impl Plugin for LandTextureCachePlugin {
         );
 
         app.add_systems(
-            Update,
+            FixedUpdate,
             (sys_pin_active_textures, sys_evict_idle_land_cache)
                 .chain()
                 .run_if(on_timer(Duration::from_secs(5))),
@@ -71,14 +71,8 @@ fn sys_pin_active_textures(
 
     let plane = map_planes_r
         .0
-        .iter_mut()
-        .find_map(|(id, plane)| {
-            if *id == scene_state_r.map_id {
-                Some(plane)
-            } else {
-                None
-            }
-        })
+        .get_mut(scene_state_r.map_id as usize)
+        .and_then(|opt| opt.as_mut())
         .expect("Uncached Map in sys_pin_active_textures");
 
     for mesh in chunk_q.iter() {
@@ -126,9 +120,11 @@ fn sys_evict_idle_land_cache(
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
     mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
+    time: Res<Time<Real>>,
 ) {
+    let now = time.last_update().unwrap_or_else(|| Instant::now());
     // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
-    let evicted_gpu_layers = cache_r.evict_idle_textures();
+    let evicted_gpu_layers = cache_r.evict_idle_textures(now);
     if evicted_gpu_layers > 0 {
         console_logger::one(
             None,
@@ -156,14 +152,11 @@ fn sys_evict_idle_land_cache(
     }
 
     // 3. Evict idle map blocks from the active map plane (CPU RAM)
-    let map_planes: &mut Vec<(u32, MapPlane)> = &mut map_planes_r.0;
-    if let Some(plane) = map_planes.iter_mut().find_map(|(id, plane)| {
-        if *id == scene_state_r.map_id {
-            Some(plane)
-        } else {
-            None
-        }
-    }) {
+    if let Some(plane) = map_planes_r
+        .0
+        .get_mut(scene_state_r.map_id as usize)
+        .and_then(|opt| opt.as_mut())
+    {
         let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
         if evicted_blocks > 0 {
             console_logger::one(
@@ -179,7 +172,7 @@ fn sys_evict_idle_land_cache(
     };
 
     // 4. Check whether the texture arrays can be shrunk (usage low for >2 min).
-    let (shrink_small, shrink_big) = cache_r.check_shrink_opportunity();
+    let (shrink_small, shrink_big) = cache_r.check_shrink_opportunity(now);
     if let Some(target) = shrink_small {
         cache_r.small.requested_resize_to = Some(target);
         console_logger::one(
@@ -211,7 +204,7 @@ fn sys_evict_idle_land_cache(
         let mapped = tile_atlas.mapped_page_count();
         let capacity = tile_atlas.params.max_layers;
         let usage_ratio = mapped as f32 / capacity.max(1) as f32;
-        let elapsed = std::time::Instant::now().duration_since(tile_atlas.last_high_usage_instant);
+        let elapsed = now.duration_since(tile_atlas.last_high_usage_instant);
 
         if usage_ratio < texture_array::RESOURCE_SHRINK_THRESHOLD
             && elapsed >= timeout
@@ -359,7 +352,9 @@ fn sys_apply_texture_array_expansion(
     shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     settings: Res<crate::external_data::settings::Settings>,
+    time: Res<Time<Real>>,
 ) {
+    let now = time.last_update().unwrap_or_else(|| Instant::now());
     let lossy_compression = settings.core.graphics.lossy_texture_compression;
 
     let (small_req, big_req) = cache_r.take_resize_requests();
@@ -389,6 +384,7 @@ fn sys_apply_texture_array_expansion(
                 LandTextureSize::Small,
                 texmap_2d_r.0.clone(),
                 lossy_compression,
+                now,
             );
             resized_small = Some(new_layers);
         }
@@ -413,6 +409,7 @@ fn sys_apply_texture_array_expansion(
                 LandTextureSize::Big,
                 texmap_2d_r.0.clone(),
                 lossy_compression,
+                now,
             );
             resized_big = Some(new_layers);
         }

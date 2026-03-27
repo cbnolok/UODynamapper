@@ -3,19 +3,17 @@ pub mod dynamic_light;
 pub mod player;
 pub mod world;
 
-use std::collections::HashSet;
-
 use crate::core::maps::MapPlaneMetadata;
 use crate::core::system_sets::*;
 use crate::prelude::*;
-use bevy::prelude::*;
 use bevy::ecs::message::{MessageReader, MessageWriter};
+use bevy::prelude::*;
 use bevy::window::{Window, WindowResized};
-use camera::{MAX_ZOOM, MIN_ZOOM, PlayerCamera, RenderZoom};
+use camera::{PlayerCamera, RenderZoom, MAX_ZOOM, MIN_ZOOM};
 use player::Player;
+use world::land::draw_mesh::{scale_from_zoom, ChunkScale};
 use world::land::TILE_NUM_PER_CHUNK_DIM;
-use world::land::draw_mesh::{ChunkScale, scale_from_zoom};
-use world::{WorldGeoData, land};
+use world::{land, WorldGeoData};
 
 #[derive(Resource)]
 pub struct SceneStateData {
@@ -60,38 +58,41 @@ impl Plugin for ScenePlugin {
         })
         .init_resource::<LandChunkCount>()
         .add_message::<RecomputeVisibleChunksEvent>()
-        .configure_sets(Update, (SceneRenderLandSysSet::SyncLandChunks.after(SceneRenderLandSysSet::ListenSyncRequests),
-    SceneRenderLandSysSet::RenderLandChunks.after(SceneRenderLandSysSet::SyncLandChunks)))
+        .configure_sets(
+            Update,
+            (
+                SceneRenderLandSysSet::SyncLandChunks
+                    .after(SceneRenderLandSysSet::ListenSyncRequests),
+                SceneRenderLandSysSet::RenderLandChunks
+                    .after(SceneRenderLandSysSet::SyncLandChunks),
+            ),
+        )
         .add_systems(
             Startup,
             sys_setup_scene.in_set(StartupSysSet::SetupSceneStage2),
         )
-
         .add_systems(
-            Update,
+            FixedUpdate,
             sys_update_scene_on_window_resize
                 .in_set(SceneRenderLandSysSet::ListenSyncRequests)
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             Update,
-            (sys_update_worldmap_chunks_to_render
-                .in_set(SceneRenderLandSysSet::SyncLandChunks),)
+            (sys_update_worldmap_chunks_to_render.in_set(SceneRenderLandSysSet::SyncLandChunks),)
                 .run_if(in_state(AppState::InGame)),
         );
     }
 }
 
-pub fn sys_setup_scene(
-    mut writer: MessageWriter<RecomputeVisibleChunksEvent>,
-) {
-/*
-    // Always clear out anything previously spawned!
-    for (entity, _) in existing_chunks_q.iter() {
-        commands.entity(entity).despawn();
-    }
-*/
-    writer.write(RecomputeVisibleChunksEvent{});
+pub fn sys_setup_scene(mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
+    /*
+        // Always clear out anything previously spawned!
+        for (entity, _) in existing_chunks_q.iter() {
+            commands.entity(entity).despawn();
+        }
+    */
+    writer.write(RecomputeVisibleChunksEvent {});
 }
 
 pub fn sys_update_scene_on_window_resize(
@@ -146,7 +147,7 @@ fn compute_visible_chunks(
     map_width: u32,
     map_height: u32,
     chunk_scale: u32,
-) -> std::collections::HashSet<(u32, u32)> {
+) -> Vec<(u32, u32)> {
     let base_chunk_size = TILE_NUM_PER_CHUNK_DIM;
     let scaled_tile_span = base_chunk_size * chunk_scale;
     let map_base_chunks_x = (map_width / base_chunk_size) as i32;
@@ -155,7 +156,8 @@ fn compute_visible_chunks(
     // Compute orthographic half-extents in world/tile units, matching
     // sys_update_camera_projection_to_view exactly.
     let ortho_width = window_width / camera::ORTHO_SIZE_FACTOR;
-    let ortho_height = (window_height / camera::ORTHO_WIDTH_SCALE_FACTOR) / camera::ORTHO_SIZE_FACTOR;
+    let ortho_height =
+        (window_height / camera::ORTHO_WIDTH_SCALE_FACTOR) / camera::ORTHO_SIZE_FACTOR;
     let hw = ortho_width * zoom / 2.0;
     let hh = ortho_height * zoom / 2.0;
 
@@ -203,7 +205,8 @@ fn compute_visible_chunks(
     let chunk_y0 = (tile_y0 as f32 / s as f32).floor() as i32;
     let chunk_y1 = (tile_y1 as f32 / s as f32).ceil() as i32;
 
-    let mut set = std::collections::HashSet::new();
+    let mut chunks =
+        Vec::with_capacity(((chunk_x1 - chunk_x0) * (chunk_y1 - chunk_y0)).max(0) as usize);
     for gx in chunk_x0.max(0)..chunk_x1 {
         for gy in chunk_y0.max(0)..chunk_y1 {
             // Coordinates in the base 8×8 grid, aligned to chunk_scale boundaries.
@@ -215,11 +218,13 @@ fn compute_visible_chunks(
             if (base_gx + chunk_scale) as i32 <= map_base_chunks_x
                 && (base_gy + chunk_scale) as i32 <= map_base_chunks_y
             {
-                set.insert((base_gx, base_gy));
+                chunks.push((base_gx, base_gy));
             }
         }
     }
-    set
+    // Ensure the results are sorted for binary search later in sys_update_worldmap_chunks_to_render.
+    chunks.sort_unstable();
+    chunks
 }
 
 /// Bundled local state for `sys_update_worldmap_chunks_to_render` to stay within
@@ -305,7 +310,7 @@ fn sys_update_worldmap_chunks_to_render(
         chunk_scale_res.0 = chunk_scale;
 
         // Compute exact visible chunk set at the current scale granularity.
-        let required_chunks: HashSet<(u32, u32)> = compute_visible_chunks(
+        let required_chunks: Vec<(u32, u32)> = compute_visible_chunks(
             player_transform.translation,
             zoom,
             window.width(),
@@ -318,7 +323,11 @@ fn sys_update_worldmap_chunks_to_render(
             None,
             LogSev::Debug,
             LogAbout::RenderWorldLand,
-            &format!("Visible chunk target: {} (scale={})", required_chunks.len(), chunk_scale),
+            &format!(
+                "Visible chunk target: {} (scale={})",
+                required_chunks.len(),
+                chunk_scale
+            ),
         );
 
         // If map plane, chunk scale, or a large position jump (teleport), brute-force
@@ -359,30 +368,44 @@ fn sys_update_worldmap_chunks_to_render(
             // All chunks go into the pending queue, sorted center-out.
             locals.pending_spawns.clear();
             locals.pending_spawns.extend(required_chunks.iter());
-            sort_visible_chunks(&mut locals.pending_spawns, &required_chunks, current_camera_chunk);
+            sort_visible_chunks(
+                &mut locals.pending_spawns,
+                &required_chunks,
+                current_camera_chunk,
+            );
             scene_state_data_res.map_id = new_map_id;
         } else {
             // Incremental update: despawn chunks no longer needed, queue new ones.
-            let mut currently_spawned = HashSet::with_capacity(required_chunks.len());
+            // Using a packed u64 representation for faster sorting/searching.
+            let mut currently_spawned = Vec::with_capacity(required_chunks.len());
             let mut despawned_count = 0i32;
+
             for (entity, tcm) in existing_chunks_q.iter() {
                 let coords: (u32, u32) = (tcm.gx, tcm.gy);
-                if required_chunks.contains(&coords) {
-                    currently_spawned.insert(coords);
+                // Perform binary search in the sorted required_chunks Vec.
+                if required_chunks.binary_search(&coords).is_ok() {
+                    currently_spawned.push(coords);
                 } else {
                     commands.entity(entity).despawn();
                     log_chunk_despawn(tcm.gx, tcm.gy, new_map_id);
                     despawned_count += 1;
                 }
             }
+            currently_spawned.sort_unstable(); // Ensure it's sorted for subsequent lookup.
             current_chunk_count = current_chunk_count.saturating_sub(despawned_count);
 
             // Build sorted pending spawn list: only chunks not yet spawned.
             locals.pending_spawns.clear();
-            for &coords in required_chunks.difference(&currently_spawned) {
-                locals.pending_spawns.push(coords);
+            for &coords in &required_chunks {
+                if currently_spawned.binary_search(&coords).is_err() {
+                    locals.pending_spawns.push(coords);
+                }
             }
-            sort_visible_chunks(&mut locals.pending_spawns, &required_chunks, current_camera_chunk);
+            sort_visible_chunks(
+                &mut locals.pending_spawns,
+                &required_chunks,
+                current_camera_chunk,
+            );
         }
     }
 
@@ -425,7 +448,7 @@ fn sys_update_worldmap_chunks_to_render(
 /// zoom-outs without increasing the per-frame spawn budget.
 fn sort_visible_chunks(
     chunks: &mut [(u32, u32)],
-    required_chunks: &HashSet<(u32, u32)>,
+    required_chunks: &[(u32, u32)],
     camera_chunk: (i32, i32),
 ) {
     let mut min_x = u32::MAX;

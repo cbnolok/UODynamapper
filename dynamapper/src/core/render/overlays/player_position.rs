@@ -1,12 +1,9 @@
-use crate::{
-    core::render::scene::player::Player,
-    prelude::*,
-};
+use crate::core::render::scene::camera::PlayerCamera;
+use crate::core::render::scene::camera::RenderZoom;
+use crate::{core::render::scene::player::Player, prelude::*};
 use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::Window;
-use crate::core::render::scene::camera::RenderZoom;
-use crate::core::render::scene::camera::PlayerCamera;
 
 const FONT_SIZE: f32 = 22.0;
 
@@ -16,7 +13,7 @@ impl Plugin for PlayerPositionOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::InGame), setup_overlay_player_position)
             .add_systems(
-                Update,
+                FixedUpdate,
                 update_player_position_text.run_if(in_state(AppState::InGame)),
             );
     }
@@ -130,7 +127,9 @@ pub fn update_player_position_text(
         if needs_rebuild {
             let pos_uo = pos.to_uo_vec3();
             let mut viewport_tiles = "-- x --".to_string();
-            if let (Some((window_w, window_h)), Ok((cam, cam_tf))) = (window_size, camera_q.single()) {
+            if let (Some((window_w, window_h)), Ok((cam, cam_tf))) =
+                (window_size, camera_q.single())
+            {
                 let sample_points = [
                     Vec2::new(0.0, 0.0),
                     Vec2::new(window_w, 0.0),

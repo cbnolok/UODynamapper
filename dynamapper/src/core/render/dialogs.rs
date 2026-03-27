@@ -35,7 +35,7 @@ impl Plugin for DialogsPlugin {
                 registered_by: "DialogsPlugin",
             },
         ))
-        .add_systems(Update, sys_sync_egui_context_scale_factor);
+        .add_systems(FixedUpdate, sys_sync_egui_context_scale_factor);
     }
 }
 
@@ -66,11 +66,8 @@ fn sys_sync_egui_context_scale_factor(
 /// Standard helper to get the egui context for the primary UI camera.
 pub fn get_egui_context_ready<'a>(
     egui_contexts: &'a mut EguiContexts,
-    egui_ui_camera: &Res<UiCameraResource>,
+    _egui_ui_camera: &Res<UiCameraResource>,
 ) -> Option<&'a mut bevy_egui::egui::Context> {
-    // Use only the context explicitly attached to our UI camera entity.
-    // This avoids accidentally alternating between different contexts.
-    egui_ui_camera
-        .0
-        .and_then(|ui_cam| egui_contexts.ctx_for_entity_mut(ui_cam).ok())
+    // Reverted to standard egui: use the primary window context.
+    egui_contexts.ctx_mut().ok()
 }

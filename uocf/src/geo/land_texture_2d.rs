@@ -121,10 +121,9 @@ pub struct TexMap2D {
 #[derive(Debug)]
 struct TexMapShared {
     file_reader: BufReader<File>,
-    scratch_buffer: Vec<u8>,
     /// Cache stores the raw BGRA5551 file data (2 bytes/pixel).
     /// Using a non-hashing FastMap for rapid indexed lookups.
-    cache: IndexMap<usize, (std::sync::Arc<Vec<u8>>, std::time::Instant), BuildNoHashHasher<usize>>,
+    cache: IndexMap<usize, (std::sync::Arc<[u8]>, std::time::Instant), BuildNoHashHasher<usize>>,
 }
 
 impl TexMap2D {
@@ -183,7 +182,6 @@ impl TexMap2D {
             file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
             shared_data: std::sync::Mutex::new(TexMapShared {
                 file_reader: BufReader::new(texmap_file_handle),
-                scratch_buffer: Vec::new(),
                 cache: IndexMap::with_capacity_and_hasher(64, BuildNoHashHasher::default()),
             }),
         };
@@ -295,13 +293,14 @@ impl TexMap2D {
             .file_reader
             .seek(SeekFrom::Start(element.file_offset))
             .ok()?;
-        shared.scratch_buffer.resize(pixel_qty_bytes, 0);
+        
+        let mut raw_data = vec![0u8; pixel_qty_bytes];
         shared
             .file_reader
-            .read_exact(&mut shared.scratch_buffer)
+            .read_exact(&mut raw_data)
             .ok()?;
 
-        let arc_raw = std::sync::Arc::new(shared.scratch_buffer.clone());
+        let arc_raw: std::sync::Arc<[u8]> = raw_data.into();
         shared.cache.insert(
             element_index,
             (std::sync::Arc::clone(&arc_raw), std::time::Instant::now()),
@@ -310,15 +309,15 @@ impl TexMap2D {
         Some(())
     }
 
-    pub fn get_pixel_data(&self, element_index: usize) -> Option<std::sync::Arc<Vec<u8>>> {
+    pub fn get_pixel_data(&self, element_index: usize, now: std::time::Instant) -> Option<std::sync::Arc<[u8]>> {
         let element: &Texture2DElement = self.element(element_index)?;
 
-        let raw_bgra5551: std::sync::Arc<Vec<u8>> = {
+        let raw_bgra5551: std::sync::Arc<[u8]> = {
             let mut shared = self.shared_data.lock().unwrap();
 
             // Check if the raw BGRA5551 data is already cached.
             if let Some((data, time)) = shared.cache.get_mut(&element_index) {
-                *time = std::time::Instant::now();
+                *time = now;
                 std::sync::Arc::clone(data)
             } else {
                 // Read raw BGRA5551 from file and cache it (2 bytes/pixel).
@@ -328,16 +327,17 @@ impl TexMap2D {
                     .file_reader
                     .seek(SeekFrom::Start(element.file_offset))
                     .ok()?;
-                shared.scratch_buffer.resize(pixel_qty_bytes, 0);
+                
+                let mut raw_data = vec![0u8; pixel_qty_bytes];
                 shared
                     .file_reader
-                    .read_exact(&mut shared.scratch_buffer)
+                    .read_exact(&mut raw_data)
                     .ok()?;
 
-                let arc_raw = std::sync::Arc::new(shared.scratch_buffer.clone());
+                let arc_raw: std::sync::Arc<[u8]> = raw_data.into();
                 shared.cache.insert(
                     element_index,
-                    (std::sync::Arc::clone(&arc_raw), std::time::Instant::now()),
+                    (std::sync::Arc::clone(&arc_raw), now),
                 );
                 arc_raw
             }
@@ -420,18 +420,18 @@ impl TexMap2D {
             }
         }
 
-        Some(std::sync::Arc::new(pixel_data))
+        Some(pixel_data.into())
     }
 
     pub fn evict_idle_textures(&self, timeout: std::time::Duration) -> usize {
         let now = std::time::Instant::now();
         let mut shared = self.shared_data.lock().unwrap();
         let initial_len = shared.cache.len();
-
+ 
         shared
             .cache
             .retain(|_, (_, time)| now.duration_since(*time) <= timeout);
-
+ 
         initial_len - shared.cache.len()
     }
 }
