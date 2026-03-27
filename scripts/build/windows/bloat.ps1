@@ -1,19 +1,21 @@
 # scripts/build/windows/bloat.ps1
-# Nightly build analysis - Safe Tier (Windows)
+# Nightly build analysis using cargo-bloat - Safe Tier (Windows)
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Env:RUSTC_WRAPPER = Join-Path $scriptDir "..\common\rustc_wrapper.ps1"
+$Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
+
+$ARGS = $args
+if ($ARGS.Length -eq 0) { $ARGS = @("--crates") }
 
 Write-Host "Running Windows Nightly Bloat Analysis..."
 
-$Env:RUSTFLAGS = "-Zshare-generics=y -Zlocation-detail=none -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Clink-arg=-Wl,--gc-sections $Env:RUSTFLAGS"
-
-$extraArgs = $args
+# Windows (MSVC) works well with gc-sections if using LLD (which you are via config.toml)
+$Env:RUSTFLAGS = "-Z share-generics=y -Z location-detail=none -C force-unwind-tables=no -C symbol-mangling-version=v0 -C link-arg=-Wl,--gc-sections $Env:RUSTFLAGS"
 
 cargo +nightly bloat --release --no-default-features `
     --config 'profile.release.strip=false' `
     -Z build-std=std,panic_abort `
     -Z build-std-features="optimize_for_size" `
-    $extraArgs
+    $ARGS
 
 Write-Host "Analysis finished."

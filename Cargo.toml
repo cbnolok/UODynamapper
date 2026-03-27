@@ -16,6 +16,7 @@ lto = "thin"        # Enable Link-Time Optimization (binary reduction size, ofte
 
 ## Other settings
 panic = "abort"     # Abort on panic instead of unwinding (saves executable size)
+#overflow-checks = false
 incremental = false
 debug = false
 strip = true        # Strip debug symbols
@@ -37,6 +38,16 @@ opt-level = 3
 #[profile.release.package.bevy_dev_tools]
 #opt-level = "z"
 
+
+# --------- Profiling
+
+[profile.profiling]
+inherits = "release"
+debug = true
+lto = false
+strip = false
+panic = "abort"
+#overflow-checks = false
 
 # --------- Debug
 

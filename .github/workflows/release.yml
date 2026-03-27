@@ -71,9 +71,9 @@ jobs:
           RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
           CARGO_INCREMENTAL: 0
         run: |
-          chmod +x scripts/build/linux/build-release-nightly.sh
+          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build-release-nightly.sh
+          ./scripts/build/linux/build-release-nightly-toolchain.sh
 
       - name: Package binary and assets
         run: |
@@ -153,9 +153,9 @@ jobs:
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
+          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.ps1"
           CARGO_INCREMENTAL: 0
-        run: pwsh ./scripts/build/windows/build.ps1
+        run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
         shell: powershell
@@ -233,22 +233,20 @@ jobs:
       - name: Build release binary (x86_64)
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
+          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.sh"
           CARGO_INCREMENTAL: 0
         run: |
-          chmod +x scripts/build/macos/build.sh
+          chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          # Modify script temporarily to support target or use environment
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang ./scripts/build/macos/build.sh --target x86_64-apple-darwin
+          ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
 
       - name: Build release binary (ARM64)
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
+          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.sh"
           CARGO_INCREMENTAL: 0
         run: |
-          # The script currently doesn't support arguments, I should probably update it or use RUSTFLAGS
-          ./scripts/build/macos/build.sh --target aarch64-apple-darwin
+          ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
 
       - name: Package binary and assets (x86_64)
         run: |

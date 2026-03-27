@@ -1,8 +1,31 @@
+# -- Linux, GNU libc (default)
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 
 [target.'cfg(all(target_os = "linux", debug_assertions))']
-# Use the 'wild' linker for faster debug builds on Linux.
-# Since release builds are driven by scripts that set -fuse-ld=mold,
-# this will be the default for local development.
-rustflags = ["-Clink-arg=-fuse-ld=wild"]
+# wild linker (even faster than mold) + frame-pointers for debug
+rustflags = ["-Clink-arg=-fuse-ld=wild", "-C", "force-frame-pointers=yes"]
+
+[target.'cfg(all(target_os = "linux", feature = "profiling"))']
+# profiling feature enables frame pointers (applies to crates with the feature)
+rustflags = ["-Clink-arg=-fuse-ld=mold", "-C", "force-frame-pointers=yes"]
+
+[target.'cfg(all(target_os = "linux", not(debug_assertions)))']
+# mold linker for release
+rustflags = ["-Clink-arg=-fuse-ld=mold"]
+
+# -- Linux, Musl libc
+[target.x86_64-unknown-linux-musl]
+rustflags = [
+  "-Clink-arg=-fuse-ld=mold",
+  "-C", "target-feature=+crt-static",
+  "-C", "link-self-contained=yes",
+]
+
+# -- Windows
+# On Windows MSVC, statically link the C runtime so that the resulting EXE does
+# not depend on the vcruntime DLL.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

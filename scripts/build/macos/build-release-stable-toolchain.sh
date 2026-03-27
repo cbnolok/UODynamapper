@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+cd "$ROOT_DIR"
+
+echo "Running macOS stable release build..."
+
+# Stable toolchain release flags.
+# macOS uses -Wl,-dead_strip instead of --gc-sections
+RUSTFLAGS=" \
+-C link-arg=-Wl,-dead_strip \
+-C link-arg=-Wl,-no_allow_shlib_undefined \
+-C link-arg=-Wl,-icf=all \
+${RUSTFLAGS:-}" \
+cargo build --release --locked --no-default-features \
+    --bin dynamapper --package dynamapper \
+    "$@"
+
+echo "Build complete."
