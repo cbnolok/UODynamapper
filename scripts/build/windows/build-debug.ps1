@@ -7,6 +7,9 @@ Set-Location $rootDir
 
 Write-Host "Running Windows debug build..."
 
+# Set RUSTC_WRAPPER to the wrapper script (absolute path)
+$Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
+
 cargo build --bin dynamapper --package dynamapper $args
 
 Write-Host "Build complete."

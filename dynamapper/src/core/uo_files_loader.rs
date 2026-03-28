@@ -14,21 +14,28 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Arc is not yet needed (no cross-thread sharing), but kept for consistency
+/// with other UO data resources and future background-thread access.
 #[derive(Resource)]
-pub struct UoInterfaceSettingsRes(pub Arc<UoInterfaceSettings>);
+pub struct UoFilesSettingsRes(pub Arc<UoFilesSettings>);
 
+/// Not wrapped in Arc: owned exclusively by the Bevy main world.
+/// Accessed only via Res<MapPlanesRes> on the main thread.
 #[derive(Resource)]
 pub struct MapPlanesRes(pub Vec<Option<map::MapPlane>>);
 
+/// Arc: will be cloned and sent to background threads for tiledata lookups
+/// (e.g. future item/static rendering, pathfinding).
 #[derive(Resource)]
 pub struct TileDataRes(pub Arc<tiledata::TileData>);
 
+/// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
+/// and passed to texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
 pub struct TexMap2DRes(pub Arc<land_texture_2d::TexMap2D>);
 
-pub struct UoInterfaceSettings {
+pub struct UoFilesSettings {
     pub base_folder: PathBuf,
-    pub lossy_texture_compression: bool,
 }
 
 pub struct UOFilesPlugin {
@@ -55,7 +62,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             text,
         )
     };
-    let uo_path: PathBuf = settings.core.uo_files.folder.clone().into();
+    let uo_path: PathBuf = settings.uo_files.folder.clone().into();
     let lossy = settings.core.graphics.lossy_texture_compression;
 
     lg("Start loading UO Data.");
@@ -92,12 +99,10 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Done loading UO Data.");
 
-    commands.insert_resource(UoInterfaceSettingsRes(Arc::new(UoInterfaceSettings {
+    commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
         base_folder: uo_path,
-        lossy_texture_compression: lossy,
     })));
     commands.insert_resource(MapPlanesRes(map_planes));
-    // TODO: Do re really need to encapsulate with Arc those Bevy Resources?
     commands.insert_resource(TileDataRes(Arc::new(tiledata)));
     commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
 }

@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 
 echo "Running macOS stable release build..."
 
+# Set RUSTC_WRAPPER to the wrapper script
+export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+
 # Stable toolchain release flags.
 # macOS uses -Wl,-dead_strip instead of --gc-sections
 RUSTFLAGS=" \

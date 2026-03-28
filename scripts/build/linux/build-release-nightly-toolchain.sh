@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 
 echo "Running Linux nightly release build..."
 
+# Set RUSTC_WRAPPER to the wrapper script
+export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+
 # Stable release flags plus nightly-only size/build-std flags.
 #-C link-arg=-Wl,--no-hash-style   # unsupported by mold
 #-C link-arg=-Wl,--icf=all         # might break something? is it better to use icf=safe? safe saves 1 mb

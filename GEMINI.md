@@ -8,7 +8,7 @@ This document provides essential information for AI agents to effectively assist
 
 **Goal**: Create a 2D client/dynamic map renderer for Ultima Online with a highly configurable renderer that can emulate both classic and modern (Kingdom Reborn) visuals.
 
-**Tech Stack**: Rust, Bevy Engine v0.18.1, WGSL (WESL + naga-oil) shaders, wgpu.
+**Tech Stack**: Rust, Bevy Engine v0.18.1, WGSL (with naga-oil) shaders, wgpu.
 
 **Workspace Members**:
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
@@ -85,7 +85,7 @@ Visual features are controlled by uniforms in shared bind groups:
 
 ### General Rules
 
-- **Comments**: Do NOT remove comments. Code must be thoroughly commented for people not well-versed in graphics programming.
+- **Comments**: Do **NOT** remove comments. Code must be thoroughly commented for people not well-versed in graphics programming.
 - **No Magic Numbers**: Use `const` values in both Rust and WGSL code.
 - **Preserve Structure**: Maintain existing code organization and naming conventions.
 

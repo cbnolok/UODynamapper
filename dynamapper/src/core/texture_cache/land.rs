@@ -33,7 +33,7 @@ impl Plugin for LandTextureCachePlugin {
         // This is correct: Extract runs AFTER Last (end of previous frame), so by the time we reach
         // First of the next frame, the previous frame's uploads have already been consumed by Extract.
         // Clearing here ensures Update fills a fresh list for the current frame.
-        app.add_systems(First, cache::sys_clear_texture_array_uploads); // TODO: is the "First" schedule correct?
+        app.add_systems(First, cache::sys_clear_texture_array_uploads);
         app.add_systems(Update, cache::sys_drain_texture_compression_tasks);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {

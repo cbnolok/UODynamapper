@@ -9,7 +9,8 @@ members = [
 # --------- Release
 
 [profile.release]
-opt-level = 2       # Optimize for speed with reasonable size increase (opt-level = 3 gives fastest possible code "z" smallest possible code)
+opt-level = 3
+#opt-level = 2       # Optimize for speed with reasonable size increase (opt-level = 3 gives fastest possible code "z" smallest possible code)
 codegen-units = 1   # Great impact on binary size (when combined with lto), and often improves performance as well
 lto = "thin"        # Enable Link-Time Optimization (binary reduction size, often increases performance)
 #lto = "fat"        # Slightly better than thin lto but at least twice slower (saves 1 mb more)

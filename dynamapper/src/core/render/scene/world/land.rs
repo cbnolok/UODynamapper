@@ -84,7 +84,8 @@ impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<draw_mesh::LandMeshScratch>()
             .add_plugins(MaterialPlugin::<LandCustomMeshMaterial>::default())
-            // TODO: explain what ExtractResourcePlugin is.
+            // Copies the TileAtlasImageHandle resource from the main world into the
+            // render world every frame, so that the GPU pipeline can access the atlas texture.
            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<tile_atlas::TileAtlasImageHandle>::default())
             .add_systems(
                 Update,
@@ -111,7 +112,8 @@ impl Plugin for DrawLandChunkMeshPlugin {
             // );
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else { return; };
-        // TODO: explain why it is needed, where is this resource used.
+        // Render-world counterpart that receives tile atlas upload commands extracted
+        // from the main world. Consumed by sys_render_upload_tile_atlas during the Queue phase.
         render_app.init_resource::<tile_atlas::RenderAtlasUploads>();
         render_app.add_systems(bevy::render::ExtractSchedule, tile_atlas::sys_extract_atlas_uploads);
         render_app.add_systems(bevy::render::Render, tile_atlas::sys_render_upload_tile_atlas.in_set(bevy::render::RenderSystems::Queue));

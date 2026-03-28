@@ -147,8 +147,6 @@ pub struct LandMeshScratch {
     missing_tile_bits: Vec<u64>,
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
-    /// Reusable buffer for atlas texel packing (avoids per-sub-block allocation).
-    texels: Vec<Rg16u>,
 }
 impl Default for LandMeshScratch {
     fn default() -> Self {
@@ -159,7 +157,6 @@ impl Default for LandMeshScratch {
             missing_tile_bits: vec![0; LandTextureCache::TILE_BITSET_SIZE],
             ids: Vec::new(),
             texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
-            texels: Vec::new(),
         }
     }
 }
@@ -171,8 +168,6 @@ pub fn sys_update_existing_chunk_mesh_lod(
     current_scale: Res<ChunkScale>,
     mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
 ) {
-    // TODO: add a log message when we change the LOD level because of the zoom level.
-
     // Scale > 1 uses fixed wide meshes; LOD swaps only matter at scale=1.
     if current_scale.0 != 1 {
         return;
@@ -182,6 +177,13 @@ pub fn sys_update_existing_chunk_mesh_lod(
     if *current_lod == next_lod {
         return;
     }
+
+    console_logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::RenderWorldLand,
+        &format!("Land mesh LOD changed: {:?} -> {:?} (zoom={:.2})", *current_lod, next_lod, render_zoom.0),
+    );
 
     let next_mesh = mesh_for_lod(&land_mesh_handles_r, next_lod);
     for mut mesh3d in chunk_mesh_q.iter_mut() {
@@ -200,7 +202,6 @@ fn enqueue_chunk_to_atlas_and_preload(
     blocks_data_map: &[(u64, MapBlock)],
     now: Instant,
     texture_lookup_cache: &mut [u32],
-    texels_buf: &mut Vec<Rg16u>,
     lossy_compression: bool,
 ) -> bool {
     let chunk_origin_tile_units_x =
@@ -213,12 +214,6 @@ fn enqueue_chunk_to_atlas_and_preload(
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
 
-    // TODO: since cells are known to have 8x8 size, shouldn't we simply use a stack-allocated plain array
-    //  instead of relying on texels_buf, which is heap allocated? It would be faster (data locality)
-    //  and we could avoid the clear() call.
-
-    // TODO: Is there a faster way to do this binary search? Or is there a better data structure for this?
-    //  We can have up to 500.000 blocks.
     let block = match blocks_data_map.binary_search_by_key(&chunk_rel_coords.as_u64(), |(k, _)| *k)
     {
         Ok(idx) => &blocks_data_map[idx].1,
@@ -228,7 +223,10 @@ fn enqueue_chunk_to_atlas_and_preload(
     // NOTE: texture_lookup_cache is NOT cleared here — it persists across
     // all sub-blocks within a frame, ensuring consistent layer assignments
     // and avoiding redundant get_texture_size_layer lookups.
-    texels_buf.clear();
+
+    // Stack-allocated 8x8 texel buffer — avoids heap allocation and clear() per chunk.
+    let mut texels_local: [Rg16u; TILE_NUM_PER_CHUNK_TOTAL] = [Rg16u::zeroed(); TILE_NUM_PER_CHUNK_TOTAL];
+    let mut texel_count: usize = 0;
     let mut has_fallback = false;
 
     for cell in &block.cells {
@@ -267,7 +265,8 @@ fn enqueue_chunk_to_atlas_and_preload(
         };
 
         // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
-        texels_buf.push(Rg16u::pack(layer as u16, cell.z, tex_size_bits));
+        texels_local[texel_count] = Rg16u::pack(layer as u16, cell.z, tex_size_bits);
+        texel_count += 1;
     }
 
     let page_w = tile_atlas.params.page_texels.x;
@@ -277,12 +276,15 @@ fn enqueue_chunk_to_atlas_and_preload(
         "Page size must be a multiple of chunk size to avoid split logic"
     );
 
-    // TODO: assert page_w and page_h are multiples of 2, so that we can use bitwise operations.
-    let page_x = chunk_origin_tile_units_x / page_w;
-    let page_y = chunk_origin_tile_units_z / page_h;
+    debug_assert!(
+        page_w.is_power_of_two() && page_h.is_power_of_two(),
+        "Page dimensions must be powers of two for bitwise operations"
+    );
+    let page_x = chunk_origin_tile_units_x >> page_w.trailing_zeros();
+    let page_y = chunk_origin_tile_units_z >> page_h.trailing_zeros();
 
-    let off_x_in_page = chunk_origin_tile_units_x % page_w;
-    let off_y_in_page = chunk_origin_tile_units_z % page_h;
+    let off_x_in_page = chunk_origin_tile_units_x & (page_w - 1);
+    let off_y_in_page = chunk_origin_tile_units_z & (page_h - 1);
 
     let (layer, _evicted) =
         tile_atlas.ensure_layer_for_page(IVec2::new(page_x as i32, page_y as i32));
@@ -291,7 +293,7 @@ fn enqueue_chunk_to_atlas_and_preload(
         layer,
         UVec2::new(off_x_in_page, off_y_in_page),
         UVec2::new(TILE_NUM_PER_CHUNK_DIM, TILE_NUM_PER_CHUNK_DIM),
-        texels_buf,
+        &texels_local[..texel_count],
     );
 
     has_fallback
@@ -654,7 +656,6 @@ pub fn sys_draw_spawned_land_chunks(
         missing_tile_bits,
         texture_lookup_cache,
         ids,
-        texels: texels_buf,
         ..
     } = &mut *scratch;
 
@@ -746,7 +747,6 @@ pub fn sys_draw_spawned_land_chunks(
                     blocks_data,
                     now,
                     texture_lookup_cache,
-                    texels_buf,
                     settings.core.graphics.lossy_texture_compression,
                 );
                 if fallback {

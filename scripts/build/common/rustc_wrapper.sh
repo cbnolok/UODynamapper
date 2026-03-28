@@ -22,19 +22,24 @@ for my_crate in "${MY_CRATES[@]}"; do
     fi
 done
 
+# Helper function to run rustc with optional sccache
+run_rustc() {
+    local extra_args=("$@")
+    if command -v sccache >/dev/null 2>&1; then
+        # Try sccache, fall back to direct rustc on failure
+        if ! sccache "$RUSTC" "${extra_args[@]}" 2>/dev/null; then
+            exec "$RUSTC" "${extra_args[@]}"
+        fi
+    else
+        exec "$RUSTC" "${extra_args[@]}"
+    fi
+}
+
 if [ "$IS_MY_CRATE" = true ]; then
     # Compile your code with whatever is in Cargo.toml (standard abort)
-    if command -v sccache >/dev/null 2>&1; then
-        exec sccache "$RUSTC" "$@"
-    else
-        exec "$RUSTC" "$@"
-    fi
+    run_rustc "$@"
 else
     # Prune dependencies with no-fmt-debug.
     # We removed immediate-abort because it is binary-incompatible with standard abort.
-    if command -v sccache >/dev/null 2>&1; then
-        exec sccache "$RUSTC" "$@" -Zfmt-debug=none
-    else
-        exec "$RUSTC" "$@" -Zfmt-debug=none
-    fi
+    run_rustc "$@" -Zfmt-debug=none
 fi

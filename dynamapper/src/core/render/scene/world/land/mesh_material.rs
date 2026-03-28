@@ -149,14 +149,16 @@ pub struct LandLightingUniforms {
     pub rim_color: Vec4,
     pub grade_warm_color: Vec4,
     pub grade_cool_color: Vec4,
-    // TODO: explain via a comment the fields of the Vec fields that are NOT RGBA colors.
+    //   grade_params  = [strength, headroom_reserve, chroma_tint, headroom_on]
     pub grade_params: Vec4,
+    //   grade_extra   = [vibrance, saturation, contrast, split_tone_strength]
     pub grade_extra: Vec4,
+    //   gloom_params  = [amount, falloff_height, shadow_bias, fog_height_bias]
     pub gloom_params: Vec4,
+    //   fog_color     = [r, g, b, max_mix]
     pub fog_color: Vec4,
+    //   fog_params    = [distance_density, height_density, noise_scale, noise_strength]
     pub fog_params: Vec4,
-    //   fog_color = [r,g,b, max_mix]
-    //   fog_params = [distance_density, height_density, noise_scale, noise_strength]
 }
 
 #[derive(Clone, Copy, Debug)]

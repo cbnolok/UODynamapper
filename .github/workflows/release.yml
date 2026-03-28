@@ -66,9 +66,7 @@ jobs:
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
-          # RUSTC_WRAPPER must be set to the wrapper script.
-          # The wrapper script will then call sccache + rustc.
-          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
+          SCCACHE_NO_DAEMON: "1"
           CARGO_INCREMENTAL: 0
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
@@ -125,6 +123,103 @@ jobs:
 
             > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
 
+  build-linux-arm64:
+    name: Build (Linux aarch64)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            pkg-config \
+            clang \
+            mold \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-unknown-linux-gnu
+          components: rust-src
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "linux-arm64-nightly-sccache"
+
+      - name: Build release binary
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_NO_DAEMON: "1"
+          CARGO_INCREMENTAL: 0
+        run: |
+          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
+          chmod +x scripts/build/common/rustc_wrapper.sh
+          ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-gnu
+
+      - name: Package binary and assets
+        run: |
+          mkdir -p release_package
+          cp target/aarch64-unknown-linux-gnu/release/dynamapper release_package/
+          cp -r assets release_package/
+          cp README.md release_package/ 2>/dev/null || true
+          # Zip the package
+          sudo apt-get install -y zip
+          zip -r dynamapper-linux-arm64.zip release_package
+          echo "Archive size: $(du -sh dynamapper-linux-arm64.zip | cut -f1)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-linux-arm64
+          path: dynamapper-linux-arm64.zip
+          retention-days: 30
+
+      - name: Create versioned GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dynamapper-linux-arm64.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Compute nightly tag name
+        if: github.event_name == 'workflow_dispatch'
+        id: nightly_tag
+        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update prerelease
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.nightly_tag.outputs.tag }}
+          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
+          prerelease: true
+          files: dynamapper-linux-arm64.zip
+          generate_release_notes: false
+          body: |
+            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
+
+            Built on: ${{ github.event.repository.updated_at }}
+
+            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+
   build-windows:
     name: Build (Windows x86_64)
     runs-on: windows-latest
@@ -153,7 +248,7 @@ jobs:
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.ps1"
+          SCCACHE_NO_DAEMON: "1"
           CARGO_INCREMENTAL: 0
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
@@ -233,7 +328,7 @@ jobs:
       - name: Build release binary (x86_64)
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.sh"
+          SCCACHE_NO_DAEMON: "1"
           CARGO_INCREMENTAL: 0
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
@@ -243,7 +338,7 @@ jobs:
       - name: Build release binary (ARM64)
         env:
           SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "scripts/build/common/rustc_wrapper.sh"
+          SCCACHE_NO_DAEMON: "1"
           CARGO_INCREMENTAL: 0
         run: |
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin

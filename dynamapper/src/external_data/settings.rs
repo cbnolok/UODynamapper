@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Asset, Clone, Debug, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
     pub core: SectCore,
+    pub uo_files: SectUoFiles,
     pub app: SectApp,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
@@ -31,7 +32,6 @@ pub struct SectKeybindings {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SectCore {
-    pub uo_files: SectUoFiles,
     pub world: SectWorld,
     pub graphics: SectGraphics,
 }
@@ -173,6 +173,7 @@ pub struct ToggleWireframe;
 // ----
 
 const CORE_CONFIG_FILE: &str = "settings/core.toml";
+const UO_FILES_CONFIG_FILE: &str = "settings/uo_files.toml";
 const USER_CONFIG_FILE: &str = "settings/preferences.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
@@ -182,6 +183,7 @@ pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
+    let uo_files_path = assets_path.join(UO_FILES_CONFIG_FILE);
     let user_path = assets_path.join(USER_CONFIG_FILE);
     let maps_path = assets_path.join(MAPS_CONFIG_FILE);
 
@@ -197,6 +199,12 @@ pub fn load_from_files() -> Settings {
     let core_data: CoreWrapper = toml::from_str(&core_contents).expect(
         "Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml",
     );
+
+    // UO files settings (assets/settings/uo_files.toml)
+    let uo_files_contents = std::fs::read_to_string(&uo_files_path)
+        .expect("Failed to read settings/uo_files.toml — please ensure assets/settings/uo_files.toml exists");
+    let uo_files: SectUoFiles = toml::from_str(&uo_files_contents)
+        .expect("Failed to parse settings/uo_files.toml — please fix the file in assets/settings/uo_files.toml");
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
@@ -248,6 +256,7 @@ pub fn load_from_files() -> Settings {
 
     Settings {
         core,
+        uo_files,
         app: user_app,
         logging: core_data.logging,
         keybindings,
@@ -462,8 +471,6 @@ fn sys_settings_watcher_loader(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
 ) {
-    // TODO: disable hot reloading for now. We would need every system to fetch the updated settings and react.
-
     // Ttrack for changes and update it asynchronously.
     let handle: Handle<Settings> = asset_server.load(CONFIG_FILE_NAME);
     commands.insert_resource(SettingsHandle(handle));
@@ -523,18 +530,6 @@ fn sys_settings_reloaded(
 */
 
 // ----
-
-// TODO: Make something actually emit this event:
-/*
-fn keyboard_toggle_wireframe(
-    input: Res<Input<KeyCode>>,
-    mut writer: EventWriter<ToggleWireframe>,
-) {
-    if input.just_pressed(KeyCode::W) {
-        writer.send(ToggleWireframe);
-    }
-}
-     */
 
 fn sys_evlisten_switch_wireframe(
     mut events: MessageReader<ToggleWireframe>,

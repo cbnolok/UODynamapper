@@ -2,6 +2,8 @@
 # Nightly build analysis using cargo-bloat - Safe Tier (Windows)
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Set RUSTC_WRAPPER to the wrapper script (absolute path)
 $Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
 
 $ARGS = $args

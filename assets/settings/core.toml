@@ -1,10 +1,6 @@
 # Core settings for UODynamapper
 # These are strictly engine/system level and usually don't change often.
 
-[core.uo_files]
-# Path to your UO client folder containing .mul or .uop files
-folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
-
 [core.world]
 # Default starting position in UO coordinates [X, Y, Z, MapID]
 start_p = [1100, 1800, 20, 0]

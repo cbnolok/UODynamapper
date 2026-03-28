@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 
 echo "Running Linux profile build (release optimizations + debug symbols, no LTO)..."
 
+# Set RUSTC_WRAPPER to the wrapper script
+export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+
 # Profile build: release optimizations with debug symbols for profilers.
 # - No LTO: makes profilers more precise
 # - Debug symbols: included for profiling

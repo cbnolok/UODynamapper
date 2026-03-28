@@ -16,17 +16,24 @@ $isMyCrate = $myCrates -contains $crateName
 
 $sccacheBin = Get-Command sccache -ErrorAction SilentlyContinue
 
-if ($isMyCrate) {
+# Helper function to run rustc with optional sccache fallback
+function Invoke-Rustc {
+    param([string[]]$ExtraArgs)
     if ($sccacheBin) {
-        & sccache $rustc @remainingArgs
+        # Try sccache, fall back to direct rustc on failure
+        $ErrorActionPreference = "SilentlyContinue"
+        & sccache $rustc @ExtraArgs 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            & $rustc @ExtraArgs
+        }
     } else {
-        & $rustc @remainingArgs
+        & $rustc @ExtraArgs
     }
+}
+
+if ($isMyCrate) {
+    Invoke-Rustc -ExtraArgs $remainingArgs
 } else {
     # Prune dependencies with no-fmt-debug.
-    if ($sccacheBin) {
-        & sccache $rustc @remainingArgs -Zfmt-debug=none
-    } else {
-        & $rustc @remainingArgs -Zfmt-debug=none
-    }
+    Invoke-Rustc -ExtraArgs ($remainingArgs + @("-Zfmt-debug=none"))
 }

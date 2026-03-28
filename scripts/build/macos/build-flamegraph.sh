@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 
 echo "Running macOS flamegraph build (release optimizations + debug symbols, frame pointers)..."
 
+# Set RUSTC_WRAPPER to the wrapper script
+export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+
 # Flamegraph build: release optimizations with debug symbols and frame pointers.
 # - No LTO & No Strip: essential for stack walking
 # - force-frame-pointers: essential for profilers

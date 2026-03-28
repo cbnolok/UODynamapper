@@ -325,11 +325,11 @@ impl MapPlane {
     #[inline(always)]
     pub fn is_block_cached(&self, pos: &MapBlockRelPos) -> bool {
         let idx = (pos.x * self.size_blocks.height) + pos.y;
-        let word_idx = (idx / 64) as usize; // TODO: use bit shifting
+        let word_idx = (idx >> 6) as usize; // Equivalent to / 64
         if word_idx >= self.cached_blocks_bitmask.len() {
             return false;
         }
-        let bit_idx = (idx % 64) as usize; // TODO: use bit shifting
+        let bit_idx = (idx & 63) as usize;  // Equivalent to % 64
         (self.cached_blocks_bitmask[word_idx] & (1 << bit_idx)) != 0
     }
 

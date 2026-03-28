@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 
 echo "Running Linux stable release build..."
 
+# Set RUSTC_WRAPPER to the wrapper script
+export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+
 # Stable toolchain release flags.
 RUSTFLAGS=" \
 -Clink-arg=-fuse-ld=mold \

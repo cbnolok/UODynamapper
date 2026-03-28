@@ -7,6 +7,9 @@ Set-Location $rootDir
 
 Write-Host "Running Windows nightly release build..."
 
+# Set RUSTC_WRAPPER to the wrapper script (absolute path)
+$Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
+
 # Stable release flags plus nightly-only size/build-std flags.
 # Windows (MSVC) works well with gc-sections if using LLD (which you are via config.toml)
 $Env:RUSTFLAGS = "-C link-arg=-Wl,--gc-sections -C link-arg=-Wl,--icf=safe -C link-arg=-Wl,--no-allow-shlib-undefined -C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"

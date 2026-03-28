@@ -132,7 +132,23 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
         let num_sub_batches = (total_blocks + SUB_BATCH_SIZE - 1) / SUB_BATCH_SIZE;
         let mut batch_idx = 0usize;
         let mut total_loaded = 0usize;
-        let mut seen_ids = vec![0u64; 1024]; // bitmask for 65536 u16 IDs
+
+        // Deduplication bitmask: one bit per possible u16 tile ID (0..65535).
+        // 1024 u64 words × 64 bits = 65,536 bits = 8 KB on the stack-ish heap.
+        //
+        // For a given tile ID `id`:
+        //   word index = id >> 6   (id / 64)
+        //   bit  index = id & 63   (id % 64)
+        //
+        // Why a bitmask instead of a HashSet<u16> or Vec<u16>?
+        //  • Fixed 8 KB footprint — no allocator churn from bucket resizing.
+        //  • O(1) test-and-set with bit ops (shift + mask + OR), zero hashing overhead.
+        //  • Cache-friendly: 8 KB fits in L1; a HashSet would scatter across many cache lines.
+        //
+        // This ensures each unique tile ID is preloaded exactly once per request,
+        // even though the same ID may appear in thousands of cells across hundreds
+        // of map blocks.
+        let mut seen_ids = vec![0u64; 1024];
         let mut seen_count = 0usize;
 
         for batch_slice in chunks_iter {
@@ -151,7 +167,6 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
             });
             total_loaded += loaded_blocks.len();
 
-            // TODO: is this even needed? why?
             // Warm texture cache for this sub-batch's tile IDs.
             for block in &loaded_blocks {
                 for cell in &block.cells {

@@ -7,6 +7,9 @@ Set-Location $rootDir
 
 Write-Host "Running Windows profile build (release optimizations + debug symbols, no LTO)..."
 
+# Set RUSTC_WRAPPER to the wrapper script (absolute path)
+$Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
+
 # Profile build: release optimizations with debug symbols for profilers.
 # - No LTO: makes profilers more precise
 # - Debug symbols: included for profiling
