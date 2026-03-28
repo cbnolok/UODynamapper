@@ -1,11 +1,11 @@
+use crate::core::render::scene::camera::{PlayerCamera, UiCameraResource};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
-use crate::util_lib::uo_coords::UOVec4;
 use crate::prelude::*;
+use crate::util_lib::uo_coords::UOVec4;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use crate::core::render::scene::camera::{PlayerCamera, UiCameraResource};
 
 /// Base delay between tiles at speed multiplier 1.0 (20 steps per second).
 const BASE_MOVE_COOLDOWN: f32 = 0.05;
@@ -17,19 +17,22 @@ impl_tracked_plugin!(PlayerMovementPlugin);
 impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app
-            .insert_resource(MoveCooldown(Timer::from_seconds(
-                BASE_MOVE_COOLDOWN,
-                TimerMode::Repeating,
-            )))
-            .insert_resource(MoveDirection::default())
-            .add_systems(
-                Update,
-                (sys_player_input, sys_player_move, sys_smooth_player_transform)
-                    .chain()
-                    .in_set(MovementSysSet::MovementActions)
-                    .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
-            );
+        app.insert_resource(MoveCooldown(Timer::from_seconds(
+            BASE_MOVE_COOLDOWN,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(MoveDirection::default())
+        .add_systems(
+            Update,
+            (
+                sys_player_input,
+                sys_player_move,
+                sys_smooth_player_transform,
+            )
+                .chain()
+                .in_set(MovementSysSet::MovementActions)
+                .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
+        );
     }
 }
 
@@ -82,7 +85,9 @@ fn sys_player_input(
     }
 
     // Mouse-driven movement still works even if movement keys are held.
-    if let Some((mouse_dir, mouse_speed)) = parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q) {
+    if let Some((mouse_dir, mouse_speed)) =
+        parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q)
+    {
         move_dir.dir = Some(mouse_dir);
         move_dir.speed_multiplier = mouse_speed;
     } else {
@@ -101,7 +106,8 @@ fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2) -> UOVec4 {
 }
 
 fn advance_vertical_position(current_pos: UOVec4, vertical_dir: i32) -> UOVec4 {
-    let next_z = (i32::from(current_pos.z) + vertical_dir).clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+    let next_z =
+        (i32::from(current_pos.z) + vertical_dir).clamp(i8::MIN as i32, i8::MAX as i32) as i8;
     UOVec4::new(current_pos.x, current_pos.y, next_z, current_pos.m)
 }
 
@@ -142,7 +148,9 @@ fn parse_mouse_movement(
     let (camera, camera_transform) = camera_q.single().ok()?;
     let player_transform = player_q.single().ok()?;
 
-    let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
+    let ray = camera
+        .viewport_to_world(camera_transform, cursor_pos)
+        .ok()?;
 
     // Find intersection with the player's current ground plane (Y-level)
     let ground_y = player_transform.translation.y;
@@ -215,9 +223,9 @@ fn sys_player_move(
         let smooth_movement = settings.app.input.smooth_movement;
         if let Some(dir) = move_dir.dir {
             for (mut transform, mut player) in query.iter_mut() {
-                let current_pos = player.current_pos.unwrap_or_else(|| {
-                    UOVec4::new(0, 0, 0, 0)
-                });
+                let current_pos = player
+                    .current_pos
+                    .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
                 // Move by exactly 1.0 per tile/step, ignoring the multiplier for distance.
                 let delta = Vec3::new(dir.x as f32, 0.0, dir.y as f32);
                 if !smooth_movement {
@@ -239,12 +247,14 @@ fn sys_player_move(
 
         if move_dir.vertical_dir != 0 {
             for (mut transform, mut player) in query.iter_mut() {
-                let current_pos = player.current_pos.unwrap_or_else(|| {
-                    UOVec4::new(0, 0, 0, 0)
-                });
+                let current_pos = player
+                    .current_pos
+                    .unwrap_or_else(|| UOVec4::new(0, 0, 0, 0));
                 // Adjust height. Use the scale utility if available or a standard step.
                 // In UO a height step is often 1, but we scale it for Bevy.
-                let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(move_dir.vertical_dir as f32);
+                let delta_y = crate::util_lib::uo_coords::scale_uo_z_to_bevy_units(
+                    move_dir.vertical_dir as f32,
+                );
                 if !smooth_movement {
                     transform.translation.y += delta_y;
                 }

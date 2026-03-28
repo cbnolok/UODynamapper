@@ -7,14 +7,19 @@ use bevy::window::Window;
 
 const FONT_SIZE: f32 = 22.0;
 
+use bevy::time::common_conditions::on_real_timer;
+use std::time::Duration;
+
 pub struct PlayerPositionOverlayPlugin;
 
 impl Plugin for PlayerPositionOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::InGame), setup_overlay_player_position)
             .add_systems(
-                FixedUpdate,
-                update_player_position_text.run_if(in_state(AppState::InGame)),
+                Update,
+                update_player_position_text
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 8.0))),
             );
     }
 }

@@ -255,6 +255,34 @@ Generates shared vertex grids for terrain chunks across both LOD and chunk scale
 - LOD swapping only applies to scale `1`
 - Manual AABBs are scale-aware so frustum culling remains correct despite vertex-displaced terrain heights
 
+**Design Rationale — Two-Level Mesh Selection (Scale + LOD)**:
+
+Mesh selection is a two-level dispatch:
+
+1. **Chunk Scale** (primary): `scale_from_zoom` → `mesh_for_scale`. At higher zoom,
+   8×8 blocks merge into super-chunks (16×16 → 256×256). Each wide mesh keeps 81
+   vertices but increases the inter-vertex step. This is the *primary* mechanism for
+   reducing draw-call and entity pressure.
+
+2. **LOD within Scale=1**: `lod_from_zoom` → `mesh_for_lod`. Three detail levels
+   (81 / 25 / 9 verts). `sys_update_existing_chunk_mesh_lod` live-swaps the `Mesh3d`
+   handle — no geometry rebuild, just a cheap handle reassignment.
+
+For real-time interactive rendering, LOD variation saves negligible GPU work
+(at most ~7 200 vertex shader invocations across ~100 chunks). Modern GPUs
+process millions of vertices per millisecond.
+
+However, LOD becomes meaningful for **offline / export rendering**: when
+rasterising the full 7 000 × 4 000 tile map at 1:1 zoom to an image file,
+the renderer must produce geometry for the entire world:
+- 1:1 at scale=1 → ~437 500 chunks × 81 verts = 35 M vertices.
+- Dropping to Medium or Low reduces this to ~11 M or ~4 M, which can matter
+  for the offline capture pipeline.
+
+The pre-built mesh assets cost trivial VRAM (~8 meshes, ≤81 verts each ≈ a few KB),
+so the complexity cost is purely code-side. Wide meshes (scale ≥ 2) don't need LOD
+because at those zoom levels screen-space density is inherently low.
+
 ### 2.5 Tile Atlas Management (`tile_atlas.rs`)
 
 The paged tile metadata atlas is a small layered `Rg16Uint` array used only for terrain metadata, not color textures.
@@ -262,9 +290,10 @@ The paged tile metadata atlas is a small layered `Rg16Uint` array used only for 
 **Current Paging Setup**:
 
 ```rust
-PAGE_TEXELS = 2048
-MAX_LAYERS = 8
-WORLD_PAGES_X = 16
+PAGE_TEXELS      = 2048
+INITIAL_LAYERS   = 4    // grows on demand via requested_expansion
+MAX_LAYERS       = 32   // hard ceiling
+WORLD_PAGES_X    = 16   // supports up to 32k × 32k tile maps
 ```
 
 **Behavior**:
@@ -272,8 +301,34 @@ WORLD_PAGES_X = 16
 - Logical world pages are mapped to physical layers through an LRU table
 - Per-chunk metadata is uploaded as sub-rect updates via `queue.write_texture`
 - The atlas stays small to reduce startup VRAM while still supporting large maps through paging
+- When all layers are occupied, the LRU layer is evicted *and* expansion is requested (doubling layers up to `MAX_LAYERS`)
 
 Unlike the metadata atlas, the land color texture arrays now support **dynamic expansion** and maintain separate small/big layer counts.
+
+**Full-Map Capacity Analysis (Britannia: 7 168 × 4 096 tiles)**:
+
+| Resource | Requirement | Limit | Headroom |
+| -------- | ----------- | ----- | -------- |
+| Atlas pages | ceil(7168/2048) × ceil(4096/2048) = **4 × 2 = 8** | 32 layers | ×4 |
+| Small texture layers | ≤1 869 unique tile IDs | 2 048 | ×1.1 |
+| Big texture layers | ≤1 869 unique tile IDs | 2 048 | ×1.1 |
+| Atlas page VRAM | 8 × 2048² × 4 B = **128 MiB** | — | — |
+| Texture VRAM (BC7) | 4 + 16 = **~20 MiB** | — | — |
+| Texture VRAM (RGBA8) | 32 + 128 = **~160 MiB** | — | — |
+
+The atlas and texture arrays comfortably fit the entire Britannia map. For custom
+maps exceeding 32k tiles per axis, `WORLD_PAGES_X` would need to increase and the
+`page_to_layer` array (currently 256 slots packed in 64 `UVec4`s) would need
+expansion.
+
+**CPU Enqueue Budget for Full-Map Rendering**:
+
+At scale=32 the full Britannia map is ~448 super-chunks. Each iterates
+`(32+2)² = 1 156` sub-blocks × 64 cells per block = **~33.5 M** cell lookups.
+The per-frame budget (`MAX_ATLAS_BLOCKS_PER_FRAME = 4 096`) processes ~3–4 chunks
+per frame, requiring **~112–150 frames (~2 s at 60 fps)** to populate the
+entire atlas. This progressive fill is intentional — it prevents multi-millisecond
+stalls — but for offline export a "flush all" bypass may be desirable.
 
 ### 2.6 Shared Material and Shader Update Strategy
 

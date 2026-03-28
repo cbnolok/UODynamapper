@@ -4,7 +4,7 @@
 //  Supports three reconstruction modes (selected via effects.reconstruction_mode):
 //   0 = Nearest (direct textureLoad or textureSample)
 //   1 = Bicubic  (Mitchell-Netravali 4×4 kernel)
-//   2 = FSR-like edge-adaptive (approximate; TODO: replace with real AMD FSR)
+//   2 = FSR EASU edge-adaptive (AMD FidelityFX Super Resolution 1.0)
 //
 //  Also provides an optional 9-tap blur (blurred_albedo) and unsharp-mask
 //  sharpening (apply_sharpening), plus gradient-stable variants for the blur.
@@ -13,6 +13,7 @@
 
 #import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, tex_small_sampler, effects}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance}
+#import "shaders/worldmap/land/fsr_easu.wgsl"::{sample_tile_fsr_easu}
 
 // ============================================================================
 // Basic albedo sampling
@@ -118,37 +119,10 @@ fn sample_tile_bicubic(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   return result / total_weight;
 }
 
-// Simplified Edge-Adaptive Reconstruction (FSR-like, luma-weighted bilinear).
-// IMPORTANT TODO: this is a simplified approximation. Implement real AMD FSR!
+// FSR EASU edge-adaptive reconstruction (12-tap directional Lanczos-like kernel).
+// Full AMD FidelityFX Super Resolution 1.0 EASU — see fsr_easu.wgsl.
 fn sample_tile_fsr(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  let dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
-  let pos = uv * dims;
-  let i_pos = vec2<i32>(floor(pos));
-  let f = fract(pos);
-
-  // 4 main taps
-  let c00 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 0), tile);
-  let c10 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 0), tile);
-  let c01 = sample_tile_albedo_at(i_pos + vec2<i32>(0, 1), tile);
-  let c11 = sample_tile_albedo_at(i_pos + vec2<i32>(1, 1), tile);
-
-  // Luma-based gradients for edge detection
-  let l00 = luminance(c00);
-  let l10 = luminance(c10);
-  let l01 = luminance(c01);
-  let l11 = luminance(c11);
-
-  // Horizontal/Vertical differences
-  let gx = abs(l10 - l00) + abs(l11 - l01);
-  let gy = abs(l01 - l00) + abs(l11 - l10);
-
-  // Edge-aware weighting: smooth edges blend more gradually
-  let wx = 1.0 / (1.0 + gx * 4.0);
-  let wy = 1.0 / (1.0 + gy * 4.0);
-
-  // Bilinear blend biased by edges
-  let res = mix(mix(c00, c10, f.x * wx), mix(c01, c11, f.x * wx), f.y * wy);
-  return res / (mix(mix(1.0, wx, f.x), mix(1.0, wx, f.x), f.y) * wy); // approximate normalization
+  return sample_tile_fsr_easu(uv, tile);
 }
 
 // Dispatch to the correct reconstruction mode (0=nearest, 1=bicubic, 2=FSR-like)

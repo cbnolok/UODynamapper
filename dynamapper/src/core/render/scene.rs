@@ -35,6 +35,9 @@ pub struct ScenePlugin {
 }
 impl_tracked_plugin!(ScenePlugin);
 
+use bevy::time::common_conditions::on_real_timer;
+use std::time::Duration;
+
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
@@ -200,10 +203,10 @@ fn compute_visible_chunks(
     // Convert tile AABB to scaled chunk grid.
     // At scale > 1, iterate at coarser granularity (16- or 32-tile steps).
     let s = scaled_tile_span as i32;
-    let chunk_x0 = (tile_x0 as f32 / s as f32).floor() as i32;
-    let chunk_x1 = (tile_x1 as f32 / s as f32).ceil() as i32;
-    let chunk_y0 = (tile_y0 as f32 / s as f32).floor() as i32;
-    let chunk_y1 = (tile_y1 as f32 / s as f32).ceil() as i32;
+    let chunk_x0 = tile_x0.div_euclid(s);
+    let chunk_x1 = tile_x1.div_euclid(s) + 1;
+    let chunk_y0 = tile_y0.div_euclid(s);
+    let chunk_y1 = tile_y1.div_euclid(s) + 1;
 
     let mut chunks =
         Vec::with_capacity(((chunk_x1 - chunk_x0) * (chunk_y1 - chunk_y0)).max(0) as usize);

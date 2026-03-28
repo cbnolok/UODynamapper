@@ -161,7 +161,7 @@ impl LandTextureCache {
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
     pub fn get_texture_size_layer(
         &mut self,
-        texmap_2d: Arc<TexMap2D>,
+        texmap_2d: &Arc<TexMap2D>,
         texture_id: u16,
         lossy_compression: bool,
         now: Instant,
@@ -180,6 +180,7 @@ impl LandTextureCache {
         };
 
         let pool = AsyncComputeTaskPool::get();
+        // Clone the Arc only on the slow (cache-miss) path.
         let texmap_2d_arc = texmap_2d.clone();
         let sender = self.upload_sender.clone();
         let task = pool.spawn(async move {

@@ -8,7 +8,7 @@ use crate::console_logger::{self, LogAbout, LogSev};
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Rg16u {
     pub r: u16,
@@ -30,7 +30,7 @@ impl Rg16u {
 /// Uniform parameters passed to the terrain shader to resolve world coordinates into atlas samples.
 /// This struct must be kept in sync with the shader's `AtlasParams` (including std140/std430 alignment).
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, PartialEq)]
+#[derive(Debug, Clone, Copy, ShaderType, PartialEq)]
 pub struct AtlasParams {
     /// Dimension of a single page in texels.
     pub page_texels: UVec2,
@@ -72,7 +72,7 @@ pub struct AtlasUpload {
     pub data: Vec<u8>,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct LayerDirtyRegion {
     pub min_x: u32,
     pub min_y: u32,
@@ -218,18 +218,30 @@ impl TileAtlas {
     pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
         let page_width = self.params.page_texels.x;
         let layer_idx = layer as usize;
-        
+
         if self.cpu_mirror[layer_idx].is_none() {
             self.cpu_mirror[layer_idx] = Some(vec![Rg16u { r: 0, g: 0 }; (page_width * self.params.page_texels.y) as usize]);
         }
         let mirror = self.cpu_mirror[layer_idx].as_mut().unwrap();
-        
+
+        // Compare before writing: skip the GPU upload if the data is unchanged.
+        // PendingTextureBake chunks re-enqueue every frame until all textures
+        // are resident; without this check each re-enqueue marks the region
+        // dirty and triggers a redundant write_texture to the GPU.
+        let mut any_changed = false;
         for y in 0..size.y {
             let src_start = (y * size.x) as usize;
             let src_end = src_start + size.x as usize;
             let dst_start = ((offset.y + y) * page_width + offset.x) as usize;
             let dst_end = dst_start + size.x as usize;
-            mirror[dst_start..dst_end].copy_from_slice(&texels[src_start..src_end]);
+            if mirror[dst_start..dst_end] != texels[src_start..src_end] {
+                mirror[dst_start..dst_end].copy_from_slice(&texels[src_start..src_end]);
+                any_changed = true;
+            }
+        }
+
+        if !any_changed {
+            return;
         }
 
         if self.dirty_regions[layer_idx].is_none() {
@@ -312,26 +324,26 @@ pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
     extracted_uploads.clear();
 
     let page_width = tile_atlas.params.page_texels.x;
-    
+
     for (layer, opt_region) in tile_atlas.dirty_regions.iter().enumerate() {
         let Some(region) = opt_region else { continue; };
         let layer = layer as u32;
-        
+
         let width = region.max_x.saturating_sub(region.min_x);
         let height = region.max_y.saturating_sub(region.min_y);
         if width == 0 || height == 0 { continue; }
-        
+
         let mirror = tile_atlas.cpu_mirror[layer as usize].as_ref().unwrap();
         let size_bytes = (width * height * 4) as usize;
         let mut data = Vec::with_capacity(size_bytes);
-        
+
         for y in region.min_y..region.max_y {
             let start = (y * page_width + region.min_x) as usize;
             let end = start + width as usize;
             let row_slice: &[u8] = bytemuck::cast_slice(&mirror[start..end]);
             data.extend_from_slice(row_slice);
         }
-        
+
         extracted_uploads.push(AtlasUpload {
             layer,
             offset: UVec2::new(region.min_x, region.min_y),

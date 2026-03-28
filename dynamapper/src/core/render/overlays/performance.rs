@@ -19,8 +19,6 @@ const FONT_SIZE: f32 = 16.0;
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
-const SYSINFO_REFRESH_INTERVAL_SEC: f32 = 1.0;
-const FPS_TEXT_REFRESH_INTERVAL_SEC: f32 = 0.5;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
 use crate::core::texture_cache::land::texture_array as tex_consts;
@@ -34,8 +32,6 @@ pub struct ProcessMetrics {
     sys: System,
     /// PID of the current process.
     pid: sysinfo::Pid,
-    /// Timer to throttle the update frequency.
-    poll_timer: Timer,
     /// Latest CPU usage normalized to total machine capacity (0..100%).
     pub cpu_usage_total: f32,
     /// Latest process CPU usage in "single core equivalents" (can exceed 100 on multicore).
@@ -54,20 +50,19 @@ pub struct ProcessMetrics {
 
 impl Default for ProcessMetrics {
     fn default() -> Self {
-        let mut sys = System::new();
-        sys.refresh_all();
-        let pid = sysinfo::get_current_pid().expect("Failed to get current check PID");
+        let sys = sysinfo::System::new_all();
+        let pid = sysinfo::get_current_pid().expect("Failed to get PID");
+
         Self {
             sys,
             pid,
-            poll_timer: Timer::from_seconds(SYSINFO_REFRESH_INTERVAL_SEC, TimerMode::Repeating),
             cpu_usage_total: 0.0,
             cpu_usage_one_core: 0.0,
             mem_usage_mib: 0.0,
+            core_count: 0,
             estimated_texture_vram_mib: 0.0,
             estimated_atlas_vram_mib: 0.0,
             process_vram_tracked_mib: 0.0,
-            core_count: 0,
         }
     }
 }
@@ -205,6 +200,9 @@ fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {
 
 // ----
 
+use bevy::time::common_conditions::on_real_timer;
+use std::time::Duration;
+
 pub struct PerformanceOverlayPlugin;
 
 impl Plugin for PerformanceOverlayPlugin {
@@ -215,14 +213,16 @@ impl Plugin for PerformanceOverlayPlugin {
                 setup_overlay_performance.in_set(StartupSysSet::SetupSceneStage2),
             )
             .add_systems(
-                FixedUpdate, // Update
+                Update,
                 sys_refresh_process_metrics
-                    //.run_if(on_timer(std::time::Duration::from_secs(1))) // Doesn't appear to work
-                    .run_if(in_state(AppState::InGame)),
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 8.0))),
             )
             .add_systems(
-                FixedUpdate,
-                update_performance_text.run_if(in_state(AppState::InGame)),
+                Update,
+                update_performance_text
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 8.0))),
             );
     }
 }
@@ -278,17 +278,11 @@ pub fn setup_overlay_performance(
 
 /// Polls the sysinfo library to get up-to-date CPU and RAM usage for the current process.
 pub fn sys_refresh_process_metrics(
-    time: Res<Time>,
     settings: Res<Settings>,
     mut metrics: ResMut<ProcessMetrics>,
     tex_cache: Res<crate::core::texture_cache::land::cache::LandTextureCache>,
     tile_atlas: Res<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
 ) {
-    metrics.poll_timer.tick(time.delta());
-    if !metrics.poll_timer.just_finished() {
-        return;
-    }
-
     let pid = metrics.pid;
     metrics
         .sys
@@ -336,7 +330,6 @@ pub fn sys_refresh_process_metrics(
 
 /// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
-    time: Res<Time>,
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
@@ -354,12 +347,8 @@ pub fn update_performance_text(
         ),
     >,
     mut last_scale: Local<f32>,
-    mut fps_acc: Local<f32>,
-    mut last_fps_cached: Local<String>,
     mut last_text_cached: Local<String>,
 ) {
-    // Accumulate time and only refresh the FPS string periodically to make it readable.
-    *fps_acc += time.delta().as_secs_f32();
     let current_scale = settings.app.window.performance_overlay_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
@@ -376,40 +365,11 @@ pub fn update_performance_text(
     }
 
     if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
-        let mut fps = last_fps_cached.clone();
-        let mut should_rebuild_text = scale_changed || last_text_cached.is_empty();
-        if *fps_acc >= FPS_TEXT_REFRESH_INTERVAL_SEC {
-            fps = diagnostics
-                .get(&FrameTimeDiagnosticsPlugin::FPS)
-                .and_then(|diag| diag.smoothed())
-                .map(|val| format!("{:.0}", val))
-                .unwrap_or_else(|| "--".to_string());
-            *last_fps_cached = fps.clone();
-            should_rebuild_text = true;
-            *fps_acc = 0.0;
-        }
-        if fps.is_empty() {
-            fps = "--".to_string();
-        }
-
-        if !should_rebuild_text {
-            if let Ok(mut node) = node_query.single_mut() {
-                let target_display = if settings.app.performance.show_overlay {
-                    Display::Flex
-                } else {
-                    Display::None
-                };
-                if node.display != target_display {
-                    node.display = target_display;
-                }
-            }
-            if scale_changed {
-                text_font.font_size = FONT_SIZE * current_scale;
-                *line_height = LineHeight::Px(FONT_SIZE * current_scale);
-                *last_scale = current_scale;
-            }
-            return;
-        }
+        let fps = diagnostics
+            .get(&FrameTimeDiagnosticsPlugin::FPS)
+            .and_then(|diag| diag.smoothed())
+            .map(|val| format!("{:.0}", val))
+            .unwrap_or_else(|| "--".to_string());
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;

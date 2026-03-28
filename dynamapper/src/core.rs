@@ -1,7 +1,6 @@
 pub mod app_states;
 pub mod constants;
 pub mod controls;
-pub mod egui_reactive;
 pub mod maps;
 pub mod render;
 pub mod system_sets;
@@ -15,14 +14,9 @@ use crate::{
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
-    pbr::wireframe::{WireframeConfig, WireframePlugin},
-    prelude::*,
-    render::{
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
-        RenderApp, RenderStartup,
-    },
-    window::WindowResolution,
-    winit::{UpdateMode, WinitSettings},
+    pbr::wireframe::{WireframeConfig, WireframePlugin}, prelude::*, render::{
+        RenderApp, RenderStartup, settings::{RenderCreation, WgpuFeatures, WgpuSettings}
+    }, window::WindowResolution, winit::{UpdateMode, WinitSettings}
 };
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
@@ -114,7 +108,8 @@ fn bevy_logging_custom_layer(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
 fn custom_bevy_log_config() -> bevy::log::LogPlugin {
     bevy::log::LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
-        filter: "calloop=error,bevy_framepace=warn".into(),
+        filter: "calloop=error,bevy_framepace=warn"
+            .into(),
         // Return a no-op fmt layer that writes to /dev/null.
         // Returning None would make Bevy fall back to its default stderr formatter,
         // causing double logging alongside our InterceptLogLayer.
@@ -132,25 +127,15 @@ fn custom_bevy_log_config() -> bevy::log::LogPlugin {
 fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
     // Use Continuous mode: render every frame unconditionally.
     // Reactive mode only schedules frames when OS events arrive (mouse/keyboard),
-    // which caps FPS at the event rate and might cause visual stutter during scrolling.
-
+    // which caps FPS at the event rate and causes visual stutter during scrolling.
     let mut settings = WinitSettings::game();
-
-    // Fastest, but CPU hungry.
-    //settings.focused_mode = UpdateMode::Continuous;
-
-    // Switch to Reactive mode to save CPU/GPU when idle.
-    settings.focused_mode = UpdateMode::Reactive {
-        wait: Duration::from_secs_f32(1.0 / 144.0),
-        react_to_device_events: true,
-        react_to_user_events: true,
-        react_to_window_events: true,
-    };
-
     if reduce_unfocused_fps {
+        /* settings.unfocused_mode = UpdateMode::ReactiveLowPower {
+            max_wait: Duration::from_millis(250), // Refresh at least ~4 times a second even if idle
+        };
+        */
         settings.unfocused_mode = UpdateMode::Reactive {
-            //ReactiveLowPower
-            wait: Duration::from_secs_f32(1.0 / 30.0),
+            wait: Duration::from_millis(250),
             react_to_device_events: true,
             react_to_user_events: true,
             react_to_window_events: true,
@@ -160,38 +145,38 @@ fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
 }
 
 fn custom_threadpool_settings() -> TaskPoolPlugin {
-    // TODO/TODOC: how do we choose which kind of threads will our system be executed on? io? async_compute?
+    /*
     TaskPoolPlugin {
-        task_pool_options: TaskPoolOptions {
-            // System parallelism: 4 threads is more than enough for our ECS workload
-            // (we only use ~1.5 cores of actual compute). Default is CPU count (~20),
-            // which creates excess idle threads that compete for cache and scheduler time.
-            compute: bevy::app::TaskPoolThreadAssignmentPolicy {
-                min_threads: 1,
-                max_threads: 4,
-                percent: 0.5,
-                on_thread_spawn: None,
-                on_thread_destroy: None,
-            },
-            // File loading (mul/uop parsing): 2 threads is sufficient.
-            io: bevy::app::TaskPoolThreadAssignmentPolicy {
-                min_threads: 1,
-                max_threads: 2,
-                percent: 0.25,
-                on_thread_spawn: None,
-                on_thread_destroy: None,
-            },
-            // Async texture compression / precaching: 4 threads covers BC7 batch jobs.
-            async_compute: bevy::app::TaskPoolThreadAssignmentPolicy {
-                min_threads: 1,
-                max_threads: 4,
-                percent: 0.25,
-                on_thread_spawn: None,
-                on_thread_destroy: None,
-            },
-            ..default()
-        },
-    }
+            task_pool_options: TaskPoolOptions {
+                // Minimum threads for system computation (already limited by the feature)
+                compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 3,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                // Limit the pool for asset loading (I/O)
+                io: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 1,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                // Limit the pool for asynchronous computation
+                async_compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                    min_threads: 1,
+                    max_threads: 1,
+                    percent: 0.0,
+                    on_thread_spawn: None,
+                    on_thread_destroy: None,
+                },
+                ..default()
+            }
+        }
+        */
+        TaskPoolPlugin::default()
 }
 
 fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
@@ -207,7 +192,6 @@ fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
                 min_height: 44.0 * 10.0,
                 ..Default::default()
             },
-            present_mode: bevy::window::PresentMode::Mailbox,
             // Let window freely resize, but camera+scene SYSTEMS keep virtual grid and diamonds fixed.
             ..Default::default()
         }),
@@ -258,7 +242,11 @@ fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
 }
 
 fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
-    //  TODO: how can we tell Bevy or Wgpu to prioritize Vulkan, if supported, over OpenGL?
+    // TODO/FIXME: PRIORITIZE THIS: should we query WgpuSettings::features and then adding POLYGON_MODE_LINE?
+    //  Are we renouncing to features that would be extremely beneficial to us, like PARTIALLY_BOUND_BINDING_ARRAY or other native ones
+    //      useful on some platforms like Android or with Metal API?
+    // Also, since Vulkan appears to support way more features than OpenGL,
+    //  how can we tell Bevy or Wgpu to prioritize Vulkan, if supported, over OpenGL?
     bevy::render::RenderPlugin {
         render_creation: RenderCreation::Automatic(WgpuSettings {
             features: WgpuFeatures::POLYGON_MODE_LINE, // Required for wireframe
@@ -270,20 +258,20 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
 }
 
 fn add_diagnostics_plugins(app: &mut App) {
-    if !app.is_plugin_added::<bevy::diagnostic::FrameTimeDiagnosticsPlugin>() {
-        app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
-    }
+    app.add_plugins((
+        bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+        // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
+        // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
+        // warning and returns no data). We read CPU/RAM directly via `sysinfo` instead
+        // (see `core/render/overlays/performance.rs`).
 
-    // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
-    // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
-    // warning and returns no data). We read CPU/RAM directly via `sysinfo` instead
-    // (see `core/render/overlays/performance.rs`).
-
-    // GPU pipeline statistics (vertex/fragment invocations, clipper primitives).
-    // On Vulkan/DX12 also provides GPU elapsed time per pass.
-    if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-    }
+        // GPU pipeline statistics (vertex/fragment invocations, clipper primitives).
+        // On Vulkan/DX12 also provides GPU elapsed time per pass.
+        // NOTE: no public DiagnosticPath constants in 0.18 — paths are dynamic strings
+        // like "render/{span_name}/fragment_shader_invocations".
+        // Use LogDiagnosticsPlugin below to discover the exact span names.
+        bevy::render::diagnostic::RenderDiagnosticsPlugin,
+    ));
 
     if DUMP_DIAGNOSTICS_INTERVAL_SEC != 0 {
         app.add_plugins((
@@ -345,8 +333,6 @@ pub fn run_bevy_app() -> ExitCode {
                 ..default()
             }),
     )
-    //.insert_resource(Time::<Virtual>::new_with(Virtual::default()))
-    //.insert_resource(Time::<Real>::new(std::time::Instant::now()))
     .add_plugins(WireframePanicFixPlugin) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
     .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
     .insert_resource(custom_wireframe_config(wireframe_enabled))
@@ -362,15 +348,10 @@ pub fn run_bevy_app() -> ExitCode {
         },
     })
     .insert_resource(bevy_egui::EguiGlobalSettings {
-        // We manually spawn PrimaryEguiContext on the UI camera in camera.rs.
-        // Setting this to true would auto-spawn a second one on the primary window,
-        // causing a duplicate EguiPrimaryContextPass schedule panic.
-        auto_create_primary_context: false,
-        enable_absorb_bevy_input_system: true,
+        auto_create_primary_context: false, // We manually spawn PrimaryEguiContext on the UI camera
         ..default()
     })
     .add_plugins(bevy_egui::EguiPlugin::default()) // egui UI layer (used for teleport dialog, etc.)
-    //.add_plugins(egui_reactive::EguiReactivePlugin) // DISABLED: reverted to standard egui
     .add_plugins((
         ExternalDataPlugin {
             registered_by: "Core",
@@ -401,9 +382,11 @@ pub fn run_bevy_app() -> ExitCode {
     )
     .configure_sets(
         Update,
-        (MovementSysSet::UpdateCamera
-            .after(MovementSysSet::MovementActions)
-            .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),),
+        (
+            MovementSysSet::UpdateCamera
+                .after(MovementSysSet::MovementActions)
+                .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),
+        ),
     )
     .add_systems(
         PreStartup,

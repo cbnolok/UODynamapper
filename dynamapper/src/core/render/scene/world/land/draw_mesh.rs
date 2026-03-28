@@ -17,7 +17,7 @@ use std::time::Instant;
 use uocf::geo::map::MapPlane;
 use uocf::geo::{
     land_texture_2d::{LandTextureSize, TexMap2D},
-    map::{MapBlock, MapBlockRelPos, MapCell, MapCellRelPos},
+    map::{MapBlock, MapBlockRelPos},
 };
 
 use super::chunk_loader;
@@ -39,6 +39,49 @@ use crate::{
 };
 
 // ---- Shared Mesh Resource and Setup ----
+//
+// Design rationale — Two-Level Mesh Selection (Scale + LOD)
+// =========================================================
+//
+// The terrain renderer uses a two-level dispatch for choosing the mesh
+// assigned to each chunk entity:
+//
+//   1. **Chunk Scale** (`scale_from_zoom` → `mesh_for_scale`):  At higher zoom
+//      levels, multiple 8×8 base blocks are merged into a single "super-chunk"
+//      entity (16×16, 32×32, ... up to 256×256 tiles).  Each wide mesh keeps a
+//      constant 81 vertices but increases the step between samples so the mesh
+//      covers a larger world area.  This is the *primary* mechanism for
+//      reducing draw-call and entity pressure as the camera zooms out.
+//
+//   2. **LOD within Scale=1** (`lod_from_zoom` → `mesh_for_lod`):  When scale
+//      is 1 (zoom < 10), the standard 8×8-tile chunk can use three detail
+//      levels: High (81 verts), Medium (25 verts), Low (9 verts).
+//      `sys_update_existing_chunk_mesh_lod` live-swaps the `Mesh3d` handle on
+//      all existing entities when the LOD threshold is crossed — no geometry
+//      rebuild, just a handle reassignment.
+//
+// Analysis:
+//
+//   For real-time interactive rendering, the LOD variation at scale=1 saves
+//   negligible GPU work (at most ~7 200 VS invocations across ~100 chunks),
+//   since modern GPUs process millions of vertices per millisecond.
+//
+//   However, the LOD system becomes meaningful for **offline / export
+//   rendering**: when rasterising the full 7 000 × 4 000 tile map at 1:1 or
+//   1:10 zoom to an image file, the renderer must produce geometry for the
+//   entire world at the chosen detail level.  In that scenario:
+//     - 1:1 export at scale=1 → ~437 500 chunks × 81 verts = 35 M vertices.
+//       Dropping to Medium (25 verts) or Low (9 verts) reduces this to
+//       ~11 M or ~4 M, which can matter for the offline capture pipeline
+//       even if the GPU could handle 35 M.
+//     - The pre-built mesh assets cost trivial VRAM (8 meshes, ≤ 81 verts
+//       each ≈ a few KB total), so the complexity cost is purely code-side.
+//
+//   Wide meshes (scale ≥ 2) are always 81 verts because at those zoom levels
+//   the world area already guarantees low screen-space density.  LOD swaps
+//   only fire at scale=1 and only on zoom boundary crossings (zoom 4.0 and
+//   10.0), so the per-frame overhead is near-zero.
+//
 
 #[derive(Resource)]
 pub struct LandMeshHandles {
@@ -68,6 +111,10 @@ pub enum LandMeshLod {
 /// Automatic LOD selection based on camera zoom level.
 /// At higher zoom (more zoomed out), fewer vertices are needed because each
 /// chunk covers fewer screen pixels.
+///
+/// Only effective at scale=1 (zoom < 10).  For real-time interactive use the
+/// vertex savings are negligible, but the distinction matters for offline
+/// full-map exports where the entire 7k×4k world is rasterised at once.
 fn lod_from_zoom(zoom: f32) -> LandMeshLod {
     if zoom >= 10.0 {
         LandMeshLod::Low // 9 verts, step=4  — chunks are tiny on screen
@@ -120,6 +167,10 @@ pub fn scale_from_zoom(zoom: f32) -> u32 {
 }
 
 /// Select the correct mesh handle for a given chunk scale and LOD.
+///
+/// Top-level dispatch: wide meshes for scale ≥ 2 (fixed 81 verts covering a
+/// larger world area), or LOD-variable meshes for scale=1.  See the block
+/// comment above `LandMeshHandles` for the full design rationale.
 fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Handle<Mesh> {
     match scale {
         32 => handles.wide256.clone(),
@@ -143,20 +194,22 @@ pub struct SharedLandMaterial(pub Handle<LandCustomMeshMaterial>);
 pub struct LandMeshScratch {
     blocks_to_draw: Vec<MapBlockRelPos>,
     block_seen_bits: Vec<u64>,
-    blocks_data: Vec<(u64, MapBlock)>,
-    missing_tile_bits: Vec<u64>,
+    /// Fixed-size bitset (8 KB) — one bit per possible tile ID.
+    missing_tile_bits: [u64; LandTextureCache::TILE_BITSET_SIZE],
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
+    /// Reusable bitmask for deduplicating uncached block coordinates.
+    dedup_bits: Vec<u64>,
 }
 impl Default for LandMeshScratch {
     fn default() -> Self {
         Self {
             blocks_to_draw: Vec::new(),
             block_seen_bits: Vec::new(),
-            blocks_data: Vec::new(),
-            missing_tile_bits: vec![0; LandTextureCache::TILE_BITSET_SIZE],
+            missing_tile_bits: [0u64; LandTextureCache::TILE_BITSET_SIZE],
             ids: Vec::new(),
             texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
+            dedup_bits: Vec::new(),
         }
     }
 }
@@ -194,12 +247,13 @@ pub fn sys_update_existing_chunk_mesh_lod(
 }
 
 /// Enqueues the 8x8 tile data for this chunk into the TileAtlas, and preloads the textures.
+/// Uses the plane's O(1) index lookup directly — no cloned blocks_data needed.
 fn enqueue_chunk_to_atlas_and_preload(
     texture_cache: &mut ResMut<LandTextureCache>,
     tile_atlas: &mut ResMut<TileAtlas>,
-    texmap_2d_r: Arc<TexMap2D>,
+    texmap_2d_r: &Arc<TexMap2D>,
     chunk_data_ref: &LandChunkConstructionData,
-    blocks_data_map: &[(u64, MapBlock)],
+    plane: &MapPlane,
     now: Instant,
     texture_lookup_cache: &mut [u32],
     lossy_compression: bool,
@@ -214,10 +268,8 @@ fn enqueue_chunk_to_atlas_and_preload(
         y: chunk_data_ref.chunk_origin_chunk_units_z,
     };
 
-    let block = match blocks_data_map.binary_search_by_key(&chunk_rel_coords.as_u64(), |(k, _)| *k)
-    {
-        Ok(idx) => &blocks_data_map[idx].1,
-        Err(_) => return false,
+    let Some(block) = plane.block_no_update(chunk_rel_coords) else {
+        return false;
     };
 
     // NOTE: texture_lookup_cache is NOT cleared here — it persists across
@@ -231,41 +283,29 @@ fn enqueue_chunk_to_atlas_and_preload(
 
     for cell in &block.cells {
         let packed = texture_lookup_cache[cell.id as usize];
-        let (texture_size, layer) = if packed != u32::MAX {
-            let size_bit = packed & 1;
-            let layer = packed >> 1;
-            let size = if size_bit == 0 {
-                LandTextureSize::Small
-            } else {
-                LandTextureSize::Big
-            };
-            (size, layer)
+        let (size_bit, layer) = if packed != u32::MAX {
+            (packed & 1, packed >> 1)
         } else {
             let (size, layer) = texture_cache.get_texture_size_layer(
-                texmap_2d_r.clone(),
+                &texmap_2d_r,
                 cell.id,
                 lossy_compression,
                 now,
             );
             let size_bit = match size {
-                LandTextureSize::Small => 0,
-                LandTextureSize::Big => 1,
+                LandTextureSize::Small => 0u32,
+                LandTextureSize::Big => 1u32,
             };
             texture_lookup_cache[cell.id as usize] = (layer << 1) | size_bit;
-            (size, layer)
+            (size_bit, layer)
         };
 
         if layer == 0 {
             has_fallback = true;
         }
 
-        let tex_size_bits = match texture_size {
-            LandTextureSize::Small => 0,
-            LandTextureSize::Big => 1,
-        };
-
         // Use 'layer' instead of 'cell.id' because that's what the shader needs to sample the 2DArray!
-        texels_local[texel_count] = Rg16u::pack(layer as u16, cell.z, tex_size_bits);
+        texels_local[texel_count] = Rg16u::pack(layer as u16, cell.z, size_bit as u16);
         texel_count += 1;
     }
 
@@ -353,8 +393,8 @@ pub fn sys_draw_spawned_land_chunks(
     time: Res<Time<Real>>,
     mut locals: Local<DrawMeshLocals>,
 ) {
-    // TODO: check if there's more room for cpu optimization, this is a huge system here.
-    // Also, drop briefly-used variables enclosing them in a block.
+    // NOTE: Briefly-used variables (map_meta, targets, uncached_blocks) are
+    // scoped or dropped early to reduce peak memory and improve clarity.
 
     let now = time.last_update().unwrap_or_else(|| Instant::now());
     let current_map_id = scene_state_data_r.map_id;
@@ -401,13 +441,8 @@ pub fn sys_draw_spawned_land_chunks(
 
     let mut scratch = land_mesh_scratch_r;
     scratch.blocks_to_draw.clear();
-    scratch.blocks_data.clear();
     scratch.texture_lookup_cache.fill(u32::MAX);
-    if scratch.missing_tile_bits.len() != 1024 {
-        scratch.missing_tile_bits.resize(1024, 0);
-    } else {
-        scratch.missing_tile_bits.fill(0);
-    }
+    scratch.missing_tile_bits.fill(0);
     scratch.ids.clear();
 
     let mut targets: Vec<LandChunkConstructionData> = chunk_q
@@ -445,12 +480,17 @@ pub fn sys_draw_spawned_land_chunks(
     // Border ring is NOT needed here — the shader samples from the atlas which
     // is populated per-block; edge stitching is handled by enqueuing +1 border
     // blocks to the atlas in the rendering loop below.
-    let map_meta = world_geo_data_r
-        .maps
-        .get(&current_map_id)
-        .expect("Requested metadata for uncached map");
-    let max_chunk_x = (map_meta.width / TILE_NUM_PER_CHUNK_DIM) as i32;
-    let max_chunk_y = (map_meta.height / TILE_NUM_PER_CHUNK_DIM) as i32;
+    // Scope map_meta — only needed to derive max_chunk dimensions.
+    let (max_chunk_x, max_chunk_y) = {
+        let map_meta = world_geo_data_r
+            .maps
+            .get(&current_map_id)
+            .expect("Requested metadata for uncached map");
+        (
+            (map_meta.width / TILE_NUM_PER_CHUNK_DIM) as i32,
+            (map_meta.height / TILE_NUM_PER_CHUNK_DIM) as i32,
+        )
+    };
 
     // ── Partition targets: ready (all blocks cached) vs deferred ────────
     // Chunks whose data is already in the MapPlane cache render immediately.
@@ -537,24 +577,23 @@ pub fn sys_draw_spawned_land_chunks(
         // Deduplicate while preserving the priority order produced by the
         // camera-distance sort above. This keeps nearby chunks at the front
         // of the background-loading queue after teleports.
-        // OPTIMIZATION: Replacing HashMap with a bitmask-based deduplication.
-        // Bitmasks provide O(1) membership testing and insertion with zero
-        // heap allocation after the initial vector is created.
-        let mut bitmask = vec![
-            0u64;
-            (((max_chunk_x * max_chunk_y) as usize)
-                >> LandTextureCache::TILE_ID_WORD_SHIFT)
-                + 1
-        ]; // Equivalent to / 64
+        // OPTIMIZATION: Reusable bitmask from scratch provides O(1) membership
+        // testing with zero heap allocation after the first frame.
+        let dedup_len = (((max_chunk_x * max_chunk_y) as usize)
+            >> LandTextureCache::TILE_ID_WORD_SHIFT)
+            + 1;
+        scratch.dedup_bits.resize(dedup_len, 0);
+        scratch.dedup_bits.fill(0);
+        let dedup_bits = &mut scratch.dedup_bits;
         uncached_blocks.retain(|pos| {
             let idx = (pos.x * max_chunk_y as u32) + pos.y;
             let word = (idx >> (LandTextureCache::TILE_ID_WORD_SHIFT as u32)) as usize; // idx / 64
-            if word >= bitmask.len() {
+            if word >= dedup_bits.len() {
                 return true;
             }
             let bit = (idx as usize & LandTextureCache::TILE_ID_BIT_MASK); // idx % 64
-            if (bitmask[word] & (1 << bit)) == 0 {
-                bitmask[word] |= 1 << bit;
+            if (dedup_bits[word] & (1 << bit)) == 0 {
+                dedup_bits[word] |= 1 << bit;
                 true
             } else {
                 false
@@ -579,6 +618,7 @@ pub fn sys_draw_spawned_land_chunks(
             });
         locals.pending = true;
     }
+    drop(targets); // No longer needed — only ready_targets used from here.
 
     // ── Per-frame chunk budget ─────────────────────────────────────────
     // Cap the amount of atlas-enqueue + texture-precache + mesh work we
@@ -591,7 +631,8 @@ pub fn sys_draw_spawned_land_chunks(
     // (sub-blocks + border ring that the atlas-enqueue loop iterates).
     const MAX_ATLAS_BLOCKS_PER_FRAME: usize = 4096;
 
-    sort_construction_targets(&mut ready_targets, current_camera_chunk);
+    // NOTE: ready_targets inherits the camera-distance order from `targets`
+    // (built by iterating the already-sorted vec), so no re-sort needed.
     {
         let mut remaining = MAX_ATLAS_BLOCKS_PER_FRAME;
         let mut count = 0usize;
@@ -652,36 +693,28 @@ pub fn sys_draw_spawned_land_chunks(
 
     let mut blocks_to_draw = std::mem::take(&mut scratch.blocks_to_draw);
     let LandMeshScratch {
-        blocks_data,
         missing_tile_bits,
         texture_lookup_cache,
         ids,
         ..
     } = &mut *scratch;
 
-    // ── Populate blocks_data from the in-memory cache only ──────────────
-    // All core blocks for ready_targets are guaranteed cached (readiness check).
-    // Border ring blocks may or may not be cached yet — if not, they're
-    // simply skipped here and the atlas enqueue will skip them too.
-    // NO DISK I/O on the main thread.
+    // ── Collect missing_tile_bits from visible blocks (immutable plane borrow) ──
+    // Uses block_no_update() — no clone, no sort, O(1) index lookup per block.
     {
-        let uo_data_map_plane = map_planes_r
+        let plane_ref = map_planes_r
             .0
-            .get_mut(current_map_id as usize)
-            .and_then(|opt| opt.as_mut())
+            .get(current_map_id as usize)
+            .and_then(|opt| opt.as_ref())
             .expect("Requested map plane metadata is uncached?");
 
         for block_coords in blocks_to_draw.iter().copied() {
-            let Some(block_ref) = uo_data_map_plane.block(block_coords) else {
+            let Some(block_ref) = plane_ref.block_no_update(block_coords) else {
                 continue; // Not cached (border block still loading) — skip.
             };
 
-            blocks_data.push((block_coords.as_u64(), block_ref.clone()));
-
             for tz in 0..8 {
                 for tx in 0..8 {
-                    // Extract the logic to speed up this function call
-                    // if let Ok(cell) = block_ref.cell(tx, tz) {
                     let cell = &block_ref.cells[((MapBlock::CELLS_PER_COLUMN * tz) + tx) as usize];
                     let cell_id = cell.id as usize;
                     let word = cell_id >> LandTextureCache::TILE_ID_WORD_SHIFT;
@@ -690,8 +723,6 @@ pub fn sys_draw_spawned_land_chunks(
                 }
             }
         }
-        // Important: Sort for binary search later in enqueue_chunk_to_atlas_and_preload
-        blocks_data.sort_unstable_by_key(|(k, _)| *k);
     }
 
     for (word_idx, &word) in missing_tile_bits.iter().enumerate() {
@@ -716,6 +747,16 @@ pub fn sys_draw_spawned_land_chunks(
     );
 
     let build_time_start = Instant::now();
+    let lossy_compression = settings.core.graphics.lossy_texture_compression;
+
+    // Borrow the plane immutably for the enqueue loop — enqueue_chunk_to_atlas_and_preload
+    // uses block_no_update() (O(1) index lookup, no clone, no sort).
+    let plane_ref = map_planes_r
+        .0
+        .get(current_map_id as usize)
+        .and_then(|opt| opt.as_ref())
+        .expect("Requested map plane metadata is uncached?");
+
     for chunk_data in ready_targets.iter().rev() {
         // For super-chunks (scale > 1), enqueue ALL sub-blocks into the tile atlas,
         // PLUS a +1 border ring so the edge vertices can sample neighbor heights.
@@ -738,16 +779,15 @@ pub fn sys_draw_spawned_land_chunks(
                     chunk_scale: 1,
                     has_mesh: false,
                 };
-                // This function call is cpu intensive: enqueue_chunk_to_atlas_and_preload.
                 let fallback = enqueue_chunk_to_atlas_and_preload(
                     &mut cache_r,
                     &mut tile_atlas_r,
-                    texmap_2d_r.0.clone(),
+                    &texmap_2d_r.0,
                     &sub,
-                    blocks_data,
+                    plane_ref,
                     now,
                     texture_lookup_cache,
-                    settings.core.graphics.lossy_texture_compression,
+                    lossy_compression,
                 );
                 if fallback {
                     overall_has_fallback = true;
@@ -774,6 +814,24 @@ pub fn sys_draw_spawned_land_chunks(
                     );
                 }
             }
+        }
+    }
+    // NLL ends the `plane_ref` borrow after the loop above, so
+    // the mutable borrow below is valid without an explicit drop.
+
+    // ── Deferred last_accessed touch ───────────────────────────────────
+    // Touch all blocks that were accessed this frame. This is separated from
+    // the enqueue loop to allow immutable plane borrowing during rendering.
+    {
+        let plane_mut = map_planes_r
+            .0
+            .get_mut(current_map_id as usize)
+            .and_then(|opt| opt.as_mut())
+            .expect("Requested map plane metadata is uncached?");
+
+        for block_coords in blocks_to_draw.iter().copied() {
+            // block() updates last_accessed; ignore the return value.
+            let _ = plane_mut.block(block_coords);
         }
     }
 

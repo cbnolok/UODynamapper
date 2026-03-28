@@ -160,7 +160,11 @@ Terrain rendering keeps the base logical chunk size at `8x8` tiles, but the rend
 | `< 10` | 1 | 8x8 tiles | Near view detail |
 | `10-25` | 2 | 16x16 tiles | Reduce entity count |
 | `25-50` | 4 | 32x32 tiles | Far zoom-out |
-| `>= 50` | 8 | 64x64 tiles | Extreme zoom-out |
+| `50-64` | 8 | 64x64 tiles | Extreme zoom-out |
+| `64-80` | 16 | 128x128 tiles | Huge zoom-out |
+| `>= 80` | 32 | 256x256 tiles | Full-map view |
+
+At scale=1, a secondary LOD system selects between three mesh detail levels (81 / 25 / 9 vertices) for minor vertex savings. This LOD distinction is negligible for real-time rendering but becomes meaningful for offline full-map exports (e.g. 7000×4000 tiles at 1:1 → 35 M vertices at High, 4 M at Low). See `CODE_OVERVIEW.md` §2.4 for the full rationale.
 
 This keeps the shader path unified while reducing draw-entity pressure dramatically at high zoom.
 

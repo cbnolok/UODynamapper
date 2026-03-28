@@ -51,7 +51,7 @@ impl Plugin for LandTextureCachePlugin {
         );
 
         app.add_systems(
-            FixedUpdate,
+            Update,
             (sys_pin_active_textures, sys_evict_idle_land_cache)
                 .chain()
                 .run_if(on_timer(Duration::from_secs(5))),

@@ -80,6 +80,9 @@ pub fn sys_update_shared_land_material(
     }
 }
 
+use bevy::time::common_conditions::on_real_timer;
+use std::time::Duration;
+
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<draw_mesh::LandMeshScratch>()
@@ -93,7 +96,8 @@ impl Plugin for DrawLandChunkMeshPlugin {
                     draw_mesh::sys_update_existing_chunk_mesh_lod
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)
-                        .run_if(in_state(AppState::InGame)),
+                        .run_if(in_state(AppState::InGame))
+                        .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
                     draw_mesh::sys_draw_spawned_land_chunks
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)

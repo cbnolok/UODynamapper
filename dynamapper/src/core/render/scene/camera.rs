@@ -273,6 +273,7 @@ fn sys_camera_zoom(
     mut scroll_events: MessageReader<MouseWheel>,
     mut kbd_events: MessageReader<KeyboardInput>,
     mut egui_contexts: EguiContexts,
+    mut chunk_recompute_writer: MessageWriter<super::RecomputeVisibleChunksEvent>,
 ) {
     // If egui is using the mouse/keyboard, don't zoom
     let ctx = match egui_contexts.ctx_mut() {
@@ -312,6 +313,7 @@ fn sys_camera_zoom(
         let multiplier = factor.powf(zoom_delta);
         let new_zoom = zoom_res.0 * multiplier;
         zoom_res.write_val(new_zoom);
+        chunk_recompute_writer.write(super::RecomputeVisibleChunksEvent {});
     }
 }
 
