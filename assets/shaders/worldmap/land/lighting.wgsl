@@ -6,7 +6,7 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/land/bindings.wgsl"::{LandLightingUniforms, lighting}
+#import "shaders/worldmap/land/bindings.wgsl"::{GlobalLightingUniforms, LandLightingUniforms, global_light, land_light}
 
 // ============================================================================
 // Basic math helpers
@@ -47,8 +47,8 @@ fn get_rim(N: vec3<f32>, V: vec3<f32>, power: f32) -> f32 {
 // Hemisphere fill light: sky from +Y, ground from -Y, blended by surface upness.
 fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
   let upness = clamp(dot(normalize(N), vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
-  let sky    = lighting.fill_sky_color.rgb    * lighting.fill_sky_color.a;
-  let ground = lighting.fill_ground_color.rgb * lighting.fill_ground_color.a;
+  let sky    = land_light.fill_sky_color.rgb    * land_light.fill_sky_color.a;
+  let ground = land_light.fill_ground_color.rgb * land_light.fill_ground_color.a;
   return mix(ground, sky, upness);
 }
 
@@ -68,11 +68,11 @@ fn apply_contrast_neutral(x: vec3<f32>, contrast: f32) -> vec3<f32> {
 //  - truly neutral contrast=1 (no clamp inside),
 //  - multiplicative split-toning normalized to luma=1 so mid-grays stay neutral.
 fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
-  let strength    = lighting.grade_params.x;  // overall grade amount
-  let vibrance    = lighting.grade_extra.x;   // selective saturation
-  let saturation  = lighting.grade_extra.y;   // global saturation
-  let contrast    = lighting.grade_extra.z;   // S-curve; 1.0 = neutral
-  let split_str   = lighting.grade_extra.w;   // split-toning strength
+  let strength    = global_light.grade_params.x;  // overall grade amount
+  let vibrance    = global_light.grade_extra.x;   // selective saturation
+  let saturation  = global_light.grade_extra.y;   // global saturation
+  let contrast    = global_light.grade_extra.z;   // S-curve; 1.0 = neutral
+  let split_str   = global_light.grade_extra.w;   // split-toning strength
 
   // Global saturation around luminance pivot
   let l = luminance(color_in);
@@ -88,8 +88,8 @@ fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
   let ctr_col = apply_contrast_neutral(vib_col, contrast);
 
   // Split-toning by luminance: cool lows, warm highs — multiplicative, luma-normalized
-  let warm = lighting.grade_warm_color.rgb;
-  let cool = lighting.grade_cool_color.rgb;
+  let warm = global_light.grade_warm_color.rgb;
+  let cool = global_light.grade_cool_color.rgb;
   let wmix = smoothstep(0.25, 0.85, l);
   let tint = mix(cool, warm, wmix);
 
@@ -107,10 +107,10 @@ fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
 // Gloom: general darkening, height-fading, optional shadow bias.
 // gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
 fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<f32>) -> vec3<f32> {
-  let amount             = clamp(lighting.gloom_params.x, 0.0, 1.0);
+  let amount             = clamp(global_light.gloom_params.x, 0.0, 1.0);
   if (amount < 1e-4) { return color_in; }
-  let falloff_height     = max(lighting.gloom_params.y, 0.0);
-  let shadow_bias        = clamp(lighting.gloom_params.z, 0.0, 1.0);
+  let falloff_height     = max(global_light.gloom_params.y, 0.0);
+  let shadow_bias        = clamp(global_light.gloom_params.z, 0.0, 1.0);
 
   // Height term: fade out over [0 .. falloff_height]
   let h = max(world_pos.y, 0.0);
@@ -124,7 +124,7 @@ fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<
   let g = clamp(amount * height_term * bias_term, 0.0, 1.0);
 
   // Cool, moody tint from ambient color; multiplicative keeps hues intact
-  let gloom_tint = mix(vec3<f32>(1.0), lighting.ambient_color, 0.7);
+  let gloom_tint = mix(vec3<f32>(1.0), global_light.ambient_color, 0.7);
   return color_in * mix(vec3<f32>(1.0), gloom_tint, g);
 }
 

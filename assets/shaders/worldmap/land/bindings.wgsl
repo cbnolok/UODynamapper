@@ -51,64 +51,84 @@ struct SceneUniform {
 // Visual feature toggles and intensity parameters.
 // Modes / toggles go in the first two vec4 slots for std140 alignment.
 struct LandEffectsUniform {
-  // Modes / toggles
+  // Modes & texture blur toggle (vec4 slot 0)
   shading_mode:   u32, // 0=Classic (vertex), 1=Enhanced (frag), 2=KR (frag)
   normal_mode:    u32, // 0=geometric, 1=bicubic
-  enable_bent:    u32,
-  enable_fog:     u32,
-
-  enable_gloom:   u32,
-  enable_tonemap: u32,
-  enable_grading: u32,
-  enable_blur:    u32,
-
-  // Graphics settings
+  enable_blur:    u32, // optional pre-shade blur of base albedo
   enable_linear_filtering: u32,
+
+  // Graphics / texture reconstruction (vec4 slot 1)
   reconstruction_mode:     u32,
   sharpening_amount:       f32,
-  _pad_graphics:           f32,
-
-  // Intensities (grouped to match std140-ish packing)
-  ambient_strength:  f32,
-  diffuse_strength:  f32,
-  specular_strength: f32,
-  rim_strength:      f32,
-
-  fill_strength:     f32,
-  sharpness_factor:  f32,
-  sharpness_mix:     f32,
-  blur_strength:     f32,
-
-  blur_radius:       f32,
-  _pad_c1_:          f32,
-  _pad_c2_:          f32,
-  _pad_c3_:          f32,
+  blur_strength:           f32,
+  blur_radius:             f32,
 };
 
-// Lighting color and post-process parameters.
-struct LandLightingUniforms {
+// Global lighting parameters shared across all shader types (land, art tiles, etc.).
+// Art tiles are 2D sprites — no 3D mesh — so they don't need view/normal–dependent
+// lighting, but they share grading, fog, gloom, tonemapping, and base light colors.
+struct GlobalLightingUniforms {
+    // Toggles (vec4 slot 0)
+    enable_fog:      u32,
+    enable_tonemap:  u32,
+    enable_grading:  u32,
+    enable_gloom:    u32,
+
+    // Colors
     light_color: vec3<f32>,
     _pad0_: f32,
     ambient_color: vec3<f32>,
     _pad1_: f32,
+
+    // Exposure / gamma / ambient
     exposure: f32,
     gamma: f32,
-    _pad2_: vec2<f32>,
-    fill_sky_color: vec4<f32>,
-    fill_ground_color: vec4<f32>,
-    rim_color: vec4<f32>,
+    ambient_strength: f32,
+    _pad2_: f32,
+
+    // Grading
     grade_warm_color: vec4<f32>,
     grade_cool_color: vec4<f32>,
     // grade_params: [strength, headroom_reserve, chroma_tint, headroom_on]
     grade_params: vec4<f32>,
     // grade_extra: [vibrance, saturation, contrast, split_strength]
     grade_extra: vec4<f32>,
+
+    // Gloom
     // gloom_params: [amount, falloff_height, shadow_bias, fog_height_bias]
     gloom_params: vec4<f32>,
+
+    // Fog
     // fog_color: [r, g, b, max_mix]
     fog_color: vec4<f32>,
     // fog_params: [distance_density, height_density, noise_scale, noise_strength]
     fog_params: vec4<f32>,
+};
+
+// Land-specific lighting: parameters that require a 3D mesh with surface
+// normals and a view vector (not applicable to flat art tiles).
+struct LandLightingUniforms {
+    // Toggle
+    enable_bent:    u32,
+    _pad0_:         u32,
+    _pad1_:         u32,
+    _pad2_:         u32,
+
+    // Intensities
+    diffuse_strength:  f32,
+    specular_strength: f32,
+    rim_strength:      f32,
+    fill_strength:     f32,
+
+    sharpness_factor:  f32,
+    sharpness_mix:     f32,
+    _pad3_:            f32,
+    _pad4_:            f32,
+
+    // Hemisphere fill & rim colors (need N / V)
+    fill_sky_color: vec4<f32>,
+    fill_ground_color: vec4<f32>,
+    rim_color: vec4<f32>,
 };
 
 // ============================================================================
@@ -119,10 +139,11 @@ struct LandLightingUniforms {
 @group(3) @binding(101) var tex_small: texture_2d_array<f32>;
 @group(3) @binding(102) var tex_big:   texture_2d_array<f32>;
 @group(3) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
-@group(3) @binding(104) var<uniform> ATLAS:   AtlasParams;
-@group(3) @binding(105) var<uniform> scene:   SceneUniform;
-@group(3) @binding(106) var<uniform> effects: LandEffectsUniform;
-@group(3) @binding(107) var<uniform> lighting: LandLightingUniforms;
+@group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
+@group(3) @binding(105) var<uniform> scene:        SceneUniform;
+@group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;
+@group(3) @binding(107) var<uniform> global_light:  GlobalLightingUniforms;
+@group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
 
 // ============================================================================
 // Grid / chunk constants

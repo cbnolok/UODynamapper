@@ -12,9 +12,9 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 
 # Stable release flags plus nightly-only size/build-std flags.
 # macOS uses -Wl,-dead_strip instead of --gc-sections
+# macOS doesn't support --icf (Identical Code Folding)
 RUSTFLAGS=" \
 -C link-arg=-Wl,-dead_strip \
--C link-arg=-Wl,-icf=safe \
 -C force-unwind-tables=no -C symbol-mangling-version=v0 \
 -Z share-generics=y -Z location-detail=none \
 ${RUSTFLAGS:-}" \

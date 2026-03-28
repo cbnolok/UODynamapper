@@ -63,9 +63,15 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 
 ### Configuration
 
-- **Keybindings**: Fully runtime-configurable (`assets/keybindings.toml`)
-- **Shader Presets**: Stored in `assets/shader_presets.toml`
-- **Settings**: UO paths, window, debug options in `assets/settings.toml`
+- **Keybindings**: Fully runtime-configurable (`assets/settings/keybindings.toml`)
+- **Shader Presets**: Stored in `assets/defaults/shader_presets.toml` (3 modes × 4 times of day = 12 presets)
+- **Settings**: Split into modular TOML files under `assets/settings/`:
+  - `core.toml` — Window, debug options, power saving
+  - `uo_files.toml` — UO installation paths
+  - `graphics.toml` — Rendering settings (BC7, wireframe)
+  - `maps.toml` — Map configuration
+  - `preferences.toml` — User preferences
+  - `keybindings.toml` — Keyboard shortcuts
 
 ### Performance
 
@@ -99,28 +105,31 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 ## 5. Application States
 
 ```text
-StartupSetup → AssetsLoading → InGame
+StartupSetup → InGame
 ```
 
-- **StartupSetup**: Initial state, startup systems run
-- **AssetsLoading**: Loading UO game files
+- **StartupSetup**: Default state. Startup systems load UO files, set up the scene (camera, player, terrain)
 - **InGame**: Main interactive state (player movement, rendering, UI)
+- **Stop**: Shutdown state
+
+There is no intermediate `AssetsLoading` state — asset loading runs within the `Startup` schedule system sets (see CODE_OVERVIEW.md for details).
 
 ---
 
 ## 6. Plugin Architecture
 
-Core plugins registered in `core.rs`:
+Core plugins registered in `core.rs` (top-level only):
 
 | Plugin | Purpose |
 | ------ | ------- |
+| `ExternalDataPlugin` | Settings + shader presets loading |
 | `ControlsPlugin` | Player input (WASD, PageUp/Down for Z) |
-| `RenderPlugin` | Scene, camera, world rendering |
-| `UOFilesPlugin` | Load Ultima Online game files |
+| `RenderPlugin` | Scene, camera, overlays, dialogs |
 | `TextureCachePlugin` | Cache land/item textures |
-| `SettingsPlugin` | Configuration management |
-| `PerformanceOverlayPlugin` | FPS/CPU/RAM metrics |
-| `SystemMessagesPlugin` | In-game log overlay |
+| `UOFilesPlugin` | Load Ultima Online game files |
+
+`ExternalDataPlugin` sub-plugins: `SettingsPlugin`, `ShaderPresetsPlugin`
+`RenderPlugin` sub-plugins: `ScenePlugin` (world, camera, player, dynamic light), `OverlaysPlugin` (FPS, position, system messages), `DialogsPlugin` (F1/F3/Ctrl+G)
 
 ---
 
@@ -189,7 +198,7 @@ cargo fmt                # Format
 
 1. Shader changes → automatic hot-reload (Bevy file watcher)
 2. Uniform tweaks → F3 UI for runtime testing
-3. Preset changes → edit `shader_presets.toml`, restart
+3. Preset changes → edit `assets/defaults/shader_presets.toml`, restart
 
 ### Testing Visual Changes
 

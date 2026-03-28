@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 /* Struct to manage Flags for LandTile and ItemTile */
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
 pub struct Flags {
     pub internal_flags: u32,
 }
@@ -130,7 +130,7 @@ impl Flags {
 
 /* Start of LandTile Struct */
 
-#[derive(Clone, Debug, new)]
+#[derive(Clone, new)]
 pub struct LandTile {
     /* Internal, utility properties */
     pub tile_id: i32,
@@ -183,7 +183,7 @@ impl LandTile {
 
 /* Start of ItemTile struct */
 
-#[derive(Clone, Debug, new)]
+#[derive(Clone, new)]
 pub struct ItemTile {
     // Some documentation was taken from UO Stratics, which may be outdated.
 

@@ -8,7 +8,7 @@ use crate::console_logger::{self, LogAbout, LogSev};
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Rg16u {
     pub r: u16,
@@ -30,7 +30,7 @@ impl Rg16u {
 /// Uniform parameters passed to the terrain shader to resolve world coordinates into atlas samples.
 /// This struct must be kept in sync with the shader's `AtlasParams` (including std140/std430 alignment).
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, PartialEq)]
+#[derive(Clone, Copy, ShaderType, PartialEq)]
 pub struct AtlasParams {
     /// Dimension of a single page in texels.
     pub page_texels: UVec2,
@@ -72,7 +72,7 @@ pub struct AtlasUpload {
     pub data: Vec<u8>,
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy)]
 pub struct LayerDirtyRegion {
     pub min_x: u32,
     pub min_y: u32,

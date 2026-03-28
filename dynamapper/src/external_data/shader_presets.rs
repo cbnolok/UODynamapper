@@ -1,6 +1,6 @@
 use crate::{
     core::render::scene::world::land::mesh_material::{
-        LandEffectsUniform, LandLightingUniforms, LandShaderModePresets,
+        GlobalLightingUniforms, LandEffectsUniform, LandLightingUniforms, LandShaderModePresets,
     },
     core::system_sets::StartupSysSet,
     prelude::*,
@@ -16,9 +16,10 @@ const SHADER_PRESETS_FILE_NAME: &str = "defaults/shader_presets.toml";
 // Bevy detects asset changes and re-uploads uniforms automatically.
 #[derive(Resource, Clone, Copy)]
 pub struct UniformState {
-    pub effects: LandEffectsUniform,    // modes/toggles + intensities
-    pub lighting: LandLightingUniforms, // light/fill/rim + grading + gloom + exposure
-    pub global_lighting: f32, // scene-wide brightness scaler (maps to land.global_lighting)
+    pub effects: LandEffectsUniform,          // texture/rendering pipeline controls
+    pub lighting: GlobalLightingUniforms,     // global: grading, fog, gloom, tonemap, colors
+    pub land_lighting: LandLightingUniforms,  // land-specific: fill, rim, bent, diffuse intensities
+    pub global_lighting: f32, // scene-wide brightness scaler (maps to scene.global_lighting)
     pub dirty: bool,          // when true, push to GPU materials this frame
 }
 
@@ -121,6 +122,7 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
     commands.insert_resource(UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
+        land_lighting: preset.land_lighting,
         global_lighting: preset.global_lighting,
         dirty: true,
     });

@@ -369,7 +369,7 @@ impl MapPlane {
 }
 
 // Position of a cell in the map plane
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct MapCellCoords {
     pub x: u32,
     pub y: u32,
@@ -384,7 +384,7 @@ impl MapCellCoords {
 }
 
 // Position of a block relative to the parent map plane.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MapBlockRelPos {
     pub x: u32,
     pub y: u32,
@@ -396,27 +396,27 @@ impl MapBlockRelPos {
     }
 }
 // Position of a cell relative to the parent block.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MapCellRelPos {
     pub x: u32,
     pub y: u32,
 }
 
 // Size of a map plane, expressed in cells/tiles.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct MapSizeCells {
     pub width: u32,
     pub height: u32,
 }
 // Size of a map plane, expressed in blocks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct MapSizeBlocks {
     pub width: u32,
     pub height: u32,
 }
 
 // A rectangle in the map; always in tiles/cells.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct MapRectCells {
     pub x0: u32,
     pub y0: u32,
@@ -441,7 +441,7 @@ impl MapRectCells {
 }
 
 // A rectangle in the map, in blocks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct MapRectBlocks {
     pub x0: u32,
     pub y0: u32,

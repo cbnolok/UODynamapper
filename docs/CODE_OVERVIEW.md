@@ -12,44 +12,67 @@ The `core.rs` file builds and configures the Bevy `App`:
 
 **Configuration Loading**:
 
-- Loads `config.toml` via the `settings` module
-- Controls window size, debug options (e.g., wireframe rendering)
+- Loads settings from modular TOML files under `assets/settings/` via `settings::load_from_files()`
+- Extracts window size, wireframe flag, power-saving flag, and framerate limit before building the Bevy App
 
 **Bevy Plugin Configuration**:
 
 ```rust
-DefaultPlugins.set(WindowPlugin { /* title, size, resizable */ })
-DefaultPlugins.set(LogPlugin { /* custom log format */ })
-DefaultPlugins.set(AssetPlugin { /* assets/ root */ })
-DefaultPlugins.set(WgpuPlugin { /* required features */ })
+DefaultPlugins
+    .set(LogPlugin { /* custom fmt layer + InterceptLogLayer for uocf/bevy logs */ })
+    .set(WindowPlugin { /* title, size, resizable, min 440x440 */ })
+    .set(TaskPoolPlugin { /* default thread pools */ })
+    .set(RenderPlugin { /* POLYGON_MODE_LINE for wireframe */ })
+    .set(ImagePlugin::default_linear())
+    .set(AssetPlugin { /* custom assets/ folder path */ })
 ```
 
 **Plugin Registration**:
 
-- **Third-Party**: `WireframePlugin` (debug meshes), `FramepacePlugin` (framerate limiting)
-- **Custom**:
+- **Third-Party**: `WireframePlugin` (debug meshes), `FramepacePlugin` (framerate limiting), `EguiPlugin` (egui UI layer)
+- **Custom** (top-level, registered in `core.rs`):
+  - `ExternalDataPlugin` → sub-plugins: `SettingsPlugin` + `ShaderPresetsPlugin`
   - `ControlsPlugin` - Player input handling
-  - `RenderPlugin` - Scene, camera, world rendering
-  - `SettingsPlugin` - Configuration management
+  - `RenderPlugin` → sub-plugins: `ScenePlugin` + `OverlaysPlugin` + `DialogsPlugin`
   - `TextureCachePlugin` - Land/item texture caching
   - `UOFilesPlugin` - UO game file loading
-  - `PerformanceOverlayPlugin` - FPS/CPU/RAM metrics
-  - `SystemMessagesPlugin` - In-game log overlay
+
+**Plugin Tree** (nested registration):
+
+```text
+core.rs
+├── ExternalDataPlugin
+│   ├── SettingsPlugin          (configuration management)
+│   └── ShaderPresetsPlugin     (shader preset loading/management)
+├── ControlsPlugin              (player input: WASD, PageUp/Down, keybindings)
+├── RenderPlugin
+│   ├── ScenePlugin
+│   │   ├── WorldPlugin         (chunk spawning, terrain rendering)
+│   │   ├── PlayerDynamicLightPlugin
+│   │   ├── CameraPlugin
+│   │   └── PlayerPlugin
+│   ├── OverlaysPlugin          (FPS, player position, system messages)
+│   └── DialogsPlugin           (F1 help, F3 shader controls, Ctrl+G teleport)
+├── TextureCachePlugin          (land/item texture GPU arrays, eviction)
+└── UOFilesPlugin               (UO game file discovery and loading)
+```
 
 ### 1.2 State Machine (`dynamapper/src/core/app_states.rs`)
 
 ```rust
 enum AppState {
-    StartupSetup,      // Initial state, startup systems run
-    AssetsLoading,     // Loading game assets
-    InGame,            // Main interactive state
+    StartupSetup,  // Initial state (default), startup systems run
+    InGame,        // Main interactive state
+    Stop,          // Shutdown
 }
 ```
 
 **Transitions**:
 
-- `advance_state_after_init_core()`: `StartupSetup` → `AssetsLoading`
-- `advance_state_after_scene_setup_stage_2()`: `AssetsLoading` → `InGame`
+- `advance_state_after_init_core()` (runs in `PreStartup`): logs state change, stays in `StartupSetup`
+- `advance_state_after_scene_setup_stage_2()` (runs after `SetupSceneStage2`): `StartupSetup` → `InGame`
+
+Note: There is no `AssetsLoading` intermediate state — asset loading is handled within the `Startup` schedule system sets.
 
 ### 1.3 System Execution Order (`dynamapper/src/core/system_sets.rs`)
 
@@ -70,10 +93,18 @@ StartupSysSet::Done
 **Update Schedule**:
 
 ```text
-MovementSysSet::MovementActions  // Process input
+MovementSysSet::MovementActions       // Process input
     ↓
-MovementSysSet::UpdateCamera     // Follow player
+MovementSysSet::UpdateCamera          // Follow player
+    ↓
+SceneRenderLandSysSet::ListenSyncRequests  // Detect camera/zoom/map changes
+    ↓
+SceneRenderLandSysSet::SyncLandChunks      // Spawn/despawn chunks
+    ↓
+SceneRenderLandSysSet::RenderLandChunks    // Upload data, update materials
 ```
+
+`MovementSysSet::UpdateCamera` is configured to run before `SceneRenderLandSysSet::ListenSyncRequests`, ensuring camera position is settled before visible chunk computation.
 
 ---
 
@@ -158,10 +189,11 @@ G16: packed metadata
 @binding(101) var tex_small: texture_2d_array<f32>;
 @binding(102) var tex_big:   texture_2d_array<f32>;
 @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
-@binding(104) var<uniform> ATLAS: AtlasParams;
-@binding(105) var<uniform> scene:   SceneUniform;
-@binding(106) var<uniform> effects: EffectsUniform;
-@binding(107) var<uniform> lighting: LightingUniforms;
+@binding(104) var<uniform> ATLAS:        AtlasParams;
+@binding(105) var<uniform> scene:        SceneUniform;
+@binding(106) var<uniform> effects:      LandEffectsUniform;
+@binding(107) var<uniform> global_light:  GlobalLightingUniforms;
+@binding(108) var<uniform> land_light:   LandLightingUniforms;
 ```
 
 **Rust Structs** (`mesh_material.rs`):
@@ -170,10 +202,36 @@ G16: packed metadata
 #[uniform(104)] pub atlas_params: AtlasParams
 #[uniform(105)] pub scene_uniform: SceneUniform
 #[uniform(106)] pub effects_uniform: LandEffectsUniform
-#[uniform(107)] pub lighting_uniform: LandLightingUniforms
+#[uniform(107)] pub global_lighting_uniform: GlobalLightingUniforms
+#[uniform(108)] pub land_lighting_uniform: LandLightingUniforms
 ```
 
-**CRITICAL**: Rust structs must use `#[repr(C, align(16))]` and derive `ShaderType`. Layout must exactly match WGSL with proper `std140` padding.
+**Three-Uniform Design**:
+
+| Binding | Struct | Scope | Contents |
+|---------|--------|-------|----------|
+| 106 | `LandEffectsUniform` | Land rendering | shading_mode, normal_mode, texture filtering, blur, reconstruction |
+| 107 | `GlobalLightingUniforms` | All geometry (shared) | fog, tonemap, color grading, gloom, ambient, exposure, gamma |
+| 108 | `LandLightingUniforms` | Land-specific | bent normals, diffuse/specular/rim/fill intensities, fill sky/ground colors |
+
+`GlobalLightingUniforms` is designed to be shared with future art/item shaders. `LandLightingUniforms` contains parameters that require 3D surface normals (only available for land terrain).
+
+**CRITICAL**: Rust structs must use `#[repr(C, align(16))]` and derive `ShaderType`. Layout must exactly match WGSL with proper `std140` padding. Padding field names must NOT end with a digit (naga_oil constraint).
+
+### 2.3.1 Modular Shader Architecture
+
+The terrain shader is split into 8 WGSL modules composed via **naga_oil** `#import` directives:
+
+| File | Purpose |
+|------|---------|
+| `main.wgsl` | Vertex/fragment entry points, lighting composition, fog |
+| `bindings.wgsl` | All struct definitions and `@group(3)` bind declarations |
+| `atlas.wgsl` | Tile metadata atlas lookups (page → layer → UV) |
+| `sampling.wgsl` | Texture sampling (small/big atlas, filtering modes) |
+| `normals.wgsl` | Normal generation (geometric, bicubic, bent) |
+| `shading.wgsl` | Shading models (Gouraud, per-fragment, color grading) |
+| `lighting.wgsl` | Light evaluation (Lambert, rim, specular, fill, tonemap) |
+| `noise.wgsl` | Noise utilities |
 
 ### 2.4 Base Mesh Setup (`setup_base_mesh.rs`)
 
@@ -308,23 +366,56 @@ Important implementation notes:
 
 ## 4. Logging System
 
-### 4.1 Categories
+### 4.1 console_logger Module (`dynamapper/src/console_logger.rs`)
+
+The project uses a custom `console_logger` module (NOT Bevy's `debug!`/`info!` macros) for all application logging. This provides structured, filterable output with timestamps.
+
+**Severity Levels** (`LogSev`):
 
 ```rust
-enum LogAbout {
-    RenderWorldLand,    // Terrain rendering
-    Performance,        // Heavy operations
-    // ... other categories
-}
-
 enum LogSev {
-    Info,
-    Warning,
+    Debug,
+    DebugVerbose,
+    Diagnostics,
     Error,
+    Info,
+    Warn,
 }
 ```
 
-### 4.2 In-Game Logger (`ingame_logger.rs`)
+**Context Categories** (`LogAbout`):
+
+```rust
+enum LogAbout {
+    AppState,
+    Camera,
+    General,
+    Input,
+    InternalAssets,
+    Performance,
+    Bevy,
+    Player,
+    Plugins,
+    Renderer,
+    RenderWorldArt,
+    RenderWorldLand,
+    Settings,
+    Startup,
+    SystemsGeneral,
+    UoFiles,
+}
+```
+
+**API**:
+
+```rust
+console_logger::one(Some(false), LogSev::Info, LogAbout::RenderWorldLand, "message");
+console_logger::system("startup message");  // shorthand for system-level info
+```
+
+**Bevy Log Interception**: An `InterceptLogLayer` (tracing subscriber) captures log events from the `uocf` crate and Bevy itself, routing them through `console_logger::one()` for consistent formatting. The default Bevy fmt layer is replaced with a sink to prevent double-logging.
+
+### 4.2 In-Game Logger (`ingame_sysmessage_logger.rs`)
 
 **API**:
 
@@ -382,29 +473,29 @@ Located in `dynamapper/src/core/render/dialogs/`:
 | File | Purpose |
 |------|---------|
 | `config.toml` | Cargo build settings, linker config |
-| `assets/settings.toml` | UO paths, window settings, debug options, power saving |
-| `assets/shader_presets.toml` | Shader uniform presets (Classic/Enhanced/KR) |
-| `assets/keybindings.toml` | Keyboard shortcuts (runtime-configurable) |
+| `assets/settings/core.toml` | Window settings, debug options, power saving |
+| `assets/settings/uo_files.toml` | UO installation paths and file configuration |
+| `assets/settings/graphics.toml` | Rendering settings (BC7, wireframe, etc.) |
+| `assets/settings/maps.toml` | Map-specific configuration |
+| `assets/settings/preferences.toml` | User preferences |
+| `assets/settings/keybindings.toml` | Keyboard shortcuts (runtime-configurable) |
+| `assets/defaults/shader_presets.toml` | Shader uniform presets (Classic/Enhanced/KR × time of day) |
 
 ### 6.2 Settings Structure
 
-```toml
-# Example settings.toml
-[uo_paths]
-installation_dir = "/path/to/uo"
+Settings are split across modular TOML files under `assets/settings/`:
 
-[window]
-width = 1920
-height = 1080
-fullscreen = false
-
-[rendering]
-lossy_texture_compression = true  # BC7
-wireframe = false
-
-[power]
-reactive_low_power = true  # Reduce usage when unfocused
+```text
+assets/settings/
+├── core.toml          # Window size, debug flags (wireframe), power saving
+├── uo_files.toml      # UO installation paths and file configuration
+├── graphics.toml      # Rendering settings (BC7 compression, texture options)
+├── maps.toml          # Map-specific configuration
+├── preferences.toml   # User preferences
+└── keybindings.toml   # Keyboard shortcuts (runtime-configurable)
 ```
+
+Shader presets are stored separately in `assets/defaults/shader_presets.toml` (12 presets: 3 modes × 4 times of day).
 
 ### 6.3 Configuration Loading Policy
 

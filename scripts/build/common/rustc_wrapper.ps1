@@ -21,9 +21,15 @@ function Invoke-Rustc {
     param([string[]]$ExtraArgs)
     if ($sccacheBin) {
         # Try sccache, fall back to direct rustc on failure
-        $ErrorActionPreference = "SilentlyContinue"
-        & sccache $rustc @ExtraArgs 2>$null
-        if ($LASTEXITCODE -ne 0) {
+        # Only suppress stderr for the sccache attempt, not for rustc
+        $prevErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & sccache $rustc @ExtraArgs
+        $sccacheExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $prevErrorAction
+        
+        if ($sccacheExitCode -ne 0) {
+            # sccache failed, fall back to direct rustc
             & $rustc @ExtraArgs
         }
     } else {

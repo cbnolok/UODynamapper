@@ -9,7 +9,7 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/land/bindings.wgsl"::{LandLightingUniforms, lighting}
+#import "shaders/worldmap/land/bindings.wgsl"::{GlobalLightingUniforms, LandLightingUniforms, global_light, land_light}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
 
 // ============================================================================
@@ -42,7 +42,7 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
   let lam_shaped = mix(lam, lam_sharp, clamp(sharpness_mix, 0.0, 0.4));
 
   // Energy RGB (allow warm key light tint)
-  let diffuse_rgb = lighting.light_color * (diffuse_strength * lam_shaped);
+  let diffuse_rgb = global_light.light_color * (diffuse_strength * lam_shaped);
   let hemi_rgb = select(vec3<f32>(0.0), (get_hemisphere_fill(Nw) * fill_strength), (fill_strength > 0.0));
 
   // Base energy is RGB now: ambient (scalar) + fill luma + tinted diffuse
@@ -51,14 +51,14 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
 
   // Headroom limiting via runtime toggle only (prevents bleaching)
   let headroom_reserve = 0.10;
-  if (lighting.grade_params.w >= 0.5) {
+  if (global_light.grade_params.w >= 0.5) {
     energy_rgb = min(energy_rgb, vec3<f32>(1.0 - headroom_reserve));
   }
 
   var color = base_albedo_in * energy_rgb;
 
   // Small chroma from fill (keeps shadows colorful but subtle)
-  let hemi_chroma_tint = min(lighting.grade_params.z, 0.20);
+  let hemi_chroma_tint = min(global_light.grade_params.z, 0.20);
   let hemi_chroma = chroma_only(hemi_rgb);
   var headroom = 1.0 - max(color.r, max(color.g, color.b));
   let hemi_gain = min(headroom, hemi_luma * hemi_chroma_tint);
@@ -67,7 +67,7 @@ fn shade_mode1_enhanced_fragment(base_albedo_in: vec3<f32>,
   // Very subtle rim/spec (limited to a quarter of the rim_strength)
   let rim_local = rim_strength * 0.25;
   if (rim_local > 0.001) {
-    let rim_raw = get_rim(Nw, V, max(0.1, lighting.rim_color.a));
+    let rim_raw = get_rim(Nw, V, max(0.1, land_light.rim_color.a));
     let NdotL = max(dot(normalize(Nw), normalize(L)), 0.0);
     let rim_vis = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
     headroom = max(0.0, 1.0 - max(color.r, max(color.g, color.b)));
@@ -105,13 +105,13 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
 
   // Energy RGB (warm key tint)
-  let diffuse_rgb = lighting.light_color * (diffuse_strength * lam_shaped);
+  let diffuse_rgb = global_light.light_color * (diffuse_strength * lam_shaped);
   let hemi_rgb = select(vec3<f32>(0.0), (get_hemisphere_fill(Nw) * fill_strength), (fill_strength > 0.0));
   let hemi_luma = luminance(hemi_rgb);
 
   // Headroom control
-  let headroom_reserve = clamp(lighting.grade_params.y, 0.0, 1.0);
-  let runtime_headroom_on = lighting.grade_params.w >= 0.5;
+  let headroom_reserve = clamp(global_light.grade_params.y, 0.0, 1.0);
+  let runtime_headroom_on = global_light.grade_params.w >= 0.5;
 
   var energy_rgb = vec3<f32>(ambient_strength + hemi_luma) + diffuse_rgb;
   if (runtime_headroom_on) {
@@ -121,7 +121,7 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   var color = base_albedo_in * energy_rgb;
 
   // Fill chroma
-  let hemi_chroma_tint = clamp(lighting.grade_params.z, 0.0, 1.0);
+  let hemi_chroma_tint = clamp(global_light.grade_params.z, 0.0, 1.0);
   let hemi_chroma = chroma_only(hemi_rgb);
   var headroom = 1.0 - max(color.r, max(color.g, color.b));
   let hemi_gain = min(headroom, hemi_luma * hemi_chroma_tint);
@@ -129,7 +129,7 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
-    let rim_power = max(0.1, lighting.rim_color.a);
+    let rim_power = max(0.1, land_light.rim_color.a);
     let rim_raw   = get_rim(Nw, V, rim_power);
     let NdotL     = max(dot(normalize(Nw), normalize(L)), 0.0);
     let rim_vis   = rim_raw * (1.0 - smoothstep(0.0, 0.35, NdotL));
@@ -137,7 +137,7 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
     let rim_neutral = min(headroom, rim_vis * rim_strength * 0.35);
     color += base_albedo_in * rim_neutral;
     let rim_colored = min(headroom, rim_vis * rim_strength * 0.25);
-    color += lighting.rim_color.rgb * rim_colored;
+    color += land_light.rim_color.rgb * rim_colored;
   }
 
   // Specular

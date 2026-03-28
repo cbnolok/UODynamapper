@@ -11,12 +11,12 @@ Quick reference document for contributors and AI agents to quickly locate releva
 | I want to... | Look in... |
 | ------------ | ---------- |
 | **Modify terrain visuals** | `assets/shaders/worldmap/land/main.wgsl` |
-| **Add a new uniform** | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` (Rust) + `main.wgsl` (shader) |
+| **Add a new uniform** | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` (Rust) + `assets/shaders/worldmap/land/bindings.wgsl` (shader) |
 | **Change UI overlays** | `dynamapper/src/core/render/overlays/` |
 | **Modify dialogs (F3, F1, etc.)** | `dynamapper/src/core/render/dialogs/` |
-| **Adjust keybindings** | `assets/keybindings.toml` |
-| **Change shader presets** | `assets/shader_presets.toml` |
-| **Modify app settings** | `assets/settings.toml` |
+| **Adjust keybindings** | `assets/settings/keybindings.toml` |
+| **Change shader presets** | `assets/defaults/shader_presets.toml` |
+| **Modify app settings** | `assets/settings/` (modular TOML files: core, graphics, uo_files, etc.) |
 | **Understand map file parsing** | `uocf/src/geo/map.rs` |
 | **Understand texture loading** | `uocf/src/geo/land_texture_2d.rs` |
 | **Debug rendering issues** | `dynamapper/src/core/render/scene/world/land/` |
@@ -36,7 +36,14 @@ Quick reference document for contributors and AI agents to quickly locate releva
 
 | File | Purpose |
 | ---- | ------- |
-| `assets/shaders/worldmap/land/main.wgsl` | WGSL terrain shader |
+| `assets/shaders/worldmap/land/main.wgsl` | WGSL terrain shader entry point |
+| `assets/shaders/worldmap/land/bindings.wgsl` | Struct definitions and bind group declarations |
+| `assets/shaders/worldmap/land/shading.wgsl` | Shading models (Gouraud, per-fragment, grading) |
+| `assets/shaders/worldmap/land/lighting.wgsl` | Light evaluation (Lambert, rim, specular, fill, tonemap) |
+| `assets/shaders/worldmap/land/sampling.wgsl` | Texture sampling (small/big atlas, filtering) |
+| `assets/shaders/worldmap/land/normals.wgsl` | Normal generation (geometric, bicubic, bent) |
+| `assets/shaders/worldmap/land/atlas.wgsl` | Tile metadata atlas lookups |
+| `assets/shaders/worldmap/land/noise.wgsl` | Noise utilities |
 | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` | Rust uniform structs (must match WGSL) |
 | `dynamapper/src/core/render/scene/world/land/draw_mesh.rs` | Chunk data collection, atlas uploads, scale-aware mesh assignment |
 | `dynamapper/src/core/render/scene/world/land/tile_atlas.rs` | Metadata atlas paging and LRU layer management |
@@ -89,9 +96,12 @@ Format: 4 bytes per tile
 ```text
 @binding(104) → AtlasParams
 @binding(105) → SceneUniform
-@binding(106) → EffectsUniform
-@binding(107) → LightingUniforms
+@binding(106) → LandEffectsUniform      (texture/rendering toggles)
+@binding(107) → GlobalLightingUniforms  (shared: fog, tonemap, grading, ambient)
+@binding(108) → LandLightingUniforms    (land-specific: bent, rim, fill, specular)
 ```
+
+`GlobalLightingUniforms` is designed to be shared with future art/item shaders. `LandLightingUniforms` contains parameters requiring 3D surface normals (land terrain only).
 
 ### Idle Eviction
 
@@ -124,10 +134,14 @@ The renderer still loads base 8x8 map blocks internally, but combines them into 
 
 ### Add a New Uniform Parameter
 
-1. Add field to Rust struct in `mesh_material.rs` (respect `std140` alignment)
+1. Add field to correct Rust struct in `mesh_material.rs` (respect `std140` alignment)
+   - `LandEffectsUniform` for texture/rendering toggles
+   - `GlobalLightingUniforms` for shared lighting (fog, tonemap, grading)
+   - `LandLightingUniforms` for land-specific lighting (bent, rim, fill, specular)
+   - Padding field names must NOT end with a digit (naga_oil constraint)
 2. Populate uniform in `draw_mesh.rs` (`create_land_chunk_material`)
-3. Add field to WGSL struct in `main.wgsl`
-4. Use uniform in shader logic
+3. Add field to WGSL struct in `bindings.wgsl`
+4. Use uniform in appropriate shader module
 5. **Verify**: Binding indices match between Rust and WGSL
 
 ### Modify a Visual Effect
@@ -141,7 +155,7 @@ The renderer still loads base 8x8 map blocks internally, but combines them into 
 
 | Symptom | Likely Cause | Fix |
 | ------- | ------------ | --- |
-| `Binding is missing from pipeline layout` | Binding index mismatch | Verify `#[uniform(10X)]` = `@binding(10X)` |
+| `Binding is missing from pipeline layout` | Binding index mismatch | Verify `#[uniform(10X)]` = `@binding(10X)` in `mesh_material.rs` and `bindings.wgsl` |
 | Colors washed out / grayish | Double gamma correction | Remove manual `pow(color, 1.0/2.2)` |
 | Shader compile error | WGSL syntax/alignment | Read wgpu error (points to exact line) |
 | High GPU usage (70%+) idle | `get_mut()` or unnecessary asset mutation in hot path | Use `get()` or change-only `get_mut()` |
@@ -156,9 +170,13 @@ The renderer still loads base 8x8 map blocks internally, but combines them into 
 | File | Purpose |
 | ---- | ------- |
 | `config.toml` | Cargo build settings, linker config |
-| `assets/settings.toml` | UO paths, window settings, debug options, power saving |
-| `assets/shader_presets.toml` | Shader uniform presets (Classic/Enhanced/KR) |
-| `assets/keybindings.toml` | Keyboard shortcuts (fully runtime-configurable) |
+| `assets/settings/core.toml` | Window size, debug flags, power saving |
+| `assets/settings/uo_files.toml` | UO installation paths and file configuration |
+| `assets/settings/graphics.toml` | Rendering settings (BC7, texture options) |
+| `assets/settings/maps.toml` | Map-specific configuration |
+| `assets/settings/preferences.toml` | User preferences |
+| `assets/settings/keybindings.toml` | Keyboard shortcuts (fully runtime-configurable) |
+| `assets/defaults/shader_presets.toml` | Shader uniform presets (3 modes × 4 times of day) |
 
 ---
 
@@ -178,7 +196,7 @@ cargo fmt                # Format
 
 1. Shader changes → automatic hot-reload (Bevy file watcher)
 2. Uniform tweaks → F3 UI for runtime testing
-3. Preset changes → edit `shader_presets.toml`, restart
+3. Preset changes → edit `assets/defaults/shader_presets.toml`, restart
 
 ### Build Optimizations
 
@@ -205,7 +223,7 @@ cargo fmt                # Format
 
 - **Lazy Loading**: Textures load on-demand, not upfront
 - **Idle Eviction**: 60s timeout, checked every 5s
-- **BC7 Compression**: Enable in `settings.toml` for 8x VRAM savings
+- **BC7 Compression**: Enable in `assets/settings/graphics.toml` for 8x VRAM savings
 - **Power Saving**: `ReactiveLowPower` mode when window unfocused
 
 ### Configuration Loading Policy

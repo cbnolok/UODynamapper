@@ -13,7 +13,7 @@ use bevy::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Asset, Clone, Debug, Deserialize, Serialize, Resource, TypePath)]
+#[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
     pub core: SectCore,
     pub uo_files: SectUoFiles,
@@ -23,20 +23,20 @@ pub struct Settings {
     pub maps: SectMaps,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectKeybindings {
     pub shader_settings: KeyCode,
     pub user_settings: KeyCode,
     pub keybindings_help: KeyCode,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectCore {
     pub world: SectWorld,
     pub graphics: SectGraphics,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectApp {
     pub input: SectInput,
     pub window: SectWindow,
@@ -44,18 +44,18 @@ pub struct SectApp {
     pub performance: SectPerformance,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectUoFiles {
     pub folder: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
     pub smooth_movement: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectWindow {
     pub height: f32,
     pub width: f32,
@@ -70,13 +70,13 @@ pub struct SectWindow {
     pub free_camera: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectMaps {
     pub maps: Vec<SectMapSize>,
 }
@@ -87,14 +87,14 @@ impl SectMaps {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectMapSize {
     pub id: u32,
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
     /// Whether settings hot-reload from disk is enabled. Disabled by default until
@@ -102,14 +102,14 @@ pub struct SectDebug {
     pub hot_reload_enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectPerformance {
     pub show_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     pub reduce_unfocused_fps: bool,
@@ -152,13 +152,13 @@ impl Default for SettingsFileWatcher {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SectLogging {
     pub min_severity: LogSev,
     pub filters: Vec<LogFilterSetting>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct LogFilterSetting {
     pub sev: Option<LogSev>,
     pub about: Option<LogAbout>,
@@ -167,7 +167,7 @@ pub struct LogFilterSetting {
 
 // ----
 
-#[derive(Message, Debug, Clone, Default, PartialEq)]
+#[derive(Message, Clone, Default, PartialEq)]
 pub struct ToggleWireframe;
 
 // ----

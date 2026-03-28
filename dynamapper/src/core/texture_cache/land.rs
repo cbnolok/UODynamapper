@@ -336,7 +336,8 @@ pub fn sys_setup_terrain_cache(
                     _pad: Vec2::ZERO,
                 },
                 effects_uniform: Default::default(),
-                lighting_uniform: Default::default(),
+                global_lighting_uniform: Default::default(),
+                land_lighting_uniform: Default::default(),
             },
         };
 

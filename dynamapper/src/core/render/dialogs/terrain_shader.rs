@@ -134,20 +134,20 @@ pub fn terrain_ui_system(
                 let mut changed = false;
 
                 // Fog and Tonemap apply in ANY shading mode (keep available always)
-                changed |= toggle_u32(ui, "Fog", &mut u.effects.enable_fog);
-                changed |= toggle_u32(ui, "Tonemap", &mut u.effects.enable_tonemap);
+                changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+                changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
 
                 // Color grading & fragment-only features only when in fragment modes
                 let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
-                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.effects.enable_grading);
-                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.effects.enable_bent);
+                    changed |= toggle_u32(ui, "Color Grading (fragment)", &mut u.lighting.enable_grading);
+                    changed |= toggle_u32(ui, "Bent normals (fragment)", &mut u.land_lighting.enable_bent);
 
                     // Gloom: fragment-only semantic
                     let toggled =
-                        toggle_u32(ui, "Gloom (fragment)", &mut u.effects.enable_gloom);
+                        toggle_u32(ui, "Gloom (fragment)", &mut u.lighting.enable_gloom);
                     if toggled {
-                        if u.effects.enable_gloom == 0 {
+                        if u.lighting.enable_gloom == 0 {
                             u.lighting.gloom_params[0] = 0.0;
                         } else if u.lighting.gloom_params[0] <= 0.0001 {
                             u.lighting.gloom_params[0] = 0.20;
@@ -181,14 +181,14 @@ pub fn terrain_ui_system(
                 );
 
                 // Ambient always shown
-                changed |= slider_s(ui, "Ambient", &mut u.effects.ambient_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "Ambient", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
                 // Diffuse is meaningful only for fragment modes. For Classic (vertex)
                 // the shader uses the precomputed vertex Lambert (old behavior) and
                 // we intentionally hide the diffuse control to avoid confusion.
                 let is_classic = u.effects.shading_mode == 0;
                 if !is_classic {
-                    changed |= slider_s(ui, "Diffuse", &mut u.effects.diffuse_strength, 0.0..=2.0);
+                    changed |= slider_s(ui, "Diffuse", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
                 } else {
                     // Show a small label to explain why Diffuse is hidden
                     ui.label("Diffuse slider hidden in Classic mode (vertex shading).");
@@ -208,26 +208,26 @@ pub fn terrain_ui_system(
                     changed |= slider_s(
                         ui,
                         "Specular (fragment only)",
-                        &mut u.effects.specular_strength,
+                        &mut u.land_lighting.specular_strength,
                         0.0..=0.4,
                     );
                     changed |= slider_s(
                         ui,
                         "Fill (env) (fragment only)",
-                        &mut u.effects.fill_strength,
+                        &mut u.land_lighting.fill_strength,
                         0.0..=1.0,
                     );
                     ui.separator();
                     changed |= slider_s(
                         ui,
                         "Sharpness Factor (fragment only)",
-                        &mut u.effects.sharpness_factor,
+                        &mut u.land_lighting.sharpness_factor,
                         0.5..=4.0,
                     );
                     changed |= slider_s(
                         ui,
                         "Sharpness Mix (fragment only)",
-                        &mut u.effects.sharpness_mix,
+                        &mut u.land_lighting.sharpness_mix,
                         0.0..=1.0,
                     );
                     ui.separator();
@@ -245,7 +245,7 @@ pub fn terrain_ui_system(
                         0.5..=8.0,
                     );
 
-                    changed |= slider_s(ui, "Rim (KR only)", &mut u.effects.rim_strength, 0.0..=0.5);
+                    changed |= slider_s(ui, "Rim (KR only)", &mut u.land_lighting.rim_strength, 0.0..=0.5);
                 } else {
                     // In Classic mode show a helper note.
                     ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
@@ -278,20 +278,20 @@ pub fn terrain_ui_system(
                 ui.separator();
 
                 {
-                    let mut v = u.lighting.fill_sky_color;
+                    let mut v = u.land_lighting.fill_sky_color;
                     if color4(ui, "Fill Sky (rgb + strength.a) (fragment only)", &mut v) {
-                        u.lighting.fill_sky_color = v;
+                        u.land_lighting.fill_sky_color = v;
                         changed = true;
                     }
                 }
                 {
-                    let mut v = u.lighting.fill_ground_color;
+                    let mut v = u.land_lighting.fill_ground_color;
                     if color4(
                         ui,
                         "Fill Ground (rgb + strength.a) (fragment only)",
                         &mut v,
                     ) {
-                        u.lighting.fill_ground_color = v;
+                        u.land_lighting.fill_ground_color = v;
                         changed = true;
                     }
                 }
@@ -299,9 +299,9 @@ pub fn terrain_ui_system(
                 ui.separator();
 
                 {
-                    let mut v = u.lighting.rim_color;
+                    let mut v = u.land_lighting.rim_color;
                     if color4(ui, "Rim (rgb + power.w) (fragment only)", &mut v) {
-                        u.lighting.rim_color = v;
+                        u.land_lighting.rim_color = v;
                         changed = true;
                     }
                 }
@@ -482,6 +482,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
+                    u.land_lighting = preset.land_lighting;
                     u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
@@ -493,6 +494,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
+                    u.land_lighting = preset.land_lighting;
                     u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
@@ -504,6 +506,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
+                    u.land_lighting = preset.land_lighting;
                     u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
@@ -515,6 +518,7 @@ pub fn terrain_ui_system(
                     };
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
+                    u.land_lighting = preset.land_lighting;
                     u.global_lighting = preset.global_lighting;
                     u.dirty = true;
                 }
@@ -537,7 +541,8 @@ fn push_uniforms_if_dirty(
     for (_handle, mat) in mats.iter_mut() {
         // Overwrite the embedded uniforms used by the material extension.
         mat.extension.effects_uniform = u.effects;
-        mat.extension.lighting_uniform = u.lighting;
+        mat.extension.global_lighting_uniform = u.lighting;
+        mat.extension.land_lighting_uniform = u.land_lighting;
 
         // NEW: write global lighting into the land uniform so shader sees it
         // NOTE: adjust the path if your extension uses a different name for the land UBO.

@@ -12,10 +12,9 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 
 # Stable toolchain release flags.
 # macOS uses -Wl,-dead_strip instead of --gc-sections
+# macOS doesn't support --icf (Identical Code Folding)
 RUSTFLAGS=" \
 -C link-arg=-Wl,-dead_strip \
--C link-arg=-Wl,-no_allow_shlib_undefined \
--C link-arg=-Wl,-icf=all \
 ${RUSTFLAGS:-}" \
 cargo build --release --locked --no-default-features \
     --bin dynamapper --package dynamapper \

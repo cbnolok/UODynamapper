@@ -1,10 +1,12 @@
 # scripts/build/windows/bloat.ps1
 # Nightly build analysis using cargo-bloat - Safe Tier (Windows)
 
+$ErrorActionPreference = "Stop"
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
-$Env:RUSTC_WRAPPER = "$scriptDir\..\common\rustc_wrapper.ps1"
+$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.ps1").Path
 
 $ARGS = $args
 if ($ARGS.Length -eq 0) { $ARGS = @("--crates") }
@@ -19,5 +21,10 @@ cargo +nightly bloat --release --no-default-features `
     -Z build-std=std,panic_abort `
     -Z build-std-features="optimize_for_size" `
     $ARGS
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Bloat analysis failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
 
 Write-Host "Analysis finished."

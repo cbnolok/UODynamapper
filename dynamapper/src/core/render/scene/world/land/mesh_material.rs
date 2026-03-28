@@ -9,7 +9,7 @@ use serde::{self, Deserialize};
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
 
-#[derive(AsBindGroup, Asset, TypePath, Debug, Clone)]
+#[derive(AsBindGroup, Asset, TypePath, Clone)]
 pub struct LandMaterialExtension {
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
@@ -30,7 +30,9 @@ pub struct LandMaterialExtension {
     #[uniform(106, visibility(vertex, fragment))]
     pub effects_uniform: LandEffectsUniform,
     #[uniform(107, visibility(vertex, fragment))]
-    pub lighting_uniform: LandLightingUniforms,
+    pub global_lighting_uniform: GlobalLightingUniforms,
+    #[uniform(108, visibility(vertex, fragment))]
+    pub land_lighting_uniform: LandLightingUniforms,
 }
 
 impl MaterialExtension for LandMaterialExtension {
@@ -71,7 +73,7 @@ impl MaterialExtension for LandMaterialExtension {
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct SceneUniform {
     pub camera_position: Vec3,
@@ -84,81 +86,110 @@ pub struct SceneUniform {
 }
 
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
+#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandEffectsUniform {
-    // TODO: keep here only non-lighting data. Move the others to LandLightingUniforms, then update the shader and terrain_shader_ui.rs.
+    // Non-lighting rendering controls only.  Lighting toggles and intensities
+    // live in GlobalLightingUniforms / LandLightingUniforms so they can be
+    // shared with future art-tile shaders (2D sprites that don't have a 3D
+    // mesh but still need global lighting, grading, fog, etc.).
 
-    // modes/toggles
+    // --- Modes & texture blur toggle (vec4 slot 0) ---
     pub shading_mode: u32,
     pub normal_mode: u32,
-    pub enable_bent: u32,
-    pub enable_fog: u32,
-    pub enable_gloom: u32,
-    pub enable_tonemap: u32,
-    pub enable_grading: u32,
-    // optional pre-shade blur of base albedo at fragment level
+    /// Optional pre-shade blur of base albedo at fragment level.
     pub enable_blur: u32,
-
-    // NEW: Graphics settings
     pub enable_linear_filtering: u32,
+
+    // --- Graphics / texture reconstruction (vec4 slot 1) ---
     pub reconstruction_mode: u32,
     pub sharpening_amount: f32,
-    pub _pad_graphics: f32,
-
-    // intensities
-    pub ambient_strength: f32,
-    pub diffuse_strength: f32,
-    pub specular_strength: f32,
-    pub rim_strength: f32,
-    pub fill_strength: f32,
-    pub sharpness_factor: f32,
-    pub sharpness_mix: f32,
-
-    // mix factor (0..1) with blurred albedo
+    /// Mix factor (0..1) with blurred albedo.
     pub blur_strength: f32,
-
-    // Intensities (slot C, 16B)
-    // blur radius in UV units (very small numbers like 0.001..0.005)
+    /// Blur radius in screen pixels (small values like 0.5..8.0).
     pub blur_radius: f32,
-    #[serde(default)]
-    pub _pad_c1_: f32,
-    #[serde(default)]
-    pub _pad_c2_: f32,
-    #[serde(default)]
-    pub _pad_c3_: f32,
 }
 
+/// Global lighting parameters shared across all shader types (land, art tiles, etc.).
+/// Art tiles are 2D sprites with a predefined bounding box — no 3D mesh — so they
+/// don't need view/normal–dependent lighting, but they share grading, fog, gloom,
+/// tonemapping, and base light/ambient colors with the land shader.
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, ShaderType, Deserialize, Default)]
-#[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
-pub struct LandLightingUniforms {
-    // vec3 + pad
+#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
+#[allow(dead_code)]
+pub struct GlobalLightingUniforms {
+    // --- Toggles (vec4 slot 0) ---
+    pub enable_fog: u32,
+    pub enable_tonemap: u32,
+    pub enable_grading: u32,
+    pub enable_gloom: u32,
+
+    // --- Colors ---
     pub light_color: Vec3,
     #[serde(default)]
     pub _pad0_: f32,
     pub ambient_color: Vec3,
     #[serde(default)]
     pub _pad1_: f32,
+
+    // --- Exposure / gamma ---
     pub exposure: f32,
     pub gamma: f32,
+    pub ambient_strength: f32,
     #[serde(default)]
-    pub _pad2_: Vec2,
-    pub fill_sky_color: Vec4,
-    pub fill_ground_color: Vec4,
-    pub rim_color: Vec4,
+    pub _pad2_: f32,
+
+    // --- Grading ---
     pub grade_warm_color: Vec4,
     pub grade_cool_color: Vec4,
     //   grade_params  = [strength, headroom_reserve, chroma_tint, headroom_on]
     pub grade_params: Vec4,
     //   grade_extra   = [vibrance, saturation, contrast, split_tone_strength]
     pub grade_extra: Vec4,
+
+    // --- Gloom ---
     //   gloom_params  = [amount, falloff_height, shadow_bias, fog_height_bias]
     pub gloom_params: Vec4,
+
+    // --- Fog ---
     //   fog_color     = [r, g, b, max_mix]
     pub fog_color: Vec4,
     //   fog_params    = [distance_density, height_density, noise_scale, noise_strength]
     pub fog_params: Vec4,
+}
+
+/// Land-specific lighting: parameters that require a 3D mesh with surface normals
+/// and a view vector, so they only apply to the terrain (not to flat art tiles).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
+#[allow(dead_code)]
+pub struct LandLightingUniforms {
+    // --- Toggle ---
+    pub enable_bent: u32,
+    #[serde(default)]
+    pub _pad0_: u32,
+    #[serde(default)]
+    pub _pad1_: u32,
+    #[serde(default)]
+    pub _pad2_: u32,
+
+    // --- Intensities ---
+    pub diffuse_strength: f32,
+    pub specular_strength: f32,
+    pub rim_strength: f32,
+    pub fill_strength: f32,
+
+    pub sharpness_factor: f32,
+    pub sharpness_mix: f32,
+    #[serde(default)]
+    pub _pad3_: f32,
+    #[serde(default)]
+    pub _pad4_: f32,
+
+    // --- Hemisphere fill & rim colors (need N / V) ---
+    pub fill_sky_color: Vec4,
+    pub fill_ground_color: Vec4,
+    pub rim_color: Vec4,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -168,7 +199,7 @@ pub enum LandShaderMode {
     KR = 2,
 }
 
-#[derive(Resource, Debug, Deserialize)]
+#[derive(Resource, Deserialize)]
 pub struct LandShaderModePresets {
     pub classic: LandRenderStylePresetsPerMode,
     pub enhanced: LandRenderStylePresetsPerMode,
@@ -176,19 +207,20 @@ pub struct LandShaderModePresets {
     pub default_preset: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LandRenderStylePresetsPerMode {
     pub morning: LandMaterialUniformsPresets,
     pub afternoon: LandMaterialUniformsPresets,
     pub night: LandMaterialUniformsPresets,
     pub cave: LandMaterialUniformsPresets,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LandMaterialUniformsPresets {
     #[serde(default = "default_global_lighting")]
     pub global_lighting: f32,
     pub effects: LandEffectsUniform,
-    pub lighting: LandLightingUniforms,
+    pub lighting: GlobalLightingUniforms,
+    pub land_lighting: LandLightingUniforms,
 }
 
 fn default_global_lighting() -> f32 {

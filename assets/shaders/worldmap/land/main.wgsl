@@ -20,9 +20,9 @@
 // ---- Land shader modules (quoted asset-path imports for on-demand loading) ----
 #import "shaders/worldmap/land/bindings.wgsl"::{
   TileUniform,
-  AtlasParams, SceneUniform, LandEffectsUniform, LandLightingUniforms,
+  AtlasParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
-  ATLAS, scene, effects, lighting,
+  ATLAS, scene, effects, global_light, land_light,
   USE_VOLUMETRIC_NOISE,
 }
 #import "shaders/worldmap/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
@@ -52,7 +52,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
   let shading_mode: u32 = effects.shading_mode;
   let normal_mode:  u32 = effects.normal_mode;
-  let enable_bent:  u32 = effects.enable_bent;
+  let enable_bent:  u32 = land_light.enable_bent;
 
   // Apply mesh local_to_world ON THE FLAT GRID FIRST to get actual world tile coords.
   // We need the world-space XZ before adding height so atlas_read_height works correctly.
@@ -108,8 +108,8 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let shading_mode   = effects.shading_mode;
-  let enable_tonemap = effects.enable_tonemap;
-  let enable_grading = effects.enable_grading;
+  let enable_tonemap = global_light.enable_tonemap;
+  let enable_grading = global_light.enable_grading;
 
   // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
   // zoom > 5  : bicubic/FSR reconstruction → nearest (saves ~15 tex reads)
@@ -118,9 +118,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // zoom > 30 : disable volumetric fog → flat fog (saves heavy FBM ALU)
   let zoom = scene.render_zoom;
   var normal_mode    = effects.normal_mode;
-  var enable_bent    = effects.enable_bent;
-  var enable_fog     = effects.enable_fog;
-  var enable_gloom   = effects.enable_gloom;
+  var enable_bent    = land_light.enable_bent;
+  var enable_fog     = global_light.enable_fog;
+  var enable_gloom   = global_light.enable_gloom;
   var enable_blur    = effects.enable_blur;
   var force_nearest  = false;
   var disable_sharpen = false;
@@ -137,19 +137,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     enable_bent = 0u;       // skip bent normals (4 extra height reads)
   }
 
-  let ambient_strength  = effects.ambient_strength;
-  let diffuse_strength  = effects.diffuse_strength;
-  let specular_strength = effects.specular_strength;
-  let rim_strength      = effects.rim_strength;
+  let ambient_strength  = global_light.ambient_strength;
+  let diffuse_strength  = land_light.diffuse_strength;
+  let specular_strength = land_light.specular_strength;
+  let rim_strength      = land_light.rim_strength;
 
-  let fill_strength     = effects.fill_strength;
-  let sharpness_factor  = effects.sharpness_factor;
-  let sharpness_mix     = effects.sharpness_mix;
+  let fill_strength     = land_light.fill_strength;
+  let sharpness_factor  = land_light.sharpness_factor;
+  let sharpness_mix     = land_light.sharpness_mix;
 
   let blur_strength     = effects.blur_strength;
   let blur_radius       = effects.blur_radius;
 
-  let exposure          = lighting.exposure;
+  let exposure          = global_light.exposure;
 
   // Local UV and tile selection
   let uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
@@ -254,13 +254,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   //  - fog_params.w -> noise_strength   (UI 0..1)   cloud contrast/detail/coverage
   if (enable_fog == 1u) {
     // Read raw UI uniforms (defensive clamps)
-    let dist_density_ui   = clamp(lighting.fog_params.x, 0.0, 1.0);
-    let height_density_ui = clamp(lighting.fog_params.y, 0.0, 1.0);
-    let noise_scale_ui    = clamp(lighting.fog_params.z, 0.0, 2.0);
-    let noise_strength_ui = clamp(lighting.fog_params.w, 0.0, 1.0);
+    let dist_density_ui   = clamp(global_light.fog_params.x, 0.0, 1.0);
+    let height_density_ui = clamp(global_light.fog_params.y, 0.0, 1.0);
+    let noise_scale_ui    = clamp(global_light.fog_params.z, 0.0, 2.0);
+    let noise_strength_ui = clamp(global_light.fog_params.w, 0.0, 1.0);
 
     // Fog height bias: -1 valley, 0 neutral, +1 high-alt haze
-    let hBias = clamp(lighting.gloom_params.w, -1.0, 1.0);
+    let hBias = clamp(global_light.gloom_params.w, -1.0, 1.0);
     let high_w = max(hBias, 0.0);
     let low_w  = max(-hBias, 0.0);
 
@@ -336,14 +336,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     fog_factor = clamp(fog_factor * mix(0.97, 1.03, (breath - 0.5) * 0.6 * noise_strength), 0.0, 1.0);
 
     // Final cap set by UI alpha
-    let fog_mix = clamp(fog_factor * lighting.fog_color.a, 0.0, 1.0);
+    let fog_mix = clamp(fog_factor * global_light.fog_color.a, 0.0, 1.0);
 
     if (USE_VOLUMETRIC_NOISE == 1u) {
-      hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, fog_mix);
+      hdr_rgb = mix(hdr_rgb, global_light.fog_color.rgb, fog_mix);
     } else {
       // Simple fallback: linearized distance*height blend capped by alpha
-      let flat_mix = clamp(base_fog * lighting.fog_color.a, 0.0, 1.0);
-      hdr_rgb = mix(hdr_rgb, lighting.fog_color.rgb, flat_mix);
+      let flat_mix = clamp(base_fog * global_light.fog_color.a, 0.0, 1.0);
+      hdr_rgb = mix(hdr_rgb, global_light.fog_color.rgb, flat_mix);
     }
   }
 

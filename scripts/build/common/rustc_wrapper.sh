@@ -27,7 +27,12 @@ run_rustc() {
     local extra_args=("$@")
     if command -v sccache >/dev/null 2>&1; then
         # Try sccache, fall back to direct rustc on failure
-        if ! sccache "$RUSTC" "${extra_args[@]}" 2>/dev/null; then
+        # Capture stderr to check for sccache-specific errors
+        local sccache_output
+        if sccache_output=$(sccache "$RUSTC" "${extra_args[@]}" 2>&1); then
+            return 0
+        else
+            # sccache failed, fall back to direct rustc
             exec "$RUSTC" "${extra_args[@]}"
         fi
     else

@@ -61,23 +61,50 @@ Map data is stored in UO mul/uop files as blocks (8x8 tiles each). Instead of pe
 - `dynamapper/src/core/render/scene/world/land/tile_atlas.rs` - LRU cache management
 - `dynamapper/src/core/render/scene/world/land/draw_mesh.rs` - Mesh creation, atlas uploads
 - `dynamapper/src/core/render/scene/world/land/mesh_material.rs` - Rust uniform structs
-- `assets/shaders/worldmap/land_base.wgsl` - WGSL shader
+- `assets/shaders/worldmap/land/` - Modular WGSL shader directory (see Shader Modules below)
 
-### 3.3 Uniform-Driven Shaders
+### 3.3 Modular Shader Architecture
 
-Visual features are controlled by uniforms in shared bind groups:
+The terrain shader is split into modular WGSL files composed at compile time via **naga_oil** `#import` directives:
+
+| File | Purpose |
+|------|---------|
+| `main.wgsl` | Entry point: vertex/fragment functions, lighting composition, fog |
+| `bindings.wgsl` | Struct definitions and `@group(3)` bind group declarations |
+| `atlas.wgsl` | Tile metadata atlas lookups (page → layer → UV) |
+| `sampling.wgsl` | Texture sampling (small/big atlas, filtering) |
+| `normals.wgsl` | Normal generation (geometric, bicubic, bent) |
+| `shading.wgsl` | Shading models (Gouraud, per-fragment, color grading) |
+| `lighting.wgsl` | Light evaluation (Lambert, rim, specular, fill, tonemap) |
+| `noise.wgsl` | Noise utilities |
+
+**naga_oil Naming Constraint**: Variable and uniform names in WGSL **cannot end with a digit** (naga_oil limitation). Use a trailing underscore for padding fields (e.g., `_pad0_` instead of `_pad0`).
+
+### 3.4 Uniform-Driven Shaders
+
+Visual features are controlled by uniforms in shared bind groups, split into three uniform buffers for clear separation of concerns:
 
 **Binding Indices** (MUST match between Rust and WGSL):
 ```rust
-#[uniform(104)] pub atlas_params: AtlasParams
-#[uniform(105)] pub scene_uniform: SceneUniform
-#[uniform(106)] pub effects_uniform: LandEffectsUniform
-#[uniform(107)] pub lighting_uniform: LandLightingUniforms
+#[uniform(104)] pub atlas_params: AtlasParams           // Tile atlas paging params
+#[uniform(105)] pub scene_uniform: SceneUniform          // Camera, light direction, zoom
+#[uniform(106)] pub effects_uniform: LandEffectsUniform  // Texture/rendering toggles
+#[uniform(107)] pub global_lighting_uniform: GlobalLightingUniforms  // Shared lighting (fog, tonemap, grading, gloom)
+#[uniform(108)] pub land_lighting_uniform: LandLightingUniforms     // Land-specific lighting (bent, rim, fill, specular)
 ```
 
-**BC7 Compression**: When enabled in `settings.toml`, terrain textures are compressed to BC7 on CPU using `intel_tex_2`, reducing VRAM usage ~8x (~160MB → ~20MB).
+**WGSL variable names** (in `bindings.wgsl`):
+```wgsl
+@binding(106) var<uniform> effects:      LandEffectsUniform;
+@binding(107) var<uniform> global_light:  GlobalLightingUniforms;
+@binding(108) var<uniform> land_light:   LandLightingUniforms;
+```
 
-**CRITICAL**: Rust struct layout in `mesh_material.rs` must **exactly** match shader structs in `land_base.wgsl`, including `std140` alignment and padding.
+**Design Rationale**: `GlobalLightingUniforms` contains lighting parameters that apply to all geometry (fog, tonemap, color grading, ambient) and will be shared with future art/item shaders. `LandLightingUniforms` contains parameters specific to land terrain that require 3D normals (bent normals, rim light, specular, fill sky/ground).
+
+**BC7 Compression**: When enabled in settings, terrain textures are compressed to BC7 on CPU using `intel_tex_2`, reducing VRAM usage ~8x (~160MB → ~20MB).
+
+**CRITICAL**: Rust struct layout in `mesh_material.rs` must **exactly** match shader structs in `bindings.wgsl`, including `std140` alignment and padding.
 
 ---
 
@@ -126,8 +153,13 @@ Visual features are controlled by uniforms in shared bind groups:
 
 ### Task: Modify a Visual Effect in the Shader
 
-1. **Identify Target**: Primary file is `assets/shaders/worldmap/land_base.wgsl`
-2. **Locate Logic**: Find relevant section (e.g., "Lighting composition", "KR-style fog")
+1. **Identify Target**: Shader files are in `assets/shaders/worldmap/land/` (see section 3.3 for module list)
+   - Lighting/shading logic → `shading.wgsl` and `lighting.wgsl`
+   - Texture sampling → `sampling.wgsl`
+   - Normal generation → `normals.wgsl`
+   - Fragment entry point / fog → `main.wgsl`
+   - Struct definitions / bindings → `bindings.wgsl`
+2. **Locate Logic**: Find relevant section in the appropriate module
 3. **Use Hot-Reload**: Test changes via F3 UI without recompiling Rust
 4. **Verify Presets**: Check all three rendering modes
 
@@ -136,14 +168,16 @@ Visual features are controlled by uniforms in shared bind groups:
 **Follow this exact order**:
 
 1. **Step 1: Rust Struct** - Add field to appropriate struct in `mesh_material.rs`
+   - Choose correct struct: `LandEffectsUniform` (texture/rendering), `GlobalLightingUniforms` (shared lighting), or `LandLightingUniforms` (land-specific lighting)
    - Ensure `#[repr(C, align(16))]` and `ShaderType` derive
    - Add padding fields as needed for `std140` alignment
+   - Padding field names must NOT end with a digit (naga_oil constraint)
 
 2. **Step 2: Populate Uniform** - In `draw_mesh.rs`, inside `create_land_chunk_material`, set the value
 
-3. **Step 3: Shader Struct** - Add corresponding field in `land_base.wgsl`
+3. **Step 3: Shader Struct** - Add corresponding field in `bindings.wgsl`
 
-4. **Step 4: Use in Shader** - Use the new parameter in shader logic
+4. **Step 4: Use in Shader** - Use the new parameter in the appropriate shader module
 
 5. **Step 5: Verify Bindings** - Ensure binding indices match between Rust and WGSL
 
@@ -151,7 +185,7 @@ Visual features are controlled by uniforms in shared bind groups:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Binding is missing from pipeline layout` | `#[uniform(10X)]` ≠ `@binding(10X)` | Verify binding indices are identical in both files |
+| `Binding is missing from pipeline layout` | `#[uniform(10X)]` ≠ `@binding(10X)` | Verify binding indices are identical in `mesh_material.rs` and `bindings.wgsl` |
 | Colors washed out / grayish | Double gamma correction | Remove manual `pow(color, 1.0/2.2)` - Bevy handles gamma |
 | Shader compile error | WGSL syntax/alignment | Read wgpu error (points to exact line) |
 | High GPU usage (70%+) idle | `get_mut()` in hot path | Use `get()` or `write_texture` to atlas |

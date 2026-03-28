@@ -6,7 +6,7 @@ pub fn scale_uo_z_to_bevy_units(z: f32) -> f32 {
     z * 0.1 // arbitrary
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UOVec3 {
     pub x: u16,
     pub y: u16,
@@ -23,7 +23,7 @@ impl UOVec3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct UOVec4 {
     pub x: u16,
     pub y: u16,
