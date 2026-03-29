@@ -226,6 +226,7 @@ pub struct MapPlane {
     cached_blocks_free_list: Vec<u32>,
     cached_blocks_bitmask: Vec<u64>,
     read_buffer: Vec<u8>,
+    pub blocks_loaded_version: u64,
 }
 
 pub struct CachedBlock {
@@ -363,6 +364,7 @@ impl MapPlane {
                 if word_idx < self.cached_blocks_bitmask.len() {
                     self.cached_blocks_bitmask[word_idx] |= 1 << bit_idx;
                 }
+                self.blocks_loaded_version += 1;
             }
         }
     }
@@ -553,6 +555,7 @@ impl MapPlane {
                     as usize
             ],
             read_buffer: Vec::new(),
+            blocks_loaded_version: 0,
         };
         Ok(map_plane)
     }
@@ -696,6 +699,7 @@ impl MapPlane {
                     if word_idx < self.cached_blocks_bitmask.len() {
                         self.cached_blocks_bitmask[word_idx] |= 1 << bit_idx;
                     }
+                    self.blocks_loaded_version += 1;
                 }
             }
         }

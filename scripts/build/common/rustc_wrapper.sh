@@ -44,7 +44,5 @@ if [ "$IS_MY_CRATE" = true ]; then
     # Compile your code with whatever is in Cargo.toml (standard abort)
     run_rustc "$@"
 else
-    # Prune dependencies with no-fmt-debug.
-    # We removed immediate-abort because it is binary-incompatible with standard abort.
-    run_rustc "$@" -Zfmt-debug=none
+    run_rustc "$@"
 fi

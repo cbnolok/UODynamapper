@@ -2,9 +2,9 @@
 // alignment validation at compile time — these appear as "function `check` is never used".
 #![allow(dead_code)]
 
+//use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
-use crate::console_logger::{self, LogAbout, LogSev};
 
 /// A simple RGBA-like 16-bit unsigned integer pair used for packing tile metadata.
 /// This matches the target texture format (Rg16Uint) in the shader.
@@ -142,7 +142,10 @@ impl TileAtlas {
         let page_u64 = (page.x as u32 as u64) | ((page.y as u32 as u64) << 32);
 
         // If it's already in the cache, return it
-        if let Ok(pos) = self.page_to_layer.binary_search_by_key(&page_u64, |(p, _)| *p) {
+        if let Ok(pos) = self
+            .page_to_layer
+            .binary_search_by_key(&page_u64, |(p, _)| *p)
+        {
             let layer = self.page_to_layer[pos].1;
             self.layer_access_tick[layer as usize] = self.current_tick;
             return (layer, None);
@@ -164,7 +167,9 @@ impl TileAtlas {
             }
 
             // Evict least recently used layer
-            let (lru_layer, _) = self.layer_access_tick.iter()
+            let (lru_layer, _) = self
+                .layer_access_tick
+                .iter()
                 .enumerate()
                 .min_by_key(|&(_, tick)| tick)
                 .expect("At least one layer must exist");
@@ -172,7 +177,10 @@ impl TileAtlas {
 
             let old_page = self.layer_to_page[lru_layer as usize];
             let old_page_u64 = (old_page.x as u32 as u64) | ((old_page.y as u32 as u64) << 32);
-            if let Ok(pos) = self.page_to_layer.binary_search_by_key(&old_page_u64, |(p, _)| *p) {
+            if let Ok(pos) = self
+                .page_to_layer
+                .binary_search_by_key(&old_page_u64, |(p, _)| *p)
+            {
                 self.page_to_layer.remove(pos);
             }
             evicted_page = Some(old_page);
@@ -180,14 +188,17 @@ impl TileAtlas {
         };
 
         // Insert new entry and keep sorted
-        let insert_pos = self.page_to_layer.binary_search_by_key(&page_u64, |(p, _)| *p)
+        let insert_pos = self
+            .page_to_layer
+            .binary_search_by_key(&page_u64, |(p, _)| *p)
             .unwrap_err();
         self.page_to_layer.insert(insert_pos, (page_u64, layer));
         self.layer_to_page[layer as usize] = page;
         self.layer_access_tick[layer as usize] = self.current_tick;
 
         if let Some(old_page) = evicted_page {
-            let evicted_page_index = (old_page.y as u32) * self.params.world_pages_x + (old_page.x as u32);
+            let evicted_page_index =
+                (old_page.y as u32) * self.params.world_pages_x + (old_page.x as u32);
             if evicted_page_index < 256 {
                 let idx = (evicted_page_index / 4) as usize;
                 let comp = evicted_page_index % 4;
@@ -215,12 +226,22 @@ impl TileAtlas {
         (layer, evicted_page)
     }
 
-    pub fn enqueue_rg16u_block(&mut self, layer: u32, offset: UVec2, size: UVec2, texels: &[Rg16u]) {
+    pub fn enqueue_rg16u_block(
+        &mut self,
+        layer: u32,
+        offset: UVec2,
+        size: UVec2,
+        texels: &[Rg16u],
+    ) {
         let page_width = self.params.page_texels.x;
         let layer_idx = layer as usize;
 
         if self.cpu_mirror[layer_idx].is_none() {
-            self.cpu_mirror[layer_idx] = Some(vec![Rg16u { r: 0, g: 0 }; (page_width * self.params.page_texels.y) as usize]);
+            self.cpu_mirror[layer_idx] = Some(vec![
+                Rg16u { r: 0, g: 0 };
+                (page_width * self.params.page_texels.y)
+                    as usize
+            ]);
         }
         let mirror = self.cpu_mirror[layer_idx].as_mut().unwrap();
 
@@ -243,6 +264,15 @@ impl TileAtlas {
         if !any_changed {
             return;
         }
+
+        /*
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::Performance,
+            &format!("[DBG-Atlas] upload: layer {} offset {:?}", layer, offset),
+        );
+        */
 
         if self.dirty_regions[layer_idx].is_none() {
             self.dirty_regions[layer_idx] = Some(LayerDirtyRegion {
@@ -292,8 +322,8 @@ impl TileAtlas {
     }
 }
 
-use bevy::render::renderer::RenderQueue;
 use bevy::render::render_asset::RenderAssets;
+use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 
@@ -308,6 +338,7 @@ pub fn sys_extract_atlas_uploads(
     mut render_uploads: ResMut<RenderAtlasUploads>,
 ) {
     if !tile_atlas.extract_staging.is_empty() {
+        /*
         let count = tile_atlas.extract_staging.len();
         console_logger::one(
             None,
@@ -315,7 +346,10 @@ pub fn sys_extract_atlas_uploads(
             LogAbout::Performance,
             &format!("[DBG-extract] Extracting {count} texture array uploads"),
         );
-        render_uploads.0.extend_from_slice(&tile_atlas.extract_staging);
+        */
+        render_uploads
+            .0
+            .extend_from_slice(&tile_atlas.extract_staging);
     }
 }
 
@@ -326,12 +360,16 @@ pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
     let page_width = tile_atlas.params.page_texels.x;
 
     for (layer, opt_region) in tile_atlas.dirty_regions.iter().enumerate() {
-        let Some(region) = opt_region else { continue; };
+        let Some(region) = opt_region else {
+            continue;
+        };
         let layer = layer as u32;
 
         let width = region.max_x.saturating_sub(region.min_x);
         let height = region.max_y.saturating_sub(region.min_y);
-        if width == 0 || height == 0 { continue; }
+        if width == 0 || height == 0 {
+            continue;
+        }
 
         let mirror = tile_atlas.cpu_mirror[layer as usize].as_ref().unwrap();
         let size_bytes = (width * height * 4) as usize;
@@ -368,6 +406,7 @@ pub fn sys_render_upload_tile_atlas(
         return;
     }
 
+    /*
     let count = uploads.0.len();
     console_logger::one(
         None,
@@ -375,13 +414,14 @@ pub fn sys_render_upload_tile_atlas(
         LogAbout::Performance,
         &format!("[DBG-render] Processing {count} texture array uploads"),
     );
+    */
 
     let Some(gpu_image) = gpu_images.get(&atlas_handle.0) else {
         uploads.0.clear();
         return;
     };
 
-    use wgpu::{TexelCopyTextureInfo, TexelCopyBufferLayout, Origin3d, Extent3d};
+    use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
     for upload in uploads.0.drain(..) {
         let destination = TexelCopyTextureInfo {

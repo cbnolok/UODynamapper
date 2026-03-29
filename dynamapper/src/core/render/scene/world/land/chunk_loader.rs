@@ -24,9 +24,10 @@ use std::time::Instant;
 use uocf::geo::land_texture_2d::TexMap2D;
 use uocf::geo::map::{self, MapBlock, MapBlockRelPos};
 
-/// Number of blocks per sub-batch.  Tuned so each sub-batch takes ~5-15 ms,
-/// giving the main thread frequent opportunities to poll and render.
-const SUB_BATCH_SIZE: usize = 4096;
+/// Number of blocks per sub-batch.  Tuned so each sub-batch takes ~10-30 ms,
+/// giving the main thread frequent opportunities to poll and render while
+/// reducing the number of channel sends and poll round-trips.
+const SUB_BATCH_SIZE: usize = 8192;
 
 // ---------------------------------------------------------------------------
 // Public request / result types
@@ -101,6 +102,7 @@ struct MapFileState {
     reader: BufReader<File>,
     size_blocks_height: u32,
     read_buffer: Vec<u8>,
+    seen_ids: Box<[u64; 1024]>,
 }
 
 fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResult>) {
@@ -124,6 +126,7 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                     reader: BufReader::new(file),
                     size_blocks_height: req.size_blocks_height,
                     read_buffer: Vec::new(),
+                    seen_ids: Box::new([0u64; 1024]),
                 }
             });
 
@@ -145,11 +148,12 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
         //  • O(1) test-and-set with bit ops (shift + mask + OR), zero hashing overhead.
         //  • Cache-friendly: 8 KB fits in L1; a HashSet would scatter across many cache lines.
         //
+        //
         // This ensures each unique tile ID is preloaded exactly once per request,
         // even though the same ID may appear in thousands of cells across hundreds
         // of map blocks.
-        let mut seen_ids = vec![0u64; 1024];
         let mut seen_count = 0usize;
+        state.seen_ids.fill(0);
 
         for batch_slice in chunks_iter {
             batch_idx += 1;
@@ -172,8 +176,8 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                 for cell in &block.cells {
                     let word = (cell.id as usize) >> 6;
                     let bit = (cell.id as usize) & 63;
-                    if (seen_ids[word] & (1 << bit)) == 0 {
-                        seen_ids[word] |= 1 << bit;
+                    if (state.seen_ids[word] & (1 << bit)) == 0 {
+                        state.seen_ids[word] |= 1 << bit;
                         seen_count += 1;
                         let _ = req.texmap_2d.preload_pixel_data(cell.id as usize);
                     }

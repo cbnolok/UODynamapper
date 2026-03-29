@@ -16,37 +16,26 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Use mold for faster linking (installed below)
-  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
-  # RUSTFLAGS: "-C link-arg=-fuse-ld=/usr/bin/mold" # Handled by build scripts
+  CARGO_INCREMENTAL: 0
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_NO_DAEMON: "1"
 
 jobs:
   build-linux:
     name: Build (Linux x86_64)
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write   # Required to create/write GitHub Releases
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install system dependencies
-        # These are cached by GitHub's runner between runs if unchanged.
-        # apt-get itself is fast (~15s). mold makes linking ~5x faster than ld.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            pkg-config \
-            clang \
-            mold
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            pkg-config clang mold
+          sudo ln -sf $(which mold) /usr/bin/ld.mold
 
-      # dtolnay/rust-toolchain already sets up basic rust
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -55,8 +44,6 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
 
-      # Caches ~/.cargo/registry (downloaded crates) and the incremental build
-      # artifacts in target/. On a cache hit, subsequent builds are very fast.
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -65,9 +52,8 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
+          CC: "clang"
+          CXX: "clang++"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
@@ -79,57 +65,19 @@ jobs:
           cp target/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
-          # Zip the package
           sudo apt-get install -y zip
           zip -r dynamapper-linux-x86_64.zip release_package
-          echo "Archive size: $(du -sh dynamapper-linux-x86_64.zip | cut -f1)"
 
-      # Always upload as workflow artifact (available from the Actions UI, 30d TTL)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-linux-x86_64
           path: dynamapper-linux-x86_64.zip
-          retention-days: 30
-
-      # On tag push: create a proper versioned GitHub Release
-      - name: Create versioned GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dynamapper-linux-x86_64.zip
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-
-      # On manual dispatch: create/overwrite the "nightly" (or custom) prerelease
-      - name: Compute nightly tag name
-        if: github.event_name == 'workflow_dispatch'
-        id: nightly_tag
-        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update prerelease
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.nightly_tag.outputs.tag }}
-          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
-          prerelease: true
-          files: dynamapper-linux-x86_64.zip
-          generate_release_notes: false
-          body: |
-            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
-
-            Built on: ${{ github.event.repository.updated_at }}
-
-            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+          retention-days: 7
 
   build-linux-arm64:
     name: Build (Linux aarch64)
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -138,15 +86,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            pkg-config \
-            clang \
-            mold \
-            gcc-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            pkg-config clang mold gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -165,9 +106,8 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
+          CC: "aarch64-linux-gnu-gcc"
+          CXX: "aarch64-linux-gnu-g++"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
@@ -179,75 +119,36 @@ jobs:
           cp target/aarch64-unknown-linux-gnu/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
-          # Zip the package
           sudo apt-get install -y zip
           zip -r dynamapper-linux-arm64.zip release_package
-          echo "Archive size: $(du -sh dynamapper-linux-arm64.zip | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-linux-arm64
           path: dynamapper-linux-arm64.zip
-          retention-days: 30
-
-      - name: Create versioned GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dynamapper-linux-arm64.zip
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-
-      - name: Compute nightly tag name
-        if: github.event_name == 'workflow_dispatch'
-        id: nightly_tag
-        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update prerelease
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.nightly_tag.outputs.tag }}
-          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
-          prerelease: true
-          files: dynamapper-linux-arm64.zip
-          generate_release_notes: false
-          body: |
-            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
-
-            Built on: ${{ github.event.repository.updated_at }}
-
-            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+          retention-days: 7
 
   build-linux-musl-x86_64:
     name: Build (Linux x86_64 musl - static)
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+    container:
+      image: alpine:latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            pkg-config \
-            musl-tools \
-            musl-dev
+          apk add --no-cache build-base clang git curl bash pkgconfig \
+            alsa-lib-dev eudev-dev wayland-dev libxkbcommon-dev zip
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-unknown-linux-musl
-          components: rust-src
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+          source $HOME/.cargo/env
+          rustup target add x86_64-unknown-linux-musl
+          rustup component add rust-src
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -260,10 +161,9 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
+          SCCACHE_GHA_ENABLED: "false"
         run: |
+          source $HOME/.cargo/env
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
@@ -274,80 +174,36 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
-          # Zip the package
-          sudo apt-get install -y zip
           zip -r dynamapper-linux-x86_64-musl.zip release_package
-          echo "Archive size: $(du -sh dynamapper-linux-x86_64-musl.zip | cut -f1)"
-          # Verify static linking
-          echo "Binary type: $(file release_package/dynamapper)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-linux-x86_64-musl
           path: dynamapper-linux-x86_64-musl.zip
-          retention-days: 30
-
-      - name: Create versioned GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dynamapper-linux-x86_64-musl.zip
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-
-      - name: Compute nightly tag name
-        if: github.event_name == 'workflow_dispatch'
-        id: nightly_tag
-        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update prerelease
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.nightly_tag.outputs.tag }}
-          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
-          prerelease: true
-          files: dynamapper-linux-x86_64-musl.zip
-          generate_release_notes: false
-          body: |
-            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
-
-            Built on: ${{ github.event.repository.updated_at }}
-
-            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+          retention-days: 7
 
   build-linux-musl-arm64:
     name: Build (Linux aarch64 musl - static)
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+    container:
+      image: alpine:latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            pkg-config \
-            musl-tools \
-            musl-dev \
-            gcc-aarch64-linux-gnu \
-            libc6-dev-arm64-cross \
-            binutils-aarch64-linux-gnu
+          apk add --no-cache build-base clang git curl bash pkgconfig \
+            alsa-lib-dev eudev-dev wayland-dev libxkbcommon-dev zip \
+            gcc-aarch64-none-elf binutils-aarch64-none-elf
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: aarch64-unknown-linux-musl
-          components: rust-src
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+          source $HOME/.cargo/env
+          rustup target add aarch64-unknown-linux-musl
+          rustup component add rust-src
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -360,10 +216,9 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
+          SCCACHE_GHA_ENABLED: "false"
         run: |
+          source $HOME/.cargo/env
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
@@ -374,56 +229,18 @@ jobs:
           cp target/aarch64-unknown-linux-musl/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
-          # Zip the package
-          sudo apt-get install -y zip
           zip -r dynamapper-linux-arm64-musl.zip release_package
-          echo "Archive size: $(du -sh dynamapper-linux-arm64-musl.zip | cut -f1)"
-          # Verify static linking
-          echo "Binary type: $(file release_package/dynamapper)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-linux-arm64-musl
           path: dynamapper-linux-arm64-musl.zip
-          retention-days: 30
-
-      - name: Create versioned GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dynamapper-linux-arm64-musl.zip
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-
-      - name: Compute nightly tag name
-        if: github.event_name == 'workflow_dispatch'
-        id: nightly_tag
-        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update prerelease
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.nightly_tag.outputs.tag }}
-          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
-          prerelease: true
-          files: dynamapper-linux-arm64-musl.zip
-          generate_release_notes: false
-          body: |
-            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
-
-            Built on: ${{ github.event.repository.updated_at }}
-
-            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+          retention-days: 7
 
   build-windows:
     name: Build (Windows x86_64)
     runs-on: windows-latest
-
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -443,10 +260,6 @@ jobs:
           key: "windows-x86_64-nightly-sccache"
 
       - name: Build release binary
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
@@ -457,52 +270,17 @@ jobs:
           Copy-Item -Path "assets" -Destination "release_package/" -Recurse
           if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
           Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64.zip"
-          Write-Host "Archive size: $(Get-Item dynamapper-windows-x86_64.zip | ForEach-Object {'{0:N2} MB' -f ($_.Length / 1MB)})"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynamapper-windows-x86_64
           path: dynamapper-windows-x86_64.zip
-          retention-days: 30
-
-      - name: Upload to release (tagged commits)
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dynamapper-windows-x86_64.zip
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-
-      # On manual dispatch: create/overwrite the "nightly" (or custom) prerelease
-      - name: Compute nightly tag name
-        if: github.event_name == 'workflow_dispatch'
-        id: nightly_tag
-        run: echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update prerelease
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.nightly_tag.outputs.tag }}
-          name: "Nightly (${{ steps.nightly_tag.outputs.tag }}) – ${{ github.sha }}"
-          prerelease: true
-          files: dynamapper-windows-x86_64.zip
-          generate_release_notes: false
-          body: |
-            🌙 **Auto-generated prerelease** from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
-
-            Built on: ${{ github.event.repository.updated_at }}
-
-            > ⚠️ UO game data files are **not** included. You must supply your own and configure the path in `settings.toml`.
+          retention-days: 7
 
   build-macos:
     name: Build (macOS x86_64 + ARM64)
     runs-on: macos-latest
-
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -523,61 +301,65 @@ jobs:
           key: "macos-nightly-sccache"
 
       - name: Build release binary (x86_64)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
 
       - name: Build release binary (ARM64)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          SCCACHE_NO_DAEMON: "1"
-          CARGO_INCREMENTAL: 0
         run: |
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
 
-      - name: Package binary and assets (x86_64)
+      - name: Package binary and assets
         run: |
-          mkdir -p release_package_x86_64
+          mkdir -p release_package_x86_64 release_package_arm64
           cp target/x86_64-apple-darwin/release/dynamapper release_package_x86_64/
           cp -r assets release_package_x86_64/
-          cp README.md release_package_x86_64/ 2>/dev/null || true
           zip -r dynamapper-macos-x86_64.zip release_package_x86_64
-          echo "Archive size: $(du -sh dynamapper-macos-x86_64.zip | cut -f1)"
-
-      - name: Package binary and assets (ARM64)
-        run: |
-          mkdir -p release_package_arm64
           cp target/aarch64-apple-darwin/release/dynamapper release_package_arm64/
           cp -r assets release_package_arm64/
-          cp README.md release_package_arm64/ 2>/dev/null || true
           zip -r dynamapper-macos-arm64.zip release_package_arm64
-          echo "Archive size: $(du -sh dynamapper-macos-arm64.zip | cut -f1)"
 
-      - name: Upload artifacts (x86_64)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dynamapper-macos-x86_64
-          path: dynamapper-macos-x86_64.zip
-          retention-days: 30
+          name: dynamapper-macos
+          path: dynamapper-macos-*.zip
+          retention-days: 7
 
-      - name: Upload artifacts (ARM64)
-        uses: actions/upload-artifact@v4
+  publish:
+    name: Publish Release
+    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: dynamapper-macos-arm64
-          path: dynamapper-macos-arm64.zip
-          retention-days: 30
+          path: artifacts
+          merge-multiple: true
 
-      - name: Upload to release (tagged commits on main/prereleases only)
-        if: github.ref_type == 'tag'
+      - name: Compute tag name
+        id: tag_info
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.prerelease_tag }}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dynamapper-macos-x86_64.zip
-            dynamapper-macos-arm64.zip
-          generate_release_notes: false
-          fail_on_unmatched_files: true
+          tag_name: ${{ steps.tag_info.outputs.tag }}
+          name: ${{ steps.tag_info.outputs.is_prerelease == 'true' && format('Nightly ({0}) – {1}', steps.tag_info.outputs.tag, github.sha) || steps.tag_info.outputs.tag }}
+          prerelease: ${{ steps.tag_info.outputs.is_prerelease == 'true' }}
+          files: artifacts/*.zip
+          generate_release_notes: ${{ steps.tag_info.outputs.is_prerelease == 'false' }}
+          body: |
+            ${{ steps.tag_info.outputs.is_prerelease == 'true' && format('🌙 **Auto-generated prerelease** from commit `{0}` on branch `{1}`.  \n\nBuilt on: {2}  \n\n> ⚠️ UO game data files are **not** included. You must supply your own.', github.sha, github.ref_name, github.event.repository.updated_at) || '' }}

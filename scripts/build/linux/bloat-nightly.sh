@@ -10,7 +10,18 @@ if [ -z "$ARGS" ]; then ARGS="--crates"; fi
 
 echo "Running Linux Nightly Bloat Analysis..."
 
-RUSTFLAGS="-Zshare-generics=y -Zlocation-detail=none -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Clink-arg=-Wl,--gc-sections $RUSTFLAGS" \
+RUSTFLAGS="\
+-Clink-arg=-fuse-ld=mold \
+-Clink-arg=-Wl,--gc-sections \
+-Clink-arg=-Wl,--icf=safe \
+-Clink-arg=-Wl,--no-allow-shlib-undefined \
+-Cforce-unwind-tables=no \
+-Csymbol-mangling-version=v0 \
+-Zshare-generics=y \
+-Zlocation-detail=none \
+
+
+$RUSTFLAGS" \
 cargo +nightly bloat --release --no-default-features \
     --config 'profile.release.strip=false' \
     -Z build-std=std,panic_abort \

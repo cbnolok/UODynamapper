@@ -416,12 +416,18 @@ fn sys_apply_texture_array_expansion(
         }
     }
 
-    if let Some(mat) = materials.get_mut(&shared_mat.0) {
-        mat.extension.texarray_small = handles_r.small.clone();
-        mat.extension.texarray_big = handles_r.big.clone();
-    }
-
+    // CRITICAL: Only call materials.get_mut() when a resize actually happened.
+    // Calling get_mut() every frame triggers Bevy's asset change detection,
+    // which forces re-extraction of the entire material bind group (3 texture
+    // arrays + 5 uniform buffers) for ALL chunk entities every frame. This was
+    // the root cause of 95% GPU usage at idle — Bevy re-uploaded all texture
+    // array bind groups every frame instead of reusing the cached GPU state.
     if resized_small.is_some() || resized_big.is_some() {
+        if let Some(mat) = materials.get_mut(&shared_mat.0) {
+            mat.extension.texarray_small = handles_r.small.clone();
+            mat.extension.texarray_big = handles_r.big.clone();
+        }
+
         console_logger::one(
             None,
             LogSev::Info,

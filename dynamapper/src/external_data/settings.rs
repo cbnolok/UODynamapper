@@ -113,6 +113,7 @@ pub struct SectPerformance {
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     pub reduce_unfocused_fps: bool,
+    pub vsync: bool, // Added vsync control
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0

@@ -20,7 +20,6 @@ rustflags = ["-Clink-arg=-fuse-ld=mold"]
 # -- Linux, Musl libc (statically linked)
 [target.x86_64-unknown-linux-musl]
 rustflags = [
-  "-Clink-arg=-fuse-ld=mold",
   "-C", "target-feature=+crt-static",
   "-C", "link-self-contained=yes",
 ]
@@ -28,7 +27,6 @@ rustflags = [
 
 [target.aarch64-unknown-linux-musl]
 rustflags = [
-  "-Clink-arg=-fuse-ld=mold",
   "-C", "target-feature=+crt-static",
   "-C", "link-self-contained=yes",
 ]

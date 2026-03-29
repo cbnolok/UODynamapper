@@ -37,9 +37,4 @@ function Invoke-Rustc {
     }
 }
 
-if ($isMyCrate) {
-    Invoke-Rustc -ExtraArgs $remainingArgs
-} else {
-    # Prune dependencies with no-fmt-debug.
-    Invoke-Rustc -ExtraArgs ($remainingArgs + @("-Zfmt-debug=none"))
-}
+Invoke-Rustc -ExtraArgs $remainingArgs

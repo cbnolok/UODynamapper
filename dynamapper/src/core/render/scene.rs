@@ -35,8 +35,6 @@ pub struct ScenePlugin {
 }
 impl_tracked_plugin!(ScenePlugin);
 
-use bevy::time::common_conditions::on_real_timer;
-use std::time::Duration;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
@@ -425,6 +423,7 @@ fn sys_update_worldmap_chunks_to_render(
                 gx,
                 gy,
                 scale: active_scale,
+                last_blocks_loaded_version: None,
             },
             Transform::from_xyz(
                 chunk_origin_tile_units_x as f32,

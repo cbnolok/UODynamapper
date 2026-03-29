@@ -14,9 +14,14 @@ use crate::{
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
-    pbr::wireframe::{WireframeConfig, WireframePlugin}, prelude::*, render::{
-        RenderApp, RenderStartup, settings::{RenderCreation, WgpuFeatures, WgpuSettings}
-    }, window::WindowResolution, winit::{UpdateMode, WinitSettings}
+    pbr::wireframe::{WireframeConfig, WireframePlugin},
+    prelude::*,
+    render::{
+        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
+        RenderApp, RenderStartup,
+    },
+    window::{PresentMode, WindowResolution},
+    winit::{UpdateMode, WinitSettings},
 };
 use std::{process::ExitCode, time::Duration};
 use system_sets::*;
@@ -108,8 +113,7 @@ fn bevy_logging_custom_layer(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
 fn custom_bevy_log_config() -> bevy::log::LogPlugin {
     bevy::log::LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
-        filter: "calloop=error,bevy_framepace=warn"
-            .into(),
+        filter: "calloop=error,bevy_framepace=warn".into(),
         // Return a no-op fmt layer that writes to /dev/null.
         // Returning None would make Bevy fall back to its default stderr formatter,
         // causing double logging alongside our InterceptLogLayer.
@@ -176,12 +180,18 @@ fn custom_threadpool_settings() -> TaskPoolPlugin {
             }
         }
         */
-        TaskPoolPlugin::default()
+    TaskPoolPlugin::default()
 }
 
-fn custom_window_plugin_settings(size: (f32, f32)) -> WindowPlugin {
+fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin {
+    let present_mode = if vsync {
+        PresentMode::AutoVsync
+    } else {
+        PresentMode::Mailbox
+    };
     WindowPlugin {
         primary_window: Some(Window {
+            present_mode,
             title: "UODynamapper".to_string(),
             resizable: true,
             // Force 1:1 aspect for virtual rendering (game world)
@@ -314,6 +324,8 @@ pub fn run_bevy_app() -> ExitCode {
     );
     let wireframe_enabled: bool = settings_data.app.debug.map_render_wireframe;
 
+    let vsync_enabled = settings_data.core.graphics.vsync;
+
     let mut app = App::new();
     app.insert_resource(custom_winit_settings(
         settings_data.core.graphics.reduce_unfocused_fps,
@@ -323,7 +335,7 @@ pub fn run_bevy_app() -> ExitCode {
             .build()
             //.disable::<LogPlugin>() // This removes every Bevy logs, instead of just disabling default to avoid double-logging or formatting issues
             .set(custom_bevy_log_config())
-            .set(custom_window_plugin_settings(window_size))
+            .set(custom_window_plugin_settings(window_size, vsync_enabled))
             .set(custom_threadpool_settings())
             .set(custom_render_plugin_settings())
             .set(ImagePlugin::default_linear())
@@ -340,8 +352,9 @@ pub fn run_bevy_app() -> ExitCode {
     //  schedule.set_executor_kind(ExecutorKind::SingleThreaded);
     //})
     .add_plugins(bevy_framepace::FramepacePlugin)
+    // TODO: we have to enable hot reloading of this setting, not just setting it at startup.
     .insert_resource(bevy_framepace::FramepaceSettings {
-        limiter: if settings_data.app.performance.frame_limit_enabled {
+        limiter: if settings_data.app.performance.frame_limit_enabled && !vsync_enabled {
             bevy_framepace::Limiter::from_framerate(settings_data.app.performance.target_fps as f64)
         } else {
             bevy_framepace::Limiter::Off
@@ -382,11 +395,9 @@ pub fn run_bevy_app() -> ExitCode {
     )
     .configure_sets(
         Update,
-        (
-            MovementSysSet::UpdateCamera
-                .after(MovementSysSet::MovementActions)
-                .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),
-        ),
+        (MovementSysSet::UpdateCamera
+            .after(MovementSysSet::MovementActions)
+            .before(crate::core::system_sets::SceneRenderLandSysSet::ListenSyncRequests),),
     )
     .add_systems(
         PreStartup,

@@ -42,8 +42,8 @@ pub struct RenderTextureArrayUploads(pub Vec<TextureArrayUpload>);
 const CACHE_EVICT_AFTER: Duration = Duration::from_secs(300);
 const FALLBACK_BLACK_LAYER: u32 = 0;
 /// Number of textures to process per task in `precache_textures_parallel`.
-/// Reduces task scheduling overhead vs. one task per texture.
-const PRECACHE_BATCH_SIZE: usize = 100;
+/// Larger batches reduce task scheduling overhead and channel sends.
+const PRECACHE_BATCH_SIZE: usize = 256;
 
 /// Runtime settings for the land texture cache, inserted at startup.
 /// Holds values read from `settings.toml` that affect how tiles are uploaded to the GPU.
@@ -215,15 +215,24 @@ impl LandTextureCache {
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
-        let mut to_load = Vec::new();
+        
+        let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::new();
+        let mut skipped_due_to_pressure = 0usize;
 
         for &id in texture_ids {
             if self.entry_by_id[id as usize].is_none() {
-                to_load.push(id);
+                let size = super::texture_array::get_texmap_size_only(id, &texmap_2d);
+                let Some(layer) = self.allocate_layer(size) else {
+                    skipped_due_to_pressure += 1;
+                    continue;
+                };
+
+                self.update_bookkeeping(id, size, layer, now);
+                to_upload.push((id, size, layer));
             }
         }
 
-        if to_load.is_empty() {
+        if to_upload.is_empty() {
             return;
         }
 
@@ -233,27 +242,10 @@ impl LandTextureCache {
             LogAbout::Performance,
             &format!(
                 "Pre-caching {} textures (Async BC7={})...",
-                to_load.len(),
+                to_upload.len(),
                 lossy_compression
             ),
         );
-
-        // Collect the set of (id, size, layer) tuples for textures that need loading.
-        // We do all allocations first (on the main thread, where we have `&mut self`),
-        // then spawn the async work for each chunk of PRECACHE_BATCH_SIZE textures.
-        let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::with_capacity(to_load.len());
-        let mut skipped_due_to_pressure = 0usize;
-
-        for id in to_load {
-            let size = super::texture_array::get_texmap_size_only(id, &texmap_2d);
-            let Some(layer) = self.allocate_layer(size) else {
-                skipped_due_to_pressure += 1;
-                continue;
-            };
-
-            self.update_bookkeeping(id, size, layer, now);
-            to_upload.push((id, size, layer));
-        }
 
         // Spawn one task per PRECACHE_BATCH_SIZE textures rather than one task per texture.
         // Reduces scheduling and allocation overhead by ~100x (100 spawns → 1).

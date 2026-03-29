@@ -13,9 +13,10 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # Stable toolchain release flags.
 RUSTFLAGS=" \
 -Clink-arg=-fuse-ld=mold \
--C link-arg=-Wl,--gc-sections \
--C link-arg=-Wl,--no-allow-shlib-undefined \
--C link-arg=-Wl,--icf=all -C link-arg=-Wl,--strip-all \
+-Clink-arg=-Wl,--gc-sections \
+-Clink-arg=-Wl,--no-allow-shlib-undefined \
+-Clink-arg=-Wl,--icf=all \
+-Clink-arg=-Wl,--strip-all \
 ${RUSTFLAGS:-}" \
 cargo build --release --locked --no-default-features \
     --bin dynamapper --package dynamapper \
