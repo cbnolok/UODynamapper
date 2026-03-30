@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::Window;
 
-const FONT_SIZE: f32 = 22.0;
+const FONT_SIZE: f32 = 18.0;
 
 use bevy::time::common_conditions::on_real_timer;
 use std::time::Duration;

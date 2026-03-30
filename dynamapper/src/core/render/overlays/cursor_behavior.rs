@@ -4,6 +4,7 @@ use crate::core::render::{
     dialogs::get_egui_context_ready,
     scene::{
         camera::{PlayerCamera, UiCameraResource},
+        world::WorldGeoData,
         RecomputeVisibleChunksEvent,
     },
 };
@@ -17,7 +18,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
 use uocf::geo::map::{MapCell, MapCellCoords};
 
-const FONT_SIZE: f32 = 22.0;
+const FONT_SIZE: f32 = 11.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorMode {
@@ -286,6 +287,7 @@ fn sys_teleport_on_click(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    world_geo_data: Res<WorldGeoData>,
 ) {
     if cursor.mode != CursorMode::Teleport {
         return;
@@ -332,7 +334,18 @@ fn sys_teleport_on_click(
             .current_pos
             .map(|p| p.m)
             .unwrap_or(settings.core.world.start_p.m);
-        let uo_pos = hit.to_uo_vec4(map);
+
+        let (max_x, max_y) = if let Some(meta) = world_geo_data.maps.get(&(map as u32)) {
+            (meta.width, meta.height)
+        } else {
+            (u16::MAX as u32, u16::MAX as u32)
+        };
+
+        let mut clamped_hit = hit;
+        clamped_hit.x = clamped_hit.x.clamp(0.0, (max_x.saturating_sub(1)) as f32);
+        clamped_hit.z = clamped_hit.z.clamp(0.0, (max_y.saturating_sub(1)) as f32);
+
+        let uo_pos = clamped_hit.to_uo_vec4(map);
         player.current_pos = Some(uo_pos);
         transform.translation = uo_pos.to_bevy_vec3_ignore_map();
         // Always force a full recompute so the new visible area loads immediately.

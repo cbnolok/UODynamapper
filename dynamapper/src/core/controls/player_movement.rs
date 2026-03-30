@@ -1,5 +1,6 @@
 use crate::core::render::scene::camera::{PlayerCamera, UiCameraResource};
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
 use crate::prelude::*;
@@ -99,9 +100,9 @@ fn sys_player_input(
     move_dir.vertical_dir = parse_vertical_movement(&keyboard_input);
 }
 
-fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2) -> UOVec4 {
-    let next_x = (i32::from(current_pos.x) + dir.x).clamp(0, u16::MAX as i32) as u16;
-    let next_y = (i32::from(current_pos.y) + dir.y).clamp(0, u16::MAX as i32) as u16;
+fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2, max_x: u32, max_y: u32) -> UOVec4 {
+    let next_x = (i32::from(current_pos.x) + dir.x).clamp(0, (max_x.saturating_sub(1)) as i32) as u16;
+    let next_y = (i32::from(current_pos.y) + dir.y).clamp(0, (max_y.saturating_sub(1)) as i32) as u16;
     UOVec4::new(next_x, next_y, current_pos.z, current_pos.m)
 }
 
@@ -214,6 +215,7 @@ fn sys_player_move(
     mut query: Query<(&mut Transform, &mut Player)>,
     settings: Res<Settings>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    world_geo_data: Res<WorldGeoData>,
 ) {
     let multiplier = settings.app.input.movement_speed_multiplier * move_dir.speed_multiplier;
     cooldown.0.tick(time.delta().mul_f32(multiplier));
@@ -233,7 +235,12 @@ fn sys_player_move(
                 }
 
                 // Sync the UO coordinate state
-                let next_pos = advance_horizontal_position(current_pos, dir);
+                let (max_x, max_y) = if let Some(meta) = world_geo_data.maps.get(&(current_pos.m as u32)) {
+                    (meta.width, meta.height)
+                } else {
+                    (u16::MAX as u32, u16::MAX as u32)
+                };
+                let next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
                 let old_map = player.current_pos.map(|p| p.m);
                 player.current_pos = Some(next_pos);
                 if old_map != Some(next_pos.m) {

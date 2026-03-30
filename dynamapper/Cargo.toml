@@ -14,7 +14,60 @@ too_many_arguments = "allow"
 uocf = { path = "../uocf" }
 bevy_framepace = { version = "0.21", default-features = false }
 bevy_egui = { version = "0.39" }
-wgpu = { version = "27.0" } #, default-features = false, features = ["vulkan", "metal"] }
+
+bytemuck = { version = "1", default-features = false, features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = [
+  "clock",
+  "std",
+] }
+color-eyre = { version = "0.6", features = ["track-caller"] }
+config = { version = "0.15", default-features = false }
+#getset = "0.1"
+#guillotiere = "0.6"
+#lru = "0.16"
+indexmap = "2.13.0"
+intel_tex_2 = "0.5.0"
+image = { version = "0.25", default-features = false, features = [
+  "bmp",
+  "png",
+  "dds",
+] }
+log = { version = "*", features = [
+  "max_level_debug",
+  "release_max_level_warn",
+] }
+mimalloc = { version = "*", features = ["v3"] }
+nohash-hasher = "0.2.0"
+#parking_lot = "0.12"
+#pad = "0.1"
+paris = { version = "1.5", default-features = false, features = [
+  "macros",
+  "no_logger",
+] } # log formatting
+parking_lot = "0.12"
+regex = { version = "1", default-features = false, features = [
+  "std",
+  "unicode",
+] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_derive = { version = "1.0.228", default-features = false }
+strum = { version = "0.28", default-features = false }
+strum_macros = { version = "0.28", default-features = false }
+
+#smallvec = "1"
+# BC7 texture compression for GPU VRAM reduction (GPU compute).
+#block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
+# System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
+# but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
+# fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+time = { version = "0.3", default-features = false }
+toml = { version = "1.0", default-features = false, features = [
+  "display",
+  "parse",
+  "serde",
+] }
+tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
   "std",
   "ansi",
@@ -23,57 +76,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
   "thread_local",
   "tracing-log",
 ] }
-bytemuck = { version = "1", default-features = false, features = ["derive"] }
-color-eyre = { version = "0.6", features = ["track-caller"] }
-config = { version = "0.15", default-features = false }
-#pad = "0.1"
-paris = { version = "1.5", default-features = false, features = [
-  "macros",
-  "no_logger",
-] } # log formatting
-regex = { version = "1", default-features = false, features = [
-  "std",
-  "unicode",
-] }
-strum = { version = "0.28", default-features = false }
-strum_macros = { version = "0.28", default-features = false }
-#guillotiere = "0.6"
-#lru = "0.16"
-image = { version = "0.25", default-features = false, features = [
-  "bmp",
-  "png",
-  "dds",
-] }
-time = { version = "0.3", default-features = false }
-toml = { version = "1.0", default-features = false, features = [
-  "display",
-  "parse",
-  "serde",
-] }
-#serde, miniserde, nanoserde
-serde = { version = "1", default-features = false, features = ["derive"] }
-serde_derive = { version = "1.0.228", default-features = false }
-#getset = "0.1"
-chrono = { version = "0.4", default-features = false, features = [
-  "clock",
-  "std",
-] }
-#parking_lot = "0.12"
-#smallvec = "1"
-# BC7 texture compression for GPU VRAM reduction (GPU compute).
-#block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
-# System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
-# but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
-# fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
-sysinfo = { version = "0.38", default-features = false, features = ["system"] }
-tracing = "0.1.44"
-mimalloc = { version = "*", features = ["v3"] }
-parking_lot = "0.12"
-intel_tex_2 = "0.5.0"
 
-nohash-hasher = "0.2.0"
-indexmap = "2.13.0"
+wgpu = { version = "27.0" }                             #, default-features = false, features = ["vulkan", "metal"] }
 wgpu-profiler = { version = "0.25.0", optional = true }
+
 
 [dependencies.bevy]
 version = "0.18.1"

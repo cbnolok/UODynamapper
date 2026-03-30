@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_QUERY_VIDEO_MEMORY_INFO,
 };
 
-const FONT_SIZE: f32 = 16.0;
+const FONT_SIZE: f32 = 11.0;
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.

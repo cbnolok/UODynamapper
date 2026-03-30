@@ -1,6 +1,6 @@
 use chrono::Timelike;
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use strum::VariantNames; // For the trait.
 use strum_macros::{Display, EnumString, VariantNames};
 //use std::io::Write; // for flush().
@@ -21,7 +21,8 @@ pub struct LogFilter {
 static LOG_SETTINGS: OnceLock<RwLock<LogSettings>> = OnceLock::new();
 
 pub fn set_log_settings(settings: LogSettings) {
-    let _ = LOG_SETTINGS.get_or_init(|| RwLock::new(LogSettings::default()))
+    let _ = LOG_SETTINGS
+        .get_or_init(|| RwLock::new(LogSettings::default()))
         .write()
         .map(|mut guard| *guard = settings);
 }
@@ -101,7 +102,10 @@ fn enum_about_variant_name_validate(val: &str) -> bool {
 
 #[allow(unused)]
 fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
-    let settings_guard = LOG_SETTINGS.get_or_init(|| RwLock::new(LogSettings::default())).read().unwrap();
+    let settings_guard = LOG_SETTINGS
+        .get_or_init(|| RwLock::new(LogSettings::default()))
+        .read()
+        .unwrap();
 
     // 1. Check min severity
     if let Some(min_sev) = &settings_guard.min_severity {
@@ -185,15 +189,14 @@ pub fn one(
 
     // Severity symbol (static &str)
     let sev_symbol: &'static str = match severity {
-        LogSev::Debug => "<bright-magenta><bold><info></></>",
-        LogSev::DebugVerbose => "<bright-magenta><bold><info></></>",
-        LogSev::Diagnostics => "<green><bold><info></></>",
-        LogSev::Error => "<red><bold><cross></></>",
-        LogSev::Info => "<cyan><bold><info></></>",
-        LogSev::Warn => "<bright-yellow><bold><warn></></>",
+        LogSev::Debug => "<bright-magenta><bold><info></></> ",
+        LogSev::DebugVerbose => "<bright-magenta><bold><info></></> ",
+        LogSev::Diagnostics => "<green><bold><info></></> ",
+        LogSev::Error => "<red><bold><cross></></> ",
+        LogSev::Info => "<cyan><bold><info></></> ",
+        LogSev::Warn => "<bright-yellow><bold><warn></></> ",
     };
     full_msg.push_str(sev_symbol);
-    full_msg.push(' ');
 
     // Style message (only clone/format if needed)
     match severity {

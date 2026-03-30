@@ -1,5 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
 use crate::{
@@ -56,6 +57,7 @@ pub fn sys_render_teleport_dialog(
     mut state: ResMut<TeleportDialogState>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    world_geo_data: Res<WorldGeoData>,
 ) {
     if !state.open {
         return;
@@ -87,7 +89,6 @@ pub fn sys_render_teleport_dialog(
                 ui.label("M:");
                 ui.text_edit_singleline(&mut state.m);
             });
-
             if ui.button("Teleport").clicked() {
                 if let (Ok(x), Ok(y), Ok(z), Ok(m)) = (
                     state.x.parse::<u16>(),
@@ -96,6 +97,20 @@ pub fn sys_render_teleport_dialog(
                     state.m.parse::<u8>(),
                 ) {
                     if let Ok((mut player, mut transform)) = player_q.single_mut() {
+                        // Validate target coordinates
+                        if let Some(meta) = world_geo_data.maps.get(&(m as u32)) {
+                            if x as u32 >= meta.width || y as u32 >= meta.height {
+                                crate::ingame_sysmessage_logger::error(format!(
+                                    "Target coordinates [{}, {}] out of bounds for map {} ({}x{})",
+                                    x, y, m, meta.width, meta.height
+                                ));
+                                return;
+                            }
+                        } else {
+                            crate::ingame_sysmessage_logger::error(format!("Invalid map ID: {}", m));
+                            return;
+                        }
+
                         let uo_pos = UOVec4::new(x, y, z, m);
                         player.current_pos = Some(uo_pos);
                         let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();

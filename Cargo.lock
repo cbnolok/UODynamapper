@@ -2210,6 +2210,7 @@ dependencies = [
  "image",
  "indexmap",
  "intel_tex_2",
+ "log",
  "mimalloc",
  "nohash-hasher",
  "paris",

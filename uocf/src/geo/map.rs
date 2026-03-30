@@ -330,7 +330,7 @@ impl MapPlane {
         if word_idx >= self.cached_blocks_bitmask.len() {
             return false;
         }
-        let bit_idx = (idx & 63) as usize;  // Equivalent to % 64
+        let bit_idx = (idx & 63) as usize; // Equivalent to % 64
         (self.cached_blocks_bitmask[word_idx] & (1 << bit_idx)) != 0
     }
 

@@ -293,12 +293,9 @@ impl TexMap2D {
             .file_reader
             .seek(SeekFrom::Start(element.file_offset))
             .ok()?;
-        
+
         let mut raw_data = vec![0u8; pixel_qty_bytes];
-        shared
-            .file_reader
-            .read_exact(&mut raw_data)
-            .ok()?;
+        shared.file_reader.read_exact(&mut raw_data).ok()?;
 
         let arc_raw: std::sync::Arc<[u8]> = raw_data.into();
         shared.cache.insert(
@@ -309,7 +306,11 @@ impl TexMap2D {
         Some(())
     }
 
-    pub fn get_pixel_data(&self, element_index: usize, now: std::time::Instant) -> Option<std::sync::Arc<[u8]>> {
+    pub fn get_pixel_data(
+        &self,
+        element_index: usize,
+        now: std::time::Instant,
+    ) -> Option<std::sync::Arc<[u8]>> {
         let element: &Texture2DElement = self.element(element_index)?;
 
         let raw_bgra5551: std::sync::Arc<[u8]> = {
@@ -327,18 +328,14 @@ impl TexMap2D {
                     .file_reader
                     .seek(SeekFrom::Start(element.file_offset))
                     .ok()?;
-                
+
                 let mut raw_data = vec![0u8; pixel_qty_bytes];
-                shared
-                    .file_reader
-                    .read_exact(&mut raw_data)
-                    .ok()?;
+                shared.file_reader.read_exact(&mut raw_data).ok()?;
 
                 let arc_raw: std::sync::Arc<[u8]> = raw_data.into();
-                shared.cache.insert(
-                    element_index,
-                    (std::sync::Arc::clone(&arc_raw), now),
-                );
+                shared
+                    .cache
+                    .insert(element_index, (std::sync::Arc::clone(&arc_raw), now));
                 arc_raw
             }
         };
@@ -427,11 +424,11 @@ impl TexMap2D {
         let now = std::time::Instant::now();
         let mut shared = self.shared_data.lock().unwrap();
         let initial_len = shared.cache.len();
- 
+
         shared
             .cache
             .retain(|_, (_, time)| now.duration_since(*time) <= timeout);
- 
+
         initial_len - shared.cache.len()
     }
 }
