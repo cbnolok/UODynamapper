@@ -4,7 +4,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 //use bevy::time::common_conditions::on_timer;
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use uocf::geo::land_texture_2d::LandTextureSize;
 
 #[cfg(target_os = "windows")]
@@ -216,13 +216,13 @@ impl Plugin for PerformanceOverlayPlugin {
                 Update,
                 sys_refresh_process_metrics
                     .run_if(in_state(AppState::InGame))
-                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 8.0))),
+                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
             )
             .add_systems(
                 Update,
                 update_performance_text
                     .run_if(in_state(AppState::InGame))
-                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 8.0))),
+                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
             );
     }
 }
@@ -284,9 +284,16 @@ pub fn sys_refresh_process_metrics(
     tile_atlas: Res<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
 ) {
     let pid = metrics.pid;
-    metrics
-        .sys
-        .refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    // 1. Refresh global CPU usage. This is required on Windows to update the system time baseline
+    // used to calculate process CPU usage as a delta.
+    metrics.sys.refresh_cpu_usage();
+
+    // 2. Refresh specific process using recommended specifics for accuracy and performance.
+    metrics.sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true, // remove_dead_processes
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
 
     if let Some(process) = metrics.sys.process(pid) {
         let cpu = process.cpu_usage();
