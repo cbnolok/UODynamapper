@@ -10,7 +10,7 @@ impl_tracked_plugin!(WindowControlsPlugin);
 impl Plugin for WindowControlsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.add_systems(FixedUpdate, sys_handle_window_controls);
+        app.add_systems(Update, sys_handle_window_controls);
     }
 }
 

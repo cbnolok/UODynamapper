@@ -59,7 +59,7 @@ impl Plugin for ShaderPresetsPlugin {
         app.insert_resource(load_from_file())
             .init_resource::<ShaderPresetsFileWatcher>()
             .add_systems(Startup, setup_uniform_state)
-            .add_systems(FixedUpdate, sys_hotreload_shader_presets);
+            .add_systems(Update, sys_hotreload_shader_presets);
     }
 }
 

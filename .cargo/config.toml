@@ -20,15 +20,19 @@ rustflags = ["-Clink-arg=-fuse-ld=mold"]
 # -- Linux, Musl libc (statically linked)
 [target.x86_64-unknown-linux-musl]
 rustflags = [
-  "-C", "target-feature=+crt-static",
-  "-C", "link-self-contained=yes",
+  "-C",
+  "target-feature=+crt-static",
+  "-C",
+  "link-self-contained=yes",
 ]
 #linker = "musl-gcc"
 
 [target.aarch64-unknown-linux-musl]
 rustflags = [
-  "-C", "target-feature=+crt-static",
-  "-C", "link-self-contained=yes",
+  "-C",
+  "target-feature=+crt-static",
+  "-C",
+  "link-self-contained=yes",
 ]
 #linker = "aarch64-linux-musl-gcc"
 
@@ -36,6 +40,9 @@ rustflags = [
 # On Windows MSVC, statically link the C runtime so that the resulting EXE does
 # not depend on the vcruntime DLL.
 [target.x86_64-pc-windows-msvc]
+#linker = "rust-lld.exe"
 rustflags = ["-C", "target-feature=+crt-static"]
+
 [target.i686-pc-windows-msvc]
+#linker = "rust-lld.exe"
 rustflags = ["-C", "target-feature=+crt-static"]

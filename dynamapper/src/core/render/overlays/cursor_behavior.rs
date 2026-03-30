@@ -55,16 +55,12 @@ impl Plugin for CursorBehaviorOverlayPlugin {
         app.init_resource::<CursorBehavior>()
             .add_systems(OnEnter(AppState::InGame), setup_overlay_cursor_behavior)
             .add_systems(
-                FixedUpdate,
-                update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
-            )
-            .add_systems(
-                FixedUpdate,
-                sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)),
-            )
-            .add_systems(
-                FixedUpdate,
-                sys_teleport_on_click.run_if(in_state(AppState::InGame)),
+                Update,
+                (
+                    update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
+                    sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)),
+                    sys_teleport_on_click.run_if(in_state(AppState::InGame)),
+                ),
             );
     }
 }

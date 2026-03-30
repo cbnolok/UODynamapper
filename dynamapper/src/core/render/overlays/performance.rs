@@ -4,7 +4,6 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 //use bevy::time::common_conditions::on_timer;
-use std::fs;
 use sysinfo::{ProcessesToUpdate, System};
 use uocf::geo::land_texture_2d::LandTextureSize;
 
@@ -148,6 +147,7 @@ fn query_process_vram_mib_windows_dxgi(_pid: sysinfo::Pid) -> Option<f32> {
             };
             adapter_index += 1;
 
+            use windows::core::Interface; // bring trait in scope in order to use cast().
             let adapter3: IDXGIAdapter3 = match adapter.cast() {
                 Ok(a3) => a3,
                 Err(_) => continue,

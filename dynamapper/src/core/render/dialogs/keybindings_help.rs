@@ -18,7 +18,7 @@ impl_tracked_plugin!(KeybindingsHelpPlugin);
 impl Plugin for KeybindingsHelpPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeybindingsHelpState>()
-            .add_systems(FixedUpdate, sys_toggle_keybindings_help)
+            .add_systems(Update, sys_toggle_keybindings_help)
             .add_systems(EguiPrimaryContextPass, sys_render_keybindings_help);
     }
 }

@@ -36,7 +36,7 @@ impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
         app.init_resource::<TerrainShaderUiState>()
-            .add_systems(FixedUpdate, sys_toggle_terrain_ui)
+            .add_systems(Update, sys_toggle_terrain_ui)
             .add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);

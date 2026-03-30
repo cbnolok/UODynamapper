@@ -2,5 +2,5 @@
 # This file will be populated with additional UO file paths and settings
 # as development progresses (e.g. art files, animation data, sound packs).
 
-# Path to your UO client folder containing .mul or .uop files
-folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
+folder = "E:\\opt\\Ultima Online\\_clients\\ML"# Path to your UO client folder containing .mul or .uop files
+#folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"

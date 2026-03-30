@@ -35,7 +35,7 @@ impl Plugin for DialogsPlugin {
                 registered_by: "DialogsPlugin",
             },
         ))
-        .add_systems(FixedUpdate, sys_sync_egui_context_scale_factor);
+        .add_systems(Update, sys_sync_egui_context_scale_factor);
     }
 }
 

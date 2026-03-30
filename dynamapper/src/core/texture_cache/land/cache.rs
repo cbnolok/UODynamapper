@@ -187,7 +187,13 @@ impl LandTextureCache {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
             let (tile_bytes, is_compressed) = if lossy_compression {
-                (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, texture_size)), true)
+                (
+                    std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
+                        &raw_rgba8,
+                        texture_size,
+                    )),
+                    true,
+                )
             } else {
                 (raw_rgba8, false)
             };
@@ -215,7 +221,7 @@ impl LandTextureCache {
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
-        
+
         let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::new();
         let mut skipped_due_to_pressure = 0usize;
 
@@ -259,9 +265,9 @@ impl LandTextureCache {
                         super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
                     let (tile_bytes, is_compressed) = if lossy_compression {
                         (
-                            std::sync::Arc::from(
-                                super::texture_array::compress_rgba8_to_bc7(&rgba8, size),
-                            ),
+                            std::sync::Arc::from(super::texture_array::compress_rgba8_to_bc7(
+                                &rgba8, size,
+                            )),
                             true,
                         )
                     } else {
@@ -317,7 +323,13 @@ impl LandTextureCache {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
             let (tile_bytes, is_compressed) = if lossy_compression {
-                (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, texture_size)), true)
+                (
+                    std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
+                        &raw_rgba8,
+                        texture_size,
+                    )),
+                    true,
+                )
             } else {
                 (raw_rgba8, false)
             };
@@ -390,7 +402,7 @@ impl LandTextureCache {
                     LogSev::Info,
                     LogAbout::Performance,
                     &format!(
-                        "Texture cache pressure ({:?}): requested array expansion {} -> {} layers (visible hint: {}, desired={}).",
+                        "Texture cache pressure ({:?}): expanding texarray {} -> {} layers (hinted: {}, desired={}).",
                         texture_size,
                         array.active_layers,
                         target_layers,
@@ -524,7 +536,13 @@ impl LandTextureCache {
                 let (_, raw_rgba8) =
                     texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
                 let (tile_bytes, is_compressed) = if lossy_compression {
-                    (std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(&raw_rgba8, actual_size)), true)
+                    (
+                        std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
+                            &raw_rgba8,
+                            actual_size,
+                        )),
+                        true,
+                    )
                 } else {
                     (raw_rgba8, false)
                 };
