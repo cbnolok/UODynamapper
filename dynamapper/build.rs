@@ -8,8 +8,8 @@ fn main() {
 
     if is_nightly {
         println!("cargo:rustc-flag=-Zlocation-detail=full");
+        //println!("cargo:rustc-flag=-Zfmt-debug=none"); // TODO: enable it instead for our crates.
     }
-
 
     /*  CRATE: intel_tex_2  */
     // Preface: we aren't using this crate anymore, but we might use in the future crates with similar issues.
@@ -42,7 +42,7 @@ fn main() {
     //   instead of __gxx_personality_v0). No explicit linkage needed.
     // - macOS (not a target here): uses libc++ instead of libstdc++; would need
     //   `cargo:rustc-link-lib=c++` instead.
-    let target_os  = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
     match (target_os.as_str(), target_env.as_str()) {

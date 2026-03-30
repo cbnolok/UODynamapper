@@ -306,15 +306,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Sample coords in world meters; domain-warp to break tiling
     let p0 = (in.world_position.xz * noise_scale_world) + wind * (t * 6.0);
-
-    // Gentle domain warp — smaller strength so we don't over-warp tiny structures
-    let warp_strength = 0.4 * noise_strength + 0.08;
-    let pWarp = domain_warp(p0, warp_strength);
-
-    // Multi-scale billow FBM to get both big blobs and small fluff
-    let n1 = fbm_billow(pWarp * 1.0);
-    let n2 = fbm_billow(pWarp * 2.3) * 0.55;
-    let n_billow = clamp(n1 * 0.7 + n2 * 0.3, 0.0, 1.0);
+    
+    var n_billow = 0.0;
+    if (noise_strength > 0.001) {
+      // Gentle domain warp — skip if noise_strength is very low to save massive ALU
+      var p_final = p0;
+      if (noise_strength > 0.2) {
+        let warp_strength = 0.4 * noise_strength + 0.08;
+        p_final = domain_warp(p0, warp_strength);
+      }
+  
+      // Multi-scale billow FBM: skip second octave if zoomed out or low strength
+      let n1 = fbm_billow(p_final * 1.0);
+      var n2 = 0.0;
+      if (zoom < 10.0 && noise_strength > 0.4) {
+        n2 = fbm_billow(p_final * 2.3) * 0.55;
+        n_billow = clamp(n1 * 0.7 + n2 * 0.3, 0.0, 1.0);
+      } else {
+        n_billow = n1;
+      }
+    }
 
     // Coverage/contrast control:
     //  Lower threshold -> more coverage.

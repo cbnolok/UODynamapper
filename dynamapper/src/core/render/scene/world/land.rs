@@ -2,6 +2,7 @@ pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
 pub mod setup_base_mesh;
+pub mod profiling;
 pub mod tile_atlas;
 
 use crate::core::system_sets::*;

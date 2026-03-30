@@ -257,9 +257,16 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
     //      useful on some platforms like Android or with Metal API?
     // Also, since Vulkan appears to support way more features than OpenGL,
     //  how can we tell Bevy or Wgpu to prioritize Vulkan, if supported, over OpenGL?
+    let mut features = WgpuFeatures::POLYGON_MODE_LINE;
+    #[cfg(feature = "gpu-profiling")]
+    {
+        features |= WgpuFeatures::TIMESTAMP_QUERY;
+        features |= WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES;
+    }
+
     bevy::render::RenderPlugin {
         render_creation: RenderCreation::Automatic(WgpuSettings {
-            features: WgpuFeatures::POLYGON_MODE_LINE, // Required for wireframe
+            features,
             memory_hints: wgpu::MemoryHints::MemoryUsage,
             ..Default::default()
         }),

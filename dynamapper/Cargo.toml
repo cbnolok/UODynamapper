@@ -44,10 +44,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tracing = "0.1.44"
 mimalloc = { version = "*", features = ["v3"] }
-multiversion = "0.8.0"
+parking_lot = "0.12"
 intel_tex_2 = "0.5.0"
+
 nohash-hasher = "0.2.0"
 indexmap = "2.13.0"
+wgpu-profiler = { version = "0.25.0", optional = true }
 
 [dependencies.bevy]
 version = "0.18.1"
@@ -236,6 +238,7 @@ bevy_development_opts = [
 ]
 default = ["bevy_development_opts"]
 # --
+gpu-profiling = ["dep:wgpu-profiler"]
 profiling = ["uocf/profiling"]
 trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
 
