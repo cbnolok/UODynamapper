@@ -1,3 +1,4 @@
+use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleKeybindingsHelp};
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
     prelude::*,
@@ -18,29 +19,24 @@ impl_tracked_plugin!(KeybindingsHelpPlugin);
 impl Plugin for KeybindingsHelpPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeybindingsHelpState>()
-            .add_systems(Update, sys_toggle_keybindings_help)
+            .add_observer(sys_help_toggle)
+            .add_observer(sys_help_close)
             .add_systems(EguiPrimaryContextPass, sys_render_keybindings_help);
     }
 }
 
-fn sys_toggle_keybindings_help(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    settings: Res<Settings>,
+fn sys_help_toggle(
+    _trigger: On<ActionToggleKeybindingsHelp>,
     mut state: ResMut<KeybindingsHelpState>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_keyboard_input() {
-            return;
-        }
-    }
-    if keyboard.just_pressed(settings.keybindings.keybindings_help) {
-        state.open = !state.open;
-    }
-    if keyboard.just_pressed(KeyCode::Escape) && state.open {
-        state.open = false;
-    }
+    state.open = !state.open;
+}
+
+fn sys_help_close(
+    _trigger: On<ActionCloseActiveDialog>,
+    mut state: ResMut<KeybindingsHelpState>,
+) {
+    state.open = false;
 }
 
 pub fn sys_render_keybindings_help(

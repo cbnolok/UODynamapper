@@ -1,3 +1,4 @@
+use crate::core::controls::input_actions::ActionToggleCursorTeleportMode;
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
     dialogs::get_egui_context_ready,
@@ -53,12 +54,12 @@ impl Plugin for CursorBehaviorOverlayPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.init_resource::<CursorBehavior>()
+            .add_observer(sys_toggle_cursor_mode)
             .add_systems(OnEnter(AppState::InGame), setup_overlay_cursor_behavior)
             .add_systems(
                 Update,
                 (
                     update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
-                    sys_toggle_cursor_mode.run_if(in_state(AppState::InGame)),
                     sys_teleport_on_click.run_if(in_state(AppState::InGame)),
                 ),
             );
@@ -242,7 +243,7 @@ pub fn update_cursor_behavior_text(
     }
 }
 
-fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16) -> Option<i8> {
+pub fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16) -> Option<i8> {
     let plane = map_planes_r
         .0
         .get(map_id as usize)
@@ -259,32 +260,20 @@ fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16)
 }
 
 fn sys_toggle_cursor_mode(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    _trigger: On<ActionToggleCursorTeleportMode>,
     mut cursor: ResMut<CursorBehavior>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_keyboard_input() {
-            return;
+    cursor.mode = match cursor.mode {
+        CursorMode::Select => CursorMode::Teleport,
+        CursorMode::Teleport => CursorMode::Select,
+    };
+    ingame_sysmessage_logger::normal(format!(
+        "Cursor mode: {}",
+        match cursor.mode {
+            CursorMode::Select => "Select",
+            CursorMode::Teleport => "Teleport",
         }
-    }
-
-    if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight) {
-        if keyboard.just_pressed(KeyCode::KeyT) {
-            cursor.mode = match cursor.mode {
-                CursorMode::Select => CursorMode::Teleport,
-                CursorMode::Teleport => CursorMode::Select,
-            };
-            ingame_sysmessage_logger::normal(format!(
-                "Cursor mode: {}",
-                match cursor.mode {
-                    CursorMode::Select => "Select",
-                    CursorMode::Teleport => "Teleport",
-                }
-            ));
-        }
-    }
+    ));
 }
 
 fn sys_teleport_on_click(

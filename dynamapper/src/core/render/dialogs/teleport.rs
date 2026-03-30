@@ -1,3 +1,4 @@
+use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
@@ -26,10 +27,8 @@ impl Plugin for TeleportPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.init_resource::<TeleportDialogState>()
-            .add_systems(
-                Update,
-                sys_toggle_teleport_dialog.run_if(in_state(AppState::InGame)),
-            )
+            .add_observer(sys_teleport_toggle)
+            .add_observer(sys_teleport_close)
             .add_systems(
                 EguiPrimaryContextPass,
                 sys_render_teleport_dialog.run_if(in_state(AppState::InGame)),
@@ -37,30 +36,18 @@ impl Plugin for TeleportPlugin {
     }
 }
 
-fn sys_toggle_teleport_dialog(
-    keyboard: Res<ButtonInput<KeyCode>>,
+fn sys_teleport_toggle(
+    _trigger: On<ActionToggleTeleportDialog>,
     mut state: ResMut<TeleportDialogState>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_keyboard_input() {
-            return;
-        }
-    }
+    state.open = !state.open;
+}
 
-    if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight) {
-        if keyboard.just_pressed(KeyCode::KeyG) {
-            state.open = !state.open;
-            if state.open {
-                // Initialize with current values could be nice, but leaving empty for now is fine
-            }
-        }
-    }
-
-    if keyboard.just_pressed(KeyCode::Escape) && state.open {
-        state.open = false;
-    }
+fn sys_teleport_close(
+    _trigger: On<ActionCloseActiveDialog>,
+    mut state: ResMut<TeleportDialogState>,
+) {
+    state.open = false;
 }
 
 pub fn sys_render_teleport_dialog(

@@ -6,6 +6,8 @@
 //      1 = Enhanced 2D (fragment; subtle improvements, still faithful)
 //      2 = KR-like     (fragment; painterly, vibrant, rim + gloom)
 
+use super::super::scene::world::land::mesh_material::*;
+use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
     external_data::shader_presets::UniformState,
@@ -13,8 +15,6 @@ use crate::{
     prelude::*,
     util_lib::tracked_plugin::*,
 };
-
-use super::super::scene::world::land::mesh_material::*;
 use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
@@ -36,30 +36,18 @@ impl Plugin for TerrainUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
         app.init_resource::<TerrainShaderUiState>()
-            .add_systems(Update, sys_toggle_terrain_ui)
+            .add_observer(sys_shader_ui_toggle)
             .add_systems(EguiPrimaryContextPass, terrain_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);
     }
 }
 
-/// Toggles the terrain UI panel open/closed on each key press.
-fn sys_toggle_terrain_ui(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    settings: Res<Settings>,
+fn sys_shader_ui_toggle(
+    _trigger: On<ActionToggleShaderSettings>,
     mut state: ResMut<TerrainShaderUiState>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_keyboard_input() {
-            return;
-        }
-    }
-
-    if keyboard.just_pressed(settings.keybindings.shader_settings) {
-        state.open = !state.open;
-    }
+    state.open = !state.open;
 }
 
 // ============================== UI SYSTEM ===============================

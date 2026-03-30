@@ -1,5 +1,4 @@
-// Preferences dialog (egui window) — renamed from options.rs
-
+use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
     prelude::*,
@@ -60,10 +59,11 @@ impl_tracked_plugin!(PreferencesDialogPlugin);
 impl Plugin for PreferencesDialogPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PreferencesDialogState>()
+            .add_observer(sys_preferences_toggle)
+            .add_observer(sys_preferences_close)
             .add_systems(
                 Update,
                 (
-                    sys_toggle_options_dialog.run_if(in_state(AppState::InGame)),
                     sys_sync_settings_to_state.run_if(in_state(AppState::InGame)),
                     sys_apply_performance_settings.run_if(in_state(AppState::InGame)),
                 ),
@@ -103,25 +103,18 @@ fn sys_sync_settings_to_state(
     }
 }
 
-fn sys_toggle_options_dialog(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    settings: Res<Settings>,
+fn sys_preferences_toggle(
+    _trigger: On<ActionTogglePreferences>,
     mut state: ResMut<PreferencesDialogState>,
-    mut egui_contexts: EguiContexts,
-    egui_ui_camera: Res<UiCameraResource>,
 ) {
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_keyboard_input() {
-            //return;
-        }
-    }
+    state.open = !state.open;
+}
 
-    if keyboard.just_pressed(settings.keybindings.user_settings) {
-        state.open = !state.open;
-    }
-    if keyboard.just_pressed(KeyCode::Escape) && state.open {
-        state.open = false;
-    }
+fn sys_preferences_close(
+    _trigger: On<ActionCloseActiveDialog>,
+    mut state: ResMut<PreferencesDialogState>,
+) {
+    state.open = false;
 }
 
 pub fn sys_render_options_dialog(
