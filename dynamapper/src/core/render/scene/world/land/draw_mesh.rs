@@ -690,12 +690,12 @@ pub fn sys_draw_spawned_land_chunks(
     cache_r.precache_textures_parallel(
         ids.as_slice(),
         texmap_2d_r.0.clone(),
-        settings.core.graphics.lossy_texture_compression,
+        settings.graphics.lossy_texture_compression,
         now,
     );
 
     // Pre-populate lookup cache sequentially so background threads don't need mutable cache access
-    let lossy_compression = settings.core.graphics.lossy_texture_compression;
+    let lossy_compression = settings.graphics.lossy_texture_compression;
     for &id in &*ids {
         let (size, layer) =
             cache_r.get_texture_size_layer(&texmap_2d_r.0, id, lossy_compression, now);

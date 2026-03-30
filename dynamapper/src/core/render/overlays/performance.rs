@@ -313,7 +313,7 @@ pub fn sys_refresh_process_metrics(
         metrics.mem_usage_mib = mem;
 
         // Use ACTUAL current layer counts, not theoretical maximums.
-        let lossy = settings.core.graphics.lossy_texture_compression;
+        let lossy = settings.graphics.lossy_texture_compression;
         let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, lossy)
             * tex_cache.small.active_layers as usize;
         let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, lossy)
@@ -380,7 +380,7 @@ pub fn update_performance_text(
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
-        let tex_mode = if settings.core.graphics.lossy_texture_compression {
+        let tex_mode = if settings.graphics.lossy_texture_compression {
             "BC7"
         } else {
             "RGBA8"

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
     pub core: SectCore,
+    pub graphics: SectGraphics,
     pub uo_files: SectUoFiles,
     pub app: SectApp,
     pub logging: SectLogging,
@@ -33,7 +34,6 @@ pub struct SectKeybindings {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectCore {
     pub world: SectWorld,
-    pub graphics: SectGraphics,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -131,6 +131,7 @@ pub struct SettingsFileWatcher {
     pub poll_timer: Timer,
     /// Last-known mtime for each watched file.
     pub core_mtime: Option<SystemTime>,
+    pub graphics_mtime: Option<SystemTime>,
     pub user_mtime: Option<SystemTime>,
     pub kb_mtime: Option<SystemTime>,
 }
@@ -147,6 +148,7 @@ impl Default for SettingsFileWatcher {
         Self {
             poll_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
             core_mtime: mtime_of(CORE_CONFIG_FILE),
+            graphics_mtime: mtime_of(GRAPHICS_CONFIG_FILE),
             user_mtime: mtime_of(USER_CONFIG_FILE),
             kb_mtime: mtime_of(KEYBINDINGS_CONFIG_FILE),
         }
@@ -214,30 +216,25 @@ pub fn load_from_files() -> Settings {
     let user_app: SectApp = toml::from_str(&user_contents)
         .expect("Failed to parse settings/preferences.toml — please fix the file in assets/settings/preferences.toml");
 
-    // Optionally load graphics overrides from a dedicated graphics.toml.
-    // If present, its [core.graphics] table will replace the core.graphics
-    // block parsed from core.toml. This lets users split graphics tuning
-    // into a separate file (assets/settings/graphics.toml).
-    let mut core = core_data.core;
+    // Graphics settings loader (assets/settings/graphics.toml)
     let gfx_path = assets_path.join(GRAPHICS_CONFIG_FILE);
-    if let Ok(gfx_contents) = std::fs::read_to_string(&gfx_path) {
-        if let Ok(val) = toml::from_str::<toml::Value>(&gfx_contents) {
-            // Try common layouts: either [core.graphics] or top-level [graphics.effects_defaults]
-            if let Some(core_tbl) = val.get("core") {
-                if let Some(graphics_val) = core_tbl.get("graphics") {
-                    if let Ok(gfx) = graphics_val.clone().try_into::<SectGraphics>() {
-                        core.graphics = gfx;
-                    } else {
-                        eprintln!("Failed to parse core.graphics in settings/graphics.toml");
-                    }
-                }
-            } else if let Some(graphics_val) = val.get("graphics") {
-                if let Ok(gfx) = graphics_val.clone().try_into::<SectGraphics>() {
-                    core.graphics = gfx;
-                }
-            }
+    let gfx_contents = std::fs::read_to_string(&gfx_path).expect(
+        "Failed to read settings/graphics.toml — please ensure assets/settings/graphics.toml exists",
+    );
+
+    // Try both [graphics] and [core.graphics] (legacy)
+    let graphics: SectGraphics = if let Ok(val) = toml::from_str::<toml::Value>(&gfx_contents) {
+        if let Some(g) = val.get("graphics") {
+            g.clone().try_into::<SectGraphics>().expect("Failed to parse [graphics] in settings/graphics.toml")
+        } else if let Some(c) = val.get("core").and_then(|c| c.get("graphics")) {
+            c.clone().try_into::<SectGraphics>().expect("Failed to parse [core.graphics] in settings/graphics.toml")
+        } else {
+            // If neither table exists, try to parse the whole file as SectGraphics if it's flat (unlikely but possible)
+            toml::from_str(&gfx_contents).expect("Failed to parse settings/graphics.toml — expected it to contain a [graphics] table")
         }
-    }
+    } else {
+        panic!("Failed to parse settings/graphics.toml as TOML");
+    };
 
     // Keybindings file
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
@@ -256,7 +253,8 @@ pub fn load_from_files() -> Settings {
         .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
 
     Settings {
-        core,
+        core: core_data.core,
+        graphics,
         uo_files,
         app: user_app,
         logging: core_data.logging,
@@ -396,14 +394,16 @@ fn sys_hotreload_settings(
     };
 
     let new_core = mtime_of(CORE_CONFIG_FILE);
+    let new_graphics = mtime_of(GRAPHICS_CONFIG_FILE);
     let new_user = mtime_of(USER_CONFIG_FILE);
     let new_kb = mtime_of(KEYBINDINGS_CONFIG_FILE);
 
     let core_changed = new_core != watcher.core_mtime;
+    let graphics_changed = new_graphics != watcher.graphics_mtime;
     let user_changed = new_user != watcher.user_mtime;
     let kb_changed = new_kb != watcher.kb_mtime;
 
-    if !(core_changed || user_changed || kb_changed) {
+    if !(core_changed || graphics_changed || user_changed || kb_changed) {
         return;
     }
 
@@ -418,7 +418,17 @@ fn sys_hotreload_settings(
             None,
             LogSev::Info,
             LogAbout::General,
-            "Hot-reloaded: core_settings.toml",
+            "Hot-reloaded: core.toml",
+        );
+    }
+    if graphics_changed {
+        settings.graphics = new_data.graphics.clone();
+        watcher.graphics_mtime = new_graphics;
+        console_logger::one(
+            None,
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: graphics.toml",
         );
     }
     if user_changed {

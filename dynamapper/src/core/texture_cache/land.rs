@@ -236,7 +236,7 @@ pub fn sys_setup_terrain_cache(
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let lossy: bool = settings.core.graphics.lossy_texture_compression;
+    let lossy: bool = settings.graphics.lossy_texture_compression;
     let handle_small = texture_array::create_gpu_texture_array(
         "land_small_texture_cache",
         &mut images,
@@ -356,7 +356,7 @@ fn sys_apply_texture_array_expansion(
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(|| Instant::now());
-    let lossy_compression = settings.core.graphics.lossy_texture_compression;
+    let lossy_compression = settings.graphics.lossy_texture_compression;
 
     let (small_req, big_req) = cache_r.take_resize_requests();
     if small_req.is_none() && big_req.is_none() {

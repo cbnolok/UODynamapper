@@ -7,16 +7,6 @@ start_p = [1100, 1800, 20, 0]
 # Whether to hide the player cube on startup
 hide_player = false
 
-[core.graphics]
-# Use BC7 texture compression to save VRAM
-lossy_texture_compression = false
-# Lower frame rate when the window is not focused
-reduce_unfocused_fps = true
-vsync = false
-texture_filtering = 0
-texture_reconstruction = 0
-sharpening_strength = 0.0
-
 [logging]
 # Minimum log level to display in terminal
 min_severity = "Info"

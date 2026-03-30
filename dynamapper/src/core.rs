@@ -332,11 +332,11 @@ pub fn run_bevy_app() -> ExitCode {
     );
     let wireframe_enabled: bool = settings_data.app.debug.map_render_wireframe;
 
-    let vsync_enabled = settings_data.core.graphics.vsync;
+    let vsync_enabled = settings_data.graphics.vsync;
 
     let mut app = App::new();
     app.insert_resource(custom_winit_settings(
-        settings_data.core.graphics.reduce_unfocused_fps,
+        settings_data.graphics.reduce_unfocused_fps,
     ))
     .add_plugins(
         DefaultPlugins

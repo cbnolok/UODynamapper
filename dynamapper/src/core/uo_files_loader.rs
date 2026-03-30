@@ -63,7 +63,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         )
     };
     let uo_path: PathBuf = settings.uo_files.folder.clone().into();
-    let lossy = settings.core.graphics.lossy_texture_compression;
+    let lossy = settings.graphics.lossy_texture_compression;
 
     lg("Start loading UO Data.");
 
