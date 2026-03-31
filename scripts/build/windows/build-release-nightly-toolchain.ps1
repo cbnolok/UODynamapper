@@ -10,7 +10,8 @@ Set-Location $rootDir
 Write-Host "Running Windows nightly release build..."
 
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
-$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.ps1").Path
+# Use .bat wrapper since Windows can't execute .ps1 directly as a process
+$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Path
 
 # Stable release flags plus nightly-only size/build-std flags.
 # Windows (MSVC) works well with gc-sections if using LLD (via config.toml)

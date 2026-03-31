@@ -4,6 +4,12 @@
 $rustc = $args[0]
 $remainingArgs = $args[1..($args.Count - 1)]
 
+# Pass through version/query flags directly without interception
+if ($remainingArgs -join " " -match "-vV|--version" -or $remainingArgs.Count -eq 0) {
+    & $rustc @remainingArgs
+    exit $LASTEXITCODE
+}
+
 $crateName = ""
 for ($i = 0; $i -lt $remainingArgs.Count; $i++) {
     if ($remainingArgs[$i] -eq "--crate-name") {

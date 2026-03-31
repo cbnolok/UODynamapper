@@ -85,14 +85,14 @@ fn query_process_vram_mib_linux_drm(pid: sysinfo::Pid) -> Option<f32> {
     //   drm-memory-local: <KiB> kB
     // TODO: can we extract anything else from here? GTT/system memory? More precise than other ways?
     let fdinfo_dir = format!("/proc/{}/fdinfo", pid);
-    let entries = fs::read_dir(fdinfo_dir).ok()?;
+    let entries = std::fs::read_dir(fdinfo_dir).ok()?;
 
     let mut total_kib: f32 = 0.0;
     let mut found_any_counter = false;
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(contents) = fs::read_to_string(path) else {
+        let Ok(contents) = std::fs::read_to_string(path) else {
             continue;
         };
 

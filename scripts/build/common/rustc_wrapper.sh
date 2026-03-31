@@ -5,6 +5,11 @@
 RUSTC=$1
 shift
 
+# Pass through version/query flags directly without interception
+if [[ "$*" == *"-vV"* ]] || [[ "$*" == *"--version"* ]] || [[ "$#" -eq 0 ]]; then
+    exec "$RUSTC" "$@"
+fi
+
 CRATE_NAME=""
 for i in "$@"; do
     if [[ $last_arg == "--crate-name" ]]; then

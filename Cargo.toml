@@ -70,7 +70,7 @@ debug-assertions = true
 
 # Settings for dependencies (incl. Bevy), but not for our main code:
 [profile.dev.package."*"]
-opt-level = "z"         # Selective size optimization (better for behemoths like bevy_dylib)
+opt-level = "s"         # Selective size optimization (better for behemoths like bevy_dylib)
 codegen-units = 1
 #lto = "thin"           # `lto` may not be specified in a `package` profile
 incremental = false
