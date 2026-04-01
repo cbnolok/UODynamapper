@@ -62,7 +62,7 @@ impl PluginRegistry {
         let mut visited = HashSet::new();
 
         for root in &self.roots {
-            self.push_tree_lines(root, 0, &mut visited, &mut lines);
+            self.push_root_tree_lines(root, &mut visited, &mut lines);
         }
 
         let mut orphan_names: Vec<_> = self
@@ -74,16 +74,15 @@ impl PluginRegistry {
         orphan_names.sort();
 
         for orphan in orphan_names {
-            self.push_tree_lines(&orphan, 0, &mut visited, &mut lines);
+            self.push_root_tree_lines(&orphan, &mut visited, &mut lines);
         }
 
         lines
     }
 
-    fn push_tree_lines(
+    fn push_root_tree_lines(
         &self,
         name: &str,
-        indent: usize,
         visited: &mut HashSet<String>,
         lines: &mut Vec<String>,
     ) {
@@ -91,12 +90,47 @@ impl PluginRegistry {
             return;
         }
 
-        let prefix = "  ".repeat(indent);
-        lines.push(format!("{prefix}{name}"));
+        lines.push(name.to_string());
 
         if let Some(node) = self.nodes.get(name) {
-            for child in &node.children {
-                self.push_tree_lines(child, indent + 1, visited, lines);
+            for (index, child) in node.children.iter().enumerate() {
+                let child_is_last = index + 1 == node.children.len();
+                self.push_tree_lines(child, "", child_is_last, visited, lines);
+            }
+        }
+    }
+
+    fn push_tree_lines(
+        &self,
+        name: &str,
+        prefix: &str,
+        is_last: bool,
+        visited: &mut HashSet<String>,
+        lines: &mut Vec<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+
+        if prefix.is_empty() {
+            lines.push(name.to_string());
+        } else {
+            let branch = if is_last { "└─ " } else { "├─ " };
+            lines.push(format!("{prefix}{branch}{name}"));
+        }
+
+        if let Some(node) = self.nodes.get(name) {
+            let child_prefix = if prefix.is_empty() {
+                if is_last { "   ".to_string() } else { "│  ".to_string() }
+            } else if is_last {
+                format!("{prefix}   ")
+            } else {
+                format!("{prefix}│  ")
+            };
+
+            for (index, child) in node.children.iter().enumerate() {
+                let child_is_last = index + 1 == node.children.len();
+                self.push_tree_lines(child, &child_prefix, child_is_last, visited, lines);
             }
         }
     }
