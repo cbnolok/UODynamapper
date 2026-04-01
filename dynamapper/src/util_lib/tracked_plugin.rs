@@ -17,6 +17,35 @@ struct PluginRegistry {
 }
 
 static PLUGIN_REGISTRY: OnceLock<Mutex<PluginRegistry>> = OnceLock::new();
+static PLUGIN_LOG_TOGGLES: OnceLock<std::sync::Mutex<PluginLogToggles>> = OnceLock::new();
+
+#[derive(Debug)]
+struct PluginLogToggles {
+    emit_flat: bool,
+    emit_tree: bool,
+}
+
+pub fn set_plugin_log_toggles(flat: bool, tree: bool) {
+    let m = PLUGIN_LOG_TOGGLES.get_or_init(|| std::sync::Mutex::new(PluginLogToggles { emit_flat: flat, emit_tree: tree }));
+    if let Ok(mut guard) = m.lock() {
+        guard.emit_flat = flat;
+        guard.emit_tree = tree;
+    }
+}
+
+fn emit_flat_enabled() -> bool {
+    PLUGIN_LOG_TOGGLES
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| g.emit_flat))
+        .unwrap_or(true)
+}
+
+fn emit_tree_enabled() -> bool {
+    PLUGIN_LOG_TOGGLES
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| g.emit_tree))
+        .unwrap_or(true)
+}
 
 fn plugin_registry() -> &'static Mutex<PluginRegistry> {
     PLUGIN_REGISTRY.get_or_init(|| Mutex::new(PluginRegistry::default()))
@@ -112,10 +141,10 @@ impl PluginRegistry {
             return;
         }
 
+        let branch = if is_last { "└─ " } else { "├─ " };
         if prefix.is_empty() {
-            lines.push(name.to_string());
+            lines.push(format!("{branch}{name}"));
         } else {
-            let branch = if is_last { "└─ " } else { "├─ " };
             lines.push(format!("{prefix}{branch}{name}"));
         }
 
@@ -146,14 +175,20 @@ pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
         .expect("plugin registry poisoned")
         .record(bare_name, plugin.registered_by());
 
-    console_logger::one(
-        LogSev::Info,
-        LogAbout::Plugins,
-        &format!("Build: {bare_name} (registered by: {}).", plugin.registered_by()),
-    );
+    if emit_flat_enabled() {
+        console_logger::one(
+            LogSev::Info,
+            LogAbout::Plugins,
+            &format!("Build: {bare_name} (registered by: {}).", plugin.registered_by()),
+        );
+    }
 }
 
 pub fn log_plugin_registry_tree() {
+    if !emit_tree_enabled() {
+        return;
+    }
+
     let registry = plugin_registry()
         .lock()
         .expect("plugin registry poisoned");
@@ -200,5 +235,45 @@ macro_rules! impl_tracked_plugin {
             }
         }
     };
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_tree_unicode() {
+        // reset singleton registry state for test
+        let mut reg = plugin_registry().lock().expect("poisoned");
+        reg.nodes.clear();
+        reg.roots.clear();
+
+        // build a small plugin graph
+        reg.record("ExternalDataPlugin", "Core");
+        reg.record("SettingsPlugin", "ExternalDataPlugin");
+        reg.record("ShaderPresetsPlugin", "ExternalDataPlugin");
+        reg.record("ControlsPlugin", "Core");
+        reg.record("PlayerMovementPlugin", "ControlsPlugin");
+        reg.record("RenderPlugin", "Core");
+        reg.record("ScenePlugin", "RenderPlugin");
+        reg.record("WorldPlugin", "ScenePlugin");
+
+        let lines = reg.tree_lines();
+
+        let expected: Vec<String> = vec![
+            "Core".to_string(),
+            "├─ ExternalDataPlugin".to_string(),
+            "│  ├─ SettingsPlugin".to_string(),
+            "│  └─ ShaderPresetsPlugin".to_string(),
+            "├─ ControlsPlugin".to_string(),
+            "│  └─ PlayerMovementPlugin".to_string(),
+            "└─ RenderPlugin".to_string(),
+            "   └─ ScenePlugin".to_string(),
+            "      └─ WorldPlugin".to_string(),
+        ];
+
+        assert_eq!(lines, expected);
+    }
 }
 

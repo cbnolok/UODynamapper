@@ -17,7 +17,7 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, sys_log_gpu_preprocessing_mode}, render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     external_data::{ExternalDataPlugin, settings},
-    util_lib::tracked_plugin::log_plugin_registry_tree,
+    util_lib::tracked_plugin::{log_plugin_registry_tree, set_plugin_log_toggles},
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -195,6 +195,11 @@ pub fn run_bevy_app() -> ExitCode {
 
     let settings_data = settings::load_from_files();
     settings::apply_logging_settings(&settings_data.logging);
+    // Configure plugin log toggles (controls flat per-plugin lines and tree dump)
+    set_plugin_log_toggles(
+        settings_data.logging.emit_flat_plugin_build,
+        settings_data.logging.emit_tree_plugin_build,
+    );
     console_logger::one(
         LogSev::Info,
         LogAbout::Startup,

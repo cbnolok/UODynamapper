@@ -11,6 +11,12 @@ hide_player = false
 # Minimum log level to display in terminal
 min_severity = "Info"
 
+# Emit flat per-plugin build lines (true to keep existing flat log lines)
+emit_flat_plugin_build = true
+
+# Emit Unicode tree view of plugin build hierarchy (true to print tree)
+emit_tree_plugin_build = true
+
 # Custom filters for specific modules or severities
 [[logging.filters]]
 sev = "Debug"

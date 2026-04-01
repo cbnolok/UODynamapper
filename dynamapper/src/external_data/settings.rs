@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::prelude::*;
 use crate::util_lib::uo_coords::*;
@@ -102,6 +103,10 @@ pub struct SectDebug {
     pub hot_reload_enabled: bool,
 }
 
+fn default_emit_true() -> bool {
+    true
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectPerformance {
     pub show_overlay: bool,
@@ -158,6 +163,10 @@ impl Default for SettingsFileWatcher {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectLogging {
     pub min_severity: LogSev,
+    #[serde(default = "default_emit_true")]
+    pub emit_flat_plugin_build: bool,
+    #[serde(default = "default_emit_true")]
+    pub emit_tree_plugin_build: bool,
     pub filters: Vec<LogFilterSetting>,
 }
 
@@ -360,6 +369,8 @@ fn sys_startup_load_file(mut commands: Commands) {
 
     // Initialize logger settings
     apply_logging_settings(&data.logging);
+    // Ensure plugin log toggles follow configured settings
+    set_plugin_log_toggles(data.logging.emit_flat_plugin_build, data.logging.emit_tree_plugin_build);
 
     commands.insert_resource(data);
     console_logger::one(
@@ -416,6 +427,8 @@ fn sys_hotreload_settings(
         settings.core = new_data.core.clone();
         settings.logging = new_data.logging.clone();
         watcher.core_mtime = new_core;
+        // Update plugin log toggles on settings hot-reload
+        set_plugin_log_toggles(settings.logging.emit_flat_plugin_build, settings.logging.emit_tree_plugin_build);
         console_logger::one(
             LogSev::Info,
             LogAbout::General,
