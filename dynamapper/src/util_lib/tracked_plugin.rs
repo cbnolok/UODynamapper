@@ -1,16 +1,138 @@
 use bevy::app::Plugin;
 use crate::{core::system_sets::StartupSysSet, console_logger::{self, LogAbout, LogSev}};
+use std::{collections::{HashMap, HashSet}, sync::{Mutex, OnceLock}};
+
+
+#[derive(Debug, Default)]
+struct PluginRegistryNode {
+    parent: Option<String>,
+    children: Vec<String>,
+    seen_as_plugin: bool,
+}
+
+#[derive(Debug, Default)]
+struct PluginRegistry {
+    nodes: HashMap<String, PluginRegistryNode>,
+    roots: Vec<String>,
+}
+
+static PLUGIN_REGISTRY: OnceLock<Mutex<PluginRegistry>> = OnceLock::new();
+
+fn plugin_registry() -> &'static Mutex<PluginRegistry> {
+    PLUGIN_REGISTRY.get_or_init(|| Mutex::new(PluginRegistry::default()))
+}
+
+fn bare_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+fn push_unique(list: &mut Vec<String>, value: &str) {
+    if !list.iter().any(|existing| existing == value) {
+        list.push(value.to_string());
+    }
+}
+
+impl PluginRegistry {
+    fn record(&mut self, plugin_name: &str, registered_by: &str) {
+        let plugin_name = bare_name(plugin_name).to_string();
+        let registered_by = bare_name(registered_by).to_string();
+
+        let parent_is_root = self
+            .nodes
+            .get(&registered_by)
+            .is_none_or(|node| node.parent.is_none());
+
+        let node = self.nodes.entry(plugin_name.clone()).or_default();
+        node.seen_as_plugin = true;
+        node.parent = Some(registered_by.clone());
+
+        let parent = self.nodes.entry(registered_by.clone()).or_default();
+        push_unique(&mut parent.children, &plugin_name);
+
+        self.roots.retain(|root| root != &plugin_name);
+        if parent_is_root {
+            push_unique(&mut self.roots, &registered_by);
+        } else {
+            self.roots.retain(|root| root != &registered_by);
+        }
+    }
+
+    fn tree_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut visited = HashSet::new();
+
+        for root in &self.roots {
+            self.push_tree_lines(root, 0, &mut visited, &mut lines);
+        }
+
+        let mut orphan_names: Vec<_> = self
+            .nodes
+            .keys()
+            .filter(|name| !visited.contains(*name))
+            .cloned()
+            .collect();
+        orphan_names.sort();
+
+        for orphan in orphan_names {
+            self.push_tree_lines(&orphan, 0, &mut visited, &mut lines);
+        }
+
+        lines
+    }
+
+    fn push_tree_lines(
+        &self,
+        name: &str,
+        indent: usize,
+        visited: &mut HashSet<String>,
+        lines: &mut Vec<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+
+        let prefix = "  ".repeat(indent);
+        lines.push(format!("{prefix}{name}"));
+
+        if let Some(node) = self.nodes.get(name) {
+            for child in &node.children {
+                self.push_tree_lines(child, indent + 1, visited, lines);
+            }
+        }
+    }
+}
 
 
 pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
     let full_name = std::any::type_name::<T>();
     let bare_name = full_name.rsplit("::").next().unwrap();
 
+    plugin_registry()
+        .lock()
+        .expect("plugin registry poisoned")
+        .record(bare_name, plugin.registered_by());
+
     console_logger::one(
         LogSev::Info,
         LogAbout::Plugins,
         &format!("Build: {bare_name} (registered by: {}).", plugin.registered_by()),
     );
+}
+
+pub fn log_plugin_registry_tree() {
+    let registry = plugin_registry()
+        .lock()
+        .expect("plugin registry poisoned");
+
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::Plugins,
+        "Plugin registry tree:",
+    );
+
+    for line in registry.tree_lines() {
+        console_logger::one(LogSev::Info, LogAbout::Plugins, &line);
+    }
 }
 
 fn log_system_add_base<'a>(myname: &'static str, plugname: &str, schedule: &'static str, sys_set: &'a str) {

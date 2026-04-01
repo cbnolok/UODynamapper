@@ -17,6 +17,7 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, sys_log_gpu_preprocessing_mode}, render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     external_data::{ExternalDataPlugin, settings},
+    util_lib::tracked_plugin::log_plugin_registry_tree,
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -289,6 +290,8 @@ pub fn run_bevy_app() -> ExitCode {
         Startup,
         advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
     );
+
+    app.add_systems(Startup, log_plugin_registry_tree.in_set(StartupSysSet::Done));
 
     // One-shot render-world startup: log whether GPU indirect draw is active.
     // GpuPreprocessingSupport lives only in the render world, not the main world.
