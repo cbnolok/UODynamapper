@@ -243,7 +243,6 @@ impl LandTextureCache {
         }
 
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -286,7 +285,6 @@ impl LandTextureCache {
 
         if skipped_due_to_pressure > 0 {
             console_logger::one(
-                None,
                 LogSev::Warn,
                 LogAbout::Performance,
                 &format!(
@@ -398,7 +396,6 @@ impl LandTextureCache {
             if array.last_requested_resize_logged != Some(target_layers) {
                 array.last_requested_resize_logged = Some(target_layers);
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::Performance,
                     &format!(

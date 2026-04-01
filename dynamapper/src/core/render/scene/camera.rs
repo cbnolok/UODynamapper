@@ -158,7 +158,7 @@ fn sys_setup_cam(
 
     commands.insert_resource(UiCameraResource(Some(ui_cam)));
 
-    console_logger::one(None, LogSev::Debug, LogAbout::Camera, "Spawned.");
+    console_logger::one(LogSev::Debug, LogAbout::Camera, "Spawned.");
 }
 
 //------------------------------------

@@ -127,7 +127,6 @@ fn sys_evict_idle_land_cache(
     let evicted_gpu_layers = cache_r.evict_idle_textures(now);
     if evicted_gpu_layers > 0 {
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -141,7 +140,6 @@ fn sys_evict_idle_land_cache(
     let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
     if evicted_pixel_buffers > 0 {
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -160,7 +158,6 @@ fn sys_evict_idle_land_cache(
         let evicted_blocks = plane.evict_idle_blocks(Duration::from_secs(60));
         if evicted_blocks > 0 {
             console_logger::one(
-                None,
                 LogSev::Info,
                 LogAbout::Performance,
                 &format!(
@@ -176,7 +173,6 @@ fn sys_evict_idle_land_cache(
     if let Some(target) = shrink_small {
         cache_r.small.requested_resize_to = Some(target);
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -188,7 +184,6 @@ fn sys_evict_idle_land_cache(
     if let Some(target) = shrink_big {
         cache_r.big.requested_resize_to = Some(target);
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -218,7 +213,6 @@ fn sys_evict_idle_land_cache(
             if target < capacity {
                 tile_atlas.requested_expansion = Some(target);
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::Performance,
                     &format!("Requesting tile atlas shrink: {capacity} → {target} layers.",),
@@ -429,7 +423,6 @@ fn sys_apply_texture_array_expansion(
         }
 
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::Performance,
             &format!(
@@ -518,7 +511,6 @@ fn sys_apply_tile_atlas_expansion(
         "Shrunk"
     };
     console_logger::one(
-        None,
         LogSev::Info,
         LogAbout::Performance,
         &format!(

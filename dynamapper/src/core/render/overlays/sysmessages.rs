@@ -18,6 +18,7 @@ impl Plugin for SystemMessagesPlugin {
     }
 }
 
+const FONT_SIZE: f32 = 16.0;
 const LOG_MAX_AGE_SEC: u64 = 8;
 const MAX_VISIBLE_MESSAGES: usize = 5;
 const LOG_CLEANUP_INTERVAL_SEC: f32 = 0.5;
@@ -110,5 +111,9 @@ fn render_log_line(ui: &mut egui::Ui, log: &InGameLog, scale: f32) {
     );
 
     let text = format!("{} {}", log.symbol, log.message);
-    ui.label(egui::RichText::new(text).color(color).size(13.0 * scale));
+    ui.label(
+        egui::RichText::new(text)
+            .color(color)
+            .size(FONT_SIZE * scale),
+    );
 }

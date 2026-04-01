@@ -7,7 +7,6 @@ pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
     let bare_name = full_name.rsplit("::").next().unwrap();
 
     console_logger::one(
-        None, //Some(false),
         LogSev::Info,
         LogAbout::Plugins,
         &format!("Build: {bare_name} (registered by: {}).", plugin.registered_by()),
@@ -18,7 +17,6 @@ fn log_system_add_base<'a>(myname: &'static str, plugname: &str, schedule: &'sta
     let plugname_bare = plugname.rsplit("::").next().unwrap();
     let myname_bare = myname.rsplit("::").next().unwrap();
     console_logger::one(
-        None, //Some(false),
         console_logger::LogSev::Debug,
         console_logger::LogAbout::Startup,
         &format!("Running with schedule '{schedule}' in set '{sys_set}': system '{myname_bare}' (registered by plugin: {plugname_bare})."),

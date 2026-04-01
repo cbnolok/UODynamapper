@@ -13,9 +13,17 @@ min_severity = "Info"
 
 # Custom filters for specific modules or severities
 [[logging.filters]]
+sev = "Debug"
+suppress = false
+
+[[logging.filters]]
+sev = "DebugVerbose"
+suppress = true
+
+[[logging.filters]]
 about = "RenderWorldLand"
 suppress = true
 
-#[[logging.filters]]
-#sev = "Debug"
-#suppress = false
+[[logging.filters]]
+about = "Performance"
+suppress = true

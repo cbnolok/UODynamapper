@@ -112,7 +112,6 @@ pub fn sys_update_scene_on_window_resize(
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
     console_logger::one(
-        None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
         &format!("Spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
@@ -121,7 +120,6 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
 
 fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     console_logger::one(
-        None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
         &format!("De-spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
@@ -321,7 +319,6 @@ fn sys_update_worldmap_chunks_to_render(
             chunk_scale,
         );
         console_logger::one(
-            None,
             LogSev::Debug,
             LogAbout::RenderWorldLand,
             &format!(
@@ -336,7 +333,6 @@ fn sys_update_worldmap_chunks_to_render(
         if map_switch || scale_changed || large_jump {
             if map_switch {
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::RenderWorldLand,
                     "Detected Map Plane change: despawn previously rendered land chunks and spawn new ones.",
@@ -344,7 +340,6 @@ fn sys_update_worldmap_chunks_to_render(
             }
             if scale_changed {
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::RenderWorldLand,
                     &format!("Chunk scale changed to {chunk_scale}: despawn all and respawn at new granularity."),
@@ -352,7 +347,6 @@ fn sys_update_worldmap_chunks_to_render(
             }
             if large_jump {
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::RenderWorldLand,
                     "Large position jump detected (teleport): despawn all and respawn at new position.",

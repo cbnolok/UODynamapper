@@ -14,7 +14,6 @@ pub enum AppState {
 #[track_caller]
 pub fn log_appstate_change(new_appstate_name: &'static str) {
     console_logger::one(
-        None,
         console_logger::LogSev::Debug,
         console_logger::LogAbout::AppState,
         format!("Changing AppState to: {new_appstate_name}.").as_str(),

@@ -56,7 +56,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     log_system_add_startup::<UOFilesPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
     let lg = |text: &str| {
         console_logger::one(
-            None,
             console_logger::LogSev::Info,
             console_logger::LogAbout::UoFiles,
             text,

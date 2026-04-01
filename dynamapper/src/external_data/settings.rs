@@ -263,6 +263,22 @@ pub fn load_from_files() -> Settings {
     }
 }
 
+pub fn apply_logging_settings(logging: &SectLogging) {
+    let mut filters = Vec::new();
+    for f in &logging.filters {
+        filters.push(console_logger::LogFilter {
+            sev: f.sev.clone(),
+            about: f.about.clone(),
+            suppress: f.suppress,
+        });
+    }
+
+    console_logger::set_log_settings(console_logger::LogSettings {
+        min_severity: Some(logging.min_severity.clone()),
+        filters,
+    });
+}
+
 pub fn save_app_settings(settings: &Settings) {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
     let user_path = assets_path.join(USER_CONFIG_FILE);
@@ -273,7 +289,6 @@ pub fn save_app_settings(settings: &Settings) {
                 paris::error!("Failed to save preferences.toml: {}", e);
             } else {
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::General,
                     "Saved preferences.toml",
@@ -296,7 +311,6 @@ pub fn save_keybindings(settings: &Settings) {
                 paris::error!("Failed to save keybindings.toml: {}", e);
             } else {
                 console_logger::one(
-                    None,
                     LogSev::Info,
                     LogAbout::General,
                     "Saved keybindings.toml",
@@ -345,22 +359,10 @@ fn sys_startup_load_file(mut commands: Commands) {
     let data = load_from_files();
 
     // Initialize logger settings
-    let mut filters = Vec::new();
-    for f in &data.logging.filters {
-        filters.push(console_logger::LogFilter {
-            sev: f.sev.clone(),
-            about: f.about.clone(),
-            suppress: f.suppress,
-        });
-    }
-    console_logger::set_log_settings(console_logger::LogSettings {
-        min_severity: Some(data.logging.min_severity.clone()),
-        filters,
-    });
+    apply_logging_settings(&data.logging);
 
     commands.insert_resource(data);
     console_logger::one(
-        None,
         LogSev::Info,
         LogAbout::Startup,
         "Loaded settings file for global access.",
@@ -415,7 +417,6 @@ fn sys_hotreload_settings(
         settings.logging = new_data.logging.clone();
         watcher.core_mtime = new_core;
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::General,
             "Hot-reloaded: core.toml",
@@ -425,7 +426,6 @@ fn sys_hotreload_settings(
         settings.graphics = new_data.graphics.clone();
         watcher.graphics_mtime = new_graphics;
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::General,
             "Hot-reloaded: graphics.toml",
@@ -435,7 +435,6 @@ fn sys_hotreload_settings(
         settings.app = new_data.app.clone();
         watcher.user_mtime = new_user;
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::General,
             "Hot-reloaded: preferences.toml",
@@ -445,7 +444,6 @@ fn sys_hotreload_settings(
         settings.keybindings = new_data.keybindings.clone();
         watcher.kb_mtime = new_kb;
         console_logger::one(
-            None,
             LogSev::Info,
             LogAbout::General,
             "Hot-reloaded: keybindings.toml",

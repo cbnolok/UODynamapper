@@ -7,7 +7,8 @@ linker = "aarch64-linux-gnu-gcc"
 
 [target.'cfg(all(target_os = "linux", debug_assertions, not(feature = "profiling")))']
 # wild linker (even faster than mold) + frame-pointers for debug
-rustflags = ["-Clink-arg=-fuse-ld=wild", "-C", "force-frame-pointers=yes"]
+#rustflags = ["-Clink-arg=-fuse-ld=wild", "-C", "force-frame-pointers=yes"]
+rustflags = ["-Clink-arg=-fuse-ld=mold", "-C", "force-frame-pointers=yes"]
 
 [target.'cfg(all(target_os = "linux", feature = "profiling"))']
 # profiling feature enables frame pointers (applies to crates with the feature)

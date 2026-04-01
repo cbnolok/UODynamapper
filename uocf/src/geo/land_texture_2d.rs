@@ -266,7 +266,7 @@ impl TexMap2D {
         texmap.file_data.shrink_to_fit();
 
         log::info!(
-            "Parsed {} (0x{:x}) Map Tile texture slots, loaded {} (0x{:x}) valid.",
+            "uocf: Parsed {} (0x{:x}) Map Tile texture slots, loaded {} (0x{:x}) valid.",
             texidx.element_count(),
             texidx.element_count(),
             i_idx_valid,

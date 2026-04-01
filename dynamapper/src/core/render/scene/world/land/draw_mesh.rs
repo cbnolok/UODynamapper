@@ -232,7 +232,6 @@ pub fn sys_update_existing_chunk_mesh_lod(
     }
 
     console_logger::one(
-        None,
         LogSev::Debug,
         LogAbout::RenderWorldLand,
         &format!(
@@ -728,8 +727,8 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     // Process blocks in parallel using Bevy's ComputeTaskPool
-    let pool = bevy::tasks::ComputeTaskPool::get();
-    let thread_results = pool.scope(|s| {
+    let pool: &bevy::tasks::ComputeTaskPool = bevy::tasks::ComputeTaskPool::get();
+    let thread_results: Vec<SuperChunkResult> = pool.scope(|s| {
         for (target_idx, chunk_data) in ready_targets.iter().enumerate() {
             // Because texture_lookup_cache is populated and read-only, we can share pointers safely
             let lookup_ptr = texture_lookup_cache.as_ptr() as usize;
@@ -881,7 +880,6 @@ pub fn sys_draw_spawned_land_chunks(
     let build_time: u128 = build_time_start.elapsed().as_micros();
     if build_time > 1000 {
         console_logger::one(
-            None,
             LogSev::Diagnostics,
             LogAbout::Performance,
             &format!(
@@ -945,7 +943,6 @@ fn draw_land_chunk(
         ));
     } else {
         console_logger::one(
-            None,
             LogSev::Error,
             LogAbout::RenderWorldLand,
             "Skipping drawing of invalid/unspawned entity at stage 'build_indexed_chunk_mesh'.",

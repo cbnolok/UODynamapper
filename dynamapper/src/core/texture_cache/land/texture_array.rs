@@ -170,7 +170,7 @@ pub fn get_texmap_size_only(
     if let Some(element) = texmap_2d_res.element(texture_id as usize) {
         return *element.size();
     }
-    
+
     let err_size = *texmap_2d_res
         .element(DEFAULT_ERROR_TEXTURE_ID as usize)
         .unwrap()
@@ -184,7 +184,7 @@ pub fn get_texmap_raw_data(
     now: std::time::Instant,
 ) -> (LandTextureSize, std::sync::Arc<[u8]>) {
     fn local_log_warn(msg: &str) {
-        console_logger::one(None, LogSev::Warn, LogAbout::RenderWorldLand, msg);
+        console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, msg);
     }
 
     let tex_size_and_rgba = {

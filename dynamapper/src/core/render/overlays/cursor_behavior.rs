@@ -18,7 +18,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
 use uocf::geo::map::{MapCell, MapCellCoords};
 
-const FONT_SIZE: f32 = 11.0;
+const FONT_SIZE: f32 = 13.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorMode {

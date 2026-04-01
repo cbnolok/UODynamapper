@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
-$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.ps1").Path
+$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Path
 
 $ARGS = $args
 if ($ARGS.Length -eq 0) { $ARGS = @("--crates") }

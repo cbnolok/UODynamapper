@@ -41,7 +41,6 @@ pub fn sys_spawn_dynamic_light(
 
     // Set up a directional light (sun)
     console_logger::one(
-        None,
         LogSev::Debug,
         LogAbout::Camera,
         format!("Spawning directional (\"dynamic\") light at camera_pos={camera_pos}, looking at player_pos={player_start_pos}.")

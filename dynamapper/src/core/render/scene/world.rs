@@ -51,11 +51,10 @@ fn sys_populate_world_geo_data(
             let id = id as u32;
             world_geo_data_res.maps.insert(id, MapPlaneMetadata {
                 id: id as u8,
-                width: plane.size_blocks.width * 8, 
+                width: plane.size_blocks.width * 8,
                 height: plane.size_blocks.height * 8,
             });
             console_logger::one(
-                None,
                 LogSev::Info,
                 LogAbout::RenderWorldLand,
                 &format!("Populated WorldGeoData for map {id} ({}x{} tiles).", plane.size_blocks.width * 8, plane.size_blocks.height * 8),

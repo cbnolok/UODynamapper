@@ -57,6 +57,7 @@ pub enum LogAbout {
     Startup,
     SystemsGeneral,
     UoFiles,
+    BevyBackends,
 }
 
 //type MsgData = (Severity, About);
@@ -125,8 +126,8 @@ fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
 
     // 2. Check filters
     for filter in &settings_guard.filters {
-        let sev_match = filter.sev.as_ref().is_none_or(|s| s == severity);
-        let about_match = filter.about.as_ref().is_none_or(|a| a == about);
+        let sev_match: bool = filter.sev.as_ref().is_none_or(|s| s == severity);
+        let about_match: bool = filter.about.as_ref().is_none_or(|a| a == about);
         if sev_match && about_match {
             return !filter.suppress;
         }
@@ -137,7 +138,16 @@ fn can_show_msg(severity: &LogSev, about: &LogAbout) -> bool {
 
 #[track_caller]
 pub fn one(
-    _show_caller_location_override: Option<bool>,
+    severity: LogSev,
+    about: LogAbout,
+    msg: &str,
+) {
+    one_with_location_override(None, severity, about, msg);
+}
+
+#[track_caller]
+pub fn one_with_location_override(
+    location_override: Option<&str>,
     severity: LogSev,
     about: LogAbout,
     msg: &str,
@@ -159,22 +169,23 @@ pub fn one(
     // Add file:line if enabled
     #[cfg(debug_assertions)]
     {
-        let show_location: bool = _show_caller_location_override.unwrap_or(true);
-        if show_location {
+        let loc_str: String = if let Some(location) = location_override {
+            location.to_string()
+        } else {
             let caller = std::panic::Location::caller();
-            let loc_str: String = format!("{}:{}", caller.file(), caller.line());
+            format!("{}:{}", caller.file(), caller.line())
+        };
 
-            const PAD_WIDTH: usize = 46;
-            let loc_trimmed: String = if loc_str.len() > PAD_WIDTH {
-                let slice: &str = &loc_str[loc_str.len() - (PAD_WIDTH - 2)..];
-                format!("..{}", slice)
-            } else {
-                loc_str
-            };
+        const PAD_WIDTH: usize = 46;
+        let loc_trimmed: String = if loc_str.len() > PAD_WIDTH {
+            let slice: &str = &loc_str[loc_str.len() - (PAD_WIDTH - 2)..];
+            format!("..{}", slice)
+        } else {
+            loc_str
+        };
 
-            // Right-pad or truncate to PAD_WIDTH
-            write!(full_msg, " {{ {:width$} }}", loc_trimmed, width = PAD_WIDTH).unwrap();
-        }
+        // Right-pad or truncate to PAD_WIDTH
+        write!(full_msg, " {{ {:width$} }}", loc_trimmed, width = PAD_WIDTH).unwrap();
     }
     #[cfg(not(debug_assertions))]
     {

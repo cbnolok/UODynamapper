@@ -80,7 +80,7 @@ impl IndexFile {
 
         let index_element_qty = file_size / IndexElement::PACKED_SIZE as usize;
         let mut file_data: Vec<IndexElement> = vec![IndexElement::default(); index_element_qty];
-        
+
         file_handle
             .read_exact(bytemuck::cast_slice_mut(&mut file_data))
             .wrap_err("Read index file")?;
@@ -99,7 +99,7 @@ impl IndexFile {
         let i_elem = file_data.len();
         let index_file = IndexFile { file_data };
         log::info!(
-            "Loaded {i_elem} (0x{:x}) Index Elements from '{file_name}'.",
+            "uocf: Loaded {i_elem} (0x{:x}) Index Elements from '{file_name}'.",
             i_elem
         );
 

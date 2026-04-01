@@ -532,7 +532,7 @@ impl TileData {
         tiledata.item_data = Vec::with_capacity(1 + tiledata.max_item_rev as usize);
 
         log::info!(
-        "Found Tiledata with size: {file_size}. \n\
+        "uocf: Found Tiledata with size: {file_size}. \n\
         Detected LandTile size: {:?}, ItemTile size: {:?}, Max Item count: {:?} (0x{:X})",
             tiledata.land_tile_binary_size,
             tiledata.item_tile_binary_size,
@@ -583,7 +583,7 @@ impl TileData {
             });
         }
         let i_tile = tiledata.land_data.len() as u32;
-        log::info!("Loaded {i_tile} (0x{:x}) LandTiles.", i_tile);
+        log::info!("uocf: Loaded {i_tile} (0x{:x}) LandTiles.", i_tile);
 
         // Read ItemTiles
         // Optimization: Same as above, we slice the buffer for the item section specifically.
@@ -633,7 +633,7 @@ impl TileData {
             });
         }
         let i_tile = tiledata.item_data.len() as u32;
-        log::info!("Loaded {i_tile} (0x{:x}) Item Tiles.", i_tile);
+        log::info!("uocf: Loaded {i_tile} (0x{:x}) Item Tiles.", i_tile);
 
         Ok(tiledata)
     }

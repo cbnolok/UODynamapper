@@ -10,7 +10,7 @@ Set-Location $rootDir
 Write-Host "Running Windows flamegraph build (release optimizations + debug symbols, frame pointers)..."
 
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
-$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.ps1").Path
+$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Path
 
 # Flamegraph build: release optimizations with debug symbols and frame pointers.
 # - No LTO & No Strip: essential for stack walking

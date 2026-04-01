@@ -10,7 +10,7 @@ Set-Location $rootDir
 Write-Host "Running Windows stable release build..."
 
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
-$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.ps1").Path
+$Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Path
 
 # Stable toolchain release flags.
 # Windows uses LLD linker via config.toml
