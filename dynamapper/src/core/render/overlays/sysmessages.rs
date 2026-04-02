@@ -7,10 +7,14 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use std::time::Duration;
 
-pub struct SystemMessagesPlugin;
+pub struct SystemMessagesPlugin {
+    pub registered_by: &'static str,
+}
+crate::impl_tracked_plugin!(SystemMessagesPlugin);
 
 impl Plugin for SystemMessagesPlugin {
     fn build(&self, app: &mut App) {
+        crate::util_lib::tracked_plugin::log_plugin_build(self);
         app.add_systems(
             EguiPrimaryContextPass,
             sys_render_sysmessages.run_if(in_state(AppState::InGame)),

@@ -10,10 +10,14 @@ const FONT_SIZE: f32 = 18.0;
 use bevy::time::common_conditions::on_real_timer;
 use std::time::Duration;
 
-pub struct PlayerPositionOverlayPlugin;
+pub struct PlayerPositionOverlayPlugin {
+    pub registered_by: &'static str,
+}
+crate::impl_tracked_plugin!(PlayerPositionOverlayPlugin);
 
 impl Plugin for PlayerPositionOverlayPlugin {
     fn build(&self, app: &mut App) {
+        crate::util_lib::tracked_plugin::log_plugin_build(self);
         app.add_systems(OnEnter(AppState::InGame), setup_overlay_player_position)
             .add_systems(
                 Update,
@@ -35,6 +39,11 @@ pub fn setup_overlay_player_position(
     asset_server: Res<AssetServer>,
     settings: Res<crate::external_data::settings::Settings>,
 ) {
+    crate::util_lib::tracked_plugin::log_system_add_one_shot::<PlayerPositionOverlayPlugin>(
+        "OnEnter(InGame)",
+        "None",
+        crate::fname!(),
+    );
     let font: Handle<Font> = asset_server.load("fonts/uo/UOClassicRough.ttf");
 
     commands

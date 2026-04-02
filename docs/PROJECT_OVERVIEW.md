@@ -120,16 +120,24 @@ There is no intermediate `AssetsLoading` state — asset loading runs within the
 
 Core plugins registered in `core.rs` (top-level only):
 
-| Plugin | Purpose |
-| ------ | ------- |
-| `ExternalDataPlugin` | Settings + shader presets loading |
-| `ControlsPlugin` | Player input (WASD, PageUp/Down for Z) |
-| `RenderPlugin` | Scene, camera, overlays, dialogs |
-| `TextureCachePlugin` | Cache land/item textures |
-| `UOFilesPlugin` | Load Ultima Online game files |
+| Plugin | Purpose | Registered By |
+| ------ | ------- | ------------- |
+| `ExternalDataPlugin` | Settings + shader presets loading | Core |
+| `ControlsPlugin` | Player input (WASD, PageUp/Down for Z) | Core |
+| `RenderPlugin` | Scene, camera, overlays, dialogs | Core |
+| `TextureCachePlugin` | Cache land/item textures | Core |
+| `UOFilesPlugin` | Load Ultima Online game files | Core |
+| `WireframePanicFixPlugin`| Fix for Bevy 0.18.1 Node3d panic | Core |
+| `DefaultPlugins` | Bevy engine core systems | Core (Manual) |
+| `WireframePlugin` | Debug wireframe rendering | Core (Manual) |
+| `FramepacePlugin` | Framerate limiting | Core (Manual) |
+| `EguiPlugin` | egui integration | Core (Manual) |
 
-`ExternalDataPlugin` sub-plugins: `SettingsPlugin`, `ShaderPresetsPlugin`
-`RenderPlugin` sub-plugins: `ScenePlugin` (world, camera, player, dynamic light), `OverlaysPlugin` (FPS, position, system messages), `DialogsPlugin` (F1/F3/Ctrl+G)
+**Internal Sub-plugins:**
+- `ExternalDataPlugin` → `SettingsPlugin`, `ShaderPresetsPlugin`
+- `RenderPlugin` → `ScenePlugin`, `OverlaysPlugin`, `DialogsPlugin`, `LandProfilingPlugin`
+- `ScenePlugin` → `WorldPlugin`, `PlayerDynamicLightPlugin`, `CameraPlugin`, `PlayerPlugin`
+- `TextureCachePlugin` → `LandTextureCachePlugin`
 
 ---
 
@@ -297,6 +305,6 @@ For detailed troubleshooting, see `docs/CONTRIBUTORS_GUIDE.md` or `GEMINI.md`.
 
 ---
 
-**Last Updated**: mercoledì 18 marzo 2026  
+**Last Updated**: giovedì 2 aprile 2026  
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024

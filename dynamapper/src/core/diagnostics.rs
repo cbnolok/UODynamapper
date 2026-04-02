@@ -4,6 +4,13 @@ use bevy::prelude::*;
 const DUMP_DIAGNOSTICS_INTERVAL_SEC: u64 = 0; // 0 = don't do it. If needed, 2 seconds is good.
 
 pub fn add_diagnostics_plugins(app: &mut App) {
+    {
+        let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
+            .lock()
+            .expect("plugin registry poisoned");
+        registry.record("FrameTimeDiagnosticsPlugin", "Core");
+        registry.record("RenderDiagnosticsPlugin", "Core");
+    }
     app.add_plugins((
         bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
         // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
@@ -20,6 +27,12 @@ pub fn add_diagnostics_plugins(app: &mut App) {
     ));
 
     if DUMP_DIAGNOSTICS_INTERVAL_SEC != 0 {
+        {
+            let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
+                .lock()
+                .expect("plugin registry poisoned");
+            registry.record("LogDiagnosticsPlugin", "Core");
+        }
         app.add_plugins((
             // Temporary: dump all render/diagnostics to console every 2 seconds.
             // filter=None means log ALL diagnostics (FPS + render stats).

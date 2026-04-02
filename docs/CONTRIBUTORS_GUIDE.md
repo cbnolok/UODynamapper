@@ -240,13 +240,32 @@ let value = settings
     .get("my_setting")
     .ok_or_else(|| ConfigError::Missing("my_setting".to_string()))?;
 
+```rust
 // WRONG - hidden default
 let value = settings.get("my_setting").unwrap_or(42);
 ```
 
 ---
 
-## 7. Logging System
+## 7. Plugin Registry & Tracking
+
+The project includes a custom `TrackedPlugin` mechanism (see `util_lib/tracked_plugin.rs`) to maintain a clear visual tree of all registered plugins at startup.
+
+### Rules for New Plugins
+
+1. **Internal Plugins**: MUST implement `TrackedPlugin`.
+   - Add a `pub registered_by: &'static str` field to the plugin struct.
+   - Use the `impl_tracked_plugin!(MyPlugin);` macro.
+   - Call `log_plugin_build(self);` at the very beginning of the `build()` method.
+2. **External Plugins**: If you add a third-party plugin (e.g., from crates.io), manually record it in the registry in `core.rs` (or the parent plugin's `build` method) using:
+   ```rust
+   let mut registry = crate::util_lib::tracked_plugin::plugin_registry().lock().unwrap();
+   registry.record("ExternalPluginName", "RegisteredByPluginName");
+   ```
+
+This ensures the "Plugin registry tree" logged at startup remains accurate.
+
+## 8. Logging System
 
 ### Categories
 
@@ -263,7 +282,7 @@ let value = settings.get("my_setting").unwrap_or(42);
 
 ---
 
-## 8. Multi-Map Support
+## 9. Multi-Map Support
 
 - Auto-discovers `map0.mul` through `map5.mul`
 - Each map plane indexed by ID (0-5)
@@ -272,7 +291,7 @@ let value = settings.get("my_setting").unwrap_or(42);
 
 ---
 
-## 9. Key Constants
+## 10. Key Constants
 
 ```rust
 TILE_NUM_PER_CHUNK_DIM = 8       // 8x8 tiles per chunk
@@ -291,7 +310,7 @@ BIG_INITIAL_LAYERS = 128
 
 ---
 
-## 10. Related Documentation
+## 11. Related Documentation
 
 - **GEMINI.md**: AI agent instructions, workflow, and best practices
 - **docs/PROJECT_OVERVIEW.md**: High-level project summary, goals, status
@@ -299,6 +318,6 @@ BIG_INITIAL_LAYERS = 128
 
 ---
 
-**Last Updated**: mercoledì 18 marzo 2026  
+**Last Updated**: giovedì 2 aprile 2026  
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024

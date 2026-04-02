@@ -365,6 +365,7 @@ impl Plugin for SettingsPlugin {
 }
 
 fn sys_startup_load_file(mut commands: Commands) {
+    log_system_add_one_shot::<SettingsPlugin>("PreStartup", "None", fname!());
     let data = load_from_files();
 
     // Initialize logger settings
@@ -469,6 +470,7 @@ fn sys_apply(
     mut windows_q: Query<&mut Window>,
     mut zoom_res: ResMut<RenderZoom>,
 ) {
+    log_system_add_one_shot::<SettingsPlugin>("Startup", "None", fname!());
     let mut w = windows_q.single_mut().unwrap();
     w.resolution = WindowResolution::new(
         settings_res.app.window.width as u32,

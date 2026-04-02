@@ -136,6 +136,13 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
 - **Egui Rendering**: In Bevy 0.18 with `bevy_egui` 0.39, all egui rendering systems MUST run in `EguiPrimaryContextPass` schedule, NOT in `Update` or `PostUpdate`.
 - **Change Detection**: Avoid `get_mut()` in hot paths (see Performance section below).
 
+### 4.3 Plugin Rules
+
+- **Plugin Tracking**: ALL internal plugins MUST implement the `TrackedPlugin` trait.
+    - Add `pub registered_by: &'static str` to the plugin struct.
+    - Call `log_plugin_build(self)` at the start of `build()`.
+- **External Plugins**: Manually record third-party plugins in the registry (e.g. in `core.rs`) so they appear in the startup graph.
+
 ---
 
 ## 5. Agent Workflow: How to Approach Tasks

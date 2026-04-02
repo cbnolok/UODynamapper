@@ -20,11 +20,15 @@ impl Plugin for OverlaysPlugin {
         log_plugin_build(self);
         app.add_plugins((
             PerformanceOverlayPlugin,
-            PlayerPositionOverlayPlugin,
+            PlayerPositionOverlayPlugin {
+                registered_by: "OverlaysPlugin",
+            },
             CursorBehaviorOverlayPlugin {
                 registered_by: "OverlaysPlugin",
             },
-            SystemMessagesPlugin,
+            SystemMessagesPlugin {
+                registered_by: "OverlaysPlugin",
+            },
         ));
     }
 }

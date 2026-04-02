@@ -9,10 +9,10 @@ hide_player = false
 
 [logging]
 # Minimum log level to display in terminal
-min_severity = "Info"
+min_severity = "Debug" # "Info"
 
 # Emit flat per-plugin build lines (true to keep existing flat log lines)
-emit_flat_plugin_build = true
+emit_flat_plugin_build = false
 
 # Emit Unicode tree view of plugin build hierarchy (true to print tree)
 emit_tree_plugin_build = true
@@ -30,6 +30,13 @@ suppress = true
 about = "RenderWorldLand"
 suppress = true
 
+# Order is important! First more specific combinations, then more general ones.
 [[logging.filters]]
 about = "Performance"
+sev = "Debug"
 suppress = true
+
+[[logging.filters]]
+about = "Performance"
+suppress = false
+

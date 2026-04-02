@@ -1,7 +1,12 @@
+use crate::{
+    console_logger::{self, LogAbout, LogSev},
+    core::system_sets::StartupSysSet,
+};
 use bevy::app::Plugin;
-use crate::{core::system_sets::StartupSysSet, console_logger::{self, LogAbout, LogSev}};
-use std::{collections::{HashMap, HashSet}, sync::{Mutex, OnceLock}};
-
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Mutex, OnceLock},
+};
 
 #[derive(Debug, Default)]
 struct PluginRegistryNode {
@@ -11,7 +16,7 @@ struct PluginRegistryNode {
 }
 
 #[derive(Debug, Default)]
-struct PluginRegistry {
+pub struct PluginRegistry {
     nodes: HashMap<String, PluginRegistryNode>,
     roots: Vec<String>,
 }
@@ -26,7 +31,12 @@ struct PluginLogToggles {
 }
 
 pub fn set_plugin_log_toggles(flat: bool, tree: bool) {
-    let m = PLUGIN_LOG_TOGGLES.get_or_init(|| std::sync::Mutex::new(PluginLogToggles { emit_flat: flat, emit_tree: tree }));
+    let m = PLUGIN_LOG_TOGGLES.get_or_init(|| {
+        std::sync::Mutex::new(PluginLogToggles {
+            emit_flat: flat,
+            emit_tree: tree,
+        })
+    });
     if let Ok(mut guard) = m.lock() {
         guard.emit_flat = flat;
         guard.emit_tree = tree;
@@ -47,7 +57,7 @@ fn emit_tree_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn plugin_registry() -> &'static Mutex<PluginRegistry> {
+pub fn plugin_registry() -> &'static Mutex<PluginRegistry> {
     PLUGIN_REGISTRY.get_or_init(|| Mutex::new(PluginRegistry::default()))
 }
 
@@ -62,7 +72,7 @@ fn push_unique(list: &mut Vec<String>, value: &str) {
 }
 
 impl PluginRegistry {
-    fn record(&mut self, plugin_name: &str, registered_by: &str) {
+    pub fn record(&mut self, plugin_name: &str, registered_by: &str) {
         let plugin_name = bare_name(plugin_name).to_string();
         let registered_by = bare_name(registered_by).to_string();
 
@@ -150,7 +160,11 @@ impl PluginRegistry {
 
         if let Some(node) = self.nodes.get(name) {
             let child_prefix = if prefix.is_empty() {
-                if is_last { "   ".to_string() } else { "│  ".to_string() }
+                if is_last {
+                    "   ".to_string()
+                } else {
+                    "│  ".to_string()
+                }
             } else if is_last {
                 format!("{prefix}   ")
             } else {
@@ -165,7 +179,6 @@ impl PluginRegistry {
     }
 }
 
-
 pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
     let full_name = std::any::type_name::<T>();
     let bare_name = full_name.rsplit("::").next().unwrap();
@@ -177,34 +190,43 @@ pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
 
     if emit_flat_enabled() {
         console_logger::one(
-            LogSev::Info,
+            LogSev::Debug,
             LogAbout::Plugins,
-            &format!("Build: {bare_name} (registered by: {}).", plugin.registered_by()),
+            &format!(
+                "Build: {bare_name} (registered by: {}).",
+                plugin.registered_by()
+            ),
         );
     }
 }
 
 pub fn sys_log_plugin_registry_tree() {
+    log_system_add_base(
+        "sys_log_plugin_registry_tree",
+        "crate::core::RenderPlugin",
+        "Startup",
+        "Done",
+    );
     if !emit_tree_enabled() {
         return;
     }
 
-    let registry = plugin_registry()
-        .lock()
-        .expect("plugin registry poisoned");
+    let registry = plugin_registry().lock().expect("plugin registry poisoned");
 
-    console_logger::one(
-        LogSev::Info,
-        LogAbout::Plugins,
-        "Plugin registry tree:",
-    );
+    console_logger::one(LogSev::Debug, LogAbout::Plugins, "Plugin registry tree:");
 
     for line in registry.tree_lines() {
-        console_logger::one(LogSev::Info, LogAbout::Plugins, &line);
+        console_logger::one(LogSev::Debug, LogAbout::Plugins, &line);
     }
 }
 
-fn log_system_add_base<'a>(myname: &'static str, plugname: &str, schedule: &'static str, sys_set: &'a str) {
+#[track_caller]
+fn log_system_add_base<'a>(
+    myname: &'static str,
+    plugname: &str,
+    schedule: &str,
+    sys_set: &'a str,
+) {
     let plugname_bare = plugname.rsplit("::").next().unwrap();
     let myname_bare = myname.rsplit("::").next().unwrap();
     console_logger::one(
@@ -214,11 +236,27 @@ fn log_system_add_base<'a>(myname: &'static str, plugname: &str, schedule: &'sta
     );
 }
 
+#[track_caller]
 pub fn log_system_add_startup<T: TrackedPlugin>(sys_set: StartupSysSet, _myname: &'static str) {
-    log_system_add_base(_myname, std::any::type_name::<T>(), "Startup", sys_set.as_ref())
+    log_system_add_base(
+        _myname,
+        std::any::type_name::<T>(),
+        "Startup",
+        sys_set.as_ref(),
+    )
 }
+
+#[track_caller]
+pub fn log_system_add_one_shot<T: TrackedPlugin>(
+    schedule: &str,
+    sys_set: &str,
+    _myname: &'static str,
+) {
+    log_system_add_base(_myname, std::any::type_name::<T>(), schedule, sys_set)
+}
+
 pub fn log_system_add_update<T: TrackedPlugin>(_myname: &'static str) {
-     // do nothing for now, it can be too cluttering.
+    // do nothing for now, it can be too cluttering.
     //log_system_add_base(_myname, std::any::type_name::<T>(), "Update")
 }
 
@@ -236,7 +274,6 @@ macro_rules! impl_tracked_plugin {
         }
     };
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -276,4 +313,3 @@ mod tests {
         assert_eq!(lines, expected);
     }
 }
-

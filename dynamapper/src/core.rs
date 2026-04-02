@@ -17,7 +17,8 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, sys_log_gpu_preprocessing_mode}, render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     external_data::{ExternalDataPlugin, settings},
-    util_lib::tracked_plugin::{sys_log_plugin_registry_tree, set_plugin_log_toggles},
+    util_lib::tracked_plugin::{sys_log_plugin_registry_tree, set_plugin_log_toggles, TrackedPlugin, log_plugin_build},
+    impl_tracked_plugin,
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -112,7 +113,10 @@ fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin 
 
 /// Bevy 0.18.1 WireframePlugin panics if Node3d::PostProcessing is missing from the graph.
 /// This plugin adds an EmptyNode to satisfy the edge requirement.
-struct WireframePanicFixPlugin;
+struct WireframePanicFixPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(WireframePanicFixPlugin);
 impl Plugin for WireframePanicFixPlugin {
     /* https://taintedcoders.com/bevy/rendering
     Bevy provides an extendable graph-structured rendering system, where input nodes pass data to output nodes.
@@ -128,6 +132,7 @@ impl Plugin for WireframePanicFixPlugin {
     When a Graph Node runs, it uses its graph inputs and the Render World to construct GPU command lists.
      */
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
         use bevy::render::render_graph::{EmptyNode, RenderGraphExt};
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
@@ -228,8 +233,21 @@ pub fn run_bevy_app() -> ExitCode {
                 file_path: assets_folder.to_str().unwrap().to_string(),
                 ..default()
             }),
-    )
-    .add_plugins(WireframePanicFixPlugin) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
+    );
+
+    {
+        let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
+            .lock()
+            .expect("plugin registry poisoned");
+        registry.record("DefaultPlugins", "Core");
+        registry.record("WireframePlugin", "Core");
+        registry.record("FramepacePlugin", "Core");
+        registry.record("EguiPlugin", "Core");
+    }
+
+    app.add_plugins(WireframePanicFixPlugin {
+        registered_by: "Core",
+    }) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
     .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
     .insert_resource(custom_wireframe_config(wireframe_enabled))
     //.edit_schedule(Update, |schedule| {

@@ -41,10 +41,18 @@ pub struct ProfilingBeginLabel;
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct ProfilingEndLabel;
 
-pub struct LandProfilingPlugin;
+use crate::util_lib::tracked_plugin::{TrackedPlugin, log_plugin_build};
+use crate::impl_tracked_plugin;
+
+pub struct LandProfilingPlugin {
+    pub registered_by: &'static str,
+}
+
+impl_tracked_plugin!(LandProfilingPlugin);
 
 impl Plugin for LandProfilingPlugin {
     fn build(&self, app: &mut App) {
+        log_plugin_build(self);
         app.init_resource::<GpuProfilingTrigger>()
             .add_systems(Update, sys_trigger_gpu_profiling);
 

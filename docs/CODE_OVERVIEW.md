@@ -29,32 +29,41 @@ DefaultPlugins
 
 **Plugin Registration**:
 
-- **Third-Party**: `WireframePlugin` (debug meshes), `FramepacePlugin` (framerate limiting), `EguiPlugin` (egui UI layer)
-- **Custom** (top-level, registered in `core.rs`):
-  - `ExternalDataPlugin` → sub-plugins: `SettingsPlugin` + `ShaderPresetsPlugin`
-  - `ControlsPlugin` - Player input handling
-  - `RenderPlugin` → sub-plugins: `ScenePlugin` + `OverlaysPlugin` + `DialogsPlugin`
-  - `TextureCachePlugin` - Land/item texture caching
-  - `UOFilesPlugin` - UO game file loading
+- **Third-Party (Manually Tracked)**: `DefaultPlugins` (group), `WireframePlugin`, `FramepacePlugin`, `EguiPlugin`
+- **Internal (TrackedPlugin)**:
+  - `ExternalDataPlugin` → sub-plugins: `SettingsPlugin`, `ShaderPresetsPlugin`
+  - `ControlsPlugin`
+  - `RenderPlugin` → sub-plugins: `ScenePlugin`, `OverlaysPlugin`, `DialogsPlugin`, `LandProfilingPlugin`
+  - `TextureCachePlugin` → sub-plugin: `LandTextureCachePlugin`
+  - `UOFilesPlugin`
+  - `WireframePanicFixPlugin`
+  - Diagnostics: `FrameTimeDiagnosticsPlugin`, `RenderDiagnosticsPlugin`, `LogDiagnosticsPlugin` (manual)
 
-**Plugin Tree** (nested registration):
+**Plugin Tree** (nested registration & tracking):
 
 ```text
 core.rs
+├── [External] DefaultPlugins
+├── [External] WireframePlugin
+├── [External] FramepacePlugin
+├── [External] EguiPlugin
+├── WireframePanicFixPlugin
 ├── ExternalDataPlugin
-│   ├── SettingsPlugin          (configuration management)
-│   └── ShaderPresetsPlugin     (shader preset loading/management)
-├── ControlsPlugin              (player input: WASD, PageUp/Down, keybindings)
+│   ├── SettingsPlugin
+│   └── ShaderPresetsPlugin
+├── ControlsPlugin
 ├── RenderPlugin
+│   ├── LandProfilingPlugin
 │   ├── ScenePlugin
-│   │   ├── WorldPlugin         (chunk spawning, terrain rendering)
+│   │   ├── WorldPlugin
 │   │   ├── PlayerDynamicLightPlugin
 │   │   ├── CameraPlugin
 │   │   └── PlayerPlugin
-│   ├── OverlaysPlugin          (FPS, player position, system messages)
-│   └── DialogsPlugin           (F1 help, F3 shader controls, Ctrl+G teleport)
-├── TextureCachePlugin          (land/item texture GPU arrays, eviction)
-└── UOFilesPlugin               (UO game file discovery and loading)
+│   ├── OverlaysPlugin
+│   └── DialogsPlugin
+├── TextureCachePlugin
+│   └── LandTextureCachePlugin
+└── UOFilesPlugin
 ```
 
 ### 1.2 State Machine (`dynamapper/src/core/app_states.rs`)
@@ -727,6 +736,6 @@ for dy in -1..3 {
 
 ---
 
-**Last Updated**: mercoledì 18 marzo 2026
+**Last Updated**: giovedì 2 aprile 2026
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024

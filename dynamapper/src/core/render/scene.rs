@@ -35,7 +35,6 @@ pub struct ScenePlugin {
 }
 impl_tracked_plugin!(ScenePlugin);
 
-
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
@@ -112,7 +111,7 @@ pub fn sys_update_scene_on_window_resize(
 
 fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
     console_logger::one(
-        LogSev::Debug,
+        LogSev::DebugVerbose,
         LogAbout::RenderWorldLand,
         &format!("Spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
     );
@@ -120,7 +119,7 @@ fn log_chunk_spawn(gx: u32, gy: u32, map: u32) {
 
 fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
     console_logger::one(
-        LogSev::Debug,
+        LogSev::DebugVerbose,
         LogAbout::RenderWorldLand,
         &format!("De-spawned chunk at: \t\tgx={gx}\tgy={gy}\t(map={map})"),
     );
@@ -319,7 +318,7 @@ fn sys_update_worldmap_chunks_to_render(
             chunk_scale,
         );
         console_logger::one(
-            LogSev::Debug,
+            LogSev::Debug, // DebugVerbose
             LogAbout::RenderWorldLand,
             &format!(
                 "Visible chunk target: {} (scale={})",

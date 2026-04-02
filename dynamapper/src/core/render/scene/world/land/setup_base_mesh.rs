@@ -5,6 +5,9 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
     asset::RenderAssetUsages,
 };
+use crate::util_lib::tracked_plugin::log_system_add_startup;
+use crate::core::system_sets::StartupSysSet;
+use crate::fname;
 
 fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
     let core_w: usize = chunk_tiles;
@@ -62,6 +65,7 @@ fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
 
 /// This startup system generates shared terrain meshes for multiple LODs and scales.
 pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    log_system_add_startup::<super::DrawLandChunkMeshPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     // Standard 8×8 tile meshes at three vertex-density LODs:
     let high = meshes.add(build_chunk_mesh(8, 1));   // 81 verts  (zoom < 4)
     let medium = meshes.add(build_chunk_mesh(8, 2)); // 25 verts  (zoom 4–10)

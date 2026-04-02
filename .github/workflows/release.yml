@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

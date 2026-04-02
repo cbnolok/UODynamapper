@@ -72,6 +72,11 @@ pub fn setup_overlay_cursor_behavior(
     asset_server: Res<AssetServer>,
     settings: Res<crate::external_data::settings::Settings>,
 ) {
+    crate::util_lib::tracked_plugin::log_system_add_one_shot::<CursorBehaviorOverlayPlugin>(
+        "OnEnter(InGame)",
+        "None",
+        crate::fname!(),
+    );
     let font: Handle<Font> = asset_server.load("fonts/uo/UOClassicRough.ttf");
 
     commands
