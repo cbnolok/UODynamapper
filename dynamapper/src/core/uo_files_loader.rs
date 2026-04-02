@@ -14,6 +14,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
+
 /// Arc is not yet needed (no cross-thread sharing), but kept for consistency
 /// with other UO data resources and future background-thread access.
 #[derive(Resource)]
@@ -66,8 +68,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Start loading UO Data.");
 
-    let mut map_planes = std::iter::repeat_with(|| None).take(8).collect::<Vec<_>>();
-    for map_plane_index in 0..6 {
+    let mut map_planes: Vec<Option<map::MapPlane>> =
+        std::iter::repeat_with(|| None).take((MAX_MAP_INDEX + 1) as usize).collect::<Vec<_>>();
+    for map_plane_index in 0..=MAX_MAP_INDEX {
         let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
         if map_file.exists() {
             lg(&format!(
