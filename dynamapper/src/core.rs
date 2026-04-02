@@ -17,7 +17,7 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, sys_log_gpu_preprocessing_mode}, render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     external_data::{ExternalDataPlugin, settings},
-    util_lib::tracked_plugin::{log_plugin_registry_tree, set_plugin_log_toggles},
+    util_lib::tracked_plugin::{sys_log_plugin_registry_tree, set_plugin_log_toggles},
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -39,12 +39,8 @@ fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
     // which caps FPS at the event rate and causes visual stutter during scrolling.
     let mut settings = WinitSettings::game();
     if reduce_unfocused_fps {
-        /* settings.unfocused_mode = UpdateMode::ReactiveLowPower {
-            max_wait: Duration::from_millis(250), // Refresh at least ~4 times a second even if idle
-        };
-        */
         settings.unfocused_mode = UpdateMode::Reactive {
-            wait: Duration::from_millis(250),
+            wait: Duration::from_secs_f32(1.0 / 10.0), // 10 FPS when unfocused
             react_to_device_events: true,
             react_to_user_events: true,
             react_to_window_events: true,
@@ -289,14 +285,14 @@ pub fn run_bevy_app() -> ExitCode {
     )
     .add_systems(
         PreStartup,
-        advance_state_after_init_core.in_set(StartupSysSet::First),
+        sys_advance_state_after_init_core.in_set(StartupSysSet::First),
     )
     .add_systems(
         Startup,
-        advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
+        sys_advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
     );
 
-    app.add_systems(Startup, log_plugin_registry_tree.in_set(StartupSysSet::Done));
+    app.add_systems(Startup, sys_log_plugin_registry_tree.in_set(StartupSysSet::Done));
 
     // One-shot render-world startup: log whether GPU indirect draw is active.
     // GpuPreprocessingSupport lives only in the render world, not the main world.
@@ -314,11 +310,11 @@ pub fn run_bevy_app() -> ExitCode {
     }
 }
 
-fn advance_state_after_init_core() {
+fn sys_advance_state_after_init_core() {
     log_appstate_change("StartupSetup");
 }
 
-fn advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {
+fn sys_advance_state_after_scene_setup_stage_2(mut next_state: ResMut<NextState<AppState>>) {
     log_appstate_change("InGame");
     next_state.set(AppState::InGame);
 }

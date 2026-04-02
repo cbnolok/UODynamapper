@@ -79,28 +79,23 @@ jobs:
 
   build-linux-arm64:
     name: Build (Linux aarch64)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Enable ARM64 architecture
-        run: |
-          sudo dpkg --add-architecture arm64
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev:arm64 libudev-dev:arm64 libwayland-dev:arm64 libxkbcommon-dev:arm64 \
-            pkg-config clang mold gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            pkg-config clang mold
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: aarch64-unknown-linux-gnu
           components: rust-src
 
       - name: Run sccache-cache
@@ -114,8 +109,8 @@ jobs:
 
       - name: Build release binary
         env:
-          CC: "aarch64-linux-gnu-gcc"
-          CXX: "aarch64-linux-gnu-g++"
+          CC: "clang"
+          CXX: "clang++"
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         run: |
@@ -152,9 +147,14 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          SUDO=""
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          fi
+
           if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends \
+            ${SUDO} apt-get update -qq
+            ${SUDO} apt-get install -y --no-install-recommends \
               build-essential clang git curl bash pkg-config \
               libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
           elif command -v apk >/dev/null 2>&1; then
@@ -166,11 +166,29 @@ jobs:
           fi
 
       - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: rust-src
+
+      - name: Prepare intel_tex_2 static libs for musl
+        shell: bash
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-          source $HOME/.cargo/env
-          rustup target add x86_64-unknown-linux-musl
-          rustup component add rust-src
+          set -euo pipefail
+          cargo +nightly fetch --locked
+          crate_dir="$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
+          if [ -z "$crate_dir" ]; then
+            echo "intel_tex_2 source not found in cargo registry"
+            exit 1
+          fi
+          ispc_dir="$crate_dir/src/ispc"
+          for stem in kernel kernel_astc ispc_texcomp_astc; do
+            src="$ispc_dir/lib${stem}x86_64-unknown-linux-gnu.a"
+            dst="$ispc_dir/lib${stem}x86_64-unknown-linux-musl.a"
+            if [ -f "$src" ] && [ ! -f "$dst" ]; then
+              cp "$src" "$dst"
+            fi
+          done
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -186,10 +204,10 @@ jobs:
           SCCACHE_GHA_ENABLED: "false"
           CC: "x86_64-linux-musl-gcc"
           CXX: "x86_64-linux-musl-g++"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "x86_64-linux-musl-gcc"
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         run: |
-          source $HOME/.cargo/env
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
@@ -222,9 +240,14 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          SUDO=""
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          fi
+
           if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends \
+            ${SUDO} apt-get update -qq
+            ${SUDO} apt-get install -y --no-install-recommends \
               build-essential clang git curl bash pkg-config \
               libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
           elif command -v apk >/dev/null 2>&1; then
@@ -236,11 +259,29 @@ jobs:
           fi
 
       - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: rust-src
+
+      - name: Prepare intel_tex_2 static libs for musl
+        shell: bash
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-          source $HOME/.cargo/env
-          rustup target add aarch64-unknown-linux-musl
-          rustup component add rust-src
+          set -euo pipefail
+          cargo +nightly fetch --locked
+          crate_dir="$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
+          if [ -z "$crate_dir" ]; then
+            echo "intel_tex_2 source not found in cargo registry"
+            exit 1
+          fi
+          ispc_dir="$crate_dir/src/ispc"
+          for stem in kernel kernel_astc ispc_texcomp_astc; do
+            src="$ispc_dir/lib${stem}aarch64-unknown-linux-gnu.a"
+            dst="$ispc_dir/lib${stem}aarch64-unknown-linux-musl.a"
+            if [ -f "$src" ] && [ ! -f "$dst" ]; then
+              cp "$src" "$dst"
+            fi
+          done
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
@@ -254,8 +295,12 @@ jobs:
       - name: Build release binary
         env:
           SCCACHE_GHA_ENABLED: "false"
+          CC: "aarch64-linux-musl-gcc"
+          CXX: "aarch64-linux-musl-g++"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: "aarch64-linux-musl-gcc"
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         run: |
-          source $HOME/.cargo/env
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
@@ -317,6 +362,57 @@ jobs:
           path: dynamapper-windows-x86_64.zip
           retention-days: 7
 
+  build-windows-arm64:
+    name: Build (Windows ARM64)
+    runs-on: windows-11-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-pc-windows-msvc
+          components: rust-src
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "windows-arm64-nightly-sccache"
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          $Env:RUSTFLAGS = "-C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
+          $Env:RUSTC_WRAPPER = (Resolve-Path "scripts/build/common/rustc_wrapper.bat").Path
+          cargo +nightly build --release --locked --no-default-features `
+            --bin dynamapper --package dynamapper `
+            --target aarch64-pc-windows-msvc `
+            -Z build-std=std,panic_abort `
+            -Z build-std-features=optimize_for_size
+
+      - name: Package binary and assets
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release_package | Out-Null
+          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/dynamapper.exe" -Destination "release_package/"
+          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
+          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-arm64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamapper-windows-arm64
+          path: dynamapper-windows-arm64.zip
+          retention-days: 7
+
   build-macos:
     name: Build (macOS x86_64 + ARM64)
     runs-on: macos-latest
@@ -370,7 +466,7 @@ jobs:
 
   publish:
     name: Publish Release
-    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-macos]
+    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-arm64, build-macos]
     runs-on: ubuntu-22.04
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     permissions:

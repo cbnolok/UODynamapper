@@ -184,7 +184,7 @@ pub fn log_plugin_build<T: TrackedPlugin>(plugin: &T) {
     }
 }
 
-pub fn log_plugin_registry_tree() {
+pub fn sys_log_plugin_registry_tree() {
     if !emit_tree_enabled() {
         return;
     }
