@@ -17,13 +17,16 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_GHA_ENABLED: "false"
   SCCACHE_NO_DAEMON: "1"
 
 jobs:
   build-linux:
     name: Build (Linux x86_64)
     runs-on: ubuntu-22.04
+    env:
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -80,6 +83,9 @@ jobs:
   build-linux-arm64:
     name: Build (Linux aarch64)
     runs-on: ubuntu-24.04-arm
+    env:
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -137,6 +143,9 @@ jobs:
   build-linux-musl-x86_64:
     name: Build (Linux x86_64 musl - static)
     runs-on: ubuntu-22.04
+    env:
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: /tmp/sccache
     container:
       image: messense/rust-musl-cross:x86_64-musl
     steps:
@@ -147,14 +156,17 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          SUDO=""
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO="sudo"
-          fi
+          run_privileged() {
+            if command -v sudo >/dev/null 2>&1; then
+              sudo "$@"
+            else
+              "$@"
+            fi
+          }
 
           if command -v apt-get >/dev/null 2>&1; then
-            ${SUDO} apt-get update -qq
-            ${SUDO} apt-get install -y --no-install-recommends \
+            run_privileged apt-get update -qq
+            run_privileged apt-get install -y --no-install-recommends \
               build-essential clang git curl bash pkg-config \
               libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
           elif command -v apk >/dev/null 2>&1; then
@@ -176,9 +188,13 @@ jobs:
         run: |
           set -euo pipefail
           cargo +nightly fetch --locked
-          crate_dir="$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          if [ ! -d "$cargo_home/registry/src" ] && [ -d "/root/.cargo/registry/src" ]; then
+            cargo_home="/root/.cargo"
+          fi
+          crate_dir="$(find "$cargo_home/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
           if [ -z "$crate_dir" ]; then
-            echo "intel_tex_2 source not found in cargo registry"
+            echo "intel_tex_2 source not found in cargo registry under $cargo_home"
             exit 1
           fi
           ispc_dir="$crate_dir/src/ispc"
@@ -201,7 +217,6 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "false"
           CC: "x86_64-linux-musl-gcc"
           CXX: "x86_64-linux-musl-g++"
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "x86_64-linux-musl-gcc"
@@ -230,6 +245,9 @@ jobs:
   build-linux-musl-arm64:
     name: Build (Linux aarch64 musl - static)
     runs-on: ubuntu-22.04
+    env:
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: /tmp/sccache
     container:
       image: messense/rust-musl-cross:aarch64-musl
     steps:
@@ -240,14 +258,21 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          SUDO=""
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO="sudo"
-          fi
+          run_privileged() {
+            if command -v sudo >/dev/null 2>&1; then
+              sudo "$@"
+            else
+              "$@"
+            fi
+          }
 
           if command -v apt-get >/dev/null 2>&1; then
-            ${SUDO} apt-get update -qq
-            ${SUDO} apt-get install -y --no-install-recommends \
+            if command -v dpkg >/dev/null 2>&1 && [ "$(dpkg --print-architecture)" = "arm64" ]; then
+              sed -i 's|http://security.ubuntu.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list || true
+              sed -i 's|http://archive.ubuntu.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list || true
+            fi
+            run_privileged apt-get update -qq
+            run_privileged apt-get install -y --no-install-recommends \
               build-essential clang git curl bash pkg-config \
               libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
           elif command -v apk >/dev/null 2>&1; then
@@ -269,9 +294,13 @@ jobs:
         run: |
           set -euo pipefail
           cargo +nightly fetch --locked
-          crate_dir="$(find "$HOME/.cargo/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          if [ ! -d "$cargo_home/registry/src" ] && [ -d "/root/.cargo/registry/src" ]; then
+            cargo_home="/root/.cargo"
+          fi
+          crate_dir="$(find "$cargo_home/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
           if [ -z "$crate_dir" ]; then
-            echo "intel_tex_2 source not found in cargo registry"
+            echo "intel_tex_2 source not found in cargo registry under $cargo_home"
             exit 1
           fi
           ispc_dir="$crate_dir/src/ispc"
@@ -294,7 +323,6 @@ jobs:
 
       - name: Build release binary
         env:
-          SCCACHE_GHA_ENABLED: "false"
           CC: "aarch64-linux-musl-gcc"
           CXX: "aarch64-linux-musl-g++"
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: "aarch64-linux-musl-gcc"
