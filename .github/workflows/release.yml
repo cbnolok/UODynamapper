@@ -147,7 +147,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "false"
       SCCACHE_DIR: /tmp/sccache
     container:
-      image: messense/rust-musl-cross:x86_64-musl
+      image: alpine:3.20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -156,58 +156,23 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          run_privileged() {
-            if command -v sudo >/dev/null 2>&1; then
-              sudo "$@"
-            else
-              "$@"
-            fi
-          }
+          apk add --no-cache \
+            bash git curl ca-certificates \
+            build-base clang mold \
+            ispc \
+            pkgconf zip \
+            alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
 
-          if command -v apt-get >/dev/null 2>&1; then
-            run_privileged apt-get update -qq
-            run_privileged apt-get install -y --no-install-recommends \
-              build-essential clang git curl bash pkg-config \
-              libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
-          elif command -v apk >/dev/null 2>&1; then
-            apk add --no-cache build-base clang git curl bash pkgconfig \
-              alsa-lib-dev eudev-dev wayland-dev libxkbcommon-dev zip
-          else
-            echo "Unknown package manager; please ensure required native libs are available in the container"
-            exit 1
-          fi
+          # Prefer static archives when available for musl linkage.
+          for p in wayland-static libxkbcommon-static alsa-lib-static eudev-static; do
+            apk add --no-cache "$p" || true
+          done
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
           targets: x86_64-unknown-linux-musl
           components: rust-src
-
-      - name: Prepare intel_tex_2 static libs for musl
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +nightly fetch --locked
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-          if [ ! -d "$cargo_home/registry/src" ] && [ -d "/root/.cargo/registry/src" ]; then
-            cargo_home="/root/.cargo"
-          fi
-          crate_dir="$(find "$cargo_home/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
-          if [ -z "$crate_dir" ]; then
-            echo "intel_tex_2 source not found in cargo registry under $cargo_home"
-            exit 1
-          fi
-          ispc_dir="$crate_dir/src/ispc"
-          for stem in kernel kernel_astc ispc_texcomp_astc; do
-            src="$ispc_dir/lib${stem}x86_64-unknown-linux-gnu.a"
-            dst="$ispc_dir/lib${stem}x86_64-unknown-linux-musl.a"
-            if [ -f "$src" ] && [ ! -f "$dst" ]; then
-              cp "$src" "$dst"
-            fi
-          done
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -217,15 +182,34 @@ jobs:
 
       - name: Build release binary
         env:
-          CC: "x86_64-linux-musl-gcc"
-          CXX: "x86_64-linux-musl-g++"
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "x86_64-linux-musl-gcc"
+          CC: "clang"
+          CXX: "clang++"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "clang"
           PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+          PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          PKG_CONFIG_ALL_STATIC: "1"
+          WAYLAND_CLIENT_STATIC: "1"
+          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
+          export RUSTFLAGS=" \
+          -Clink-arg=-fuse-ld=mold \
+          -Clink-arg=-Wl,--gc-sections \
+          -Clink-arg=-Wl,--icf=safe \
+          -Clink-arg=-Wl,--no-allow-shlib-undefined \
+          -Clink-arg=-Wl,--strip-all \
+          -Cforce-unwind-tables=no \
+          -Csymbol-mangling-version=v0 \
+          -Zshare-generics=y \
+          -Zlocation-detail=none \
+          ${RUSTFLAGS:-}"
+          cargo +nightly build --release --locked --no-default-features \
+            --bin dynamapper --package dynamapper \
+            --target x86_64-unknown-linux-musl \
+            --features intel_tex_2/ispc \
+            -Z build-std=std,panic_abort \
+            -Z build-std-features=optimize_for_size
 
       - name: Package binary and assets
         run: |
@@ -244,12 +228,12 @@ jobs:
 
   build-linux-musl-arm64:
     name: Build (Linux aarch64 musl - static)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04-arm
     env:
       SCCACHE_GHA_ENABLED: "false"
       SCCACHE_DIR: /tmp/sccache
     container:
-      image: messense/rust-musl-cross:aarch64-musl
+      image: alpine:3.20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -258,62 +242,23 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          run_privileged() {
-            if command -v sudo >/dev/null 2>&1; then
-              sudo "$@"
-            else
-              "$@"
-            fi
-          }
+          apk add --no-cache \
+            bash git curl ca-certificates \
+            build-base clang mold \
+            ispc \
+            pkgconf zip \
+            alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
 
-          if command -v apt-get >/dev/null 2>&1; then
-            if command -v dpkg >/dev/null 2>&1 && [ "$(dpkg --print-architecture)" = "arm64" ]; then
-              sed -i 's|http://security.ubuntu.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list || true
-              sed -i 's|http://archive.ubuntu.com/ubuntu|http://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list || true
-            fi
-            run_privileged apt-get update -qq
-            run_privileged apt-get install -y --no-install-recommends \
-              build-essential clang git curl bash pkg-config \
-              libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev zip
-          elif command -v apk >/dev/null 2>&1; then
-            apk add --no-cache build-base clang git curl bash pkgconfig \
-              alsa-lib-dev eudev-dev wayland-dev libxkbcommon-dev zip
-          else
-            echo "Unknown package manager; please ensure required native libs are available in the container"
-            exit 1
-          fi
+          # Prefer static archives when available for musl linkage.
+          for p in wayland-static libxkbcommon-static alsa-lib-static eudev-static; do
+            apk add --no-cache "$p" || true
+          done
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-unknown-linux-musl
           components: rust-src
-
-      - name: Prepare intel_tex_2 static libs for musl
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +nightly fetch --locked
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-          if [ ! -d "$cargo_home/registry/src" ] && [ -d "/root/.cargo/registry/src" ]; then
-            cargo_home="/root/.cargo"
-          fi
-          crate_dir="$(find "$cargo_home/registry/src" -maxdepth 2 -type d -name 'intel_tex_2-*' | head -n 1)"
-          if [ -z "$crate_dir" ]; then
-            echo "intel_tex_2 source not found in cargo registry under $cargo_home"
-            exit 1
-          fi
-          ispc_dir="$crate_dir/src/ispc"
-          for stem in kernel kernel_astc ispc_texcomp_astc; do
-            src="$ispc_dir/lib${stem}aarch64-unknown-linux-gnu.a"
-            dst="$ispc_dir/lib${stem}aarch64-unknown-linux-musl.a"
-            if [ -f "$src" ] && [ ! -f "$dst" ]; then
-              cp "$src" "$dst"
-            fi
-          done
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -323,15 +268,34 @@ jobs:
 
       - name: Build release binary
         env:
-          CC: "aarch64-linux-musl-gcc"
-          CXX: "aarch64-linux-musl-g++"
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: "aarch64-linux-musl-gcc"
+          CC: "clang"
+          CXX: "clang++"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: "clang"
           PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+          PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          PKG_CONFIG_ALL_STATIC: "1"
+          WAYLAND_CLIENT_STATIC: "1"
+          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
+          export RUSTFLAGS=" \
+          -Clink-arg=-fuse-ld=mold \
+          -Clink-arg=-Wl,--gc-sections \
+          -Clink-arg=-Wl,--icf=safe \
+          -Clink-arg=-Wl,--no-allow-shlib-undefined \
+          -Clink-arg=-Wl,--strip-all \
+          -Cforce-unwind-tables=no \
+          -Csymbol-mangling-version=v0 \
+          -Zshare-generics=y \
+          -Zlocation-detail=none \
+          ${RUSTFLAGS:-}"
+          cargo +nightly build --release --locked --no-default-features \
+            --bin dynamapper --package dynamapper \
+            --target aarch64-unknown-linux-musl \
+            --features intel_tex_2/ispc \
+            -Z build-std=std,panic_abort \
+            -Z build-std-features=optimize_for_size
 
       - name: Package binary and assets
         run: |
@@ -416,14 +380,7 @@ jobs:
 
       - name: Build release binary
         shell: pwsh
-        run: |
-          $Env:RUSTFLAGS = "-C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
-          $Env:RUSTC_WRAPPER = (Resolve-Path "scripts/build/common/rustc_wrapper.bat").Path
-          cargo +nightly build --release --locked --no-default-features `
-            --bin dynamapper --package dynamapper `
-            --target aarch64-pc-windows-msvc `
-            -Z build-std=std,panic_abort `
-            -Z build-std-features=optimize_for_size
+        run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
         shell: powershell

@@ -1,37 +1,25 @@
 # scripts/build/common/rustc_wrapper.ps1
 # Windows PowerShell wrapper for rustc
 
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$PassThroughArgs
-)
+$passThroughArgs = @($args)
 
-if (-not $PassThroughArgs -or $PassThroughArgs.Count -eq 0) {
+if (-not $passThroughArgs -or $passThroughArgs.Count -eq 0) {
     Write-Error "rustc_wrapper.ps1 requires rustc path and arguments"
     exit 1
 }
 
-$rustc = $PassThroughArgs[0]
+$rustc = $passThroughArgs[0]
 $remainingArgs = @()
-if ($PassThroughArgs.Count -gt 1) {
-    $remainingArgs = $PassThroughArgs[1..($PassThroughArgs.Count - 1)]
+if ($passThroughArgs.Count -gt 1) {
+    $remainingArgs = $passThroughArgs[1..($passThroughArgs.Count - 1)]
 }
 
-# Pass through version/query flags directly without interception
-if ($remainingArgs -join " " -match "-vV|--version" -or $remainingArgs.Count -eq 0) {
+# Pass through version/query flags directly without sccache to keep cargo probes clean.
+$joinedArgs = $remainingArgs -join " "
+if ($remainingArgs.Count -eq 0 -or $joinedArgs -match "(^|\s)(-vV|--version)($|\s)" -or $joinedArgs -match "--print(=|\s)") {
     & $rustc @remainingArgs
     exit $LASTEXITCODE
 }
-
-$crateName = ""
-for ($i = 0; $i -lt $remainingArgs.Count; $i++) {
-    if ($remainingArgs[$i] -eq "--crate-name") {
-        $crateName = $remainingArgs[$i + 1]
-    }
-}
-
-$myCrates = @("dynamapper", "uocf")
-$isMyCrate = $myCrates -contains $crateName
 
 $sccacheBin = Get-Command sccache -ErrorAction SilentlyContinue
 
