@@ -883,7 +883,7 @@ pub fn sys_draw_spawned_land_chunks(
             LogSev::Diagnostics,
             LogAbout::Performance,
             &format!(
-                "Perf: chunk rendering preloader took {build_time} µs for {} chunks.",
+                "Perf: Slow land chunk rendering preloader run: took {build_time} µs for {} chunks.",
                 ready_targets.len()
             ),
         );

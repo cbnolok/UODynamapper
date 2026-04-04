@@ -143,9 +143,6 @@ jobs:
   build-linux-musl-x86_64:
     name: Build (Linux x86_64 musl - static)
     runs-on: ubuntu-22.04
-    env:
-      SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: /tmp/sccache
     container:
       image: alpine:3.20
     steps:
@@ -180,6 +177,19 @@ jobs:
           workspaces: "."
           key: "linux-musl-x86_64-nightly-sccache"
 
+      - name: Prepare intel_tex_2 ISPC sources
+        run: |
+          cargo +nightly fetch --locked --manifest-path dynamapper/Cargo.toml
+          CARGO_SRC_DIR="${CARGO_HOME:-$HOME/.cargo}/registry/src"
+          for crate_dir in "$CARGO_SRC_DIR"/*/intel_tex_2-0.5.0; do
+            [ -d "$crate_dir" ] || continue
+            mkdir -p "$crate_dir/vendor"
+            if [ ! -f "$crate_dir/vendor/ispc_texcomp/kernel.ispc" ]; then
+              rm -rf "$crate_dir/vendor/ispc_texcomp"
+              git clone --depth 1 https://github.com/GameTechDev/ISPCTextureCompressor.git "$crate_dir/vendor/ispc_texcomp"
+            fi
+          done
+
       - name: Build release binary
         env:
           CC: "clang"
@@ -189,27 +199,11 @@ jobs:
           PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
           PKG_CONFIG_ALL_STATIC: "1"
           WAYLAND_CLIENT_STATIC: "1"
-          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
+          CARGO_FEATURES: "intel_tex_2/ispc"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          export RUSTFLAGS=" \
-          -Clink-arg=-fuse-ld=mold \
-          -Clink-arg=-Wl,--gc-sections \
-          -Clink-arg=-Wl,--icf=safe \
-          -Clink-arg=-Wl,--no-allow-shlib-undefined \
-          -Clink-arg=-Wl,--strip-all \
-          -Cforce-unwind-tables=no \
-          -Csymbol-mangling-version=v0 \
-          -Zshare-generics=y \
-          -Zlocation-detail=none \
-          ${RUSTFLAGS:-}"
-          cargo +nightly build --release --locked --no-default-features \
-            --bin dynamapper --package dynamapper \
-            --target x86_64-unknown-linux-musl \
-            --features intel_tex_2/ispc \
-            -Z build-std=std,panic_abort \
-            -Z build-std-features=optimize_for_size
+          ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
 
       - name: Package binary and assets
         run: |
@@ -229,11 +223,6 @@ jobs:
   build-linux-musl-arm64:
     name: Build (Linux aarch64 musl - static)
     runs-on: ubuntu-24.04-arm
-    env:
-      SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: /tmp/sccache
-    container:
-      image: alpine:3.20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -242,17 +231,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          apk add --no-cache \
-            bash git curl ca-certificates \
-            build-base clang mold \
-            ispc \
-            pkgconf zip \
-            alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
-
-          # Prefer static archives when available for musl linkage.
-          for p in wayland-static libxkbcommon-static alsa-lib-static eudev-static; do
-            apk add --no-cache "$p" || true
-          done
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang mold ispc pkg-config zip \
+            musl-tools musl-dev \
+            libasound2-dev libudev-dev libwayland-dev wayland-protocols libxkbcommon-dev
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -266,6 +249,19 @@ jobs:
           workspaces: "."
           key: "linux-musl-arm64-nightly-sccache"
 
+      - name: Prepare intel_tex_2 ISPC sources
+        run: |
+          cargo +nightly fetch --locked --manifest-path dynamapper/Cargo.toml
+          CARGO_SRC_DIR="${CARGO_HOME:-$HOME/.cargo}/registry/src"
+          for crate_dir in "$CARGO_SRC_DIR"/*/intel_tex_2-0.5.0; do
+            [ -d "$crate_dir" ] || continue
+            mkdir -p "$crate_dir/vendor"
+            if [ ! -f "$crate_dir/vendor/ispc_texcomp/kernel.ispc" ]; then
+              rm -rf "$crate_dir/vendor/ispc_texcomp"
+              git clone --depth 1 https://github.com/GameTechDev/ISPCTextureCompressor.git "$crate_dir/vendor/ispc_texcomp"
+            fi
+          done
+
       - name: Build release binary
         env:
           CC: "clang"
@@ -275,27 +271,11 @@ jobs:
           PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
           PKG_CONFIG_ALL_STATIC: "1"
           WAYLAND_CLIENT_STATIC: "1"
-          RUSTC_WRAPPER: "./scripts/build/common/rustc_wrapper.sh"
+          CARGO_FEATURES: "intel_tex_2/ispc"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           chmod +x scripts/build/common/rustc_wrapper.sh
-          export RUSTFLAGS=" \
-          -Clink-arg=-fuse-ld=mold \
-          -Clink-arg=-Wl,--gc-sections \
-          -Clink-arg=-Wl,--icf=safe \
-          -Clink-arg=-Wl,--no-allow-shlib-undefined \
-          -Clink-arg=-Wl,--strip-all \
-          -Cforce-unwind-tables=no \
-          -Csymbol-mangling-version=v0 \
-          -Zshare-generics=y \
-          -Zlocation-detail=none \
-          ${RUSTFLAGS:-}"
-          cargo +nightly build --release --locked --no-default-features \
-            --bin dynamapper --package dynamapper \
-            --target aarch64-unknown-linux-musl \
-            --features intel_tex_2/ispc \
-            -Z build-std=std,panic_abort \
-            -Z build-std-features=optimize_for_size
+          ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
 
       - name: Package binary and assets
         run: |

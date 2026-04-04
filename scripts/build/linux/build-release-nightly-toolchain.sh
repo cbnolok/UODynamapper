@@ -35,10 +35,19 @@ RUSTFLAGS=" \
 -Zshare-generics=y \
 -Zlocation-detail=none \
 ${RUSTFLAGS:-}"
-cargo +nightly build --release --locked --no-default-features \
-    --bin dynamapper --package dynamapper \
-    -Z build-std=std,panic_abort \
-    -Z build-std-features=optimize_for_size \
-    "$@"
+
+build_args=(
+    +nightly build --release --locked --no-default-features
+    --bin dynamapper --package dynamapper
+    -Z build-std=std,panic_abort
+    -Z build-std-features=optimize_for_size
+)
+
+if [[ -n "${CARGO_FEATURES:-}" ]]; then
+    build_args+=(--features "$CARGO_FEATURES")
+fi
+
+build_args+=("$@")
+cargo "${build_args[@]}"
 
 echo "Build complete."

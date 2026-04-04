@@ -1,6 +1,6 @@
 # UODynamapper
 
-**Ultima Online Dynamic Map Renderer** — A dynamic map renderer for Ultima Online, built with Rust and Bevy. Plans are to recreate both classic and modern (Kingdom Reborn/Enhanced Client) visuals with a single codebase.
+A dynamic map renderer for Ultima Online, built with Rust and Bevy. Plans are to recreate both classic and modern (Kingdom Reborn/Enhanced Client) visuals with a single codebase.
 It's still in an early stage.  
 Status: Land/terrain rendering supported.
 

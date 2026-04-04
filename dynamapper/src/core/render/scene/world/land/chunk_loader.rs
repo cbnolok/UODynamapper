@@ -24,6 +24,8 @@ use std::time::Instant;
 use uocf::geo::land_texture_2d::TexMap2D;
 use uocf::geo::map::{self, MapBlock, MapBlockRelPos};
 
+use crate::console_logger::{self, LogAbout, LogSev};
+
 /// Number of blocks per sub-batch.  Tuned so each sub-batch takes ~10-30 ms,
 /// giving the main thread frequent opportunities to poll and render while
 /// reducing the number of channel sends and poll round-trips.
@@ -201,9 +203,14 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
 
         let elapsed_us = t0.elapsed().as_micros();
         if elapsed_us > 500 {
-            eprintln!(
-                "chunk-loader: loaded {} blocks ({} sub-batches) + warmed {} textures in {} µs",
-                total_loaded, num_sub_batches, seen_count, elapsed_us,
+            console_logger::one(
+                LogSev::Debug,
+                LogAbout::Performance,
+                format!(
+                    "Perf: Slow land chunk-loader run: loaded {} blocks ({} sub-batches) + warmed {} textures in {} µs",
+                    total_loaded, num_sub_batches, seen_count, elapsed_us,
+                )
+                .as_str(),
             );
         }
     }
