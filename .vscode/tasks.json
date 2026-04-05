@@ -1,27 +1,77 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "build-debug",
-            "type": "process",
-            "command": "cargo",
-            "args": ["build", "--bin", "dynamapper", "--package", "dynamapper"],
-            "problemMatcher": ["$rustc"],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": "build"
-        },
-        {
-            "label": "build-release",
-            "type": "process",
-            "command": "cargo",
-            "args": ["build", "--release", "--bin", "dynamapper", "--package", "dynamapper"],
-            "problemMatcher": ["$rustc"],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": "build"
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-debug",
+			"type": "process",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--bin",
+				"dynamapper",
+				"--package",
+				"dynamapper"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build"
+		},
+		{
+			"label": "build-release",
+			"type": "process",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--release",
+				"--bin",
+				"dynamapper",
+				"--package",
+				"dynamapper"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build"
+		},
+		{
+			"label": "build-ispc-check",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"-p",
+				"dynamapper",
+				"--features",
+				"ispc"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build-no-default-features-check",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"-p",
+				"dynamapper",
+				"--no-default-features"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		}
+	]
 }

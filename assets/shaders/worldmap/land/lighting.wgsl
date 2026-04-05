@@ -123,9 +123,17 @@ fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<
 
   let g = clamp(amount * height_term * bias_term, 0.0, 1.0);
 
-  // Cool, moody tint from ambient color; multiplicative keeps hues intact
-  let gloom_tint = mix(vec3<f32>(1.0), global_light.ambient_color, 0.7);
-  return color_in * mix(vec3<f32>(1.0), gloom_tint, g);
+  // Dedicated gloom tint: if gloom_color RGB is non-zero, use it; otherwise fall back to ambient
+  let has_custom_color = dot(global_light.gloom_color.rgb, vec3<f32>(1.0)) > 0.01;
+  let tint_source = select(global_light.ambient_color, global_light.gloom_color.rgb, has_custom_color);
+  let gloom_tint = mix(vec3<f32>(1.0), tint_source, 0.7);
+
+  // Desaturate in gloomy areas (KR characteristic: shadows lose saturation)
+  let desat_amount = clamp(global_light.gloom_color.a, 0.0, 1.0) * g;
+  let luma = luminance(color_in);
+  let desaturated = mix(color_in, vec3<f32>(luma), desat_amount);
+
+  return desaturated * mix(vec3<f32>(1.0), gloom_tint, g);
 }
 
 // Tonemap: Reinhard with configurable exposure

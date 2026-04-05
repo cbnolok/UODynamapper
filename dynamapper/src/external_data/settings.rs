@@ -117,11 +117,60 @@ pub struct SectPerformance {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
+    #[serde(default)]
+    pub lossy_texture_compression_backend: LossyTextureCompressionBackend,
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LossyTextureCompressionBackend {
+    #[default]
+    BlockCompression,
+    Ispc,
+}
+
+impl SectGraphics {
+    pub fn active_lossy_texture_compression_backend(
+        &self,
+    ) -> Option<LossyTextureCompressionBackend> {
+        if !self.lossy_texture_compression {
+            return None;
+        }
+
+        match self.lossy_texture_compression_backend {
+            LossyTextureCompressionBackend::BlockCompression => {
+                Some(LossyTextureCompressionBackend::BlockCompression)
+            }
+            LossyTextureCompressionBackend::Ispc => {
+                #[cfg(feature = "ispc")]
+                {
+                    Some(LossyTextureCompressionBackend::Ispc)
+                }
+                #[cfg(not(feature = "ispc"))]
+                {
+                    Some(LossyTextureCompressionBackend::BlockCompression)
+                }
+            }
+        }
+    }
+
+    pub fn log_unavailable_texture_compression_backend_warning(&self) {
+        #[cfg(not(feature = "ispc"))]
+        if self.lossy_texture_compression
+            && self.lossy_texture_compression_backend == LossyTextureCompressionBackend::Ispc
+        {
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::General,
+                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `ispc` feature. Falling back to block_compression.",
+            );
+        }
+    }
 }
 
 /// Resource used to debounce saving settings to disk.
@@ -365,11 +414,12 @@ impl Plugin for SettingsPlugin {
 }
 
 fn sys_startup_load_file(mut commands: Commands) {
-    log_system_add_one_shot::<SettingsPlugin>("PreStartup", "None", fname!());
     let data = load_from_files();
 
     // Initialize logger settings
     apply_logging_settings(&data.logging);
+    data.graphics
+        .log_unavailable_texture_compression_backend_warning();
     // Ensure plugin log toggles follow configured settings
     set_plugin_log_toggles(data.logging.emit_flat_plugin_build, data.logging.emit_tree_plugin_build);
 
@@ -439,6 +489,9 @@ fn sys_hotreload_settings(
     if graphics_changed {
         settings.graphics = new_data.graphics.clone();
         watcher.graphics_mtime = new_graphics;
+        settings
+            .graphics
+            .log_unavailable_texture_compression_backend_warning();
         console_logger::one(
             LogSev::Info,
             LogAbout::General,
@@ -470,7 +523,6 @@ fn sys_apply(
     mut windows_q: Query<&mut Window>,
     mut zoom_res: ResMut<RenderZoom>,
 ) {
-    log_system_add_one_shot::<SettingsPlugin>("Startup", "None", fname!());
     let mut w = windows_q.single_mut().unwrap();
     w.resolution = WindowResolution::new(
         settings_res.app.window.width as u32,

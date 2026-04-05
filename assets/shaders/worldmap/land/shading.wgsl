@@ -100,7 +100,12 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
                            specular_strength: f32,
                            enable_gloom: u32) -> vec3<f32> {
 
-  let lam = get_lambert(Nw, L);
+  // Wrapped diffuse: when wrap > 0, lighting wraps around the surface
+  // so shadows never go fully black (KR-style soft shadow terminator).
+  // wrap = 0.0 → standard Lambert, wrap = 0.5 → half-Lambert.
+  let wrap = land_light.diffuse_wrap;
+  let raw_ndotl = dot(normalize(Nw), L);
+  let lam = select(max(raw_ndotl, 0.0), max(raw_ndotl * (1.0 - wrap) + wrap, 0.0), wrap > 0.001);
   let lam_sharp  = pow(max(lam, 1e-4), max(0.0001, sharpness_factor));
   let lam_shaped = mix(lam, lam_sharp, sharpness_mix);
 

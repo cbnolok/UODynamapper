@@ -686,18 +686,19 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
+    let compression = crate::core::texture_cache::land::texture_array::TerrainTextureCompression::from_graphics_settings(
+        &settings.graphics,
+    );
     cache_r.precache_textures_parallel(
         ids.as_slice(),
         texmap_2d_r.0.clone(),
-        settings.graphics.lossy_texture_compression,
+        compression,
         now,
     );
 
     // Pre-populate lookup cache sequentially so background threads don't need mutable cache access
-    let lossy_compression = settings.graphics.lossy_texture_compression;
     for &id in &*ids {
-        let (size, layer) =
-            cache_r.get_texture_size_layer(&texmap_2d_r.0, id, lossy_compression, now);
+        let (size, layer) = cache_r.get_texture_size_layer(&texmap_2d_r.0, id, compression, now);
         let size_bit = match size {
             LandTextureSize::Small => 0u32,
             LandTextureSize::Big => 1u32,
@@ -883,7 +884,7 @@ pub fn sys_draw_spawned_land_chunks(
             LogSev::Diagnostics,
             LogAbout::Performance,
             &format!(
-                "Perf: Slow land chunk rendering preloader run: took {build_time} µs for {} chunks.",
+                "Perf: chunk rendering preloader took {build_time} µs for {} chunks.",
                 ready_targets.len()
             ),
         );

@@ -59,9 +59,9 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
+          CARGO_FEATURES: "ispc"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh
 
       - name: Package binary and assets
@@ -117,11 +117,8 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-gnu
 
       - name: Package binary and assets
@@ -143,67 +140,39 @@ jobs:
   build-linux-musl-x86_64:
     name: Build (Linux x86_64 musl - static)
     runs-on: ubuntu-22.04
-    container:
-      image: alpine:3.20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install system dependencies
-        run: |
-          apk add --no-cache \
-            bash git curl ca-certificates \
-            build-base clang mold \
-            ispc \
-            pkgconf zip \
-            alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
-
-          # Prefer static archives when available for musl linkage.
-          for p in wayland-static libxkbcommon-static alsa-lib-static eudev-static; do
-            apk add --no-cache "$p" || true
-          done
-
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-unknown-linux-musl
-          components: rust-src
-
-      - name: Cache Cargo registry and build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "."
-          key: "linux-musl-x86_64-nightly-sccache"
-
-      - name: Prepare intel_tex_2 ISPC sources
-        run: |
-          cargo +nightly fetch --locked --manifest-path dynamapper/Cargo.toml
-          CARGO_SRC_DIR="${CARGO_HOME:-$HOME/.cargo}/registry/src"
-          for crate_dir in "$CARGO_SRC_DIR"/*/intel_tex_2-0.5.0; do
-            [ -d "$crate_dir" ] || continue
-            mkdir -p "$crate_dir/vendor"
-            if [ ! -f "$crate_dir/vendor/ispc_texcomp/kernel.ispc" ]; then
-              rm -rf "$crate_dir/vendor/ispc_texcomp"
-              git clone --depth 1 https://github.com/GameTechDev/ISPCTextureCompressor.git "$crate_dir/vendor/ispc_texcomp"
-            fi
-          done
-
       - name: Build release binary
-        env:
-          CC: "clang"
-          CXX: "clang++"
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "clang"
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          PKG_CONFIG_ALL_STATIC: "1"
-          WAYLAND_CLIENT_STATIC: "1"
-          CARGO_FEATURES: "intel_tex_2/ispc"
         run: |
-          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            alpine:3.20 \
+            sh -eu -c '
+              apk add --no-cache \
+                bash build-base clang mold \
+                curl ca-certificates pkgconf \
+                alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
+              . "$HOME/.cargo/env"
+              rustup target add x86_64-unknown-linux-musl
+              rustup component add rust-src
+              export CC=clang
+              export CXX=clang++
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
+              export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig
+              export PKG_CONFIG_ALL_STATIC=1
+              export WAYLAND_CLIENT_STATIC=1
+              chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
+              ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
+              chown -R "$HOST_UID:$HOST_GID" /work/target
+            '
 
       - name: Package binary and assets
         run: |
@@ -211,6 +180,8 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zip
           zip -r dynamapper-linux-x86_64-musl.zip release_package
 
       - name: Upload artifact
@@ -229,53 +200,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential clang mold ispc pkg-config zip \
-            musl-tools musl-dev \
-            libasound2-dev libudev-dev libwayland-dev wayland-protocols libxkbcommon-dev
-
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: aarch64-unknown-linux-musl
-          components: rust-src
-
-      - name: Cache Cargo registry and build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "."
-          key: "linux-musl-arm64-nightly-sccache"
-
-      - name: Prepare intel_tex_2 ISPC sources
-        run: |
-          cargo +nightly fetch --locked --manifest-path dynamapper/Cargo.toml
-          CARGO_SRC_DIR="${CARGO_HOME:-$HOME/.cargo}/registry/src"
-          for crate_dir in "$CARGO_SRC_DIR"/*/intel_tex_2-0.5.0; do
-            [ -d "$crate_dir" ] || continue
-            mkdir -p "$crate_dir/vendor"
-            if [ ! -f "$crate_dir/vendor/ispc_texcomp/kernel.ispc" ]; then
-              rm -rf "$crate_dir/vendor/ispc_texcomp"
-              git clone --depth 1 https://github.com/GameTechDev/ISPCTextureCompressor.git "$crate_dir/vendor/ispc_texcomp"
-            fi
-          done
-
       - name: Build release binary
-        env:
-          CC: "clang"
-          CXX: "clang++"
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: "clang"
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: "/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          PKG_CONFIG_ALL_STATIC: "1"
-          WAYLAND_CLIENT_STATIC: "1"
-          CARGO_FEATURES: "intel_tex_2/ispc"
         run: |
-          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          chmod +x scripts/build/common/rustc_wrapper.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            alpine:3.20 \
+            sh -eu -c '
+              apk add --no-cache \
+                bash build-base clang mold \
+                curl ca-certificates pkgconf \
+                alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
+              . "$HOME/.cargo/env"
+              rustup target add aarch64-unknown-linux-musl
+              rustup component add rust-src
+              export CC=clang
+              export CXX=clang++
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
+              export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig
+              export PKG_CONFIG_ALL_STATIC=1
+              export WAYLAND_CLIENT_STATIC=1
+              chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
+              ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
+              chown -R "$HOST_UID:$HOST_GID" /work/target
+            '
 
       - name: Package binary and assets
         run: |
@@ -283,6 +234,8 @@ jobs:
           cp target/aarch64-unknown-linux-musl/release/dynamapper release_package/
           cp -r assets release_package/
           cp README.md release_package/ 2>/dev/null || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zip
           zip -r dynamapper-linux-arm64-musl.zip release_package
 
       - name: Upload artifact
@@ -316,6 +269,8 @@ jobs:
           key: "windows-x86_64-nightly-sccache"
 
       - name: Build release binary
+        env:
+          CARGO_FEATURES: "ispc"
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
@@ -403,12 +358,15 @@ jobs:
           key: "macos-nightly-sccache"
 
       - name: Build release binary (x86_64)
+        env:
+          CARGO_FEATURES: "ispc"
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
-          chmod +x scripts/build/common/rustc_wrapper.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
 
       - name: Build release binary (ARM64)
+        env:
+          CARGO_FEATURES: "ispc"
         run: |
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
 

@@ -253,6 +253,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   //  - fog_params.z -> noise_scale      (UI 0..2)   mapped to world noise scale
   //  - fog_params.w -> noise_strength   (UI 0..1)   cloud contrast/detail/coverage
   if (enable_fog == 1u) {
+    // Night-aware fog: blend fog_color toward a darker fog tint (e.g. deep blue night fog).
+    // At blend=0 (day presets): no change. At blend=1: fully replaces with night tint.
+    let night_blend = clamp(global_light.fog_night_color.a, 0.0, 1.0);
+    let effective_fog_color = mix(global_light.fog_color.rgb, global_light.fog_night_color.rgb, night_blend);
+
     // Read raw UI uniforms (defensive clamps)
     let dist_density_ui   = clamp(global_light.fog_params.x, 0.0, 1.0);
     let height_density_ui = clamp(global_light.fog_params.y, 0.0, 1.0);
@@ -350,11 +355,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let fog_mix = clamp(fog_factor * global_light.fog_color.a, 0.0, 1.0);
 
     if (USE_VOLUMETRIC_NOISE == 1u) {
-      hdr_rgb = mix(hdr_rgb, global_light.fog_color.rgb, fog_mix);
+      hdr_rgb = mix(hdr_rgb, effective_fog_color, fog_mix);
     } else {
       // Simple fallback: linearized distance*height blend capped by alpha
       let flat_mix = clamp(base_fog * global_light.fog_color.a, 0.0, 1.0);
-      hdr_rgb = mix(hdr_rgb, global_light.fog_color.rgb, flat_mix);
+      hdr_rgb = mix(hdr_rgb, effective_fog_color, flat_mix);
     }
   }
 

@@ -40,15 +40,20 @@ fn main() {
     // - Windows MSVC: the MSVC linker automatically pulls in the Visual C++ runtime
     //   (msvcrt / vcruntime), which provides the equivalent symbols (__CxxFrameHandler3
     //   instead of __gxx_personality_v0). No explicit linkage needed.
-    // - macOS (not a target here): uses libc++ instead of libstdc++; would need
-    //   `cargo:rustc-link-lib=c++` instead.
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    // - macOS: uses libc++ instead of libstdc++; we must link `c++` explicitly when
+    //   the ISPC backend is enabled.
+    if std::env::var_os("CARGO_FEATURE_ISPC").is_some() {
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
-    match (target_os.as_str(), target_env.as_str()) {
-        ("linux", _) | ("windows", "gnu") => {
-            println!("cargo:rustc-link-lib=stdc++");
+        match (target_os.as_str(), target_env.as_str()) {
+            ("linux", _) | ("windows", "gnu") => {
+                println!("cargo:rustc-link-lib=stdc++");
+            }
+            ("macos", _) => {
+                println!("cargo:rustc-link-lib=c++");
+            }
+            _ => {}
         }
-        _ => {}
     }
 }

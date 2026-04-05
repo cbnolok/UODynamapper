@@ -313,10 +313,12 @@ pub fn sys_refresh_process_metrics(
         metrics.mem_usage_mib = mem;
 
         // Use ACTUAL current layer counts, not theoretical maximums.
-        let lossy = settings.graphics.lossy_texture_compression;
-        let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, lossy)
+        let compression = tex_consts::TerrainTextureCompression::from_graphics_settings(
+            &settings.graphics,
+        );
+        let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, compression)
             * tex_cache.small.active_layers as usize;
-        let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, lossy)
+        let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, compression)
             * tex_cache.big.active_layers as usize;
 
         // Tile metadata atlas: Rg16Uint = TILE_ATLAS_BYTES_PER_TEXEL bytes/texel.
@@ -380,11 +382,10 @@ pub fn update_performance_text(
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
-        let tex_mode = if settings.graphics.lossy_texture_compression {
-            "BC7"
-        } else {
-            "RGBA8"
-        };
+        let tex_mode = tex_consts::TerrainTextureCompression::from_graphics_settings(
+            &settings.graphics,
+        )
+        .label();
 
         // Read render pipeline statistics from RenderDiagnosticsPlugin.
         // Paths are dynamic strings: "render/{span_name}/{stat}".

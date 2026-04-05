@@ -156,6 +156,16 @@ pub struct GlobalLightingUniforms {
     pub fog_color: Vec4,
     //   fog_params    = [distance_density, height_density, noise_scale, noise_strength]
     pub fog_params: Vec4,
+
+    // --- KR-style enhancements ---
+    //   gloom_color   = [r, g, b, desaturation_amount]
+    //   RGB: dedicated gloom tint (replaces auto-derive from ambient when non-zero).
+    //   A: how much to desaturate in gloomy areas (0.0 = none, 1.0 = full grayscale).
+    pub gloom_color: Vec4,
+    //   fog_night_color = [r, g, b, blend_factor]
+    //   Blends fog_color toward this darker tint. At blend=0: fog_color as-is.
+    //   At blend=1: fully replaces fog_color with this (e.g. deep blue-black night fog).
+    pub fog_night_color: Vec4,
 }
 
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
@@ -181,8 +191,8 @@ pub struct LandLightingUniforms {
 
     pub sharpness_factor: f32,
     pub sharpness_mix: f32,
-    #[serde(default)]
-    pub _pad3_: f32,
+    /// Half-Lambert wrap factor: 0.0 = standard Lambert, 0.3–0.5 = KR-style soft shadow terminator.
+    pub diffuse_wrap: f32,
     #[serde(default)]
     pub _pad4_: f32,
 

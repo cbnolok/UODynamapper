@@ -230,19 +230,21 @@ pub fn sys_setup_terrain_cache(
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let lossy: bool = settings.graphics.lossy_texture_compression;
+    let compression = texture_array::TerrainTextureCompression::from_graphics_settings(
+        &settings.graphics,
+    );
     let handle_small = texture_array::create_gpu_texture_array(
         "land_small_texture_cache",
         &mut images,
         LandTextureSize::Small,
-        lossy,
+        compression,
         texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
     );
     let handle_big = texture_array::create_gpu_texture_array(
         "land_big_texture_cache",
         &mut images,
         LandTextureSize::Big,
-        lossy,
+        compression,
         texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
     );
     cmd.insert_resource(cache::LandTextureCache::new(
@@ -350,7 +352,8 @@ fn sys_apply_texture_array_expansion(
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(|| Instant::now());
-    let lossy_compression = settings.graphics.lossy_texture_compression;
+    let compression =
+        texture_array::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
 
     let (small_req, big_req) = cache_r.take_resize_requests();
     if small_req.is_none() && big_req.is_none() {
@@ -370,7 +373,7 @@ fn sys_apply_texture_array_expansion(
                 "land_small_texture_cache",
                 &mut images,
                 LandTextureSize::Small,
-                lossy_compression,
+                compression,
                 new_layers,
             );
             handles_r.small = new_handle.clone();
@@ -378,7 +381,7 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Small,
                 texmap_2d_r.0.clone(),
-                lossy_compression,
+                compression,
                 now,
             );
             resized_small = Some(new_layers);
@@ -395,7 +398,7 @@ fn sys_apply_texture_array_expansion(
                 "land_big_texture_cache",
                 &mut images,
                 LandTextureSize::Big,
-                lossy_compression,
+                compression,
                 new_layers,
             );
             handles_r.big = new_handle.clone();
@@ -403,7 +406,7 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Big,
                 texmap_2d_r.0.clone(),
-                lossy_compression,
+                compression,
                 now,
             );
             resized_big = Some(new_layers);

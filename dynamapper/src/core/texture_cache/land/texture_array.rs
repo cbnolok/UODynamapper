@@ -1,6 +1,11 @@
 #![allow(unused)]
 
-use crate::{core::uo_files_loader::TexMap2DRes, prelude::*, util_lib::image::*};
+use crate::{
+    core::uo_files_loader::TexMap2DRes,
+    external_data::settings::{LossyTextureCompressionBackend, SectGraphics},
+    prelude::*,
+    util_lib::image::*,
+};
 use bevy::{
     image::{ImageSampler, ImageSamplerDescriptor},
     prelude::*,
@@ -32,8 +37,8 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 //     Big:   2048 layers × 128×128/2 B =   16 MB
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
-// offline or on-the-fly. We previously used `intel_tex_2` (CPU-side), but now use
-// `block_compression` (GPU compute) for better performance and smaller binary size.
+// offline or on-the-fly. UODynamapper can encode BC7 tiles at runtime using either
+// `block_compression` or, when compiled with the `ispc` feature, `intel_tex_2`.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 // ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
@@ -66,14 +71,46 @@ pub const RESOURCE_SHRINK_TIMEOUT_SECS: u64 = 120;
 /// Fraction of capacity below which we consider shrinking.
 pub const RESOURCE_SHRINK_THRESHOLD: f32 = 0.40;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerrainTextureCompression {
+    Rgba8,
+    Bc7(LossyTextureCompressionBackend),
+}
+
+impl TerrainTextureCompression {
+    pub fn from_graphics_settings(graphics: &SectGraphics) -> Self {
+        match graphics.active_lossy_texture_compression_backend() {
+            Some(backend) => Self::Bc7(backend),
+            None => Self::Rgba8,
+        }
+    }
+
+    pub fn lossy_backend(self) -> Option<LossyTextureCompressionBackend> {
+        match self {
+            Self::Rgba8 => None,
+            Self::Bc7(backend) => Some(backend),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rgba8 => "RGBA8",
+            Self::Bc7(LossyTextureCompressionBackend::BlockCompression) => {
+                "BC7/block_compression"
+            }
+            Self::Bc7(LossyTextureCompressionBackend::Ispc) => "BC7/ispc",
+        }
+    }
+}
+
 /// Returns the GPU TextureFormat to use for terrain texture arrays, based on whether
 /// lossy BC7 compression has been requested by the user in the settings.
 ///
 /// - Uncompressed (`Rgba8UnormSrgb`): ~160 MB VRAM total, highest quality.
 /// - BC7 compressed (`Bc7RgbaUnormSrgb`): ~20 MB VRAM total, near-lossless quality,
 ///   but requires BC texture compression GPU support and CPU encoding time per tile.
-pub fn terrain_texarray_format(lossy_compression: bool) -> TextureFormat {
-    if lossy_compression {
+pub fn terrain_texarray_format(compression: TerrainTextureCompression) -> TextureFormat {
+    if compression.lossy_backend().is_some() {
         // BC7 is a 4-bpp block format (4×4 pixels = 16 bytes per block of 16 pixels).
         // It supports RGBA and near-lossless quality with 8:1 compression over RGBA8.
         TextureFormat::Bc7RgbaUnormSrgb
@@ -84,10 +121,10 @@ pub fn terrain_texarray_format(lossy_compression: bool) -> TextureFormat {
 }
 
 /// Compute the byte size of a single layer in the texture array, for the chosen format.
-pub fn bytes_per_layer(tex_size: LandTextureSize, lossy_compression: bool) -> usize {
+pub fn bytes_per_layer(tex_size: LandTextureSize, compression: TerrainTextureCompression) -> usize {
     let (w, h) = tex_size.dimensions();
     let (w, h) = (w as usize, h as usize);
-    if lossy_compression {
+    if compression.lossy_backend().is_some() {
         // BC7: each 4×4 block = 16 bytes. Number of blocks = ceil(w/4) * ceil(h/4).
         let block_w = w.div_ceil(4);
         let block_h = h.div_ceil(4);
@@ -103,16 +140,16 @@ pub fn create_gpu_texture_array(
     label: &'static str,
     image_assets: &mut Assets<Image>,
     tex_size: LandTextureSize,
-    lossy_compression: bool,
+    compression: TerrainTextureCompression,
     layers: u32,
 ) -> Handle<Image> {
     let (width, height) = tex_size.dimensions();
-    let format = terrain_texarray_format(lossy_compression);
+    let format = terrain_texarray_format(compression);
 
     // Pre-allocate zeroed data to trigger a full initial GPU upload (clearing all layers).
     // This zero-initialises every layer so the shader always sees a valid (black) texture
     // even for layers that haven't been populated yet.
-    let data_bytes = bytes_per_layer(tex_size, lossy_compression) * layers as usize;
+    let data_bytes = bytes_per_layer(tex_size, compression) * layers as usize;
 
     let mut array = Image {
         data: Some(vec![0u8; data_bytes]),
@@ -221,14 +258,56 @@ pub fn get_texmap_raw_data(
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Returns BC7 compressed bytes. BC7 compression is perfectly handled by intel_tex_2 on the CPU.
-pub fn compress_rgba8_to_bc7(rgba8_data: &[u8], tex_size: LandTextureSize) -> Vec<u8> {
+pub fn compress_rgba8_to_bc7(
+    rgba8_data: &[u8],
+    tex_size: LandTextureSize,
+    backend: LossyTextureCompressionBackend,
+) -> Vec<u8> {
     let (width, height) = tex_size.dimensions();
-    let surface = intel_tex_2::RgbaSurface {
-        data: rgba8_data,
-        width,
-        height,
-        stride: width * 4,
-    };
-    let settings = intel_tex_2::bc7::alpha_basic_settings();
-    intel_tex_2::bc7::compress_blocks(&settings, &surface)
+    match backend {
+        LossyTextureCompressionBackend::BlockCompression => {
+            let variant = block_compression::CompressionVariant::BC7(
+                block_compression::BC7Settings::alpha_basic(),
+            );
+            let mut blocks = vec![0u8; variant.blocks_byte_size(width, height)];
+            block_compression::encode::compress_rgba8(
+                variant,
+                rgba8_data,
+                &mut blocks,
+                width,
+                height,
+                width * 4,
+            );
+            blocks
+        }
+        LossyTextureCompressionBackend::Ispc => {
+            #[cfg(feature = "ispc")]
+            {
+                let surface = intel_tex_2::RgbaSurface {
+                    data: rgba8_data,
+                    width,
+                    height,
+                    stride: width * 4,
+                };
+                let settings = intel_tex_2::bc7::alpha_basic_settings();
+                intel_tex_2::bc7::compress_blocks(&settings, &surface)
+            }
+            #[cfg(not(feature = "ispc"))]
+            {
+                let variant = block_compression::CompressionVariant::BC7(
+                    block_compression::BC7Settings::alpha_basic(),
+                );
+                let mut blocks = vec![0u8; variant.blocks_byte_size(width, height)];
+                block_compression::encode::compress_rgba8(
+                    variant,
+                    rgba8_data,
+                    &mut blocks,
+                    width,
+                    height,
+                    width * 4,
+                );
+                blocks
+            }
+        }
+    }
 }

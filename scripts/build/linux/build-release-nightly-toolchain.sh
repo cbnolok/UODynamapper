@@ -7,8 +7,12 @@ cd "$ROOT_DIR"
 
 echo "Running Linux nightly release build..."
 
-# Set RUSTC_WRAPPER to the wrapper script
-export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
+# Use sccache directly when available to avoid wrapper-induced retries.
+if command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER="sccache"
+else
+    unset RUSTC_WRAPPER
+fi
 
 # Parse target from arguments
 TARGET=""
@@ -23,8 +27,8 @@ done
 
 # -Zfmt-debug=none \
 
-# GNU libc build: use mold linker with full optimizations
-RUSTFLAGS=" \
+# Release builds: use mold with aggressive size/link-time flags.
+export RUSTFLAGS=" \
 -Clink-arg=-fuse-ld=mold \
 -Clink-arg=-Wl,--gc-sections \
 -Clink-arg=-Wl,--icf=safe \

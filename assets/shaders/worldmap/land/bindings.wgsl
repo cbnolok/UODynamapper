@@ -103,6 +103,12 @@ struct GlobalLightingUniforms {
     fog_color: vec4<f32>,
     // fog_params: [distance_density, height_density, noise_scale, noise_strength]
     fog_params: vec4<f32>,
+
+    // KR-style enhancements
+    // gloom_color: [r, g, b, desaturation_amount]
+    gloom_color: vec4<f32>,
+    // fog_night_color: [r, g, b, blend_factor]
+    fog_night_color: vec4<f32>,
 };
 
 // Land-specific lighting: parameters that require a 3D mesh with surface
@@ -122,7 +128,7 @@ struct LandLightingUniforms {
 
     sharpness_factor:  f32,
     sharpness_mix:     f32,
-    _pad3_:            f32,
+    diffuse_wrap:      f32,
     _pad4_:            f32,
 
     // Hemisphere fill & rim colors (need N / V)

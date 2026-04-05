@@ -234,6 +234,7 @@ pub fn terrain_ui_system(
                     );
 
                     changed |= slider_s(ui, "Rim (KR only)", &mut u.land_lighting.rim_strength, 0.0..=0.5);
+                    changed |= slider_s(ui, "Diffuse Wrap (KR only)", &mut u.land_lighting.diffuse_wrap, 0.0..=0.5);
                 } else {
                     // In Classic mode show a helper note.
                     ui.label("Fragment-only intensities hidden in Classic (vertex) mode.");
@@ -394,6 +395,19 @@ pub fn terrain_ui_system(
                 if changed {
                     u.dirty = true;
                 }
+
+                // Gloom color + desaturation (KR-style enhancement)
+                let mut changed_color = false;
+                {
+                    let mut v = u.lighting.gloom_color;
+                    if color4(ui, "Gloom Tint (rgb + desat.a) (KR)", &mut v) {
+                        u.lighting.gloom_color = v;
+                        changed_color = true;
+                    }
+                }
+                if changed_color {
+                    u.dirty = true;
+                }
             });
 
             // ------------------------ Graphics ------------------------------
@@ -453,6 +467,19 @@ pub fn terrain_ui_system(
                     0.0..=1.0,
                 );
                 if changed {
+                    u.dirty = true;
+                }
+
+                // Night fog tint (KR-style enhancement)
+                let mut changed_night = false;
+                {
+                    let mut v = u.lighting.fog_night_color;
+                    if color4(ui, "Night Fog Tint (rgb + blend.a)", &mut v) {
+                        u.lighting.fog_night_color = v;
+                        changed_night = true;
+                    }
+                }
+                if changed_night {
                     u.dirty = true;
                 }
             });

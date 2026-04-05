@@ -68,8 +68,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Start loading UO Data.");
 
-    let mut map_planes: Vec<Option<map::MapPlane>> =
-        std::iter::repeat_with(|| None).take((MAX_MAP_INDEX + 1) as usize).collect::<Vec<_>>();
+    let mut map_planes: Vec<Option<map::MapPlane>> = std::iter::repeat_with(|| None)
+        .take((MAX_MAP_INDEX + 1) as usize)
+        .collect::<Vec<_>>();
     for map_plane_index in 0..=MAX_MAP_INDEX {
         let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
         if map_file.exists() {

@@ -28,16 +28,22 @@ if (Get-Command sccache -ErrorAction SilentlyContinue) {
 $Env:RUSTFLAGS = "-C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
 
 $targetArgs = @()
+$featureArgs = @()
 $expectedBinary = "target/release/dynamapper.exe"
 if (![string]::IsNullOrWhiteSpace($Target)) {
     $targetArgs = @("--target", $Target)
     $expectedBinary = "target/$Target/release/dynamapper.exe"
 }
 
+if (![string]::IsNullOrWhiteSpace($Env:CARGO_FEATURES)) {
+    $featureArgs = @("--features", $Env:CARGO_FEATURES)
+}
+
 cargo +nightly build --release --locked --no-default-features `
     --bin dynamapper --package dynamapper `
     -Z build-std=std,panic_abort `
     -Z build-std-features=optimize_for_size `
+    @featureArgs `
     @targetArgs `
     $args
 

@@ -26,7 +26,7 @@ config = { version = "0.15", default-features = false }
 #guillotiere = "0.6"
 #lru = "0.16"
 indexmap = "2.13.0"
-intel_tex_2 = "0.5.0"
+intel_tex_2 = { version = "0.5.0", optional = true }
 image = { version = "0.25", default-features = false, features = [
   "bmp",
   "png",
@@ -55,8 +55,8 @@ strum = { version = "0.28", default-features = false }
 strum_macros = { version = "0.28", default-features = false }
 
 #smallvec = "1"
-# BC7 texture compression for GPU VRAM reduction (GPU compute).
-#block_compression = { version = "0.7", default-features = false, features = ["bc7", "wgpu"] }
+# BC7 texture compression for GPU VRAM reduction.
+block_compression = { version = "0.7", default-features = false, features = ["bc7"] }
 # System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
 # fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
@@ -269,6 +269,7 @@ bevy_development_opts = [
 default = ["bevy_development_opts"]
 # --
 gpu-profiling = ["dep:wgpu-profiler"]
+ispc = ["dep:intel_tex_2"]
 profiling = ["uocf/profiling"]
 trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
 

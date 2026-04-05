@@ -116,6 +116,25 @@ pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) 
     cache.pending_uploads.extend(batch);
 }
 
+fn prepare_texture_upload_bytes(
+    raw_rgba8: std::sync::Arc<[u8]>,
+    texture_size: LandTextureSize,
+    compression: texture_array::TerrainTextureCompression,
+) -> (std::sync::Arc<[u8]>, bool) {
+    if let Some(backend) = compression.lossy_backend() {
+        (
+            std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
+                &raw_rgba8,
+                texture_size,
+                backend,
+            )),
+            true,
+        )
+    } else {
+        (raw_rgba8, false)
+    }
+}
+
 impl LandTextureCache {
     pub const MAX_TILE_ID: usize = 65536;
     /// Shift by 6 is equivalent to division by 64 (the number of bits in a `u64`).
@@ -163,7 +182,7 @@ impl LandTextureCache {
         &mut self,
         texmap_2d: &Arc<TexMap2D>,
         texture_id: u16,
-        lossy_compression: bool,
+        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) -> (LandTextureSize, u32) {
         // If texture is already resident, just return its info.
@@ -186,17 +205,8 @@ impl LandTextureCache {
         let task = pool.spawn(async move {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, is_compressed) = if lossy_compression {
-                (
-                    std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
-                        &raw_rgba8,
-                        texture_size,
-                    )),
-                    true,
-                )
-            } else {
-                (raw_rgba8, false)
-            };
+            let (tile_bytes, is_compressed) =
+                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
@@ -217,7 +227,7 @@ impl LandTextureCache {
         &mut self,
         texture_ids: &[u16],
         texmap_2d: Arc<TexMap2D>,
-        lossy_compression: bool,
+        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
@@ -248,7 +258,7 @@ impl LandTextureCache {
             &format!(
                 "Pre-caching {} textures (Async BC7={})...",
                 to_upload.len(),
-                lossy_compression
+                compression.lossy_backend().is_some()
             ),
         );
 
@@ -262,16 +272,8 @@ impl LandTextureCache {
                 for (id, size, layer) in chunk {
                     let (_, rgba8) =
                         super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
-                    let (tile_bytes, is_compressed) = if lossy_compression {
-                        (
-                            std::sync::Arc::from(super::texture_array::compress_rgba8_to_bc7(
-                                &rgba8, size,
-                            )),
-                            true,
-                        )
-                    } else {
-                        (rgba8, false)
-                    };
+                    let (tile_bytes, is_compressed) =
+                        prepare_texture_upload_bytes(rgba8, size, compression);
                     let _ = sender.send(TextureArrayUpload {
                         layer,
                         size,
@@ -301,7 +303,7 @@ impl LandTextureCache {
         &mut self,
         texture_id: u16,
         texmap_2d: &Arc<TexMap2D>,
-        lossy_compression: bool,
+        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) -> Option<TextureArrayUpload> {
         // If resident, touch timestamp and return None as no upload is needed.
@@ -320,17 +322,8 @@ impl LandTextureCache {
         let task = pool.spawn(async move {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, is_compressed) = if lossy_compression {
-                (
-                    std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
-                        &raw_rgba8,
-                        texture_size,
-                    )),
-                    true,
-                )
-            } else {
-                (raw_rgba8, false)
-            };
+            let (tile_bytes, is_compressed) =
+                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
@@ -506,7 +499,7 @@ impl LandTextureCache {
         &mut self,
         size: LandTextureSize,
         texmap_2d: Arc<TexMap2D>,
-        lossy_compression: bool,
+        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let ids_to_restore: Vec<(u16, u32)> = self
@@ -532,17 +525,8 @@ impl LandTextureCache {
             let task = pool.spawn(async move {
                 let (_, raw_rgba8) =
                     texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                let (tile_bytes, is_compressed) = if lossy_compression {
-                    (
-                        std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
-                            &raw_rgba8,
-                            actual_size,
-                        )),
-                        true,
-                    )
-                } else {
-                    (raw_rgba8, false)
-                };
+                let (tile_bytes, is_compressed) =
+                    prepare_texture_upload_bytes(raw_rgba8, actual_size, compression);
                 let _ = sender.send(TextureArrayUpload {
                     layer,
                     size: actual_size,
