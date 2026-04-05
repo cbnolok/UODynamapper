@@ -17,6 +17,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RELEASE_FEATURES_LINUX_DESKTOP: "linux_x11,linux_wayland"
+  RELEASE_FEATURES_LINUX_DESKTOP_ISPC: "ispc,linux_x11,linux_wayland"
+  RELEASE_FEATURES_X11_ONLY: "linux_x11"
+  RELEASE_FEATURES_ISPC: "ispc"
   SCCACHE_GHA_ENABLED: "false"
   SCCACHE_NO_DAEMON: "1"
 
@@ -29,7 +34,7 @@ jobs:
       SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -47,7 +52,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -59,7 +64,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: "ispc"
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP_ISPC }}
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh
@@ -74,7 +79,7 @@ jobs:
           zip -r dynamapper-linux-x86_64.zip release_package
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64
           path: dynamapper-linux-x86_64.zip
@@ -88,7 +93,7 @@ jobs:
       SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -105,7 +110,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -117,6 +122,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-gnu
@@ -131,7 +137,7 @@ jobs:
           zip -r dynamapper-linux-arm64.zip release_package
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-arm64
           path: dynamapper-linux-arm64.zip
@@ -142,15 +148,18 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Build release binary
+        env:
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_X11_ONLY }}
         run: |
           docker run --rm \
             -v "$PWD:/work" \
             -w /work \
+            -e CARGO_FEATURES="${CARGO_FEATURES}" \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             alpine:3.20 \
@@ -158,7 +167,7 @@ jobs:
               apk add --no-cache \
                 bash build-base clang mold \
                 curl ca-certificates pkgconf \
-                alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add x86_64-unknown-linux-musl
@@ -166,9 +175,6 @@ jobs:
               export CC=clang
               export CXX=clang++
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig
-              export PKG_CONFIG_ALL_STATIC=1
-              export WAYLAND_CLIENT_STATIC=1
               chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
               ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
@@ -185,7 +191,7 @@ jobs:
           zip -r dynamapper-linux-x86_64-musl.zip release_package
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64-musl
           path: dynamapper-linux-x86_64-musl.zip
@@ -196,15 +202,18 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Build release binary
+        env:
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_X11_ONLY }}
         run: |
           docker run --rm \
             -v "$PWD:/work" \
             -w /work \
+            -e CARGO_FEATURES="${CARGO_FEATURES}" \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             alpine:3.20 \
@@ -212,7 +221,7 @@ jobs:
               apk add --no-cache \
                 bash build-base clang mold \
                 curl ca-certificates pkgconf \
-                alsa-lib-dev eudev-dev wayland-dev wayland-protocols libxkbcommon-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add aarch64-unknown-linux-musl
@@ -220,9 +229,6 @@ jobs:
               export CC=clang
               export CXX=clang++
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig
-              export PKG_CONFIG_ALL_STATIC=1
-              export WAYLAND_CLIENT_STATIC=1
               chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
               ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
@@ -239,7 +245,7 @@ jobs:
           zip -r dynamapper-linux-arm64-musl.zip release_package
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-arm64-musl
           path: dynamapper-linux-arm64-musl.zip
@@ -250,7 +256,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -260,7 +266,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -270,7 +276,7 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: "ispc"
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
@@ -283,10 +289,61 @@ jobs:
           Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-windows-x86_64
           path: dynamapper-windows-x86_64.zip
+          retention-days: 7
+
+  build-windows-clang:
+    name: Build (Windows x86_64 clang-cl)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "windows-x86_64-clang-nightly-sccache"
+
+      - name: Build release binary
+        shell: pwsh
+        env:
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+          CC: "clang-cl"
+          CXX: "clang-cl"
+          AR: "llvm-lib"
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: "clang-cl"
+        run: |
+          $env:PATH = "C:\Program Files\LLVM\bin;$env:PATH"
+          pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
+
+      - name: Package binary and assets
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release_package | Out-Null
+          Copy-Item -Path "target/release/dynamapper.exe" -Destination "release_package/"
+          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
+          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64-clang.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dynamapper-windows-x86_64-clang
+          path: dynamapper-windows-x86_64-clang.zip
           retention-days: 7
 
   build-windows-arm64:
@@ -294,7 +351,7 @@ jobs:
     runs-on: windows-11-arm
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -305,7 +362,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
@@ -327,76 +384,112 @@ jobs:
           Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-arm64.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dynamapper-windows-arm64
           path: dynamapper-windows-arm64.zip
           retention-days: 7
 
-  build-macos:
-    name: Build (macOS x86_64 + ARM64)
-    runs-on: macos-latest
+  build-macos-x86_64:
+    name: Build (macOS x86_64)
+    runs-on: macos-15-intel
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: x86_64-apple-darwin
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          key: "macos-nightly-sccache"
+          key: "macos-x86_64-nightly-sccache"
 
-      - name: Build release binary (x86_64)
+      - name: Build release binary
         env:
-          CARGO_FEATURES: "ispc"
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
 
-      - name: Build release binary (ARM64)
-        env:
-          CARGO_FEATURES: "ispc"
+      - name: Package binary and assets
         run: |
+          mkdir -p release_package
+          cp target/x86_64-apple-darwin/release/dynamapper release_package/
+          cp -r assets release_package/
+          zip -r dynamapper-macos-x86_64.zip release_package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: dynamapper-macos-x86_64
+          path: dynamapper-macos-x86_64.zip
+          retention-days: 7
+
+  build-macos-arm64:
+    name: Build (macOS ARM64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-apple-darwin
+          components: rust-src
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: "macos-arm64-nightly-sccache"
+
+      - name: Build release binary
+        env:
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+        run: |
+          chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package_x86_64 release_package_arm64
-          cp target/x86_64-apple-darwin/release/dynamapper release_package_x86_64/
-          cp -r assets release_package_x86_64/
-          zip -r dynamapper-macos-x86_64.zip release_package_x86_64
-          cp target/aarch64-apple-darwin/release/dynamapper release_package_arm64/
-          cp -r assets release_package_arm64/
-          zip -r dynamapper-macos-arm64.zip release_package_arm64
+          mkdir -p release_package
+          cp target/aarch64-apple-darwin/release/dynamapper release_package/
+          cp -r assets release_package/
+          zip -r dynamapper-macos-arm64.zip release_package
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
         with:
-          name: dynamapper-macos
-          path: dynamapper-macos-*.zip
+          name: dynamapper-macos-arm64
+          path: dynamapper-macos-arm64.zip
           retention-days: 7
 
   publish:
     name: Publish Release
-    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-arm64, build-macos]
+    needs: [build-linux, build-linux-arm64, build-linux-musl-x86_64, build-linux-musl-arm64, build-windows, build-windows-clang, build-windows-arm64, build-macos-x86_64, build-macos-arm64]
     runs-on: ubuntu-22.04
     if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     permissions:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

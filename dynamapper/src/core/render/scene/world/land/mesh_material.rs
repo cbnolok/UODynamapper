@@ -4,7 +4,7 @@ use bevy::{
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
 };
-use serde::{self, Deserialize};
+use serde::{self, Deserialize, Serialize};
 
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
@@ -86,7 +86,7 @@ pub struct SceneUniform {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
+#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandEffectsUniform {
     // Non-lighting rendering controls only.  Lighting toggles and intensities
@@ -115,7 +115,7 @@ pub struct LandEffectsUniform {
 /// don't need view/normal–dependent lighting, but they share grading, fog, gloom,
 /// tonemapping, and base light/ambient colors with the land shader.
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
+#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)]
 pub struct GlobalLightingUniforms {
     // --- Toggles (vec4 slot 0) ---
@@ -171,7 +171,7 @@ pub struct GlobalLightingUniforms {
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Default)]
+#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)]
 pub struct LandLightingUniforms {
     // --- Toggle ---
@@ -209,7 +209,7 @@ pub enum LandShaderMode {
     KR = 2,
 }
 
-#[derive(Resource, Deserialize)]
+#[derive(Resource, Deserialize, Serialize)]
 pub struct LandShaderModePresets {
     pub classic: LandRenderStylePresetsPerMode,
     pub enhanced: LandRenderStylePresetsPerMode,
@@ -217,14 +217,14 @@ pub struct LandShaderModePresets {
     pub default_preset: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct LandRenderStylePresetsPerMode {
     pub morning: LandMaterialUniformsPresets,
     pub afternoon: LandMaterialUniformsPresets,
     pub night: LandMaterialUniformsPresets,
     pub cave: LandMaterialUniformsPresets,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct LandMaterialUniformsPresets {
     #[serde(default = "default_global_lighting")]
     pub global_lighting: f32,

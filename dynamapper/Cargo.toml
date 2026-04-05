@@ -140,8 +140,8 @@ features = [
   #"libm",               # Uses the libm maths library instead of the one provided in std and core.
 
   # --- Platform-Specific Support ---
-  "x11",     # Linux: X11 display server support
-  "wayland", # Linux: Wayland display server support
+  #"x11",     # Linux: X11 display server support
+  #"wayland", # Linux: Wayland display server support
   #"accesskit_unix",     # Enable AccessKit on Unix backends
   #"android-game-activity",    # Android GameActivity support.
   #"android-native-activity",  # Android NativeActivity support.
@@ -175,10 +175,10 @@ features = [
   "dds",    # DDS compressed texture support
   "ico",    # ICO image format support
   "jpeg",   # JPEG image format support
-  "ktx2",   # KTX2 compressed texture support
-  "zstd_c", # C Zstandard decompression for KTX2.
+  #"ktx2",   # KTX2 compressed texture support
+  #"zstd_c", # C Zstandard decompression for KTX2.
   #"zstd_rust",           # Pure rust Zstandard decompression for KTX2.
-  #"basis-universal",    # Basis Universal compressed texture support # Compile error on Linux ARM.
+  "basis-universal",    # Basis Universal compressed texture support
   #"exr",                # EXR image format support
   #"ff",                 # Farbfeld image format support
   #"gif",                # GIF image format support
@@ -258,6 +258,13 @@ features = [
 ]
 
 [features]
+gpu-profiling = ["dep:wgpu-profiler"]
+ispc = ["dep:intel_tex_2"]
+linux_wayland = ["bevy/wayland"]
+linux_x11 = ["bevy/x11"]
+profiling = ["uocf/profiling"]
+trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
+# --
 # Keep dynamic linking enabled by default for local/dev builds (faster compile)
 # but allow CI to disable it by building with `--no-default-features`.
 bevy_development_opts = [
@@ -266,12 +273,7 @@ bevy_development_opts = [
   "bevy/track_location",
   "bevy/debug",
 ]
-default = ["bevy_development_opts"]
-# --
-gpu-profiling = ["dep:wgpu-profiler"]
-ispc = ["dep:intel_tex_2"]
-profiling = ["uocf/profiling"]
-trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
+default = ["bevy_development_opts", "linux_wayland", "linux_x11"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", default-features = false, features = [

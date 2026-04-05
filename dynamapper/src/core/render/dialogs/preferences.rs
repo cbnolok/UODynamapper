@@ -13,6 +13,8 @@ const DEFAULT_FPS_LIMIT: u32 = 60;
 #[derive(Resource)]
 pub struct PreferencesDialogState {
     pub open: bool,
+    /// Currently selected tab (0 = Graphics, 1 = UI).
+    pub selected_tab: usize,
     pub frame_limit_enabled: bool,
     pub fps_preset_idx: usize,
     pub movement_speed_multiplier: f32,
@@ -25,6 +27,12 @@ pub struct PreferencesDialogState {
     pub player_position_scale: f32,
     pub sysmessages_scale: f32,
     pub performance_overlay_scale: f32,
+    /// VSync toggle (synced from SectGraphics).
+    pub vsync: bool,
+    /// Texture filtering (0: Point, 1: Linear).
+    pub texture_filtering: u32,
+    /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
+    pub texture_reconstruction: u32,
 }
 
 impl Default for PreferencesDialogState {
@@ -35,6 +43,7 @@ impl Default for PreferencesDialogState {
             .unwrap_or(0);
         Self {
             open: false,
+            selected_tab: 0,
             frame_limit_enabled: true,
             fps_preset_idx,
             movement_speed_multiplier: 1.0,
@@ -47,6 +56,9 @@ impl Default for PreferencesDialogState {
             player_position_scale: 1.0,
             sysmessages_scale: 1.0,
             performance_overlay_scale: 1.0,
+            vsync: false,
+            texture_filtering: 0,
+            texture_reconstruction: 0,
         }
     }
 }
@@ -68,7 +80,7 @@ impl Plugin for PreferencesDialogPlugin {
                     sys_apply_performance_settings.run_if(in_state(AppState::InGame)),
                 ),
             )
-            .add_systems(EguiPrimaryContextPass, sys_render_options_dialog);
+            .add_systems(EguiPrimaryContextPass, sys_render_preferences_dialog);
     }
 }
 
@@ -96,6 +108,9 @@ fn sys_sync_settings_to_state(
         state.player_position_scale = settings.app.window.player_position_scale;
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
+        state.vsync = settings.graphics.vsync;
+        state.texture_filtering = settings.graphics.texture_filtering;
+        state.texture_reconstruction = settings.graphics.texture_reconstruction;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -117,12 +132,14 @@ fn sys_preferences_close(
     state.open = false;
 }
 
-pub fn sys_render_options_dialog(
+/// Renders the preferences dialog window with two tabs: Graphics and UI.
+pub fn sys_render_preferences_dialog(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<PreferencesDialogState>,
     mut framepace: ResMut<FramepaceSettings>,
     mut settings: ResMut<Settings>,
+    mut windows_q: Query<&mut Window>,
 ) {
     if !state.open {
         return;
@@ -141,142 +158,240 @@ pub fn sys_render_options_dialog(
 
     let response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
-        .fixed_size([300.0, 400.0])
+        .fixed_size([320.0, 420.0])
         .collapsible(false)
         .resizable(false)
         .open(&mut window_open)
         .show(ctx, |ui| {
-            ui.heading("Performance");
+            // ---- Tab bar ----
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(state.selected_tab == 0, "⚙ Graphics")
+                    .clicked()
+                {
+                    state.selected_tab = 0;
+                }
+                if ui
+                    .selectable_label(state.selected_tab == 1, "🖥 UI")
+                    .clicked()
+                {
+                    state.selected_tab = 1;
+                }
+            });
             ui.separator();
 
-            let prev_enabled = state.frame_limit_enabled;
-            ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter");
+            match state.selected_tab {
+                // ==================== GRAPHICS TAB ====================
+                0 => {
+                    ui.heading("Performance");
+                    ui.separator();
 
-            ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
-                let current_fps = FPS_PRESETS[state.fps_preset_idx];
-                egui::ComboBox::from_label("Target FPS")
-                    .selected_text(format!("{} fps", current_fps))
-                    .show_ui(ui, |ui| {
-                        for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
-                            let label = format!("{} fps", fps);
-                            ui.selectable_value(&mut state.fps_preset_idx, idx, label);
+                    // ---- Frame limiter toggle ----
+                    let prev_enabled = state.frame_limit_enabled;
+                    ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter");
+
+                    // ---- FPS combobox ----
+                    ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
+                        let current_fps = FPS_PRESETS[state.fps_preset_idx];
+                        egui::ComboBox::from_label("Target FPS")
+                            .selected_text(format!("{} fps", current_fps))
+                            .show_ui(ui, |ui| {
+                                for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
+                                    let label = format!("{} fps", fps);
+                                    ui.selectable_value(&mut state.fps_preset_idx, idx, label);
+                                }
+                            });
+                    });
+
+                    // Apply frame limiter changes
+                    let fps_changed = state.fps_preset_idx != {
+                        match framepace.limiter {
+                            Limiter::Manual(d) => {
+                                let current_fps_hz = 1.0 / d.as_secs_f64();
+                                FPS_PRESETS
+                                    .iter()
+                                    .position(|&fps| (fps as f64 - current_fps_hz).abs() < 0.5)
+                                    .unwrap_or(usize::MAX)
+                            }
+                            _ => usize::MAX,
+                        }
+                    };
+
+                    if prev_enabled != state.frame_limit_enabled || fps_changed {
+                        framepace.limiter = if state.frame_limit_enabled {
+                            Limiter::from_framerate(FPS_PRESETS[state.fps_preset_idx] as f64)
+                        } else {
+                            Limiter::Off
+                        };
+                    }
+
+                    ui.label(
+                        egui::RichText::new(
+                            "Note: frame limiting also affected by VSync.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+
+                    ui.add_space(8.0);
+
+                    // ---- VSync ----
+                    if ui.checkbox(&mut state.vsync, "VSync").changed() {
+                        settings.graphics.vsync = state.vsync;
+                        // Apply immediately to the window's present mode
+                        if let Ok(mut window) = windows_q.single_mut() {
+                            window.present_mode = if state.vsync {
+                                bevy::window::PresentMode::AutoVsync
+                            } else {
+                                bevy::window::PresentMode::AutoNoVsync
+                            };
+                        }
+                    }
+
+                    ui.add_space(4.0);
+                    ui.heading("Texture");
+                    ui.separator();
+
+                    // ---- Texture Filtering ----
+                    let filter_labels = ["Point (Nearest)", "Linear (Bilinear)"];
+                    let mut filter_idx = state.texture_filtering as usize;
+                    egui::ComboBox::from_label("Filtering")
+                        .selected_text(
+                            *filter_labels
+                                .get(filter_idx)
+                                .unwrap_or(&"Unknown"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (idx, label) in filter_labels.iter().enumerate() {
+                                ui.selectable_value(&mut filter_idx, idx, *label);
+                            }
+                        });
+                    if filter_idx as u32 != state.texture_filtering {
+                        state.texture_filtering = filter_idx as u32;
+                        settings.graphics.texture_filtering = state.texture_filtering;
+                    }
+
+                    // ---- Texture Reconstruction ----
+                    let recon_labels = ["None", "Bicubic", "FSR"];
+                    let mut recon_idx = state.texture_reconstruction as usize;
+                    egui::ComboBox::from_label("Reconstruction")
+                        .selected_text(
+                            *recon_labels
+                                .get(recon_idx)
+                                .unwrap_or(&"Unknown"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (idx, label) in recon_labels.iter().enumerate() {
+                                ui.selectable_value(&mut recon_idx, idx, *label);
+                            }
+                        });
+                    if recon_idx as u32 != state.texture_reconstruction {
+                        state.texture_reconstruction = recon_idx as u32;
+                        settings.graphics.texture_reconstruction = state.texture_reconstruction;
+                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Hot-reload settings:");
+                        if ui
+                            .checkbox(&mut state.hot_reload_enabled, "Enable")
+                            .changed()
+                        {
+                            settings.app.debug.hot_reload_enabled = state.hot_reload_enabled;
                         }
                     });
-            });
 
-            let fps_changed = state.fps_preset_idx != {
-                match framepace.limiter {
-                    Limiter::Manual(d) => {
-                        let current_fps_hz = 1.0 / d.as_secs_f64();
-                        FPS_PRESETS
-                            .iter()
-                            .position(|&fps| (fps as f64 - current_fps_hz).abs() < 0.5)
-                            .unwrap_or(usize::MAX)
-                    }
-                    _ => usize::MAX,
+                    ui.add_space(8.0);
+                    ui.heading("World & Input");
+                    ui.separator();
+
+                    // ---- Movement Speed ----
+                    ui.horizontal(|ui| {
+                        ui.label("Move Speed:");
+                        ui.add(egui::Slider::new(
+                            &mut state.movement_speed_multiplier,
+                            0.1..=500.0,
+                        ));
+                    });
+
+                    ui.checkbox(&mut state.smooth_movement, "Smooth movement");
+                    ui.label(
+                        egui::RichText::new("Interpolates the player between integer tile steps.")
+                            .small()
+                            .weak(),
+                    );
+
+                    // ---- Visibility ----
+                    ui.checkbox(&mut state.hide_player, "Hide Player Object");
+                    ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
+
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut state.free_camera, "Free Camera Mode");
+                    ui.label(
+                        egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
+                            .small()
+                            .weak(),
+                    );
                 }
-            };
 
-            if prev_enabled != state.frame_limit_enabled || fps_changed {
-                framepace.limiter = if state.frame_limit_enabled {
-                    Limiter::from_framerate(FPS_PRESETS[state.fps_preset_idx] as f64)
-                } else {
-                    Limiter::Off
-                };
+                // ====================== UI TAB ========================
+                1 => {
+                    ui.heading("UI Scale");
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("Egui Scale:");
+                        if ui
+                            .add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0))
+                            .changed()
+                        {
+                            settings.app.window.egui_scale = state.egui_scale;
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.heading("Overlay Scales");
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("Player Position:");
+                        if ui
+                            .add(egui::Slider::new(
+                                &mut state.player_position_scale,
+                                0.5..=3.0,
+                            ))
+                            .changed()
+                        {
+                            settings.app.window.player_position_scale = state.player_position_scale;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("System Messages:");
+                        if ui
+                            .add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0))
+                            .changed()
+                        {
+                            settings.app.window.sysmessages_scale = state.sysmessages_scale;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Performance Overlay:");
+                        if ui
+                            .add(egui::Slider::new(
+                                &mut state.performance_overlay_scale,
+                                0.5..=3.0,
+                            ))
+                            .changed()
+                        {
+                            settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
+                        }
+                    });
+                }
+                _ => {}
             }
 
-            ui.label(
-                egui::RichText::new(
-                    "Note: frame limiting also affected by VSync (driver/compositor level).",
-                )
-                .small()
-                .weak(),
-            );
-
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label("Hot-reload settings:");
-                if ui
-                    .checkbox(&mut state.hot_reload_enabled, "Enable")
-                    .changed()
-                {
-                    settings.app.debug.hot_reload_enabled = state.hot_reload_enabled;
-                }
-            });
-            ui.add_space(8.0);
-            ui.heading("World & Input");
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.label("Move Speed:");
-                ui.add(egui::Slider::new(
-                    &mut state.movement_speed_multiplier,
-                    0.1..=500.0,
-                ));
-            });
-
-            ui.checkbox(&mut state.smooth_movement, "Smooth movement");
-            ui.label(
-                egui::RichText::new("Interpolates the player between integer tile steps.")
-                    .small()
-                    .weak(),
-            );
-
-            ui.checkbox(&mut state.hide_player, "Hide Player Object");
-            ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
-
-            ui.add_space(4.0);
-            ui.checkbox(&mut state.free_camera, "Free Camera Mode");
-            ui.label(
-                egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
-                    .small()
-                    .weak(),
-            );
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Egui Scale:");
-                if ui
-                    .add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0))
-                    .changed()
-                {
-                    settings.app.window.egui_scale = state.egui_scale;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Player Position Scale:");
-                if ui
-                    .add(egui::Slider::new(
-                        &mut state.player_position_scale,
-                        0.5..=3.0,
-                    ))
-                    .changed()
-                {
-                    settings.app.window.player_position_scale = state.player_position_scale;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("System Messages Scale:");
-                if ui
-                    .add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0))
-                    .changed()
-                {
-                    settings.app.window.sysmessages_scale = state.sysmessages_scale;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Performance Overlay Scale:");
-                if ui
-                    .add(egui::Slider::new(
-                        &mut state.performance_overlay_scale,
-                        0.5..=3.0,
-                    ))
-                    .changed()
-                {
-                    settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
-                }
-            });
-
+            // ---- Sync UI state to Settings resource ----
+            // Only write when values actually differ to avoid triggering the debounced save timer.
             if (settings.as_ref().app.input.movement_speed_multiplier
                 - state.movement_speed_multiplier)
                 .abs()

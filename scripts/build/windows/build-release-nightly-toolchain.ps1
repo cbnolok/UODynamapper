@@ -25,7 +25,12 @@ if (Get-Command sccache -ErrorAction SilentlyContinue) {
 # Windows (MSVC) works well with gc-sections if using LLD (via config.toml)
 # Note: MSVC linker uses /OPT:REF instead of --gc-sections, but Cargo handles
 # these defaults for MSVC release builds.
-$Env:RUSTFLAGS = "-C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
+#$Env:RUSTFLAGS = "-C force-unwind-tables=no -C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
+
+# Stable release flags plus nightly-only size/build-std flags.
+# Do not disable unwind tables on Windows targets: x86_64/aarch64 Windows uses
+# mandatory unwind metadata for SEH and stack walking.
+$Env:RUSTFLAGS = "-C symbol-mangling-version=v0 -Z share-generics=y -Z location-detail=none $Env:RUSTFLAGS"
 
 $targetArgs = @()
 $featureArgs = @()

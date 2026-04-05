@@ -147,7 +147,7 @@ pub fn one(
 
 #[track_caller]
 pub fn one_with_location_override(
-    location_override: Option<&str>,
+    _location_override: Option<&str>,
     severity: LogSev,
     about: LogAbout,
     msg: &str,
@@ -169,7 +169,7 @@ pub fn one_with_location_override(
     // Add file:line if enabled
     #[cfg(debug_assertions)]
     {
-        let loc_str: String = if let Some(location) = location_override {
+        let loc_str: String = if let Some(location) = _location_override {
             location.to_string()
         } else {
             let caller = std::panic::Location::caller();

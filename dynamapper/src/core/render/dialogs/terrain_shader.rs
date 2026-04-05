@@ -10,7 +10,7 @@ use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
-    external_data::shader_presets::UniformState,
+    external_data::shader_presets::{UniformState, build_save_presets, save_shader_settings},
     impl_tracked_plugin,
     prelude::*,
     util_lib::tracked_plugin::*,
@@ -61,6 +61,7 @@ pub fn terrain_ui_system(
     shader_presets: Res<LandShaderModePresets>,
     mut ui_state: ResMut<TerrainShaderUiState>,
     settings: Res<Settings>,
+    mut was_open: Local<bool>,
 ) {
     // Try to get the egui context - if it fails, skip rendering this frame
     let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
@@ -101,16 +102,25 @@ pub fn terrain_ui_system(
                 ui.separator();
 
                 ui.strong("Normals:");
-                let mut nm = u.effects.normal_mode;
-                if ui.selectable_label(nm == 0, "Geometric").clicked() {
-                    nm = 0;
-                }
-                if ui.selectable_label(nm == 1, "Bicubic").clicked() {
-                    nm = 1;
-                }
-                if nm != u.effects.normal_mode {
-                    u.effects.normal_mode = nm;
-                    u.dirty = true;
+                // Classic always uses geometric normals — disable selector.
+                if mode == 0 {
+                    ui.add_enabled(false, egui::Label::new("Geometric (fixed)"));
+                    if u.effects.normal_mode != 0 {
+                        u.effects.normal_mode = 0;
+                        u.dirty = true;
+                    }
+                } else {
+                    let mut nm = u.effects.normal_mode;
+                    if ui.selectable_label(nm == 0, "Geometric").clicked() {
+                        nm = 0;
+                    }
+                    if ui.selectable_label(nm == 1, "Bicubic").clicked() {
+                        nm = 1;
+                    }
+                    if nm != u.effects.normal_mode {
+                        u.effects.normal_mode = nm;
+                        u.dirty = true;
+                    }
                 }
             });
 
@@ -489,56 +499,60 @@ pub fn terrain_ui_system(
             // ------------------------ Presets -------------------------
             ui.horizontal(|ui| {
                 ui.strong("Presets:");
-                if ui.button("Morning").clicked() {
-                    let preset = match u.effects.shading_mode {
-                        0 => &shader_presets.classic.morning,
-                        1 => &shader_presets.enhanced.morning,
-                        _ => &shader_presets.kr.morning,
-                    };
+                let mode = u.effects.shading_mode;
+                let mode_prefix = match mode {
+                    0 => "classic",
+                    1 => "enhanced",
+                    _ => "kr",
+                };
+
+                // Helper: apply a preset and update active_preset key.
+                fn apply_preset(u: &mut UniformState, preset: &LandMaterialUniformsPresets, key: String) {
                     u.effects = preset.effects;
                     u.lighting = preset.lighting;
                     u.land_lighting = preset.land_lighting;
                     u.global_lighting = preset.global_lighting;
+                    u.active_preset = key;
                     u.dirty = true;
+                }
+
+                if ui.button("Morning").clicked() {
+                    let p = match mode { 0 => &shader_presets.classic.morning, 1 => &shader_presets.enhanced.morning, _ => &shader_presets.kr.morning };
+                    apply_preset(&mut u, p, format!("{}.morning", mode_prefix));
                 }
                 if ui.button("Afternoon").clicked() {
-                    let preset = match u.effects.shading_mode {
-                        0 => &shader_presets.classic.afternoon,
-                        1 => &shader_presets.enhanced.afternoon,
-                        _ => &shader_presets.kr.afternoon,
-                    };
-                    u.effects = preset.effects;
-                    u.lighting = preset.lighting;
-                    u.land_lighting = preset.land_lighting;
-                    u.global_lighting = preset.global_lighting;
-                    u.dirty = true;
+                    let p = match mode { 0 => &shader_presets.classic.afternoon, 1 => &shader_presets.enhanced.afternoon, _ => &shader_presets.kr.afternoon };
+                    apply_preset(&mut u, p, format!("{}.afternoon", mode_prefix));
                 }
                 if ui.button("Night").clicked() {
-                    let preset = match u.effects.shading_mode {
-                        0 => &shader_presets.classic.night,
-                        1 => &shader_presets.enhanced.night,
-                        _ => &shader_presets.kr.night,
-                    };
-                    u.effects = preset.effects;
-                    u.lighting = preset.lighting;
-                    u.land_lighting = preset.land_lighting;
-                    u.global_lighting = preset.global_lighting;
-                    u.dirty = true;
+                    let p = match mode { 0 => &shader_presets.classic.night, 1 => &shader_presets.enhanced.night, _ => &shader_presets.kr.night };
+                    apply_preset(&mut u, p, format!("{}.night", mode_prefix));
                 }
                 if ui.button("Cave").clicked() {
-                    let preset = match u.effects.shading_mode {
-                        0 => &shader_presets.classic.cave,
-                        1 => &shader_presets.enhanced.cave,
-                        _ => &shader_presets.kr.cave,
-                    };
-                    u.effects = preset.effects;
-                    u.lighting = preset.lighting;
-                    u.land_lighting = preset.land_lighting;
-                    u.global_lighting = preset.global_lighting;
-                    u.dirty = true;
+                    let p = match mode { 0 => &shader_presets.classic.cave, 1 => &shader_presets.enhanced.cave, _ => &shader_presets.kr.cave };
+                    apply_preset(&mut u, p, format!("{}.cave", mode_prefix));
                 }
             });
+
+            // Undo button: restore the last saved values.
+            ui.horizontal(|ui| {
+                if ui.button("⟲ Undo to Last Saved").clicked() {
+                    if let Some(snap) = u.saved_snapshot {
+                        u.restore(&snap);
+                    }
+                }
+                // Show active preset label
+                ui.label(format!("Active: {}", u.active_preset));
+            });
         });
+
+    // Detect close transition: save shader settings to land.toml.
+    if *was_open && !ui_state.open {
+        let save_presets = build_save_presets(&u, &shader_presets);
+        save_shader_settings(&save_presets);
+        u.saved_snapshot = Some(u.snapshot());
+    }
+    *was_open = ui_state.open;
 }
 
 // push_uniforms_if_dirty updates ALL LandCustomMaterial assets.
