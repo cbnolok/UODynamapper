@@ -31,7 +31,6 @@ done
 export RUSTFLAGS=" \
 -Clink-arg=-fuse-ld=mold \
 -Clink-arg=-Wl,--gc-sections \
--Clink-arg=-Wl,--icf=safe \
 -Clink-arg=-Wl,--no-allow-shlib-undefined \
 -Clink-arg=-Wl,--strip-all \
 -Cforce-unwind-tables=no \
@@ -39,6 +38,7 @@ export RUSTFLAGS=" \
 -Zshare-generics=y \
 -Zlocation-detail=none \
 ${RUSTFLAGS:-}"
+# -Clink-arg=-Wl,--icf=safe # Identical Code Folding (ICF) is not yet stable on Github runners Linux targets (old "mold" versions?)
 
 build_args=(
     +nightly build --release --locked --no-default-features

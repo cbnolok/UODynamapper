@@ -14,15 +14,24 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # - No LTO: makes profilers more precise
 # - Debug symbols: included for profiling
 # - No strip: keep symbols
-RUSTFLAGS=" \
+export RUSTFLAGS=" \
 -Cforce-frame-pointers=yes \
 -Clink-arg=-fuse-ld=mold \
 -Clink-arg=-Wl,--gc-sections \
 -Clink-arg=-Wl,--no-allow-shlib-undefined \
--Clink-arg=-Wl,--icf=safe \
-${RUSTFLAGS:-}" \
-cargo build --profile profiling --locked --no-default-features --features profiling \
-    --bin dynamapper --package dynamapper \
-    "$@"
+${RUSTFLAGS:-}"
+# -Clink-arg=-Wl,--icf=safe # Identical Code Folding (ICF) is not yet stable on Github runners Linux targets (old "mold" versions?)
+
+build_args=(
+    build --release --locked --no-default-features
+    --bin dynamapper --package dynamapper
+)
+
+if [[ -n "${CARGO_FEATURES:-}" ]]; then
+    build_args+=(--features "$CARGO_FEATURES")
+fi
+
+build_args+=("$@")
+cargo "${build_args[@]}"
 
 echo "Profile build complete."

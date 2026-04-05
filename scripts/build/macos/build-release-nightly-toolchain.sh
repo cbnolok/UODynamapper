@@ -14,7 +14,7 @@ else
     unset RUSTC_WRAPPER
 fi
 
-# Stable release flags plus nightly-only size/build-std flags.
+# Release flags plus nightly-only size/build-std flags.
 # macOS uses -Wl,-dead_strip instead of --gc-sections
 # macOS doesn't support --icf (Identical Code Folding)
 export RUSTFLAGS=" \
