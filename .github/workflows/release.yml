@@ -18,10 +18,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  RELEASE_FEATURES_LINUX_DESKTOP: "linux_x11,linux_wayland"
-  RELEASE_FEATURES_LINUX_DESKTOP_ISPC: "ispc,linux_x11,linux_wayland"
-  RELEASE_FEATURES_X11_ONLY: "linux_x11"
-  RELEASE_FEATURES_ISPC: "ispc"
+  ISPC_VERSION: "1.30.0"
+  ISPC_URL_WINDOWS_X86_64: "https://github.com/ispc/ispc/releases/download/v1.30.0/ispc-v1.30.0-windows.zip"
+  RELEASE_FEATURES_LINUX_DESKTOP: "intel_tex,linux_x11,linux_wayland"
+  RELEASE_FEATURES_X11_ONLY: "intel_tex,linux_x11"
+  RELEASE_FEATURES_INTEL_TEX: "intel_tex"
+  RELEASE_FEATURES_INTEL_TEX_SOURCE: "intel_tex_source"
   SCCACHE_GHA_ENABLED: "false"
   SCCACHE_NO_DAEMON: "1"
 
@@ -64,25 +66,23 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP_ISPC }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/release/dynamapper release_package/
-          cp -r assets release_package/
-          cp README.md release_package/ 2>/dev/null || true
-          sudo apt-get install -y zip
-          zip -r dynamapper-linux-x86_64.zip release_package
+          mkdir -p artifact/dynamapper-linux-x86_64
+          cp target/release/dynamapper artifact/dynamapper-linux-x86_64/
+          cp -r assets artifact/dynamapper-linux-x86_64/
+          cp README.md artifact/dynamapper-linux-x86_64/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64
-          path: dynamapper-linux-x86_64.zip
+          path: artifact/dynamapper-linux-x86_64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-arm64:
@@ -129,18 +129,16 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/aarch64-unknown-linux-gnu/release/dynamapper release_package/
-          cp -r assets release_package/
-          cp README.md release_package/ 2>/dev/null || true
-          sudo apt-get install -y zip
-          zip -r dynamapper-linux-arm64.zip release_package
+          mkdir -p artifact/dynamapper-linux-arm64
+          cp target/aarch64-unknown-linux-gnu/release/dynamapper artifact/dynamapper-linux-arm64/
+          cp -r assets artifact/dynamapper-linux-arm64/
+          cp README.md artifact/dynamapper-linux-arm64/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-arm64
-          path: dynamapper-linux-arm64.zip
+          path: artifact/dynamapper-linux-arm64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-musl-x86_64:
@@ -182,19 +180,16 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/x86_64-unknown-linux-musl/release/dynamapper release_package/
-          cp -r assets release_package/
-          cp README.md release_package/ 2>/dev/null || true
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends zip
-          zip -r dynamapper-linux-x86_64-musl.zip release_package
+          mkdir -p artifact/dynamapper-linux-x86_64-musl
+          cp target/x86_64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-x86_64-musl/
+          cp -r assets artifact/dynamapper-linux-x86_64-musl/
+          cp README.md artifact/dynamapper-linux-x86_64-musl/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64-musl
-          path: dynamapper-linux-x86_64-musl.zip
+          path: artifact/dynamapper-linux-x86_64-musl/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-musl-arm64:
@@ -236,19 +231,16 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/aarch64-unknown-linux-musl/release/dynamapper release_package/
-          cp -r assets release_package/
-          cp README.md release_package/ 2>/dev/null || true
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends zip
-          zip -r dynamapper-linux-arm64-musl.zip release_package
+          mkdir -p artifact/dynamapper-linux-arm64-musl
+          cp target/aarch64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-arm64-musl/
+          cp -r assets artifact/dynamapper-linux-arm64-musl/
+          cp README.md artifact/dynamapper-linux-arm64-musl/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-arm64-musl
-          path: dynamapper-linux-arm64-musl.zip
+          path: artifact/dynamapper-linux-arm64-musl/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-windows:
@@ -276,23 +268,22 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_INTEL_TEX }}
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release_package | Out-Null
-          Copy-Item -Path "target/release/dynamapper.exe" -Destination "release_package/"
-          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
-          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64.zip"
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64" | Out-Null
+          Copy-Item -Path "target/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64/"
+          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64/" }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-windows-x86_64
-          path: dynamapper-windows-x86_64.zip
+          path: artifact/dynamapper-windows-x86_64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-windows-clang:
@@ -321,6 +312,15 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
+      - name: Install ISPC
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'ispc.zip'
+          $extractDir = Join-Path $env:RUNNER_TEMP "ispc-v$($env:ISPC_VERSION)-windows"
+          Invoke-WebRequest -Uri $env:ISPC_URL_WINDOWS_X86_64 -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP -Force
+          (Join-Path $extractDir 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -333,7 +333,7 @@ jobs:
       - name: Build release binary
         shell: pwsh
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_INTEL_TEX_SOURCE }}
           CC: "clang"
           CXX: "clang++"
           AR: "llvm-ar"
@@ -346,17 +346,16 @@ jobs:
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release_package | Out-Null
-          Copy-Item -Path "target/x86_64-pc-windows-gnu/release/dynamapper.exe" -Destination "release_package/"
-          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
-          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-x86_64-clang.zip"
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64-clang" | Out-Null
+          Copy-Item -Path "target/x86_64-pc-windows-gnu/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64-clang/"
+          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64-clang/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64-clang/" }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-windows-x86_64-clang
-          path: dynamapper-windows-x86_64-clang.zip
+          path: artifact/dynamapper-windows-x86_64-clang/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-windows-arm64:
@@ -385,22 +384,23 @@ jobs:
 
       - name: Build release binary
         shell: pwsh
+        env:
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_INTEL_TEX }}
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release_package | Out-Null
-          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/dynamapper.exe" -Destination "release_package/"
-          Copy-Item -Path "assets" -Destination "release_package/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "release_package/" }
-          Compress-Archive -Path "release_package" -DestinationPath "dynamapper-windows-arm64.zip"
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-arm64" | Out-Null
+          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-arm64/"
+          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-arm64/" -Recurse
+          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-arm64/" }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-windows-arm64
-          path: dynamapper-windows-arm64.zip
+          path: artifact/dynamapper-windows-arm64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-macos-x86_64:
@@ -429,23 +429,23 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_INTEL_TEX }}
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/x86_64-apple-darwin/release/dynamapper release_package/
-          cp -r assets release_package/
-          zip -r dynamapper-macos-x86_64.zip release_package
+          mkdir -p artifact/dynamapper-macos-x86_64
+          cp target/x86_64-apple-darwin/release/dynamapper artifact/dynamapper-macos-x86_64/
+          cp -r assets artifact/dynamapper-macos-x86_64/
+          cp README.md artifact/dynamapper-macos-x86_64/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-macos-x86_64
-          path: dynamapper-macos-x86_64.zip
+          path: artifact/dynamapper-macos-x86_64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-macos-arm64:
@@ -474,23 +474,23 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_ISPC }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_INTEL_TEX }}
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
 
       - name: Package binary and assets
         run: |
-          mkdir -p release_package
-          cp target/aarch64-apple-darwin/release/dynamapper release_package/
-          cp -r assets release_package/
-          zip -r dynamapper-macos-arm64.zip release_package
+          mkdir -p artifact/dynamapper-macos-arm64
+          cp target/aarch64-apple-darwin/release/dynamapper artifact/dynamapper-macos-arm64/
+          cp -r assets artifact/dynamapper-macos-arm64/
+          cp README.md artifact/dynamapper-macos-arm64/ 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-macos-arm64
-          path: dynamapper-macos-arm64.zip
+          path: artifact/dynamapper-macos-arm64/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   publish:
@@ -505,7 +505,23 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          merge-multiple: true
+
+      - name: Create release archives
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zip
+          mkdir -p release-assets
+          shopt -s nullglob
+
+          for artifact_dir in artifacts/*; do
+            [[ -d "$artifact_dir" ]] || continue
+            artifact_name="$(basename "$artifact_dir")"
+            (
+              cd "$artifact_dir"
+              zip -r "../../release-assets/${artifact_name}.zip" ./*
+            )
+          done
 
       - name: Compute tag name
         id: tag_info
@@ -533,7 +549,7 @@ jobs:
           tag_name: ${{ steps.tag_info.outputs.tag }}
           name: ${{ steps.tag_info.outputs.name }}
           prerelease: ${{ steps.tag_info.outputs.is_prerelease == 'true' }}
-          files: artifacts/*.zip
+          files: release-assets/*.zip
           overwrite_files: true
           generate_release_notes: ${{ steps.tag_info.outputs.is_prerelease == 'false' }}
           body: |

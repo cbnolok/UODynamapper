@@ -342,80 +342,9 @@ impl TexMap2D {
 
         // Decode BGRA5551 → RGBA8888 (done outside the lock so other threads
         // can access the cache concurrently).
-        let mut pixel_data: Vec<u8> = Vec::with_capacity(element.pixel_qty * 4);
-
-        #[cfg(debug_assertions)]
-        {
-            let pixels_u16: &[u16] = bytemuck::cast_slice(&raw_bgra5551);
-            for &p in pixels_u16 {
-                let mut pixel_16: Bgra5551 = crate::utils::color::Bgra5551::new_from_val(p);
-                pixel_16.set_a(1);
-                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let (pixel_data_u16_prefix, pixel_data_u16_suffix) =
-                bytemuck::cast_slice(&raw_bgra5551).as_chunks::<16>();
-
-            for &chunk_array in pixel_data_u16_prefix {
-                let chunk = u16x16::new(chunk_array);
-
-                // PERFORMANCE NOTE:
-                // We keep the entire decoding and packing process in SIMD registers to avoid
-                // "SIMD-to-scalar spills". The original implementation moved data to a stack array
-                // to loop over it, which forced the CPU to wait on high-latency extraction moves.
-                //
-                // ALGORITHM:
-                // We extract the 5-6-5 bits into separate registers, then perform vectorized
-                // bit-packing using wide bitwise shifts and ORs. This processes 8 pixels at
-                // a time in parallel per register (16 per total chunk).
-
-                let [lo, hi]: [u16x8; 2] = unsafe { std::mem::transmute(chunk) };
-
-                // Extract components into u32 registers for bit-packing.
-                // 1) Mask 5 bits (0x1F) for R, G, B channels.
-                // 2) Shift right to extract (for G and R).
-                // 3) Shift left by 3 to scale 5-bit to 8-bit (nearly, 0..31 -> 0..248).
-                let b_u16_lo: u32x8 = u32x8::from((lo & u16x8::splat(0x1F)) << 3);
-                let g_u16_lo: u32x8 = u32x8::from(((lo >> 5) & u16x8::splat(0x1F)) << 3);
-                let r_u16_lo: u32x8 = u32x8::from(((lo >> 10) & u16x8::splat(0x1F)) << 3);
-                let a_u16_lo: u32x8 = u32x8::splat(0xFF); // Full opacity for land tiles
-
-                let b_u16_hi: u32x8 = u32x8::from((hi & u16x8::splat(0x1F)) << 3);
-                let g_u16_hi: u32x8 = u32x8::from(((hi >> 5) & u16x8::splat(0x1F)) << 3);
-                let r_u16_hi: u32x8 = u32x8::from(((hi >> 10) & u16x8::splat(0x1F)) << 3);
-                let a_u16_hi: u32x8 = u32x8::splat(0xFF);
-
-                // ENDIANNESS & PACKING:
-                // Bit-packing as (A << 24 | B << 16 | G << 8 | R) results in memory bytes [R, G, B, A]
-                // on Little-Endian systems (x86_64, aarch64), which is the standard RGBA8888
-                // format expected by modern GPUs (Vulkan/Metal/DXR).
-                #[allow(unused_mut)]
-                let mut rgba_lo: u32x8 =
-                    (a_u16_lo << 24) | (b_u16_lo << 16) | (g_u16_lo << 8) | r_u16_lo;
-                #[allow(unused_mut)]
-                let mut rgba_hi: u32x8 =
-                    (a_u16_hi << 24) | (b_u16_hi << 16) | (g_u16_hi << 8) | r_u16_hi;
-
-                // Handle host endianness: we want Little-Endian memory layout for RGBA [R, G, B, A]
-                #[cfg(target_endian = "big")]
-                {
-                    rgba_lo = rgba_lo.swap_bytes();
-                    rgba_hi = rgba_hi.swap_bytes();
-                }
-
-                // Efficient large stores (32-bytes at a time) instead of 16 individual 4-byte pushes.
-                pixel_data.extend_from_slice(bytemuck::cast_slice(rgba_lo.as_array()));
-                pixel_data.extend_from_slice(bytemuck::cast_slice(rgba_hi.as_array()));
-            }
-
-            for &p in pixel_data_u16_suffix {
-                let mut pixel_16 = crate::utils::color::Bgra5551::new_from_val(p);
-                pixel_16.set_a(1);
-                pixel_data.extend_from_slice(pixel_16.as_rgba8888().value().to_le_bytes().as_ref());
-            }
-        }
+        let mut pixel_data: Vec<u8> = vec![0; element.pixel_qty * 4];
+        let pixels_u16: &[u16] = bytemuck::cast_slice(&raw_bgra5551);
+        crate::utils::color::bulk_convert_bgra5551_to_rgba8888(pixels_u16, &mut pixel_data);
 
         Some(pixel_data.into())
     }

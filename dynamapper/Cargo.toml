@@ -1,7 +1,7 @@
 # Cargo.toml
 [package]
 name = "dynamapper"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"    # "2024"
 
 [lints.clippy]
@@ -14,7 +14,6 @@ too_many_arguments = "allow"
 uocf = { path = "../uocf" }
 bevy_framepace = { version = "0.21", default-features = false }
 bevy_egui = { version = "0.39" }
-
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
@@ -23,9 +22,10 @@ chrono = { version = "0.4", default-features = false, features = [
 color-eyre = { version = "0.6", features = ["track-caller"] }
 config = { version = "0.15", default-features = false }
 #getset = "0.1"
-#guillotiere = "0.6"
+guillotiere = "0.6"
 #lru = "0.16"
 indexmap = "2.13.0"
+# BC7 texture compression (CPU algorithm, relies on Intel ISPC).
 intel_tex_2 = { version = "0.5.0", optional = true }
 image = { version = "0.25", default-features = false, features = [
   "bmp",
@@ -38,7 +38,6 @@ log = { version = "*", features = [
 ] }
 mimalloc = { version = "*", features = ["v3"] }
 nohash-hasher = "0.2.0"
-#parking_lot = "0.12"
 #pad = "0.1"
 paris = { version = "1.5", default-features = false, features = [
   "macros",
@@ -55,7 +54,7 @@ strum = { version = "0.28", default-features = false }
 strum_macros = { version = "0.28", default-features = false }
 
 #smallvec = "1"
-# BC7 texture compression for GPU VRAM reduction.
+# BC7 texture compression (GPU algorithm, compute shader).
 block_compression = { version = "0.7", default-features = false, features = ["bc7"] }
 # System metrics (CPU/RAM). Bevy includes this transitively via sysinfo_plugin,
 # but we use it directly here because Bevy's SystemInformationDiagnosticsPlugin
@@ -188,7 +187,7 @@ features = [
   #"tga",                # TGA image format support
   #"tiff",               # TIFF image format support
   #"webp",               # WebP image format support
-  "zlib", # For KTX2 supercompression
+  #"zlib", # For KTX2 supercompression
 
   # --- Audio Format Support ---
   #"flac",               # FLAC audio format support
@@ -259,7 +258,8 @@ features = [
 
 [features]
 gpu-profiling = ["dep:wgpu-profiler"]
-ispc = ["dep:intel_tex_2"]
+intel_tex = ["dep:intel_tex_2"]
+intel_tex_source = ["intel_tex", "intel_tex_2/ispc"]
 linux_wayland = ["bevy/wayland"]
 linux_x11 = ["bevy/x11"]
 profiling = ["uocf/profiling"]

@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use uocf::geo::land_texture_2d::TexMap2D;
-use uocf::geo::map::{self, MapBlock, MapBlockRelPos};
+use uocf::classic::land_texture_2d::TexMap2D;
+use uocf::classic::map::{self, MapBlock, MapBlockRelPos};
 
 use crate::console_logger::{self, LogAbout, LogSev};
 

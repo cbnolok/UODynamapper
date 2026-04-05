@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
-use uocf::geo::map::{MapCell, MapCellCoords};
+use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 

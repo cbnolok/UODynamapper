@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
+use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TextureArrayImageHandles {

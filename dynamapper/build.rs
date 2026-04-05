@@ -42,7 +42,7 @@ fn main() {
     //   instead of __gxx_personality_v0). No explicit linkage needed.
     // - macOS: uses libc++ instead of libstdc++; we must link `c++` explicitly when
     //   the ISPC backend is enabled.
-    if std::env::var_os("CARGO_FEATURE_ISPC").is_some() {
+    if std::env::var_os("CARGO_FEATURE_INTEL_TEX").is_some() {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 

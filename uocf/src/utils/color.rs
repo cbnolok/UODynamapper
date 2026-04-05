@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use wide::*;
+
 #[inline(always)]
 fn component_rgba_5bit_to_8bit(component: u8) -> u8 {
     assert!(component < 32);
@@ -120,6 +122,75 @@ impl Rgba8888 {
     pub fn new_from_val(value: u32) -> Self {
         Self {
             value
+        }
+    }
+}
+
+/// Utility function using AVX/SSE (via wide) to mass-convert Bgra5551 slices
+/// into Rgba8888 streams natively.
+#[inline(always)]
+pub fn bulk_convert_bgra5551_to_rgba8888(raw_u16: &[u16], out_rgba: &mut [u8]) {
+    // Assume slice matching lengths: `raw_u16.len() * 4 == out_rgba.len()`
+    #[cfg(not(debug_assertions))]
+    {
+        let (pixel_data_u16_prefix, pixel_data_u16_suffix) = bytemuck::cast_slice::<_, u16>(raw_u16).as_chunks::<16>();
+
+        let mut out_offset = 0;
+        for &chunk_array in pixel_data_u16_prefix {
+            let chunk = u16x16::new(chunk_array);
+            
+            let [lo, hi]: [u16x8; 2] = unsafe { std::mem::transmute(chunk) };
+
+            let b_u16_lo: u32x8 = u32x8::from((lo & u16x8::splat(0x1F)) << 3);
+            let g_u16_lo: u32x8 = u32x8::from(((lo >> 5) & u16x8::splat(0x1F)) << 3);
+            let r_u16_lo: u32x8 = u32x8::from(((lo >> 10) & u16x8::splat(0x1F)) << 3);
+            let a_u16_lo: u32x8 = u32x8::splat(0xFF); // Full opacity
+
+            let b_u16_hi: u32x8 = u32x8::from((hi & u16x8::splat(0x1F)) << 3);
+            let g_u16_hi: u32x8 = u32x8::from(((hi >> 5) & u16x8::splat(0x1F)) << 3);
+            let r_u16_hi: u32x8 = u32x8::from(((hi >> 10) & u16x8::splat(0x1F)) << 3);
+            let a_u16_hi: u32x8 = u32x8::splat(0xFF);
+
+            #[allow(unused_mut)]
+            let mut rgba_lo: u32x8 = (a_u16_lo << 24) | (b_u16_lo << 16) | (g_u16_lo << 8) | r_u16_lo;
+            #[allow(unused_mut)]
+            let mut rgba_hi: u32x8 = (a_u16_hi << 24) | (b_u16_hi << 16) | (g_u16_hi << 8) | r_u16_hi;
+
+            #[cfg(target_endian = "big")]
+            {
+                rgba_lo = rgba_lo.swap_bytes();
+                rgba_hi = rgba_hi.swap_bytes();
+            }
+
+            let arr_lo = rgba_lo.as_array();
+            let arr_hi = rgba_hi.as_array();
+            
+            let slice_lo = bytemuck::cast_slice(arr_lo);
+            let slice_hi = bytemuck::cast_slice(arr_hi);
+            
+            out_rgba[out_offset..out_offset+32].copy_from_slice(slice_lo);
+            out_rgba[out_offset+32..out_offset+64].copy_from_slice(slice_hi);
+            out_offset += 64;
+        }
+        
+        for &p in pixel_data_u16_suffix {
+            let r = (((p >> 10) & 0x1F) << 3) as u8;
+            let g = (((p >> 5) & 0x1F) << 3) as u8;
+            let b = ((p & 0x1F) << 3) as u8;
+            out_rgba[out_offset..out_offset+4].copy_from_slice(&[r, g, b, 255]);
+            out_offset += 4;
+        }
+    }
+    
+    #[cfg(debug_assertions)]
+    {
+        let mut out_offset = 0;
+        for &p in raw_u16 {
+            let r = (((p >> 10) & 0x1F) << 3) as u8;
+            let g = (((p >> 5) & 0x1F) << 3) as u8;
+            let b = ((p & 0x1F) << 3) as u8;
+            out_rgba[out_offset..out_offset+4].copy_from_slice(&[r, g, b, 255]);
+            out_offset += 4;
         }
     }
 }

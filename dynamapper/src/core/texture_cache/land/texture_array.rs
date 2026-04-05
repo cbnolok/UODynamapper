@@ -14,7 +14,7 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
-use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
+use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
@@ -38,7 +38,7 @@ use uocf::geo::land_texture_2d::{LandTextureSize, TexMap2D};
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
 // offline or on-the-fly. UODynamapper can encode BC7 tiles at runtime using either
-// `block_compression` or, when compiled with the `ispc` feature, `intel_tex_2`.
+// `block_compression` or, when compiled with the `intel_tex` feature, `intel_tex_2`.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 // ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
@@ -281,7 +281,7 @@ pub fn compress_rgba8_to_bc7(
             blocks
         }
         LossyTextureCompressionBackend::Ispc => {
-            #[cfg(feature = "ispc")]
+            #[cfg(feature = "intel_tex")]
             {
                 let surface = intel_tex_2::RgbaSurface {
                     data: rgba8_data,
@@ -292,7 +292,7 @@ pub fn compress_rgba8_to_bc7(
                 let settings = intel_tex_2::bc7::alpha_basic_settings();
                 intel_tex_2::bc7::compress_blocks(&settings, &surface)
             }
-            #[cfg(not(feature = "ispc"))]
+            #[cfg(not(feature = "intel_tex"))]
             {
                 let variant = block_compression::CompressionVariant::BC7(
                     block_compression::BC7Settings::alpha_basic(),

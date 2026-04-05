@@ -14,8 +14,8 @@ use bevy::{
 use bytemuck::Zeroable;
 use std::sync::Arc;
 use std::time::Instant;
-use uocf::geo::map::MapPlane;
-use uocf::geo::{
+use uocf::classic::map::MapPlane;
+use uocf::classic::{
     land_texture_2d::{LandTextureSize, TexMap2D},
     map::{MapBlock, MapBlockRelPos},
 };

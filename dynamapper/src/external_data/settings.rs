@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::prelude::*;
-use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::util_lib::uo_coords::*;
 use bevy::{
     //asset::{AssetLoader, LoadContext, io::Reader},
@@ -120,7 +120,7 @@ pub struct SectGraphics {
     #[serde(default)]
     pub lossy_texture_compression_backend: LossyTextureCompressionBackend,
     pub reduce_unfocused_fps: bool,
-    pub vsync: bool,                 // Added vsync control
+    pub vsync: bool, // Added vsync control
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0
@@ -147,11 +147,11 @@ impl SectGraphics {
                 Some(LossyTextureCompressionBackend::BlockCompression)
             }
             LossyTextureCompressionBackend::Ispc => {
-                #[cfg(feature = "ispc")]
+                #[cfg(feature = "intel_tex")]
                 {
                     Some(LossyTextureCompressionBackend::Ispc)
                 }
-                #[cfg(not(feature = "ispc"))]
+                #[cfg(not(feature = "intel_tex"))]
                 {
                     Some(LossyTextureCompressionBackend::BlockCompression)
                 }
@@ -160,14 +160,14 @@ impl SectGraphics {
     }
 
     pub fn log_unavailable_texture_compression_backend_warning(&self) {
-        #[cfg(not(feature = "ispc"))]
+        #[cfg(not(feature = "intel_tex"))]
         if self.lossy_texture_compression
             && self.lossy_texture_compression_backend == LossyTextureCompressionBackend::Ispc
         {
             console_logger::one(
                 LogSev::Warn,
                 LogAbout::General,
-                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `ispc` feature. Falling back to block_compression.",
+                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `intel_tex` feature required for the Intel ISPC backend. Falling back to block_compression.",
             );
         }
     }
@@ -283,13 +283,9 @@ pub fn load_from_files() -> Settings {
     // Try both [graphics] and [core.graphics] (legacy)
     let graphics: SectGraphics = if let Ok(val) = toml::from_str::<toml::Value>(&gfx_contents) {
         if let Some(g) = val.get("graphics") {
-            g.clone()
-                .try_into::<SectGraphics>()
-                .expect("Failed to parse [graphics] in settings/graphics.toml")
+            g.clone().try_into::<SectGraphics>().expect("Failed to parse [graphics] in settings/graphics.toml")
         } else if let Some(c) = val.get("core").and_then(|c| c.get("graphics")) {
-            c.clone()
-                .try_into::<SectGraphics>()
-                .expect("Failed to parse [core.graphics] in settings/graphics.toml")
+            c.clone().try_into::<SectGraphics>().expect("Failed to parse [core.graphics] in settings/graphics.toml")
         } else {
             // If neither table exists, try to parse the whole file as SectGraphics if it's flat (unlikely but possible)
             toml::from_str(&gfx_contents).expect("Failed to parse settings/graphics.toml — expected it to contain a [graphics] table")
@@ -350,7 +346,11 @@ pub fn save_app_settings(settings: &Settings) {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
                 paris::error!("Failed to save preferences.toml: {}", e);
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved preferences.toml");
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved preferences.toml",
+                );
             }
         }
         Err(e) => {
@@ -368,7 +368,11 @@ pub fn save_keybindings(settings: &Settings) {
             if let Err(e) = std::fs::write(&kb_path, toml_str) {
                 paris::error!("Failed to save keybindings.toml: {}", e);
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved keybindings.toml");
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved keybindings.toml",
+                );
             }
         }
         Err(e) => {
@@ -417,47 +421,7 @@ fn sys_startup_load_file(mut commands: Commands) {
     data.graphics
         .log_unavailable_texture_compression_backend_warning();
     // Ensure plugin log toggles follow configured settings
-    set_plugin_log_toggles(
-        data.logging.emit_flat_plugin_build,
-        data.logging.emit_tree_plugin_build,
-    );
-
-    // --- Texture compression startup summary ---
-    {
-        let state = if data.graphics.lossy_texture_compression {
-            "ON"
-        } else {
-            "OFF"
-        };
-        let mut msg = format!("Texture compression: {state}");
-
-        if data.graphics.lossy_texture_compression {
-            #[allow(unused_mut)]
-            let mut backends = vec!["block_compression"];
-            #[cfg(feature = "ispc")]
-            backends.push("intel_tex_2");
-            msg = format!("{msg} | Available backends: {}", backends.join(", "));
-        }
-        console_logger::one(LogSev::Info, LogAbout::Startup, &msg);
-    }
-
-    // --- Linux: supported display servers (features) ---
-    #[cfg(target_os = "linux")]
-    {
-        let mut servers = vec![];
-        #[cfg(feature = "linux_x11")]
-        servers.push("X11");
-        #[cfg(feature = "linux_wayland")]
-        servers.push("Wayland");
-
-        if !servers.is_empty() {
-            console_logger::one(
-                LogSev::Info,
-                LogAbout::Startup,
-                &format!("Desktop client support: {}", servers.join(", ")),
-            );
-        }
-    }
+    set_plugin_log_toggles(data.logging.emit_flat_plugin_build, data.logging.emit_tree_plugin_build);
 
     commands.insert_resource(data);
     console_logger::one(
@@ -515,11 +479,12 @@ fn sys_hotreload_settings(
         settings.logging = new_data.logging.clone();
         watcher.core_mtime = new_core;
         // Update plugin log toggles on settings hot-reload
-        set_plugin_log_toggles(
-            settings.logging.emit_flat_plugin_build,
-            settings.logging.emit_tree_plugin_build,
+        set_plugin_log_toggles(settings.logging.emit_flat_plugin_build, settings.logging.emit_tree_plugin_build);
+        console_logger::one(
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: core.toml",
         );
-        console_logger::one(LogSev::Info, LogAbout::General, "Hot-reloaded: core.toml");
     }
     if graphics_changed {
         settings.graphics = new_data.graphics.clone();

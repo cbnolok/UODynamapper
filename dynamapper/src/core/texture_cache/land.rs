@@ -7,8 +7,8 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use std::time::{Duration, Instant};
-use uocf::geo::land_texture_2d::LandTextureSize;
-use uocf::geo::map::MapBlockRelPos;
+use uocf::classic::land_texture_2d::LandTextureSize;
+use uocf::classic::map::MapBlockRelPos;
 
 pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,

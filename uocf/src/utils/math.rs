@@ -22,3 +22,11 @@ pub fn downcast_ceil_usize(from: u64) -> usize
         from as usize
     }
 }
+
+pub fn i32_downcast_ceil_usize(from: i32) -> usize {
+    if from < 0 {
+        return 0;
+    }
+    from as usize
+}
+

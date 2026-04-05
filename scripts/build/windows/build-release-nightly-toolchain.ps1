@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$rootDir = Resolve-Path "$scriptDir\..\.."
+$rootDir = Resolve-Path "$scriptDir\..\..\.."
 Set-Location $rootDir
 
 Write-Host "Running Windows nightly release build..."
@@ -34,11 +34,13 @@ $Env:RUSTFLAGS = "-C symbol-mangling-version=v0 -Z share-generics=y -Z location-
 
 $targetArgs = @()
 $featureArgs = @()
-$expectedBinary = "target/release/dynamapper.exe"
+$expectedBinaryRelative = "target/release/dynamapper.exe"
 if (![string]::IsNullOrWhiteSpace($Target)) {
     $targetArgs = @("--target", $Target)
-    $expectedBinary = "target/$Target/release/dynamapper.exe"
+    $expectedBinaryRelative = "target/$Target/release/dynamapper.exe"
 }
+
+$expectedBinary = Join-Path $rootDir $expectedBinaryRelative
 
 if (![string]::IsNullOrWhiteSpace($Env:CARGO_FEATURES)) {
     $featureArgs = @("--features", $Env:CARGO_FEATURES)
@@ -59,7 +61,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Verify the binary was created
 if (!(Test-Path $expectedBinary)) {
-    Write-Error "Build succeeded but dynamapper.exe was not found at '$expectedBinary'"
+    Write-Error "Build succeeded but dynamapper.exe was not found at '$expectedBinaryRelative' (resolved to '$expectedBinary')"
     exit 1
 }
 

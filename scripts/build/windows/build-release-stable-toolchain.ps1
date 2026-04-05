@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$rootDir = Resolve-Path "$scriptDir\..\.."
+$rootDir = Resolve-Path "$scriptDir\..\..\.."
 Set-Location $rootDir
 
 Write-Host "Running Windows stable release build..."
@@ -26,8 +26,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Verify the binary was created
-if (!(Test-Path "target/release/dynamapper.exe")) {
-    Write-Error "Build succeeded but dynamapper.exe was not found in target/release/"
+$expectedBinaryRelative = "target/release/dynamapper.exe"
+$expectedBinary = Join-Path $rootDir $expectedBinaryRelative
+if (!(Test-Path $expectedBinary)) {
+    Write-Error "Build succeeded but dynamapper.exe was not found at '$expectedBinaryRelative' (resolved to '$expectedBinary')"
     exit 1
 }
 
