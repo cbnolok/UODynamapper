@@ -16,9 +16,12 @@ color-eyre = { version = "0.6", features = ["track-caller"] }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
 glam = { version = "0.30", default-features = false, features = ["std"] }
-image = { version = "0.25", default-features = false, features = ["bmp", "dds"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "dds", "tga"] }
+image_dds = "0.7.2"
+ddsfile = "0.5.2"
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
+bitflags = "2"
 nohash-hasher = "0.2.0"
 indexmap = "2.13.0"
 # Standard Rust log facade — allows uocf to emit log events without
@@ -26,8 +29,11 @@ indexmap = "2.13.0"
 log = { version = "0.4", default-features = false }
 adler32 = "1.2.0"
 flate2 = { version = "1.0.30", features = ["zlib-ng"], default-features = false }
-pulp = "0.21.5"
 rayon = "1.8.0"
+zstd = "0.13"
 
 [features]
 profiling = []
+
+[dev-dependencies]
+rand = "0.8.5"

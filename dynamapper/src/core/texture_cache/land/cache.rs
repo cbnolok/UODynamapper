@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use uddconv::bc7::{self, RawImageFormat, TextureUploadLayout};
 use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -32,8 +33,7 @@ pub struct TextureArrayUpload {
     pub size: LandTextureSize,
     pub layer: u32,
     pub bytes: std::sync::Arc<[u8]>,
-    /// True if `bytes` contains BC7-compressed data instead of raw RGBA8.
-    pub lossy_compressed: bool,
+    pub upload_layout: TextureUploadLayout,
 }
 
 #[derive(Resource, Default)]
@@ -120,19 +120,17 @@ fn prepare_texture_upload_bytes(
     raw_rgba8: std::sync::Arc<[u8]>,
     texture_size: LandTextureSize,
     compression: texture_array::TerrainTextureCompression,
-) -> (std::sync::Arc<[u8]>, bool) {
-    if let Some(backend) = compression.lossy_backend() {
-        (
-            std::sync::Arc::from(texture_array::compress_rgba8_to_bc7(
-                &raw_rgba8,
-                texture_size,
-                backend,
-            )),
-            true,
-        )
-    } else {
-        (raw_rgba8, false)
-    }
+) -> (std::sync::Arc<[u8]>, TextureUploadLayout) {
+    let texture = bc7::encode_for_vram_arc(
+        raw_rgba8,
+        texture_array::texture_extent(texture_size),
+        RawImageFormat::Rgba8888,
+        texture_array::terrain_texture_vram_encoding(compression),
+    )
+    .expect("terrain texture VRAM encoding failed");
+
+    let upload_layout = texture.upload_layout();
+    (texture.into_bytes(), upload_layout)
 }
 
 impl LandTextureCache {
@@ -205,13 +203,13 @@ impl LandTextureCache {
         let task = pool.spawn(async move {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, is_compressed) =
+            let (tile_bytes, upload_layout) =
                 prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
                 bytes: tile_bytes,
-                lossy_compressed: is_compressed,
+                upload_layout,
             });
         });
         task.detach();
@@ -272,13 +270,13 @@ impl LandTextureCache {
                 for (id, size, layer) in chunk {
                     let (_, rgba8) =
                         super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
-                    let (tile_bytes, is_compressed) =
+                    let (tile_bytes, upload_layout) =
                         prepare_texture_upload_bytes(rgba8, size, compression);
                     let _ = sender.send(TextureArrayUpload {
                         layer,
                         size,
                         bytes: tile_bytes,
-                        lossy_compressed: is_compressed,
+                        upload_layout,
                     });
                 }
             });
@@ -322,13 +320,13 @@ impl LandTextureCache {
         let task = pool.spawn(async move {
             let (_, raw_rgba8) =
                 texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, is_compressed) =
+            let (tile_bytes, upload_layout) =
                 prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
                 bytes: tile_bytes,
-                lossy_compressed: is_compressed,
+                upload_layout,
             });
         });
         task.detach();
@@ -525,13 +523,13 @@ impl LandTextureCache {
             let task = pool.spawn(async move {
                 let (_, raw_rgba8) =
                     texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                let (tile_bytes, is_compressed) =
+                let (tile_bytes, upload_layout) =
                     prepare_texture_upload_bytes(raw_rgba8, actual_size, compression);
                 let _ = sender.send(TextureArrayUpload {
                     layer,
                     size: actual_size,
                     bytes: tile_bytes,
-                    lossy_compressed: is_compressed,
+                    upload_layout,
                 });
             });
             task.detach();
@@ -718,18 +716,9 @@ pub fn sys_render_upload_texture_array(
 
     let mut required_capacity = 0;
     for upload in &uploads.0 {
-        let (width, height) = upload.size.dimensions();
-        let row_bytes = if upload.lossy_compressed {
-            (width.div_ceil(4) * 16) as usize
-        } else {
-            (width * 4) as usize
-        };
+        let row_bytes = upload.upload_layout.bytes_per_row as usize;
         let padded_row_bytes = (row_bytes + 255) & !255;
-        let rows = if upload.lossy_compressed {
-            height.div_ceil(4) as usize
-        } else {
-            height as usize
-        };
+        let rows = upload.upload_layout.rows_per_image as usize;
         required_capacity += padded_row_bytes * rows;
     }
 
@@ -747,18 +736,9 @@ pub fn sys_render_upload_texture_array(
     let mut staging_bytes = Vec::with_capacity(required_capacity);
 
     for upload in &uploads.0 {
-        let (width, height) = upload.size.dimensions();
-        let row_bytes = if upload.lossy_compressed {
-            (width.div_ceil(4) * 16) as usize
-        } else {
-            (width * 4) as usize
-        };
+        let row_bytes = upload.upload_layout.bytes_per_row as usize;
         let padded_row_bytes = (row_bytes + 255) & !255;
-        let rows = if upload.lossy_compressed {
-            height.div_ceil(4) as usize
-        } else {
-            height as usize
-        };
+        let rows = upload.upload_layout.rows_per_image as usize;
 
         for r in 0..rows {
             let src_start = r * row_bytes;
@@ -788,17 +768,9 @@ pub fn sys_render_upload_texture_array(
         };
 
         let (width, height) = upload.size.dimensions();
-        let row_bytes = if upload.lossy_compressed {
-            (width.div_ceil(4) * 16) as usize
-        } else {
-            (width * 4) as usize
-        };
+        let row_bytes = upload.upload_layout.bytes_per_row as usize;
         let padded_row_bytes = (row_bytes + 255) & !255;
-        let rows = if upload.lossy_compressed {
-            height.div_ceil(4) as usize
-        } else {
-            height as usize
-        };
+        let rows = upload.upload_layout.rows_per_image as usize;
 
         let offset = current_offset as u64;
         current_offset += padded_row_bytes * rows;
@@ -809,7 +781,7 @@ pub fn sys_render_upload_texture_array(
                 layout: TexelCopyBufferLayout {
                     offset,
                     bytes_per_row: Some(padded_row_bytes as u32),
-                    rows_per_image: Some(height),
+                    rows_per_image: Some(upload.upload_layout.rows_per_image),
                 },
             },
             TexelCopyTextureInfo {

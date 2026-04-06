@@ -1,11 +1,11 @@
 //! Represents a single file within a UOP package.
 
-use std::io::{Read, Write};
-use std::sync::Arc;
 use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use std::io::{Read, Write};
+use std::sync::Arc;
 
 /// The compression method used for the file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,10 +14,12 @@ pub enum CompressionFlag {
     None = 0,
     /// Zlib compression.
     Zlib = 1,
-    /// ZlibBwt compression.
-    ZlibBwt = 2,
     /// "Mythic" compression.
-    Mythic = 3,
+    Mythic = 2,
+    /// ZlibBwt compression.
+    ZlibBwt = 3,
+    /// Zstd compression (custom for our UOP package extension: UDDP).
+    Zstd = 128,
 }
 
 impl From<i16> for CompressionFlag {
@@ -25,8 +27,9 @@ impl From<i16> for CompressionFlag {
         match value {
             0 => CompressionFlag::None,
             1 => CompressionFlag::Zlib,
-            2 => CompressionFlag::ZlibBwt,
-            3 => CompressionFlag::Mythic,
+            2 => CompressionFlag::Mythic,
+            3 => CompressionFlag::ZlibBwt,
+            128 => CompressionFlag::Zstd,
             _ => CompressionFlag::None, // Default or error handling
         }
     }
@@ -103,6 +106,11 @@ impl UopFile {
                 self.compressed_size = compressed.len() as u32;
                 compressed
             }
+            CompressionFlag::Zstd => {
+                let compressed = zstd::bulk::compress(&buffer, 3)?;
+                self.compressed_size = compressed.len() as u32;
+                compressed
+            }
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -139,6 +147,7 @@ impl UopFile {
             1 => CompressionFlag::Zlib,
             2 => CompressionFlag::Mythic,
             3 => CompressionFlag::ZlibBwt,
+            32765 => CompressionFlag::Zstd,
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -202,7 +211,7 @@ impl UopFile {
     pub fn set_data(&mut self, data: Arc<[u8]>) {
         self.data = Some(data);
     }
-    
+
     /// Unloads the memory representation of the compressed file data.
     pub fn unload_data(&mut self) {
         self.data = None;
@@ -260,18 +269,17 @@ impl UopFile {
                 std::io::copy(&mut decoder, target)?;
             }
             CompressionFlag::Mythic => {
-                // TODO: Implement Mythic decompression
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "Mythic decompression not implemented",
-                ));
+                let decompressed =
+                    super::compression::mythic_decompress::decompress_with_header(data)?;
+                target.write_all(&decompressed)?;
             }
             CompressionFlag::ZlibBwt => {
-                // TODO: Implement ZlibBwt decompression
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "ZlibBwt decompression not implemented",
-                ));
+                let decompressed = super::compression::zlib_bwt_codec::decompress(data)?;
+                target.write_all(&decompressed)?;
+            }
+            CompressionFlag::Zstd => {
+                let decompressed = zstd::bulk::decompress(data, self.decompressed_size as usize)?;
+                target.write_all(&decompressed)?;
             }
         }
         Ok(())

@@ -29,8 +29,6 @@
 
 crate::eyre_imports!();
 use bytemuck::{cast_slice, Pod, Zeroable};
-use byteorder::{LittleEndian, ReadBytesExt};
-use color_eyre::Section;
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::fs::File;
 use std::io::{prelude::*, BufReader, SeekFrom};
@@ -159,7 +157,7 @@ impl MapBlock {
             Ok(&self.cells[((Self::CELLS_PER_COLUMN * y) + x) as usize])
         }
     }
-    fn cell_as_mut(&mut self, x: u32, y: u32) -> eyre::Result<&mut MapCell> {
+    pub fn cell_as_mut(&mut self, x: u32, y: u32) -> eyre::Result<&mut MapCell> {
         if x >= Self::CELLS_PER_ROW || y >= Self::CELLS_PER_COLUMN {
             Err(eyre!(Self::ERR_CELL_OUT_RANGE.to_owned()))
         } else {

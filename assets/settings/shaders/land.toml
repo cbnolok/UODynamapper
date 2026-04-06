@@ -1,0 +1,1453 @@
+default_preset = "classic.morning"
+
+[classic.morning]
+global_lighting = 1.02
+
+[classic.morning.effects]
+shading_mode = 1
+normal_mode = 0
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.morning.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 0
+enable_gloom = 0
+light_color = [
+    1.05,
+    0.99,
+    0.92,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.17,
+    0.22,
+    0.29,
+]
+_pad1_ = 0.0
+exposure = 1.05
+gamma = 2.2
+ambient_strength = 0.18
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    0.9,
+    0.15,
+    0.35,
+    1.0,
+]
+grade_extra = [
+    0.45,
+    1.2,
+    1.15,
+    0.9,
+]
+gloom_params = [
+    0.2,
+    0.008,
+    0.45,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[classic.morning.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.0
+specular_strength = 0.0
+rim_strength = 0.0
+fill_strength = 0.0
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.5,
+    0.7,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.28,
+    0.19,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.7,
+    0.85,
+    1.0,
+    2.5,
+]
+
+[classic.afternoon]
+global_lighting = 1.08
+
+[classic.afternoon.effects]
+shading_mode = 0
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.afternoon.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 0
+enable_gloom = 0
+light_color = [
+    1.08,
+    0.99,
+    0.9,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.18,
+    0.22,
+    0.28,
+]
+_pad1_ = 0.0
+exposure = 1.1
+gamma = 2.2
+ambient_strength = 0.18
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.0,
+    0.15,
+    0.4,
+    1.0,
+]
+grade_extra = [
+    0.6,
+    1.25,
+    1.22,
+    1.0,
+]
+gloom_params = [
+    0.15,
+    0.007,
+    0.35,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[classic.afternoon.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.0
+specular_strength = 0.0
+rim_strength = 0.0
+fill_strength = 0.0
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.48,
+    0.68,
+    1.0,
+    0.75,
+]
+fill_ground_color = [
+    0.3,
+    0.2,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.95,
+    0.95,
+    0.85,
+    2.7,
+]
+
+[classic.night]
+global_lighting = 0.82
+
+[classic.night.effects]
+shading_mode = 0
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.night.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 0
+enable_gloom = 0
+light_color = [
+    0.8,
+    0.88,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.12,
+    0.16,
+    0.24,
+]
+_pad1_ = 0.0
+exposure = 1.2
+gamma = 2.2
+ambient_strength = 0.1
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.1,
+    0.18,
+    0.45,
+    1.0,
+]
+grade_extra = [
+    0.75,
+    1.2,
+    1.3,
+    0.8,
+]
+gloom_params = [
+    0.4,
+    0.01,
+    0.65,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[classic.night.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.7
+specular_strength = 0.0
+rim_strength = 0.0
+fill_strength = 0.0
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.4,
+    0.6,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.2,
+    0.16,
+    0.14,
+    0.3,
+]
+rim_color = [
+    0.65,
+    0.85,
+    1.1,
+    3.0,
+]
+
+[classic.cave]
+global_lighting = 0.6
+
+[classic.cave.effects]
+shading_mode = 0
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[classic.cave.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 0
+enable_gloom = 0
+light_color = [
+    0.9,
+    0.95,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.1,
+    0.14,
+    0.2,
+]
+_pad1_ = 0.0
+exposure = 0.95
+gamma = 2.2
+ambient_strength = 0.06
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.05,
+    0.2,
+    0.38,
+    1.0,
+]
+grade_extra = [
+    0.65,
+    1.15,
+    1.28,
+    0.8,
+]
+gloom_params = [
+    0.65,
+    0.012,
+    0.75,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[classic.cave.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.85
+specular_strength = 0.0
+rim_strength = 0.0
+fill_strength = 0.0
+sharpness_factor = 1.0
+sharpness_mix = 0.0
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.38,
+    0.6,
+    1.0,
+    0.65,
+]
+fill_ground_color = [
+    0.18,
+    0.14,
+    0.12,
+    0.28,
+]
+rim_color = [
+    0.55,
+    0.75,
+    1.05,
+    2.8,
+]
+
+[enhanced.morning]
+global_lighting = 1.08
+
+[enhanced.morning.effects]
+shading_mode = 1
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.morning.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 0
+light_color = [
+    1.05,
+    0.99,
+    0.92,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.17,
+    0.22,
+    0.29,
+]
+_pad1_ = 0.0
+exposure = 1.05
+gamma = 2.2
+ambient_strength = 0.18
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    0.9,
+    0.15,
+    0.35,
+    1.0,
+]
+grade_extra = [
+    0.45,
+    1.2,
+    1.15,
+    0.9,
+]
+gloom_params = [
+    0.2,
+    0.008,
+    0.45,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[enhanced.morning.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.05
+specular_strength = 0.03
+rim_strength = 0.06
+fill_strength = 0.28
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.5,
+    0.7,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.28,
+    0.19,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.7,
+    0.85,
+    1.0,
+    2.5,
+]
+
+[enhanced.afternoon]
+global_lighting = 1.14
+
+[enhanced.afternoon.effects]
+shading_mode = 1
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.afternoon.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 0
+light_color = [
+    1.08,
+    0.99,
+    0.9,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.18,
+    0.22,
+    0.28,
+]
+_pad1_ = 0.0
+exposure = 1.1
+gamma = 2.2
+ambient_strength = 0.18
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.0,
+    0.15,
+    0.4,
+    1.0,
+]
+grade_extra = [
+    0.6,
+    1.25,
+    1.22,
+    1.0,
+]
+gloom_params = [
+    0.15,
+    0.007,
+    0.35,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[enhanced.afternoon.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.05
+specular_strength = 0.03
+rim_strength = 0.06
+fill_strength = 0.28
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.48,
+    0.68,
+    1.0,
+    0.75,
+]
+fill_ground_color = [
+    0.3,
+    0.2,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.95,
+    0.95,
+    0.85,
+    2.7,
+]
+
+[enhanced.night]
+global_lighting = 0.72
+
+[enhanced.night.effects]
+shading_mode = 1
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.night.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 0
+light_color = [
+    0.8,
+    0.88,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.12,
+    0.16,
+    0.24,
+]
+_pad1_ = 0.0
+exposure = 1.0
+gamma = 2.2
+ambient_strength = 0.08
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.1,
+    0.18,
+    0.45,
+    1.0,
+]
+grade_extra = [
+    0.75,
+    1.2,
+    1.3,
+    0.8,
+]
+gloom_params = [
+    0.4,
+    0.01,
+    0.65,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[enhanced.night.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.45
+specular_strength = 0.03
+rim_strength = 0.22
+fill_strength = 0.18
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.4,
+    0.6,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.2,
+    0.16,
+    0.14,
+    0.3,
+]
+rim_color = [
+    0.65,
+    0.85,
+    1.1,
+    3.0,
+]
+
+[enhanced.cave]
+global_lighting = 0.5
+
+[enhanced.cave.effects]
+shading_mode = 1
+normal_mode = 1
+enable_blur = 0
+enable_linear_filtering = 0
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.15
+blur_radius = 0.0025
+
+[enhanced.cave.lighting]
+enable_fog = 0
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 0
+light_color = [
+    0.9,
+    0.95,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.1,
+    0.14,
+    0.2,
+]
+_pad1_ = 0.0
+exposure = 0.85
+gamma = 2.2
+ambient_strength = 0.04
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.05,
+    0.2,
+    0.38,
+    1.0,
+]
+grade_extra = [
+    0.65,
+    1.15,
+    1.28,
+    0.8,
+]
+gloom_params = [
+    0.65,
+    0.012,
+    0.75,
+    0.0,
+]
+fog_color = [
+    0.75,
+    0.85,
+    0.95,
+    0.5,
+]
+fog_params = [
+    0.02,
+    0.0,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[enhanced.cave.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.5
+specular_strength = 0.02
+rim_strength = 0.14
+fill_strength = 0.12
+sharpness_factor = 1.5
+sharpness_mix = 0.25
+diffuse_wrap = 0.0
+_pad4_ = 0.0
+fill_sky_color = [
+    0.38,
+    0.6,
+    1.0,
+    0.65,
+]
+fill_ground_color = [
+    0.18,
+    0.14,
+    0.12,
+    0.28,
+]
+rim_color = [
+    0.55,
+    0.75,
+    1.05,
+    2.8,
+]
+
+[kr.morning]
+global_lighting = 1.1
+
+[kr.morning.effects]
+shading_mode = 2
+normal_mode = 1
+enable_blur = 1
+enable_linear_filtering = 1
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.28
+blur_radius = 0.005
+
+[kr.morning.lighting]
+enable_fog = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 1
+light_color = [
+    1.05,
+    0.99,
+    0.92,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.17,
+    0.22,
+    0.29,
+]
+_pad1_ = 0.0
+exposure = 1.05
+gamma = 2.2
+ambient_strength = 0.22
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    0.9,
+    0.15,
+    0.35,
+    1.0,
+]
+grade_extra = [
+    0.35,
+    1.1,
+    1.08,
+    0.9,
+]
+gloom_params = [
+    0.35,
+    0.008,
+    0.6,
+    0.0,
+]
+fog_color = [
+    0.72,
+    0.8,
+    0.9,
+    0.35,
+]
+fog_params = [
+    0.06,
+    0.03,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.15,
+    0.18,
+    0.28,
+    0.25,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[kr.morning.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.1
+specular_strength = 0.015
+rim_strength = 0.08
+fill_strength = 0.42
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+diffuse_wrap = 0.35
+_pad4_ = 0.0
+fill_sky_color = [
+    0.5,
+    0.7,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.28,
+    0.19,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.7,
+    0.85,
+    1.0,
+    2.5,
+]
+
+[kr.afternoon]
+global_lighting = 1.16
+
+[kr.afternoon.effects]
+shading_mode = 2
+normal_mode = 1
+enable_blur = 1
+enable_linear_filtering = 1
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.28
+blur_radius = 0.005
+
+[kr.afternoon.lighting]
+enable_fog = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 1
+light_color = [
+    1.08,
+    0.99,
+    0.9,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.18,
+    0.22,
+    0.28,
+]
+_pad1_ = 0.0
+exposure = 1.1
+gamma = 2.2
+ambient_strength = 0.22
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.0,
+    0.15,
+    0.4,
+    1.0,
+]
+grade_extra = [
+    0.45,
+    1.12,
+    1.08,
+    1.0,
+]
+gloom_params = [
+    0.3,
+    0.007,
+    0.55,
+    0.0,
+]
+fog_color = [
+    0.72,
+    0.8,
+    0.9,
+    0.35,
+]
+fog_params = [
+    0.06,
+    0.03,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.14,
+    0.16,
+    0.24,
+    0.2,
+]
+fog_night_color = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+
+[kr.afternoon.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 1.1
+specular_strength = 0.015
+rim_strength = 0.08
+fill_strength = 0.42
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+diffuse_wrap = 0.35
+_pad4_ = 0.0
+fill_sky_color = [
+    0.48,
+    0.68,
+    1.0,
+    0.75,
+]
+fill_ground_color = [
+    0.3,
+    0.2,
+    0.12,
+    0.35,
+]
+rim_color = [
+    0.95,
+    0.95,
+    0.85,
+    2.7,
+]
+
+[kr.night]
+global_lighting = 0.75
+
+[kr.night.effects]
+shading_mode = 2
+normal_mode = 1
+enable_blur = 1
+enable_linear_filtering = 1
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.28
+blur_radius = 0.005
+
+[kr.night.lighting]
+enable_fog = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 1
+light_color = [
+    0.8,
+    0.88,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.12,
+    0.16,
+    0.24,
+]
+_pad1_ = 0.0
+exposure = 1.0
+gamma = 2.2
+ambient_strength = 0.1
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.1,
+    0.18,
+    0.45,
+    1.0,
+]
+grade_extra = [
+    0.25,
+    1.05,
+    1.06,
+    0.8,
+]
+gloom_params = [
+    0.5,
+    0.01,
+    0.65,
+    0.0,
+]
+fog_color = [
+    0.72,
+    0.8,
+    0.9,
+    0.4,
+]
+fog_params = [
+    0.08,
+    0.04,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.08,
+    0.1,
+    0.18,
+    0.45,
+]
+fog_night_color = [
+    0.05,
+    0.07,
+    0.14,
+    0.75,
+]
+
+[kr.night.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.45
+specular_strength = 0.01
+rim_strength = 0.1
+fill_strength = 0.2
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+diffuse_wrap = 0.2
+_pad4_ = 0.0
+fill_sky_color = [
+    0.4,
+    0.6,
+    1.0,
+    0.7,
+]
+fill_ground_color = [
+    0.2,
+    0.16,
+    0.14,
+    0.3,
+]
+rim_color = [
+    0.65,
+    0.85,
+    1.1,
+    3.0,
+]
+
+[kr.cave]
+global_lighting = 0.52
+
+[kr.cave.effects]
+shading_mode = 2
+normal_mode = 1
+enable_blur = 1
+enable_linear_filtering = 1
+reconstruction_mode = 0
+sharpening_amount = 0.0
+blur_strength = 0.28
+blur_radius = 0.005
+
+[kr.cave.lighting]
+enable_fog = 1
+enable_tonemap = 1
+enable_grading = 1
+enable_gloom = 1
+light_color = [
+    0.9,
+    0.95,
+    1.05,
+]
+_pad0_ = 0.0
+ambient_color = [
+    0.1,
+    0.14,
+    0.2,
+]
+_pad1_ = 0.0
+exposure = 0.8
+gamma = 2.2
+ambient_strength = 0.05
+_pad2_ = 0.0
+grade_warm_color = [
+    1.08,
+    0.98,
+    0.9,
+    0.0,
+]
+grade_cool_color = [
+    0.82,
+    0.95,
+    1.05,
+    0.0,
+]
+grade_params = [
+    1.05,
+    0.2,
+    0.38,
+    1.0,
+]
+grade_extra = [
+    0.25,
+    1.05,
+    1.08,
+    0.8,
+]
+gloom_params = [
+    0.7,
+    0.012,
+    0.75,
+    0.0,
+]
+fog_color = [
+    0.72,
+    0.8,
+    0.9,
+    0.35,
+]
+fog_params = [
+    0.04,
+    0.06,
+    0.0,
+    0.0,
+]
+gloom_color = [
+    0.06,
+    0.08,
+    0.14,
+    0.55,
+]
+fog_night_color = [
+    0.03,
+    0.04,
+    0.08,
+    0.9,
+]
+
+[kr.cave.land_lighting]
+enable_bent = 1
+_pad0_ = 0
+_pad1_ = 0
+_pad2_ = 0
+diffuse_strength = 0.4
+specular_strength = 0.01
+rim_strength = 0.06
+fill_strength = 0.14
+sharpness_factor = 2.0
+sharpness_mix = 0.55
+diffuse_wrap = 0.15
+_pad4_ = 0.0
+fill_sky_color = [
+    0.38,
+    0.6,
+    1.0,
+    0.65,
+]
+fill_ground_color = [
+    0.18,
+    0.14,
+    0.12,
+    0.28,
+]
+rim_color = [
+    0.55,
+    0.75,
+    1.05,
+    2.8,
+]

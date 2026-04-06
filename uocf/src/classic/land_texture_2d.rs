@@ -15,22 +15,17 @@
 //!   the loading worker and the rendering system.
 
 crate::eyre_imports!();
-use byteorder::{LittleEndian, ReadBytesExt};
 use getset::Getters;
-use image::{DynamicImage, ImageBuffer, RgbaImage};
 use indexmap::IndexMap;
 use nohash_hasher::BuildNoHashHasher;
-use std::borrow::Cow;
 use std::fs::File;
 
 use std::path::PathBuf;
 
 use crate::generic_index;
-use crate::utils::color::*;
 use crate::utils::math::*;
 use bytemuck;
-use std::io::{prelude::*, BufReader, Cursor, SeekFrom};
-use wide::*;
+use std::io::{prelude::*, BufReader, SeekFrom};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum LandTextureSize {

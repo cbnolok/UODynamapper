@@ -1,0 +1,21 @@
+[package]
+name = "uddconv"
+version = "0.1.0"
+edition = "2021"
+
+[lints.clippy]
+needless_lifetimes = "allow"
+collapsible_if = "allow"
+manual_is_multiple_of = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+block_compression = { version = "0.7", default-features = false, features = ["bc7"] }
+intel_tex_2 = { version = "0.5.0", optional = true }
+wgpu-types = "27"
+
+[features]
+default = []
+gpu = ["block_compression/wgpu"]
+intel_tex = ["dep:intel_tex_2"]
+intel_tex_source = ["intel_tex", "intel_tex_2/ispc"]

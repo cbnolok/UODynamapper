@@ -13,6 +13,7 @@ use bevy::{
     window::WindowResolution,
 };
 use serde::{Deserialize, Serialize};
+use uddconv::bc7::{is_bc7_encoder_backend_available, Bc7EncoderBackend};
 
 #[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
@@ -147,12 +148,9 @@ impl SectGraphics {
                 Some(LossyTextureCompressionBackend::BlockCompression)
             }
             LossyTextureCompressionBackend::Ispc => {
-                #[cfg(feature = "intel_tex")]
-                {
+                if is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) {
                     Some(LossyTextureCompressionBackend::Ispc)
-                }
-                #[cfg(not(feature = "intel_tex"))]
-                {
+                } else {
                     Some(LossyTextureCompressionBackend::BlockCompression)
                 }
             }
@@ -160,14 +158,14 @@ impl SectGraphics {
     }
 
     pub fn log_unavailable_texture_compression_backend_warning(&self) {
-        #[cfg(not(feature = "intel_tex"))]
         if self.lossy_texture_compression
             && self.lossy_texture_compression_backend == LossyTextureCompressionBackend::Ispc
+            && !is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc)
         {
             console_logger::one(
                 LogSev::Warn,
                 LogAbout::General,
-                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `intel_tex` feature required for the Intel ISPC backend. Falling back to block_compression.",
+                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/intel_tex` backend. Falling back to block_compression.",
             );
         }
     }

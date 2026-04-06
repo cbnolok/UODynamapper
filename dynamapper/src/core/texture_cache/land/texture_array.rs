@@ -14,6 +14,7 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
+use uddconv::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
 use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
@@ -37,8 +38,8 @@ use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 //     Big:   2048 layers × 128×128/2 B =   16 MB
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
-// offline or on-the-fly. UODynamapper can encode BC7 tiles at runtime using either
-// `block_compression` or, when compiled with the `intel_tex` feature, `intel_tex_2`.
+// offline or on-the-fly. UODynamapper routes BC7 conversion through the shared `uddconv` crate,
+// which currently supports `block_compression` and an optional ISPC backend.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 // ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
@@ -103,6 +104,29 @@ impl TerrainTextureCompression {
     }
 }
 
+pub fn texture_extent(tex_size: LandTextureSize) -> ImageExtent {
+    let (width, height) = tex_size.dimensions();
+    ImageExtent::new(width, height).expect("terrain textures must have valid size")
+}
+
+pub fn terrain_texture_vram_encoding(
+    compression: TerrainTextureCompression,
+) -> VramTextureEncoding {
+    match compression {
+        TerrainTextureCompression::Rgba8 => VramTextureEncoding::Rgba8UnormSrgb,
+        TerrainTextureCompression::Bc7(LossyTextureCompressionBackend::BlockCompression) => {
+            VramTextureEncoding::Bc7(Bc7EncoderBackend::BlockCompression)
+        }
+        TerrainTextureCompression::Bc7(LossyTextureCompressionBackend::Ispc) => {
+            VramTextureEncoding::Bc7(Bc7EncoderBackend::Ispc)
+        }
+    }
+}
+
+pub fn terrain_texture_vram_format(compression: TerrainTextureCompression) -> VramTextureFormat {
+    terrain_texture_vram_encoding(compression).format()
+}
+
 /// Returns the GPU TextureFormat to use for terrain texture arrays, based on whether
 /// lossy BC7 compression has been requested by the user in the settings.
 ///
@@ -110,29 +134,15 @@ impl TerrainTextureCompression {
 /// - BC7 compressed (`Bc7RgbaUnormSrgb`): ~20 MB VRAM total, near-lossless quality,
 ///   but requires BC texture compression GPU support and CPU encoding time per tile.
 pub fn terrain_texarray_format(compression: TerrainTextureCompression) -> TextureFormat {
-    if compression.lossy_backend().is_some() {
-        // BC7 is a 4-bpp block format (4×4 pixels = 16 bytes per block of 16 pixels).
-        // It supports RGBA and near-lossless quality with 8:1 compression over RGBA8.
-        TextureFormat::Bc7RgbaUnormSrgb
-    } else {
-        // Standard uncompressed 32bpp RGBA, sRGB color space.
-        TextureFormat::Rgba8UnormSrgb
+    match terrain_texture_vram_format(compression) {
+        VramTextureFormat::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
+        VramTextureFormat::Bc7RgbaUnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
     }
 }
 
 /// Compute the byte size of a single layer in the texture array, for the chosen format.
 pub fn bytes_per_layer(tex_size: LandTextureSize, compression: TerrainTextureCompression) -> usize {
-    let (w, h) = tex_size.dimensions();
-    let (w, h) = (w as usize, h as usize);
-    if compression.lossy_backend().is_some() {
-        // BC7: each 4×4 block = 16 bytes. Number of blocks = ceil(w/4) * ceil(h/4).
-        let block_w = w.div_ceil(4);
-        let block_h = h.div_ceil(4);
-        block_w * block_h * 16
-    } else {
-        // Uncompressed RGBA8: 4 bytes per pixel.
-        w * h * 4
-    }
+    terrain_texture_vram_format(compression).expected_byte_len(texture_extent(tex_size))
 }
 
 /// Create a GPU texture array (array texture) resource for a given size.
@@ -253,61 +263,3 @@ pub fn get_texmap_raw_data(
     (err_size, err_data)
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// 3. Optional BC7 Compression
-////////////////////////////////////////////////////////////////////////////////
-
-/// Returns BC7 compressed bytes. BC7 compression is perfectly handled by intel_tex_2 on the CPU.
-pub fn compress_rgba8_to_bc7(
-    rgba8_data: &[u8],
-    tex_size: LandTextureSize,
-    backend: LossyTextureCompressionBackend,
-) -> Vec<u8> {
-    let (width, height) = tex_size.dimensions();
-    match backend {
-        LossyTextureCompressionBackend::BlockCompression => {
-            let variant = block_compression::CompressionVariant::BC7(
-                block_compression::BC7Settings::alpha_basic(),
-            );
-            let mut blocks = vec![0u8; variant.blocks_byte_size(width, height)];
-            block_compression::encode::compress_rgba8(
-                variant,
-                rgba8_data,
-                &mut blocks,
-                width,
-                height,
-                width * 4,
-            );
-            blocks
-        }
-        LossyTextureCompressionBackend::Ispc => {
-            #[cfg(feature = "intel_tex")]
-            {
-                let surface = intel_tex_2::RgbaSurface {
-                    data: rgba8_data,
-                    width,
-                    height,
-                    stride: width * 4,
-                };
-                let settings = intel_tex_2::bc7::alpha_basic_settings();
-                intel_tex_2::bc7::compress_blocks(&settings, &surface)
-            }
-            #[cfg(not(feature = "intel_tex"))]
-            {
-                let variant = block_compression::CompressionVariant::BC7(
-                    block_compression::BC7Settings::alpha_basic(),
-                );
-                let mut blocks = vec![0u8; variant.blocks_byte_size(width, height)];
-                block_compression::encode::compress_rgba8(
-                    variant,
-                    rgba8_data,
-                    &mut blocks,
-                    width,
-                    height,
-                    width * 4,
-                );
-                blocks
-            }
-        }
-    }
-}

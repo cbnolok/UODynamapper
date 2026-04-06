@@ -35,10 +35,10 @@ pub fn bruteforce_hash_recursive(
     stop_signal: Arc<AtomicBool>,
 ) -> Option<String> {
     if num_threads > 0 {
-        rayon::ThreadPoolBuilder::new()
+        let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build_global()
-            .unwrap();
+            ;
     }
 
     let prefix_bytes: &[u8] = prefix.as_bytes();
@@ -155,10 +155,10 @@ pub fn bruteforce_hash_simd(
     stop_signal: Arc<AtomicBool>,
 ) -> Option<String> {
     if num_threads > 0 {
-        rayon::ThreadPoolBuilder::new()
+        let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build_global()
-            .unwrap();
+            ;
     }
 
     for len in min_len..=max_len {
@@ -237,6 +237,11 @@ impl<'a> CandidateGenerator<'a> {
             batch.push(candidate);
 
             // Increment indices
+            if self.len == 1 {
+                self.exhausted = true;
+                return Some(batch);
+            }
+
             let mut i = self.len - 1;
             loop {
                 self.indices[i] += 1;
