@@ -4,7 +4,15 @@
 #![allow(dead_code)]
 
 use super::texture_array;
-use crate::console_logger::{self, LogAbout, LogSev};
+use crate::{
+    console_logger::{self, LogAbout, LogSev},
+    core::texture_cache::{
+        TextureResidencyPlan,
+        TextureResidencyStrategy,
+        visit_grouped_layer_assignments,
+        visit_grouped_texture_ids,
+    },
+};
 use bevy::prelude::*;
 // use bevy::render::render_resource::*;
 use bevy::render::extract_resource::ExtractResource;
@@ -95,6 +103,7 @@ impl LandTextureArrayWrapper {
 
 #[derive(Resource)]
 pub struct LandTextureCache {
+    residency_strategy: TextureResidencyStrategy,
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
     pub entry_by_id: Vec<Option<(LandTextureSize, LandTextureEntry)>>,
@@ -140,15 +149,20 @@ impl LandTextureCache {
     /// Masking with 63 (0x3F) is equivalent to modulo 64.
     pub const TILE_ID_BIT_MASK: usize = 63;
     pub const TILE_BITSET_SIZE: usize = Self::MAX_TILE_ID >> Self::TILE_ID_WORD_SHIFT;
+    // Preload mode must use a stable group order so layer assignment stays deterministic
+    // across bookkeeping, upload scheduling, and any future debugging tools.
+    const RESIDENCY_GROUP_ORDER: [LandTextureSize; 2] = [LandTextureSize::Small, LandTextureSize::Big];
 
     pub fn new(
         small_tex_image_handle: Handle<Image>,
         big_tex_image_handle: Handle<Image>,
         small_initial_layers: u32,
         big_initial_layers: u32,
+        residency_strategy: TextureResidencyStrategy,
     ) -> Self {
         let (upload_sender, upload_receiver) = std::sync::mpsc::channel();
         Self {
+            residency_strategy,
             small: LandTextureArrayWrapper::new(
                 small_tex_image_handle,
                 small_initial_layers,
@@ -166,6 +180,104 @@ impl LandTextureCache {
             upload_receiver: std::sync::Mutex::new(upload_receiver),
             upload_sender,
         }
+    }
+
+    pub fn residency_strategy(&self) -> TextureResidencyStrategy {
+        self.residency_strategy
+    }
+
+    pub fn preloads_full_collection(&self) -> bool {
+        self.residency_strategy.preloads_full_collection()
+    }
+
+    pub fn prime_full_file_residency(
+        &mut self,
+        plan: &TextureResidencyPlan<LandTextureSize>,
+        texmap_2d: Arc<TexMap2D>,
+        compression: texture_array::TerrainTextureCompression,
+        now: Instant,
+    ) {
+        if !self.preloads_full_collection() {
+            return;
+        }
+
+        // Phase 1: warm the source file cache so startup upload tasks read from RAM.
+        visit_grouped_texture_ids(plan, &Self::RESIDENCY_GROUP_ORDER, |_, texture_ids| {
+            for &texture_id in texture_ids {
+                let _ = texmap_2d.preload_pixel_data(texture_id as usize);
+            }
+        });
+
+        // Phase 2: assign permanent GPU layers and schedule the corresponding uploads.
+        self.assign_full_residency_layers(plan, now);
+        self.enqueue_full_residency_uploads(plan, texmap_2d, compression, now);
+    }
+
+    fn assign_full_residency_layers(
+        &mut self,
+        plan: &TextureResidencyPlan<LandTextureSize>,
+        now: Instant,
+    ) {
+        visit_grouped_layer_assignments(
+            plan,
+            &Self::RESIDENCY_GROUP_ORDER,
+            1,
+            |texture_size, texture_id, layer| {
+                self.update_bookkeeping(texture_id, texture_size, layer, now);
+            },
+        );
+
+        for texture_size in Self::RESIDENCY_GROUP_ORDER {
+            let array = match texture_size {
+                LandTextureSize::Small => &mut self.small,
+                LandTextureSize::Big => &mut self.big,
+            };
+            array.free_layers.clear();
+            array.lru.clear();
+            array.last_high_usage_instant = now;
+        }
+    }
+
+    fn enqueue_full_residency_uploads(
+        &self,
+        plan: &TextureResidencyPlan<LandTextureSize>,
+        texmap_2d: Arc<TexMap2D>,
+        compression: texture_array::TerrainTextureCompression,
+        now: Instant,
+    ) {
+        let pool = AsyncComputeTaskPool::get();
+
+        visit_grouped_texture_ids(plan, &Self::RESIDENCY_GROUP_ORDER, |texture_size, texture_ids| {
+            let mut layer_assignments = Vec::with_capacity(texture_ids.len());
+            for (index, &texture_id) in texture_ids.iter().enumerate() {
+                layer_assignments.push((texture_id, index as u32 + 1));
+            }
+
+            for chunk in layer_assignments.chunks(PRECACHE_BATCH_SIZE) {
+                let chunk = chunk.to_vec();
+                let texmap_2d_arc = texmap_2d.clone();
+                let sender = self.upload_sender.clone();
+
+                let task = pool.spawn(async move {
+                    for (texture_id, layer) in chunk {
+                        let (_, rgba8) = super::texture_array::get_texmap_raw_data(
+                            texture_id,
+                            &texmap_2d_arc,
+                            now,
+                        );
+                        let (tile_bytes, upload_layout) =
+                            prepare_texture_upload_bytes(rgba8, texture_size, compression);
+                        let _ = sender.send(TextureArrayUpload {
+                            layer,
+                            size: texture_size,
+                            bytes: tile_bytes,
+                            upload_layout,
+                        });
+                    }
+                });
+                task.detach();
+            }
+        });
     }
 
     /// Clears all pinned texture IDs.  Call when the entire chunk set is
@@ -187,6 +299,14 @@ impl LandTextureCache {
         if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
             entry.1.last_touch = now;
             return (entry.0, entry.1.layer);
+        }
+
+        if self.preloads_full_collection() {
+            if let Some(entry) = &mut self.entry_by_id[texture_array::DEFAULT_ERROR_TEXTURE_ID as usize]
+            {
+                entry.1.last_touch = now;
+                return (entry.0, entry.1.layer);
+            }
         }
 
         // Not resident: load metadata and attempt to allocate a cache layer.
@@ -228,6 +348,10 @@ impl LandTextureCache {
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
+        if self.preloads_full_collection() {
+            return;
+        }
+
         let pool = AsyncComputeTaskPool::get();
 
         let mut to_upload: Vec<(u16, LandTextureSize, u32)> = Vec::new();
@@ -336,6 +460,10 @@ impl LandTextureCache {
 
     /// Allocates a layer for a new texture, handling LRU eviction if the array is full.
     fn allocate_layer(&mut self, texture_size: LandTextureSize) -> Option<u32> {
+        if self.preloads_full_collection() {
+            return None;
+        }
+
         let array = match texture_size {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
@@ -544,6 +672,7 @@ impl LandTextureCache {
         layer: u32,
         now: Instant,
     ) {
+        let track_lru = !self.preloads_full_collection();
         let array = match texture_size {
             LandTextureSize::Small => &mut self.small,
             LandTextureSize::Big => &mut self.big,
@@ -556,10 +685,16 @@ impl LandTextureCache {
                 last_touch: now,
             },
         ));
-        array.lru.push_back(texture_id);
+        if track_lru {
+            array.lru.push_back(texture_id);
+        }
     }
 
     pub fn evict_idle_textures(&mut self, now: Instant) -> usize {
+        if self.preloads_full_collection() {
+            return 0;
+        }
+
         let mut evicted_count = 0;
         let mut to_remove = Vec::new();
 
@@ -601,6 +736,10 @@ impl LandTextureCache {
     /// The caller is responsible for creating the new GPU image and calling
     /// `apply_array_resize` + `enqueue_reupload_for_size`.
     pub fn check_shrink_opportunity(&self, now: Instant) -> (Option<u32>, Option<u32>) {
+        if self.preloads_full_collection() {
+            return (None, None);
+        }
+
         let timeout = Duration::from_secs(texture_array::RESOURCE_SHRINK_TIMEOUT_SECS);
 
         let check = |arr: &LandTextureArrayWrapper, initial: u32| -> Option<u32> {

@@ -27,6 +27,7 @@ impl RawImageFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bc7EncoderBackend {
     BlockCompression,
+    ImageDds,
     Ispc,
 }
 
@@ -34,6 +35,7 @@ impl Bc7EncoderBackend {
     pub const fn is_available(self) -> bool {
         match self {
             Self::BlockCompression => true,
+            Self::ImageDds => cfg!(feature = "dds_bc7"),
             Self::Ispc => cfg!(feature = "intel_tex"),
         }
     }
@@ -41,13 +43,17 @@ impl Bc7EncoderBackend {
     pub const fn fallback(self) -> Self {
         match self {
             Self::BlockCompression => Self::BlockCompression,
-            Self::Ispc => Self::BlockCompression,
+            Self::ImageDds | Self::Ispc => Self::BlockCompression,
         }
     }
 
     pub const fn unavailable_reason(self) -> Option<&'static str> {
         match self {
             Self::BlockCompression => None,
+            Self::ImageDds if cfg!(feature = "dds_bc7") => None,
+            Self::ImageDds => Some(
+                "this build does not include uddconv/dds_bc7 support for the image-dds backend",
+            ),
             Self::Ispc if cfg!(feature = "intel_tex") => None,
             Self::Ispc => Some(
                 "this build does not include uddconv/intel_tex support for the Intel ISPC backend",
@@ -461,6 +467,7 @@ pub fn encode_to_bc7(
             );
             blocks
         }
+        Bc7EncoderBackend::ImageDds => encode_with_image_dds(rgba_pixels.as_ref(), extent)?,
         Bc7EncoderBackend::Ispc => encode_with_ispc(rgba_pixels.as_ref(), extent)?,
     };
 
@@ -643,6 +650,42 @@ fn encode_with_ispc(
         let _ = rgba_pixels;
         let _ = extent;
         Err(UddconvError::BackendUnavailable(Bc7EncoderBackend::Ispc))
+    }
+}
+
+fn encode_with_image_dds(
+    rgba_pixels: &[u8],
+    extent: ImageExtent,
+) -> Result<Vec<u8>, UddconvError> {
+    #[cfg(feature = "dds_bc7")]
+    {
+        use image_dds::{ImageFormat, Mipmaps, Quality, SurfaceRgba8};
+
+        let surface = SurfaceRgba8 {
+            width: extent.width(),
+            height: extent.height(),
+            depth: 1,
+            layers: 1,
+            mipmaps: 1,
+            data: rgba_pixels,
+        };
+
+        let compressed = surface
+            .encode(
+                ImageFormat::BC7RgbaUnorm,
+                Quality::Normal,
+                Mipmaps::Disabled,
+            )
+            .map_err(|_| UddconvError::BackendUnavailable(Bc7EncoderBackend::ImageDds))?;
+
+        Ok(compressed.data)
+    }
+
+    #[cfg(not(feature = "dds_bc7"))]
+    {
+        let _ = rgba_pixels;
+        let _ = extent;
+        Err(UddconvError::BackendUnavailable(Bc7EncoderBackend::ImageDds))
     }
 }
 

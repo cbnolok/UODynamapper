@@ -22,7 +22,7 @@ pub struct PreferencesDialogState {
     pub hide_player: bool,
     pub show_overlay: bool,
     pub free_camera: bool,
-    pub egui_scale: f32,
+    pub ui_scale: f32,
     pub hot_reload_enabled: bool,
     pub player_position_scale: f32,
     pub sysmessages_scale: f32,
@@ -51,7 +51,7 @@ impl Default for PreferencesDialogState {
             hide_player: false,
             show_overlay: true,
             free_camera: false,
-            egui_scale: 1.0,
+            ui_scale: 1.0,
             hot_reload_enabled: false,
             player_position_scale: 1.0,
             sysmessages_scale: 1.0,
@@ -103,7 +103,7 @@ fn sys_sync_settings_to_state(
             .position(|&fps| fps == settings.app.performance.target_fps)
             .unwrap_or(0);
         state.free_camera = settings.app.window.free_camera;
-        state.egui_scale = settings.app.window.egui_scale;
+        state.ui_scale = settings.app.window.ui_scale;
         state.hot_reload_enabled = settings.app.debug.hot_reload_enabled;
         state.player_position_scale = settings.app.window.player_position_scale;
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
@@ -340,12 +340,10 @@ pub fn sys_render_preferences_dialog(
                     ui.separator();
 
                     ui.horizontal(|ui| {
-                        ui.label("Egui Scale:");
-                        if ui
-                            .add(egui::Slider::new(&mut state.egui_scale, 0.5..=3.0))
-                            .changed()
-                        {
-                            settings.app.window.egui_scale = state.egui_scale;
+                        ui.label("UI Scale:");
+                        let response = ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0));
+                        if response.drag_stopped() {
+                            settings.app.window.ui_scale = state.ui_scale;
                         }
                     });
 
@@ -418,8 +416,8 @@ pub fn sys_render_preferences_dialog(
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;
             }
-            if (settings.as_ref().app.window.egui_scale - state.egui_scale).abs() > 0.001 {
-                settings.app.window.egui_scale = state.egui_scale;
+            if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
+                settings.app.window.ui_scale = state.ui_scale;
             }
             if (settings.as_ref().app.window.player_position_scale - state.player_position_scale)
                 .abs()

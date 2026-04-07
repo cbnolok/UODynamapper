@@ -1,11 +1,23 @@
-//! Represents a single file within a UOP package.
+//! UOP file entry and payload codec handling.
+//!
+//! Binary layout covered by this module:
+//! - Per-file metadata stored inside a block:
+//!   - `u64 data_block_address`
+//!   - `u32 data_block_length`
+//!   - `u32 compressed_size`
+//!   - `u32 decompressed_size`
+//!   - `u64 filename_hash`
+//!   - `u32 data_block_hash`
+//!   - `i16 compression_flag`
+//! - The metadata points to the file payload stored elsewhere in the package.
+//! - The payload bytes are stored either raw or compressed according to
+//!   `compression_flag`; this module owns the encode/decode path for those bytes.
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use flate2::read::ZlibDecoder;
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
 use std::io::{Read, Write};
 use std::sync::Arc;
+
+use crate::uop::codec::{decode_payload, encode_payload, UddpCompression};
 
 /// The compression method used for the file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,16 +34,35 @@ pub enum CompressionFlag {
     Zstd = 128,
 }
 
+impl CompressionFlag {
+    pub fn from_raw_i16(value: i16) -> Result<Self, std::io::Error> {
+        match value {
+            0 => Ok(CompressionFlag::None),
+            1 => Ok(CompressionFlag::Zlib),
+            2 => Ok(CompressionFlag::Mythic),
+            3 => Ok(CompressionFlag::ZlibBwt),
+            128 | 32765 => Ok(CompressionFlag::Zstd),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Unsupported compression type {value}"),
+            )),
+        }
+    }
+
+    pub fn as_uddp_compression(self) -> UddpCompression {
+        match self {
+            CompressionFlag::None => UddpCompression::None,
+            CompressionFlag::Zlib => UddpCompression::Zlib,
+            CompressionFlag::Mythic => UddpCompression::Mythic,
+            CompressionFlag::ZlibBwt => UddpCompression::ZlibBwt,
+            CompressionFlag::Zstd => UddpCompression::Zstd,
+        }
+    }
+}
+
 impl From<i16> for CompressionFlag {
     fn from(value: i16) -> Self {
-        match value {
-            0 => CompressionFlag::None,
-            1 => CompressionFlag::Zlib,
-            2 => CompressionFlag::Mythic,
-            3 => CompressionFlag::ZlibBwt,
-            128 => CompressionFlag::Zstd,
-            _ => CompressionFlag::None, // Default or error handling
-        }
+        Self::from_raw_i16(value).unwrap_or(CompressionFlag::None)
     }
 }
 
@@ -94,30 +125,8 @@ impl UopFile {
         self.decompressed_size = buffer.len() as u32;
         self.compression = compression;
 
-        let final_data = match compression {
-            CompressionFlag::None => {
-                self.compressed_size = self.decompressed_size;
-                buffer
-            }
-            CompressionFlag::Zlib => {
-                let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-                encoder.write_all(&buffer)?;
-                let compressed = encoder.finish()?;
-                self.compressed_size = compressed.len() as u32;
-                compressed
-            }
-            CompressionFlag::Zstd => {
-                let compressed = zstd::bulk::compress(&buffer, 3)?;
-                self.compressed_size = compressed.len() as u32;
-                compressed
-            }
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Unsupported compression type for creation",
-                ));
-            }
-        };
+        let final_data = encode_payload(&buffer, compression.as_uddp_compression())?;
+        self.compressed_size = final_data.len() as u32;
 
         self.data_block_hash = super::hash::hash_data_block(&final_data)?;
         self.data = Some(Arc::from(final_data));
@@ -142,19 +151,7 @@ impl UopFile {
         let data_block_hash = reader.read_u32::<LittleEndian>()?;
         let compression_flag = reader.read_i16::<LittleEndian>()?;
 
-        let compression = match compression_flag {
-            0 => CompressionFlag::None,
-            1 => CompressionFlag::Zlib,
-            2 => CompressionFlag::Mythic,
-            3 => CompressionFlag::ZlibBwt,
-            32765 => CompressionFlag::Zstd,
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Unsupported compression type",
-                ));
-            }
-        };
+        let compression = CompressionFlag::from_raw_i16(compression_flag)?;
 
         Ok(UopFile {
             data_block_address,
@@ -260,28 +257,12 @@ impl UopFile {
             ));
         };
 
-        match self.compression {
-            CompressionFlag::None => {
-                target.write_all(data)?;
-            }
-            CompressionFlag::Zlib => {
-                let mut decoder = ZlibDecoder::new(&data[..]);
-                std::io::copy(&mut decoder, target)?;
-            }
-            CompressionFlag::Mythic => {
-                let decompressed =
-                    super::compression::mythic_decompress::decompress_with_header(data)?;
-                target.write_all(&decompressed)?;
-            }
-            CompressionFlag::ZlibBwt => {
-                let decompressed = super::compression::zlib_bwt_codec::decompress(data)?;
-                target.write_all(&decompressed)?;
-            }
-            CompressionFlag::Zstd => {
-                let decompressed = zstd::bulk::decompress(data, self.decompressed_size as usize)?;
-                target.write_all(&decompressed)?;
-            }
-        }
+        let decompressed = decode_payload(
+            data,
+            self.decompressed_size as usize,
+            self.compression.as_uddp_compression(),
+        )?;
+        target.write_all(&decompressed)?;
         Ok(())
     }
 

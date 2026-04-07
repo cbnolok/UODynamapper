@@ -428,6 +428,22 @@ Important implementation notes:
 - When no safe eviction is possible, expansion is requested and rendering temporarily falls back instead of overrunning the GPU array
 - The cache now tracks small and big initial layer counts separately, matching the real GPU texture sizes
 
+**Shared Residency Abstraction**:
+
+- Collection-agnostic residency planning lives in `dynamapper/src/core/texture_cache/residency.rs`
+- The shared layer models three reusable concerns: grouping texture IDs, resolving layer budgets, and iterating IDs/layer assignments in a deterministic order
+- `LandTextureCachePlugin` only supplies terrain-specific grouping (`Small` / `Big`) and texmap byte loading
+- This keeps future texture families free to reuse the same residency/planning code without copying the land-specific cache logic verbatim
+
+**Terrain Residency Flow**:
+
+1. `build_texture_residency_plan()` scans `TexMap2D` and groups IDs by `LandTextureSize`
+2. `resolve_layer_allocations()` chooses either the configured LRU sizes or the exact preload sizes for each group
+3. In preload mode, `prime_full_file_residency()` first warms the underlying `TexMap2D` source cache, then assigns deterministic GPU layers starting at layer `1`
+4. In LRU mode, the existing demand-driven residency path remains active, including eviction and dynamic array growth
+
+For the shared concepts behind this flow, see `docs/TEXTURE_RESIDENCY.md`.
+
 ## 4. Logging System
 
 ### 4.1 console_logger Module (`dynamapper/src/console_logger.rs`)

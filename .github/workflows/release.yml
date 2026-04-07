@@ -317,15 +317,6 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
-      - name: Install ISPC
-        shell: pwsh
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'ispc.zip'
-          $extractDir = Join-Path $env:RUNNER_TEMP "ispc-v$($env:ISPC_VERSION)-windows"
-          Invoke-WebRequest -Uri $env:ISPC_URL_WINDOWS_X86_64 -OutFile $archive
-          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP -Force
-          (Join-Path $extractDir 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -338,7 +329,7 @@ jobs:
       - name: Build release binary
         shell: pwsh
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX_SOURCE }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX }}
           CC: "clang"
           CXX: "clang++"
           AR: "llvm-ar"

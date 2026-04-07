@@ -23,6 +23,10 @@ use flate2::{
 use clap::{Parser, Subcommand};
 use color_eyre::eyre;
 
+use uocf_tools::art_uddp::{
+    CcArtAtlasOptions, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_HEIGHT,
+    DEFAULT_ATLAS_PAGE_WIDTH, convert_art_mul_to_cc_art_uddp,
+};
 use uocf::uop::{
     compression::{mythic_decompress, zlib_bwt_codec},
     hash::{hash_data_block, hash_file_name_single},
@@ -732,6 +736,19 @@ enum Commands {
         #[arg(name = "path")]
         path: PathBuf,
     },
+    /// Packs classic art.mul/artidx.mul into cc_art.uddp atlas pages.
+    PackArtUddp {
+        #[arg(name = "path")]
+        path: PathBuf,
+        #[arg(long, default_value = "cc_art.uddp")]
+        output: PathBuf,
+        #[arg(long, default_value_t = DEFAULT_ATLAS_PAGE_WIDTH)]
+        atlas_width: u32,
+        #[arg(long, default_value_t = DEFAULT_ATLAS_PAGE_HEIGHT)]
+        atlas_height: u32,
+        #[arg(long, default_value_t = DEFAULT_ATLAS_GUTTER)]
+        gutter: u16,
+    },
 }
 
 fn print_results(success: u32, total: u32) {
@@ -957,6 +974,49 @@ fn main() -> eyre::Result<()> {
                     eprintln!("Error packing {}.mul: {}", map_x_name, e);
                 } else {
                     success_count += 1;
+                }
+            }
+        }
+        Commands::PackArtUddp {
+            path,
+            output,
+            atlas_width,
+            atlas_height,
+            gutter,
+        } => {
+            println!("Mode: Pack art.mul to cc_art.uddp.");
+            println!();
+
+            if !path.exists() || !path.is_dir() {
+                eprintln!("Directory '{}' does not exist!", path.display());
+                return Ok(());
+            }
+
+            total_count += 1;
+            let out_file = if output.is_absolute() {
+                output.clone()
+            } else {
+                path.join(output)
+            };
+            let options = CcArtAtlasOptions {
+                atlas_width: *atlas_width,
+                atlas_height: *atlas_height,
+                gutter: *gutter,
+            };
+
+            match convert_art_mul_to_cc_art_uddp(path, &out_file, &options) {
+                Ok(summary) => {
+                    println!(
+                        "Wrote {} pages for {} populated slots out of {} total slots to '{}'.",
+                        summary.page_count,
+                        summary.populated_slot_count,
+                        summary.slot_count,
+                        out_file.display()
+                    );
+                    success_count += 1;
+                }
+                Err(error) => {
+                    eprintln!("Error packing cc_art.uddp: {error}");
                 }
             }
         }

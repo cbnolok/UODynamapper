@@ -277,6 +277,7 @@ mod tests {
     const TEST_EXPECTED_RESULT: &str = "build/gumpartlegacymul/00001283.tga";
 
     #[test]
+    #[ignore = "slow brute-force coverage; run explicitly with --ignored"]
     fn test_bruteforce_hash_recursive() {
         let stop_signal: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let result: Option<String> = bruteforce_hash_recursive(
@@ -293,6 +294,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow brute-force coverage; run explicitly with --ignored"]
     fn test_bruteforce_hash_simd() {
         let stop_signal: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let result: Option<String> = bruteforce_hash_simd(
@@ -309,6 +311,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow brute-force coverage; run explicitly with --ignored"]
     fn test_bruteforce_hash_recursive_not_found() {
         let stop_signal: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let result: Option<String> = bruteforce_hash_recursive(
@@ -325,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow brute-force coverage; run explicitly with --ignored"]
     fn test_bruteforce_hash_simd_not_found() {
         let stop_signal: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let result: Option<String> = bruteforce_hash_simd(

@@ -4,7 +4,7 @@ default_preset = "classic.morning"
 global_lighting = 1.02
 
 [classic.morning.effects]
-shading_mode = 1
+shading_mode = 0
 normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 0

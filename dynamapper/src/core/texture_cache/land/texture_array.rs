@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use crate::{
+    core::texture_cache::TextureResidencyPlan,
     core::uo_files_loader::TexMap2DRes,
     external_data::settings::{LossyTextureCompressionBackend, SectGraphics},
     prelude::*,
@@ -102,6 +103,20 @@ impl TerrainTextureCompression {
             Self::Bc7(LossyTextureCompressionBackend::Ispc) => "BC7/ispc",
         }
     }
+}
+
+pub fn build_texture_residency_plan(texmap_2d_res: &TexMap2D) -> TextureResidencyPlan<LandTextureSize> {
+    let mut plan = TextureResidencyPlan::new();
+
+    for texture_id in 0..texmap_2d_res.len() {
+        let Some(element) = texmap_2d_res.element(texture_id) else {
+            continue;
+        };
+
+        plan.push(*element.size(), texture_id as u16);
+    }
+
+    plan
 }
 
 pub fn texture_extent(tex_size: LandTextureSize) -> ImageExtent {
@@ -206,7 +221,7 @@ pub fn create_gpu_texture_array(
 //const DEFAULT_ERROR_TEXTURE_ID: u32 = TEXTURE_UNUSED_ID;
 
 const DEFAULT_ERROR_TEXTURE_SIZE: LandTextureSize = LandTextureSize::Big;
-const DEFAULT_ERROR_TEXTURE_ID: u32 = 0x4C; // Sea floor
+pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 
 /// Try to get actual texture for provided texture_id.
 /// If invalid, return UNUSED texture.

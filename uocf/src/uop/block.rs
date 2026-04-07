@@ -1,4 +1,11 @@
-//! Represents a block of files within a UOP package.
+//! UOP block reader for chained groups of file entries.
+//!
+//! Binary layout covered by this module:
+//! - Block header:
+//!   - `u32 file_count`
+//!   - `u64 next_block_address`
+//! - Followed immediately by `file_count` serialized UOP file entries.
+//! - `next_block_address == 0` marks the final block in the package.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -61,7 +68,7 @@ impl UopBlock {
     /// present in the block.
     pub fn preload_data(&mut self, reader: &mut File) -> Result<(), std::io::Error> {
         let current_pos = reader.stream_position()?;
-        
+
         for file in &mut self.files {
             if file.has_size() && file.data().is_none() {
                 reader.seek(SeekFrom::Start(file.data_block_address()))?;
@@ -70,7 +77,7 @@ impl UopBlock {
                 file.set_data(std::sync::Arc::from(buffer));
             }
         }
-        
+
         reader.seek(SeekFrom::Start(current_pos))?;
         Ok(())
     }

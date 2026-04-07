@@ -11,11 +11,13 @@ too_many_arguments = "allow"
 
 [dependencies]
 block_compression = { version = "0.7", default-features = false, features = ["bc7"] }
+image_dds = { version = "0.7", optional = true }
 intel_tex_2 = { version = "0.5.0", optional = true }
 wgpu-types = "27"
 
 [features]
 default = []
+dds_bc7 = ["dep:image_dds"]
 gpu = ["block_compression/wgpu"]
 intel_tex = ["dep:intel_tex_2"]
 intel_tex_source = ["intel_tex", "intel_tex_2/ispc"]

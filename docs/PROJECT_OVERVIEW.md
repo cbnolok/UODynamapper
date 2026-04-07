@@ -72,11 +72,13 @@ main.rs → core.rs (Bevy app setup) → AppState machine
   - `maps.toml` — Map configuration
   - `preferences.toml` — User preferences
   - `keybindings.toml` — Keyboard shortcuts
+- **Texture Residency Toggle**: `assets/settings/uo_files.toml` can switch terrain texmaps between LRU residency and full-file preload residency
 
 ### Performance
 
 - **Idle Eviction**: 60s timeout for inactive data
 - **Lazy Loading**: Textures load on-demand
+- **Optional Full Preload**: Terrain texmaps can reserve deterministic layers for the full collection at startup
 - **Power Saving**: Reactive low-power mode when unfocused
 - **Spawn Throttling**: New chunk entities spawn center-out, capped per frame
 - **Shared-Material Stability**: Terrain material updates only when relevant state changes
@@ -91,6 +93,7 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 | **docs/CONTRIBUTORS_GUIDE.md** | Quick file reference, common tasks | Humans + AI |
 | **GEMINI.md** | AI agent workflow and best practices | AI agents |
 | **docs/CODE_OVERVIEW.md** | Low-level architecture details | Developers |
+| **docs/TEXTURE_RESIDENCY.md** | Shared texture residency abstraction | Developers |
 | **docs/PROJECT_OVERVIEW.md** | This file - high-level summary | Everyone |
 | **docs/TODO.md** | Planned features | Developers |
 

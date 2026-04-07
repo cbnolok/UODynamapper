@@ -3,6 +3,11 @@ pub mod texture_array;
 
 use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
 use crate::core::system_sets::*;
+use crate::core::texture_cache::{
+    TextureResidencyGroupLayers,
+    TextureResidencyStrategy,
+    resolve_layer_allocations,
+};
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
@@ -14,6 +19,24 @@ pub struct LandTextureCachePlugin {
     pub registered_by: &'static str,
 }
 impl_tracked_plugin!(LandTextureCachePlugin);
+
+// Terrain currently splits texmaps by physical source dimensions because small and big
+// texmaps live in different GPU texture arrays. Future collections can define their own
+// group table while still reusing the shared residency helpers.
+const LAND_TEXTURE_GROUP_LAYERS: [TextureResidencyGroupLayers<LandTextureSize>; 2] = [
+    TextureResidencyGroupLayers {
+        group: LandTextureSize::Small,
+        debug_name: "small texmap",
+        initial_layers: texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
+        max_layers: texture_array::TEXARRAY_SMALL_MAX_TILE_LAYERS,
+    },
+    TextureResidencyGroupLayers {
+        group: LandTextureSize::Big,
+        debug_name: "big texmap",
+        initial_layers: texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
+        max_layers: texture_array::TEXARRAY_BIG_MAX_TILE_LAYERS,
+    },
+];
 
 impl Plugin for LandTextureCachePlugin {
     /// Allocate GPU texture array for terrain tiles and TileCache.
@@ -123,30 +146,32 @@ fn sys_evict_idle_land_cache(
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(|| Instant::now());
-    // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
-    let evicted_gpu_layers = cache_r.evict_idle_textures(now);
-    if evicted_gpu_layers > 0 {
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!(
-                "Evicted {} idle textures from GPU cache.",
-                evicted_gpu_layers
-            ),
-        );
-    }
+    if !cache_r.preloads_full_collection() {
+        // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
+        let evicted_gpu_layers = cache_r.evict_idle_textures(now);
+        if evicted_gpu_layers > 0 {
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!(
+                    "Evicted {} idle textures from GPU cache.",
+                    evicted_gpu_layers
+                ),
+            );
+        }
 
-    // 2. Evict idle pixel data from the raw TexMap2D cache (CPU RAM)
-    let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
-    if evicted_pixel_buffers > 0 {
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!(
-                "Evicted {} idle pixel buffers from TexMap2D cache.",
-                evicted_pixel_buffers
-            ),
-        );
+        // 2. Evict idle pixel data from the raw TexMap2D cache (CPU RAM)
+        let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
+        if evicted_pixel_buffers > 0 {
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!(
+                    "Evicted {} idle pixel buffers from TexMap2D cache.",
+                    evicted_pixel_buffers
+                ),
+            );
+        }
     }
 
     // 3. Evict idle map blocks from the active map plane (CPU RAM)
@@ -169,28 +194,30 @@ fn sys_evict_idle_land_cache(
     };
 
     // 4. Check whether the texture arrays can be shrunk (usage low for >2 min).
-    let (shrink_small, shrink_big) = cache_r.check_shrink_opportunity(now);
-    if let Some(target) = shrink_small {
-        cache_r.small.requested_resize_to = Some(target);
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!(
-                "Requesting texture array shrink (Small): {} → {} layers.",
-                cache_r.small.active_layers, target
-            ),
-        );
-    }
-    if let Some(target) = shrink_big {
-        cache_r.big.requested_resize_to = Some(target);
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::Performance,
-            &format!(
-                "Requesting texture array shrink (Big): {} → {} layers.",
-                cache_r.big.active_layers, target
-            ),
-        );
+    if !cache_r.preloads_full_collection() {
+        let (shrink_small, shrink_big) = cache_r.check_shrink_opportunity(now);
+        if let Some(target) = shrink_small {
+            cache_r.small.requested_resize_to = Some(target);
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!(
+                    "Requesting texture array shrink (Small): {} → {} layers.",
+                    cache_r.small.active_layers, target
+                ),
+            );
+        }
+        if let Some(target) = shrink_big {
+            cache_r.big.requested_resize_to = Some(target);
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::Performance,
+                &format!(
+                    "Requesting texture array shrink (Big): {} → {} layers.",
+                    cache_r.big.active_layers, target
+                ),
+            );
+        }
     }
 
     // 5. Check whether the tile metadata atlas can be shrunk.
@@ -227,32 +254,78 @@ pub fn sys_setup_terrain_cache(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::external_data::settings::Settings>,
+    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
     let compression = texture_array::TerrainTextureCompression::from_graphics_settings(
         &settings.graphics,
     );
+    let residency_strategy = TextureResidencyStrategy::from_preload_enabled(
+        settings.uo_files.texmaps_preload_full_file,
+    );
+    let residency_plan = residency_strategy.preloads_full_collection().then(|| {
+        texture_array::build_texture_residency_plan(&texmap_2d_r.0)
+    });
+    // Shared layer budgeting keeps the terrain module responsible only for defining its
+    // groups; the generic residency layer decides whether startup uses LRU-sized arrays
+    // or exact-fit preloaded arrays.
+    let layer_allocations = resolve_layer_allocations(
+        residency_strategy,
+        residency_plan.as_ref(),
+        &LAND_TEXTURE_GROUP_LAYERS,
+    );
+    let small_layers = layer_allocations
+        .iter()
+        .find(|allocation| allocation.group == LandTextureSize::Small)
+        .map(|allocation| allocation.layers)
+        .unwrap_or(texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS);
+    let big_layers = layer_allocations
+        .iter()
+        .find(|allocation| allocation.group == LandTextureSize::Big)
+        .map(|allocation| allocation.layers)
+        .unwrap_or(texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS);
+
     let handle_small = texture_array::create_gpu_texture_array(
         "land_small_texture_cache",
         &mut images,
         LandTextureSize::Small,
         compression,
-        texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
+        small_layers,
     );
     let handle_big = texture_array::create_gpu_texture_array(
         "land_big_texture_cache",
         &mut images,
         LandTextureSize::Big,
         compression,
-        texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
+        big_layers,
     );
-    cmd.insert_resource(cache::LandTextureCache::new(
+    let mut land_texture_cache = cache::LandTextureCache::new(
         handle_small.clone(),
         handle_big.clone(),
-        texture_array::TEXARRAY_SMALL_INITIAL_TILE_LAYERS,
-        texture_array::TEXARRAY_BIG_INITIAL_TILE_LAYERS,
-    ));
+        small_layers,
+        big_layers,
+        residency_strategy,
+    );
+
+    if let Some(plan) = residency_plan.as_ref() {
+        land_texture_cache.prime_full_file_residency(
+            plan,
+            texmap_2d_r.0.clone(),
+            compression,
+            Instant::now(),
+        );
+        console_logger::one(
+            LogSev::Info,
+            LogAbout::Startup,
+            &format!(
+                "Preloaded full texmaps collection into fixed texture-array layers ({} textures).",
+                plan.total_texture_count()
+            ),
+        );
+    }
+
+    cmd.insert_resource(land_texture_cache);
 
     use crate::core::render::scene::world::land::{
         draw_mesh::SharedLandMaterial,

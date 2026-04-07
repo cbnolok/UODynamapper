@@ -49,6 +49,7 @@ pub struct SectApp {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectUoFiles {
     pub folder: String,
+    pub texmaps_preload_full_file: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -62,7 +63,7 @@ pub struct SectWindow {
     pub height: f32,
     pub width: f32,
     pub zoom: f32,
-    pub egui_scale: f32,
+    pub ui_scale: f32,
     /// Per-overlay scale for the player position overlay.
     pub player_position_scale: f32,
     /// Per-overlay scale for system messages rendered via egui.

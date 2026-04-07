@@ -52,8 +52,8 @@ fn sys_sync_egui_context_scale_factor(
         return;
     };
 
-    let target_scale = if settings.app.window.egui_scale.is_finite() {
-        settings.app.window.egui_scale.clamp(0.5, 3.0)
+    let target_scale = if settings.app.window.ui_scale.is_finite() {
+        settings.app.window.ui_scale.clamp(0.5, 3.0)
     } else {
         1.0
     };
