@@ -4,6 +4,7 @@ use crate::core::system_sets::StartupSysSet;
 use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use bevy::prelude::*;
+use uddconv::{cc_art, cc_tiledata};
 //use dashmap::DashMap;
 //use parking_lot::RwLock;
 use uocf::eyre_imports;
@@ -35,6 +36,14 @@ pub struct TileDataRes(pub Arc<tiledata::TileData>);
 /// and passed to texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
 pub struct TexMap2DRes(pub Arc<land_texture_2d::TexMap2D>);
+
+/// Optional prepacked atlas package for static and land art.
+#[derive(Resource)]
+pub struct CcArtPackageRes(pub Arc<cc_art::CcArtPackage>);
+
+/// Optional prepacked tiledata package mirroring tiledata.mul.
+#[derive(Resource)]
+pub struct CcTileDataPackageRes(pub Arc<cc_tiledata::CcTileDataPackage>);
 
 pub struct UoFilesSettings {
     pub base_folder: PathBuf,
@@ -100,6 +109,28 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         land_texture_2d::TexMap2D::load(uo_path.join("texmaps.mul"), uo_path.join("texidx.mul"))
             .expect("Load texmap");
 
+    let cc_art_path = uo_path.join("cc_art.uddp");
+    let cc_art_package = if cc_art_path.exists() {
+        lg("Loading optional cc_art.uddp package...");
+        Some(
+            cc_art::CcArtPackage::load(&cc_art_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", cc_art_path.display())),
+        )
+    } else {
+        None
+    };
+
+    let cc_tiledata_path = uo_path.join("cc_tiledata.uddp");
+    let cc_tiledata_package = if cc_tiledata_path.exists() {
+        lg("Loading optional cc_tiledata.uddp package...");
+        Some(
+            cc_tiledata::CcTileDataPackage::load(&cc_tiledata_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", cc_tiledata_path.display())),
+        )
+    } else {
+        None
+    };
+
     lg("Done loading UO Data.");
 
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
@@ -108,4 +139,10 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     commands.insert_resource(MapPlanesRes(map_planes));
     commands.insert_resource(TileDataRes(Arc::new(tiledata)));
     commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
+    if let Some(cc_art_package) = cc_art_package {
+        commands.insert_resource(CcArtPackageRes(Arc::new(cc_art_package)));
+    }
+    if let Some(cc_tiledata_package) = cc_tiledata_package {
+        commands.insert_resource(CcTileDataPackageRes(Arc::new(cc_tiledata_package)));
+    }
 }

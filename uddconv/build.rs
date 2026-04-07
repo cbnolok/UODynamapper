@@ -10,19 +10,19 @@ fn main() {
         println!("cargo:rustc-flag=-Zlocation-detail=full");
     }
 
-    // `intel_tex_2` uses ISPC-compiled code that may require an explicit C++ runtime link.
-    if std::env::var_os("CARGO_FEATURE_INTEL_TEX").is_some() {
-        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-        let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    // BC7-related native backends used by this crate can pull in C++ objects on some
+    // platforms. Link the platform C++ runtime unconditionally for this crate so test
+    // binaries and feature combinations resolve the same way as normal library builds.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
-        match (target_os.as_str(), target_env.as_str()) {
-            ("linux", _) | ("windows", "gnu") => {
-                println!("cargo:rustc-link-lib=stdc++");
-            }
-            ("macos", _) => {
-                println!("cargo:rustc-link-lib=c++");
-            }
-            _ => {}
+    match (target_os.as_str(), target_env.as_str()) {
+        ("linux", _) | ("windows", "gnu") => {
+            println!("cargo:rustc-link-lib=stdc++");
         }
+        ("macos", _) => {
+            println!("cargo:rustc-link-lib=c++");
+        }
+        _ => {}
     }
 }

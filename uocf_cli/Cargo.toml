@@ -1,5 +1,5 @@
 [package]
-name = "uocf_tools"
+name = "uocf_cli"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,7 +10,6 @@ color-eyre = "0.6.5"
 anyhow = "1.0.102"
 byteorder = "1.5.0"
 flate2 = "1.1.9"
-guillotiere = "0.6"
 
 [[bin]]
 name = "uoptool"

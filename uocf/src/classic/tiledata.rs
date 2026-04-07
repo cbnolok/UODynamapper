@@ -432,6 +432,14 @@ impl TileData {
         }
     }
 
+    pub fn land_tiles(&self) -> &[LandTile] {
+        &self.land_data
+    }
+
+    pub fn item_tiles(&self) -> &[ItemTile] {
+        &self.item_data
+    }
+
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
         let file_path = file_path
             .canonicalize()

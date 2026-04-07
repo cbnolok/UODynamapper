@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use std::fs;
 use std::path::PathBuf;
+use uocf_cli::parse_hex_u64;
 use uocf::uop::file::{CompressionFlag, UopFile};
 use uocf::uop::package::UopPackage;
 
@@ -43,12 +44,6 @@ enum Commands {
         #[arg(required = true)]
         uop_file: PathBuf,
     },
-}
-
-/// Parses a hexadecimal string into a u64.
-fn parse_hex_u64(s: &str) -> Result<u64, std::num::ParseIntError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u64::from_str_radix(s, 16)
 }
 
 fn main() -> eyre::Result<()> {

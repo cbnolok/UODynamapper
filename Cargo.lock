@@ -5726,9 +5726,22 @@ name = "uddconv"
 version = "0.1.0"
 dependencies = [
  "block_compression",
+ "byteorder",
+ "color-eyre",
+ "guillotiere",
  "image_dds",
  "intel_tex_2 0.5.0",
+ "uocf",
  "wgpu-types",
+]
+
+[[package]]
+name = "uddconv_cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "uddconv",
 ]
 
 [[package]]
@@ -5799,7 +5812,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "uocf_tools"
+name = "uocf_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -5807,7 +5820,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "flate2",
- "guillotiere",
  "uocf",
 ]
 

@@ -11,6 +11,8 @@ Quick reference document for contributors and AI agents to quickly locate releva
 | I want to... | Look in... |
 | ------------ | ---------- |
 | **Modify terrain visuals** | `assets/shaders/worldmap/land/main.wgsl` |
+| **Work on generic UO CLI tooling** | `uocf_cli/src/bin/` + `uocf_cli/src/lib.rs` |
+| **Work on converted package CLI tooling** | `uddconv_cli/src/` |
 | **Add a new uniform** | `dynamapper/src/core/render/scene/world/land/mesh_material.rs` (Rust) + `assets/shaders/worldmap/land/bindings.wgsl` (shader) |
 | **Change UI overlays** | `dynamapper/src/core/render/overlays/` |
 | **Modify dialogs (F3, F1, etc.)** | `dynamapper/src/core/render/dialogs/` |

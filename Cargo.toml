@@ -3,8 +3,9 @@ resolver = "2"
 members = [
     "dynamapper",
     "uddconv",
+    "uddconv_cli",
     "uocf",
-    "uocf_tools"
+    "uocf_cli"
 ]
 
 

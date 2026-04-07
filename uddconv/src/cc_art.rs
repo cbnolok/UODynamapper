@@ -1,35 +1,16 @@
-//! Build-time converter for classic `art.mul`/`artidx.mul` into `cc_art.uddp`.
+//! Build-time and runtime support for `cc_art.uddp`.
 //!
-//! Package layout produced by this module:
-//! - `pages/{page_index}.rgba8888`: one fixed-size atlas page per UDDP entry.
-//!   Payload bytes are raw RGBA8888 page pixels and are compressed with Zstd by
-//!   the UDDP writer so runtime can decompress straight into a GPU upload buffer.
-//! - `metadata/pages.bin`: page table describing how many tiles ended up in each
-//!   atlas page and how much of the page is actually used.
-//! - `metadata/slots.bin`: one record for every `art_id` slot from `artidx.mul`,
-//!   including unused slots. This is the authoritative sparse index.
-//!
-//! Binary layout of `metadata/pages.bin`:
-//! - `b"CAPG"`
-//! - `u32 version`
-//! - `u32 atlas_width`
-//! - `u32 atlas_height`
-//! - `u32 gutter`
-//! - `u32 page_count`
-//! - `page_count * CcArtPageRecord`
-//!
-//! Binary layout of `metadata/slots.bin`:
-//! - `b"CASL"`
-//! - `u32 version`
-//! - `u32 atlas_width`
-//! - `u32 atlas_height`
-//! - `u32 gutter`
-//! - `u32 slot_count`
-//! - `slot_count * CcArtSlotRecord`
+//! Package layout:
+//! - `pages/{page_index}.rgba8888`: fixed-size atlas page payloads. The page bytes are
+//!   raw RGBA8888 pixels compressed with Zstd by the UDDP container.
+//! - `metadata/pages.bin`: page table with atlas dimensions and per-page occupancy.
+//! - `metadata/slots.bin`: sparse slot table with one record per `art_id`, including
+//!   empty slots from `artidx.mul`.
 
+use std::io::{Cursor, Read};
 use std::path::Path;
 
-use byteorder::{LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{AtlasAllocator, size2};
 
@@ -42,17 +23,20 @@ use uocf::{
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 const CC_ART_METADATA_VERSION: u32 = 1;
-const SLOT_FLAG_PRESENT: u16 = 1 << 0;
-const SLOT_FLAG_LAND: u16 = 1 << 1;
-const SLOT_FLAG_STATIC: u16 = 1 << 2;
-const MISSING_PAGE_INDEX: u32 = u32::MAX;
-const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
+const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
+const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+
+pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
+pub const SLOT_FLAG_LAND: u16 = 1 << 1;
+pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
+pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
+pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CcArtAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
@@ -69,7 +53,7 @@ impl Default for CcArtAtlasOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CcArtBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
@@ -102,24 +86,24 @@ struct DecodedArtTile {
     rgba: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CcArtPageRecord {
-    page_index: u32,
-    tile_count: u32,
-    used_width: u32,
-    used_height: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CcArtPageRecord {
+    pub page_index: u32,
+    pub tile_count: u32,
+    pub used_width: u32,
+    pub used_height: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CcArtSlotRecord {
-    art_id: u32,
-    page_index: u32,
-    page_tile_index: u16,
-    flags: u16,
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CcArtSlotRecord {
+    pub art_id: u32,
+    pub page_index: u32,
+    pub page_tile_index: u16,
+    pub flags: u16,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 impl CcArtSlotRecord {
@@ -136,9 +120,16 @@ impl CcArtSlotRecord {
         }
     }
 
-    #[cfg(test)]
-    fn is_present(self) -> bool {
+    pub fn is_present(self) -> bool {
         (self.flags & SLOT_FLAG_PRESENT) != 0
+    }
+
+    pub fn is_land(self) -> bool {
+        (self.flags & SLOT_FLAG_LAND) != 0
+    }
+
+    pub fn is_static(self) -> bool {
+        (self.flags & SLOT_FLAG_STATIC) != 0
     }
 }
 
@@ -158,6 +149,93 @@ struct BuiltPage {
     record: CcArtPageRecord,
     pixels: Vec<u8>,
     placed_tiles: Vec<PlacedTile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CcArtPackage {
+    package: UddpPackage,
+    atlas_width: u32,
+    atlas_height: u32,
+    gutter: u16,
+    pages: Vec<CcArtPageRecord>,
+    slots: Vec<CcArtSlotRecord>,
+}
+
+impl CcArtPackage {
+    pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let package = UddpPackage::load(path.as_ref())
+            .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
+        Self::from_uddp_package(package)
+    }
+
+    pub fn from_uddp_package(package: UddpPackage) -> eyre::Result<Self> {
+        let page_manifest = package
+            .get_entry_by_path(PAGE_MANIFEST_ENTRY_PATH)
+            .context("cc_art.uddp missing metadata/pages.bin")?
+            .unpack()
+            .wrap_err("unpack metadata/pages.bin")?;
+        let slot_manifest = package
+            .get_entry_by_path(SLOT_MANIFEST_ENTRY_PATH)
+            .context("cc_art.uddp missing metadata/slots.bin")?
+            .unpack()
+            .wrap_err("unpack metadata/slots.bin")?;
+
+        let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
+        let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
+
+        if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
+            eyre::bail!("cc_art metadata headers disagree on atlas dimensions or gutter");
+        }
+
+        Ok(Self {
+            package,
+            atlas_width: page_width,
+            atlas_height: page_height,
+            gutter: page_gutter,
+            pages,
+            slots,
+        })
+    }
+
+    pub fn package(&self) -> &UddpPackage {
+        &self.package
+    }
+
+    pub fn atlas_width(&self) -> u32 {
+        self.atlas_width
+    }
+
+    pub fn atlas_height(&self) -> u32 {
+        self.atlas_height
+    }
+
+    pub fn gutter(&self) -> u16 {
+        self.gutter
+    }
+
+    pub fn pages(&self) -> &[CcArtPageRecord] {
+        &self.pages
+    }
+
+    pub fn slots(&self) -> &[CcArtSlotRecord] {
+        &self.slots
+    }
+
+    pub fn slot_record(&self, art_id: u32) -> Option<&CcArtSlotRecord> {
+        self.slots.get(art_id as usize)
+    }
+
+    pub fn present_slot(&self, art_id: u32) -> Option<&CcArtSlotRecord> {
+        self.slot_record(art_id).filter(|slot| slot.is_present())
+    }
+
+    pub fn read_page_rgba8888(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
+        self.package
+            .get_entry_by_path(&page_entry_path(page_index))
+            .with_context(|| format!("cc_art.uddp missing page {page_index}"))?
+            .unpack()
+            .wrap_err_with(|| format!("unpack atlas page {page_index}"))
+    }
 }
 
 pub fn convert_art_mul_to_cc_art_uddp(
@@ -192,22 +270,21 @@ pub fn convert_art_mul_to_cc_art_uddp(
     let mut package = UddpPackage::new();
     package.add_typed_entry_from_memory(
         &page_manifest,
-        "metadata/pages.bin",
+        PAGE_MANIFEST_ENTRY_PATH,
         UddpContentId::Metadata,
         UddpCompression::Zstd,
     )?;
     package.add_typed_entry_from_memory(
         &slot_manifest,
-        "metadata/slots.bin",
+        SLOT_MANIFEST_ENTRY_PATH,
         UddpContentId::Metadata,
         UddpCompression::Zstd,
     )?;
 
     for page in &pages {
-        let entry_path = page_entry_path(page.record.page_index);
         package.add_typed_entry_from_memory(
             &page.pixels,
-            &entry_path,
+            &page_entry_path(page.record.page_index),
             UddpContentId::Rgba8888,
             UddpCompression::Zstd,
         )?;
@@ -303,7 +380,11 @@ fn pack_tiles_into_pages(
     while !remaining.is_empty() {
         let (page, leftovers) = build_page(page_index, remaining, options)?;
         if page.placed_tiles.is_empty() {
-            eyre::bail!("could not fit any art tile into atlas page {}x{}", options.atlas_width, options.atlas_height);
+            eyre::bail!(
+                "could not fit any art tile into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
         }
 
         for placed in &page.placed_tiles {
@@ -390,16 +471,14 @@ fn build_page(
         }
     }
 
-    let record = CcArtPageRecord {
-        page_index,
-        tile_count: placed_tiles.len() as u32,
-        used_width,
-        used_height,
-    };
-
     Ok((
         BuiltPage {
-            record,
+            record: CcArtPageRecord {
+                page_index,
+                tile_count: placed_tiles.len() as u32,
+                used_width,
+                used_height,
+            },
             pixels,
             placed_tiles,
         },
@@ -480,6 +559,64 @@ fn serialize_slot_manifest(
     Ok(bytes)
 }
 
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPageRecord>)> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != PAGE_MANIFEST_MAGIC {
+        eyre::bail!("invalid cc_art page manifest magic");
+    }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    if version != CC_ART_METADATA_VERSION {
+        eyre::bail!("unsupported cc_art page manifest version {version}");
+    }
+    let atlas_width = cursor.read_u32::<LittleEndian>()?;
+    let atlas_height = cursor.read_u32::<LittleEndian>()?;
+    let gutter = cursor.read_u32::<LittleEndian>()? as u16;
+    let page_count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut pages = Vec::with_capacity(page_count);
+    for _ in 0..page_count {
+        pages.push(CcArtPageRecord {
+            page_index: cursor.read_u32::<LittleEndian>()?,
+            tile_count: cursor.read_u32::<LittleEndian>()?,
+            used_width: cursor.read_u32::<LittleEndian>()?,
+            used_height: cursor.read_u32::<LittleEndian>()?,
+        });
+    }
+    Ok((atlas_width, atlas_height, gutter, pages))
+}
+
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtSlotRecord>)> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != SLOT_MANIFEST_MAGIC {
+        eyre::bail!("invalid cc_art slot manifest magic");
+    }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    if version != CC_ART_METADATA_VERSION {
+        eyre::bail!("unsupported cc_art slot manifest version {version}");
+    }
+    let atlas_width = cursor.read_u32::<LittleEndian>()?;
+    let atlas_height = cursor.read_u32::<LittleEndian>()?;
+    let gutter = cursor.read_u32::<LittleEndian>()? as u16;
+    let slot_count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut slots = Vec::with_capacity(slot_count);
+    for _ in 0..slot_count {
+        slots.push(CcArtSlotRecord {
+            art_id: cursor.read_u32::<LittleEndian>()?,
+            page_index: cursor.read_u32::<LittleEndian>()?,
+            page_tile_index: cursor.read_u16::<LittleEndian>()?,
+            flags: cursor.read_u16::<LittleEndian>()?,
+            x: cursor.read_u16::<LittleEndian>()?,
+            y: cursor.read_u16::<LittleEndian>()?,
+            width: cursor.read_u16::<LittleEndian>()?,
+            height: cursor.read_u16::<LittleEndian>()?,
+        });
+    }
+    Ok((atlas_width, atlas_height, gutter, slots))
+}
+
 fn page_entry_path(page_index: u32) -> String {
     format!("pages/{page_index:05}.rgba8888")
 }
@@ -541,13 +678,46 @@ mod tests {
     }
 
     #[test]
-    fn slot_manifest_contains_header_and_all_slots() {
-        let options = CcArtAtlasOptions::default();
-        let slots = vec![CcArtSlotRecord::absent(0), CcArtSlotRecord::absent(1)];
-        let bytes = serialize_slot_manifest(&slots, &options).unwrap();
+    fn runtime_reader_can_unpack_page_and_slot_metadata() {
+        let options = CcArtAtlasOptions {
+            atlas_width: 8,
+            atlas_height: 8,
+            gutter: 1,
+        };
+        let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
+        let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
+        let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
+        let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
 
-        assert_eq!(&bytes[..4], b"CASL");
-        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 2);
-        assert_eq!(bytes.len(), 24 + 2 * 20);
+        let mut package = UddpPackage::new();
+        package
+            .add_typed_entry_from_memory(
+                &page_manifest,
+                PAGE_MANIFEST_ENTRY_PATH,
+                UddpContentId::Metadata,
+                UddpCompression::Zstd,
+            )
+            .unwrap();
+        package
+            .add_typed_entry_from_memory(
+                &slot_manifest,
+                SLOT_MANIFEST_ENTRY_PATH,
+                UddpContentId::Metadata,
+                UddpCompression::Zstd,
+            )
+            .unwrap();
+        package
+            .add_typed_entry_from_memory(
+                &pages[0].pixels,
+                &page_entry_path(0),
+                UddpContentId::Rgba8888,
+                UddpCompression::Zstd,
+            )
+            .unwrap();
+
+        let package = CcArtPackage::from_uddp_package(package).unwrap();
+        assert_eq!(package.pages().len(), 1);
+        assert!(package.present_slot(0).unwrap().is_land());
+        assert_eq!(package.read_page_rgba8888(0).unwrap().len(), 8 * 8 * 4);
     }
 }

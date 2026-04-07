@@ -18,6 +18,9 @@ High-level summary of the UODynamapper project for contributors and AI agents to
 
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
 - `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
+- `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
+- `uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
+- `uocf_cli/` - Generic UO tooling CLI crate for UOP/package operations and format conversion utilities
 
 ---
 
