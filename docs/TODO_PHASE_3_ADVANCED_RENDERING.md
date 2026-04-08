@@ -7,6 +7,12 @@ Hard targets:
 - Perspective/free modes never drop below 144 FPS in the defined stress profile.
 - Runtime mode switches are deterministic and do not require world reload.
 
+Status vocabulary used in this document:
+- Current implementation: already present in the renderer today.
+- Accepted target architecture: chosen replacement or expansion path.
+- Optional / benchmark-first: only worth doing if profiling shows a real gain.
+- Deferred / unclear: postponed until prerequisites or product needs are clearer.
+
 ## 1. Mode Taxonomy and Ownership
 
 Camera modes:
@@ -22,6 +28,8 @@ This prevents camera code from accumulating content-specific branches.
 
 ## 2. Shader Variant Strategy
 
+Status: Optional / benchmark-first.
+
 ## 2.1 Why Variants (Not One Giant Branchy Shader)
 
 Global uniform branching is valid, but heavy optional code (for example POM loops) can increase register pressure in fast modes.
@@ -30,6 +38,8 @@ Policy:
 - Use shader defs / pipeline specialization for major mode groups.
 - Keep military variant lean and free of expensive perspective-only logic.
 - Accept one-time pipeline warmup stutter at first switch.
+
+Current renderer is still allowed to ship on a unified shader path if military-mode performance stays within target. Specialization is a performance lever, not a prerequisite for Phase 3 terrain work.
 
 ## 2.2 Required Variant Set
 
@@ -44,6 +54,18 @@ Minimum variant matrix:
 Variants are selected by runtime mode and material flags; do not duplicate scene entities per mode.
 
 ## 3. GPU Clipmap Terrain
+
+Status: Accepted target architecture.
+
+Decision-history note:
+- The current threshold-based mesh/scale path is implemented today and should be treated as transitional, not final.
+- GPU clipmap terrain remains the chosen replacement because it addresses zoom-threshold hitching, live-edit compatibility, arbitrary-resolution rendering, and deterministic export goals established in the earlier design work.
+
+Comparison:
+
+| Current threshold path | Observed weakness | Accepted replacement | Why chosen |
+|---|---|---|---|
+| Discrete `scale_from_zoom()` and mesh swaps at zoom thresholds | Pop/hitch risk, chunk respawn pressure, zoom bands baked into render topology | GPU clipmap rings with continuous sampling/blend logic | Smoother zoom, better edit behavior, cleaner long-term terrain architecture |
 
 ## 3.1 Geometry
 
@@ -67,11 +89,17 @@ Vertex stage responsibilities:
 
 ## 3.4 Zoom Behavior
 
-- Remove threshold-triggered mesh swap/rebuild.
+- Remove threshold-triggered mesh swap/rebuild as the end-state terrain path.
 - Continuous zoom transitions through clipmap level blend logic.
 - Avoid hard pop at LOD boundaries.
 
+Current implementation note:
+- Threshold-triggered terrain scale changes and mesh swaps exist today.
+- Keep them operational until the clipmap path is ready, but do not promote them to the long-term design.
+
 ## 4. Static Art Behavior in Free/Perspective Modes
+
+Status: Deferred until the static-art rendering pipeline is in place.
 
 ## 4.1 Category Policy
 
@@ -87,6 +115,8 @@ Categories:
 
 ## 4.3 Structural Advanced Path
 
+Status: Optional / benchmark-first.
+
 Optional heavy path:
 - Per-fragment volumetric illusion (for example POM-like behavior).
 - Enabled only for flagged structural materials in perspective/free mode.
@@ -95,16 +125,25 @@ Do not enable globally; cost amplification is unacceptable.
 
 ## 5. Terrain Transition Modes
 
+Status: Mode A is the current fidelity path; Mode B is accepted target architecture; stochastic refinements are optional / benchmark-first.
+
 Runtime switch (no reload):
 - Mode A: classic transition tiles only.
 - Mode B: automatic stochastic blend for maps without transition assets.
 
 Automatic blend requirements:
 - Neighbor-aware blend factor.
-- Noise modulation to avoid straight synthetic seams.
+- Optional noise modulation to avoid straight synthetic seams.
 - No mutation of source logical tile IDs.
 
+Decision-history note:
+- Classic transition tiles remain the baseline for original-content fidelity.
+- Automatic blending is a first-class roadmap item for custom maps that do not ship with transition assets.
+- Noise/stochastic seam refinement should not block the base auto-blend mode.
+
 ## 6. Water Modes and Pass Order
+
+Status: Classic water remains baseline; explicit water pass ordering is accepted target architecture; enhanced-water extras are optional / benchmark-first.
 
 ## 6.1 Water Modes
 
@@ -118,11 +157,11 @@ For submerged-asset visibility correctness:
 2. Static/mobile pass.
 3. Transparent water pass.
 
-This order is required to see submerged art through water while preserving depth semantics.
+This order is required to see submerged art through water while preserving depth semantics. It has priority over cosmetic enhanced-water work.
 
 ## 6.3 Enhanced Water Inputs
 
-Enhanced path may use:
+Optional enhanced path may use:
 - Time uniform.
 - Normal/noise map(s).
 - Scene depth input for depth-based tint/opacity.
@@ -130,6 +169,8 @@ Enhanced path may use:
 Depth-based tint must be bounded to avoid over-darkening in shallow areas.
 
 ## 7. Runtime Switching and State Management
+
+Status: Accepted target architecture, with partial support already present.
 
 Switchable at runtime:
 - camera mode
@@ -142,7 +183,13 @@ Switch behavior requirements:
 - No full atlas rebuild.
 - Bounded warmup hitch only on first pipeline compile.
 
+Implementation note:
+- Camera-only switching exists today.
+- Terrain blend mode, water mode, and structural-path toggles should follow the same uniform/material update model rather than triggering world rebuilds.
+
 ## 8. Performance Governance
+
+Status: Required baseline metrics are mandatory; deeper specialization telemetry is optional.
 
 Mandatory telemetry:
 - frame time breakdown by pass
@@ -155,7 +202,13 @@ Acceptance criteria:
 - Perspective stress scene: >= 144 FPS baseline profile.
 - No runaway spikes during frequent mode toggles after warm caches.
 
+Priority split:
+- Must have: military-mode regression check, runtime-switch hitch validation, upload-queue pressure visibility.
+- Nice to have: variant usage counts and expensive-path pixel coverage once specialization-heavy paths actually exist.
+
 ## 9. Deterministic Export Compatibility
+
+Status: Accepted target architecture for future export work.
 
 Phase 3 must preserve offline deterministic rendering:
 - fixed camera stepping

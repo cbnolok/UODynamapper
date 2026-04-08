@@ -8,7 +8,10 @@ pub mod tile_atlas;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResource;
 use mesh_material::LandCustomMeshMaterial;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// How many tiles per chunk row/column? (chunks are squared)
 pub const TILE_NUM_PER_CHUNK_DIM: u32 = 8;
@@ -27,6 +30,158 @@ pub struct LCMesh {
     pub scale: u32,
     /// Last blocks_loaded_version checked from MapPlane. Used to skip is_block_cached polling.
     pub last_blocks_loaded_version: Option<u64>,
+}
+
+/// Runtime terrain upload limits copied from developer-facing worldmap settings.
+///
+/// The same resource is used in both worlds:
+/// - Main world: caps how much terrain preparation work `draw_mesh` can schedule.
+/// - Render world: caps how many atlas writes can be flushed in a single Queue pass.
+///
+/// Keeping the values in one explicit resource makes the upload path easier to inspect
+/// and avoids hiding frame-pacing behavior behind scattered constants.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
+pub struct LandUploadBudget {
+    pub prepare_max_blocks_per_frame: usize,
+    pub upload_max_ops_per_frame: usize,
+    pub upload_max_bytes_per_frame: usize,
+}
+
+impl Default for LandUploadBudget {
+    fn default() -> Self {
+        Self {
+            prepare_max_blocks_per_frame: 32_768,
+            upload_max_ops_per_frame: 8,
+            upload_max_bytes_per_frame: 16 * 1024 * 1024,
+        }
+    }
+}
+
+impl LandUploadBudget {
+    pub fn from_settings(settings: &crate::external_data::settings::Settings) -> Self {
+        let land_streaming = &settings.worldmap_rendering.land_streaming;
+        Self {
+            prepare_max_blocks_per_frame: land_streaming.prepare_max_blocks_per_frame,
+            upload_max_ops_per_frame: land_streaming.upload_max_ops_per_frame,
+            upload_max_bytes_per_frame: land_streaming.upload_max_bytes_per_frame,
+        }
+    }
+
+    pub fn effective_prepare_max_blocks_per_frame(&self) -> usize {
+        if self.prepare_max_blocks_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.prepare_max_blocks_per_frame
+        }
+    }
+
+    pub fn effective_upload_max_ops_per_frame(&self) -> usize {
+        if self.upload_max_ops_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.upload_max_ops_per_frame
+        }
+    }
+
+    pub fn effective_upload_max_bytes_per_frame(&self) -> usize {
+        if self.upload_max_bytes_per_frame == 0 {
+            usize::MAX
+        } else {
+            self.upload_max_bytes_per_frame
+        }
+    }
+}
+
+#[derive(Default)]
+struct LandUploadTelemetryShared {
+    dirty_block_updates: AtomicU32,
+    queued_ops: AtomicU32,
+    queued_bytes: AtomicU64,
+    submitted_ops: AtomicU32,
+    submitted_bytes: AtomicU64,
+    pending_ops: AtomicU32,
+    pending_bytes: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LandUploadTelemetrySnapshot {
+    pub dirty_block_updates: u32,
+    pub queued_ops: u32,
+    pub queued_bytes: u64,
+    pub submitted_ops: u32,
+    pub submitted_bytes: u64,
+    pub pending_ops: u32,
+    pub pending_bytes: u64,
+}
+
+/// Shared telemetry for the terrain metadata-atlas upload path.
+///
+/// The main world populates the queued counters after dirty regions are gathered, while the
+/// render world updates the submitted and backlog counters after applying the per-frame caps.
+/// We store the counters in an `Arc` so both worlds see the same numbers without introducing
+/// a bespoke cross-world messaging path.
+#[derive(Resource, Clone, Default, ExtractResource)]
+pub struct LandUploadTelemetry {
+    shared: Arc<LandUploadTelemetryShared>,
+}
+
+impl LandUploadTelemetry {
+    pub fn snapshot(&self) -> LandUploadTelemetrySnapshot {
+        LandUploadTelemetrySnapshot {
+            dirty_block_updates: self.shared.dirty_block_updates.load(Ordering::Relaxed),
+            queued_ops: self.shared.queued_ops.load(Ordering::Relaxed),
+            queued_bytes: self.shared.queued_bytes.load(Ordering::Relaxed),
+            submitted_ops: self.shared.submitted_ops.load(Ordering::Relaxed),
+            submitted_bytes: self.shared.submitted_bytes.load(Ordering::Relaxed),
+            pending_ops: self.shared.pending_ops.load(Ordering::Relaxed),
+            pending_bytes: self.shared.pending_bytes.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn record_stage(&self, dirty_block_updates: u32, queued_ops: u32, queued_bytes: u64) {
+        self.shared
+            .dirty_block_updates
+            .store(dirty_block_updates, Ordering::Relaxed);
+        self.shared.queued_ops.store(queued_ops, Ordering::Relaxed);
+        self.shared
+            .queued_bytes
+            .store(queued_bytes, Ordering::Relaxed);
+    }
+
+    pub fn record_submit(
+        &self,
+        submitted_ops: u32,
+        submitted_bytes: u64,
+        pending_ops: u32,
+        pending_bytes: u64,
+    ) {
+        self.shared
+            .submitted_ops
+            .store(submitted_ops, Ordering::Relaxed);
+        self.shared
+            .submitted_bytes
+            .store(submitted_bytes, Ordering::Relaxed);
+        self.shared.pending_ops.store(pending_ops, Ordering::Relaxed);
+        self.shared
+            .pending_bytes
+            .store(pending_bytes, Ordering::Relaxed);
+    }
+}
+
+/// Synchronize the extracted upload budget resource with the current settings.
+///
+/// The resource is cheap to copy and is used by both main-world terrain preparation and
+/// render-world atlas uploads, so we update it whenever settings change instead of making
+/// those systems reach into the full Settings resource directly.
+fn sys_sync_land_upload_budget(
+    settings: Res<crate::external_data::settings::Settings>,
+    mut upload_budget: ResMut<LandUploadBudget>,
+) {
+    if !settings.is_changed() && !upload_budget.is_added() {
+        return;
+    }
+
+    *upload_budget = LandUploadBudget::from_settings(&settings);
 }
 
 /// Establishes material, buffer pool, diagnostics, and the draw system.
@@ -105,15 +260,24 @@ use std::time::Duration;
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<draw_mesh::LandMeshScratch>()
+            .init_resource::<LandUploadBudget>()
+            .init_resource::<LandUploadTelemetry>()
             .add_plugins(MaterialPlugin::<LandCustomMeshMaterial>::default())
             // Copies the TileAtlasImageHandle resource from the main world into the
             // render world every frame, so that the GPU pipeline can access the atlas texture.
             .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
                 tile_atlas::TileAtlasImageHandle,
             >::default())
+            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+                LandUploadBudget,
+            >::default())
+            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+                LandUploadTelemetry,
+            >::default())
             .add_systems(
                 Update,
                 (
+                    sys_sync_land_upload_budget.before(SceneRenderLandSysSet::RenderLandChunks),
                     draw_mesh::sys_update_existing_chunk_mesh_lod
                         .in_set(SceneRenderLandSysSet::RenderLandChunks)
                         .after(SceneRenderLandSysSet::SyncLandChunks)

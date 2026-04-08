@@ -5,6 +5,7 @@ use bevy::camera::visibility::NoAutoAabb;
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::NoFrustumCulling,
+    ecs::system::SystemParam,
     mesh::{Indices, MeshVertexAttribute},
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
@@ -23,7 +24,7 @@ use uocf::classic::{
 use super::chunk_loader;
 
 use super::TILE_NUM_PER_CHUNK_DIM;
-use super::{mesh_material::*, LCMesh, TILE_NUM_PER_CHUNK_TOTAL};
+use super::{mesh_material::*, LandUploadBudget, LCMesh, TILE_NUM_PER_CHUNK_TOTAL};
 use crate::{
     core::{
         constants,
@@ -219,7 +220,7 @@ pub fn sys_update_existing_chunk_mesh_lod(
     land_mesh_handles_r: Res<LandMeshHandles>,
     mut current_lod: ResMut<LandMeshLod>,
     current_scale: Res<ChunkScale>,
-    mut chunk_mesh_q: Query<&mut Mesh3d, With<LCMesh>>,
+    mut chunk_mesh_q: Query<(&LCMesh, &mut Mesh3d)>,
 ) {
     // Scale > 1 uses fixed wide meshes; LOD swaps only matter at scale=1.
     if current_scale.0 != 1 {
@@ -241,7 +242,10 @@ pub fn sys_update_existing_chunk_mesh_lod(
     );
 
     let next_mesh = mesh_for_lod(&land_mesh_handles_r, next_lod);
-    for mut mesh3d in chunk_mesh_q.iter_mut() {
+    for (chunk_mesh, mut mesh3d) in chunk_mesh_q.iter_mut() {
+        if chunk_mesh.scale != 1 {
+            continue;
+        }
         mesh3d.0 = next_mesh.clone();
     }
 
@@ -283,6 +287,19 @@ pub struct DrawMeshLocals {
     last_scale: u32,
 }
 
+/// Small wrapper for the frame-pacing resources used by land chunk drawing.
+///
+/// `sys_draw_spawned_land_chunks` already needs a large number of ECS parameters, and Bevy
+/// has a hard limit on how many can be passed directly to one system function. Grouping the
+/// pacing-related resources keeps the call site readable and makes the scheduler-facing budget
+/// controls explicit in one place.
+#[derive(SystemParam)]
+pub struct LandFramePacing<'w> {
+    pub upload_budget: Res<'w, LandUploadBudget>,
+    pub settings: Res<'w, crate::external_data::settings::Settings>,
+    pub time: Res<'w, Time<Real>>,
+}
+
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
 pub fn sys_draw_spawned_land_chunks(
     mut commands: Commands,
@@ -301,14 +318,16 @@ pub fn sys_draw_spawned_land_chunks(
     land_mesh_handles_r: Res<LandMeshHandles>,
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
-    settings: Res<crate::external_data::settings::Settings>,
-    time: Res<Time<Real>>,
+    frame_pacing: LandFramePacing,
     mut locals: Local<DrawMeshLocals>,
 ) {
     // NOTE: Briefly-used variables (map_meta, targets, uncached_blocks) are
     // scoped or dropped early to reduce peak memory and improve clarity.
 
-    let now = time.last_update().unwrap_or_else(|| Instant::now());
+    let now = frame_pacing
+        .time
+        .last_update()
+        .unwrap_or_else(|| Instant::now());
     let current_map_id = scene_state_data_r.map_id;
 
     // ── Initialize background loader thread (once) ─────────────────────
@@ -560,13 +579,16 @@ pub fn sys_draw_spawned_land_chunks(
     //
     // Budget unit = "equivalent base blocks" ≈ (scale + 2)² per chunk
     // (sub-blocks + border ring that the atlas-enqueue loop iterates).
-    // Balance chunk parsing budget. 32768 base blocks per frame absorbs an entire
-    // column of new super-chunks (even during fast zoom-out) in a single pass,
-    // consolidating multiple GPU write_texture calls into one coalesced upload.
-    const MAX_ATLAS_BLOCKS_PER_FRAME: usize = 32768;
+    //
+    // The budget comes from a shared resource instead of a hardcoded constant so we can
+    // tune terrain pacing from config and keep the main-world preparation budget aligned
+    // with the render-world upload budget.
+    let max_atlas_blocks_per_frame = frame_pacing
+        .upload_budget
+        .effective_prepare_max_blocks_per_frame();
 
     {
-        let mut remaining = MAX_ATLAS_BLOCKS_PER_FRAME;
+        let mut remaining = max_atlas_blocks_per_frame;
         let mut count = 0usize;
         for t in ready_targets.iter() {
             let cost = (t.chunk_scale as usize + 2).pow(2);
@@ -687,7 +709,7 @@ pub fn sys_draw_spawned_land_chunks(
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
     let compression = crate::core::texture_cache::land::texture_array::TerrainTextureCompression::from_graphics_settings(
-        &settings.graphics,
+        &frame_pacing.settings.graphics,
     );
     cache_r.precache_textures_parallel(
         ids.as_slice(),

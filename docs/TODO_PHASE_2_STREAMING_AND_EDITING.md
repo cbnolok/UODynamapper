@@ -7,6 +7,12 @@ Hard targets:
 - Batched partial texture writes per frame (never per-object immediate writes).
 - Predictable RAM/VRAM residency under long sessions.
 
+Status vocabulary used in this document:
+- Current implementation: already matches the intended terrain path well enough to keep.
+- Accepted target architecture: chosen direction for terrain streaming/rendering work.
+- Optional / benchmark-first: useful only if telemetry or content pressure proves the need.
+- Deferred / unclear: intentionally postponed until the surrounding editing/runtime model is defined.
+
 ## 1. Package Architecture
 
 ## 1.1 UDDP Container (Package)
@@ -85,9 +91,11 @@ Decode helpers:
 
 ## 3. Chunking and Transport Unit
 
+Status: Accepted target architecture.
+
 Streaming transport unit is decoupled from legacy 8x8 logical map block.
 
-Baseline transport unit:
+Baseline UDDP transport unit:
 - `64x64` tiles.
 
 Rationale:
@@ -95,29 +103,51 @@ Rationale:
 - Better frustum granularity than 128x128 in memory-sensitive scenarios.
 - Better upload scheduling control under strict per-frame budgets.
 
+Transport and rendering stay intentionally separate:
+- Transport granularity: `64x64` is the preferred UDDP read/decode/upload unit.
+- Render granularity: legacy `map.mul` remains `8x8`, and render-side chunk merging can continue to choose larger draw units independently.
+- Why they are orthogonal: storage/decompression policy should not force a specific draw-entity size or terrain zoom behavior.
+
 ## 4. Runtime Streaming Pipeline
 
 ## 4.1 Demand Generation
 
+Status: Current visible-footprint path is enough for Phase 2a; prefetch rings are optional / benchmark-first.
+
 Input:
 - Camera frustum intersection against tile grid.
-- Prefetch ring around visible footprint.
+- Safety pad around visible footprint.
+- Optional prefetch ring around visible footprint.
 
-Priority tiers:
+Minimum priority tiers:
+1. Visible now.
+2. Safety pad.
+
+Optional expansion after telemetry:
 1. Visible now.
 2. Near ring.
 3. Far ring.
 
+Do not add predictive rings by default if the existing visible-plus-pad strategy already keeps queue pressure bounded.
+
 ## 4.2 Async Read/Decode
+
+Status: Accepted target architecture.
 
 - Use Bevy task pools for all reads and decode work.
 - Resolve entry metadata from in-memory package index.
 - Decode based on `codec_bits + content_id` pipeline.
 - Emit decoded payload descriptors into upload queue.
 
+Implementation note:
+- Legacy `map.mul` reads may continue on a dedicated background thread while UDDP decode/postprocess work moves onto Bevy task pools.
+- The important invariant is that gameplay systems never perform blocking reads or issue direct GPU upload calls.
+
 No direct GPU calls from gameplay systems.
 
 ## 4.3 Upload Scheduler (Mandatory Design)
+
+Status: Current per-frame budget exists; write coalescing is accepted target architecture.
 
 Upload queue item fields should include:
 - destination texture id
@@ -134,23 +164,35 @@ Per-frame flush behavior:
 - apply hard cap (`max_ops_per_frame`, `max_bytes_per_frame`)
 - carry over remainder by priority
 
+Phase split:
+- Phase 2a: preserve hard per-frame upload budgets and camera-priority ordering.
+- Phase 2b: add write coalescing and grouping to reduce `queue.write_texture` overhead.
+
 This is required to avoid API/driver overhead from many small `queue.write_texture` calls.
 
 ## 5. RAM/VRAM Caching
 
 ## 5.1 Decoded RAM Cache
 
+Status: Optional / benchmark-first.
+
 - LRU keyed by logical chunk/content key.
 - Hysteresis timer before eviction.
 - Prevent immediate eviction/reload oscillation near camera boundaries.
 
+Only make this a default terrain feature if telemetry shows meaningful re-decode churn for the same content under normal camera motion.
+
 ## 5.2 VRAM Residency Cache
+
+Status: Current implementation for terrain metadata/atlas residency; keep as baseline.
 
 - LRU for atlas slots/pages/layers.
 - Eviction is bookkeeping-first; overwrite on next allocation.
 - Optional periodic defrag path if fragmentation exceeds threshold.
 
 ## 5.3 Required Telemetry
+
+Status: Accepted target architecture.
 
 - RAM cache hit/miss.
 - VRAM residency hit/miss.
@@ -160,15 +202,21 @@ This is required to avoid API/driver overhead from many small `queue.write_textu
 
 ## 6. Live Editing Model
 
+Status: Deferred / unclear for persistence and workflow details.
+
 ## 6.1 Runtime Mutation
 
 - Edits modify metadata texture/region via minimal partial write.
 - Dirty region tracker records changed coordinates and affected LOD regions.
 
+This remains the accepted rendering-side mutation model once live editing exists, but Phase 2 does not require shipping the full gameplay/editor workflow.
+
 ## 6.2 Mipmap Consistency
 
-- Base-level edit invalidates higher mips in affected region.
+- If terrain uses a mip hierarchy, base-level edit invalidates higher mips in affected region.
 - Rebuild with compute or targeted CPU path, bounded by frame budget.
+
+Current terrain metadata/texturing does not yet rely on a mip-based edit path, so this requirement is conditional rather than immediate.
 
 ## 6.3 Persistence Strategy
 
@@ -177,6 +225,8 @@ This is required to avoid API/driver overhead from many small `queue.write_textu
 - Save path either:
 	- writes patch/delta file, or
 	- rebuilds package offline on explicit command.
+
+Detailed persistence policy is deferred until editing semantics, undo behavior, and world-state ownership are specified.
 
 ## 7. Performance Budgets and Acceptance
 

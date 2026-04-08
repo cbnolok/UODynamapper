@@ -80,6 +80,79 @@ pub struct LayerDirtyRegion {
     pub max_y: u32,
 }
 
+impl LayerDirtyRegion {
+    pub fn from_offset_size(offset: UVec2, size: UVec2) -> Self {
+        Self {
+            min_x: offset.x,
+            min_y: offset.y,
+            max_x: offset.x + size.x,
+            max_y: offset.y + size.y,
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.max_x.saturating_sub(self.min_x)
+    }
+
+    pub fn height(&self) -> u32 {
+        self.max_y.saturating_sub(self.min_y)
+    }
+
+    pub fn area(&self) -> u32 {
+        self.width().saturating_mul(self.height())
+    }
+
+    pub fn merged(&self, other: &Self) -> Self {
+        Self {
+            min_x: self.min_x.min(other.min_x),
+            min_y: self.min_y.min(other.min_y),
+            max_x: self.max_x.max(other.max_x),
+            max_y: self.max_y.max(other.max_y),
+        }
+    }
+
+    pub fn touches_or_overlaps(&self, other: &Self) -> bool {
+        self.min_x <= other.max_x
+            && self.max_x >= other.min_x
+            && self.min_y <= other.max_y
+            && self.max_y >= other.min_y
+    }
+
+    pub fn should_merge(&self, other: &Self) -> bool {
+        if !self.touches_or_overlaps(other) {
+            return false;
+        }
+
+        // Merge when the combined bounding box does not introduce a gap.
+        // This keeps straightforward horizontal/vertical adjacency collapsed
+        // without turning distant L-shaped edits into oversized uploads.
+        let merged = self.merged(other);
+        merged.area() <= self.area().saturating_add(other.area())
+    }
+}
+
+fn coalesce_dirty_regions(regions: &mut Vec<LayerDirtyRegion>) {
+    let mut i = 0usize;
+    while i < regions.len() {
+        let mut merged_any = false;
+        let mut j = i + 1;
+        while j < regions.len() {
+            if regions[i].should_merge(&regions[j]) {
+                let merged = regions[i].merged(&regions[j]);
+                regions[i] = merged;
+                regions.swap_remove(j);
+                merged_any = true;
+            } else {
+                j += 1;
+            }
+        }
+
+        if !merged_any {
+            i += 1;
+        }
+    }
+}
+
 /// Resource managing the paged metadata atlas.
 /// It maintains a CPU-side cache and tracks pending uploads to the GPU.
 #[derive(Resource)]
@@ -99,8 +172,13 @@ pub struct TileAtlas {
 
     /// CPU mirror of mapped layer data. Indexed by layer.
     pub cpu_mirror: Vec<Option<Vec<Rg16u>>>,
-    /// Tracks modified bounding box per layer. Indexed by layer.
-    pub dirty_regions: Vec<Option<LayerDirtyRegion>>,
+    /// Tracks modified regions per layer.
+    ///
+    /// We keep multiple rectangles and coalesce only overlapping or edge-sharing ones so the
+    /// uploader avoids sending one oversized bounding box for sparse edits on the same layer.
+    pub dirty_regions: Vec<Vec<LayerDirtyRegion>>,
+    /// Number of changed 8x8 block writes accumulated since the last staging pass.
+    pub pending_dirty_write_count: u32,
     /// Staging buffer swapped into place by the clear system so that
     /// the extract system can take ownership without cloning.
     extract_staging: Vec<AtlasUpload>,
@@ -126,7 +204,8 @@ impl TileAtlas {
             layer_access_tick: vec![0; max_layers],
             current_tick: 0,
             cpu_mirror: vec![None; max_layers],
-            dirty_regions: vec![None; max_layers],
+            dirty_regions: vec![Vec::new(); max_layers],
+            pending_dirty_write_count: 0,
             extract_staging: Vec::new(),
             requested_expansion: None,
             max_layers_limit,
@@ -274,19 +353,11 @@ impl TileAtlas {
         );
         */
 
-        if self.dirty_regions[layer_idx].is_none() {
-            self.dirty_regions[layer_idx] = Some(LayerDirtyRegion {
-                min_x: u32::MAX,
-                min_y: u32::MAX,
-                max_x: 0,
-                max_y: 0,
-            });
-        }
-        let region = self.dirty_regions[layer_idx].as_mut().unwrap();
-        region.min_x = region.min_x.min(offset.x);
-        region.min_y = region.min_y.min(offset.y);
-        region.max_x = region.max_x.max(offset.x + size.x);
-        region.max_y = region.max_y.max(offset.y + size.y);
+        self.pending_dirty_write_count = self.pending_dirty_write_count.saturating_add(1);
+
+        let regions = &mut self.dirty_regions[layer_idx];
+        regions.push(LayerDirtyRegion::from_offset_size(offset, size));
+        coalesce_dirty_regions(regions);
     }
 
     /// Number of currently mapped pages.
@@ -304,7 +375,10 @@ impl TileAtlas {
         self.current_tick = 0;
         self.params.page_to_layer = [bevy::math::UVec4::MAX; 64];
         self.cpu_mirror.fill(None);
-        self.dirty_regions.fill(None);
+        for regions in &mut self.dirty_regions {
+            regions.clear();
+        }
+        self.pending_dirty_write_count = 0;
     }
 
     /// Applies a new layer count after the GPU image has been replaced.
@@ -316,7 +390,7 @@ impl TileAtlas {
         self.layer_to_page.resize(new_len, IVec2::ZERO);
         self.layer_access_tick.resize(new_len, 0);
         self.cpu_mirror.resize(new_len, None);
-        self.dirty_regions.resize(new_len, None);
+        self.dirty_regions.resize_with(new_len, Vec::new);
 
         self.clear_all_mappings();
     }
@@ -353,45 +427,72 @@ pub fn sys_extract_atlas_uploads(
     }
 }
 
-pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
-    let mut extracted_uploads = std::mem::take(&mut tile_atlas.extract_staging);
+pub fn sys_clear_atlas_uploads(
+    mut tile_atlas: ResMut<TileAtlas>,
+    telemetry: Res<super::LandUploadTelemetry>,
+) {
+    let TileAtlas {
+        params,
+        cpu_mirror,
+        dirty_regions,
+        pending_dirty_write_count,
+        extract_staging,
+        ..
+    } = &mut *tile_atlas;
+
+    let mut extracted_uploads = std::mem::take(extract_staging);
     extracted_uploads.clear();
 
-    let page_width = tile_atlas.params.page_texels.x;
+    let page_width = params.page_texels.x;
+    let dirty_block_updates = *pending_dirty_write_count;
+    let mut queued_bytes = 0u64;
 
-    for (layer, opt_region) in tile_atlas.dirty_regions.iter().enumerate() {
-        let Some(region) = opt_region else {
+    for (layer, regions) in dirty_regions.iter_mut().enumerate() {
+        if regions.is_empty() {
             continue;
-        };
+        }
         let layer = layer as u32;
 
-        let width = region.max_x.saturating_sub(region.min_x);
-        let height = region.max_y.saturating_sub(region.min_y);
-        if width == 0 || height == 0 {
-            continue;
+        coalesce_dirty_regions(regions);
+
+        let mirror = cpu_mirror[layer as usize].as_ref().unwrap();
+
+        for region in regions.iter() {
+            let width = region.max_x.saturating_sub(region.min_x);
+            let height = region.max_y.saturating_sub(region.min_y);
+            if width == 0 || height == 0 {
+                continue;
+            }
+
+            let size_bytes = (width * height * 4) as usize;
+            let mut data = Vec::with_capacity(size_bytes);
+
+            for y in region.min_y..region.max_y {
+                let start = (y * page_width + region.min_x) as usize;
+                let end = start + width as usize;
+                let row_slice: &[u8] = bytemuck::cast_slice(&mirror[start..end]);
+                data.extend_from_slice(row_slice);
+            }
+
+            queued_bytes = queued_bytes.saturating_add(data.len() as u64);
+            extracted_uploads.push(AtlasUpload {
+                layer,
+                offset: UVec2::new(region.min_x, region.min_y),
+                size: UVec2::new(width, height),
+                data,
+            });
         }
 
-        let mirror = tile_atlas.cpu_mirror[layer as usize].as_ref().unwrap();
-        let size_bytes = (width * height * 4) as usize;
-        let mut data = Vec::with_capacity(size_bytes);
-
-        for y in region.min_y..region.max_y {
-            let start = (y * page_width + region.min_x) as usize;
-            let end = start + width as usize;
-            let row_slice: &[u8] = bytemuck::cast_slice(&mirror[start..end]);
-            data.extend_from_slice(row_slice);
-        }
-
-        extracted_uploads.push(AtlasUpload {
-            layer,
-            offset: UVec2::new(region.min_x, region.min_y),
-            size: UVec2::new(width, height),
-            data,
-        });
+        regions.clear();
     }
 
-    tile_atlas.dirty_regions.fill(None);
-    tile_atlas.extract_staging = extracted_uploads;
+    *pending_dirty_write_count = 0;
+    *extract_staging = extracted_uploads;
+    telemetry.record_stage(
+        dirty_block_updates,
+        extract_staging.len() as u32,
+        queued_bytes,
+    );
 }
 
 /// System running in the Render world that drains `RenderAtlasUploads` and issues
@@ -399,10 +500,13 @@ pub fn sys_clear_atlas_uploads(mut tile_atlas: ResMut<TileAtlas>) {
 pub fn sys_render_upload_tile_atlas(
     mut uploads: ResMut<RenderAtlasUploads>,
     atlas_handle: Res<TileAtlasImageHandle>,
+    upload_budget: Res<super::LandUploadBudget>,
+    telemetry: Res<super::LandUploadTelemetry>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,
 ) {
     if uploads.0.is_empty() {
+        telemetry.record_submit(0, 0, 0, 0);
         return;
     }
 
@@ -418,12 +522,33 @@ pub fn sys_render_upload_tile_atlas(
 
     let Some(gpu_image) = gpu_images.get(&atlas_handle.0) else {
         uploads.0.clear();
+        telemetry.record_submit(0, 0, 0, 0);
         return;
     };
 
     use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
-    for upload in uploads.0.drain(..) {
+    // Apply explicit per-frame upload caps so metadata-atlas updates can spill over to
+    // later frames instead of forcing a single large Queue pass after zoom-outs or teleports.
+    //
+    // We deliberately allow the first upload through even if it exceeds the byte limit.
+    // That avoids deadlocking on a single large dirty region when the configured budget is
+    // lower than the size of that region.
+    let max_ops = upload_budget.effective_upload_max_ops_per_frame();
+    let max_bytes = upload_budget.effective_upload_max_bytes_per_frame();
+    let mut submitted_ops = 0usize;
+    let mut submitted_bytes = 0usize;
+    let mut submitted_uploads = 0usize;
+
+    for upload in uploads.0.iter() {
+        let upload_bytes = upload.data.len();
+        let ops_would_overflow = submitted_ops >= max_ops;
+        let bytes_would_overflow = submitted_bytes.saturating_add(upload_bytes) > max_bytes;
+
+        if submitted_uploads > 0 && (ops_would_overflow || bytes_would_overflow) {
+            break;
+        }
+
         let destination = TexelCopyTextureInfo {
             texture: &*gpu_image.texture,
             mip_level: 0,
@@ -448,5 +573,24 @@ pub fn sys_render_upload_tile_atlas(
         };
 
         render_queue.write_texture(destination, &upload.data, data_layout, extent);
+
+        submitted_ops += 1;
+        submitted_bytes = submitted_bytes.saturating_add(upload_bytes);
+        submitted_uploads += 1;
     }
+
+    if submitted_uploads > 0 {
+        uploads.0.drain(0..submitted_uploads);
+    }
+
+    let pending_bytes = uploads
+        .0
+        .iter()
+        .fold(0u64, |acc, upload| acc.saturating_add(upload.data.len() as u64));
+    telemetry.record_submit(
+        submitted_ops as u32,
+        submitted_bytes as u64,
+        uploads.0.len() as u32,
+        pending_bytes,
+    );
 }

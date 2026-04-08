@@ -86,6 +86,9 @@ Acceptance:
 - [ ] Implement upload scheduler that merges writes and emits bounded GPU copy batches each frame.
 - [ ] Implement per-content dictionary handling for small payload classes.
 - [ ] Implement fallback decode paths per content type.
+- [ ] Adopt `64x64` as the preferred UDDP transport/decompression unit for terrain payloads.
+- [ ] Keep transport granularity separate from render granularity; do not force render entities to match UDDP chunk size.
+- [ ] Treat predictive prefetch rings as optional until telemetry proves they improve terrain streaming under real motion.
 
 Acceptance:
 - [ ] No main-thread stalls during normal camera motion.
@@ -93,10 +96,11 @@ Acceptance:
 
 ## M3. Land Clipmap and Continuous LOD
 
+- [ ] Keep the current threshold-based terrain scale/mesh path explicitly documented as transitional.
 - [ ] Replace discrete zoom mesh swapping with GPU clipmap rings.
 - [ ] Implement snapped world-space sampling in vertex stage.
-- [ ] Use metadata mip chain for continuous LOD.
-- [ ] Add live editing compatibility (single-tile edits + mip maintenance).
+- [ ] Use a continuous LOD path so zoom no longer depends on hard render-threshold swaps.
+- [ ] Add live-edit compatible terrain invalidation/update rules for the chosen clipmap path.
 
 Acceptance:
 - [ ] No zoom-threshold redraw hitches.
@@ -110,6 +114,7 @@ Acceptance:
   - [ ] free orthographic mode with billboarding where enabled
   - [ ] perspective mode with optional enhanced effects
 - [ ] Keep minimal register pressure in military mode variant.
+- [ ] Treat shader specialization as benchmark-first if the unified shader path already holds the military-mode target.
 
 Acceptance:
 - [ ] One-time switch hitch acceptable; no recurring hitch after pipeline warmup.
@@ -117,12 +122,18 @@ Acceptance:
 
 ## M5. Terrain Blending and Water Modes
 
-- [ ] Keep original transition-tile path for classic fidelity.
-- [ ] Add optional automatic blending path for custom maps lacking transition tiles.
-- [ ] Add dual water mode:
-  - [ ] classic frame-based water
-  - [ ] enhanced procedural water with depth-aware tinting
-- [ ] Implement correct render pass ordering for transparent water over submerged art.
+- [ ] M5.1 Terrain blend modes:
+  - [ ] Keep original transition-tile path for classic fidelity.
+  - [ ] Add automatic blend mode for custom maps lacking transition tiles.
+  - [ ] Keep source logical tile IDs immutable in both modes.
+  - [ ] Treat stochastic/noise seam refinement as optional after the base auto-blend path works.
+- [ ] M5.2 Water modes:
+  - [ ] Keep classic frame-based water as the baseline mode.
+  - [ ] Add enhanced procedural water with depth-aware tinting only if benchmark cost is acceptable.
+- [ ] M5.3 Pass ordering correctness:
+  - [ ] Render opaque terrain with water fragments excluded.
+  - [ ] Render submerged art/mobile content before transparent water.
+  - [ ] Render transparent water as the final water pass.
 
 Acceptance:
 - [ ] Mode switches produce deterministic visuals without state corruption.

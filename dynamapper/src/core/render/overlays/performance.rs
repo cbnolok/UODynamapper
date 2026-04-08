@@ -198,6 +198,22 @@ fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {
     None
 }
 
+fn format_transfer_bytes(bytes: u64) -> String {
+    const BYTES_PER_KIB: f64 = 1024.0;
+    const BYTES_PER_MIB_F64: f64 = 1024.0 * 1024.0;
+
+    let bytes_f = bytes as f64;
+    if bytes == 0 {
+        "0 B".to_string()
+    } else if bytes_f >= BYTES_PER_MIB_F64 {
+        format!("{:.2} MiB", bytes_f / BYTES_PER_MIB_F64)
+    } else if bytes_f >= BYTES_PER_KIB {
+        format!("{:.1} KiB", bytes_f / BYTES_PER_KIB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 // ----
 
 use bevy::time::common_conditions::on_real_timer;
@@ -342,6 +358,7 @@ pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
+    land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,
     entities: &bevy::ecs::entity::Entities,
     land_chunk_count: Res<crate::core::render::scene::LandChunkCount>,
     mut text_query: Query<
@@ -382,6 +399,7 @@ pub fn update_performance_text(
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
+        let upload_snapshot = land_upload_telemetry.snapshot();
         let tex_mode = tex_consts::TerrainTextureCompression::from_graphics_settings(
             &settings.graphics,
         )
@@ -402,8 +420,19 @@ pub fn update_performance_text(
             gpu_elapsed, clipper_in, clipper_out, vert_invoc, frag_invoc,
         );
 
+        let upload_stats = format!(
+            "Land uploads: dirty {} -> queued {} ({}) | submitted {} ({}) | backlog {} ({})",
+            upload_snapshot.dirty_block_updates,
+            upload_snapshot.queued_ops,
+            format_transfer_bytes(upload_snapshot.queued_bytes),
+            upload_snapshot.submitted_ops,
+            format_transfer_bytes(upload_snapshot.submitted_bytes),
+            upload_snapshot.pending_ops,
+            format_transfer_bytes(upload_snapshot.pending_bytes),
+        );
+
         let next_text = format!(
-            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n{}",
+            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n{}\n{}",
             fps,
             metrics.cpu_usage_total,
             metrics.cpu_usage_one_core,
@@ -415,6 +444,7 @@ pub fn update_performance_text(
             metrics.process_vram_tracked_mib,
             chunk_count,
             entity_count,
+            upload_stats,
             render_stats,
         );
 

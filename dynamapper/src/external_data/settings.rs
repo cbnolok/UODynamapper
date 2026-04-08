@@ -24,6 +24,7 @@ pub struct Settings {
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
     pub maps: SectMaps,
+    pub worldmap_rendering: SectWorldMapRendering,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -38,7 +39,7 @@ pub struct SectCore {
     pub world: SectWorld,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectApp {
     pub input: SectInput,
     pub window: SectWindow,
@@ -52,13 +53,13 @@ pub struct SectUoFiles {
     pub texmaps_preload_full_file: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
     pub smooth_movement: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectWindow {
     pub height: f32,
     pub width: f32,
@@ -84,6 +85,40 @@ pub struct SectMaps {
     pub maps: Vec<SectMapSize>,
 }
 
+#[derive(Clone, Deserialize, Serialize, Default)]
+pub struct SectWorldMapRendering {
+    #[serde(default)]
+    pub land_streaming: SectLandStreaming,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct SectLandStreaming {
+    /// Main-world terrain preparation budget measured in equivalent 8x8 map blocks.
+    ///
+    /// This limits how many ready chunks we are allowed to expand, precache and enqueue
+    /// into the atlas in a single frame. Set to 0 to disable the cap entirely.
+    #[serde(default = "default_land_prepare_max_blocks_per_frame")]
+    pub prepare_max_blocks_per_frame: usize,
+    /// Maximum number of metadata-atlas `write_texture` uploads that may be submitted
+    /// during a single render-world queue pass. Set to 0 to disable the cap.
+    #[serde(default = "default_land_upload_max_ops_per_frame")]
+    pub upload_max_ops_per_frame: usize,
+    /// Maximum number of metadata-atlas bytes that may be uploaded in a single render
+    /// frame. Set to 0 to disable the byte cap.
+    #[serde(default = "default_land_upload_max_bytes_per_frame")]
+    pub upload_max_bytes_per_frame: usize,
+}
+
+impl Default for SectLandStreaming {
+    fn default() -> Self {
+        Self {
+            prepare_max_blocks_per_frame: default_land_prepare_max_blocks_per_frame(),
+            upload_max_ops_per_frame: default_land_upload_max_ops_per_frame(),
+            upload_max_bytes_per_frame: default_land_upload_max_bytes_per_frame(),
+        }
+    }
+}
+
 impl SectMaps {
     pub fn map_size(&self, map_id: u32) -> Option<&SectMapSize> {
         self.maps.iter().find(|map| map.id == map_id)
@@ -97,7 +132,7 @@ pub struct SectMapSize {
     pub height: u32,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
     /// Whether settings hot-reload from disk is enabled. Disabled by default until
@@ -109,7 +144,19 @@ fn default_emit_true() -> bool {
     true
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+fn default_land_prepare_max_blocks_per_frame() -> usize {
+    32_768
+}
+
+fn default_land_upload_max_ops_per_frame() -> usize {
+    8
+}
+
+fn default_land_upload_max_bytes_per_frame() -> usize {
+    16 * 1024 * 1024
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectPerformance {
     pub show_overlay: bool,
     pub frame_limit_enabled: bool,
@@ -187,6 +234,7 @@ pub struct SettingsFileWatcher {
     pub graphics_mtime: Option<SystemTime>,
     pub user_mtime: Option<SystemTime>,
     pub kb_mtime: Option<SystemTime>,
+    pub worldmap_rendering_mtime: Option<SystemTime>,
 }
 
 impl Default for SettingsFileWatcher {
@@ -204,6 +252,7 @@ impl Default for SettingsFileWatcher {
             graphics_mtime: mtime_of(GRAPHICS_CONFIG_FILE),
             user_mtime: mtime_of(USER_CONFIG_FILE),
             kb_mtime: mtime_of(KEYBINDINGS_CONFIG_FILE),
+            worldmap_rendering_mtime: mtime_of(WORLDMAP_RENDERING_CONFIG_FILE),
         }
     }
 }
@@ -238,6 +287,7 @@ const USER_CONFIG_FILE: &str = "settings/preferences.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
 const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
+const WORLDMAP_RENDERING_CONFIG_FILE: &str = "settings/core_worldmap_rendering.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
@@ -246,6 +296,7 @@ pub fn load_from_files() -> Settings {
     let uo_files_path = assets_path.join(UO_FILES_CONFIG_FILE);
     let user_path = assets_path.join(USER_CONFIG_FILE);
     let maps_path = assets_path.join(MAPS_CONFIG_FILE);
+    let worldmap_rendering_path = assets_path.join(WORLDMAP_RENDERING_CONFIG_FILE);
 
     let core_contents =
         std::fs::read_to_string(&core_path).expect("Failed to read settings/core.toml");
@@ -309,6 +360,15 @@ pub fn load_from_files() -> Settings {
     let maps: SectMaps = toml::from_str(&maps_contents)
         .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
 
+    let worldmap_rendering_contents = std::fs::read_to_string(&worldmap_rendering_path).expect(
+        "Failed to read settings/core_worldmap_rendering.toml — please ensure assets/settings/core_worldmap_rendering.toml exists",
+    );
+
+    let worldmap_rendering: SectWorldMapRendering = toml::from_str(&worldmap_rendering_contents)
+        .expect(
+            "Failed to parse settings/core_worldmap_rendering.toml — please fix the file in assets/settings/core_worldmap_rendering.toml",
+        );
+
     Settings {
         core: core_data.core,
         graphics,
@@ -317,6 +377,7 @@ pub fn load_from_files() -> Settings {
         logging: core_data.logging,
         keybindings,
         maps,
+        worldmap_rendering,
     }
 }
 
@@ -460,13 +521,20 @@ fn sys_hotreload_settings(
     let new_graphics = mtime_of(GRAPHICS_CONFIG_FILE);
     let new_user = mtime_of(USER_CONFIG_FILE);
     let new_kb = mtime_of(KEYBINDINGS_CONFIG_FILE);
+    let new_worldmap_rendering = mtime_of(WORLDMAP_RENDERING_CONFIG_FILE);
 
     let core_changed = new_core != watcher.core_mtime;
     let graphics_changed = new_graphics != watcher.graphics_mtime;
     let user_changed = new_user != watcher.user_mtime;
     let kb_changed = new_kb != watcher.kb_mtime;
+    let worldmap_rendering_changed = new_worldmap_rendering != watcher.worldmap_rendering_mtime;
 
-    if !(core_changed || graphics_changed || user_changed || kb_changed) {
+    if !(core_changed
+        || graphics_changed
+        || user_changed
+        || kb_changed
+        || worldmap_rendering_changed)
+    {
         return;
     }
 
@@ -513,6 +581,15 @@ fn sys_hotreload_settings(
             LogSev::Info,
             LogAbout::General,
             "Hot-reloaded: keybindings.toml",
+        );
+    }
+    if worldmap_rendering_changed {
+        settings.worldmap_rendering = new_data.worldmap_rendering.clone();
+        watcher.worldmap_rendering_mtime = new_worldmap_rendering;
+        console_logger::one(
+            LogSev::Info,
+            LogAbout::General,
+            "Hot-reloaded: core_worldmap_rendering.toml",
         );
     }
 }
@@ -631,9 +708,23 @@ fn sys_debounced_save(
     time: Res<Time>,
     settings: Res<Settings>,
     mut save_timer: ResMut<SettingsSaveTimer>,
+    mut last_saved_app: Local<Option<SectApp>>,
     mut last_saved_keybindings: Local<Option<SectKeybindings>>,
 ) {
-    if settings.is_changed() && !settings.is_added() {
+    if settings.is_added() {
+        *last_saved_app = Some(settings.app.clone());
+        *last_saved_keybindings = Some(settings.keybindings.clone());
+        return;
+    }
+
+    let app_changed = last_saved_app
+        .as_ref()
+        .map_or(true, |last| last != &settings.app);
+    let kb_changed = last_saved_keybindings
+        .as_ref()
+        .map_or(true, |last| last != &settings.keybindings);
+
+    if app_changed || kb_changed {
         // Reset timer whenever a change occurs
         save_timer.0.reset();
         save_timer.0.unpause();
@@ -642,12 +733,11 @@ fn sys_debounced_save(
     if !save_timer.0.is_paused() {
         save_timer.0.tick(time.delta());
         if save_timer.0.just_finished() {
-            save_app_settings(&settings);
+            if app_changed {
+                save_app_settings(&settings);
+                *last_saved_app = Some(settings.app.clone());
+            }
 
-            // Only save keybindings when they have actually changed
-            let kb_changed = last_saved_keybindings
-                .as_ref()
-                .map_or(true, |last| last != &settings.keybindings);
             if kb_changed {
                 save_keybindings(&settings);
                 *last_saved_keybindings = Some(settings.keybindings.clone());

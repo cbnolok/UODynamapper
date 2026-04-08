@@ -248,13 +248,13 @@ impl LandTextureCache {
         let pool = AsyncComputeTaskPool::get();
 
         visit_grouped_texture_ids(plan, &Self::RESIDENCY_GROUP_ORDER, |texture_size, texture_ids| {
-            let mut layer_assignments = Vec::with_capacity(texture_ids.len());
-            for (index, &texture_id) in texture_ids.iter().enumerate() {
-                layer_assignments.push((texture_id, index as u32 + 1));
-            }
-
-            for chunk in layer_assignments.chunks(PRECACHE_BATCH_SIZE) {
-                let chunk = chunk.to_vec();
+            for (chunk_index, chunk) in texture_ids.chunks(PRECACHE_BATCH_SIZE).enumerate() {
+                let base_layer = chunk_index as u32 * PRECACHE_BATCH_SIZE as u32;
+                let chunk: Vec<(u16, u32)> = chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &texture_id)| (texture_id, base_layer + index as u32 + 1))
+                    .collect();
                 let texmap_2d_arc = texmap_2d.clone();
                 let sender = self.upload_sender.clone();
 
@@ -506,7 +506,12 @@ impl LandTextureCache {
 
         // 2) No evictable non-visible texture found: request GPU array expansion.
         let desired = ((self.visible_hint_count as f32) * 1.5).ceil() as u32;
-        let target_layers = desired.max(array.active_layers + 64).min(array.max_layers);
+        let geometric_target = array.active_layers.saturating_mul(2).min(array.max_layers);
+        let exact_target = desired
+            .max(array.active_layers.saturating_add(1))
+            .next_power_of_two()
+            .min(array.max_layers);
+        let target_layers = geometric_target.max(exact_target).min(array.max_layers);
         if target_layers > array.active_layers {
             let previous_request = array.requested_resize_to;
             array.requested_resize_to =
@@ -628,6 +633,7 @@ impl LandTextureCache {
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
+        let pool = AsyncComputeTaskPool::get();
         let ids_to_restore: Vec<(u16, u32)> = self
             .entry_by_id
             .iter()
@@ -642,23 +648,24 @@ impl LandTextureCache {
             })
             .collect();
 
-        for (texture_id, layer) in ids_to_restore {
-            let actual_size = texture_array::get_texmap_size_only(texture_id, &texmap_2d);
+        for chunk in ids_to_restore.chunks(PRECACHE_BATCH_SIZE) {
+            let chunk: Vec<(u16, u32)> = chunk.to_vec();
             let texmap_2d_arc = texmap_2d.clone();
-
-            let pool = AsyncComputeTaskPool::get();
             let sender = self.upload_sender.clone();
+
             let task = pool.spawn(async move {
-                let (_, raw_rgba8) =
-                    texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                let (tile_bytes, upload_layout) =
-                    prepare_texture_upload_bytes(raw_rgba8, actual_size, compression);
-                let _ = sender.send(TextureArrayUpload {
-                    layer,
-                    size: actual_size,
-                    bytes: tile_bytes,
-                    upload_layout,
-                });
+                for (texture_id, layer) in chunk {
+                    let (_, raw_rgba8) =
+                        texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+                    let (tile_bytes, upload_layout) =
+                        prepare_texture_upload_bytes(raw_rgba8, size, compression);
+                    let _ = sender.send(TextureArrayUpload {
+                        layer,
+                        size,
+                        bytes: tile_bytes,
+                        upload_layout,
+                    });
+                }
             });
             task.detach();
         }
@@ -829,6 +836,7 @@ pub fn sys_clear_texture_array_uploads(mut cache: ResMut<LandTextureCache>) {
 pub struct PersistentStaging {
     pub buffer: Option<wgpu::Buffer>,
     pub capacity: usize,
+    pub scratch_bytes: Vec<u8>,
 }
 
 pub fn sys_render_upload_texture_array(
@@ -872,7 +880,13 @@ pub fn sys_render_upload_texture_array(
         staging.capacity = new_cap;
     }
 
-    let mut staging_bytes = Vec::with_capacity(required_capacity);
+    staging.scratch_bytes.clear();
+    let scratch_capacity = staging.scratch_bytes.capacity();
+    if scratch_capacity < required_capacity {
+        staging
+            .scratch_bytes
+            .reserve(required_capacity - scratch_capacity);
+    }
 
     for upload in &uploads.0 {
         let row_bytes = upload.upload_layout.bytes_per_row as usize;
@@ -882,12 +896,21 @@ pub fn sys_render_upload_texture_array(
         for r in 0..rows {
             let src_start = r * row_bytes;
             let src_end = src_start + row_bytes;
-            staging_bytes.extend_from_slice(&upload.bytes[src_start..src_end]);
-            staging_bytes.resize(staging_bytes.len() + (padded_row_bytes - row_bytes), 0);
+            staging
+                .scratch_bytes
+                .extend_from_slice(&upload.bytes[src_start..src_end]);
+            let padded_len = staging.scratch_bytes.len() + (padded_row_bytes - row_bytes);
+            staging
+                .scratch_bytes
+                .resize(padded_len, 0);
         }
     }
 
-    render_queue.write_buffer(staging.buffer.as_ref().unwrap(), 0, &staging_bytes);
+    render_queue.write_buffer(
+        staging.buffer.as_ref().unwrap(),
+        0,
+        &staging.scratch_bytes,
+    );
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Batched Texture Uploads Encoder"),
