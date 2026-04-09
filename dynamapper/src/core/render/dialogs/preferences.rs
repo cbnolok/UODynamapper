@@ -1,6 +1,7 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    external_data::settings::AntiAliasingMode,
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
@@ -29,6 +30,7 @@ pub struct PreferencesDialogState {
     pub performance_overlay_scale: f32,
     /// VSync toggle (synced from SectGraphics).
     pub vsync: bool,
+    pub anti_aliasing: AntiAliasingMode,
     /// Texture filtering (0: Point, 1: Linear).
     pub texture_filtering: u32,
     /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
@@ -57,6 +59,7 @@ impl Default for PreferencesDialogState {
             sysmessages_scale: 1.0,
             performance_overlay_scale: 1.0,
             vsync: false,
+            anti_aliasing: AntiAliasingMode::default(),
             texture_filtering: 0,
             texture_reconstruction: 0,
         }
@@ -109,6 +112,7 @@ fn sys_sync_settings_to_state(
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
         state.vsync = settings.graphics.vsync;
+        state.anti_aliasing = settings.graphics.anti_aliasing;
         state.texture_filtering = settings.graphics.texture_filtering;
         state.texture_reconstruction = settings.graphics.texture_reconstruction;
 
@@ -246,6 +250,21 @@ pub fn sys_render_preferences_dialog(
                                 bevy::window::PresentMode::AutoNoVsync
                             };
                         }
+                    }
+
+                    egui::ComboBox::from_label("Anti-Aliasing")
+                        .selected_text(state.anti_aliasing.label())
+                        .show_ui(ui, |ui| {
+                            for mode in AntiAliasingMode::ALL {
+                                ui.selectable_value(
+                                    &mut state.anti_aliasing,
+                                    mode,
+                                    mode.label(),
+                                );
+                            }
+                        });
+                    if settings.graphics.anti_aliasing != state.anti_aliasing {
+                        settings.graphics.anti_aliasing = state.anti_aliasing;
                     }
 
                     ui.add_space(4.0);

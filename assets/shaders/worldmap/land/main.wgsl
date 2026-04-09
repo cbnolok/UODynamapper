@@ -122,6 +122,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var enable_fog     = global_light.enable_fog;
   var enable_gloom   = global_light.enable_gloom;
   var enable_blur    = effects.enable_blur;
+  var use_volumetric_fog = USE_VOLUMETRIC_NOISE == 1u;
   var force_nearest  = false;
   var disable_sharpen = false;
 
@@ -135,6 +136,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   if (zoom > 20.0) {
     enable_bent = 0u;       // skip bent normals (4 extra height reads)
+  }
+  if (zoom > 30.0) {
+    use_volumetric_fog = false; // skip domain-warped FBM fog when zoomed far out
   }
 
   let ambient_strength  = global_light.ambient_strength;
@@ -311,7 +315,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Sample coords in world meters; domain-warp to break tiling
     let p0 = (in.world_position.xz * noise_scale_world) + wind * (t * 6.0);
-    
+
     var n_billow = 0.0;
     if (noise_strength > 0.001) {
       // Gentle domain warp — skip if noise_strength is very low to save massive ALU
@@ -320,7 +324,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let warp_strength = 0.4 * noise_strength + 0.08;
         p_final = domain_warp(p0, warp_strength);
       }
-  
+
       // Multi-scale billow FBM: skip second octave if zoomed out or low strength
       let n1 = fbm_billow(p_final * 1.0);
       var n2 = 0.0;
@@ -354,7 +358,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Final cap set by UI alpha
     let fog_mix = clamp(fog_factor * global_light.fog_color.a, 0.0, 1.0);
 
-    if (USE_VOLUMETRIC_NOISE == 1u) {
+    if (use_volumetric_fog) {
       hdr_rgb = mix(hdr_rgb, effective_fog_color, fog_mix);
     } else {
       // Simple fallback: linearized distance*height blend capped by alpha

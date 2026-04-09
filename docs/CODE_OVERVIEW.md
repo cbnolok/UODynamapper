@@ -652,7 +652,8 @@ Chunk entities include `parent_map_id` component for multi-map tracking.
 
 ### 8.2 BC7 Compression
 
-**Library**: `intel_tex_2`
+**Default Library**: `image_dds`
+**Optional Accelerator**: `intel_tex_2`
 **Settings**: `alpha_basic_settings`
 **VRAM Savings**: ~160MB → ~20MB (~8x)
 **Alignment**:

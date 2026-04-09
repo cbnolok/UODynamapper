@@ -163,22 +163,60 @@ pub struct SectPerformance {
     pub target_fps: u32,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
     #[serde(default)]
     pub lossy_texture_compression_backend: LossyTextureCompressionBackend,
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
+    #[serde(default)]
+    pub anti_aliasing: AntiAliasingMode,
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum AntiAliasingMode {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "fxaa")]
+    Fxaa,
+    #[serde(rename = "smaa")]
+    Smaa,
+    #[serde(rename = "msaa_2x")]
+    Msaa2x,
+    #[default]
+    #[serde(rename = "msaa_4x")]
+    Msaa4x,
+}
+
+impl AntiAliasingMode {
+    pub const ALL: [Self; 5] = [
+        Self::Off,
+        Self::Fxaa,
+        Self::Smaa,
+        Self::Msaa2x,
+        Self::Msaa4x,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Fxaa => "FXAA",
+            Self::Smaa => "SMAA",
+            Self::Msaa2x => "MSAA 2x",
+            Self::Msaa4x => "MSAA 4x",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LossyTextureCompressionBackend {
     #[default]
+    ImageDds,
     BlockCompression,
     Ispc,
 }
@@ -192,29 +230,52 @@ impl SectGraphics {
         }
 
         match self.lossy_texture_compression_backend {
+            LossyTextureCompressionBackend::ImageDds => {
+                Some(LossyTextureCompressionBackend::ImageDds)
+            }
             LossyTextureCompressionBackend::BlockCompression => {
-                Some(LossyTextureCompressionBackend::BlockCompression)
+                if is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) {
+                    Some(LossyTextureCompressionBackend::BlockCompression)
+                } else {
+                    Some(LossyTextureCompressionBackend::ImageDds)
+                }
             }
             LossyTextureCompressionBackend::Ispc => {
                 if is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) {
                     Some(LossyTextureCompressionBackend::Ispc)
                 } else {
-                    Some(LossyTextureCompressionBackend::BlockCompression)
+                    Some(LossyTextureCompressionBackend::ImageDds)
                 }
             }
         }
     }
 
     pub fn log_unavailable_texture_compression_backend_warning(&self) {
-        if self.lossy_texture_compression
-            && self.lossy_texture_compression_backend == LossyTextureCompressionBackend::Ispc
-            && !is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc)
-        {
-            console_logger::one(
-                LogSev::Warn,
-                LogAbout::General,
-                "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/intel_tex` backend. Falling back to block_compression.",
-            );
+        if !self.lossy_texture_compression {
+            return;
+        }
+
+        let warning = match self.lossy_texture_compression_backend {
+            LossyTextureCompressionBackend::ImageDds => None,
+            LossyTextureCompressionBackend::BlockCompression
+                if !is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) =>
+            {
+                Some(
+                    "graphics.lossy_texture_compression_backend = \"block_compression\" requested, but this build was compiled without the `uddconv/block_compression` backend. Falling back to image_dds.",
+                )
+            }
+            LossyTextureCompressionBackend::Ispc
+                if !is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) =>
+            {
+                Some(
+                    "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/ispc` backend. Falling back to image_dds.",
+                )
+            }
+            _ => None,
+        };
+
+        if let Some(message) = warning {
+            console_logger::one(LogSev::Warn, LogAbout::General, message);
         }
     }
 }
@@ -437,6 +498,35 @@ pub fn save_keybindings(settings: &Settings) {
         }
         Err(e) => {
             paris::error!("Failed to serialize keybindings: {}", e);
+        }
+    }
+}
+
+pub fn save_graphics_settings(settings: &Settings) {
+    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let graphics_path = assets_path.join(GRAPHICS_CONFIG_FILE);
+
+    #[derive(Serialize)]
+    struct GraphicsWrapper<'a> {
+        graphics: &'a SectGraphics,
+    }
+
+    match toml::to_string_pretty(&GraphicsWrapper {
+        graphics: &settings.graphics,
+    }) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&graphics_path, toml_str) {
+                paris::error!("Failed to save graphics.toml: {}", e);
+            } else {
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved graphics.toml",
+                );
+            }
+        }
+        Err(e) => {
+            paris::error!("Failed to serialize graphics settings: {}", e);
         }
     }
 }
@@ -709,10 +799,12 @@ fn sys_debounced_save(
     settings: Res<Settings>,
     mut save_timer: ResMut<SettingsSaveTimer>,
     mut last_saved_app: Local<Option<SectApp>>,
+    mut last_saved_graphics: Local<Option<SectGraphics>>,
     mut last_saved_keybindings: Local<Option<SectKeybindings>>,
 ) {
     if settings.is_added() {
         *last_saved_app = Some(settings.app.clone());
+        *last_saved_graphics = Some(settings.graphics.clone());
         *last_saved_keybindings = Some(settings.keybindings.clone());
         return;
     }
@@ -723,8 +815,11 @@ fn sys_debounced_save(
     let kb_changed = last_saved_keybindings
         .as_ref()
         .map_or(true, |last| last != &settings.keybindings);
+    let graphics_changed = last_saved_graphics
+        .as_ref()
+        .map_or(true, |last| last != &settings.graphics);
 
-    if app_changed || kb_changed {
+    if app_changed || graphics_changed || kb_changed {
         // Reset timer whenever a change occurs
         save_timer.0.reset();
         save_timer.0.unpause();
@@ -736,6 +831,11 @@ fn sys_debounced_save(
             if app_changed {
                 save_app_settings(&settings);
                 *last_saved_app = Some(settings.app.clone());
+            }
+
+            if graphics_changed {
+                save_graphics_settings(&settings);
+                *last_saved_graphics = Some(settings.graphics.clone());
             }
 
             if kb_changed {

@@ -20,14 +20,14 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ISPC_VERSION: "1.30.0"
   ISPC_URL_WINDOWS_X86_64: "https://github.com/ispc/ispc/releases/download/v1.30.0/ispc-v1.30.0-windows.zip"
-  # intel_tex ships prebuilt static libraries for x86_64 Linux GNU and macOS Darwin targets.
-  # Use uddconv/intel_tex_source only on the Windows GNU clang job where we intentionally
-  # rebuild from source under MSYS2. Other targets fall back to block_compression.
-  RELEASE_FEATURES_LINUX_DESKTOP_X86_64: "uddconv/intel_tex,linux_x11,linux_wayland"
+  # ISPC is available on all desktop GNU/MSVC/macOS targets in this matrix except:
+  # - Windows GNU / MinGW
+  # - Linux musl static builds (x86_64 and aarch64)
+  RELEASE_FEATURES_LINUX_DESKTOP: "uddconv/ispc,linux_x11,linux_wayland"
   RELEASE_FEATURES_LINUX_DESKTOP_FALLBACK: "linux_x11,linux_wayland"
   RELEASE_FEATURES_LINUX_X11_FALLBACK: "linux_x11"
-  RELEASE_FEATURES_UDDCONV_INTEL_TEX: "uddconv/intel_tex"
-  RELEASE_FEATURES_UDDCONV_INTEL_TEX_SOURCE: "uddconv/intel_tex_source"
+  RELEASE_FEATURES_UDDCONV_ISPC: "uddconv/ispc"
+  RELEASE_FEATURES_UDDCONV_ISPC_SOURCE: "uddconv/ispc_source"
   RELEASE_FEATURES_NONE: ""
   SCCACHE_GHA_ENABLED: "false"
   SCCACHE_NO_DAEMON: "1"
@@ -71,7 +71,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP_X86_64 }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh
@@ -127,7 +127,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP_FALLBACK }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: |
           chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
           ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-gnu
@@ -273,7 +273,7 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
@@ -329,7 +329,7 @@ jobs:
       - name: Build release binary
         shell: pwsh
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_NONE }}
           CC: "clang"
           CXX: "clang++"
           AR: "llvm-ar"
@@ -381,7 +381,7 @@ jobs:
       - name: Build release binary
         shell: pwsh
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_NONE }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
@@ -425,7 +425,7 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
@@ -470,7 +470,7 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_INTEL_TEX }}
+          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: |
           chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
           ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin

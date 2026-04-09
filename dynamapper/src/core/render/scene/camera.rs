@@ -1,10 +1,11 @@
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
-use crate::external_data::settings::Settings;
+use crate::external_data::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::camera::ScalingMode;
+use bevy::anti_alias::{fxaa::Fxaa, smaa::Smaa};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseWheel;
@@ -77,6 +78,12 @@ impl Plugin for CameraPlugin {
                 Startup,
                 sys_setup_cam.in_set(StartupSysSet::SetupSceneStage1),
             )
+            .add_systems(
+                Update,
+                sys_apply_world_camera_graphics_settings
+                    .run_if(resource_changed::<Settings>)
+                    .in_set(MovementSysSet::UpdateCamera), // or some appropriate set
+            )
             .add_systems(Update, sys_update_camera_projection_to_view)
             .add_systems(
                 Update,
@@ -114,7 +121,7 @@ fn sys_setup_cam(
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
     // Setup world camera - order 0 to render the 3D world FIRST
-    commands.spawn((
+    let world_cam = commands.spawn((
         PlayerCamera,
         Camera3d::default(),
         Camera {
@@ -135,7 +142,7 @@ fn sys_setup_cam(
         Transform::from_translation(player_start_pos + PlayerCamera::BASE_OFFSET_FROM_PLAYER)
             .looking_at(player_start_pos, Vec3::Y),
         GlobalTransform::default(),
-    ));
+    )).id();
 
     // Setup dedicated UI camera - order 1 to render UI ON TOP of the 3D world
     // Camera2d MUST be used for Bevy UI to work, regardless of order
@@ -158,7 +165,129 @@ fn sys_setup_cam(
 
     commands.insert_resource(UiCameraResource(Some(ui_cam)));
 
+    apply_world_camera_graphics_settings(
+        &mut commands,
+        world_cam,
+        Some(ui_cam),
+        &settings.graphics,
+    );
+
     console_logger::one(LogSev::Debug, LogAbout::Camera, "Spawned.");
+}
+
+//------------------------------------
+// Graphic Settings Updates
+//------------------------------------
+
+// Anti-aliasing in this scene ended up being much less straightforward than
+// Bevy's public API suggests, so keep the reasoning here close to the code.
+//
+// What we learned while debugging the black-screen regressions:
+//
+// 1. Post-process AA (FXAA/SMAA) must be treated separately from MSAA.
+//    In practice, Bevy expects FXAA/SMAA to be enabled by attaching their
+//    dedicated components to the 3D camera, while classic MSAA is controlled
+//    through the camera's `Msaa` component.
+//
+// 2. Forcing `Hdr` on this camera was a dead end here.
+//    We tried it because some internal Bevy post-process code paths are easier
+//    to reason about in HDR, but in this project it caused severe regressions:
+//    our custom land shader already performs its own tonemapping step, while
+//    Bevy's 3D pipeline also expects to tonemap HDR views for StandardMaterial.
+//    That combination produced black output / double-processing depending on
+//    the exact camera state.
+//
+// 3. Disabling Bevy tonemapping globally was also wrong.
+//    Even when that looked like a plausible fix for the custom shader, it broke
+//    Bevy's StandardMaterial path (the player cube and other stock 3D content).
+//    The result was another black-screen branch.  So this file must NOT try to
+//    outsmart Bevy by overriding HDR/tonemapping policy per camera.
+//
+// 4. The final reliable rule was: keep both cameras on the same MSAA sample
+//    count when they render to the same target, and only attach FXAA/SMAA to
+//    the world camera.
+//    The UI camera should not run post-process AA itself, but it still needs a
+//    matching `Msaa` component so Bevy does not end up composing views that use
+//    incompatible sample counts on the same window target.
+//
+// 5. Camera-side AA selection is intentionally limited to component wiring.
+//    If FXAA/SMAA ever appear to do nothing, also verify the application-level
+//    anti-alias plugin/bootstrap in the app setup.  This function only manages
+//    per-camera state and deliberately avoids wider render-pipeline overrides.
+
+fn sys_apply_world_camera_graphics_settings(
+    mut commands: Commands,
+    camera_q: Query<Entity, With<PlayerCamera>>,
+    ui_camera: Res<UiCameraResource>,
+    settings: Res<Settings>,
+) {
+    if let Some(camera_entity) = camera_q.iter().next() {
+        apply_world_camera_graphics_settings(
+            &mut commands,
+            camera_entity,
+            ui_camera.0,
+            &settings.graphics,
+        );
+    }
+}
+
+fn apply_world_camera_graphics_settings(
+    commands: &mut Commands,
+    world_camera: Entity,
+    ui_camera: Option<Entity>,
+    graphics: &SectGraphics,
+) {
+    // FXAA/SMAA are post-process techniques, so they run with MSAA disabled.
+    // True MSAA modes keep the selected sample count instead.
+    let msaa = match graphics.anti_aliasing {
+        AntiAliasingMode::Off | AntiAliasingMode::Fxaa | AntiAliasingMode::Smaa => Msaa::Off,
+        AntiAliasingMode::Msaa2x => Msaa::Sample2,
+        AntiAliasingMode::Msaa4x => Msaa::Sample4,
+    };
+
+    // Keep the UI camera aligned with the world camera sample count.
+    // During debugging we hit a black-screen failure mode when only the 3D
+    // camera changed `Msaa` while the UI camera kept Bevy's default sampling
+    // path on the same window target.
+    if let Some(ui_camera) = ui_camera {
+        commands.entity(ui_camera).insert(msaa);
+    }
+
+    let mut entity_commands = commands.entity(world_camera);
+    entity_commands.insert(msaa);
+
+    // Only the world camera gets the post-process AA components.
+    // The UI camera keeps its normal rendering path and just mirrors MSAA.
+    //
+    // Do not add `Hdr`, remove `Hdr`, or override `Tonemapping` here.
+    // Those experiments were exactly what caused the earlier regressions.
+    match graphics.anti_aliasing {
+        AntiAliasingMode::Off => {
+            entity_commands
+                .remove::<Fxaa>()
+                .remove::<Smaa>();
+        }
+        AntiAliasingMode::Fxaa => {
+            entity_commands
+                .insert(Fxaa::default())
+                .remove::<Smaa>();
+        }
+        AntiAliasingMode::Smaa => {
+            entity_commands
+                .remove::<Fxaa>()
+                .insert(Smaa::default());
+        }
+        AntiAliasingMode::Msaa2x => {
+            entity_commands
+                .remove::<Fxaa>()
+                .remove::<Smaa>();
+        }
+        AntiAliasingMode::Msaa4x => {
+            entity_commands
+                .remove::<Fxaa>()
+                .remove::<Smaa>();
+        }
+    }
 }
 
 //------------------------------------

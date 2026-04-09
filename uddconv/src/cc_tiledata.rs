@@ -161,7 +161,7 @@ pub fn convert_tiledata_mul_to_cc_tiledata_uddp(
 }
 
 fn serialize_land_tiles(tiles: &[LandTile]) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + tiles.len() * 30);
+    let mut bytes: Vec<u8> = Vec::with_capacity(12 + tiles.len() * 30);
     bytes.extend_from_slice(&LAND_MAGIC);
     bytes.write_u32::<LittleEndian>(CCTILEDATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(tiles.len() as u32)?;
@@ -207,7 +207,7 @@ fn parse_land_tiles(bytes: &[u8]) -> eyre::Result<Vec<CcLandTileRecord>> {
         eyre::bail!("unsupported cc_tiledata land version {version}");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
-    let mut tiles = Vec::with_capacity(count);
+    let mut tiles: Vec<CcLandTileRecord> = Vec::with_capacity(count);
     for _ in 0..count {
         let tile_id = cursor.read_u32::<LittleEndian>()?;
         let flags = cursor.read_u32::<LittleEndian>()?;
@@ -236,7 +236,7 @@ fn parse_item_tiles(bytes: &[u8]) -> eyre::Result<Vec<CcItemTileRecord>> {
         eyre::bail!("unsupported cc_tiledata item version {version}");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
-    let mut tiles = Vec::with_capacity(count);
+    let mut tiles: Vec<CcItemTileRecord> = Vec::with_capacity(count);
     for _ in 0..count {
         let tile_id = cursor.read_u32::<LittleEndian>()?;
         let flags = cursor.read_u32::<LittleEndian>()?;
@@ -293,7 +293,7 @@ mod tests {
         bytes.write_u16::<LittleEndian>(tiles[0].texture_id).unwrap();
         bytes.extend_from_slice(&tiles[0].name);
 
-        let parsed = parse_land_tiles(&bytes).unwrap();
+        let parsed: Vec<CcLandTileRecord> = parse_land_tiles(&bytes).unwrap();
         assert_eq!(parsed, tiles);
         assert_eq!(parsed[0].name_ascii(), "sand");
     }
@@ -333,7 +333,7 @@ mod tests {
         bytes.write_i8(record.height).unwrap();
         bytes.extend_from_slice(&record.name);
 
-        let parsed = parse_item_tiles(&bytes).unwrap();
+        let parsed: Vec<CcItemTileRecord> = parse_item_tiles(&bytes).unwrap();
         assert_eq!(parsed, vec![record]);
         assert_eq!(parsed[0].name_ascii(), "chair");
     }

@@ -127,7 +127,8 @@ The renderer still loads base 8x8 map blocks internally, but combines them into 
 ### BC7 Compression
 
 - **Savings**: ~160MB → ~20MB VRAM (~8x reduction)
-- **Library**: `intel_tex_2` with `alpha_basic_settings`
+- **Default Library**: `image_dds`
+- **Optional Accelerator**: `intel_tex_2` with `alpha_basic_settings`
 - **Alignment**: `bytes_per_row = (width + 3) / 4 * 16` (4x4 blocks)
 
 ---

@@ -239,6 +239,15 @@ struct ChunkRenderLocals {
     transition_target_scale: Option<u32>,
     /// Required chunk coordinates for the target scale while a handoff is active.
     transition_required_chunks: Vec<(u32, u32)>,
+    /// Last visible-chunk target we actually logged.
+    ///
+    /// The visible target can be recomputed many times in a row from resize,
+    /// zoom, teleport, or follow-camera updates even when the final chunk set is
+    /// identical.  Logging every recompute is noisy and was spamming the console
+    /// with repeated "Visible chunk target: N" lines for the exact same target.
+    last_logged_visible_target: Vec<(u32, u32)>,
+    last_logged_visible_target_map_id: Option<u32>,
+    last_logged_visible_target_scale: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -395,15 +404,23 @@ fn sys_update_worldmap_chunks_to_render(
             new_map_plane_metadata.height,
             desired_scale,
         );
-        console_logger::one(
-            LogSev::Debug, // DebugVerbose
-            LogAbout::RenderWorldLand,
-            &format!(
-                "Visible chunk target: {} (scale={})",
-                required_desired_chunks.len(),
-                desired_scale
-            ),
-        );
+        if locals.last_logged_visible_target_map_id != Some(new_map_id)
+            || locals.last_logged_visible_target_scale != Some(desired_scale)
+            || locals.last_logged_visible_target != required_desired_chunks
+        {
+            console_logger::one(
+                LogSev::Debug, // DebugVerbose
+                LogAbout::RenderWorldLand,
+                &format!(
+                    "Visible chunk target: {} (scale={})",
+                    required_desired_chunks.len(),
+                    desired_scale
+                ),
+            );
+            locals.last_logged_visible_target_map_id = Some(new_map_id);
+            locals.last_logged_visible_target_scale = Some(desired_scale);
+            locals.last_logged_visible_target = required_desired_chunks.clone();
+        }
 
         // Map switches and the initial population still use the brute-force path.
         // Teleports now reuse the incremental path so the new location can stream in without

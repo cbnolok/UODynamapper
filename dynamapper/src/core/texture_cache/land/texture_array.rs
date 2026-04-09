@@ -40,7 +40,8 @@ use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
 //
 // NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
 // offline or on-the-fly. UODynamapper routes BC7 conversion through the shared `uddconv` crate,
-// which currently supports `block_compression` and an optional ISPC backend.
+// which uses `image_dds` by default and can optionally accelerate encoding via
+// `block_compression` or the Intel ISPC backend.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 // ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
@@ -97,6 +98,7 @@ impl TerrainTextureCompression {
     pub fn label(self) -> &'static str {
         match self {
             Self::Rgba8 => "RGBA8",
+            Self::Bc7(LossyTextureCompressionBackend::ImageDds) => "BC7/image_dds",
             Self::Bc7(LossyTextureCompressionBackend::BlockCompression) => {
                 "BC7/block_compression"
             }
@@ -129,6 +131,9 @@ pub fn terrain_texture_vram_encoding(
 ) -> VramTextureEncoding {
     match compression {
         TerrainTextureCompression::Rgba8 => VramTextureEncoding::Rgba8UnormSrgb,
+        TerrainTextureCompression::Bc7(LossyTextureCompressionBackend::ImageDds) => {
+            VramTextureEncoding::Bc7(Bc7EncoderBackend::ImageDds)
+        }
         TerrainTextureCompression::Bc7(LossyTextureCompressionBackend::BlockCompression) => {
             VramTextureEncoding::Bc7(Bc7EncoderBackend::BlockCompression)
         }
