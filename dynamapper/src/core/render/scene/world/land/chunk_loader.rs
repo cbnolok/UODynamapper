@@ -113,6 +113,10 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
     while let Ok(req) = rx.recv() {
         let t0 = Instant::now();
         let total_blocks = req.blocks_to_load.len();
+        let _trace_span = crate::tracy_span!(
+            "worldmap::chunk_loader_request",
+            requested_blocks = total_blocks
+        );
 
         // Get (or lazily open) a persistent file handle for this map file.
         let state = open_maps
@@ -160,6 +164,12 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
         for batch_slice in chunks_iter {
             batch_idx += 1;
             let is_final = batch_idx == num_sub_batches;
+            let _batch_span = crate::tracy_span!(
+                "worldmap::chunk_loader_batch",
+                batch_index = batch_idx,
+                batch_blocks = batch_slice.len(),
+                is_final = is_final
+            );
 
             let loaded_blocks = map::load_blocks_from_reader(
                 &mut state.reader,

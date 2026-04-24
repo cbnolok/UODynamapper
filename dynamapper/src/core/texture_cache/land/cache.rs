@@ -820,7 +820,14 @@ fn dump_texture_array_layer(
 pub fn sys_extract_texture_array_uploads(
     cache: Extract<Res<LandTextureCache>>,
     mut render_uploads: ResMut<RenderTextureArrayUploads>,
+    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
+    let _trace_span = crate::tracy_span!("worldmap::texarray_extract_uploads");
+    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+        &diagnostics,
+        crate::core::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayExtract,
+    );
+
     if !cache.pending_uploads.is_empty() {
         // Since bytes is Arc<Vec<u8>>, cloning is now O(1) and ultra-light.
         render_uploads
@@ -845,8 +852,15 @@ pub fn sys_render_upload_texture_array(
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,
     render_device: Res<RenderDevice>,
+    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
     mut staging: Local<PersistentStaging>,
 ) {
+    let _trace_span = crate::tracy_span!("worldmap::texarray_render_uploads");
+    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+        &diagnostics,
+        crate::core::diagnostics::WorldmapCrossAppTimedSystem::TextureArrayUpload,
+    );
+
     if uploads.0.is_empty() {
         return;
     }

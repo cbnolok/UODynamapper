@@ -316,6 +316,8 @@ fn sys_update_worldmap_chunks_to_render(
     world_geo_data_res: Res<WorldGeoData>,
     render_zoom_res: Res<RenderZoom>,
     mut scene_state_data_res: ResMut<SceneStateData>,
+    mut runtime_diagnostics: ResMut<crate::core::diagnostics::WorldmapRuntimeDiagnostics>,
+    mut system_diagnostics: ResMut<crate::core::diagnostics::WorldmapSystemDiagnostics>,
     mut land_chunk_count: ResMut<LandChunkCount>,
     mut chunk_scale_res: ResMut<ChunkScale>,
     windows_q: Query<&Window>,
@@ -327,6 +329,12 @@ fn sys_update_worldmap_chunks_to_render(
     const MAX_SPAWNS_PER_FRAME: usize = 512;
     /// Maximum number of obsolete chunk entities retired per frame.
     const MAX_DESPAWNS_PER_FRAME: usize = 1024;
+
+    let _timer = crate::core::diagnostics::scoped_worldmap_timer(
+        &mut system_diagnostics,
+        crate::core::diagnostics::WorldmapTimedSystem::ChunkSync,
+    );
+    let _trace_span = crate::tracy_span!("worldmap::chunk_sync");
 
     let mut current_chunk_count: i32 = land_chunk_count.0 as i32;
 
@@ -376,7 +384,7 @@ fn sys_update_worldmap_chunks_to_render(
         let window: &Window = windows_q.single().unwrap();
         let zoom: f32 = render_zoom_res.0.clamp(MIN_ZOOM, MAX_ZOOM);
         let cam_pos = player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER;
-        let current_camera_chunk = (
+        let current_camera_chunk: (i32, i32) = (
             (cam_pos.x.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
             (cam_pos.z.floor() as i32).div_euclid(TILE_NUM_PER_CHUNK_DIM as i32),
         );
@@ -387,19 +395,21 @@ fn sys_update_worldmap_chunks_to_render(
             .unwrap_or_else(|| panic!("Requested metadata for uncached map {new_map_id}"));
 
         // Determine the desired chunk scale from current zoom.
-        let desired_scale = scale_from_zoom(zoom);
+        let desired_scale: u32 = scale_from_zoom(zoom);
         chunk_scale_res.0 = desired_scale;
 
-        let committed_scale = locals.committed_scale.unwrap_or(desired_scale);
+        let committed_scale: u32 = locals.committed_scale.unwrap_or(desired_scale);
         let scale_changed = desired_scale != committed_scale;
+
+        let viewport_size: (f32, f32) = (window.width(), window.height());
 
         // Compute the visible chunk set for the desired scale and, if a handoff is active,
         // also maintain the committed scale as a fallback until the target scale is ready.
         let required_desired_chunks: Vec<(u32, u32)> = compute_visible_chunks(
             player_transform.translation,
             zoom,
-            window.width(),
-            window.height(),
+            viewport_size.0,
+            viewport_size.1,
             new_map_plane_metadata.width,
             new_map_plane_metadata.height,
             desired_scale,
@@ -412,9 +422,10 @@ fn sys_update_worldmap_chunks_to_render(
                 LogSev::Debug, // DebugVerbose
                 LogAbout::RenderWorldLand,
                 &format!(
-                    "Visible chunk target: {} (scale={})",
+                    "Visible chunk target: {} (scale={}, zoom={}, viewport size: x={}, y={})",
                     required_desired_chunks.len(),
-                    desired_scale
+                    desired_scale, zoom,
+                    viewport_size.0, viewport_size.1
                 ),
             );
             locals.last_logged_visible_target_map_id = Some(new_map_id);
@@ -731,6 +742,15 @@ fn sys_update_worldmap_chunks_to_render(
 
     // Update chunk count incrementally; this avoids a full ECS scan every frame.
     land_chunk_count.0 = current_chunk_count.max(0) as u32;
+
+    runtime_diagnostics.map_id = scene_state_data_res.map_id;
+    runtime_diagnostics.visible_chunk_target = locals.last_logged_visible_target.len();
+    runtime_diagnostics.desired_scale = Some(chunk_scale_res.0);
+    runtime_diagnostics.committed_scale = locals.committed_scale;
+    runtime_diagnostics.transition_target_scale = locals.transition_target_scale;
+    runtime_diagnostics.live_chunks = land_chunk_count.0;
+    runtime_diagnostics.pending_spawns = locals.pending_spawns.len();
+    runtime_diagnostics.pending_despawns = locals.pending_despawns.len();
 }
 
 /// Sort chunk coordinates so the visible corner tiles are spawned first,

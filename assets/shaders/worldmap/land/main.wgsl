@@ -111,6 +111,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let enable_tonemap = global_light.enable_tonemap;
   let enable_grading = global_light.enable_grading;
 
+  // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
+  if (shading_mode == 3u) {
+    return vec4<f32>(0.5, 0.5, 0.5, 1.0);
+  }
+
   // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
   // zoom > 5  : bicubic/FSR reconstruction → nearest (saves ~15 tex reads)
   // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)

@@ -184,6 +184,84 @@ fn sys_sync_land_upload_budget(
     *upload_budget = LandUploadBudget::from_settings(&settings);
 }
 
+fn sys_apply_land_shader_simplification_override(
+    settings: Res<crate::external_data::settings::Settings>,
+    uniform_state: Res<crate::external_data::shader_presets::UniformState>,
+    shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
+    mut last_override: Local<Option<crate::external_data::settings::SectWorldMapShaderSimplification>>,
+) {
+    let override_config = settings.worldmap_rendering.shader_simplification.clone();
+    let force_changed = *last_override != Some(override_config.clone());
+    let force_minimal = override_config.force_minimal_shader;
+    let force_flat_fragment = override_config.force_flat_fragment_shader;
+    let any_override = force_minimal || force_flat_fragment;
+
+    if !force_changed && !(any_override && uniform_state.is_changed()) {
+        return;
+    }
+
+    let Some(shared_mat) = shared_mat else {
+        return;
+    };
+    let Some(mat) = materials.get_mut(&shared_mat.0) else {
+        return;
+    };
+
+    if force_flat_fragment || force_minimal {
+        mat.extension.effects_uniform.shading_mode = if force_flat_fragment { 3 } else { 0 };
+        mat.extension.effects_uniform.normal_mode = 0;
+        mat.extension.effects_uniform.enable_blur = 0;
+        mat.extension.effects_uniform.enable_linear_filtering = 0;
+        mat.extension.effects_uniform.reconstruction_mode = 0;
+        mat.extension.effects_uniform.sharpening_amount = 0.0;
+        mat.extension.effects_uniform.blur_strength = 0.0;
+        mat.extension.effects_uniform.blur_radius = 0.0;
+
+        mat.extension.global_lighting_uniform.enable_fog = 0;
+        mat.extension.global_lighting_uniform.enable_grading = 0;
+        mat.extension.global_lighting_uniform.enable_gloom = 0;
+
+        mat.extension.land_lighting_uniform.enable_bent = 0;
+        mat.extension.land_lighting_uniform.specular_strength = 0.0;
+        mat.extension.land_lighting_uniform.rim_strength = 0.0;
+        mat.extension.land_lighting_uniform.fill_strength = 0.0;
+        mat.extension.land_lighting_uniform.sharpness_mix = 0.0;
+
+        // Make the fragment path take the intentionally cheap branch even when zoom would
+        // normally keep full-res sampling.
+        mat.extension.scene_uniform.adaptive_zoom_simplification = 1.0;
+
+        if force_changed {
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::RenderWorldLand,
+                if force_flat_fragment {
+                    "Forced flat land fragment shader override enabled."
+                } else {
+                    "Forced minimal land shader override enabled."
+                },
+            );
+        }
+    } else {
+        mat.extension.effects_uniform = uniform_state.effects;
+        mat.extension.global_lighting_uniform = uniform_state.lighting;
+        mat.extension.land_lighting_uniform = uniform_state.land_lighting;
+        mat.extension.scene_uniform.global_lighting = uniform_state.global_lighting;
+        mat.extension.scene_uniform.adaptive_zoom_simplification = 0.0;
+
+        if force_changed {
+            console_logger::one(
+                LogSev::Info,
+                LogAbout::RenderWorldLand,
+                "Forced land shader override disabled.",
+            );
+        }
+    }
+
+    *last_override = Some(override_config);
+}
+
 /// Establishes material, buffer pool, diagnostics, and the draw system.
 pub struct DrawLandChunkMeshPlugin {
     pub registered_by: &'static str,
@@ -288,6 +366,9 @@ impl Plugin for DrawLandChunkMeshPlugin {
                         .after(SceneRenderLandSysSet::SyncLandChunks)
                         .run_if(in_state(AppState::InGame)),
                     sys_update_shared_land_material.run_if(in_state(AppState::InGame)),
+                    sys_apply_land_shader_simplification_override
+                        .run_if(in_state(AppState::InGame))
+                        .after(sys_update_shared_land_material),
                 ),
             )
             .add_systems(First, tile_atlas::sys_clear_atlas_uploads)

@@ -113,7 +113,7 @@ pub struct TextureFile {
 
 impl TextureFile {
     /// Provides access to textures natively mapped in UOP layout without
-    /// decompressing the format (like `image_dds`) to raw RGBA.
+    /// decompressing the format through `dds` to raw RGBA.
     pub fn raw_bytes(&self) -> &[u8] {
         &self.raw_data
     }
@@ -124,12 +124,19 @@ impl TextureFile {
     pub fn decode_to_rgba(&self) -> eyre::Result<DynamicImage> {
         match self.format {
             ECImageFormat::DDS => {
-                let mut cursor = Cursor::new(&self.raw_data[..]);
-                let dds = ddsfile::Dds::read(&mut cursor).wrap_err("Failed reading DDS header")?;
-                let dds_image =
-                    image_dds::image_from_dds(&dds, 0).wrap_err("Failed extracting DDS image")?;
-                let (w, h) = dds_image.dimensions();
-                let image_buffer = ImageBuffer::from_raw(w, h, dds_image.into_raw())
+                let cursor = Cursor::new(&self.raw_data[..]);
+                let mut decoder = dds::Decoder::new(cursor).wrap_err("Failed reading DDS header")?;
+                let size = decoder.main_size();
+                let rgba_len = dds::ColorFormat::RGBA_U8
+                    .buffer_size(size)
+                    .ok_or_else(|| eyre::eyre!("DDS image is too large to decode"))?;
+                let mut rgba = vec![0u8; rgba_len];
+                let image = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8)
+                    .ok_or_else(|| eyre::eyre!("Could not create DDS decode buffer"))?;
+                decoder
+                    .read_surface(image)
+                    .wrap_err("Failed decoding DDS image")?;
+                let image_buffer = ImageBuffer::from_raw(size.width, size.height, rgba)
                     .ok_or_else(|| eyre::eyre!("Could not map buffer"))?;
                 Ok(DynamicImage::ImageRgba8(image_buffer))
             }

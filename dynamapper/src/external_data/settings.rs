@@ -89,6 +89,59 @@ pub struct SectMaps {
 pub struct SectWorldMapRendering {
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
+    #[serde(default)]
+    pub diagnostics: SectWorldMapDiagnostics,
+    #[serde(default)]
+    pub shader_simplification: SectWorldMapShaderSimplification,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub struct SectWorldMapShaderSimplification {
+    /// Forces a temporary minimal terrain shader configuration on the shared land material.
+    #[serde(default)]
+    pub force_minimal_shader: bool,
+    /// Forces the terrain fragment shader to return a flat debug color immediately.
+    #[serde(default)]
+    pub force_flat_fragment_shader: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct SectWorldMapDiagnostics {
+    /// Enables Bevy's low-level render diagnostics plugin.
+    ///
+    /// This gathers GPU pass timings and pipeline statistics. It is useful when profiling, but
+    /// on some drivers it can perturb frame time noticeably. Restart required after changing it.
+    #[serde(default = "default_worldmap_diagnostics_enable_render_diagnostics")]
+    pub enable_render_diagnostics: bool,
+    /// Enables compact periodic worldmap diagnostics in the console.
+    #[serde(default)]
+    pub dump_to_console: bool,
+    /// Period between compact diagnostics dumps.
+    #[serde(default = "default_worldmap_diagnostics_dump_interval_sec")]
+    pub dump_interval_sec: f32,
+    /// Include a compact render-pass GPU breakdown in the dump.
+    #[serde(default = "default_worldmap_diagnostics_log_render_breakdown")]
+    pub log_render_breakdown: bool,
+    /// Include compact world/chunk state in the dump.
+    #[serde(default = "default_worldmap_diagnostics_log_world_state")]
+    pub log_world_state: bool,
+    /// Include compact CPU-side system timing in the dump, plus auxiliary
+    /// upload/extract helpers and a residual frame-gap estimate.
+    #[serde(default = "default_worldmap_diagnostics_log_system_timers")]
+    pub log_system_timers: bool,
+}
+
+impl Default for SectWorldMapDiagnostics {
+    fn default() -> Self {
+        Self {
+            enable_render_diagnostics: default_worldmap_diagnostics_enable_render_diagnostics(),
+            dump_to_console: false,
+            dump_interval_sec: default_worldmap_diagnostics_dump_interval_sec(),
+            log_render_breakdown: default_worldmap_diagnostics_log_render_breakdown(),
+            log_world_state: default_worldmap_diagnostics_log_world_state(),
+            log_system_timers: default_worldmap_diagnostics_log_system_timers(),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -148,6 +201,26 @@ fn default_land_prepare_max_blocks_per_frame() -> usize {
     32_768
 }
 
+fn default_worldmap_diagnostics_dump_interval_sec() -> f32 {
+    2.0
+}
+
+fn default_worldmap_diagnostics_enable_render_diagnostics() -> bool {
+    true
+}
+
+fn default_worldmap_diagnostics_log_render_breakdown() -> bool {
+    true
+}
+
+fn default_worldmap_diagnostics_log_world_state() -> bool {
+    true
+}
+
+fn default_worldmap_diagnostics_log_system_timers() -> bool {
+    true
+}
+
 fn default_land_upload_max_ops_per_frame() -> usize {
     8
 }
@@ -166,11 +239,9 @@ pub struct SectPerformance {
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectGraphics {
     pub lossy_texture_compression: bool,
-    #[serde(default)]
     pub lossy_texture_compression_backend: LossyTextureCompressionBackend,
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
-    #[serde(default)]
     pub anti_aliasing: AntiAliasingMode,
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
@@ -216,9 +287,19 @@ impl AntiAliasingMode {
 #[serde(rename_all = "snake_case")]
 pub enum LossyTextureCompressionBackend {
     #[default]
-    ImageDds,
+    Dds,
     BlockCompression,
     Ispc,
+}
+
+impl LossyTextureCompressionBackend {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Dds => "dds",
+            Self::BlockCompression => "block_compression",
+            Self::Ispc => "ispc",
+        }
+    }
 }
 
 impl SectGraphics {
@@ -230,23 +311,30 @@ impl SectGraphics {
         }
 
         match self.lossy_texture_compression_backend {
-            LossyTextureCompressionBackend::ImageDds => {
-                Some(LossyTextureCompressionBackend::ImageDds)
-            }
+            LossyTextureCompressionBackend::Dds => Some(LossyTextureCompressionBackend::Dds),
             LossyTextureCompressionBackend::BlockCompression => {
                 if is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) {
                     Some(LossyTextureCompressionBackend::BlockCompression)
                 } else {
-                    Some(LossyTextureCompressionBackend::ImageDds)
+                    Some(LossyTextureCompressionBackend::Dds)
                 }
             }
             LossyTextureCompressionBackend::Ispc => {
                 if is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) {
                     Some(LossyTextureCompressionBackend::Ispc)
                 } else {
-                    Some(LossyTextureCompressionBackend::ImageDds)
+                    Some(LossyTextureCompressionBackend::Dds)
                 }
             }
+        }
+    }
+
+    pub fn texture_compression_log_status(&self) -> String {
+        match self.active_lossy_texture_compression_backend() {
+            Some(backend) => {
+                format!("ON. Utilizing BC7 backend: {}.", backend.label())
+            }
+            None => "OFF. Terrain textures will use uncompressed RGBA8.".to_string(),
         }
     }
 
@@ -256,19 +344,19 @@ impl SectGraphics {
         }
 
         let warning = match self.lossy_texture_compression_backend {
-            LossyTextureCompressionBackend::ImageDds => None,
+            LossyTextureCompressionBackend::Dds => None,
             LossyTextureCompressionBackend::BlockCompression
                 if !is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) =>
             {
                 Some(
-                    "graphics.lossy_texture_compression_backend = \"block_compression\" requested, but this build was compiled without the `uddconv/block_compression` backend. Falling back to image_dds.",
+                    "graphics.lossy_texture_compression_backend = \"block_compression\" requested, but this build was compiled without the `uddconv/block_compression` backend. Falling back to dds.",
                 )
             }
             LossyTextureCompressionBackend::Ispc
                 if !is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) =>
             {
                 Some(
-                    "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/ispc` backend. Falling back to image_dds.",
+                    "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/ispc` backend. Falling back to dds.",
                 )
             }
             _ => None,
@@ -276,6 +364,21 @@ impl SectGraphics {
 
         if let Some(message) = warning {
             console_logger::one(LogSev::Warn, LogAbout::General, message);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TextureCompressionLogState {
+    enabled: bool,
+    active_backend: Option<LossyTextureCompressionBackend>,
+}
+
+impl TextureCompressionLogState {
+    fn from_graphics(graphics: &SectGraphics) -> Self {
+        Self {
+            enabled: graphics.lossy_texture_compression,
+            active_backend: graphics.active_lossy_texture_compression_backend(),
         }
     }
 }
@@ -546,6 +649,7 @@ impl Plugin for SettingsPlugin {
             .add_message::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
+            .add_systems(Update, sys_log_texture_compression_status)
             .insert_resource(SettingsSaveTimer({
                 let mut t = Timer::from_seconds(1.0, TimerMode::Once);
                 t.pause();
@@ -579,6 +683,26 @@ fn sys_startup_load_file(mut commands: Commands) {
         LogAbout::Startup,
         "Loaded settings file for global access.",
     );
+}
+
+fn sys_log_texture_compression_status(
+    settings: Res<Settings>,
+    mut last_logged_state: Local<Option<TextureCompressionLogState>>,
+) {
+    let current_state = TextureCompressionLogState::from_graphics(&settings.graphics);
+    if last_logged_state.as_ref() == Some(&current_state) {
+        return;
+    }
+
+    let prefix = if last_logged_state.is_none() {
+        "Startup texture compression state"
+    } else {
+        "Texture compression state changed"
+    };
+    let message = format!("{prefix}: {}", settings.graphics.texture_compression_log_status());
+    console_logger::one(LogSev::Info, LogAbout::Settings, &message);
+
+    *last_logged_state = Some(current_state);
 }
 
 /// Hot-reload system: polls file modification times every second, and updates the

@@ -105,7 +105,7 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
 
 **Design Rationale**: `GlobalLightingUniforms` contains lighting parameters that apply to all geometry (fog, tonemap, color grading, ambient) and will be shared with future art/item shaders. `LandLightingUniforms` contains parameters specific to land terrain that require 3D normals (bent normals, rim light, specular, fill sky/ground).
 
-**BC7 Compression**: When enabled in settings, terrain textures are compressed to BC7 on CPU using the portable `image_dds` path by default, with optional `block_compression` or `intel_tex_2` acceleration, reducing VRAM usage ~8x (~160MB → ~20MB).
+**BC7 Compression**: When enabled in settings, terrain textures are compressed to BC7 on CPU using `dds` as the portable baseline backend, with `block_compression` or `intel_tex_2` as alternatives, reducing VRAM usage ~8x (~160MB → ~20MB).
 
 **CRITICAL**: Rust struct layout in `mesh_material.rs` must **exactly** match shader structs in `bindings.wgsl`, including `std140` alignment and padding.
 
@@ -121,7 +121,8 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
 
 ### Configuration Rules (TOML Settings)
 
-- **No Default Values in Rust**: Never use `.unwrap_or()`, `.unwrap_or_default()`, or similar fallback patterns when loading TOML settings.
+- **No Default Values in Rust**: Never use `.unwrap_or()`, `.unwrap_or_default()`, or similar fallback patterns when loading TOML settings. Do NOT hardcode
+ default values in Rust code.
 - **Explicit Configuration**: All settings must be explicitly defined in TOML files. Hidden defaults in Rust code are difficult to discover and lead to configuration drift.
 - **Fail Fast**: If a required setting is missing from the TOML file, the application should fail with a clear error message indicating which setting is missing.
 - **Example Pattern**:
@@ -226,7 +227,7 @@ Calling `get_mut()` on Materials or Assets inside Update systems triggers Bevy's
 ### 6.3 BC7 Compression & VRAM
 
 - **Savings**: ~160MB → ~20MB (~8x reduction)
-- **Default Library**: `image_dds`
+- **Preferred Library**: `dds`
 - **Optional Accelerator**: `intel_tex_2` with `alpha_basic_settings`
 - **Alignment**: `bytes_per_row = (width + 3) / 4 * 16` (4x4 blocks)
 

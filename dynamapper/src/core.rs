@@ -14,7 +14,7 @@ use crate::{
     core::{
         app_states::*,
         bevy_log_filter::custom_bevy_log_config,
-        diagnostics::{add_diagnostics_plugins, sys_log_gpu_preprocessing_mode}, render::scene::camera::UO_TILE_PIXEL_SIZE,
+        diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin}, render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
     external_data::{ExternalDataPlugin, settings},
     util_lib::tracked_plugin::{sys_log_plugin_registry_tree, set_plugin_log_toggles, TrackedPlugin, log_plugin_build},
@@ -24,10 +24,7 @@ use bevy::{
     //ecs::schedule::ExecutorKind,
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
-    render::{
-        settings::{RenderCreation, WgpuFeatures, WgpuSettings},
-        RenderApp, RenderStartup,
-    },
+    render::settings::{RenderCreation, WgpuFeatures, WgpuSettings},
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
@@ -312,13 +309,11 @@ pub fn run_bevy_app() -> ExitCode {
 
     app.add_systems(Startup, sys_log_plugin_registry_tree.in_set(StartupSysSet::Done));
 
-    // One-shot render-world startup: log whether GPU indirect draw is active.
-    // GpuPreprocessingSupport lives only in the render world, not the main world.
-    app.sub_app_mut(RenderApp)
-        .add_systems(RenderStartup, sys_log_gpu_preprocessing_mode);
+    // One-shot startup log: report whether Bevy uses GPU preprocessing / indirect draw.
+    app.add_plugins(LogGpuPreprocessingModePlugin);
 
     // Manually add complex plugins or plugin tuples.
-    add_diagnostics_plugins(&mut app);
+    add_diagnostics_plugins(&mut app, &settings_data.worldmap_rendering.diagnostics);
 
     let result = app.run();
 

@@ -124,6 +124,15 @@ fn sys_setup_cam(
     let world_cam = commands.spawn((
         PlayerCamera,
         Camera3d::default(),
+        // Disable Bevy's fullscreen tonemapping pass: the land shader already
+        // performs its own Reinhard tonemapping, and the default
+        // Tonemapping::ReinhardLuminance adds a redundant resolution-dependent
+        // fullscreen blit every frame.
+        //bevy::core_pipeline::tonemapping::Tonemapping::None,
+        // Depth prepass: writes depth in a cheap pass (vertex-only, no custom
+        // fragment work) so the main pass benefits from hardware early-z
+        // rejection of occluded fragments behind terrain elevation.
+        //bevy::core_pipeline::prepass::DepthPrepass,
         Camera {
             order: 0, // Render world first
             ..default()
@@ -152,6 +161,7 @@ fn sys_setup_cam(
             Camera {
                 order: 10,                           // Render UI after world (on top)
                 clear_color: ClearColorConfig::None, // Don't clear, just overlay
+                //is_active: false,                    // TEMP: disabled for perf testing
                 ..default()
             },
             IsDefaultUiCamera,

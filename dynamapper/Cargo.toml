@@ -148,7 +148,7 @@ features = [
 
   # --- Built-in Data & LUTs ---
   #"default_font",        # Include a default font (ASCII only, ~20kB)
-  #"smaa_luts",           # Include SMAA Look Up Tables KTX2 Files
+  "smaa_luts",           # Include SMAA Look Up Tables KTX2 Files
   "tonemapping_luts", # Include tonemapping Look Up Tables KTX2 files.
   #"bluenoise_texture",  # Include blue noise KTX2 file used by environment maps, Solari and atmosphere
 
@@ -166,15 +166,15 @@ features = [
   #"statically-linked-dxc",  # Statically linked DXC shader compiler for DirectX 12
 
   # --- Asset File Format Support ---
-  "png",    # PNG image format support
-  "bmp",    # BMP image format support
-  "dds",    # DDS compressed texture support
-  "ico",    # ICO image format support
-  "jpeg",   # JPEG image format support
-  #"ktx2",   # KTX2 compressed texture support
-  #"zstd_c", # C Zstandard decompression for KTX2.
-  #"zstd_rust",           # Pure rust Zstandard decompression for KTX2.
-  "basis-universal",    # Basis Universal compressed texture support
+  "png",                 # PNG image format support
+  "bmp",                 # BMP image format support
+  "dds",                 # DDS compressed texture support
+  "ico",                 # ICO image format support
+  "jpeg",                # JPEG image format support
+  "ktx2",                # KTX2 compressed texture support
+  "zstd_c",              # C Zstandard decompression for KTX2.
+  #"zstd_rust",          # Pure rust Zstandard decompression for KTX2.
+  "basis-universal",     # Basis Universal compressed texture support
   #"exr",                # EXR image format support
   #"ff",                 # Farbfeld image format support
   #"gif",                # GIF image format support
@@ -241,7 +241,8 @@ features = [
   #"sysinfo_plugin",     # Enables system information diagnostic plugin
   #"trace",              # Tracing support
   #"trace_chrome",       # Tracing support, saving a file in Chrome Tracing format
-  #"trace_tracy",        # Tracing support, exposing a port for Tracy
+  # Tracy is enabled via this crate's `trace_tracy` feature below so profiling
+  # builds stay opt-in instead of always paying tracing overhead.
   #"trace_tracy_memory", # Tracing support, with memory profiling, for Tracy
   #"track_location",     # Enables source location tracking for change detection
 

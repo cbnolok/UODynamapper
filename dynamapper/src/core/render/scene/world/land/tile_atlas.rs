@@ -410,7 +410,14 @@ pub struct RenderAtlasUploads(pub Vec<AtlasUpload>);
 pub fn sys_extract_atlas_uploads(
     tile_atlas: Extract<Res<TileAtlas>>,
     mut render_uploads: ResMut<RenderAtlasUploads>,
+    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
+    let _trace_span = crate::tracy_span!("worldmap::atlas_extract_uploads");
+    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+        &diagnostics,
+        crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasExtract,
+    );
+
     if !tile_atlas.extract_staging.is_empty() {
         /*
         let count = tile_atlas.extract_staging.len();
@@ -430,7 +437,14 @@ pub fn sys_extract_atlas_uploads(
 pub fn sys_clear_atlas_uploads(
     mut tile_atlas: ResMut<TileAtlas>,
     telemetry: Res<super::LandUploadTelemetry>,
+    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
+    let _trace_span = crate::tracy_span!("worldmap::atlas_stage_uploads");
+    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+        &diagnostics,
+        crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasStage,
+    );
+
     let TileAtlas {
         params,
         cpu_mirror,
@@ -502,9 +516,16 @@ pub fn sys_render_upload_tile_atlas(
     atlas_handle: Res<TileAtlasImageHandle>,
     upload_budget: Res<super::LandUploadBudget>,
     telemetry: Res<super::LandUploadTelemetry>,
+    diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,
 ) {
+    let _trace_span = crate::tracy_span!("worldmap::atlas_render_uploads");
+    let _timer = crate::core::diagnostics::scoped_worldmap_cross_app_timer(
+        &diagnostics,
+        crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasUpload,
+    );
+
     if uploads.0.is_empty() {
         telemetry.record_submit(0, 0, 0, 0);
         return;

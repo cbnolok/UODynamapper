@@ -4,8 +4,8 @@
 [graphics]
 # Use BC7 texture compression to save VRAM
 lossy_texture_compression = false
-# BC7 encoder backend: "image_dds", "block_compression", or "ispc"
-lossy_texture_compression_backend = "image_dds"
+# BC7 encoder backend: "dds", "block_compression", or "ispc"
+lossy_texture_compression_backend = "dds"
 # Lower frame rate when the window is not focused
 reduce_unfocused_fps = true
 vsync = false

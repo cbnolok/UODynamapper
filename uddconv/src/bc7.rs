@@ -29,38 +29,31 @@ impl RawImageFormat {
 
 /// BC7 encoder implementations.
 ///
-/// `ImageDds` is the portability baseline and should remain the default choice.
-/// The other backends are optional accelerators when the target supports them.
+/// `Dds` is the portable baseline backend.
+/// The other backends are optional alternatives that can be faster on supported builds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bc7EncoderBackend {
+    Dds,
     BlockCompression,
-    ImageDds,
     Ispc,
 }
 
 impl Bc7EncoderBackend {
     pub const fn is_available(self) -> bool {
         match self {
+            Self::Dds => true,
             Self::BlockCompression => cfg!(feature = "block_compression"),
-            Self::ImageDds => true,
             Self::Ispc => cfg!(feature = "ispc"),
-        }
-    }
-
-    pub const fn fallback(self) -> Self {
-        match self {
-            Self::ImageDds => Self::ImageDds,
-            Self::BlockCompression | Self::Ispc => Self::ImageDds,
         }
     }
 
     pub const fn unavailable_reason(self) -> Option<&'static str> {
         match self {
+            Self::Dds => None,
             Self::BlockCompression if cfg!(feature = "block_compression") => None,
             Self::BlockCompression => Some(
                 "this build does not include uddconv/block_compression support for the block_compression backend",
             ),
-            Self::ImageDds => None,
             Self::Ispc if cfg!(feature = "ispc") => None,
             Self::Ispc => Some(
                 "this build does not include uddconv/ispc support for the Intel ISPC backend",
@@ -77,8 +70,27 @@ pub const fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7Encod
     if backend.is_available() {
         backend
     } else {
-        // Optional backends always degrade to the portable implementation.
-        backend.fallback()
+        match backend {
+            Bc7EncoderBackend::Dds => backend,
+            Bc7EncoderBackend::BlockCompression => {
+                if Bc7EncoderBackend::Dds.is_available() {
+                    Bc7EncoderBackend::Dds
+                } else if Bc7EncoderBackend::Ispc.is_available() {
+                    Bc7EncoderBackend::Ispc
+                } else {
+                    backend
+                }
+            }
+            Bc7EncoderBackend::Ispc => {
+                if Bc7EncoderBackend::Dds.is_available() {
+                    Bc7EncoderBackend::Dds
+                } else if Bc7EncoderBackend::BlockCompression.is_available() {
+                    Bc7EncoderBackend::BlockCompression
+                } else {
+                    backend
+                }
+            }
+        }
     }
 }
 
@@ -483,10 +495,10 @@ pub fn encode_to_bc7(
     let backend = resolve_bc7_encoder_backend(backend);
 
     let blocks = match backend {
+        Bc7EncoderBackend::Dds => encode_with_dds(rgba_pixels.as_ref(), extent)?,
         Bc7EncoderBackend::BlockCompression => {
             encode_with_block_compression(rgba_pixels.as_ref(), extent)?
         }
-        Bc7EncoderBackend::ImageDds => encode_with_image_dds(rgba_pixels.as_ref(), extent)?,
         Bc7EncoderBackend::Ispc => encode_with_ispc(rgba_pixels.as_ref(), extent)?,
     };
 
@@ -550,7 +562,8 @@ pub fn decode_bc7(
     extent: ImageExtent,
     output_format: RawImageFormat,
 ) -> Result<Vec<u8>, UddconvError> {
-    use image_dds::{ImageFormat, Surface};
+    use dds::{ColorFormat, DecodeOptions, Format, ImageViewMut, Size};
+    use std::io::Cursor;
 
     let expected_len = expected_bc7_byte_len(extent);
     if blocks.len() != expected_len {
@@ -560,24 +573,26 @@ pub fn decode_bc7(
         });
     }
 
-    // `image_dds` can decode BC7 directly from a raw surface description, so we do not need
-    // a DDS container or padded staging buffer here.
-    let rgba = Surface {
-        width: extent.width(),
-        height: extent.height(),
-        depth: 1,
-        layers: 1,
-        mipmaps: 1,
-        image_format: ImageFormat::BC7RgbaUnorm,
-        data: blocks,
-    }
-    .decode_rgba8()
-    .map_err(|error| UddconvError::BackendOperationFailed {
-        backend: Bc7EncoderBackend::ImageDds,
-        operation: "decode",
-        message: error.to_string(),
-    })?
-    .data;
+    // `dds` can decode BC7 directly from the raw block stream, so this path does not need
+    // a temporary DDS container wrapper.
+    let mut rgba = vec![0u8; extent.byte_len(RawImageFormat::Rgba8888)];
+    let size = Size::new(extent.width(), extent.height());
+    let image = ImageViewMut::new(&mut rgba, size, ColorFormat::RGBA_U8).ok_or_else(|| {
+        UddconvError::BackendOperationFailed {
+            backend: Bc7EncoderBackend::Dds,
+            operation: "decode",
+            message: "failed to construct RGBA8 output view".to_string(),
+        }
+    })?;
+    let options = DecodeOptions::default();
+    let mut reader = Cursor::new(blocks);
+    dds::decode(&mut reader, image, Format::BC7_UNORM, &options).map_err(|error| {
+        UddconvError::BackendOperationFailed {
+            backend: Bc7EncoderBackend::Dds,
+            operation: "decode",
+            message: error.to_string(),
+        }
+    })?;
 
     Ok(match output_format {
         RawImageFormat::Rgba8888 => rgba,
@@ -711,37 +726,33 @@ fn encode_with_ispc(
     }
 }
 
-fn encode_with_image_dds(
+fn encode_with_dds(
     rgba_pixels: &[u8],
     extent: ImageExtent,
 ) -> Result<Vec<u8>, UddconvError> {
-    {
-        use image_dds::{ImageFormat, Mipmaps, Quality, SurfaceRgba8};
+    use dds::{ColorFormat, CompressionQuality, EncodeOptions, Format, ImageView, Size};
 
-        // This is the default backend because it is pure Rust and available on every target we support.
-        let surface = SurfaceRgba8 {
-            width: extent.width(),
-            height: extent.height(),
-            depth: 1,
-            layers: 1,
-            mipmaps: 1,
-            data: rgba_pixels,
-        };
+    let size = Size::new(extent.width(), extent.height());
+    let image = ImageView::new(rgba_pixels, size, ColorFormat::RGBA_U8).ok_or_else(|| {
+        UddconvError::BackendOperationFailed {
+            backend: Bc7EncoderBackend::Dds,
+            operation: "encode",
+            message: "failed to construct RGBA8 input view".to_string(),
+        }
+    })?;
+    let mut options = EncodeOptions::default();
+    options.quality = CompressionQuality::Normal;
 
-        let compressed = surface
-            .encode(
-                ImageFormat::BC7RgbaUnorm,
-                Quality::Normal,
-                Mipmaps::Disabled,
-            )
-            .map_err(|error| UddconvError::BackendOperationFailed {
-                backend: Bc7EncoderBackend::ImageDds,
-                operation: "encode",
-                message: error.to_string(),
-            })?;
+    let mut blocks = Vec::with_capacity(expected_bc7_byte_len(extent));
+    dds::encode(&mut blocks, image, Format::BC7_UNORM, None, &options).map_err(|error| {
+        UddconvError::BackendOperationFailed {
+            backend: Bc7EncoderBackend::Dds,
+            operation: "encode",
+            message: error.to_string(),
+        }
+    })?;
 
-        Ok(compressed.data)
-    }
+    Ok(blocks)
 }
 
 #[cfg(test)]
@@ -763,11 +774,12 @@ mod tests {
     fn rgb888_roundtrip_preserves_sizes() {
         let extent = ImageExtent::new(4, 4).unwrap();
         let rgb = vec![96u8; extent.byte_len(RawImageFormat::Rgb888)];
+        let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
         let bc7 = encode_to_bc7(
             &rgb,
             extent,
             RawImageFormat::Rgb888,
-            Bc7EncoderBackend::ImageDds,
+            backend,
         )
         .unwrap();
         let decoded = decode_bc7_to_rgb888(bc7.blocks(), extent).unwrap();
@@ -780,11 +792,12 @@ mod tests {
     fn rgba8888_roundtrip_preserves_sizes() {
         let extent = ImageExtent::new(4, 4).unwrap();
         let rgba = vec![255u8; extent.byte_len(RawImageFormat::Rgba8888)];
+        let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
         let bc7 = encode_to_bc7(
             &rgba,
             extent,
             RawImageFormat::Rgba8888,
-            Bc7EncoderBackend::ImageDds,
+            backend,
         )
         .unwrap();
         let decoded = decode_bc7_to_rgba8888(bc7.blocks(), extent).unwrap();
@@ -797,11 +810,12 @@ mod tests {
     fn vram_texture_container_roundtrip_preserves_bc7_metadata() {
         let extent = ImageExtent::new(8, 4).unwrap();
         let rgba = vec![128u8; extent.byte_len(RawImageFormat::Rgba8888)];
+        let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
         let texture = encode_for_vram(
             &rgba,
             extent,
             RawImageFormat::Rgba8888,
-            VramTextureEncoding::Bc7(Bc7EncoderBackend::ImageDds),
+            VramTextureEncoding::Bc7(backend),
         )
         .unwrap();
 
@@ -814,21 +828,29 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_optional_backends_fall_back_to_image_dds() {
+    fn unavailable_backends_resolve_to_a_supported_backend_when_possible() {
         assert_eq!(
             resolve_bc7_encoder_backend(Bc7EncoderBackend::BlockCompression),
             if cfg!(feature = "block_compression") {
                 Bc7EncoderBackend::BlockCompression
+            } else if Bc7EncoderBackend::Dds.is_available() {
+                Bc7EncoderBackend::Dds
+            } else if cfg!(feature = "ispc") {
+                Bc7EncoderBackend::Ispc
             } else {
-                Bc7EncoderBackend::ImageDds
+                Bc7EncoderBackend::BlockCompression
             }
         );
         assert_eq!(
             resolve_bc7_encoder_backend(Bc7EncoderBackend::Ispc),
             if cfg!(feature = "ispc") {
                 Bc7EncoderBackend::Ispc
+            } else if Bc7EncoderBackend::Dds.is_available() {
+                Bc7EncoderBackend::Dds
+            } else if cfg!(feature = "block_compression") {
+                Bc7EncoderBackend::BlockCompression
             } else {
-                Bc7EncoderBackend::ImageDds
+                Bc7EncoderBackend::Ispc
             }
         );
     }
