@@ -31,6 +31,7 @@ adler32 = "1.2.0"
 flate2 = { version = "1.0.30", features = ["zlib-ng"], default-features = false }
 rayon = "1.8.0"
 zstd = "0.13"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
 
 [features]
 profiling = []

@@ -1,2 +1,2 @@
-pub mod zstd_tests;
-pub mod uddp_tests;
+pub mod legacy_tests;
+pub mod uop_tests;

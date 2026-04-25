@@ -1,16 +1,16 @@
-//! UDDF single-payload wrapper for standalone artifacts using the UDDP codec model.
+//! UDDF single-payload wrapper kept stable while UDDP moves to the new format.
 //!
-//! Binary layout covered by this module:
-//! - Fixed wrapper header with magic/version/payload format/codec bits.
-//! - `u128` flags split across two `u64` words on disk.
-//! - Aligned payload area starting at `payload_offset`.
-//! - The payload bytes are stored raw or compressed according to `codec_bits`.
-//! - In practice the payload is the very last part of the file: first the fixed
-//!   header is written, then zero padding up to `payload_offset`, then the
-//!   payload blob itself.
+//! The current wrapper stores only the fields still used by the new UDD design:
+//! - one current version only
+//! - one explicit `content_id` field
+//! - one compact wrapper codec field for compression only
+//! - one `u64` flags field
+//! - no checksum or backwards-compatibility branches
 
-use crate::uop::codec::{align_up, decode_payload, encode_payload, CodecBits, UddpCompression, UddpContentId, UDDP_DEFAULT_ALIGNMENT};
-use crate::uop::hash::hash_data_block;
+use crate::udd::codec::{
+    align_up, decode_payload, encode_payload, CodecBits, UDDP_DEFAULT_ALIGNMENT,
+    UddpCompression, UddpContentId,
+};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -19,20 +19,19 @@ use std::sync::Arc;
 
 const UDDF_MAGIC: &[u8; 4] = b"UDDF";
 const UDDF_VERSION: u32 = 1;
-const UDDF_HEADER_SIZE: u64 = 72;
+const UDDF_HEADER_SIZE: u64 = 56;
 
 #[derive(Debug, Clone)]
 pub struct UddfFile {
     version: u32,
     alignment: u64,
     payload_format: u32,
+    content_id: u16,
     codec_bits: CodecBits,
-    flags: u128,
-    /// Absolute file offset where the payload blob begins.
+    flags: u64,
     payload_offset: u64,
     compressed_size: u64,
     raw_size: u64,
-    checksum: u32,
     payload: Arc<[u8]>,
 }
 
@@ -42,22 +41,21 @@ impl UddfFile {
         payload_format: u32,
         content_id: u16,
         compression: UddpCompression,
-        flags: u128,
+        flags: u64,
     ) -> io::Result<Self> {
-        let codec_bits = CodecBits::new(content_id, compression)?;
+        let codec_bits = CodecBits::new(compression)?;
         let encoded = encode_payload(payload, compression)?;
-        let checksum = hash_data_block(&encoded)?;
 
         Ok(Self {
             version: UDDF_VERSION,
             alignment: UDDP_DEFAULT_ALIGNMENT,
             payload_format,
+            content_id,
             codec_bits,
             flags,
             payload_offset: align_up(UDDF_HEADER_SIZE, UDDP_DEFAULT_ALIGNMENT)?,
             compressed_size: encoded.len() as u64,
             raw_size: payload.len() as u64,
-            checksum,
             payload: Arc::from(encoded),
         })
     }
@@ -67,7 +65,7 @@ impl UddfFile {
         payload_format: u32,
         content_id: UddpContentId,
         compression: UddpCompression,
-        flags: u128,
+        flags: u64,
     ) -> io::Result<Self> {
         Self::wrap_bytes(payload, payload_format, content_id.into(), compression, flags)
     }
@@ -80,11 +78,15 @@ impl UddfFile {
         self.codec_bits
     }
 
-    pub fn typed_content_id(&self) -> Option<UddpContentId> {
-        self.codec_bits.typed_content_id()
+    pub fn content_id(&self) -> u16 {
+        self.content_id
     }
 
-    pub fn flags(&self) -> u128 {
+    pub fn typed_content_id(&self) -> Option<UddpContentId> {
+        Some(UddpContentId::from_u16(self.content_id).unwrap_or(UddpContentId::Unknown))
+    }
+
+    pub fn flags(&self) -> u64 {
         self.flags
     }
 
@@ -122,24 +124,19 @@ impl UddfFile {
     pub fn save_to_writer<W: Write + Seek>(&self, writer: &mut W) -> io::Result<()> {
         let payload_offset = align_up(UDDF_HEADER_SIZE, self.alignment)?;
 
-        // Write the fixed header first. The payload itself is not embedded inside
-        // the header; it is appended later at `payload_offset`.
         writer.seek(SeekFrom::Start(0))?;
         writer.write_all(UDDF_MAGIC)?;
         writer.write_u32::<LittleEndian>(self.version)?;
         writer.write_u32::<LittleEndian>(self.payload_format)?;
+        writer.write_u16::<LittleEndian>(self.content_id)?;
         writer.write_u16::<LittleEndian>(self.codec_bits.raw())?;
-        writer.write_u16::<LittleEndian>(0)?;
         writer.write_u64::<LittleEndian>(payload_offset)?;
         writer.write_u64::<LittleEndian>(self.compressed_size)?;
         writer.write_u64::<LittleEndian>(self.raw_size)?;
-        writer.write_u32::<LittleEndian>(self.checksum)?;
         writer.write_u32::<LittleEndian>(self.alignment as u32)?;
-        writer.write_u64::<LittleEndian>(self.flags as u64)?;
-        writer.write_u64::<LittleEndian>((self.flags >> 64) as u64)?;
         writer.write_u64::<LittleEndian>(0)?;
+        writer.write_u64::<LittleEndian>(self.flags)?;
 
-        // Fill the alignment gap, then emit the single wrapped payload blob.
         pad_to(writer, payload_offset)?;
         writer.write_all(&self.payload)?;
         Ok(())
@@ -156,22 +153,26 @@ impl UddfFile {
         }
 
         let version = reader.read_u32::<LittleEndian>()?;
+        if version != UDDF_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported UDDF version {version}"),
+            ));
+        }
+
         let payload_format = reader.read_u32::<LittleEndian>()?;
+        let content_id = reader.read_u16::<LittleEndian>()?;
         let codec_bits = CodecBits::from_raw(reader.read_u16::<LittleEndian>()?);
-        let _reserved0 = reader.read_u16::<LittleEndian>()?;
         let payload_offset = reader.read_u64::<LittleEndian>()?;
         let compressed_size = reader.read_u64::<LittleEndian>()?;
         let raw_size = reader.read_u64::<LittleEndian>()?;
-        let checksum = reader.read_u32::<LittleEndian>()?;
         let alignment = reader.read_u32::<LittleEndian>()? as u64;
-        let flags_low = reader.read_u64::<LittleEndian>()?;
-        let flags_high = reader.read_u64::<LittleEndian>()?;
-        let _reserved1 = reader.read_u64::<LittleEndian>()?;
+        let _reserved0 = reader.read_u64::<LittleEndian>()?;
+        let flags = reader.read_u64::<LittleEndian>()?;
+        codec_bits.compression()?;
 
         align_up(0, alignment)?;
 
-        // After parsing the fixed header, jump to the payload area and read the
-        // single blob referenced by `payload_offset` and `compressed_size`.
         reader.seek(SeekFrom::Start(payload_offset))?;
         let mut payload = vec![0u8; compressed_size as usize];
         reader.read_exact(&mut payload)?;
@@ -180,12 +181,12 @@ impl UddfFile {
             version,
             alignment,
             payload_format,
+            content_id,
             codec_bits,
-            flags: ((flags_high as u128) << 64) | flags_low as u128,
+            flags,
             payload_offset,
             compressed_size,
             raw_size,
-            checksum,
             payload: Arc::from(payload),
         })
     }

@@ -15,424 +15,487 @@
 //!   at its own payload through `data_block_address`.
 
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use indexmap::IndexMap;
 use nohash_hasher::BuildNoHashHasher;
+
 use crate::uop::block::UopBlock;
 use crate::uop::file::{CompressionFlag, UopFile};
 use crate::uop::hash;
 
-#[allow(dead_code)]
+const UOP_MAGIC: [u8; 4] = *b"MYP\0";
 const MIN_SUPPORTED_VERSION: u32 = 4;
 const MAX_SUPPORTED_VERSION: u32 = 5;
+const DEFAULT_VERSION: u32 = MAX_SUPPORTED_VERSION;
+const DEFAULT_BLOCK_SIZE: u32 = 100;
+const PACKAGE_MISC: u32 = 0xFD23_EC43;
 const PACKAGE_HEADER_SIZE: u64 = 32;
-const V5_FIRST_BLOCK_HEADER_OFFSET: u64 = 0x200;
+const BLOCK_HEADER_SIZE: u64 = 12;
+const FILE_ENTRY_SIZE: u64 = 34;
 
-/// Represents a UOP package.
+/// Select how package payload bytes are materialized during load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadMode {
+    /// Parse metadata only and leave payload bytes on disk until requested.
+    Lazy,
+    /// Parse metadata and preload all compressed payload bytes immediately.
+    Eager,
+}
+
+/// UOP package reader/writer with selectable payload loading and a package-level hash index.
 pub struct UopPackage {
     /// The version of the UOP package.
     version: u32,
-    /// A miscellaneous value, usually 0xFD23EC43.
     misc: u32,
-    /// The address of the first block in the UOP file.
     start_address: u64,
-    /// The maximum number of files per block.
     block_size: u32,
-    /// The total number of files in the package.
     file_count: u32,
-    /// The name of the package file.
-    #[allow(dead_code)]
-    package_name: String,
-    /// The parsed and mapped files contained within this package, indexed by their u64 hash.
-    files: IndexMap<u64, UopFile, BuildNoHashHasher<u64>>,
+    package_path: Option<PathBuf>,
+    load_mode: LoadMode,
+    blocks: Vec<UopBlock>,
+    files_by_hash: IndexMap<u64, UopFile, BuildNoHashHasher<u64>>,
+    hash_index_dirty: bool,
 }
 
 impl UopPackage {
-    pub const DEFAULT_VERSION: u32 = 4;
-    pub const DEFAULT_BLOCK_SIZE: u32 = 512 * 1000; // 512 kb.
+    /// Creates a new package with an explicit version and block capacity.
+    ///
+    /// The writer keeps the historical UOP constraints explicit here instead of
+    /// silently clamping values because package versions and per-block capacity
+    /// are part of the binary layout, not just runtime tuning knobs.
+    pub fn new(version: u32, block_size: u32) -> io::Result<Self> {
+        if !(MIN_SUPPORTED_VERSION..=MAX_SUPPORTED_VERSION).contains(&version) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "unsupported UOP version {version}; expected {}..={}",
+                    MIN_SUPPORTED_VERSION, MAX_SUPPORTED_VERSION
+                ),
+            ));
+        }
 
-    /// Creates a new, empty `UopPackage`.
-    ///
-    /// # Arguments
-    ///
-    /// * `version` - The version of the UOP package.
-    /// * `block_size` - The maximum number of files per block.
-    pub fn new(version: u32, block_size: u32) -> Self {
-        UopPackage {
+        if block_size == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "block_size must be greater than zero",
+            ));
+        }
+
+        Ok(Self {
             version,
-            misc: 0xFD23EC43,
-            start_address: 0,
+            misc: PACKAGE_MISC,
+            start_address: PACKAGE_HEADER_SIZE,
             block_size,
             file_count: 0,
-            package_name: String::new(),
-            files: IndexMap::with_hasher(BuildNoHashHasher::default()),
-        }
+            package_path: None,
+            load_mode: LoadMode::Eager,
+            blocks: Vec::new(),
+            files_by_hash: IndexMap::with_hasher(BuildNoHashHasher::default()),
+            hash_index_dirty: false,
+        })
     }
 
+    /// Creates a package using the default writer settings.
     pub fn new_default() -> Self {
-        Self::new(Self::DEFAULT_VERSION, Self::DEFAULT_BLOCK_SIZE)
+        Self::new(DEFAULT_VERSION, DEFAULT_BLOCK_SIZE).expect("default UOP package settings are valid")
     }
 
-    /// Loads a `UopPackage` from a file.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - The path to the UOP file.
-// TODO: add lazy_load_files: bool.
-//  If false, load the compressed data in UopFile::compressed_data: Option<Vec<u8>>, then decompress into UopFile::compressed_data: Option<Vec<u8>> and free compressed_data.
-//    We actually cache compressed data when we are creating from zero (not loading) a file.
-//  If true, only load metadata.
-//  Add a fn to free a package or a file stored data.
-// Store the hashes and the file block and index
-    pub fn load(file_path: &Path) -> Result<Self, std::io::Error> {
-        let mut file = File::open(file_path)?;
+    pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::load_with_mode(path, LoadMode::Eager)
+    }
 
-        // Read and validate the package header
-        let mut myp0 = [0u8; 4];
-        file.read_exact(&mut myp0)?;
+    /// Load a package while choosing whether payload bytes are read eagerly or lazily.
+    pub fn load_with_mode(path: impl AsRef<Path>, load_mode: LoadMode) -> io::Result<Self> {
+        let path = path.as_ref();
+        let mut reader = File::open(path)?;
 
-        if &myp0 != b"MYP\0" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid Mythic Package file",
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+        if magic != UOP_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid UOP magic",
             ));
         }
 
-        let version = file.read_u32::<LittleEndian>()?;
-        if version > MAX_SUPPORTED_VERSION {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Unsupported Mythic Package version",
+        let version = reader.read_u32::<LittleEndian>()?;
+        if !(MIN_SUPPORTED_VERSION..=MAX_SUPPORTED_VERSION).contains(&version) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported UOP version {version}; expected {}..={}",
+                    MIN_SUPPORTED_VERSION, MAX_SUPPORTED_VERSION
+                ),
             ));
         }
 
-        let misc = file.read_u32::<LittleEndian>()?;
-        let start_address = file.read_u64::<LittleEndian>()?;
-        let block_size = file.read_u32::<LittleEndian>()?;
-        let file_count = file.read_u32::<LittleEndian>()?;
+        let misc = reader.read_u32::<LittleEndian>()?;
+        let start_address = reader.read_u64::<LittleEndian>()?;
+        let block_size = reader.read_u32::<LittleEndian>()?;
+        let file_count = reader.read_u32::<LittleEndian>()?;
 
-        // Seek to the first block and read all files
-        file.seek(SeekFrom::Start(start_address))?;
+        if start_address == 0 && file_count != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "non-empty UOP package has no first block address",
+            ));
+        }
 
-        let mut files = IndexMap::with_capacity_and_hasher(file_count as usize, BuildNoHashHasher::default());
+        let mut blocks = Vec::new();
         let mut next_block_address = start_address;
 
         while next_block_address != 0 {
-            let mut block = UopBlock::read(&mut file)?;
+            reader.seek(SeekFrom::Start(next_block_address))?;
+            let mut block = UopBlock::read(&mut reader)?;
             next_block_address = block.next_block_address();
-
-            // Extract the files, taking ownership away from the ephemeral UopBlock loop
-            for file_entry in block.files_mut().drain(..) {
-                if file_entry.filename_hash() != 0 {
-                    files.insert(file_entry.filename_hash(), file_entry);
-                }
+            if load_mode == LoadMode::Eager {
+                block.preload_data(&mut reader)?;
             }
-
-            if next_block_address != 0 {
-                file.seek(SeekFrom::Start(next_block_address))?;
-            }
+            blocks.push(block);
         }
 
-        Ok(UopPackage {
+        let mut package = Self {
             version,
             misc,
             start_address,
             block_size,
             file_count,
-            package_name: file_path.to_string_lossy().to_string(),
-            files,
-        })
+            package_path: Some(path.to_path_buf()),
+            load_mode,
+            blocks,
+            files_by_hash: IndexMap::with_hasher(BuildNoHashHasher::default()),
+            hash_index_dirty: false,
+        };
+        package.refresh_hash_index();
+        Ok(package)
     }
 
-    /// Preloads the data for all files in the package into memory.
-    /// Helpful for small files where sequential eager loading is faster.
-    pub fn preload_all(&mut self) -> Result<(), std::io::Error> {
-        let mut file = File::open(&self.package_name)?;
-
-        let current_pos = file.stream_position()?;
-        for file_entry in self.files.values_mut() {
-            if file_entry.has_size() && file_entry.data().is_none() {
-                file.seek(SeekFrom::Start(file_entry.data_block_address()))?;
-                let mut buffer = Vec::with_capacity(file_entry.compressed_size() as usize);
-                (&mut file).take(file_entry.compressed_size() as u64).read_to_end(&mut buffer)?;
-                file_entry.set_data(std::sync::Arc::from(buffer));
-            }
-        }
-        file.seek(SeekFrom::Start(current_pos))?;
-
-        Ok(())
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
-    /// Adds a file to the package.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - The path to the file to add.
-    /// * `packed_file_name` - The name of the file within the package.
-    /// * `compression` - The compression method to use.
-    pub fn add_file(&mut self, file_path: &str, packed_file_name: &str, compression: CompressionFlag) -> Result<(), std::io::Error> {
-        let mut file_data = File::open(file_path)?;
-        let hash = super::hash::hash_file_name_single(packed_file_name);
-        let new_file = UopFile::new().create_file(&mut file_data, hash, compression)?;
-
-        self.files.insert(hash, new_file);
-        self.file_count = self.files.len() as u32;
-
-        Ok(())
+    /// Return the configured payload load mode for this package instance.
+    pub fn load_mode(&self) -> LoadMode {
+        self.load_mode
     }
 
-    /// Adds a file from a memory buffer to the package.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - The file data to add.
-    /// * `packed_file_name` - The name of the file within the package.
-    /// * `compression` - The compression method to use.
-    pub fn add_file_from_memory(&mut self, data: &[u8], packed_file_name: &str, compression: CompressionFlag) -> Result<(), std::io::Error> {
-        let mut cursor = std::io::Cursor::new(data);
-        let hash = super::hash::hash_file_name_single(packed_file_name);
-        let new_file = UopFile::new().create_file(&mut cursor, hash, compression)?;
-
-        self.files.insert(hash, new_file);
-        self.file_count = self.files.len() as u32;
-
-        Ok(())
+    /// Return the maximum number of file records each block may hold.
+    pub fn block_size(&self) -> u32 {
+        self.block_size
     }
 
-    /// Finalizes and saves the package to a file.
-    ///
-    /// This method writes the package header, block headers, file headers, and file
-    /// data to the specified file.
-    ///
-    /// # Arguments
-    ///
-    /// * `uop_path` - The path to save the UOP file to.
-    pub fn finalize_and_save(&mut self, uop_path: &Path) -> Result<(), std::io::Error> {
-        let mut file = File::create(uop_path)?;
-        let mut header_buffer = Vec::new();
-
-        // Write UOP file header to buffer
-        header_buffer.write_all(b"MYP ")?;  // 0x50594D
-        header_buffer.write_u32::<LittleEndian>(self.version)?;
-        header_buffer.write_u32::<LittleEndian>(self.misc)?;
-
-        if self.version == 5 {
-            self.start_address = V5_FIRST_BLOCK_HEADER_OFFSET;
-        } else {
-            self.start_address = PACKAGE_HEADER_SIZE;
-        }
-        header_buffer.write_u64::<LittleEndian>(self.start_address)?;
-
-        header_buffer.write_u32::<LittleEndian>(self.block_size)?;
-        header_buffer.write_u32::<LittleEndian>(self.file_count)?;
-
-        if self.version == 5 {
-            let padding_size = V5_FIRST_BLOCK_HEADER_OFFSET - PACKAGE_HEADER_SIZE;
-            let padding = vec![0; padding_size as usize];
-            header_buffer.write_all(&padding)?;
-        }
-
-        let mut data_buffer = Vec::new();
-        let total_blocks = (self.files.len() as f32 / self.block_size as f32).ceil() as usize;
-        let mut current_data_offset = self.start_address + total_blocks as u64 * (4 + 8) + self.file_count as u64 * 34;
-        let mut block_addresses = Vec::with_capacity(total_blocks);
-
-        let mut current_block_chunk = Vec::with_capacity(self.block_size as usize);
-        let mut values_iter = self.files.values_mut().peekable();
-
-        while values_iter.peek().is_some() {
-            block_addresses.push(header_buffer.len() as u64);
-
-            // Gather files up to max block_size
-            current_block_chunk.clear();
-            for _ in 0..self.block_size {
-                if let Some(file) = values_iter.next() {
-                    current_block_chunk.push(file);
-                } else {
-                    break;
-                }
-            }
-
-            header_buffer.write_u32::<LittleEndian>(current_block_chunk.len() as u32)?;
-            header_buffer.write_u64::<LittleEndian>(0)?; // Next block format 0
-
-            for file_entry in &mut current_block_chunk {
-                file_entry.set_data_block_address(current_data_offset);
-                header_buffer.write_u64::<LittleEndian>(file_entry.data_block_address())?;
-                header_buffer.write_u32::<LittleEndian>(file_entry.data_block_length())?;
-                header_buffer.write_u32::<LittleEndian>(file_entry.compressed_size())?;
-                header_buffer.write_u32::<LittleEndian>(file_entry.decompressed_size())?;
-                header_buffer.write_u64::<LittleEndian>(file_entry.filename_hash())?;
-                header_buffer.write_u32::<LittleEndian>(file_entry.data_block_hash())?;
-                header_buffer.write_i16::<LittleEndian>(file_entry.compression() as i16)?;
-
-                let parsed_data = file_entry.data().expect("File data must be loaded before saving");
-                data_buffer.write_all(parsed_data)?;
-                current_data_offset += parsed_data.len() as u64;
-            }
-
-            let empty_file_header = vec![0; 34];
-            for _ in current_block_chunk.len()..self.block_size as usize {
-                header_buffer.write_all(&empty_file_header)?;
-            }
-        }
-
-        for i in 0..block_addresses.len() - 1 {
-            let block_address = block_addresses[i];
-            let next_block_address = block_addresses[i + 1];
-            let mut cursor = std::io::Cursor::new(&mut header_buffer);
-            cursor.seek(SeekFrom::Start(block_address + 4))?;
-            cursor.write_u64::<LittleEndian>(next_block_address)?;
-        }
-
-        file.write_all(&header_buffer)?;
-        file.write_all(&data_buffer)?;
-
-        Ok(())
+    /// Return the total logical file count advertised by the package.
+    pub fn file_count(&self) -> u32 {
+        self.file_count
     }
 
-    /// Returns a reference to a file in the package by its hash.
-    pub fn get_file_by_hash(&self, hash: u64) -> Option<&UopFile> {
-        self.files.get(&hash)
+    /// Expose the parsed block list for tooling and tests.
+    pub fn blocks(&self) -> &Vec<UopBlock> {
+        &self.blocks
     }
 
-    /// Returns a mutable reference to a file in the package by its hash.
-    pub fn get_file_by_hash_mut(&mut self, hash: u64) -> Option<&mut UopFile> {
-        self.files.get_mut(&hash)
+    /// Expose mutable block access for low-level package editing tools.
+    pub fn blocks_mut(&mut self) -> &mut Vec<UopBlock> {
+        self.hash_index_dirty = true;
+        &mut self.blocks
     }
 
-    /// Returns an iterator over the files in the package.
+    /// Return the package-owned hash index keyed by filename hash.
+    pub fn files_by_hash(&self) -> &IndexMap<u64, UopFile, BuildNoHashHasher<u64>> {
+        &self.files_by_hash
+    }
+
+    /// Iterate over all logical file entries in block order.
     pub fn iter_files(&self) -> impl Iterator<Item = &UopFile> {
-        self.files.values()
+        self.blocks.iter().flat_map(|block| block.files().iter())
     }
 
-    /// Recompresses all files in the UOP package with the specified compression level.
-    /// This method reads the raw data for each file, unpacks it, recompresses it,
-    /// and updates the file's metadata.
-    pub fn recompress(&mut self, compression_level: flate2::Compression) -> io::Result<()> {
-        // Create a temporary file to write the recompressed data
-        let temp_path = Path::new(&self.package_name).with_extension("uop.recompress.temp");
-        let mut temp_file = File::create(&temp_path)?;
+    /// Iterate mutably over all logical file entries in block order.
+    pub fn iter_files_mut(&mut self) -> impl Iterator<Item = &mut UopFile> {
+        self.hash_index_dirty = true;
+        self.blocks.iter_mut().flat_map(|block| block.files_mut().iter_mut())
+    }
 
-        // Write the UOP header to the temporary file
-        temp_file.write_u32::<LittleEndian>(0x50594D)?;
-        temp_file.write_u32::<LittleEndian>(self.version)?;
-        temp_file.write_u32::<LittleEndian>(0)?;
-        // Placeholder for first_table_offset, will be updated later
-        temp_file.write_u64::<LittleEndian>(0)?;
-        temp_file.write_u32::<LittleEndian>(self.block_size)?;
-        temp_file.write_u32::<LittleEndian>(self.file_count)?;
-        temp_file.write_u32::<LittleEndian>(0)?;
-        temp_file.write_u32::<LittleEndian>(0)?;
-        temp_file.write_u32::<LittleEndian>(0)?;
-        temp_file.write_u32::<LittleEndian>(0)?;
+    /// Find a file entry by its normalized filename hash.
+    pub fn get_file_by_hash(&self, filename_hash: u64) -> Option<&UopFile> {
+        if self.hash_index_dirty {
+            return self
+                .blocks
+                .iter()
+                .flat_map(|block| block.files().iter())
+                .find(|file| file.filename_hash() == filename_hash);
+        }
 
-        let mut current_data_offset = temp_file.stream_position()?;
-        let mut table_offsets = Vec::new();
+        self.files_by_hash.get(&filename_hash)
+    }
 
-        // Iterate through files and recompress them
-        for (i, file_entry) in self.files.values_mut().enumerate() {
-            // Read raw data if not already loaded
-            // if file_entry.data().is_empty() {
-            //     self.file.seek(SeekFrom::Start(file_entry.data_block_address()))?;
-            //     let mut raw_data = vec![0; file_entry.compressed_size() as usize];
-            //     self.file.read_exact(&mut raw_data)?;
-            //     file_entry.set_data(raw_data);
-            // }
-
-            // Unpack the data
-            let unpacked_data = file_entry.unpack()?;
-
-            // Recompress the data
-            let (recompressed_data, new_compression_flag) = match file_entry.compression() {
-                CompressionFlag::None => {
-                    let mut encoder =  flate2::write::ZlibEncoder::new(Vec::new(), compression_level);
-                    encoder.write_all(&unpacked_data)?;
-                    (encoder.finish()?, CompressionFlag::Zlib)
+    /// Find a mutable file entry by its normalized filename hash.
+    pub fn get_file_by_hash_mut(&mut self, filename_hash: u64) -> Option<&mut UopFile> {
+        self.hash_index_dirty = true;
+        for block in &mut self.blocks {
+            for file in block.files_mut() {
+                if file.filename_hash() == filename_hash {
+                    return Some(file);
                 }
-                CompressionFlag::Zlib => {
-                    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), compression_level);
-                    encoder.write_all(&unpacked_data)?;
-                    (encoder.finish()?, CompressionFlag::Zlib)
-                }
+            }
+        }
+        None
+    }
+
+    /// Find a file entry by its internal packed path.
+    ///
+    /// This is a small convenience wrapper over `get_file_by_hash` for callers
+    /// that still have the original UOP logical path string available.
+    pub fn get_file_by_name(&self, packed_file_name: &str) -> Option<&UopFile> {
+        self.get_file_by_hash(hash::hash_file_name_single(packed_file_name))
+    }
+
+    /// Read bytes from an arbitrary source and append them as one UOP file.
+    ///
+    /// This is the most general high-level insertion helper. The reader is
+    /// consumed immediately, the payload is compressed according to the chosen
+    /// legacy compression flag, and the resulting `UopFile` is added to the
+    /// final block chain.
+    pub fn add_file_from_reader(
+        &mut self,
+        reader: &mut impl Read,
+        packed_file_name: &str,
+        compression: CompressionFlag,
+    ) -> io::Result<()> {
+        // UOP indexes files by a pre-hashed normalized internal path.
+        let filename_hash = hash::hash_file_name_single(packed_file_name);
+        let file = UopFile::new().create_file(reader, filename_hash, compression)?;
+        self.push_file(file);
+        Ok(())
+    }
+
+    /// Append an in-memory byte slice as one UOP file.
+    pub fn add_file_from_memory(
+        &mut self,
+        file_content: &[u8],
+        packed_file_name: &str,
+        compression: CompressionFlag,
+    ) -> io::Result<()> {
+        self.add_file_from_reader(&mut Cursor::new(file_content), packed_file_name, compression)
+    }
+
+    /// Finalize layout-sensitive fields and write a complete package to disk.
+    pub fn finalize_and_save(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
+        self.ensure_all_data_loaded()?;
+        self.recompute_layout();
+        self.refresh_hash_index();
+
+        let mut writer = File::create(path)?;
+        self.write_header(&mut writer)?;
+        self.write_blocks(&mut writer)?;
+        self.write_payloads(&mut writer)
+    }
+
+    /// Load one payload into memory when this package was opened lazily.
+    pub fn ensure_file_data_loaded_by_hash(&mut self, filename_hash: u64) -> io::Result<()> {
+        let package_path = self.package_path.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "package has no backing file path for lazy payload loading",
+            )
+        })?;
+
+        let mut reader = File::open(package_path)?;
+        let mut loaded = false;
+        {
+            let file = self.get_file_by_hash_mut(filename_hash).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file payload for hash {filename_hash:016X} not found"),
+                )
+            })?;
+            if file.data().is_none() && file.has_size() {
+                file.load_data_from(&mut reader)?;
+                loaded = true;
+            }
+        }
+
+        if loaded {
+            self.refresh_hash_index();
+        }
+
+        Ok(())
+    }
+
+    /// Load all payloads into memory when the package was opened lazily.
+    pub fn ensure_all_data_loaded(&mut self) -> io::Result<()> {
+        if !self.iter_files().any(|file| file.has_size() && file.data().is_none()) {
+            return Ok(());
+        }
+
+        let package_path = self.package_path.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "package has no backing file path for lazy payload loading",
+            )
+        })?;
+
+        let mut reader = File::open(package_path)?;
+        for block in &mut self.blocks {
+            block.preload_data(&mut reader)?;
+        }
+
+        self.refresh_hash_index();
+        Ok(())
+    }
+
+    /// Rebuild compressed payloads in-place using the current package file set.
+    pub fn recompress(&mut self, _compression_level: flate2::Compression) -> io::Result<()> {
+        self.ensure_all_data_loaded()?;
+
+        for file in self.iter_files_mut() {
+            let unpacked = file.unpack()?;
+            let recompressed_flag = match file.compression() {
+                CompressionFlag::None | CompressionFlag::Zlib => CompressionFlag::Zlib,
                 CompressionFlag::Mythic => {
-                    // TODO: Implement Mythic compression
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,
-                        "Mythic compression not implemented",
+                        "Mythic recompression is not implemented",
                     ));
                 }
                 CompressionFlag::ZlibBwt => {
-                    // TODO: Implement ZlibBwt compression
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,
-                        "ZlibBwt compression not implemented",
-                    ));
-                }
-                CompressionFlag::Zstd => {
-                    // TODO: Implement Zstd recompression
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Zstd recompression not implemented in recompress()",
+                        "ZlibBwt recompression is not implemented",
                     ));
                 }
             };
 
-            // Update file entry metadata
-            file_entry.set_data(std::sync::Arc::from(recompressed_data));
-            file_entry.set_compressed_size(file_entry.data().unwrap().len() as u32);
-            file_entry.set_decompressed_size(unpacked_data.len() as u32);
-            file_entry.set_compression(new_compression_flag);
-            file_entry.set_data_block_hash(hash::hash_data_block(file_entry.data().unwrap())?);
-            file_entry.set_data_block_address(current_data_offset);
-
-            // Write recompressed data to temporary file
-            temp_file.write_all(file_entry.data().unwrap())?;
-            current_data_offset = temp_file.stream_position()?;
-
-            // Store table offset for later writing
-            if i % self.block_size as usize == 0 {
-                table_offsets.push(temp_file.stream_position()?);
-            }
+            *file = UopFile::new().create_file(
+                &mut Cursor::new(unpacked),
+                file.filename_hash(),
+                recompressed_flag,
+            )?;
         }
 
-        // Write table entries
-        let mut current_table_offset_idx = 0;
-        for (i, file_entry) in self.files.values().enumerate() {
-            if i % self.block_size as usize == 0 {
-                // Update previous table's next_table_offset
-                if i > 0 {
-                    let prev_table_offset = table_offsets[current_table_offset_idx - 1];
-                    temp_file.seek(SeekFrom::Start(prev_table_offset + 4))?;
-                    temp_file.write_u64::<LittleEndian>(table_offsets[current_table_offset_idx] as u64)?;
-                }
-                // Write current table header
-                temp_file.seek(SeekFrom::Start(table_offsets[current_table_offset_idx]))?;
-                temp_file.write_u32::<LittleEndian>(self.block_size)?;
-                temp_file.write_u64::<LittleEndian>(0)?; // Placeholder for next_table_offset
-                current_table_offset_idx += 1;
-            }
+        self.refresh_hash_index();
+        Ok(())
+    }
 
-            // Write file entry metadata
-            temp_file.write_u64::<LittleEndian>(file_entry.data_block_address())?;
-            temp_file.write_u32::<LittleEndian>(file_entry.data_block_length())?;
-            temp_file.write_u32::<LittleEndian>(file_entry.compressed_size())?;
-            temp_file.write_u32::<LittleEndian>(file_entry.decompressed_size())?;
-            temp_file.write_u64::<LittleEndian>(file_entry.filename_hash())?;
-            temp_file.write_u32::<LittleEndian>(file_entry.data_block_hash())?;
-            temp_file.write_i16::<LittleEndian>(file_entry.compression() as i16)?;
+    fn push_file(&mut self, file: UopFile) {
+        // UOP blocks are fixed-capacity groups. Once the active block reaches the
+        // advertised capacity, the writer starts a new block and updates the file
+        // count at package scope.
+        let needs_new_block = self
+            .blocks
+            .last()
+            .map(|block| block.files().len() >= self.block_size as usize)
+            .unwrap_or(true);
+
+        if needs_new_block {
+            self.blocks.push(UopBlock::new());
         }
 
-        // Update first_table_offset in header
-        temp_file.seek(SeekFrom::Start(16))?;
-        temp_file.write_u64::<LittleEndian>(table_offsets[0] as u64)?;
+        self.blocks
+            .last_mut()
+            .expect("a block exists after allocation")
+            .add_file(file.clone());
+        self.files_by_hash.insert(file.filename_hash(), file);
+        self.file_count += 1;
+        self.hash_index_dirty = false;
+    }
 
-        // Replace original file with temporary file
-        std::fs::rename(&temp_path, &self.package_name)?;
+    fn refresh_hash_index(&mut self) {
+        let mut files_by_hash = IndexMap::with_hasher(BuildNoHashHasher::default());
+        for file in self.iter_files() {
+            files_by_hash.insert(file.filename_hash(), file.clone());
+        }
+        self.files_by_hash = files_by_hash;
+        self.hash_index_dirty = false;
+    }
+
+    fn recompute_layout(&mut self) {
+        self.file_count = self.blocks.iter().map(|block| block.files().len() as u32).sum();
+
+        if self.blocks.is_empty() {
+            self.start_address = 0;
+            return;
+        }
+
+        // UOP stores all block tables first and appends payload blobs after the
+        // last block table. Recomputing both regions together keeps the writer
+        // deterministic and makes patching tests stable.
+        let mut block_addresses = Vec::with_capacity(self.blocks.len());
+        let mut offset = PACKAGE_HEADER_SIZE;
+
+        for block in &self.blocks {
+            block_addresses.push(offset);
+            offset += BLOCK_HEADER_SIZE + FILE_ENTRY_SIZE * block.files().len() as u64;
+        }
+
+        let mut payload_offset = offset;
+        self.start_address = block_addresses[0];
+
+        for (index, block) in self.blocks.iter_mut().enumerate() {
+            let next_block_address = block_addresses.get(index + 1).copied().unwrap_or(0);
+            block.set_next_block_address(next_block_address);
+
+            for file in block.files_mut() {
+                file.set_data_block_address(payload_offset);
+                payload_offset += file.compressed_size() as u64;
+            }
+        }
+    }
+
+    fn write_header(&self, writer: &mut File) -> io::Result<()> {
+        // The final reserved `u32` is kept at zero to preserve the historical
+        // 32-byte package header layout expected by existing tooling.
+        writer.write_all(&UOP_MAGIC)?;
+        writer.write_u32::<LittleEndian>(self.version)?;
+        writer.write_u32::<LittleEndian>(self.misc)?;
+        writer.write_u64::<LittleEndian>(self.start_address)?;
+        writer.write_u32::<LittleEndian>(self.block_size)?;
+        writer.write_u32::<LittleEndian>(self.file_count)?;
+        writer.write_u32::<LittleEndian>(0)?;
+        Ok(())
+    }
+
+    fn write_blocks(&self, writer: &mut File) -> io::Result<()> {
+        for block in &self.blocks {
+            writer.write_u32::<LittleEndian>(block.files().len() as u32)?;
+            writer.write_u64::<LittleEndian>(block.next_block_address())?;
+
+            for file in block.files() {
+                // The legacy metadata record matches the on-disk layout read by
+                // `UopFile::read` exactly, so this writer stays byte-for-byte
+                // compatible with the existing loader.
+                writer.write_u64::<LittleEndian>(file.data_block_address())?;
+                writer.write_u32::<LittleEndian>(file.data_block_length())?;
+                writer.write_u32::<LittleEndian>(file.compressed_size())?;
+                writer.write_u32::<LittleEndian>(file.decompressed_size())?;
+                writer.write_u64::<LittleEndian>(file.filename_hash())?;
+                writer.write_u32::<LittleEndian>(file.data_block_hash())?;
+                writer.write_i16::<LittleEndian>(file.compression() as i16)?;
+            }
+        }
 
         Ok(())
     }
 
+    fn write_payloads(&self, writer: &mut File) -> io::Result<()> {
+        // Payloads are emitted in the same order used during layout computation,
+        // so every previously assigned `data_block_address` remains valid.
+        for file in self.iter_files() {
+            let data = file.data().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "file payload for hash {:016X} has not been loaded into memory",
+                        file.filename_hash()
+                    ),
+                )
+            })?;
+            writer.write_all(data)?;
+        }
+
+        Ok(())
+    }
 }

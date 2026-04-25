@@ -4,6 +4,7 @@
 //! - `metadata/land.bin`: dense table for land tiledata entries.
 //! - `metadata/items.bin`: dense table for item tiledata entries.
 
+use std::fs;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -12,7 +13,10 @@ use color_eyre::eyre::{self, WrapErr};
 
 use uocf::{
     classic::tiledata::{ItemTile, LandTile, TileData},
-    uop::{UddpCompression, UddpContentId, UddpPackage},
+    udd::{
+        xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
+        LookupMode, UddpBuilder, UddpReader,
+    },
 };
 
 const LAND_MAGIC: [u8; 4] = *b"CTDL";
@@ -65,35 +69,22 @@ impl CcItemTileRecord {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct CcTileDataPackage {
-    package: UddpPackage,
+    package: UddpReader,
     land_tiles: Vec<CcLandTileRecord>,
     item_tiles: Vec<CcItemTileRecord>,
 }
 
 impl CcTileDataPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let package = UddpPackage::load(path.as_ref())
+        let package = UddpReader::open(fs::read(path.as_ref())?)
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
         Self::from_uddp_package(package)
     }
 
-    pub fn from_uddp_package(package: UddpPackage) -> eyre::Result<Self> {
-        let land_tiles = parse_land_tiles(
-            &package
-                .get_entry_by_path(LAND_ENTRY_PATH)
-                .ok_or_else(|| eyre::eyre!("cc_tiledata.uddp missing metadata/land.bin"))?
-                .unpack()
-                .wrap_err("unpack metadata/land.bin")?,
-        )?;
-        let item_tiles = parse_item_tiles(
-            &package
-                .get_entry_by_path(ITEM_ENTRY_PATH)
-                .ok_or_else(|| eyre::eyre!("cc_tiledata.uddp missing metadata/items.bin"))?
-                .unpack()
-                .wrap_err("unpack metadata/items.bin")?,
-        )?;
+    pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        let land_tiles = parse_land_tiles(&read_path_entry(&package, LAND_ENTRY_PATH)?)?;
+        let item_tiles = parse_item_tiles(&read_path_entry(&package, ITEM_ENTRY_PATH)?)?;
 
         Ok(Self {
             package,
@@ -102,7 +93,7 @@ impl CcTileDataPackage {
         })
     }
 
-    pub fn package(&self) -> &UddpPackage {
+    pub fn package(&self) -> &UddpReader {
         &self.package
     }
 
@@ -137,27 +128,36 @@ pub fn convert_tiledata_mul_to_cc_tiledata_uddp(
     let land_bytes = serialize_land_tiles(tiledata.land_tiles())?;
     let item_bytes = serialize_item_tiles(tiledata.item_tiles())?;
 
-    let mut package = UddpPackage::new();
-    package.add_typed_entry_from_memory(
-        &land_bytes,
-        LAND_ENTRY_PATH,
-        UddpContentId::Metadata,
-        UddpCompression::Zstd,
-    )?;
-    package.add_typed_entry_from_memory(
-        &item_bytes,
-        ITEM_ENTRY_PATH,
-        UddpContentId::Metadata,
-        UddpCompression::Zstd,
-    )?;
-    package
-        .save(out_file)
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(LAND_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &land_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(ITEM_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &item_bytes,
+    })?;
+    fs::write(out_file, package.build()?)
         .wrap_err_with(|| format!("save {}", out_file.display()))?;
 
     Ok(CcTileDataBuildSummary {
         land_tile_count: tiledata.land_tiles().len() as u32,
         item_tile_count: tiledata.item_tiles().len() as u32,
     })
+}
+
+fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
+    package
+        .read_file_by_path_hash(xxh64_virtual_path(path))
+        .wrap_err_with(|| format!("unpack {path}"))
 }
 
 fn serialize_land_tiles(tiles: &[LandTile]) -> eyre::Result<Vec<u8>> {

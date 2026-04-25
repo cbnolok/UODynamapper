@@ -14,10 +14,10 @@
 //!   `compression_flag`; this module owns the encode/decode path for those bytes.
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-use crate::uop::codec::{decode_payload, encode_payload, UddpCompression};
+use crate::uop::codec::{decode_payload, encode_payload, UopCompression};
 
 /// The compression method used for the file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,8 +30,6 @@ pub enum CompressionFlag {
     Mythic = 2,
     /// ZlibBwt compression.
     ZlibBwt = 3,
-    /// Zstd compression (custom for our UOP package extension: UDDP).
-    Zstd = 128,
 }
 
 impl CompressionFlag {
@@ -41,7 +39,6 @@ impl CompressionFlag {
             1 => Ok(CompressionFlag::Zlib),
             2 => Ok(CompressionFlag::Mythic),
             3 => Ok(CompressionFlag::ZlibBwt),
-            128 | 32765 => Ok(CompressionFlag::Zstd),
             _ => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Unsupported compression type {value}"),
@@ -49,13 +46,12 @@ impl CompressionFlag {
         }
     }
 
-    pub fn as_uddp_compression(self) -> UddpCompression {
+    pub fn as_uop_compression(self) -> UopCompression {
         match self {
-            CompressionFlag::None => UddpCompression::None,
-            CompressionFlag::Zlib => UddpCompression::Zlib,
-            CompressionFlag::Mythic => UddpCompression::Mythic,
-            CompressionFlag::ZlibBwt => UddpCompression::ZlibBwt,
-            CompressionFlag::Zstd => UddpCompression::Zstd,
+            CompressionFlag::None => UopCompression::None,
+            CompressionFlag::Zlib => UopCompression::Zlib,
+            CompressionFlag::Mythic => UopCompression::Mythic,
+            CompressionFlag::ZlibBwt => UopCompression::ZlibBwt,
         }
     }
 }
@@ -67,7 +63,7 @@ impl From<i16> for CompressionFlag {
 }
 
 /// Represents a single file within a UOP package.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UopFile {
     /// The address of the file's data in the UOP file.
     data_block_address: u64,
@@ -125,7 +121,7 @@ impl UopFile {
         self.decompressed_size = buffer.len() as u32;
         self.compression = compression;
 
-        let final_data = encode_payload(&buffer, compression.as_uddp_compression())?;
+        let final_data = encode_payload(&buffer, compression.as_uop_compression())?;
         self.compressed_size = final_data.len() as u32;
 
         self.data_block_hash = super::hash::hash_data_block(&final_data)?;
@@ -163,6 +159,20 @@ impl UopFile {
             compression,
             data: None,
         })
+    }
+
+    /// Load the compressed payload bytes referenced by this entry from a package reader.
+    pub fn load_data_from<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), std::io::Error> {
+        if !self.has_size() || self.data.is_some() {
+            return Ok(());
+        }
+
+        let payload_address = self.data_block_address + self.data_block_length as u64;
+        reader.seek(SeekFrom::Start(payload_address))?;
+        let mut buffer = vec![0u8; self.compressed_size as usize];
+        reader.read_exact(&mut buffer)?;
+        self.data = Some(Arc::from(buffer));
+        Ok(())
     }
 
     /// Returns the address of the file's data in the UOP file.
@@ -260,7 +270,7 @@ impl UopFile {
         let decompressed = decode_payload(
             data,
             self.decompressed_size as usize,
-            self.compression.as_uddp_compression(),
+            self.compression.as_uop_compression(),
         )?;
         target.write_all(&decompressed)?;
         Ok(())

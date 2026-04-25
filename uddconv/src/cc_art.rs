@@ -9,6 +9,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::Path;
+use std::fs;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -17,7 +18,10 @@ use guillotiere::{AtlasAllocator, size2};
 use uocf::{
     classic::art::ArtMap,
     generic_index::IndexFile,
-    uop::{UddpCompression, UddpContentId, UddpPackage},
+    udd::{
+        xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
+        LookupMode, UddpBuilder, UddpReader,
+    },
 };
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
@@ -151,9 +155,8 @@ struct BuiltPage {
     placed_tiles: Vec<PlacedTile>,
 }
 
-#[derive(Debug, Clone)]
 pub struct CcArtPackage {
-    package: UddpPackage,
+    package: UddpReader,
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
@@ -163,22 +166,16 @@ pub struct CcArtPackage {
 
 impl CcArtPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let package = UddpPackage::load(path.as_ref())
+        let package = UddpReader::open(fs::read(path.as_ref())?)
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
         Self::from_uddp_package(package)
     }
 
-    pub fn from_uddp_package(package: UddpPackage) -> eyre::Result<Self> {
-        let page_manifest = package
-            .get_entry_by_path(PAGE_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/pages.bin")?
-            .unpack()
-            .wrap_err("unpack metadata/pages.bin")?;
-        let slot_manifest = package
-            .get_entry_by_path(SLOT_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/slots.bin")?
-            .unpack()
-            .wrap_err("unpack metadata/slots.bin")?;
+    pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
+            .context("cc_art.uddp missing metadata/pages.bin")?;
+        let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
+            .context("cc_art.uddp missing metadata/slots.bin")?;
 
         let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
@@ -197,7 +194,7 @@ impl CcArtPackage {
         })
     }
 
-    pub fn package(&self) -> &UddpPackage {
+    pub fn package(&self) -> &UddpReader {
         &self.package
     }
 
@@ -230,10 +227,7 @@ impl CcArtPackage {
     }
 
     pub fn read_page_rgba8888(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
-        self.package
-            .get_entry_by_path(&page_entry_path(page_index))
-            .with_context(|| format!("cc_art.uddp missing page {page_index}"))?
-            .unpack()
+        read_path_entry(&self.package, &page_entry_path(page_index))
             .wrap_err_with(|| format!("unpack atlas page {page_index}"))
     }
 }
@@ -267,31 +261,37 @@ pub fn convert_art_mul_to_cc_art_uddp(
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
 
-    let mut package = UddpPackage::new();
-    package.add_typed_entry_from_memory(
-        &page_manifest,
-        PAGE_MANIFEST_ENTRY_PATH,
-        UddpContentId::Metadata,
-        UddpCompression::Zstd,
-    )?;
-    package.add_typed_entry_from_memory(
-        &slot_manifest,
-        SLOT_MANIFEST_ENTRY_PATH,
-        UddpContentId::Metadata,
-        UddpCompression::Zstd,
-    )?;
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &page_manifest,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &slot_manifest,
+    })?;
 
     for page in &pages {
-        package.add_typed_entry_from_memory(
-            &page.pixels,
-            &page_entry_path(page.record.page_index),
-            UddpContentId::Rgba8888,
-            UddpCompression::Zstd,
-        )?;
+        let page_path = page_entry_path(page.record.page_index);
+        package.add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: UddCompressionFlag::ZstdNoDict,
+            virtual_path: Some(&page_path),
+            path_hash64: None,
+            id: None,
+            data: &page.pixels,
+        })?;
     }
 
-    package
-        .save(out_file)
+    fs::write(out_file, package.build()?)
         .wrap_err_with(|| format!("save {}", out_file.display()))?;
 
     Ok(CcArtBuildSummary {
@@ -689,35 +689,48 @@ mod tests {
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
 
-        let mut package = UddpPackage::new();
+        let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
         package
-            .add_typed_entry_from_memory(
-                &page_manifest,
-                PAGE_MANIFEST_ENTRY_PATH,
-                UddpContentId::Metadata,
-                UddpCompression::Zstd,
-            )
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: UddCompressionFlag::ZstdNoDict,
+                virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &page_manifest,
+            })
             .unwrap();
         package
-            .add_typed_entry_from_memory(
-                &slot_manifest,
-                SLOT_MANIFEST_ENTRY_PATH,
-                UddpContentId::Metadata,
-                UddpCompression::Zstd,
-            )
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: UddCompressionFlag::ZstdNoDict,
+                virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &slot_manifest,
+            })
             .unwrap();
+        let page_path = page_entry_path(0);
         package
-            .add_typed_entry_from_memory(
-                &pages[0].pixels,
-                &page_entry_path(0),
-                UddpContentId::Rgba8888,
-                UddpCompression::Zstd,
-            )
+            .add_file(AddFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: UddCompressionFlag::ZstdNoDict,
+                virtual_path: Some(&page_path),
+                path_hash64: None,
+                id: None,
+                data: &pages[0].pixels,
+            })
             .unwrap();
 
-        let package = CcArtPackage::from_uddp_package(package).unwrap();
+        let package = CcArtPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap()).unwrap();
         assert_eq!(package.pages().len(), 1);
         assert!(package.present_slot(0).unwrap().is_land());
         assert_eq!(package.read_page_rgba8888(0).unwrap().len(), 8 * 8 * 4);
     }
+}
+
+fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
+    package
+        .read_file_by_path_hash(xxh64_virtual_path(path))
+        .wrap_err_with(|| format!("read {path}"))
 }
