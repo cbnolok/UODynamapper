@@ -1,6 +1,7 @@
 use crate::uop::file::CompressionFlag;
 use crate::uop::hash::hash_file_name_single;
 use crate::uop::package::{LoadMode, UopPackage};
+use flate2::Compression;
 use std::io::Write;
 use std::fs;
 use std::path::PathBuf;
@@ -132,6 +133,69 @@ fn package_load_mode_can_defer_payload_loading() {
             .unpack()
             .expect("lazy payload"),
         b"lazy payload"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn package_recompress_preserves_mythic_and_zlib_bwt_entries() {
+    let path = temp_uop_path("uop_recompress_codecs");
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(
+            b"mythic payload",
+            "build/codecs/00000000.bin",
+            CompressionFlag::Mythic,
+        )
+        .expect("add mythic entry");
+    package
+        .add_file_from_memory(
+            b"zlib bwt payload",
+            "build/codecs/00000001.bin",
+            CompressionFlag::ZlibBwt,
+        )
+        .expect("add zlib+bwt entry");
+
+    package
+        .recompress(Compression::default())
+        .expect("recompress package");
+    package.finalize_and_save(&path).expect("save package");
+
+    let loaded = UopPackage::load(&path).expect("load package");
+    let mythic_hash = hash_file_name_single("build/codecs/00000000.bin");
+    let zlib_bwt_hash = hash_file_name_single("build/codecs/00000001.bin");
+
+    assert_eq!(
+        loaded
+            .get_file_by_hash(mythic_hash)
+            .expect("mythic entry")
+            .compression(),
+        CompressionFlag::Mythic
+    );
+    assert_eq!(
+        loaded
+            .get_file_by_hash(mythic_hash)
+            .expect("mythic payload")
+            .unpack()
+            .expect("decode mythic payload"),
+        b"mythic payload"
+    );
+    assert_eq!(
+        loaded
+            .get_file_by_hash(zlib_bwt_hash)
+            .expect("zlib+bwt entry")
+            .compression(),
+        CompressionFlag::ZlibBwt
+    );
+    assert_eq!(
+        loaded
+            .get_file_by_hash(zlib_bwt_hash)
+            .expect("zlib+bwt payload")
+            .unpack()
+            .expect("decode zlib+bwt payload"),
+        b"zlib bwt payload"
     );
 
     let _ = fs::remove_file(path);

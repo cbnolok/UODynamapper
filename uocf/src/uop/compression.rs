@@ -1,34 +1,58 @@
 // uocf/src/uop/compression.rs
 
 pub mod move_to_front_coding {
-    pub fn encode(input: &[u8]) -> Vec<u8> {
-        let mut output = Vec::with_capacity(input.len());
-        let mut alphabet: Vec<u8> = (0..=255).collect(); // Initialize alphabet 0-255
+    fn move_to_front_element(array: &mut [u8; 256], element: u8) -> i32 {
+        if array[0] == element {
+            return 0;
+        }
 
-        for &byte in input {
-            if let Some(index) = alphabet.iter().position(|&x| x == byte) {
-                output.push(index as u8); // Output the index
-                let value = alphabet.remove(index); // Remove the element
-                alphabet.insert(0, value); // Move it to the front
-            } else {
-                output.push(0);
+        let mut element_index = -1;
+        for index in (1..array.len()).rev() {
+            if array[index] == element {
+                element_index = index as i32;
             }
+
+            if element_index != -1 {
+                array[index] = array[index - 1];
+            }
+        }
+
+        array[0] = element;
+        element_index
+    }
+
+    fn move_to_front_index(array: &mut [u8; 256], element_index: usize) {
+        let element = array[element_index];
+        for index in (1..=element_index).rev() {
+            array[index] = array[index - 1];
+        }
+        array[0] = element;
+    }
+
+    pub fn encode(input: &[u8]) -> Vec<u8> {
+        let mut symbols = [0u8; 256];
+        for (index, symbol) in symbols.iter_mut().enumerate() {
+            *symbol = index as u8;
+        }
+
+        let mut output = vec![0u8; input.len()];
+        for (index, &byte) in input.iter().enumerate() {
+            output[index] = move_to_front_element(&mut symbols, byte) as u8;
         }
         output
     }
 
     pub fn decode(input: &[u8]) -> Vec<u8> {
-        let mut output = Vec::with_capacity(input.len());
-        let mut alphabet: Vec<u8> = (0..=255).collect(); // Initialize alphabet 0-255
+        let mut symbols = [0u8; 256];
+        for (index, symbol) in symbols.iter_mut().enumerate() {
+            *symbol = index as u8;
+        }
 
-        for &index in input {
-            if index < alphabet.len() as u8 {
-                let value = alphabet.remove(index as usize); // Get value at index and remove
-                output.push(value); // Output the value
-                alphabet.insert(0, value); // Move it to the front
-            } else {
-                output.push(0);
-            }
+        let mut output = vec![0u8; input.len()];
+        for (index, &encoded_index) in input.iter().enumerate() {
+            let element_index = encoded_index as usize;
+            output[index] = symbols[element_index];
+            move_to_front_index(&mut symbols, element_index);
         }
         output
     }
@@ -38,8 +62,8 @@ pub mod mythic_decompress {
     use crate::utils::math::i32_downcast_ceil_usize;
 
     use super::move_to_front_coding;
-    use std::io::{self, Cursor, Read};
-    use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::{self, Cursor, Read, Write};
+    use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
     // Helper function: Frequency
     fn frequency(input: &[i32], output: &mut [u8]) {
@@ -152,11 +176,11 @@ pub mod mythic_decompress {
         }
 
         // Final pass to populate remaining output based on frequency_table
-        let mut m_final = 0;
+        let mut m_final = 0usize;
         for i in 0..non_zero_count {
             let freq_index = frequency_table[i] as usize;
             output[m_final + 1024] = get_idx(&symbol_table, freq_index as u8, non_zero_count);
-            m_final +=  i32_downcast_ceil_usize(partial_input[freq_index]);
+            m_final += i32_downcast_ceil_usize(partial_input[freq_index]);
         }
 
         output
@@ -240,6 +264,21 @@ pub mod mythic_decompress {
         move_to_front_coding::encode(&compressed_internal)
     }
 
+    pub fn compress_with_header(buffer: &[u8]) -> io::Result<Vec<u8>> {
+        let raw_len = u32::try_from(buffer.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Mythic payload exceeds 32-bit length header",
+            )
+        })?;
+
+        let transformed = transform(buffer);
+        let mut encoded = Vec::with_capacity(transformed.len() + 4);
+        encoded.write_u32::<LittleEndian>(raw_len ^ 0x8E2C9A3D)?;
+        encoded.write_all(&transformed)?;
+        Ok(encoded)
+    }
+
     pub fn detransform(buffer: &[u8]) -> Vec<u8> {
         let decoded_mtf = move_to_front_coding::decode(buffer);
         internal_decompress(&decoded_mtf)
@@ -252,6 +291,13 @@ pub mod mythic_decompress {
 
         let mut list = Vec::new();
         cursor.read_to_end(&mut list)?;
+
+        if list.len() < 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Mythic payload is shorter than its 1024-byte frequency table",
+            ));
+        }
 
         let decoded_mtf = move_to_front_coding::decode(&list);
         let decompressed_internal = internal_decompress(&decoded_mtf);
@@ -268,8 +314,13 @@ pub mod mythic_decompress {
 }
 
 pub mod zlib_bwt_codec {
+    use super::{move_to_front_coding, mythic_decompress};
+    use flate2::read::ZlibDecoder;
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
     use std::io::{self, Cursor};
     use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::{Read, Write};
 
     // Helper function: Frequency (adapted for u8 output)
     fn frequency(input: &[i32], output: &mut [u8]) {
@@ -402,8 +453,7 @@ pub mod zlib_bwt_codec {
         output
     }
 
-    // Decompress (from BwtDecompress)
-    pub fn decompress(buffer: &[u8]) -> io::Result<Vec<u8>> {
+    fn decompress_transformed(buffer: &[u8]) -> io::Result<Vec<u8>> {
         let mut reader = Cursor::new(buffer);
 
         let _header = reader.read_u32::<LittleEndian>()?;
@@ -437,12 +487,33 @@ pub mod zlib_bwt_codec {
         Ok(output)
     }
 
-    // No compress function provided in the C# BwtDecompress.
-    // So, we will not provide a compress function for ZlibBwt.
-    pub fn compress(_buffer: &[u8]) -> io::Result<Vec<u8>> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "ZlibBwt compression is not supported.",
-        ))
+    // Some clients zlib-wrap the BWT stage, while older experiments stored the
+    // transformed bytes directly. Accept both so existing decode behavior stays
+    // intact while writes use the zlib-wrapped form expected by client loaders.
+    pub fn decompress(buffer: &[u8]) -> io::Result<Vec<u8>> {
+        if let Ok(decoded) = decompress_zlib_wrapped(buffer) {
+            return Ok(decoded);
+        }
+
+        decompress_transformed(buffer)
+    }
+
+    fn decompress_zlib_wrapped(buffer: &[u8]) -> io::Result<Vec<u8>> {
+        let mut decoder = ZlibDecoder::new(buffer);
+        let mut transformed = Vec::new();
+        decoder.read_to_end(&mut transformed)?;
+        decompress_transformed(&transformed)
+    }
+
+    pub fn compress(buffer: &[u8]) -> io::Result<Vec<u8>> {
+        let transformed = mythic_decompress::internal_compress(buffer);
+        let mut staged = Vec::with_capacity(transformed.len() + 5);
+        staged.extend_from_slice(&0u32.to_le_bytes());
+        staged.extend_from_slice(&move_to_front_coding::encode(&transformed));
+        staged.push(0);
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&staged)?;
+        encoder.finish()
     }
 }

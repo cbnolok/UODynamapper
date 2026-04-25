@@ -353,21 +353,7 @@ impl UopPackage {
 
         for file in self.iter_files_mut() {
             let unpacked = file.unpack()?;
-            let recompressed_flag = match file.compression() {
-                CompressionFlag::None | CompressionFlag::Zlib => CompressionFlag::Zlib,
-                CompressionFlag::Mythic => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Mythic recompression is not implemented",
-                    ));
-                }
-                CompressionFlag::ZlibBwt => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "ZlibBwt recompression is not implemented",
-                    ));
-                }
-            };
+            let recompressed_flag = file.compression();
 
             *file = UopFile::new().create_file(
                 &mut Cursor::new(unpacked),

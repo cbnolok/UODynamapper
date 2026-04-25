@@ -35,14 +35,10 @@ pub fn encode_payload(payload: &[u8], compression: UopCompression) -> io::Result
             encoder.write_all(payload)?;
             encoder.finish()
         }
-        UopCompression::Mythic => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Mythic encoding is not implemented",
-        )),
-        UopCompression::ZlibBwt => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Zlib+BWT encoding is not implemented",
-        )),
+        UopCompression::Mythic => {
+            crate::uop::compression::mythic_decompress::compress_with_header(payload)
+        }
+        UopCompression::ZlibBwt => crate::uop::compression::zlib_bwt_codec::compress(payload),
     }
 }
 
@@ -59,9 +55,17 @@ pub fn decode_payload(
             decoder.read_to_end(&mut decoded)?;
             Ok(decoded)
         }
-        UopCompression::Mythic => {
-            crate::uop::compression::mythic_decompress::decompress_with_header(payload)
-        }
+        UopCompression::Mythic => decode_mythic_payload(payload),
         UopCompression::ZlibBwt => crate::uop::compression::zlib_bwt_codec::decompress(payload),
     }
+}
+
+fn decode_mythic_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
+    if let Ok(zlib_decoded) = decode_payload(payload, 0, UopCompression::Zlib) {
+        if let Ok(decoded) = crate::uop::compression::mythic_decompress::decompress_with_header(&zlib_decoded) {
+            return Ok(decoded);
+        }
+    }
+
+    crate::uop::compression::mythic_decompress::decompress_with_header(payload)
 }
