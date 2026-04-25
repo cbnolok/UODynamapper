@@ -1,7 +1,7 @@
 use crate::core::controls::input_actions::ActionToggleCursorTeleportMode;
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
-    dialogs::get_egui_context_ready,
+    dialogs,
     scene::{
         camera::{PlayerCamera, UiCameraResource},
         world::WorldGeoData,
@@ -299,7 +299,7 @@ fn sys_teleport_on_click(
     }
 
     // If egui wants pointer input, don't teleport
-    if let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) {
+    if let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) {
         if ctx.wants_pointer_input() {
             return;
         }

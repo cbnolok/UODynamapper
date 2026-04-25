@@ -4,11 +4,14 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use uocf_cli::parse_hex_u64;
 use uocf::uop::file::{CompressionFlag, UopFile};
+use uocf::uop::hash_bruteforce;
 use uocf::uop::package::UopPackage;
 
-/// UOP Tool - A utility for interacting with UOP files.
+/// UO Package Tool - A utility for inspecting, hashing, and modifying Ultima Online .uop files.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -23,6 +26,40 @@ enum Commands {
         /// The string to hash.
         #[arg(required = true)]
         value: String,
+    },
+    /// Brute-force crack a UOP hash.
+    Crack {
+        /// The target hash (hex).
+        #[arg(required = true, value_parser = parse_hex_u64)]
+        hash: u64,
+
+        /// Known prefix.
+        #[arg(long, default_value = "")]
+        prefix: String,
+
+        /// Known suffix.
+        #[arg(long, default_value = "")]
+        suffix: String,
+
+        /// Character set to use.
+        #[arg(long, default_value = "abcdefghijklmnopqrstuvwxyz0123456789")]
+        charset: String,
+
+        /// Minimum length of the variable part.
+        #[arg(long, default_value_t = 1)]
+        min_len: usize,
+
+        /// Maximum length of the variable part.
+        #[arg(long, default_value_t = 8)]
+        max_len: usize,
+
+        /// Number of threads to use (0 for auto).
+        #[arg(long, default_value_t = 0)]
+        threads: usize,
+
+        /// Cracking method (parallel-simd, parallel-scalar).
+        #[arg(long, default_value = "parallel-simd")]
+        method: String,
     },
     /// Replace a file in the UOP package.
     Replace {
@@ -54,6 +91,53 @@ fn main() -> eyre::Result<()> {
         Commands::Hash { value } => {
             let hash = uocf::uop::hash::hash_file_name_single(value);
             println!("Hash for \"{value}\": 0x{:016x}", hash);
+        }
+        Commands::Crack {
+            hash,
+            prefix,
+            suffix,
+            charset,
+            min_len,
+            max_len,
+            threads,
+            method,
+        } => {
+            println!("Cracking hash 0x{:016x}...", hash);
+            println!("  Prefix: \"{}\"", prefix);
+            println!("  Suffix: \"{}\"", suffix);
+            println!("  Charset: \"{}\"", charset);
+            println!("  Length: {} to {}", min_len, max_len);
+            println!("  Method: {}", method);
+
+            let stop_signal = Arc::new(AtomicBool::new(false));
+            let result = match method.as_str() {
+                "parallel-simd" => hash_bruteforce::bruteforce_hash_simd(
+                    *hash,
+                    prefix,
+                    suffix,
+                    charset,
+                    *min_len,
+                    *max_len,
+                    *threads,
+                    stop_signal,
+                ),
+                "parallel-scalar" => hash_bruteforce::bruteforce_hash_recursive(
+                    *hash,
+                    prefix,
+                    suffix,
+                    charset,
+                    *min_len,
+                    *max_len,
+                    *threads,
+                    stop_signal,
+                ),
+                _ => return Err(eyre::eyre!("Invalid cracking method: {}. Use 'parallel-simd' or 'parallel-scalar'.", method)),
+            };
+
+            match result {
+                Some(found) => println!("\nFound: {}", found),
+                None => println!("\nFailed to find matching string."),
+            }
         }
         Commands::Replace {
             uop_file,

@@ -4,8 +4,8 @@ use crate::core::system_sets::*;
 use crate::external_data::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::prelude::*;
 use crate::util_lib::math::Between;
-use bevy::camera::ScalingMode;
 use bevy::anti_alias::{fxaa::Fxaa, smaa::Smaa};
+use bevy::camera::ScalingMode;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseWheel;
@@ -62,6 +62,8 @@ impl RenderZoom {
 pub struct PlayerCamera;
 impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
+    pub const BASE_OFFSET_FROM_PLAYER_PERSP: Vec3 =
+        Vec3::new(50.0, 50.0 * ORTHO_WIDTH_SCALE_FACTOR, 50.0);
 }
 
 pub struct CameraPlugin {
@@ -120,23 +122,14 @@ fn sys_setup_cam(
     let start_p = settings.core.world.start_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
-    // Setup world camera - order 0 to render the 3D world FIRST
-    let world_cam = commands.spawn((
-        PlayerCamera,
-        Camera3d::default(),
-        // Disable Bevy's fullscreen tonemapping pass: the land shader already
-        // performs its own Reinhard tonemapping, and the default
-        // Tonemapping::ReinhardLuminance adds a redundant resolution-dependent
-        // fullscreen blit every frame.
-        //bevy::core_pipeline::tonemapping::Tonemapping::None,
-        // Depth prepass: writes depth in a cheap pass (vertex-only, no custom
-        // fragment work) so the main pass benefits from hardware early-z
-        // rejection of occluded fragments behind terrain elevation.
-        //bevy::core_pipeline::prepass::DepthPrepass,
-        Camera {
-            order: 0, // Render world first
-            ..default()
-        },
+    let projection = if settings.app.window.perspective_camera {
+        Projection::Perspective(PerspectiveProjection {
+            fov: 0.25, // Fixed, narrow FOV to mitigate edge fisheye distortion
+            near: 0.1,
+            far: 20000.0, // High far plane for high de-zoom
+            ..PerspectiveProjection::default()
+        })
+    } else {
         Projection::Orthographic(OrthographicProjection {
             // NOTE: You control zoom by adjusting .scale (or by adjusting orthographic width/height).
             scale: 1.0 * zoom,
@@ -147,11 +140,39 @@ fn sys_setup_cam(
             near: -1000.0,
             far: 1000.0,
             ..OrthographicProjection::default_3d()
-        }),
-        Transform::from_translation(player_start_pos + PlayerCamera::BASE_OFFSET_FROM_PLAYER)
-            .looking_at(player_start_pos, Vec3::Y),
-        GlobalTransform::default(),
-    )).id();
+        })
+    };
+
+    let offset = if settings.app.window.perspective_camera {
+        PlayerCamera::BASE_OFFSET_FROM_PLAYER_PERSP * zoom
+    } else {
+        PlayerCamera::BASE_OFFSET_FROM_PLAYER
+    };
+
+    // Setup world camera - order 0 to render the 3D world FIRST
+    let world_cam = commands
+        .spawn((
+            PlayerCamera,
+            Camera3d::default(),
+            // Disable Bevy's fullscreen tonemapping pass: the land shader already
+            // performs its own Reinhard tonemapping, and the default
+            // Tonemapping::ReinhardLuminance adds a redundant resolution-dependent
+            // fullscreen blit every frame.
+            //bevy::core_pipeline::tonemapping::Tonemapping::None,
+            // Depth prepass: writes depth in a cheap pass (vertex-only, no custom
+            // fragment work) so the main pass benefits from hardware early-z
+            // rejection of occluded fragments behind terrain elevation.
+            //bevy::core_pipeline::prepass::DepthPrepass,
+            Camera {
+                order: 0, // Render world first
+                ..default()
+            },
+            projection,
+            Transform::from_translation(player_start_pos + offset)
+                .looking_at(player_start_pos, Vec3::Y),
+            GlobalTransform::default(),
+        ))
+        .id();
 
     // Setup dedicated UI camera - order 1 to render UI ON TOP of the 3D world
     // Camera2d MUST be used for Bevy UI to work, regardless of order
@@ -273,29 +294,19 @@ fn apply_world_camera_graphics_settings(
     // Those experiments were exactly what caused the earlier regressions.
     match graphics.anti_aliasing {
         AntiAliasingMode::Off => {
-            entity_commands
-                .remove::<Fxaa>()
-                .remove::<Smaa>();
+            entity_commands.remove::<Fxaa>().remove::<Smaa>();
         }
         AntiAliasingMode::Fxaa => {
-            entity_commands
-                .insert(Fxaa::default())
-                .remove::<Smaa>();
+            entity_commands.insert(Fxaa::default()).remove::<Smaa>();
         }
         AntiAliasingMode::Smaa => {
-            entity_commands
-                .remove::<Fxaa>()
-                .insert(Smaa::default());
+            entity_commands.remove::<Fxaa>().insert(Smaa::default());
         }
         AntiAliasingMode::Msaa2x => {
-            entity_commands
-                .remove::<Fxaa>()
-                .remove::<Smaa>();
+            entity_commands.remove::<Fxaa>().remove::<Smaa>();
         }
         AntiAliasingMode::Msaa4x => {
-            entity_commands
-                .remove::<Fxaa>()
-                .remove::<Smaa>();
+            entity_commands.remove::<Fxaa>().remove::<Smaa>();
         }
     }
 }
@@ -323,6 +334,7 @@ fn sys_update_camera_projection_to_view(
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    settings: Res<Settings>,
 ) {
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width();
@@ -336,13 +348,46 @@ fn sys_update_camera_projection_to_view(
     let ortho_height = window_height / ORTHO_SIZE_FACTOR;
 
     let mut proj = camera_q.single_mut().unwrap();
-    if let Projection::Orthographic(ref mut ortho) = *proj {
-        let mut projection_changed = false;
-        match ortho.scaling_mode {
-            ScalingMode::Fixed { width, height } => {
-                if (width - ortho_width).abs() > f32::EPSILON
-                    || (height - ortho_height).abs() > f32::EPSILON
-                {
+    let is_perspective = settings.app.window.perspective_camera;
+
+    let mut projection_changed = false;
+
+    // Toggle logic
+    let transition_to_persp = is_perspective && matches!(*proj, Projection::Orthographic(_));
+    let transition_to_ortho = !is_perspective && matches!(*proj, Projection::Perspective(_));
+
+    if transition_to_persp {
+        *proj = Projection::Perspective(PerspectiveProjection {
+            fov: 0.25,
+            near: 0.1,
+            far: 20000.0,
+            ..PerspectiveProjection::default()
+        });
+        projection_changed = true;
+    } else if transition_to_ortho {
+        *proj = Projection::Orthographic(OrthographicProjection {
+            near: -100.0,
+            far: 100.0,
+            ..OrthographicProjection::default_3d()
+        });
+        projection_changed = true;
+    }
+
+    match *proj {
+        Projection::Orthographic(ref mut ortho) => {
+            match ortho.scaling_mode {
+                ScalingMode::Fixed { width, height } => {
+                    if (width - ortho_width).abs() > f32::EPSILON
+                        || (height - ortho_height).abs() > f32::EPSILON
+                    {
+                        ortho.scaling_mode = ScalingMode::Fixed {
+                            width: ortho_width,
+                            height: ortho_height,
+                        };
+                        projection_changed = true;
+                    }
+                }
+                _ => {
                     ortho.scaling_mode = ScalingMode::Fixed {
                         width: ortho_width,
                         height: ortho_height,
@@ -350,23 +395,24 @@ fn sys_update_camera_projection_to_view(
                     projection_changed = true;
                 }
             }
-            _ => {
-                ortho.scaling_mode = ScalingMode::Fixed {
-                    width: ortho_width,
-                    height: ortho_height,
-                };
+
+            if (ortho.scale - zoom).abs() > f32::EPSILON {
+                ortho.scale = 1.0 * zoom;
                 projection_changed = true;
             }
         }
-
-        if (ortho.scale - zoom).abs() > f32::EPSILON {
-            ortho.scale = 1.0 * zoom;
-            projection_changed = true;
+        Projection::Perspective(ref mut persp) => {
+            if (persp.fov - 0.25).abs() > f32::EPSILON {
+                persp.fov = 0.25;
+                persp.far = 20000.0;
+                projection_changed = true;
+            }
         }
+        _ => {}
+    }
 
-        if projection_changed {
-            chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-        }
+    if projection_changed {
+        chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
     }
 }
 
@@ -375,6 +421,8 @@ fn sys_camera_follow_player(
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     mut last_camera_chunk: Local<Option<(i32, i32)>>,
+    settings: Res<Settings>,
+    render_zoom: Res<RenderZoom>,
 ) {
     let mut camera_transform = match camera_q.single_mut().ok() {
         Some(t) => t,
@@ -385,10 +433,14 @@ fn sys_camera_follow_player(
         None => return,
     };
 
-    let desired_transform = Transform::from_translation(
-        player_transform.translation + PlayerCamera::BASE_OFFSET_FROM_PLAYER,
-    )
-    .looking_at(player_transform.translation, Vec3::Y);
+    let offset = if settings.app.window.perspective_camera {
+        PlayerCamera::BASE_OFFSET_FROM_PLAYER_PERSP * render_zoom.0
+    } else {
+        PlayerCamera::BASE_OFFSET_FROM_PLAYER
+    };
+
+    let desired_transform = Transform::from_translation(player_transform.translation + offset)
+        .looking_at(player_transform.translation, Vec3::Y);
 
     if *camera_transform != desired_transform {
         *camera_transform = desired_transform;

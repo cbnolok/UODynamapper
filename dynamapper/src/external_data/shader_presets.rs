@@ -18,11 +18,11 @@ const SHADER_SETTINGS_FILE_NAME: &str = "settings/shaders/land.toml";
 // preset name (e.g. "kr.morning") so we know which mode × time to save into.
 #[derive(Resource, Clone)]
 pub struct UniformState {
-    pub effects: LandEffectsUniform,          // texture/rendering pipeline controls
-    pub lighting: GlobalLightingUniforms,     // global: grading, fog, gloom, tonemap, colors
-    pub land_lighting: LandLightingUniforms,  // land-specific: fill, rim, bent, diffuse intensities
-    pub global_lighting: f32, // scene-wide brightness scaler (maps to scene.global_lighting)
-    pub dirty: bool,          // when true, push to GPU materials this frame
+    pub effects: LandEffectsUniform, // texture/rendering pipeline controls
+    pub lighting: GlobalLightingUniforms, // global: grading, fog, gloom, tonemap, colors
+    pub land_lighting: LandLightingUniforms, // land-specific: fill, rim, bent, diffuse intensities
+    pub global_lighting: f32,        // scene-wide brightness scaler (maps to scene.global_lighting)
+    pub dirty: bool,                 // when true, push to GPU materials this frame
     /// Snapshot of the last values saved to disk (for undo). `None` until first save.
     pub saved_snapshot: Option<UniformSnapshot>,
     /// Active preset key, e.g. "kr.morning" — used to decide which slot to save into
@@ -71,7 +71,7 @@ pub struct ShaderPresetsFileWatcher {
 
 impl Default for ShaderPresetsFileWatcher {
     fn default() -> Self {
-        let path = crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
+        let path = crate::core::constants::valid_asset_dir().join(SHADER_PRESETS_FILE_NAME);
         let mtime = std::fs::metadata(&path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -100,7 +100,7 @@ impl Plugin for ShaderPresetsPlugin {
 
 pub fn load_from_file() -> LandShaderModePresets {
     let presets_with_rel_path: PathBuf =
-        crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
+        crate::core::constants::valid_asset_dir().join(SHADER_PRESETS_FILE_NAME);
 
     let contents = std::fs::read_to_string(&presets_with_rel_path)
         .expect("Failed to read shader presets file");
@@ -125,7 +125,7 @@ pub fn load_from_file() -> LandShaderModePresets {
 /// Try to load user-saved shader settings from `settings/shaders/land.toml`.
 /// Returns `None` if the file doesn't exist or can't be parsed.
 pub fn load_shader_settings() -> Option<LandShaderModePresets> {
-    let path = crate::core::constants::default_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let path = crate::core::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
     let contents = std::fs::read_to_string(&path).ok()?;
     match toml::from_str::<LandShaderModePresets>(&contents) {
         Ok(p) => Some(p),
@@ -139,7 +139,7 @@ pub fn load_shader_settings() -> Option<LandShaderModePresets> {
 /// Save the active shader settings to `settings/shaders/land.toml`.
 /// Overwrites the full preset structure (all modes × time-of-day) plus the active preset key.
 pub fn save_shader_settings(presets: &LandShaderModePresets) {
-    let path = crate::core::constants::default_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let path = crate::core::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -170,10 +170,7 @@ pub fn save_shader_settings(presets: &LandShaderModePresets) {
 /// Build a full `LandShaderModePresets` from the current `UniformState`, writing
 /// the live values into the slot matching `active_preset` and keeping the rest
 /// from the base presets.
-pub fn build_save_presets(
-    u: &UniformState,
-    base: &LandShaderModePresets,
-) -> LandShaderModePresets {
+pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> LandShaderModePresets {
     // Start with a clone of the base (either user-saved or factory defaults).
     // We only overwrite the active preset's slot so other modes are preserved.
     let mut out = clone_presets(base);
@@ -280,15 +277,14 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
         (clone_presets(&shader_presets), key)
     };
 
-    let preset = get_preset_slot(&source, &preset_key)
-        .unwrap_or_else(|| {
-            let msg = format!(
-                "Invalid active preset '{}', falling back to classic.morning",
-                preset_key
-            );
-            console_logger::one(LogSev::Warn, LogAbout::Settings, &msg);
-            &source.classic.morning
-        });
+    let preset = get_preset_slot(&source, &preset_key).unwrap_or_else(|| {
+        let msg = format!(
+            "Invalid active preset '{}', falling back to classic.morning",
+            preset_key
+        );
+        console_logger::one(LogSev::Warn, LogAbout::Settings, &msg);
+        &source.classic.morning
+    });
 
     let state = UniformState {
         effects: preset.effects,
@@ -326,7 +322,7 @@ fn sys_hotreload_shader_presets(
         return;
     }
 
-    let path = crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
+    let path = crate::core::constants::valid_asset_dir().join(SHADER_PRESETS_FILE_NAME);
     let new_mtime = std::fs::metadata(&path)
         .ok()
         .and_then(|m| m.modified().ok());

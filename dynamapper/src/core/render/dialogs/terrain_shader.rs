@@ -9,8 +9,8 @@
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
-    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
-    external_data::shader_presets::{UniformState, build_save_presets, save_shader_settings},
+    core::render::{dialogs, scene::camera::UiCameraResource},
+    external_data::shader_presets::{build_save_presets, save_shader_settings, UniformState},
     impl_tracked_plugin,
     prelude::*,
     util_lib::tracked_plugin::*,
@@ -59,12 +59,12 @@ pub fn terrain_ui_system(
     egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
     shader_presets: Res<LandShaderModePresets>,
+    settings: ResMut<Settings>,
     mut ui_state: ResMut<TerrainShaderUiState>,
-    settings: Res<Settings>,
     mut was_open: Local<bool>,
 ) {
     // Try to get the egui context - if it fails, skip rendering this frame
-    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 
@@ -549,6 +549,7 @@ pub fn terrain_ui_system(
     // Detect close transition: save shader settings to land.toml,
     // but only if values actually changed from the last saved snapshot.
     if *was_open && !ui_state.open {
+        /*
         let values_changed = match u.saved_snapshot {
             Some(snap) => {
                 // Compare current live values against the last-saved snapshot.
@@ -562,10 +563,11 @@ pub fn terrain_ui_system(
             None => true,
         };
         if values_changed {
-            let save_presets = build_save_presets(&u, &shader_presets);
-            save_shader_settings(&save_presets);
-            u.saved_snapshot = Some(u.snapshot());
-        }
+        */
+        let save_presets = build_save_presets(&u, &shader_presets);
+        save_shader_settings(&save_presets);
+        u.saved_snapshot = Some(u.snapshot());
+        //}
     }
     *was_open = ui_state.open;
 }

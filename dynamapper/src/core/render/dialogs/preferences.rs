@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
-    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    core::render::{dialogs, scene::camera::UiCameraResource},
     external_data::settings::AntiAliasingMode,
     prelude::*,
 };
@@ -35,6 +35,7 @@ pub struct PreferencesDialogState {
     pub texture_filtering: u32,
     /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
     pub texture_reconstruction: u32,
+    pub perspective_camera: bool,
 }
 
 impl Default for PreferencesDialogState {
@@ -62,6 +63,7 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             texture_filtering: 0,
             texture_reconstruction: 0,
+            perspective_camera: false,
         }
     }
 }
@@ -115,6 +117,7 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.texture_filtering = settings.graphics.texture_filtering;
         state.texture_reconstruction = settings.graphics.texture_reconstruction;
+        state.perspective_camera = settings.app.window.perspective_camera;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -149,7 +152,7 @@ pub fn sys_render_preferences_dialog(
         return;
     }
 
-    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 
@@ -230,11 +233,9 @@ pub fn sys_render_preferences_dialog(
                     }
 
                     ui.label(
-                        egui::RichText::new(
-                            "Note: frame limiting also affected by VSync.",
-                        )
-                        .small()
-                        .weak(),
+                        egui::RichText::new("Note: frame limiting also affected by VSync.")
+                            .small()
+                            .weak(),
                     );
 
                     ui.add_space(8.0);
@@ -256,11 +257,7 @@ pub fn sys_render_preferences_dialog(
                         .selected_text(state.anti_aliasing.label())
                         .show_ui(ui, |ui| {
                             for mode in AntiAliasingMode::ALL {
-                                ui.selectable_value(
-                                    &mut state.anti_aliasing,
-                                    mode,
-                                    mode.label(),
-                                );
+                                ui.selectable_value(&mut state.anti_aliasing, mode, mode.label());
                             }
                         });
                     if settings.graphics.anti_aliasing != state.anti_aliasing {
@@ -275,11 +272,7 @@ pub fn sys_render_preferences_dialog(
                     let filter_labels = ["Point (Nearest)", "Linear (Bilinear)"];
                     let mut filter_idx = state.texture_filtering as usize;
                     egui::ComboBox::from_label("Filtering")
-                        .selected_text(
-                            *filter_labels
-                                .get(filter_idx)
-                                .unwrap_or(&"Unknown"),
-                        )
+                        .selected_text(*filter_labels.get(filter_idx).unwrap_or(&"Unknown"))
                         .show_ui(ui, |ui| {
                             for (idx, label) in filter_labels.iter().enumerate() {
                                 ui.selectable_value(&mut filter_idx, idx, *label);
@@ -294,11 +287,7 @@ pub fn sys_render_preferences_dialog(
                     let recon_labels = ["None", "Bicubic", "FSR"];
                     let mut recon_idx = state.texture_reconstruction as usize;
                     egui::ComboBox::from_label("Reconstruction")
-                        .selected_text(
-                            *recon_labels
-                                .get(recon_idx)
-                                .unwrap_or(&"Unknown"),
-                        )
+                        .selected_text(*recon_labels.get(recon_idx).unwrap_or(&"Unknown"))
                         .show_ui(ui, |ui| {
                             for (idx, label) in recon_labels.iter().enumerate() {
                                 ui.selectable_value(&mut recon_idx, idx, *label);
@@ -351,6 +340,9 @@ pub fn sys_render_preferences_dialog(
                             .small()
                             .weak(),
                     );
+
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut state.perspective_camera, "Perspective Camera Mode");
                 }
 
                 // ====================== UI TAB ========================
@@ -400,7 +392,8 @@ pub fn sys_render_preferences_dialog(
                             ))
                             .changed()
                         {
-                            settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
+                            settings.app.window.performance_overlay_scale =
+                                state.performance_overlay_scale;
                         }
                     });
                 }
@@ -434,6 +427,9 @@ pub fn sys_render_preferences_dialog(
             }
             if settings.as_ref().app.window.free_camera != state.free_camera {
                 settings.app.window.free_camera = state.free_camera;
+            }
+            if settings.as_ref().app.window.perspective_camera != state.perspective_camera {
+                settings.app.window.perspective_camera = state.perspective_camera;
             }
             if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
                 settings.app.window.ui_scale = state.ui_scale;

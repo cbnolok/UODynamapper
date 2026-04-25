@@ -1,6 +1,6 @@
 use crate::ingame_sysmessage_logger::{self, InGameLog};
 use crate::{
-    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    core::render::{dialogs, scene::camera::UiCameraResource},
     prelude::*,
 };
 use bevy::prelude::*;
@@ -36,7 +36,7 @@ fn sys_render_sysmessages(
     mut cached_logs: Local<Vec<InGameLog>>,
     mut cached_log_count: Local<usize>,
 ) {
-    let Some(ctx) = get_egui_context_ready(&mut contexts, &egui_ui_camera) else {
+    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut contexts, &egui_ui_camera) else {
         return;
     };
 

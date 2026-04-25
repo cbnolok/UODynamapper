@@ -69,6 +69,7 @@ fn sys_player_input(
 ) {
     // Keep movement and mouse cursor input separate.
     if let Ok(ctx) = egui_contexts.ctx_mut() {
+        // ctx()
         if ctx.wants_pointer_input() {
             move_dir.dir = None;
             move_dir.vertical_dir = 0;
@@ -77,6 +78,7 @@ fn sys_player_input(
     }
     if let Some(ui_cam) = egui_ui_camera.0 {
         if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(ui_cam) {
+            // ctx_for_entity
             if ctx.wants_pointer_input() {
                 move_dir.dir = None;
                 move_dir.vertical_dir = 0;
@@ -101,8 +103,10 @@ fn sys_player_input(
 }
 
 fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2, max_x: u32, max_y: u32) -> UOVec4 {
-    let next_x = (i32::from(current_pos.x) + dir.x).clamp(0, (max_x.saturating_sub(1)) as i32) as u16;
-    let next_y = (i32::from(current_pos.y) + dir.y).clamp(0, (max_y.saturating_sub(1)) as i32) as u16;
+    let next_x =
+        (i32::from(current_pos.x) + dir.x).clamp(0, (max_x.saturating_sub(1)) as i32) as u16;
+    let next_y =
+        (i32::from(current_pos.y) + dir.y).clamp(0, (max_y.saturating_sub(1)) as i32) as u16;
     UOVec4::new(next_x, next_y, current_pos.z, current_pos.m)
 }
 
@@ -235,11 +239,12 @@ fn sys_player_move(
                 }
 
                 // Sync the UO coordinate state
-                let (max_x, max_y) = if let Some(meta) = world_geo_data.maps.get(&(current_pos.m as u32)) {
-                    (meta.width, meta.height)
-                } else {
-                    (u16::MAX as u32, u16::MAX as u32)
-                };
+                let (max_x, max_y) =
+                    if let Some(meta) = world_geo_data.maps.get(&(current_pos.m as u32)) {
+                        (meta.width, meta.height)
+                    } else {
+                        (u16::MAX as u32, u16::MAX as u32)
+                    };
                 let next_pos = advance_horizontal_position(current_pos, dir, max_x, max_y);
                 let old_map = player.current_pos.map(|p| p.m);
                 player.current_pos = Some(next_pos);

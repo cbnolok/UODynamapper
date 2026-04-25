@@ -71,6 +71,7 @@ pub struct SectWindow {
     /// Per-overlay scale for the performance overlay.
     pub performance_overlay_scale: f32,
     pub free_camera: bool,
+    pub perspective_camera: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -402,7 +403,7 @@ pub struct SettingsFileWatcher {
 
 impl Default for SettingsFileWatcher {
     fn default() -> Self {
-        let assets_path = crate::core::constants::default_asset_dir();
+        let assets_path = crate::core::constants::valid_asset_dir();
         // Snapshot the initial mtimes so we don't trigger a reload immediately on startup.
         let mtime_of = |name: &str| -> Option<SystemTime> {
             std::fs::metadata(assets_path.join(name))
@@ -453,7 +454,7 @@ const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
 const WORLDMAP_RENDERING_CONFIG_FILE: &str = "settings/core_worldmap_rendering.toml";
 
 pub fn load_from_files() -> Settings {
-    let assets_path = crate::core::constants::default_asset_dir();
+    let assets_path = crate::core::constants::valid_asset_dir();
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let uo_files_path = assets_path.join(UO_FILES_CONFIG_FILE);
@@ -565,7 +566,7 @@ pub fn apply_logging_settings(logging: &SectLogging) {
 }
 
 pub fn save_app_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::default_asset_dir();
+    let assets_path = crate::core::constants::valid_asset_dir();
     let user_path = assets_path.join(USER_CONFIG_FILE);
 
     match toml::to_string_pretty(&settings.app) {
@@ -583,7 +584,7 @@ pub fn save_app_settings(settings: &Settings) {
 }
 
 pub fn save_keybindings(settings: &Settings) {
-    let assets_path = crate::core::constants::default_asset_dir();
+    let assets_path = crate::core::constants::valid_asset_dir();
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
 
     match toml::to_string_pretty(&settings.keybindings) {
@@ -601,7 +602,7 @@ pub fn save_keybindings(settings: &Settings) {
 }
 
 pub fn save_graphics_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::default_asset_dir();
+    let assets_path = crate::core::constants::valid_asset_dir();
     let graphics_path = assets_path.join(GRAPHICS_CONFIG_FILE);
 
     #[derive(Serialize)]
@@ -721,7 +722,7 @@ fn sys_hotreload_settings(
         return;
     }
 
-    let assets_path = crate::core::constants::default_asset_dir();
+    let assets_path = crate::core::constants::valid_asset_dir();
     let mtime_of = |name: &str| -> Option<SystemTime> {
         std::fs::metadata(assets_path.join(name))
             .ok()

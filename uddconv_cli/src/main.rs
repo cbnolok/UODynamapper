@@ -10,6 +10,8 @@ use uddconv::{
     cc_tiledata::convert_tiledata_mul_to_cc_tiledata_uddp,
 };
 
+/// UODynamapper Asset Converter - A tool to convert classic Ultima Online assets
+/// into UODynamapper-specific formats.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {

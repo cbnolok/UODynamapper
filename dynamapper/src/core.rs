@@ -180,7 +180,7 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
 
 pub fn run_bevy_app() -> ExitCode {
     let cwd = std::env::current_dir().unwrap();
-    let assets_folder = constants::default_asset_dir();
+    let assets_folder = constants::valid_asset_dir();
 
     // Current working directory.
     console_logger::system(&format!("CWD: {cwd:?}"));

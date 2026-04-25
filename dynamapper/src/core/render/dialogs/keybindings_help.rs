@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleKeybindingsHelp};
 use crate::{
-    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    core::render::{dialogs, scene::camera::UiCameraResource},
     prelude::*,
 };
 use bevy::prelude::*;
@@ -32,10 +32,7 @@ fn sys_help_toggle(
     state.open = !state.open;
 }
 
-fn sys_help_close(
-    _trigger: On<ActionCloseActiveDialog>,
-    mut state: ResMut<KeybindingsHelpState>,
-) {
+fn sys_help_close(_trigger: On<ActionCloseActiveDialog>, mut state: ResMut<KeybindingsHelpState>) {
     state.open = false;
 }
 
@@ -46,7 +43,7 @@ pub fn sys_render_keybindings_help(
     egui_ui_camera: Res<UiCameraResource>,
 ) {
     // Try to get the egui context - if it fails, skip rendering this frame
-    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 

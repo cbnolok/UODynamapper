@@ -4,6 +4,8 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre;
 use uocf_cli::legacy_mul::{CompressionFlag, FileType, LegacyMulFileConverter};
 
+/// UO Legacy MUL/UOP Converter - A tool to convert between legacy .mul/.idx files
+/// and modern .uop packages.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {

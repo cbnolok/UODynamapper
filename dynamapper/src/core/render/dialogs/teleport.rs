@@ -4,7 +4,7 @@ use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::ingame_sysmessage_logger;
 use crate::{
-    core::render::{dialogs::get_egui_context_ready, scene::camera::UiCameraResource},
+    core::render::{dialogs, scene::camera::UiCameraResource},
     prelude::*,
 };
 use bevy::prelude::*;
@@ -64,7 +64,7 @@ pub fn sys_render_teleport_dialog(
     }
 
     // Try to get the egui context - if it fails, skip rendering this frame
-    let Some(ctx) = get_egui_context_ready(&mut egui_contexts, &egui_ui_camera) else {
+    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 
@@ -107,7 +107,10 @@ pub fn sys_render_teleport_dialog(
                                 return;
                             }
                         } else {
-                            crate::ingame_sysmessage_logger::error(format!("Invalid map ID: {}", m));
+                            crate::ingame_sysmessage_logger::error(format!(
+                                "Invalid map ID: {}",
+                                m
+                            ));
                             return;
                         }
 
