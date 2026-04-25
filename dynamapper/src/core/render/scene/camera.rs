@@ -476,7 +476,8 @@ fn sys_free_camera_movement(
     };
 
     let move_speed = 10.0 * time.delta_secs();
-    let rotate_speed = 1.0 * time.delta_secs();
+    // Reduced from 1.0 to 0.15 for finer-grained rotation control (~8.6°/s).
+    let rotate_speed = 0.15 * time.delta_secs();
     let mut move_vec = Vec3::ZERO;
 
     if keyboard.pressed(KeyCode::ArrowUp) {

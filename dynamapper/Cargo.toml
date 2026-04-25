@@ -91,18 +91,18 @@ features = [
   "bevy_input_focus", # Enable input focus subsystem
   "bevy_log",         # Enable integration with tracing and log
   "bevy_pbr",         # Adds PBR rendering
-  "bevy_picking",     # Provides picking functionality
-  "bevy_render",      # Provides rendering functionality
-  "bevy_scene",       # Provides scene functionality
-  "bevy_state",       # Enable built in global state machines
-  "bevy_text",        # Provides text functionality
-  "bevy_ui",          # A custom ECS-driven UI framework
-  "bevy_window",      # Windowing layer
-  "bevy_winit",       # winit window and input backend
+  #"bevy_picking",     # Provides picking functionality
+  "bevy_render", # Provides rendering functionality
+  "bevy_scene",  # Provides scene functionality
+  "bevy_state",  # Enable built in global state machines
+  "bevy_text",   # Provides text functionality
+  "bevy_ui",     # A custom ECS-driven UI framework
+  "bevy_window", # Windowing layer
+  "bevy_winit",  # winit window and input backend
 
   # --- Picking Implementations ---
-  "sprite_picking", # Provides an implementation for picking sprites
-  "ui_picking",     # Provides an implementation for picking UI
+  #"sprite_picking", # Provides an implementation for picking sprites
+  "ui_picking", # Provides an implementation for picking UI
   #"mesh_picking",       # Provides an implementation for picking meshes
 
   # --- Optional Bevy Internal Crates ---
@@ -115,14 +115,14 @@ features = [
   #"bevy_gilrs",         # Adds gamepad support
   #"bevy_gizmos_render", # Adds support for rendering gizmos
   #"bevy_gltf",          # glTF support
-  "bevy_light",        # Provides light types such as point lights, directional lights, spotlights.
-  "bevy_mesh",         # Provides a mesh format and some primitive meshing routines.
-  "bevy_mikktspace",   # Provides vertex tangent generation for use with bevy_mesh.
-  "bevy_post_process", # Provides post process effects such as depth of field, bloom, chromatic aberration. (needed by bevy_anti_alias?)
+  "bevy_light", # Provides light types such as point lights, directional lights, spotlights.
+  #"bevy_mesh",         # Provides a mesh format and some primitive meshing routines.
+  #"bevy_mikktspace",   # Provides vertex tangent generation for use with bevy_mesh.
+  "bevy_post_process", # Provides post process effects such as depth of field, bloom, chromatic aberration. (needed by bevy_anti_alias)
   #"bevy_remote",        # Enable the Bevy Remote Protocol
-  "bevy_shader", # Provides shaders usable through asset handles.
+  #"bevy_shader", # Provides shaders usable through asset handles.
   #"bevy_solari",        # Provides raytraced lighting (experimental)
-  "bevy_sprite_render", # Provides sprite rendering functionality
+  #"bevy_sprite_render", # Provides sprite rendering functionality
   #"bevy_ui_debug",      # Provides a debug overlay for bevy UI
   "bevy_ui_render", # Provides rendering functionality for bevy_ui
 
@@ -148,7 +148,7 @@ features = [
 
   # --- Built-in Data & LUTs ---
   #"default_font",        # Include a default font (ASCII only, ~20kB)
-  "smaa_luts",           # Include SMAA Look Up Tables KTX2 Files
+  "smaa_luts",        # Include SMAA Look Up Tables KTX2 Files
   "tonemapping_luts", # Include tonemapping Look Up Tables KTX2 files.
   #"bluenoise_texture",  # Include blue noise KTX2 file used by environment maps, Solari and atmosphere
 
@@ -166,15 +166,15 @@ features = [
   #"statically-linked-dxc",  # Statically linked DXC shader compiler for DirectX 12
 
   # --- Asset File Format Support ---
-  "png",                 # PNG image format support
-  "bmp",                 # BMP image format support
-  "dds",                 # DDS compressed texture support
-  "ico",                 # ICO image format support
-  "jpeg",                # JPEG image format support
-  "ktx2",                # KTX2 compressed texture support
-  "zstd_c",              # C Zstandard decompression for KTX2.
+  "png",    # PNG image format support
+  "bmp",    # BMP image format support
+  "dds",    # DDS compressed texture support
+  "ico",    # ICO image format support
+  "jpeg",   # JPEG image format support
+  "ktx2",   # KTX2 compressed texture support
+  "zstd_c", # C Zstandard decompression for KTX2.
   #"zstd_rust",          # Pure rust Zstandard decompression for KTX2.
-  "basis-universal",     # Basis Universal compressed texture support
+  "basis-universal", # Basis Universal compressed texture support
   #"exr",                # EXR image format support
   #"ff",                 # Farbfeld image format support
   #"gif",                # GIF image format support

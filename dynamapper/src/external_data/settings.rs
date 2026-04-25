@@ -1,10 +1,9 @@
-use std::path::PathBuf;
 use std::time::SystemTime;
 
 use crate::console_logger::{self, LogAbout, LogSev};
-use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::prelude::*;
+use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::util_lib::uo_coords::*;
 use bevy::{
     //asset::{AssetLoader, LoadContext, io::Reader},
@@ -403,7 +402,7 @@ pub struct SettingsFileWatcher {
 
 impl Default for SettingsFileWatcher {
     fn default() -> Self {
-        let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+        let assets_path = crate::core::constants::default_asset_dir();
         // Snapshot the initial mtimes so we don't trigger a reload immediately on startup.
         let mtime_of = |name: &str| -> Option<SystemTime> {
             std::fs::metadata(assets_path.join(name))
@@ -454,7 +453,7 @@ const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
 const WORLDMAP_RENDERING_CONFIG_FILE: &str = "settings/core_worldmap_rendering.toml";
 
 pub fn load_from_files() -> Settings {
-    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let assets_path = crate::core::constants::default_asset_dir();
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let uo_files_path = assets_path.join(UO_FILES_CONFIG_FILE);
@@ -497,9 +496,13 @@ pub fn load_from_files() -> Settings {
     // Try both [graphics] and [core.graphics] (legacy)
     let graphics: SectGraphics = if let Ok(val) = toml::from_str::<toml::Value>(&gfx_contents) {
         if let Some(g) = val.get("graphics") {
-            g.clone().try_into::<SectGraphics>().expect("Failed to parse [graphics] in settings/graphics.toml")
+            g.clone()
+                .try_into::<SectGraphics>()
+                .expect("Failed to parse [graphics] in settings/graphics.toml")
         } else if let Some(c) = val.get("core").and_then(|c| c.get("graphics")) {
-            c.clone().try_into::<SectGraphics>().expect("Failed to parse [core.graphics] in settings/graphics.toml")
+            c.clone()
+                .try_into::<SectGraphics>()
+                .expect("Failed to parse [core.graphics] in settings/graphics.toml")
         } else {
             // If neither table exists, try to parse the whole file as SectGraphics if it's flat (unlikely but possible)
             toml::from_str(&gfx_contents).expect("Failed to parse settings/graphics.toml — expected it to contain a [graphics] table")
@@ -562,7 +565,7 @@ pub fn apply_logging_settings(logging: &SectLogging) {
 }
 
 pub fn save_app_settings(settings: &Settings) {
-    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let assets_path = crate::core::constants::default_asset_dir();
     let user_path = assets_path.join(USER_CONFIG_FILE);
 
     match toml::to_string_pretty(&settings.app) {
@@ -570,11 +573,7 @@ pub fn save_app_settings(settings: &Settings) {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
                 paris::error!("Failed to save preferences.toml: {}", e);
             } else {
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::General,
-                    "Saved preferences.toml",
-                );
+                console_logger::one(LogSev::Info, LogAbout::General, "Saved preferences.toml");
             }
         }
         Err(e) => {
@@ -584,7 +583,7 @@ pub fn save_app_settings(settings: &Settings) {
 }
 
 pub fn save_keybindings(settings: &Settings) {
-    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let assets_path = crate::core::constants::default_asset_dir();
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
 
     match toml::to_string_pretty(&settings.keybindings) {
@@ -592,11 +591,7 @@ pub fn save_keybindings(settings: &Settings) {
             if let Err(e) = std::fs::write(&kb_path, toml_str) {
                 paris::error!("Failed to save keybindings.toml: {}", e);
             } else {
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::General,
-                    "Saved keybindings.toml",
-                );
+                console_logger::one(LogSev::Info, LogAbout::General, "Saved keybindings.toml");
             }
         }
         Err(e) => {
@@ -606,7 +601,7 @@ pub fn save_keybindings(settings: &Settings) {
 }
 
 pub fn save_graphics_settings(settings: &Settings) {
-    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let assets_path = crate::core::constants::default_asset_dir();
     let graphics_path = assets_path.join(GRAPHICS_CONFIG_FILE);
 
     #[derive(Serialize)]
@@ -621,11 +616,7 @@ pub fn save_graphics_settings(settings: &Settings) {
             if let Err(e) = std::fs::write(&graphics_path, toml_str) {
                 paris::error!("Failed to save graphics.toml: {}", e);
             } else {
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::General,
-                    "Saved graphics.toml",
-                );
+                console_logger::one(LogSev::Info, LogAbout::General, "Saved graphics.toml");
             }
         }
         Err(e) => {
@@ -675,7 +666,10 @@ fn sys_startup_load_file(mut commands: Commands) {
     data.graphics
         .log_unavailable_texture_compression_backend_warning();
     // Ensure plugin log toggles follow configured settings
-    set_plugin_log_toggles(data.logging.emit_flat_plugin_build, data.logging.emit_tree_plugin_build);
+    set_plugin_log_toggles(
+        data.logging.emit_flat_plugin_build,
+        data.logging.emit_tree_plugin_build,
+    );
 
     commands.insert_resource(data);
     console_logger::one(
@@ -699,7 +693,10 @@ fn sys_log_texture_compression_status(
     } else {
         "Texture compression state changed"
     };
-    let message = format!("{prefix}: {}", settings.graphics.texture_compression_log_status());
+    let message = format!(
+        "{prefix}: {}",
+        settings.graphics.texture_compression_log_status()
+    );
     console_logger::one(LogSev::Info, LogAbout::Settings, &message);
 
     *last_logged_state = Some(current_state);
@@ -724,7 +721,7 @@ fn sys_hotreload_settings(
         return;
     }
 
-    let assets_path = PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string());
+    let assets_path = crate::core::constants::default_asset_dir();
     let mtime_of = |name: &str| -> Option<SystemTime> {
         std::fs::metadata(assets_path.join(name))
             .ok()
@@ -760,12 +757,11 @@ fn sys_hotreload_settings(
         settings.logging = new_data.logging.clone();
         watcher.core_mtime = new_core;
         // Update plugin log toggles on settings hot-reload
-        set_plugin_log_toggles(settings.logging.emit_flat_plugin_build, settings.logging.emit_tree_plugin_build);
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            "Hot-reloaded: core.toml",
+        set_plugin_log_toggles(
+            settings.logging.emit_flat_plugin_build,
+            settings.logging.emit_tree_plugin_build,
         );
+        console_logger::one(LogSev::Info, LogAbout::General, "Hot-reloaded: core.toml");
     }
     if graphics_changed {
         settings.graphics = new_data.graphics.clone();

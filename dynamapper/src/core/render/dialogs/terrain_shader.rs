@@ -546,11 +546,26 @@ pub fn terrain_ui_system(
             });
         });
 
-    // Detect close transition: save shader settings to land.toml.
+    // Detect close transition: save shader settings to land.toml,
+    // but only if values actually changed from the last saved snapshot.
     if *was_open && !ui_state.open {
-        let save_presets = build_save_presets(&u, &shader_presets);
-        save_shader_settings(&save_presets);
-        u.saved_snapshot = Some(u.snapshot());
+        let values_changed = match u.saved_snapshot {
+            Some(snap) => {
+                // Compare current live values against the last-saved snapshot.
+                // If any field differs, we need to persist.
+                u.effects != snap.effects
+                    || u.lighting != snap.lighting
+                    || u.land_lighting != snap.land_lighting
+                    || (u.global_lighting - snap.global_lighting).abs() > f32::EPSILON
+            }
+            // No previous save — treat as changed so we persist the initial state.
+            None => true,
+        };
+        if values_changed {
+            let save_presets = build_save_presets(&u, &shader_presets);
+            save_shader_settings(&save_presets);
+            u.saved_snapshot = Some(u.snapshot());
+        }
     }
     *was_open = ui_state.open;
 }

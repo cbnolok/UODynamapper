@@ -71,9 +71,7 @@ pub struct ShaderPresetsFileWatcher {
 
 impl Default for ShaderPresetsFileWatcher {
     fn default() -> Self {
-        let path = PathBuf::from(
-            crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME,
-        );
+        let path = crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
         let mtime = std::fs::metadata(&path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -102,7 +100,7 @@ impl Plugin for ShaderPresetsPlugin {
 
 pub fn load_from_file() -> LandShaderModePresets {
     let presets_with_rel_path: PathBuf =
-        PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME);
+        crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
 
     let contents = std::fs::read_to_string(&presets_with_rel_path)
         .expect("Failed to read shader presets file");
@@ -127,9 +125,7 @@ pub fn load_from_file() -> LandShaderModePresets {
 /// Try to load user-saved shader settings from `settings/shaders/land.toml`.
 /// Returns `None` if the file doesn't exist or can't be parsed.
 pub fn load_shader_settings() -> Option<LandShaderModePresets> {
-    let path = PathBuf::from(
-        crate::core::constants::ASSET_FOLDER.to_string() + SHADER_SETTINGS_FILE_NAME,
-    );
+    let path = crate::core::constants::default_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
     let contents = std::fs::read_to_string(&path).ok()?;
     match toml::from_str::<LandShaderModePresets>(&contents) {
         Ok(p) => Some(p),
@@ -143,9 +139,7 @@ pub fn load_shader_settings() -> Option<LandShaderModePresets> {
 /// Save the active shader settings to `settings/shaders/land.toml`.
 /// Overwrites the full preset structure (all modes × time-of-day) plus the active preset key.
 pub fn save_shader_settings(presets: &LandShaderModePresets) {
-    let path = PathBuf::from(
-        crate::core::constants::ASSET_FOLDER.to_string() + SHADER_SETTINGS_FILE_NAME,
-    );
+    let path = crate::core::constants::default_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -332,8 +326,7 @@ fn sys_hotreload_shader_presets(
         return;
     }
 
-    let path =
-        PathBuf::from(crate::core::constants::ASSET_FOLDER.to_string() + SHADER_PRESETS_FILE_NAME);
+    let path = crate::core::constants::default_asset_dir().join(SHADER_PRESETS_FILE_NAME);
     let new_mtime = std::fs::metadata(&path)
         .ok()
         .and_then(|m| m.modified().ok());

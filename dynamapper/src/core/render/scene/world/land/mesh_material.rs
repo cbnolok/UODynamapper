@@ -86,7 +86,7 @@ pub struct SceneUniform {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandEffectsUniform {
     // Non-lighting rendering controls only.  Lighting toggles and intensities
@@ -115,7 +115,7 @@ pub struct LandEffectsUniform {
 /// don't need view/normal–dependent lighting, but they share grading, fog, gloom,
 /// tonemapping, and base light/ambient colors with the land shader.
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)]
 pub struct GlobalLightingUniforms {
     // --- Toggles (vec4 slot 0) ---
@@ -171,7 +171,7 @@ pub struct GlobalLightingUniforms {
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, Deserialize, Serialize, Default)]
+#[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
 #[allow(dead_code)]
 pub struct LandLightingUniforms {
     // --- Toggle ---

@@ -1,8 +1,8 @@
 pub mod app_states;
 mod bevy_log_filter;
-mod diagnostics;
 pub mod constants;
 pub mod controls;
+mod diagnostics;
 pub mod maps;
 pub mod render;
 pub mod system_sets;
@@ -14,11 +14,14 @@ use crate::{
     core::{
         app_states::*,
         bevy_log_filter::custom_bevy_log_config,
-        diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin}, render::scene::camera::UO_TILE_PIXEL_SIZE,
+        diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin},
+        render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
-    external_data::{ExternalDataPlugin, settings},
-    util_lib::tracked_plugin::{sys_log_plugin_registry_tree, set_plugin_log_toggles, TrackedPlugin, log_plugin_build},
+    external_data::{settings, ExternalDataPlugin},
     impl_tracked_plugin,
+    util_lib::tracked_plugin::{
+        log_plugin_build, set_plugin_log_toggles, sys_log_plugin_registry_tree, TrackedPlugin,
+    },
 };
 use bevy::{
     //ecs::schedule::ExecutorKind,
@@ -48,38 +51,35 @@ fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
 }
 
 fn custom_threadpool_settings() -> TaskPoolPlugin {
-    /*
     TaskPoolPlugin {
-            task_pool_options: TaskPoolOptions {
-                // Minimum threads for system computation (already limited by the feature)
-                compute: bevy::app::TaskPoolThreadAssignmentPolicy {
-                    min_threads: 1,
-                    max_threads: 3,
-                    percent: 0.0,
-                    on_thread_spawn: None,
-                    on_thread_destroy: None,
-                },
-                // Limit the pool for asset loading (I/O)
-                io: bevy::app::TaskPoolThreadAssignmentPolicy {
-                    min_threads: 1,
-                    max_threads: 1,
-                    percent: 0.0,
-                    on_thread_spawn: None,
-                    on_thread_destroy: None,
-                },
-                // Limit the pool for asynchronous computation
-                async_compute: bevy::app::TaskPoolThreadAssignmentPolicy {
-                    min_threads: 1,
-                    max_threads: 1,
-                    percent: 0.0,
-                    on_thread_spawn: None,
-                    on_thread_destroy: None,
-                },
-                ..default()
-            }
-        }
-        */
-    TaskPoolPlugin::default()
+        task_pool_options: TaskPoolOptions {
+            // Minimum threads for system computation (already limited by the feature)
+            compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                min_threads: 1,
+                max_threads: 3,
+                percent: 0.0,
+                on_thread_spawn: None,
+                on_thread_destroy: None,
+            },
+            // Limit the pool for asset loading (I/O)
+            io: bevy::app::TaskPoolThreadAssignmentPolicy {
+                min_threads: 1,
+                max_threads: 1,
+                percent: 0.0,
+                on_thread_spawn: None,
+                on_thread_destroy: None,
+            },
+            // Limit the pool for asynchronous computation
+            async_compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                min_threads: 1,
+                max_threads: 1,
+                percent: 0.0,
+                on_thread_spawn: None,
+                on_thread_destroy: None,
+            },
+            ..default()
+        },
+    }
 }
 
 fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin {
@@ -91,6 +91,8 @@ fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin 
     WindowPlugin {
         primary_window: Some(Window {
             present_mode,
+            composite_alpha_mode: bevy::window::CompositeAlphaMode::Opaque,
+            desired_maximum_frame_latency: Some(std::num::NonZeroU32::new(1).unwrap()),
             title: "UODynamapper".to_string(),
             resizable: true,
             // Force 1:1 aspect for virtual rendering (game world)
@@ -101,6 +103,7 @@ fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin 
                 min_height: UO_TILE_PIXEL_SIZE * 10.0,
                 ..Default::default()
             },
+
             // Let window freely resize, but camera+scene SYSTEMS keep virtual grid and diamonds fixed.
             ..Default::default()
         }),
@@ -177,7 +180,7 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
 
 pub fn run_bevy_app() -> ExitCode {
     let cwd = std::env::current_dir().unwrap();
-    let assets_folder = cwd.join(constants::ASSET_FOLDER);
+    let assets_folder = constants::default_asset_dir();
 
     // Current working directory.
     console_logger::system(&format!("CWD: {cwd:?}"));
@@ -220,6 +223,10 @@ pub fn run_bevy_app() -> ExitCode {
         DefaultPlugins
             .build()
             //.disable::<LogPlugin>() // This removes every Bevy logs, instead of just disabling default to avoid double-logging or formatting issues
+            //.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+            //.disable::<bevy::core_pipeline::experimental::mip_generation::MipGenerationPlugin>()
+            //.disable::<bevy::core_pipeline::oit::OrderIndependentTransparencyPlugin>()
+            //.disable::<bevy::core_pipeline::upscaling::UpscalingPlugin>()
             .set(custom_bevy_log_config())
             .set(custom_window_plugin_settings(window_size, vsync_enabled))
             .set(custom_threadpool_settings())
@@ -231,6 +238,34 @@ pub fn run_bevy_app() -> ExitCode {
                 ..default()
             }),
     );
+
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    })
+    .edit_schedule(PreUpdate, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    })
+    .edit_schedule(PostUpdate, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    })
+    .edit_schedule(FixedUpdate, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    })
+    .edit_schedule(FixedPreUpdate, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    })
+    .edit_schedule(FixedPostUpdate, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    });
+
+    if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        render_app.edit_schedule(bevy::render::Render, |schedule| {
+            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        });
+        render_app.edit_schedule(bevy::render::ExtractSchedule, |schedule| {
+            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        });
+    }
 
     {
         let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
@@ -247,9 +282,6 @@ pub fn run_bevy_app() -> ExitCode {
     }) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
     .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
     .insert_resource(custom_wireframe_config(wireframe_enabled))
-    //.edit_schedule(Update, |schedule| {
-    //  schedule.set_executor_kind(ExecutorKind::SingleThreaded);
-    //})
     .add_plugins(bevy_framepace::FramepacePlugin)
     // TODO: we have to enable hot reloading of this setting, not just setting it at startup.
     .insert_resource(bevy_framepace::FramepaceSettings {
@@ -307,7 +339,10 @@ pub fn run_bevy_app() -> ExitCode {
         sys_advance_state_after_scene_setup_stage_2.after(StartupSysSet::SetupSceneStage2),
     );
 
-    app.add_systems(Startup, sys_log_plugin_registry_tree.in_set(StartupSysSet::Done));
+    app.add_systems(
+        Startup,
+        sys_log_plugin_registry_tree.in_set(StartupSysSet::Done),
+    );
 
     // One-shot startup log: report whether Bevy uses GPU preprocessing / indirect draw.
     app.add_plugins(LogGpuPreprocessingModePlugin);
