@@ -11,6 +11,11 @@ use std::collections::{HashMap, HashSet};
 use super::support::{patch_header_package_hash64, zstd_compress, zstd_compress_with_dict};
 use super::*;
 
+const DICT_TRAIN_MIN_SAMPLE_BYTES: usize = 128;
+const DICT_TRAIN_AUTO_MAX_SAMPLE_BYTES: usize = 48 * 1024;
+const DICT_TRAIN_MAX_SAMPLE_COUNT: usize = 1024;
+const DICT_TRAIN_MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingKey {
     PathHash(u64),
@@ -45,6 +50,20 @@ struct BuiltFile {
 struct BuildPlan {
     dictionaries: Vec<BuiltDictionary>,
     files: Vec<BuiltFile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildProgressPhase {
+    TrainingDictionaries,
+    CompressingFiles,
+    Assembling,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildProgress {
+    pub phase: BuildProgressPhase,
+    pub completed: usize,
+    pub total: usize,
 }
 
 /// Builder for runtime `.uddp` containers.
@@ -127,26 +146,71 @@ impl UddpBuilder {
 
     /// Build the final package image.
     pub fn build(&mut self) -> Result<Vec<u8>, BuildError> {
-        let plan = self.plan_build()?;
-        self.emit_package(plan)
+        self.build_with_progress(|_| {})
+    }
+
+    /// Build the final package image while reporting coarse progress for the
+    /// expensive compression and assembly passes.
+    pub fn build_with_progress<F>(&mut self, mut progress: F) -> Result<Vec<u8>, BuildError>
+    where
+        F: FnMut(BuildProgress),
+    {
+        let plan = self.plan_build_with_progress(&mut progress)?;
+        self.emit_package_with_progress(plan, &mut progress)
     }
 
     fn plan_build(&self) -> Result<BuildPlan, BuildError> {
+        self.plan_build_with_progress(|_| {})
+    }
+
+    fn plan_build_with_progress<F>(&self, mut progress: F) -> Result<BuildPlan, BuildError>
+    where
+        F: FnMut(BuildProgress),
+    {
         let mut samples_by_type: HashMap<u8, Vec<&[u8]>> = HashMap::new();
         for file in &self.files {
             samples_by_type.entry(file.data_type).or_default().push(&file.raw_data);
         }
 
+        let training_samples_by_type = samples_by_type
+            .iter()
+            .filter_map(|(&data_type, samples)| {
+                let training_samples = select_dict_training_samples(samples);
+                should_train_dict(&training_samples)
+                    .then_some((data_type, training_samples))
+            })
+            .collect::<Vec<_>>();
+
         let mut dicts_by_type: HashMap<u8, Vec<u8>> = HashMap::new();
-        for (&data_type, samples) in &samples_by_type {
-            if should_train_dict(samples) {
+        if !training_samples_by_type.is_empty() {
+            let mut completed = 0usize;
+            progress(BuildProgress {
+                phase: BuildProgressPhase::TrainingDictionaries,
+                completed,
+                total: training_samples_by_type.len(),
+            });
+
+            for (data_type, samples) in &training_samples_by_type {
                 let dict_size = choose_dict_size(samples);
                 let dict = train_zstd_dict(samples, dict_size)?;
                 if !dict.is_empty() {
-                    dicts_by_type.insert(data_type, dict);
+                    dicts_by_type.insert(*data_type, dict);
                 }
+                completed += 1;
+                progress(BuildProgress {
+                    phase: BuildProgressPhase::TrainingDictionaries,
+                    completed,
+                    total: training_samples_by_type.len(),
+                });
             }
         }
+
+        let mut completed = 0usize;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::CompressingFiles,
+            completed,
+            total: self.files.len(),
+        });
 
         let mut files = Vec::with_capacity(self.files.len());
         for file in &self.files {
@@ -182,6 +246,13 @@ impl UddpBuilder {
                 raw_size: file.raw_data.len() as u32,
                 encoded_payload,
             });
+
+            completed += 1;
+            progress(BuildProgress {
+                phase: BuildProgressPhase::CompressingFiles,
+                completed,
+                total: self.files.len(),
+            });
         }
 
         let mut dictionaries = Vec::new();
@@ -198,7 +269,22 @@ impl UddpBuilder {
     }
 
     fn emit_package(&self, plan: BuildPlan) -> Result<Vec<u8>, BuildError> {
+        self.emit_package_with_progress(plan, |_| {})
+    }
+
+    fn emit_package_with_progress<F>(&self, plan: BuildPlan, mut progress: F) -> Result<Vec<u8>, BuildError>
+    where
+        F: FnMut(BuildProgress),
+    {
         validate_keys(self.lookup_mode, &plan.files)?;
+
+        let total_steps = 2 + plan.dictionaries.len() + plan.files.len();
+        let mut completed = 0usize;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed,
+            total: total_steps,
+        });
 
         let dict_table_offset = UddpHeader::SERIALIZED_SIZE as u64;
         let dict_table_size = (plan.dictionaries.len() * UddpDictRef::SERIALIZED_SIZE) as u64;
@@ -250,6 +336,13 @@ impl UddpBuilder {
         if blob_cursor > MAX_PACKAGE_SIZE {
             return Err(BuildError::PackageTooLarge(blob_cursor));
         }
+
+        completed += 1;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed,
+            total: total_steps,
+        });
 
         let header = UddpHeader {
             magic: UDDP_MAGIC,
@@ -323,11 +416,30 @@ impl UddpBuilder {
             }
         }
 
+        completed += 1;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed,
+            total: total_steps,
+        });
+
         for dict in &plan.dictionaries {
             out.extend_from_slice(&dict.bytes);
+            completed += 1;
+            progress(BuildProgress {
+                phase: BuildProgressPhase::Assembling,
+                completed,
+                total: total_steps,
+            });
         }
         for file in &plan.files {
             out.extend_from_slice(&file.encoded_payload);
+            completed += 1;
+            progress(BuildProgress {
+                phase: BuildProgressPhase::Assembling,
+                completed,
+                total: total_steps,
+            });
         }
 
         let package_hash64 = canonical_package_hash64(&out);
@@ -356,6 +468,50 @@ fn should_train_dict(samples: &[&[u8]]) -> bool {
     }
     let total: usize = samples.iter().map(|sample| sample.len()).sum();
     total >= 128 * 1024
+}
+
+/// Keep dictionary training deterministic and bounded.
+///
+/// Dictionaries only help the smaller payloads that use dict compression, so
+/// avoid training on giant blobs and cap the total corpus size to keep build
+/// time predictable.
+fn select_dict_training_samples<'a>(samples: &'a [&'a [u8]]) -> Vec<&'a [u8]> {
+    let eligible = samples
+        .iter()
+        .copied()
+        .filter(|sample| {
+            let len = sample.len();
+            (DICT_TRAIN_MIN_SAMPLE_BYTES..=DICT_TRAIN_AUTO_MAX_SAMPLE_BYTES).contains(&len)
+        })
+        .collect::<Vec<_>>();
+
+    if eligible.len() <= DICT_TRAIN_MAX_SAMPLE_COUNT {
+        return cap_training_sample_bytes(eligible);
+    }
+
+    let target_count = DICT_TRAIN_MAX_SAMPLE_COUNT;
+    let mut evenly_spaced = Vec::with_capacity(target_count);
+    for i in 0..target_count {
+        let index = i * eligible.len() / target_count;
+        evenly_spaced.push(eligible[index]);
+    }
+
+    cap_training_sample_bytes(evenly_spaced)
+}
+
+fn cap_training_sample_bytes<'a>(samples: Vec<&'a [u8]>) -> Vec<&'a [u8]> {
+    let mut total = 0usize;
+    let mut capped = Vec::with_capacity(samples.len());
+
+    for sample in samples {
+        if total >= DICT_TRAIN_MAX_TOTAL_BYTES {
+            break;
+        }
+        total += sample.len();
+        capped.push(sample);
+    }
+
+    capped
 }
 
 /// Pick a practical dictionary size from the available sample volume.

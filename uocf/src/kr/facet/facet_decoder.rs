@@ -38,8 +38,8 @@
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, eyre};
-use std::io::Cursor;
 use std::collections::{HashMap, HashSet};
+use std::io::Cursor;
 
 use crate::classic::map::MapBlock;
 use crate::enhanced::facet::StaticTile;
@@ -68,7 +68,12 @@ use super::tile_mappings_loader::*;
     }
 */
 
-/// Represents a single delimiter entry within a facet tile.
+// region: --- Internal Raw File-Mapping Structs (Binary Format)
+
+/// Represents a single delimiter entry within a KR facet tile.
+///
+/// This structure mirrors the binary layout used in Kingdom Reborn facets for stitching.
+/// It is primarily used as an intermediate representation during decoding.
 #[derive(Debug, Clone)]
 pub struct KrFacetDelimiter {
     pub direction: u8,
@@ -106,130 +111,144 @@ pub struct DecodedKrFacet {
     pub tiles: Vec<Vec<KrFacetTile>>, // 64x64 grid of tiles
 }
 
-    /// Decodes a raw KR facet `.bin` file directly into a classic 8x8 block representation.
-    ///
-    /// This bypasses the intermediate `KrFacetTile` allocation entirely, ensuring
-    /// zero redundant vector allocations. The output represents the 64 classic 8x8 MapBlocks.
-    ///
-    /// # Arguments
-    /// * `data` - The raw byte slice of the `.bin` file.
-    /// * `tile_dictionary` - The KR to Classic tile mapping.
-    /// * `static_dictionary` - A whitelist of valid classic static tile IDs.
-    pub fn decode_facet_bin(
-        data: &[u8],
-        tile_dictionary: &HashMap<u16, (u16, u8)>,
-        static_dictionary: &HashSet<u16>,
-    ) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
-        let mut cursor: Cursor<&[u8]> = Cursor::new(data);
+// endregion: --- Internal Raw File-Mapping Structs
 
-        // 1. Read Header
-        let _facet_id: u8 = cursor.read_u8()?;
-        let _file_id: u16 = cursor.read_u16::<LittleEndian>()?;
+// region: --- Public API (Convenience & Application Use)
 
-        // Initialize the 64 classic empty blocks
-        let mut decoded_blocks: Vec<crate::enhanced::facet::DecodedBlockClassic> = (0..64)
-            .map(|i| {
-                let block_x = (i % 8) as u32;
-                let block_y = (i / 8) as u32;
-                let mut block = MapBlock::default();
-                block.internal_coords.x = block_x;
-                block.internal_coords.y = block_y;
-                crate::enhanced::facet::DecodedBlockClassic {
-                    block,
-                    statics: Vec::new(),
-                }
-            })
-            .collect();
+/// Decodes a raw KR facet `.bin` file directly into a classic 8x8 block representation.
+///
+/// This bypasses the intermediate `KrFacetTile` allocation entirely, ensuring
+/// zero redundant vector allocations. The output represents the 64 classic 8x8 MapBlocks.
+///
+/// # Arguments
+/// * `data` - The raw byte slice of the `.bin` file.
+/// * `tile_dictionary` - The KR to Classic tile mapping.
+/// * `static_dictionary` - A whitelist of valid classic static tile IDs.
+pub fn decode_facet_bin(
+    data: &[u8],
+    tile_dictionary: &HashMap<u16, (u16, u8)>,
+    static_dictionary: &HashSet<u16>,
+) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
+    let mut cursor: Cursor<&[u8]> = Cursor::new(data);
 
-        // 2. Read Tile Data (64x64 grid, column-major: X then Y)
-        for x_64 in 0..64_u32 {
-            for y_64 in 0..64_u32 {
-                // Determine block coordinates
-                let block_x: u32 = x_64 / 8;
-                let block_y: u32 = y_64 / 8;
-                let block_index: usize = (block_y * 8 + block_x) as usize;
-                let cell_x: u32 = x_64 % 8;
-                let cell_y: u32 = y_64 % 8;
+    // 1. Read Header
+    let _facet_id: u8 = cursor.read_u8()?;
+    let _file_id: u16 = cursor.read_u16::<LittleEndian>()?;
 
-                // --- Land Tile ---
-                let z: i8 = cursor.read_i8()?;
-                let kr_land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
-                let _unknown_byte_land: u8 = cursor.read_u8()?;
-                let _original_id_low: u8 = cursor.read_u8()?;
-                let _original_id_high: u8 = cursor.read_u8()?;
-
-                // Apply reverse mapping for the land graphic
-                let classic_graphic_id = tile_dictionary.get(&kr_land_graphic).map(|r| r.0).unwrap_or(0);
-
-                if let Ok(cell) = decoded_blocks[block_index].block.cell_as_mut(cell_x, cell_y) {
-                    cell.id = classic_graphic_id;
-                    cell.z = z;
-                }
-
-                // --- Delimiters ---
-                let delimiter_count: u8 = cursor.read_u8()?;
-                if delimiter_count > 0 {
-                    // Skip delimiters (1 + 1 + 2 + 1 = 5 bytes per delimiter)
-                    cursor.set_position(cursor.position() + (delimiter_count as u64 * 5));
-                }
-
-                // --- Statics ---
-                let always_0_byte1: u8 = cursor.read_u8()?; // Always 0
-                let count_or_0_byte2: u8 = cursor.read_u8()?; // Count for first static, 0 for others
-
-                let static_count = if always_0_byte1 == 0 && count_or_0_byte2 > 0 {
-                    count_or_0_byte2
-                } else {
-                    0
-                };
-
-                for _ in 0..static_count {
-                    let graphic: u16 = cursor.read_u16::<LittleEndian>()?;
-                    let _unknown1: u16 = cursor.read_u16::<LittleEndian>()?;
-                    let static_z: i8 = cursor.read_i8()?;
-                    let hue: u16 = cursor.read_u16::<LittleEndian>()?;
-
-                    // Statics translation rule: The static is only pushed if it exists in the whitelist dictionary.
-                    if static_dictionary.contains(&graphic) {
-                        decoded_blocks[block_index].statics.push(StaticTile {
-                            graphic_id: graphic as u32,
-                            x: cell_x as u8,
-                            y: cell_y as u8,
-                            z: static_z,
-                            hue: hue as u32,
-                        });
-                    }
-                }
+    // Initialize the 64 classic empty blocks
+    let mut decoded_blocks: Vec<crate::enhanced::facet::DecodedBlockClassic> = (0..64)
+        .map(|i| {
+            let block_x = (i % 8) as u32;
+            let block_y = (i / 8) as u32;
+            let mut block = MapBlock::default();
+            block.internal_coords.x = block_x;
+            block.internal_coords.y = block_y;
+            crate::enhanced::facet::DecodedBlockClassic {
+                block,
+                statics: Vec::new(),
             }
-        }
-
-        Ok(crate::enhanced::facet::DecodedFacet {
-            blocks: decoded_blocks,
         })
-    }
+        .collect();
 
-    /// Reads and decodes a single 64x64 block from a KR facet UOP file.
-    pub fn read_facet_block(
-        package: &UopPackage,
-        map_index: u8,
-        block_id: u32,
-        tile_dictionary: &HashMap<u16, (u16, u8)>,
-        static_dictionary: &HashSet<u16>,
-    ) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
-        use std::io::Write;
-        let mut path_buf = [0u8; 64];
-        let mut slice = &mut path_buf[..];
-        write!(slice, "build/sectors/facet_0{}/{:08}.bin", map_index, block_id).unwrap();
-        let len = 64 - slice.len();
-        let target_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-        let target_hash: u64 = uop::hash::hash_file_name_single(target_path);
+    // 2. Read Tile Data (64x64 grid, column-major: X then Y)
+    for x_64 in 0..64_u32 {
+        for y_64 in 0..64_u32 {
+            // Determine block coordinates
+            let block_x: u32 = x_64 / 8;
+            let block_y: u32 = y_64 / 8;
+            let block_index: usize = (block_y * 8 + block_x) as usize;
+            let cell_x: u32 = x_64 % 8;
+            let cell_y: u32 = y_64 % 8;
 
-        for file in package.iter_files() {
-            if file.filename_hash() == target_hash {
-                let decompressed_data = file.unpack()?;
-                return decode_facet_bin(&decompressed_data, tile_dictionary, static_dictionary);
+            // --- Land Tile ---
+            let z: i8 = cursor.read_i8()?;
+            let kr_land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
+            let _unknown_byte_land: u8 = cursor.read_u8()?;
+            let _original_id_low: u8 = cursor.read_u8()?;
+            let _original_id_high: u8 = cursor.read_u8()?;
+
+            // Apply reverse mapping for the land graphic
+            let classic_graphic_id = tile_dictionary
+                .get(&kr_land_graphic)
+                .map(|r| r.0)
+                .unwrap_or(0);
+
+            if let Ok(cell) = decoded_blocks[block_index]
+                .block
+                .cell_as_mut(cell_x, cell_y)
+            {
+                cell.id = classic_graphic_id;
+                cell.z = z;
+            }
+
+            // --- Delimiters ---
+            let delimiter_count: u8 = cursor.read_u8()?;
+            if delimiter_count > 0 {
+                // Skip delimiters (1 + 1 + 2 + 1 = 5 bytes per delimiter)
+                cursor.set_position(cursor.position() + (delimiter_count as u64 * 5));
+            }
+
+            // --- Statics ---
+            let always_0_byte1: u8 = cursor.read_u8()?; // Always 0
+            let count_or_0_byte2: u8 = cursor.read_u8()?; // Count for first static, 0 for others
+
+            let static_count = if always_0_byte1 == 0 && count_or_0_byte2 > 0 {
+                count_or_0_byte2
+            } else {
+                0
+            };
+
+            for _ in 0..static_count {
+                let graphic: u16 = cursor.read_u16::<LittleEndian>()?;
+                let _unknown1: u16 = cursor.read_u16::<LittleEndian>()?;
+                let static_z: i8 = cursor.read_i8()?;
+                let hue: u16 = cursor.read_u16::<LittleEndian>()?;
+
+                // Statics translation rule: The static is only pushed if it exists in the whitelist dictionary.
+                if static_dictionary.contains(&graphic) {
+                    decoded_blocks[block_index].statics.push(StaticTile {
+                        graphic_id: graphic as u32,
+                        x: cell_x as u8,
+                        y: cell_y as u8,
+                        z: static_z,
+                        hue: hue as u32,
+                    });
+                }
             }
         }
-        Err(eyre!("File not found in package: {}", target_path))
     }
 
+    Ok(crate::enhanced::facet::DecodedFacet {
+        blocks: decoded_blocks,
+    })
+}
+
+/// Reads and decodes a single 64x64 block from a KR facet UOP file.
+pub fn read_facet_block(
+    package: &UopPackage,
+    map_index: u8,
+    block_id: u32,
+    tile_dictionary: &HashMap<u16, (u16, u8)>,
+    static_dictionary: &HashSet<u16>,
+) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
+    use std::io::Write;
+    let mut path_buf = [0u8; 64];
+    let mut slice = &mut path_buf[..];
+    write!(
+        slice,
+        "build/sectors/facet_0{}/{:08}.bin",
+        map_index, block_id
+    )
+    .unwrap();
+    let len = 64 - slice.len();
+    let target_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
+    let target_hash: u64 = uop::hash::hash_file_name_single(target_path);
+
+    for file in package.iter_files() {
+        if file.filename_hash() == target_hash {
+            let decompressed_data = file.unpack()?;
+            return decode_facet_bin(&decompressed_data, tile_dictionary, static_dictionary);
+        }
+    }
+    Err(eyre!("File not found in package: {}", target_path))
+}

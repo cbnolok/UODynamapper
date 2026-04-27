@@ -235,6 +235,13 @@ pub struct CachedBlock {
 impl MapPlane {
     pub const EXTRA_BLOCKS_TO_CACHE_PER_SIDE: u32 = 8;
 
+    pub fn size_cells(&self) -> MapSizeCells {
+        MapSizeCells {
+            width: self.size_blocks.width * MapBlock::CELLS_PER_ROW,
+            height: self.size_blocks.height * MapBlock::CELLS_PER_COLUMN,
+        }
+    }
+
     pub fn block(&mut self, pos: MapBlockRelPos) -> Option<&MapBlock> {
         if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
             return None;

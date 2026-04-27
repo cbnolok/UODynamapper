@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use uocf::classic::map::MapPlane;
 use uocf::classic::{
-    land_texture_2d::{LandTextureSize, TexMap2D},
+    land_texture::{LandTextureSize, TexMap},
     map::{MapBlock, MapBlockRelPos},
 };
 

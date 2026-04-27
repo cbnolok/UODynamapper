@@ -3,7 +3,13 @@
 use crate::enhanced::textures::{TextureFile, Textures, ECImageFormat};
 use color_eyre::eyre::Result;
 
-/// A reader for enhanced client terrain textures.
+// region: --- Public API (Convenience & Application Use)
+
+/// A high-level reader for managing Enhanced Client terrain textures.
+///
+/// This structure acts as an orchestrator that simplifies access to land textures
+/// by managing both "World" (native EC) and "Legacy" (CC-style) texture packages.
+/// It handles the path formatting and hashing logic internally.
 pub struct TerrainReader {
     world_terrain_textures: Textures,
     legacy_terrain_textures: Textures,
@@ -43,3 +49,5 @@ impl TerrainReader {
         }
     }
 }
+
+// endregion: --- Public API

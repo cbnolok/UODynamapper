@@ -54,11 +54,20 @@ use crate::utils::color::color_lut;
 const ART_ITEM_ID_OFFSET: u32 = 0x4000;
 const LAND_DIMENSION: usize = 44;
 const LAND_HALF_ROWS: usize = LAND_DIMENSION / 2;
-const LAND_DIAMOND_PIXEL_COUNT: usize = 1936;
+const LAND_DIAMOND_PIXEL_COUNT: usize = LAND_HALF_ROWS * (LAND_HALF_ROWS + 1) * 2;
 const LAND_DIAMOND_BYTE_COUNT: usize = LAND_DIAMOND_PIXEL_COUNT * 2;
 const RGBA_BYTES_PER_PIXEL: usize = 4;
 const STATIC_HEADER_BYTES: usize = 8;
 const LOOKUP_ENTRY_BYTES: usize = 2;
+
+#[inline(always)]
+fn classic_art_payload_is_structurally_valid(art_id: u32, size: u32) -> bool {
+    if art_id < ART_ITEM_ID_OFFSET {
+        size as usize >= LAND_DIAMOND_BYTE_COUNT
+    } else {
+        size as usize >= STATIC_HEADER_BYTES
+    }
+}
 
 #[inline(always)]
 fn read_u16_le(bytes: &[u8], offset: usize) -> eyre::Result<u16> {
@@ -254,7 +263,17 @@ impl ArtMap {
         let client_path = client_path.as_ref().to_path_buf();
         let idx_path = client_path.join("artidx.mul");
         let mul_path = client_path.join("art.mul");
-        let uop_path = client_path.join("artlegacymul.uop");
+
+        // Find artlegacymul.uop case-insensitively
+        let uop_candidates = ["artlegacymul.uop", "artLegacyMUL.uop"];
+        let mut uop_path = None;
+        for &name in &uop_candidates {
+            let path = client_path.join(name);
+            if path.exists() {
+                uop_path = Some(path);
+                break;
+            }
+        }
 
         let mut idx_file = None;
         let mut art_file = None;
@@ -269,9 +288,9 @@ impl ArtMap {
             log::info!("uocf: Loaded classic Art.mul format");
         }
 
-        if uop_path.exists() {
-            uop_package = Some(UopPackage::load(&uop_path)?);
-            log::info!("uocf: Loaded newer artlegacymul.uop format");
+        if let Some(path) = uop_path {
+            uop_package = Some(UopPackage::load(&path)?);
+            log::info!("uocf: Loaded newer art UOP format from {}", path.display());
         }
 
         if idx_file.is_none() && uop_package.is_none() {
@@ -297,7 +316,7 @@ impl ArtMap {
         if let (Some(idx), Some(art_mutex)) = (&self.idx_file, &self.art_file) {
             if let Ok(entry) = idx.element(art_id as usize) {
                 if let (Some(lookup), Some(size)) = (entry.lookup(), entry.len()) {
-                    if size > 0 {
+                    if classic_art_payload_is_structurally_valid(art_id, size) {
                         let target_size = size as usize;
                         scratch_buffer.resize(target_size, 0);
 
@@ -312,11 +331,19 @@ impl ArtMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            let file_name = format!("build/artlegacymul/{:08}.tga", art_id);
-            let hash = crate::uop::hash::hash_file_name_single(&file_name);
-            if let Some(file) = uop.get_file_by_hash(hash) {
-                file.unpack_to(scratch_buffer)?;
-                return Ok(());
+            // Try multiple vpath candidates?
+            let candidates = [
+                format!("build/artlegacymul/{:08}.tga", art_id),
+                //format!("build/artlegacy/{:08}.dat", art_id),
+                //format!("build/art/{:08}.tga", art_id),
+            ];
+
+            for file_name in candidates {
+                let hash = crate::uop::hash::hash_file_name_single(&file_name);
+                if let Some(file) = uop.get_file_by_hash(hash) {
+                    file.unpack_to(scratch_buffer)?;
+                    return Ok(());
+                }
             }
         }
 
@@ -337,19 +364,84 @@ impl ArtMap {
 
     /// Reads and parses an Art Static tile (RLE encoded image).
     /// Modifies the `scratch_raw_buffer` and returns `(width, height, pixel_data)`.
+    /// Reads and parses an Art Static tile (RLE encoded image).
+    /// Modifies the `scratch_raw_buffer` and returns `(width, height, pixel_data)`.
     pub fn decode_static_tile(
         &self,
         art_id: u32,
         scratch_raw_buffer: &mut Vec<u8>,
     ) -> eyre::Result<(u16, u16, Vec<u8>)> {
         self.get_raw_art_data(art_id, scratch_raw_buffer)?;
+
+        // Check if it's a TGA (common in UOP versions)
+        if scratch_raw_buffer.len() >= 18
+            && (scratch_raw_buffer.ends_with(b"TRUEVISION-XFILE.\0")
+                || is_probably_tga(scratch_raw_buffer))
+        {
+            let img =
+                image::load_from_memory_with_format(scratch_raw_buffer, image::ImageFormat::Tga)?;
+            let rgba = img.to_rgba8();
+            return Ok((rgba.width() as u16, rgba.height() as u16, rgba.into_raw()));
+        }
+
         decode_static_tile_from_raw(scratch_raw_buffer)
     }
+
+    pub fn max_id(&self) -> u32 {
+        if let Some(idx) = &self.idx_file {
+            idx.element_count() as u32
+        } else {
+            // If only UOP is present, we don't have a dense index.
+            // Traditional art IDs go up to 0x10000.
+            0x10000
+        }
+    }
+
+    pub fn has_id(&self, art_id: u32) -> bool {
+        if let Some(idx) = &self.idx_file {
+            if let Ok(entry) = idx.element(art_id as usize) {
+                return entry.lookup().is_some()
+                    && classic_art_payload_is_structurally_valid(art_id, entry.len().unwrap_or(0));
+            }
+            false
+        } else if let Some(uop) = &self.uop_package {
+            // Check UOP candidates
+            let candidates = [
+                format!("build/artlegacymul/{:08}.tga", art_id),
+                format!("build/artlegacy/{:08}.dat", art_id),
+                format!("build/art/{:08}.tga", art_id),
+            ];
+            for name in candidates {
+                if uop
+                    .get_file_by_hash(crate::uop::hash::hash_file_name_single(&name))
+                    .is_some()
+                {
+                    return true;
+                }
+            }
+            false
+        } else {
+            false
+        }
+    }
+}
+
+fn is_probably_tga(data: &[u8]) -> bool {
+    if data.len() < 18 {
+        return false;
+    }
+    // TGA header: id_len(1), color_map_type(1), image_type(1), ...
+    // image_type 2 is uncompressed RGB/RGBA, 10 is RLE RGB/RGBA
+    let image_type = data[2];
+    (image_type == 2 || image_type == 10) && data[1] <= 1
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_land_tile_from_raw, decode_static_tile_from_raw, LAND_DIMENSION};
+    use super::{
+        decode_land_tile_from_raw, decode_static_tile_from_raw, LAND_DIAMOND_PIXEL_COUNT,
+        LAND_DIMENSION,
+    };
 
     fn rgba_at(pixel_data: &[u8], x: usize, y: usize, width: usize) -> [u8; 4] {
         let offset = (y * width + x) * 4;
@@ -363,15 +455,23 @@ mod tests {
 
     #[test]
     fn land_decode_clears_transparent_corners() {
-        let raw_data = vec![0xFFu8; 1936 * 2];
+        let raw_data = vec![0xFFu8; LAND_DIAMOND_PIXEL_COUNT * 2];
         let mut pixel_data = [0x7Fu8; LAND_DIMENSION * LAND_DIMENSION * 4];
 
         decode_land_tile_from_raw(&raw_data, &mut pixel_data).unwrap();
 
         assert_eq!(rgba_at(&pixel_data, 0, 0, LAND_DIMENSION), [0, 0, 0, 0]);
-        assert_eq!(rgba_at(&pixel_data, LAND_DIMENSION - 1, 0, LAND_DIMENSION), [0, 0, 0, 0]);
         assert_eq!(
-            rgba_at(&pixel_data, LAND_DIMENSION / 2, LAND_DIMENSION / 2, LAND_DIMENSION),
+            rgba_at(&pixel_data, LAND_DIMENSION - 1, 0, LAND_DIMENSION),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            rgba_at(
+                &pixel_data,
+                LAND_DIMENSION / 2,
+                LAND_DIMENSION / 2,
+                LAND_DIMENSION
+            ),
             [248, 248, 248, 255]
         );
     }

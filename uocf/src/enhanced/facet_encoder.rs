@@ -15,10 +15,13 @@ use crate::utils::color::Rgb555;
 
 use ddsfile::{D3DFormat, Dds, NewD3dParams};
 
-// As per user feedback, this encoder assumes the input `StaticTile` structs
-// contain GLOBAL map coordinates.
+// region: --- Public API (Convenience & Application Use)
 
-/// Encodes a classic map plane and its associated statics into a facet.uop file and a facet.dds file.
+/// Encodes a classic map plane and its associated statics into Enhanced Client formats.
+///
+/// This utility orchestrates the conversion of classic land blocks and statics into
+/// both the binary `.bin` blocks for `facet.uop` and a high-resolution `facet.dds`
+/// texture for the terrain renderer.
 pub fn encode_map_plane(
     map_plane: &mut MapPlane, // Needs to be mutable to load blocks on demand
     all_statics: &[StaticTile],
@@ -352,3 +355,5 @@ fn generate_bin_data(
 
     Ok(data)
 }
+
+// endregion: --- Public API

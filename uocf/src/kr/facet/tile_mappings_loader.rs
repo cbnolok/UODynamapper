@@ -4,6 +4,8 @@ use std::io;
 use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
+// region: --- Public API (Convenience & Application Use)
+
 /// Loads a tile dictionary from a binary file.
 ///
 /// The file is expected to contain a sequence of `(key: u16, value: (u16, u8))` pairs.
@@ -35,3 +37,5 @@ pub fn load_static_dictionary(path: &Path) -> io::Result<HashSet<u16>> {
 
     Ok(dictionary)
 }
+
+// endregion: --- Public API

@@ -38,6 +38,7 @@ fn print_results(success: u32, total: u32) {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
+    env_logger::init();
 
     let cli = Cli::parse();
 

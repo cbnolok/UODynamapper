@@ -10,6 +10,8 @@ color-eyre = "0.6.5"
 anyhow = "1.0.102"
 byteorder = "1.5.0"
 flate2 = "1.1.9"
+env_logger = "0.11.10"
+log = "0.4.29"
 
 [[bin]]
 name = "uoptool"

@@ -13,13 +13,15 @@ Status: Land/terrain rendering supported.
 This project is organized as a Cargo workspace with several specialized components:
 
 ### Applications & Tools
+
 - **[dynamapper](dynamapper/)**: The main application.
-- **[uddconv_cli](uddconv_cli/)**: Asset converter for UODynamapper. Packs classic `.mul` art and tiledata into optimized `.uddp` packages.
+- **[uddconv_cli](uddconv_cli/)**: Asset converter for UODynamapper. Packs classic and Enhanced Client assets into optimized `.uddp` packages, prints package info, and extracts atlas pages for inspection.
 - **[uocf_cli](uocf_cli/)**: General-purpose UO tooling, providing:
-  - `uoptool`: Utility for inspecting, hashing, brute-force find original string value from its hash, and modifying modern `.uop` package files.
+  - `uoptool`: Utility for hashing, brute-force cracking, replacing files inside, and rebuilding modern `.uop` package files.
   - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
 
 ### Libraries
+
 - **[uocf](uocf/)**: A parser library for core Ultima Online file formats (Map, Art, Tiledata, UOP) for Classic, Enhanced and Kingdom Reborn clients. Support for custom formats is being added (Michelangelo's `.uop`, `.vd` files).
 - **[uddconv](uddconv/)**: Shared library for UODynamapper-specific asset conversion and runtime data loading.
 
@@ -32,6 +34,24 @@ This project is organized as a Cargo workspace with several specialized componen
 - Free camera movement and rotation (it will be limited if art sprites rendering is enabled).
 - Free "player" movement and teleport via click or teleport menu (supports different maps).
 - Different shading styles.
+
+### CLI Features
+
+#### `uddconv_cli`
+
+- Pack Classic art into `cc_art.uddp` atlas packages.
+- Pack Enhanced Client statics into `ec_art.uddp` atlas packages.
+- Pack Enhanced Client land textures into `ec_land.uddp` atlas packages.
+- Build `unified_tiledata.uddp` from Classic `tiledata.mul` plus Enhanced `tileart.uop` metadata.
+- Inspect `.uddp` and `.uddpi` structure with `info`.
+- Extract known atlas packages to PNG pages plus CSV metadata with `extract`.
+
+#### `uoptool`
+
+- Compute UOP path hashes with `hash`.
+- Brute-force candidate virtual paths with `crack`.
+- Replace a payload in-place by hash with `replace`.
+- Recompress and rebuild an entire package with `rebuild`.
 
 ---
 
@@ -51,7 +71,7 @@ Check other toml configuration files in the 'assets' folder.
 ## Keybindings
 
 | Key | Action |
-|-----|--------|
+| --- | ------ |
 | `W` / `A` / `S` / `D` | Move player (NW / SW / SE / NE) |
 | `PageUp` / `PageDown` | Increase / Decrease altitude |
 | `Scroll Wheel` | Zoom in / out |
@@ -72,7 +92,7 @@ See [docs/keybindings.md](docs/keybindings.md) for the complete list with descri
 ## Documentation
 
 | Document | Description |
-|----------|-------------|
+| -------- | ----------- |
 | **[docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)** | High-level project summary, quick start, and current status |
 | **[docs/CONTRIBUTORS_GUIDE.md](docs/CONTRIBUTORS_GUIDE.md)** | Quick file reference, common workflows, and troubleshooting |
 | **[docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md)** | Low-level architecture details and design choices |
@@ -81,6 +101,7 @@ See [docs/keybindings.md](docs/keybindings.md) for the complete list with descri
 | **[GEMINI.md](GEMINI.md)** | AI agent instructions and best practices |
 
 **Recommended Reading Order**:
+
 1. **New users**: Start with [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)
 2. **Contributors**: Read [CONTRIBUTORS_GUIDE.md](docs/CONTRIBUTORS_GUIDE.md) for quick reference
 3. **Deep dive**: Consult [CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) for architecture details

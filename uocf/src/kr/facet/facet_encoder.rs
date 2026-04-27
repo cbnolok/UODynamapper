@@ -69,6 +69,14 @@ use super::tile_mappings_loader::*;
 /// # Returns
 ///
 /// A `Result` indicating success or an `eyre::Error` if an issue occurs.
+// region: --- Public API (Convenience & Application Use)
+
+/// Encodes a classic map plane and its associated statics into Kingdom Reborn formats.
+///
+/// This utility orchestrates the conversion of classic land blocks and statics into
+/// the binary `.bin` blocks expected by the Kingdom Reborn `facet.uop` package.
+/// It handles complex KR-specific features like tile dictionaries and whitelist-based
+/// statics translation.
 pub fn encode_map_plane(
     map_plane: &mut MapPlane, // Needs to be mutable to load blocks on demand
     all_statics: &[StaticTile],
@@ -83,8 +91,8 @@ pub fn encode_map_plane(
 
     #[cfg(feature = "tile_mappings_builder")]
     {
-        tile_dictionary = in_memory_dictionaries::get_in_memory_tile_dictionary();
-        static_dictionary = in_memory_dictionaries::get_in_memory_static_dictionary();
+        tile_dictionary = get_tile_map();
+        static_dictionary = get_statics_table().into_iter().map(|id| id as u16).collect();
     }
 
     #[cfg(not(feature = "tile_mappings_builder"))]
@@ -193,7 +201,7 @@ pub fn encode_map_plane(
 ///
 /// A `Result` containing a `Vec<u8>` with the generated binary data, or an `eyre::Error` if an issue occurs.
 pub fn generate_kr_bin_data(
-    map_plane: &MapPlane,
+    map_plane: &mut MapPlane,
     statics_map: &HashMap<(u32, u32), Vec<&StaticTile>>,
     chunk_base_x: u32,
     chunk_base_y: u32,
@@ -287,7 +295,7 @@ pub fn generate_kr_bin_data(
 /// # Returns
 ///
 /// An `Option<&MapCell>` which is `Some` if the cell is found, or `None` otherwise.
-fn get_cell_from_plane(map_plane: &MapPlane, global_x: u32, global_y: u32) -> Option<&MapCell> {
+fn get_cell_from_plane(map_plane: &mut MapPlane, global_x: u32, global_y: u32) -> Option<&MapCell> {
     // Calculate the block coordinates (8x8 blocks)
     let block_x: u32 = global_x / 8;
     let block_y: u32 = global_y / 8;
@@ -322,7 +330,7 @@ fn get_cell_from_plane(map_plane: &MapPlane, global_x: u32, global_y: u32) -> Op
 /// A `Result` indicating success or an `eyre::Error` if an issue occurs.
 fn write_kr_delimiters(
     cursor: &mut Cursor<&mut Vec<u8>>,
-    map_plane: &MapPlane,
+    map_plane: &mut MapPlane,
     global_x: u32,
     global_y: u32,
     tile_dictionary: &HashMap<u16, (u16, u8)>,
@@ -336,6 +344,7 @@ fn write_kr_delimiters(
     let on_right_edge_64: bool = global_x % 64 == 63;
     let on_bottom_edge_64: bool = global_y % 64 == 63;
 
+    let map_size_cells = map_plane.size_cells();
     let mut delimiters_to_write: Vec<(u8, i8, u16, u8)> = Vec::new(); // (direction, z, graphic_id, unknown_byte)
 
     // Helper to get neighbor cell and add to delimiters_to_write
@@ -344,7 +353,7 @@ fn write_kr_delimiters(
         let ny = global_y as i32 + dy;
 
         // Ensure neighbor coordinates are within valid bounds of the map plane
-        if nx >= 0 && ny >= 0 && (nx as u32) < map_plane.size_cells().width && (ny as u32) < map_plane.size_cells().height {
+        if nx >= 0 && ny >= 0 && (nx as u32) < map_size_cells.width && (ny as u32) < map_size_cells.height {
             if let Some(cell) = get_cell_from_plane(map_plane, nx as u32, ny as u32) {
                 let (kr_land_graphic_id, kr_land_unknown_byte) = *tile_dictionary.get(&cell.id).unwrap_or(&(0, 0));
                 delimiters_to_write.push((direction_byte, cell.z, kr_land_graphic_id, kr_land_unknown_byte));
@@ -366,11 +375,11 @@ fn write_kr_delimiters(
         add_delimiter(0, -1, 2)?; // Top (2)
     }
     // Right edge
-    if on_right_edge_64 && global_x < map_plane.size_cells().width - 1 {
+    if on_right_edge_64 && global_x < map_size_cells.width - 1 {
         add_delimiter(1, 0, 3)?; // Right (3)
     }
     // Bottom edge
-    if on_bottom_edge_64 && global_y < map_plane.size_cells().height - 1 {
+    if on_bottom_edge_64 && global_y < map_size_cells.height - 1 {
         add_delimiter(0, 1, 5)?; // Bottom (5)
     }
 
@@ -380,15 +389,15 @@ fn write_kr_delimiters(
         add_delimiter(-1, -1, 1)?; // TopLeft (1)
     }
     // TopRight corner
-    if on_top_edge_64 && on_right_edge_64 && global_x < map_plane.size_cells().width - 1 && global_y > 0 {
+    if on_top_edge_64 && on_right_edge_64 && global_x < map_size_cells.width - 1 && global_y > 0 {
         add_delimiter(1, -1, 7)?; // TopRight (7)
     }
     // BottomLeft corner
-    if on_bottom_edge_64 && on_left_edge_64 && global_x > 0 && global_y < map_plane.size_cells().height - 1 {
+    if on_bottom_edge_64 && on_left_edge_64 && global_x > 0 && global_y < map_size_cells.height - 1 {
         add_delimiter(-1, 1, 6)?; // BottomLeft (6)
     }
     // BottomRight corner
-    if on_bottom_edge_64 && on_right_edge_64 && global_x < map_plane.size_cells().width - 1 && global_y < map_plane.size_cells().height - 1 {
+    if on_bottom_edge_64 && on_right_edge_64 && global_x < map_size_cells.width - 1 && global_y < map_size_cells.height - 1 {
         add_delimiter(1, 1, 4)?; // BottomRight (4)
     }
 
@@ -403,3 +412,5 @@ fn write_kr_delimiters(
 
     Ok(())
 }
+
+// endregion: --- Public API

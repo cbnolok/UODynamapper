@@ -182,6 +182,20 @@ impl UddpReader {
         self.bytes.get(start..end)
     }
 
+    pub fn package_size_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn dictionary_records(&self) -> Vec<(u8, Codec, u32)> {
+        let mut records = self
+            .dict_by_type
+            .iter()
+            .map(|(&data_type, dict)| (data_type, dict.codec, dict.size))
+            .collect::<Vec<_>>();
+        records.sort_by_key(|(data_type, _, _)| *data_type);
+        records
+    }
+
     fn resolved_from_locator(locator: &UddpLocator) -> ResolvedFile {
         ResolvedFile {
             raw_size: locator.raw_size,

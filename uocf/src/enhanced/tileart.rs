@@ -1,19 +1,32 @@
 //! Represents tile art data from a UOP file for Enhanced Client "Art Tiles" (statics).
 
-use crate::uop::file::UopFile;
 use crate::enhanced::string_dictionary::UoStringDictionary;
+use crate::uop::file::UopFile;
+use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
-use bitflags::bitflags;
 
-// region: --- Public API
+// region: --- Public API (Convenience & Application Use)
 
-pub fn load(uop_file: &UopFile, string_dictionary: &UoStringDictionary) -> color_eyre::eyre::Result<ArtData> {
+/// Main entry point to load and process Art Tile data from an Enhanced Client UOP file.
+/// This function handles the full pipeline: parsing the raw binary structure and
+/// resolving string references into a clean, public-facing ArtData structure.
+pub fn load(
+    uop_file: &UopFile,
+    string_dictionary: &UoStringDictionary,
+) -> color_eyre::eyre::Result<ArtData> {
     let raw_entry = TileArtEntry::parse_raw(uop_file)?;
     let processed_data = raw_entry.process(string_dictionary);
     Ok(processed_data)
 }
 
+/// Inferred tile classification used for high-level logic.
+///
+/// This is a convenience abstraction. In the raw binary data, this is stored as
+/// a simple integer (`type_val` in `TileArtEntry`). We map these values:
+/// - 0 => `Static`
+/// - 1 => `Solid`
+/// - 2 => `Liquid`
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TileType {
     #[default]
@@ -22,6 +35,10 @@ pub enum TileType {
     Liquid,
 }
 
+/// Direct mapping of indices used in the raw `TaeProp` array in the binary file.
+///
+/// Each enum variant represents a specific property slot (0-11) as defined in the
+/// `tileart.uop` format. These values are used byte-per-byte from the source.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyKey {
     Weight = 0,
@@ -38,6 +55,10 @@ pub enum PropertyKey {
     Paperdoll = 11,
 }
 
+/// Cleaned-up representation of texture coordinates and offsets for a tile.
+///
+/// Unlike the internal `TaeImgOffset`, this structure includes the resolved `texture_id`
+/// and is what the rest of the application uses to render the tile.
 #[derive(Debug, Default, Clone)]
 pub struct ArtTexture {
     pub texture_id: u32,
@@ -49,6 +70,12 @@ pub struct ArtTexture {
     pub offset_y: i32,
 }
 
+/// The primary public-facing structure for Enhanced Client static art data.
+///
+/// This is a convenience structure that aggregates and simplifies the raw data found in
+/// `TileArtEntry`. It is intended for use by the renderer and other high-level systems.
+/// It contains resolved textures for both Enhanced (EC) and Classic (CC) visual modes,
+/// as well as unified flags and radar colors.
 #[derive(Debug, Default, Clone)]
 pub struct ArtData {
     pub id: u16,
@@ -78,6 +105,7 @@ pub struct TextureItem {
 }
 
 bitflags! {
+    /// Direct bit-for-bit mapping of the 64-bit tile flag field found in the binary file.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct TaeFlag: u64 {
         const None = 0x0;
@@ -126,6 +154,7 @@ bitflags! {
     }
 }
 
+/// Direct mapping of the 4-byte radar color data (typically BGRA) found in the file.
 #[derive(Debug, Default, Clone)]
 pub struct TaeRadarcol {
     pub r: u8,
@@ -136,8 +165,7 @@ pub struct TaeRadarcol {
 
 // endregion: --- Public API
 
-
-// region: --- Internal Raw File-Mapping Structs
+// region: --- Internal Raw File-Mapping Structs (Binary Format)
 
 impl Default for TaeFlag {
     fn default() -> Self {
@@ -222,6 +250,11 @@ pub struct TaeImgOffset {
     pub y_off: i32,
 }
 
+/// Raw, bit-for-bit mapping of an Art Tile entry as stored in the UOP binary.
+///
+/// This structure contains many "unknown" fields and raw offsets that are specific to the
+/// file format. It is used internally for parsing and should not be exposed to the
+/// main application. Use `ArtData` instead for a cleaned-up version.
 #[derive(Debug, Default, Clone)]
 pub struct TileArtEntry {
     pub uop_block: i32,
@@ -265,7 +298,6 @@ pub struct TileArtEntry {
 }
 
 // endregion: --- Internal Raw File-Mapping Structs
-
 
 impl TileArtEntry {
     pub fn parse_raw(uop_file: &UopFile) -> color_eyre::eyre::Result<Self> {
@@ -424,7 +456,10 @@ impl TileArtEntry {
             if ec_texture_block.has_texture == 1 {
                 art_data.tile_type = self.get_tile_type(ec_texture_block, string_dictionary);
                 if let Some(texture_item) = ec_texture_block.texture_items.get(0) {
-                     if let Some(id) = Self::get_texture_id_from_string_offset(texture_item.name_string_off, string_dictionary) {
+                    if let Some(id) = Self::get_texture_id_from_string_offset(
+                        texture_item.name_string_off,
+                        string_dictionary,
+                    ) {
                         art_data.ec_texture = Some(ArtTexture {
                             texture_id: id,
                             start_x: self.ec_img_offset.x_start,
@@ -442,7 +477,10 @@ impl TileArtEntry {
         if let Some(cc_texture_block) = self.texture_vector.get(1) {
             if cc_texture_block.has_texture == 1 {
                 if let Some(texture_item) = cc_texture_block.texture_items.get(0) {
-                    if let Some(id) = Self::get_texture_id_from_string_offset(texture_item.name_string_off, string_dictionary) {
+                    if let Some(id) = Self::get_texture_id_from_string_offset(
+                        texture_item.name_string_off,
+                        string_dictionary,
+                    ) {
                         art_data.cc_texture = Some(ArtTexture {
                             texture_id: id,
                             start_x: self.cc_img_offset.x_start,
@@ -460,13 +498,18 @@ impl TileArtEntry {
         art_data
     }
 
-    fn get_texture_item_vector(&self, string_dictionary: &UoStringDictionary) -> Vec<Vec<TextureItem>> {
+    fn get_texture_item_vector(
+        &self,
+        string_dictionary: &UoStringDictionary,
+    ) -> Vec<Vec<TextureItem>> {
         let mut texture_ids = Vec::new();
         for texture in &self.texture_vector {
             if texture.has_texture == 1 {
                 let mut items = Vec::new();
                 for texture_item in &texture.texture_items {
-                    if let Some(str) = string_dictionary.get_string((texture_item.name_string_off - 1) as usize) {
+                    if let Some(str) =
+                        string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
+                    {
                         let mut item = TextureItem::default();
                         if str.contains("Data\\WorldArt\\") {
                             item.texture_type = TextureType::WorldArt;
@@ -476,7 +519,8 @@ impl TileArtEntry {
                             item.texture_type = TextureType::TileArtEnhanced;
                         }
 
-                        let numeric_part = str.chars().filter(|c| c.is_digit(10)).collect::<String>();
+                        let numeric_part =
+                            str.chars().filter(|c| c.is_digit(10)).collect::<String>();
                         if let Ok(id) = numeric_part.parse() {
                             item.id = id;
                         }
@@ -491,8 +535,14 @@ impl TileArtEntry {
         texture_ids
     }
 
-    fn get_tile_type(&self, texture_block: &TaeTexture, string_dictionary: &UoStringDictionary) -> TileType {
-        if let Some(shader_name) = string_dictionary.get_string((texture_block.type_string_off - 1) as usize) {
+    fn get_tile_type(
+        &self,
+        texture_block: &TaeTexture,
+        string_dictionary: &UoStringDictionary,
+    ) -> TileType {
+        if let Some(shader_name) =
+            string_dictionary.get_string((texture_block.type_string_off - 1) as usize)
+        {
             match shader_name {
                 "UOWaterShader" => TileType::Liquid,
                 "UOStaticTerrainShader" => TileType::Solid,
@@ -503,7 +553,7 @@ impl TileArtEntry {
                         }
                     }
                     TileType::Static
-                },
+                }
                 _ => TileType::Static,
             }
         } else {
@@ -526,9 +576,15 @@ impl TileArtEntry {
         None
     }
 
-    fn get_texture_id_from_string_offset(offset: u32, string_dictionary: &UoStringDictionary) -> Option<u32> {
+    fn get_texture_id_from_string_offset(
+        offset: u32,
+        string_dictionary: &UoStringDictionary,
+    ) -> Option<u32> {
         if let Some(str_path) = string_dictionary.get_string((offset - 1) as usize) {
-            let numeric_part = str_path.chars().filter(|c| c.is_digit(10)).collect::<String>();
+            let numeric_part = str_path
+                .chars()
+                .filter(|c| c.is_digit(10))
+                .collect::<String>();
             if let Ok(id) = numeric_part.parse() {
                 return Some(id);
             }

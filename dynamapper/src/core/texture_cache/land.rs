@@ -12,7 +12,7 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use std::time::{Duration, Instant};
-use uocf::classic::land_texture_2d::LandTextureSize;
+use uocf::classic::land_texture::LandTextureSize;
 use uocf::classic::map::MapBlockRelPos;
 
 pub struct LandTextureCachePlugin {
@@ -255,6 +255,9 @@ pub fn sys_setup_terrain_cache(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::external_data::settings::Settings>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    cc_art_r: Option<Res<crate::core::uo_files_loader::CcArtPackageRes>>,
+    ec_art_r: Option<Res<crate::core::uo_files_loader::EcArtPackageRes>>,
+    ec_land_r: Option<Res<crate::core::uo_files_loader::EcLandPackageRes>>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -307,6 +310,10 @@ pub fn sys_setup_terrain_cache(
         big_layers,
         residency_strategy,
     );
+
+    land_texture_cache.cc_art = cc_art_r.map(|r| r.0.clone());
+    land_texture_cache.ec_art = ec_art_r.map(|r| r.0.clone());
+    land_texture_cache.ec_land = ec_land_r.map(|r| r.0.clone());
 
     if let Some(plan) = residency_plan.as_ref() {
         land_texture_cache.prime_full_file_residency(

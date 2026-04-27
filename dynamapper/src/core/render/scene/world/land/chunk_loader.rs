@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use uocf::classic::land_texture_2d::TexMap2D;
+use uocf::classic::land_texture::TexMap;
 use uocf::classic::map::{self, MapBlock, MapBlockRelPos};
 
 use crate::console_logger::{self, LogAbout, LogSev};
@@ -41,7 +41,7 @@ pub struct LoadRequest {
     pub blocks_to_load: Vec<MapBlockRelPos>,
     /// Shared handle used to warm the texture pixel-data cache on this thread
     /// so the main thread's `precache_textures_parallel` hits only cache lookups.
-    pub texmap_2d: Arc<TexMap2D>,
+    pub texmap_2d: Arc<TexMap>,
 }
 
 pub struct LoadResult {

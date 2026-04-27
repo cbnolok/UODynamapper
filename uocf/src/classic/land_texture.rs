@@ -7,7 +7,7 @@
 //!
 //! - **Centralized Texture Cache**: Instead of each texture element having its own `Mutex` (which costs
 //!   significant memory when there are thousands of textures), we use a single `Mutex` protecting
-//!   a centralized `HashMap` cache in `TexMap2D`. This reduces synchronization overhead and memory usage.
+//!   a centralized `HashMap` cache in `TexMa`. This reduces synchronization overhead and memory usage.
 //! - **SIMD-Optimized Conversion**: UO textures are stored in `Bgra5551` format. We use `wide` crate SIMD
 //!   intrinsics to process 16 pixels at a time, converting them to `Rgba8888` for the GPU. This
 //!   path is highly optimized for modern CPUs.
@@ -55,7 +55,7 @@ impl LandTextureSize {
 }
 
 #[derive(Debug, Default, Getters)]
-pub struct Texture2DElement {
+pub struct TexMapElement {
     // Pixel data in TexMap.mul is stored as bgra5551 (u16), but we convert it to argb8888 (u32) before storing it.
     valid: bool,
     #[get = "pub"]
@@ -67,7 +67,7 @@ pub struct Texture2DElement {
     pixel_qty: usize,
 }
 
-impl Clone for Texture2DElement {
+impl Clone for TexMapElement {
     fn clone(&self) -> Self {
         Self {
             valid: self.valid,
@@ -78,7 +78,7 @@ impl Clone for Texture2DElement {
         }
     }
 }
-impl Texture2DElement {
+impl TexMapElement {
     pub const TEXTURE_UNUSED: u32 = 0x007F; // NODRAW
     const PIXEL_DATA_CHANNELS: usize = 4; // R, G, B, A
 
@@ -108,8 +108,8 @@ impl Texture2DElement {
 }
 
 #[derive(Debug)]
-pub struct TexMap2D {
-    file_data: Vec<Texture2DElement>,
+pub struct TexMap {
+    file_data: Vec<TexMapElement>,
     shared_data: std::sync::Mutex<TexMapShared>,
 }
 
@@ -121,23 +121,23 @@ struct TexMapShared {
     cache: IndexMap<usize, (std::sync::Arc<[u8]>, std::time::Instant), BuildNoHashHasher<usize>>,
 }
 
-impl TexMap2D {
+impl TexMap {
     pub fn len(&self) -> usize {
         self.file_data.len()
     }
 
-    pub fn element(&self, element_index: usize) -> Option<&Texture2DElement> {
+    pub fn element(&self, element_index: usize) -> Option<&TexMapElement> {
         if element_index >= self.file_data.len() {
             /*return Err(eyre!(
-                "TexMap2d: requested element with out of range index ({element_index})."
+                "TexMaps: requested element with out of range index ({element_index})."
             ));*/
             return None;
         }
         //println!("Requested element {element_index} from texmap.mul.");
-        let element: &Texture2DElement = &self.file_data[element_index];
+        let element: &TexMapElement = &self.file_data[element_index];
         if !element.valid {
             /*return Err(eyre!(
-                "TexMap2d: requested invalid/uninitialized element ({element_index})."
+                "TexMaps: requested invalid/uninitialized element ({element_index})."
             ));*/
             return None;
         }
@@ -148,7 +148,7 @@ impl TexMap2D {
     pub fn load(
         texmap_file_path: PathBuf,
         texmap_idx_file_path: PathBuf,
-    ) -> eyre::Result<TexMap2D> {
+    ) -> eyre::Result<TexMap> {
         /* Open texmap.mul */
         let texmap_file_name = texmap_file_path
             .file_name()
@@ -173,8 +173,8 @@ impl TexMap2D {
 
         /* Read whole texidx.mul to get texmap index data */
         const TEXMAP_MAX_ID: u32 = 0x1388;
-        let mut texmap = TexMap2D {
-            file_data: vec![Texture2DElement::default(); TEXMAP_MAX_ID as usize],
+        let mut texmap = TexMap {
+            file_data: vec![TexMapElement::default(); TEXMAP_MAX_ID as usize],
             shared_data: std::sync::Mutex::new(TexMapShared {
                 file_reader: BufReader::new(texmap_file_handle),
                 cache: IndexMap::with_capacity_and_hasher(64, BuildNoHashHasher::default()),
@@ -238,7 +238,7 @@ impl TexMap2D {
                 }
             };
 
-            let cur_texture: &mut Texture2DElement = &mut texmap.file_data[i_idx_raw as usize];
+            let cur_texture: &mut TexMapElement = &mut texmap.file_data[i_idx_raw as usize];
             cur_texture.id = i_idx_raw; //i_idx_valid as u32;
             cur_texture.size = tex_size_type;
 
@@ -274,7 +274,7 @@ impl TexMap2D {
     /// Caches the raw BGRA5551 data file slice into memory, without decoding it to RGBA8888.
     /// This is strictly used by background preloader threads to warm up the OS filesystem.
     pub fn preload_pixel_data(&self, element_index: usize) -> Option<()> {
-        let element: &Texture2DElement = self.element(element_index)?;
+        let element: &TexMapElement = self.element(element_index)?;
         let mut shared = self.shared_data.lock().unwrap();
 
         if let Some((_, time)) = shared.cache.get_mut(&element_index) {
@@ -306,7 +306,7 @@ impl TexMap2D {
         element_index: usize,
         now: std::time::Instant,
     ) -> Option<std::sync::Arc<[u8]>> {
-        let element: &Texture2DElement = self.element(element_index)?;
+        let element: &TexMapElement = self.element(element_index)?;
 
         let raw_bgra5551: std::sync::Arc<[u8]> = {
             let mut shared = self.shared_data.lock().unwrap();

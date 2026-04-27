@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::text::LineHeight;
 //use bevy::time::common_conditions::on_timer;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-use uocf::classic::land_texture_2d::LandTextureSize;
+use uocf::classic::land_texture::LandTextureSize;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Dxgi::{

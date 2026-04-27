@@ -85,6 +85,7 @@ enum Commands {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
+    env_logger::init();
     let cli = Cli::parse();
 
     match &cli.subcommand {

@@ -4,16 +4,12 @@ use crate::core::system_sets::StartupSysSet;
 use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use bevy::prelude::*;
-use uddconv::{cc_art, cc_tiledata};
-//use dashmap::DashMap;
 //use parking_lot::RwLock;
-use uocf::eyre_imports;
-use uocf::classic::{land_texture_2d, map};
-use uocf::classic::tiledata;
-eyre_imports!();
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use uocf::classic::tiledata;
+use uocf::classic::{land_texture, map};
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -35,15 +31,19 @@ pub struct TileDataRes(pub Arc<tiledata::TileData>);
 /// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
 /// and passed to texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
-pub struct TexMap2DRes(pub Arc<land_texture_2d::TexMap2D>);
+pub struct TexMap2DRes(pub Arc<land_texture::TexMap>);
 
 /// Optional prepacked atlas package for static and land art.
 #[derive(Resource)]
-pub struct CcArtPackageRes(pub Arc<cc_art::CcArtPackage>);
+pub struct CcArtPackageRes(pub Arc<uddconv::cc_art::CcArtPackage>);
 
-/// Optional prepacked tiledata package mirroring tiledata.mul.
+/// Optional prepacked atlas package for EC static art.
 #[derive(Resource)]
-pub struct CcTileDataPackageRes(pub Arc<cc_tiledata::CcTileDataPackage>);
+pub struct EcArtPackageRes(pub Arc<uddconv::ec_art::EcArtPackage>);
+
+/// Optional prepacked atlas package for EC land art.
+#[derive(Resource)]
+pub struct EcLandPackageRes(pub Arc<uddconv::ec_land::EcLandPackage>);
 
 pub struct UoFilesSettings {
     pub base_folder: PathBuf,
@@ -106,26 +106,37 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Loading Texmaps...");
     let texmap_2d =
-        land_texture_2d::TexMap2D::load(uo_path.join("texmaps.mul"), uo_path.join("texidx.mul"))
+        land_texture::TexMap::load(uo_path.join("texmaps.mul"), uo_path.join("texidx.mul"))
             .expect("Load texmap");
 
     let cc_art_path = uo_path.join("cc_art.uddp");
     let cc_art_package = if cc_art_path.exists() {
         lg("Loading optional cc_art.uddp package...");
         Some(
-            cc_art::CcArtPackage::load(&cc_art_path)
+            uddconv::cc_art::CcArtPackage::load(&cc_art_path)
                 .unwrap_or_else(|_| panic!("Error loading {}", cc_art_path.display())),
         )
     } else {
         None
     };
 
-    let cc_tiledata_path = uo_path.join("cc_tiledata.uddp");
-    let cc_tiledata_package = if cc_tiledata_path.exists() {
-        lg("Loading optional cc_tiledata.uddp package...");
+    let ec_art_path = uo_path.join("ec_art.uddp");
+    let ec_art_package = if ec_art_path.exists() {
+        lg("Loading optional ec_art.uddp package...");
         Some(
-            cc_tiledata::CcTileDataPackage::load(&cc_tiledata_path)
-                .unwrap_or_else(|_| panic!("Error loading {}", cc_tiledata_path.display())),
+            uddconv::ec_art::EcArtPackage::load(&ec_art_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", ec_art_path.display())),
+        )
+    } else {
+        None
+    };
+
+    let ec_land_path = uo_path.join("ec_land.uddp");
+    let ec_land_package = if ec_land_path.exists() {
+        lg("Loading optional ec_land.uddp package...");
+        Some(
+            uddconv::ec_land::EcLandPackage::load(&ec_land_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", ec_land_path.display())),
         )
     } else {
         None
@@ -142,7 +153,10 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     if let Some(cc_art_package) = cc_art_package {
         commands.insert_resource(CcArtPackageRes(Arc::new(cc_art_package)));
     }
-    if let Some(cc_tiledata_package) = cc_tiledata_package {
-        commands.insert_resource(CcTileDataPackageRes(Arc::new(cc_tiledata_package)));
+    if let Some(ec_art_package) = ec_art_package {
+        commands.insert_resource(EcArtPackageRes(Arc::new(ec_art_package)));
+    }
+    if let Some(ec_land_package) = ec_land_package {
+        commands.insert_resource(EcLandPackageRes(Arc::new(ec_land_package)));
     }
 }

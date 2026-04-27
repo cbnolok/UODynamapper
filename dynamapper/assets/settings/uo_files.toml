@@ -2,8 +2,8 @@
 # This file will be populated with additional UO file paths and settings
 # as development progresses (e.g. art files, animation data, sound packs).
 
-folder = "E:\\opt\\Ultima Online\\_clients\\ML"
-#folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
+#folder = "E:\\opt\\Ultima Online\\_clients\\ML"
+folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
 # If true, preload all land texmaps into fixed GPU array layers at startup.
 # If false, use the existing LRU-backed terrain texture cache.
 texmaps_preload_full_file = true

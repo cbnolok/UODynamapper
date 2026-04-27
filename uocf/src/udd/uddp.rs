@@ -49,7 +49,7 @@ mod support;
 
 use self::support::{Cursor, write_u8, write_u16, write_u32, write_u64};
 
-pub use self::builder::UddpBuilder;
+pub use self::builder::{BuildProgress, BuildProgressPhase, UddpBuilder};
 pub use self::patch::{UddpiApplier, UddpiBuilder};
 pub use self::reader::UddpReader;
 pub use self::support::{
@@ -306,7 +306,7 @@ pub struct UddpDictRef {
 }
 
 impl UddpDictRef {
-    pub const SERIALIZED_SIZE: usize = 24;
+    pub const SERIALIZED_SIZE: usize = 20;
 
     fn write_to(&self, out: &mut Vec<u8>) {
         write_u8(out, self.data_type);

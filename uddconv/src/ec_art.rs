@@ -1,17 +1,17 @@
-//! Build-time and runtime support for `cc_art.uddp`.
+//! Build-time and runtime support for `ec_art.uddp`.
 //!
+//! Sources EC item/static visuals from tileart-owned references, resolving the
+//! selected Enhanced and Classic texture payloads from `Texture.uop` and
+//! `LegacyTexture.uop`.
 //! Package layout:
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
-//!   When BC7 compression is enabled each page is block-compressed on the CPU before
-//!   being stored in the UDDP container. RGBA pages are stored uncompressed (TODO: compress them with zstd instead).
-//! - `metadata/pages.bin`: page table with atlas dimensions, per-page occupancy, and
-//!   the pixel format used for each page.
-//! - `metadata/slots.bin`: sparse slot table with one record per `art_id`, including
-//!   empty slots from `artidx.mul`.
+//! - `metadata/pages.bin`: page table with atlas dimensions, occupancy and pixel format.
+//! - `metadata/slots.bin`: sparse slot table with one record per art_id.
 
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
@@ -25,51 +25,35 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::cc_art::PagePixelFormat;
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_dir_matching;
+use crate::source_paths::find_first_existing_file;
 use uocf::{
-    classic::art::ArtMap,
+    enhanced::{
+        terrain_definition::TerrainDefinitionPackage,
+        tile_database::ArtDefinition,
+        textures::Textures,
+        tileart::TileType,
+    },
     udd::{
         xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
         LookupMode, UddpBuilder, UddpReader,
     },
 };
 
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
+const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
+const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
-const CC_ART_METADATA_VERSION: u32 = 2;
-
-/// Page pixel format stored in the page manifest and on-disk entry extension.
-/// This mirrors `VramTextureFormat` but is kept local so the atlas modules
-/// stay independent from the full bc7 encoding type hierarchy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PagePixelFormat {
-    /// Raw RGBA8888, one byte per channel. File extension: `.rgba8888`.
-    Rgba8888 = 0,
-    /// BC7 block-compressed, 16 bytes per 4×4 texel block. File extension: `.bc7`.
-    Bc7 = 1,
-}
-
-impl PagePixelFormat {
-    pub(crate) fn from_repr(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Rgba8888),
-            1 => Some(Self::Bc7),
-            _ => None,
-        }
-    }
-    /// File extension used for pages stored in this format.
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Rgba8888 => "rgba8888",
-            Self::Bc7 => "bc7",
-        }
-    }
-}
+const EC_ART_METADATA_VERSION: u32 = 2;
 const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+
+fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+    find_first_existing_file(
+        source_dirs,
+        &["string_dictionary.uop", "string_Wdictionary.uop"],
+    )
+}
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -77,22 +61,21 @@ pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
-pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
+pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtAtlasOptions {
+pub struct EcArtAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
     /// When `true` each atlas page is BC7-compressed on the CPU before being
-    /// stored in the UDDP container, reducing VRAM usage by ~8×. Requires
-    /// extra CPU time during the build step.
+    /// stored in the UDDP container, reducing VRAM usage by ~8×.
     pub use_bc7: bool,
 }
 
-impl Default for CcArtAtlasOptions {
+impl Default for EcArtAtlasOptions {
     fn default() -> Self {
         Self {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -104,7 +87,7 @@ impl Default for CcArtAtlasOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtBuildSummary {
+pub struct EcArtBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
     pub page_count: u32,
@@ -112,6 +95,7 @@ pub struct CcArtBuildSummary {
     pub atlas_height: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArtTileKind {
     Land,
@@ -136,8 +120,20 @@ struct DecodedArtTile {
     rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TextureSourceKey {
+    World(u32),
+    Legacy(u32),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtPageRecord {
+struct SlotAlias {
+    art_id: u32,
+    canonical_art_id: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EcArtPageRecord {
     pub page_index: u32,
     pub tile_count: u32,
     pub used_width: u32,
@@ -147,7 +143,7 @@ pub struct CcArtPageRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtSlotRecord {
+pub struct EcArtSlotRecord {
     pub art_id: u32,
     pub page_index: u32,
     pub page_tile_index: u16,
@@ -158,7 +154,7 @@ pub struct CcArtSlotRecord {
     pub height: u16,
 }
 
-impl CcArtSlotRecord {
+impl EcArtSlotRecord {
     fn absent(art_id: u32) -> Self {
         Self {
             art_id,
@@ -198,23 +194,22 @@ struct PlacedTile {
 
 #[derive(Debug, Clone)]
 struct BuiltPage {
-    record: CcArtPageRecord,
-    /// Raw RGBA8888 pixels as produced by the guillotiere packer.
-    /// Encoded to the final format (RGBA or BC7) at pack time.
+    record: EcArtPageRecord,
+    /// Raw RGBA8888 pixels produced by the guillotiere packer.
     pixels: Vec<u8>,
     placed_tiles: Vec<PlacedTile>,
 }
 
-pub struct CcArtPackage {
+pub struct EcArtPackage {
     package: UddpReader,
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
-    pages: Vec<CcArtPageRecord>,
-    slots: Vec<CcArtSlotRecord>,
+    pages: Vec<EcArtPageRecord>,
+    slots: Vec<EcArtSlotRecord>,
 }
 
-impl CcArtPackage {
+impl EcArtPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let package = UddpReader::open(fs::read(path.as_ref())?)
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
@@ -223,15 +218,15 @@ impl CcArtPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/pages.bin")?;
+            .context("ec_art.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/slots.bin")?;
+            .context("ec_art.uddp missing metadata/slots.bin")?;
 
         let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
-            eyre::bail!("cc_art metadata headers disagree on atlas dimensions or gutter");
+            eyre::bail!("ec_art metadata headers disagree on atlas dimensions or gutter");
         }
 
         Ok(Self {
@@ -260,14 +255,24 @@ impl CcArtPackage {
         self.gutter
     }
 
-    pub fn pages(&self) -> &[CcArtPageRecord] {
+    pub fn pages(&self) -> &[EcArtPageRecord] {
         &self.pages
     }
 
-    pub fn slots(&self) -> &[CcArtSlotRecord] {
+    pub fn slots(&self) -> &[EcArtSlotRecord] {
         &self.slots
     }
 
+    pub fn slot_record(&self, art_id: u32) -> Option<&EcArtSlotRecord> {
+        self.slots.get(art_id as usize)
+    }
+
+    pub fn present_slot(&self, art_id: u32) -> Option<&EcArtSlotRecord> {
+        self.slot_record(art_id).filter(|slot| slot.is_present())
+    }
+
+    /// Returns the raw bytes of an atlas page as stored on disk.
+    /// Check `pages()[page_index].pixel_format` to know how to interpret them.
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let fmt = self
             .pages
@@ -277,53 +282,85 @@ impl CcArtPackage {
         read_path_entry(&self.package, &page_entry_path(page_index, fmt))
             .wrap_err_with(|| format!("unpack atlas page {page_index}"))
     }
-
-    pub fn present_slot(&self, art_id: u32) -> Option<&CcArtSlotRecord> {
-        self.slots
-            .get(art_id as usize)
-            .filter(|slot| slot.is_present())
-    }
 }
 
-pub fn convert_art_mul_to_cc_art_uddp(
+pub fn convert_ec_art_uop_to_ec_art_uddp(
     client_dir: &Path,
     out_file: &Path,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<CcArtBuildSummary> {
-    convert_art_mul_to_cc_art_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<EcArtBuildSummary> {
+    convert_ec_art_uop_to_ec_art_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
 }
 
-pub fn convert_art_mul_to_cc_art_uddp_from_sources(
+pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
     source_dirs: &[PathBuf],
     out_file: &Path,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<CcArtBuildSummary> {
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<EcArtBuildSummary> {
     validate_options(options)?;
 
-    let client_dir = find_first_dir_matching(source_dirs, &[&["artlegacymul.uop"], &["artLegacyMUL.uop"], &["artidx.mul", "art.mul"]])
-        .ok_or_else(|| eyre::eyre!(
-            "no art sources found in any provided path: expected artLegacyMUL.uop or art.mul/artidx.mul"
-        ))?;
+    let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
+        .ok_or_else(|| eyre::eyre!("missing required file: tileart.uop"))?;
+    let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
+        .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
+    let stringdict_path = find_string_dictionary_path(source_dirs)
+        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop or string_Wdictionary.uop"))?;
+    let texture_uop_path = find_first_existing_file(source_dirs, &["Texture.uop"]);
+    let legacy_texture_uop_path = find_first_existing_file(source_dirs, &["LegacyTexture.uop"]);
 
-    let has_uop = ["artlegacymul.uop", "artLegacyMUL.uop"]
-        .iter()
-        .any(|name| client_dir.join(name).is_file());
-
-    if has_uop {
-        info!("Converting CC Art from UOP format to {}", out_file.display());
-    } else {
-        info!("Converting CC Art from classic MUL format to {}", out_file.display());
+    if texture_uop_path.is_none() && legacy_texture_uop_path.is_none() {
+        eyre::bail!("missing required files: Texture.uop and LegacyTexture.uop not found");
     }
-    println!("Using CC art source dir: {}", client_dir.display());
 
-    let art_map = ArtMap::load(&client_dir)
-        .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
+    info!("Converting EC Art from Texture.uop / LegacyTexture.uop to {}", out_file.display());
+    println!("Using tileart.uop: {}", tileart_path.display());
+    println!("Using TerrainDefinition.uop: {}", terrain_definition_path.display());
+    println!("Using string dictionary: {}", stringdict_path.display());
+    if let Some(path) = texture_uop_path.as_ref() {
+        println!("Using Texture.uop: {}", path.display());
+    }
+    if let Some(path) = legacy_texture_uop_path.as_ref() {
+        println!("Using LegacyTexture.uop: {}", path.display());
+    }
 
-    let slot_count = art_map.max_id();
-    let decoded_tiles = decode_present_tiles(&art_map)?;
-    let populated_slot_count = decoded_tiles.len() as u32;
+    let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
+        Some(
+            Textures::new(texture_uop_path, None, None)
+                .wrap_err_with(|| format!("load {}", texture_uop_path.display()))?,
+        )
+    } else {
+        None
+    };
 
-    let (pages, slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    let legacy_textures = if let Some(legacy_texture_uop_path) = legacy_texture_uop_path.as_ref() {
+        Some(
+            Textures::new(legacy_texture_uop_path, None, None)
+                .wrap_err_with(|| format!("load {}", legacy_texture_uop_path.display()))?,
+        )
+    } else {
+        None
+    };
+
+    let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
+        .wrap_err("load tileart-driven art definition")?;
+    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
+        .wrap_err("load TerrainDefinition.uop")?;
+    let land_texture_ids = terrain_definition
+        .land_source_texture_ids()
+        .into_iter()
+        .collect::<HashSet<_>>();
+
+    let slot_count = 0x10000_u32; // 65536 max art items in EC
+    let (decoded_tiles, aliases) = decode_present_tiles(
+        &art_definition,
+        world_textures.as_ref(),
+        legacy_textures.as_ref(),
+        &land_texture_ids,
+    )?;
+
+    let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    apply_slot_aliases(&mut slot_records, &aliases)?;
+    let populated_slot_count = slot_records.iter().filter(|slot| slot.is_present()).count() as u32;
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
 
@@ -421,7 +458,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
 
     build_and_write_package(&mut package, out_file)?;
 
-    Ok(CcArtBuildSummary {
+    Ok(EcArtBuildSummary {
         slot_count,
         populated_slot_count,
         page_count: pages.len() as u32,
@@ -430,9 +467,9 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
     })
 }
 
-fn validate_options(options: &CcArtAtlasOptions) -> eyre::Result<()> {
+fn validate_options(options: &EcArtAtlasOptions) -> eyre::Result<()> {
     if options.use_bc7 {
-        eyre::bail!("BC7 output is disabled for cc_art atlas pages because small art tiles lose sharpness");
+        eyre::bail!("BC7 output is disabled for ec_art atlas pages because small art tiles lose sharpness");
     }
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("atlas dimensions must be greater than zero");
@@ -443,87 +480,97 @@ fn validate_options(options: &CcArtAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
-    // Decode every occupied art slot up front so the packer can sort by area and
-    // feed the atlas allocator largest-first. Classic clients are messy in practice:
-    // some slots are structurally present but malformed, so the converter skips
-    // those and reports a compact sample instead of aborting the whole package.
+fn decode_present_tiles(
+    art_definition: &ArtDefinition,
+    world_textures: Option<&Textures>,
+    legacy_textures: Option<&Textures>,
+    land_texture_ids: &HashSet<u32>,
+) -> eyre::Result<(Vec<DecodedArtTile>, Vec<SlotAlias>)> {
+    // Art ownership comes from tileart definitions. Resolve each item/static's
+    // selected EC or CC texture payload, but keep the slot table keyed by art id.
+    // Multiple art ids can intentionally share the same texture payload, so dedupe
+    // by resolved source texture id and alias their slot records afterward.
     let mut decoded_tiles = Vec::new();
-    let mut scratch_raw = Vec::new();
-    let mut skipped_tiles = 0u32;
-    let mut skipped_land_tiles = 0u32;
-    let mut skipped_static_tiles = 0u32;
-    let mut skipped_land_samples = Vec::new();
-    let mut skipped_static_samples = Vec::new();
-
-    let max_id = art_map.max_id();
-    let pb = ProgressBar::new(max_id as u64);
+    let mut aliases = Vec::new();
+    let mut canonical_by_source = HashMap::new();
+    let pb = ProgressBar::new(art_definition.definitions.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding tiles ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding art tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
 
-    for art_id in 0..max_id {
+    let mut art_ids = art_definition
+        .definitions
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    art_ids.sort_unstable();
+
+    for art_id in art_ids {
         pb.inc(1);
-        if !art_map.has_id(art_id) {
+        let art_data = art_definition
+            .definitions
+            .get(&art_id)
+            .context("missing tileart definition during art decode")?;
+
+        if art_data.tile_type != TileType::Static {
             continue;
         }
 
-        let kind = if art_id < 0x4000 {
-            ArtTileKind::Land
+        let resolved = if let Some(texture) = art_data.ec_texture.as_ref() {
+            if let Some(world_textures) = world_textures {
+                world_textures
+                    .get_from_id(texture.texture_id)?
+                    .map(|file| (TextureSourceKey::World(texture.texture_id), file))
+            } else {
+                None
+            }
         } else {
-            ArtTileKind::Static
-        };
+            None
+        }
+        .or(if let Some(texture) = art_data.cc_texture.as_ref() {
+            if let Some(legacy_textures) = legacy_textures {
+                legacy_textures
+                    .get_from_id(texture.texture_id)?
+                    .map(|file| (TextureSourceKey::Legacy(texture.texture_id), file))
+            } else {
+                None
+            }
+        } else {
+            None
+        });
 
-        match kind {
-            ArtTileKind::Land => {
-                let mut rgba = [0u8; 44 * 44 * 4];
-                match art_map.decode_land_tile(art_id, &mut scratch_raw, &mut rgba) {
-                    Ok(()) => decoded_tiles.push(DecodedArtTile {
-                        art_id,
-                        kind,
-                        width: 44,
-                        height: 44,
-                        rgba: rgba.to_vec(),
-                    }),
-                    Err(error) => {
-                        skipped_tiles += 1;
-                        skipped_land_tiles += 1;
-                        if skipped_land_samples.len() < 8 {
-                            skipped_land_samples.push(format!("{art_id} ({error})"));
-                        }
-                    }
+        if let Some((source_key, file)) = resolved {
+            let is_land_source = match source_key {
+                TextureSourceKey::World(texture_id) | TextureSourceKey::Legacy(texture_id) => {
+                    land_texture_ids.contains(&texture_id)
                 }
+            };
+            if is_land_source {
+                continue;
             }
-            ArtTileKind::Static => {
-                match art_map.decode_static_tile(art_id, &mut scratch_raw) {
-                    Ok((width, height, rgba)) => decoded_tiles.push(DecodedArtTile {
-                        art_id,
-                        kind,
-                        width,
-                        height,
-                        rgba,
-                    }),
-                    Err(error) => {
-                        skipped_tiles += 1;
-                        skipped_static_tiles += 1;
-                        if skipped_static_samples.len() < 8 {
-                            skipped_static_samples.push(format!("{art_id} ({error})"));
-                        }
-                    }
-                }
+
+            if let Some(&canonical_art_id) = canonical_by_source.get(&source_key) {
+                aliases.push(SlotAlias {
+                    art_id: art_id as u32,
+                    canonical_art_id,
+                });
+                continue;
             }
+
+            let img = file.decode_to_rgba()?;
+            let rgba = img.to_rgba8();
+            canonical_by_source.insert(source_key, art_id as u32);
+            decoded_tiles.push(DecodedArtTile {
+                art_id: art_id as u32,
+                kind: ArtTileKind::Static,
+                width: rgba.width() as u16,
+                height: rgba.height() as u16,
+                rgba: rgba.into_raw(),
+            });
         }
     }
-    if skipped_tiles > 0 {
-        let land_summary = format_skip_summary(skipped_land_tiles, &skipped_land_samples);
-        let static_summary = format_skip_summary(skipped_static_tiles, &skipped_static_samples);
-        pb.finish_with_message(format!(
-            "Tiles decoded (skipped {skipped_tiles} malformed entries; land: {land_summary}; static: {static_summary})"
-        ));
-    } else {
-        pb.finish_with_message("Tiles decoded");
-    }
+    pb.finish_with_message("Art tiles decoded");
 
     decoded_tiles.sort_by(|left, right| {
         let left_area = left.width as u32 * left.height as u32;
@@ -533,31 +580,42 @@ fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
             .then_with(|| left.art_id.cmp(&right.art_id))
     });
 
-    Ok(decoded_tiles)
+    Ok((decoded_tiles, aliases))
 }
 
-fn format_skip_summary(skipped_count: u32, samples: &[String]) -> String {
-    if skipped_count == 0 {
-        return "0".to_string();
+fn apply_slot_aliases(slots: &mut [EcArtSlotRecord], aliases: &[SlotAlias]) -> eyre::Result<()> {
+    for alias in aliases {
+        let canonical = *slots
+            .get(alias.canonical_art_id as usize)
+            .context("canonical ec_art slot outside slot table")?;
+        let slot = slots
+            .get_mut(alias.art_id as usize)
+            .context("alias ec_art slot outside slot table")?;
+        if !canonical.is_present() {
+            eyre::bail!(
+                "canonical ec_art slot {} missing while applying alias {}",
+                alias.canonical_art_id,
+                alias.art_id
+            );
+        }
+        *slot = EcArtSlotRecord {
+            art_id: alias.art_id,
+            ..canonical
+        };
     }
-
-    if skipped_count as usize > samples.len() {
-        format!("{skipped_count} [{}; ...]", samples.join(", "))
-    } else {
-        format!("{skipped_count} [{}]", samples.join(", "))
-    }
+    Ok(())
 }
 
 fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<(Vec<BuiltPage>, Vec<CcArtSlotRecord>)> {
-    // Build full sparse metadata up front. Empty slots are kept explicitly so the
-    // runtime can answer `art_id -> atlas location` without a side lookup table.
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<(Vec<BuiltPage>, Vec<EcArtSlotRecord>)> {
+    // Like the CC path, keep a sparse slot table for the full art id range. That
+    // makes runtime lookup deterministic even when many ids are absent.
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
-        .map(CcArtSlotRecord::absent)
+        .map(EcArtSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
     let mut page_index = 0u32;
@@ -576,7 +634,7 @@ fn pack_tiles_into_pages(
             let slot = slot_records
                 .get_mut(placed.art_id as usize)
                 .context("placed tile art_id outside slot table")?;
-            *slot = CcArtSlotRecord {
+            *slot = EcArtSlotRecord {
                 art_id: placed.art_id,
                 page_index,
                 page_tile_index: placed.page_tile_index,
@@ -599,11 +657,10 @@ fn pack_tiles_into_pages(
 fn build_page(
     page_index: u32,
     tiles: Vec<DecodedArtTile>,
-    options: &CcArtAtlasOptions,
+    options: &EcArtAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
-    // Pages are always assembled as full-size RGBA images in memory even when the
-    // stored package payload is later cropped or BC7-encoded. That keeps placement,
-    // blitting, and runtime atlas coordinates in one consistent page space.
+    // The working page is always a full-size RGBA canvas. Cropping happens only
+    // at storage time so slot coordinates remain expressed in atlas-page space.
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
         options.atlas_height as i32,
@@ -616,10 +673,20 @@ fn build_page(
     let gutter = i32::from(options.gutter);
 
     for tile in tiles {
-        // The allocator reserves the requested gutter as part of the rectangle so
-        // neighboring tiles do not bleed into one another when sampled with filtering.
-        let alloc_width = tile.width as i32 + gutter * 2;
-        let alloc_height = tile.height as i32 + gutter * 2;
+        // A few EC statics legitimately span the full atlas width. Keep the gutter
+        // where it fits, but drop it on a saturated axis so those tiles can still be packed.
+        let gutter_x = if tile.width as u32 + (options.gutter as u32 * 2) > options.atlas_width {
+            0
+        } else {
+            gutter
+        };
+        let gutter_y = if tile.height as u32 + (options.gutter as u32 * 2) > options.atlas_height {
+            0
+        } else {
+            gutter
+        };
+        let alloc_width = tile.width as i32 + gutter_x * 2;
+        let alloc_height = tile.height as i32 + gutter_y * 2;
         if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
             eyre::bail!(
                 "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
@@ -633,8 +700,8 @@ fn build_page(
         }
 
         if let Some(allocation) = allocator.allocate(size2(alloc_width, alloc_height)) {
-            let inner_x = allocation.rectangle.min.x + gutter;
-            let inner_y = allocation.rectangle.min.y + gutter;
+            let inner_x = allocation.rectangle.min.x + gutter_x;
+            let inner_y = allocation.rectangle.min.y + gutter_y;
             blit_rgba_tile(
                 &mut pixels,
                 options.atlas_width,
@@ -645,9 +712,9 @@ fn build_page(
                 &tile.rgba,
             )?;
 
-            // Track the furthest written texel, not the allocator rectangle. The
-            // later crop step trims only guaranteed-empty space from the right/bottom
-            // edges while preserving the logical tile coordinates recorded in metadata.
+            // Record the furthest texel that carries real image data. The package
+            // stores only `used_width x used_height`, while the manifest preserves
+            // the original atlas dimensions needed to interpret these coordinates.
             used_width = used_width.max(inner_x as u32 + tile.width as u32);
             used_height = used_height.max(inner_y as u32 + tile.height as u32);
             placed_tiles.push(PlacedTile {
@@ -666,14 +733,11 @@ fn build_page(
 
     Ok((
         BuiltPage {
-            record: CcArtPageRecord {
+            record: EcArtPageRecord {
                 page_index,
                 tile_count: placed_tiles.len() as u32,
                 used_width,
                 used_height,
-                // Pixel format is not yet known here; it will be resolved at
-                // pack time once the caller decides the encoding. Use Rgba8888
-                // as the placeholder — it is updated in serialize_page_manifest.
                 pixel_format: PagePixelFormat::Rgba8888,
             },
             pixels,
@@ -716,10 +780,9 @@ fn blit_rgba_tile(
 }
 
 fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32) -> Vec<u8> {
-    // Only the stored payload is cropped. The atlas still behaves logically as a
-    // full `atlas_width x atlas_height` page because manifests keep the slot coords
-    // in that original space plus the `used_width/used_height` bounds needed to read
-    // the compact payload back.
+    // The crop is intentionally one-sided: we remove only empty rows/columns from
+    // the lower-right region. That avoids rewriting slot coordinates or changing
+    // the atlas origin while still cutting a large amount of dead transparent space.
     let mut cropped = vec![0u8; crop_width as usize * crop_height as usize * 4];
     let src_stride = src_width as usize * 4;
     let dst_stride = crop_width as usize * 4;
@@ -736,23 +799,22 @@ fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32)
 
 fn serialize_page_manifest(
     pages: &[BuiltPage],
-    options: &CcArtAtlasOptions,
+    options: &EcArtAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    // The page manifest carries both the logical atlas dimensions and the per-page
-    // used rectangle. Readers reconstruct a full page view from those two facts:
-    // atlas coordinates stay stable, but package I/O only touches the occupied area.
+    // Manifest records tell the reader how to reinterpret cropped payloads as
+    // logical atlas pages. `used_width/used_height` describe the stored bytes,
+    // while `atlas_width/atlas_height` keep the public coordinate system stable.
     let pixel_format = if options.use_bc7 {
         PagePixelFormat::Bc7
     } else {
         PagePixelFormat::Rgba8888
     };
-    let mut bytes = Vec::with_capacity(25 + pages.len() * 17);
+    let mut bytes = Vec::with_capacity(25 + pages.len() * 16);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(EC_ART_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
-    // 1 byte: page pixel format (0 = RGBA8888, 1 = BC7)
     bytes.push(pixel_format as u8);
     bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
     for page in pages {
@@ -765,12 +827,12 @@ fn serialize_page_manifest(
 }
 
 fn serialize_slot_manifest(
-    slots: &[CcArtSlotRecord],
-    options: &CcArtAtlasOptions,
+    slots: &[EcArtSlotRecord],
+    options: &EcArtAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(EC_ART_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -788,28 +850,26 @@ fn serialize_slot_manifest(
     Ok(bytes)
 }
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPageRecord>)> {
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<EcArtPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC {
-        eyre::bail!("invalid cc_art page manifest magic");
+        eyre::bail!("invalid ec_art page manifest magic");
     }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_ART_METADATA_VERSION {
-        eyre::bail!("unsupported cc_art page manifest version {version}");
+    if version != EC_ART_METADATA_VERSION {
+        eyre::bail!("unsupported ec_art page manifest version {version}");
     }
     let atlas_width = cursor.read_u32::<LittleEndian>()?;
     let atlas_height = cursor.read_u32::<LittleEndian>()?;
     let gutter = cursor.read_u32::<LittleEndian>()? as u16;
-    // 1 byte: page pixel format (shared for all pages in the package)
-    let pixel_format_byte = cursor.read_u8()?;
-    let pixel_format = PagePixelFormat::from_repr(pixel_format_byte)
-        .ok_or_else(|| eyre::eyre!("unknown page pixel format byte {pixel_format_byte}"))?;
+    let pixel_format = PagePixelFormat::from_repr(cursor.read_u8()?)
+        .ok_or_else(|| eyre::eyre!("unknown ec_art page pixel format"))?;
     let page_count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut pages = Vec::with_capacity(page_count);
     for _ in 0..page_count {
-        pages.push(CcArtPageRecord {
+        pages.push(EcArtPageRecord {
             page_index: cursor.read_u32::<LittleEndian>()?,
             tile_count: cursor.read_u32::<LittleEndian>()?,
             used_width: cursor.read_u32::<LittleEndian>()?,
@@ -820,16 +880,16 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPa
     Ok((atlas_width, atlas_height, gutter, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtSlotRecord>)> {
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<EcArtSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC {
-        eyre::bail!("invalid cc_art slot manifest magic");
+        eyre::bail!("invalid ec_art slot manifest magic");
     }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_ART_METADATA_VERSION {
-        eyre::bail!("unsupported cc_art slot manifest version {version}");
+    if version != EC_ART_METADATA_VERSION {
+        eyre::bail!("unsupported ec_art slot manifest version {version}");
     }
     let atlas_width = cursor.read_u32::<LittleEndian>()?;
     let atlas_height = cursor.read_u32::<LittleEndian>()?;
@@ -837,7 +897,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtSl
     let slot_count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(slot_count);
     for _ in 0..slot_count {
-        slots.push(CcArtSlotRecord {
+        slots.push(EcArtSlotRecord {
             art_id: cursor.read_u32::<LittleEndian>()?,
             page_index: cursor.read_u32::<LittleEndian>()?,
             page_tile_index: cursor.read_u16::<LittleEndian>()?,
@@ -871,14 +931,14 @@ mod tests {
 
     #[test]
     fn sparse_slots_keep_absent_records() {
-        let options = CcArtAtlasOptions {
+        let options = EcArtAtlasOptions {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 1,
             use_bc7: false,
         };
         let tiles = vec![
-            rgba_tile(0, ArtTileKind::Land, 4, 4),
+            rgba_tile(0, ArtTileKind::Static, 4, 4),
             rgba_tile(3, ArtTileKind::Static, 4, 4),
         ];
 
@@ -893,14 +953,14 @@ mod tests {
 
     #[test]
     fn packer_spills_to_multiple_pages() {
-        let options = CcArtAtlasOptions {
+        let options = EcArtAtlasOptions {
             atlas_width: 8,
             atlas_height: 8,
             gutter: 1,
             use_bc7: false,
         };
         let tiles = vec![
-            rgba_tile(0, ArtTileKind::Land, 4, 4),
+            rgba_tile(0, ArtTileKind::Static, 4, 4),
             rgba_tile(1, ArtTileKind::Static, 4, 4),
         ];
 
@@ -914,14 +974,35 @@ mod tests {
     }
 
     #[test]
+    fn full_width_static_tile_fits_when_page_is_4096_wide() {
+        let options = EcArtAtlasOptions {
+            atlas_width: 4096,
+            atlas_height: 2048,
+            gutter: 1,
+            use_bc7: false,
+        };
+        let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
+
+        let (pages, slots) = pack_tiles_into_pages(tiles, 0x10000, &options).unwrap();
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].record.tile_count, 1);
+        assert_eq!(pages[0].placed_tiles[0].x, 0);
+        assert_eq!(pages[0].placed_tiles[0].y, 1);
+        assert_eq!(slots[41339].page_index, 0);
+        assert_eq!(slots[41339].width, 4096);
+        assert_eq!(slots[41339].height, 128);
+    }
+
+    #[test]
     fn runtime_reader_can_unpack_page_and_slot_metadata() {
-        let options = CcArtAtlasOptions {
+        let options = EcArtAtlasOptions {
             atlas_width: 8,
             atlas_height: 8,
             gutter: 1,
             use_bc7: false,
         };
-        let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
+        let tiles = vec![rgba_tile(0, ArtTileKind::Static, 4, 4)];
         let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
@@ -960,12 +1041,43 @@ mod tests {
             .unwrap();
 
         let package =
-            CcArtPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
+            EcArtPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
                 .unwrap();
         assert_eq!(package.pages().len(), 1);
-        assert!(package.present_slot(0).unwrap().is_land());
+        assert!(package.present_slot(0).unwrap().is_static());
         let page = &package.pages()[0];
         assert_eq!(package.read_page_bytes(0).unwrap().len(), (page.used_width * page.used_height * 4) as usize);
+    }
+
+    #[test]
+    fn alias_slots_reuse_canonical_page_location() {
+        let options = EcArtAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 1,
+            use_bc7: false,
+        };
+        let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];
+
+        let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options).unwrap();
+        apply_slot_aliases(
+            &mut slots,
+            &[SlotAlias {
+                art_id: 9,
+                canonical_art_id: 7,
+            }],
+        )
+        .unwrap();
+
+        assert!(slots[7].is_present());
+        assert!(slots[9].is_present());
+        assert_eq!(slots[9].art_id, 9);
+        assert_eq!(slots[9].page_index, slots[7].page_index);
+        assert_eq!(slots[9].page_tile_index, slots[7].page_tile_index);
+        assert_eq!(slots[9].x, slots[7].x);
+        assert_eq!(slots[9].y, slots[7].y);
+        assert_eq!(slots[9].width, slots[7].width);
+        assert_eq!(slots[9].height, slots[7].height);
     }
 }
 

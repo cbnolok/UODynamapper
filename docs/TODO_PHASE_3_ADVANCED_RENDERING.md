@@ -141,6 +141,8 @@ Decision-history note:
 - Automatic blending is a first-class roadmap item for custom maps that do not ship with transition assets.
 - Noise/stochastic seam refinement should not block the base auto-blend mode.
 
+Reference note: see `docs/LAND_TEXTURES_AND_TRANSITIONS.md` for the classic `texmaps.mul` versus `art.mul` split and why texmap-only rendering cannot fully reproduce original transition fidelity.
+
 ## 6. Water Modes and Pass Order
 
 Status: Classic water remains baseline; explicit water pass ordering is accepted target architecture; enhanced-water extras are optional / benchmark-first.

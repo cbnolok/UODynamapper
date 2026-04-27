@@ -16,7 +16,7 @@ use bevy::{
 };
 use std::sync::OnceLock;
 use uddconv::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
-use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
+use uocf::classic::land_texture::{LandTextureSize, TexMap};
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
@@ -107,7 +107,7 @@ impl TerrainTextureCompression {
     }
 }
 
-pub fn build_texture_residency_plan(texmap_2d_res: &TexMap2D) -> TextureResidencyPlan<LandTextureSize> {
+pub fn build_texture_residency_plan(texmap_2d_res: &TexMap) -> TextureResidencyPlan<LandTextureSize> {
     let mut plan = TextureResidencyPlan::new();
 
     for texture_id in 0..texmap_2d_res.len() {
@@ -232,7 +232,7 @@ pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 /// If invalid, return UNUSED texture.
 pub fn get_texmap_size_only(
     texture_id: u16,
-    texmap_2d_res: &TexMap2D,
+    texmap_2d_res: &TexMap,
 ) -> LandTextureSize {
     if let Some(element) = texmap_2d_res.element(texture_id as usize) {
         return *element.size();
@@ -247,7 +247,7 @@ pub fn get_texmap_size_only(
 
 pub fn get_texmap_raw_data(
     texture_id: u16,
-    texmap_2d_res: &TexMap2D,
+    texmap_2d_res: &TexMap,
     now: std::time::Instant,
 ) -> (LandTextureSize, std::sync::Arc<[u8]>) {
     fn local_log_warn(msg: &str) {

@@ -17,6 +17,8 @@ use zstd::bulk::{Compressor, Decompressor};
 
 use super::*;
 
+const ZSTD_LEVEL: i32 = 9;
+
 /// Pack the public metadata word stored in every file locator.
 pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32) -> Meta32 {
     let ty = (data_type as u32) & 0x3F;
@@ -106,13 +108,13 @@ pub fn xxh64_virtual_path(path: &str) -> u64 {
 
 /// Plain Zstd compression helper.
 pub(crate) fn zstd_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
-    let mut compressor = Compressor::new(3)?;
+    let mut compressor = Compressor::new(ZSTD_LEVEL)?;
     compressor.compress(data)
 }
 
 /// Dictionary-backed Zstd compression helper.
 pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Result<Vec<u8>> {
-    let mut compressor = Compressor::with_dictionary(3, dict)?;
+    let mut compressor = Compressor::with_dictionary(ZSTD_LEVEL, dict)?;
     compressor.compress(data)
 }
 

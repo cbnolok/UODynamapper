@@ -7,6 +7,8 @@ mod tests;
 
 pub use uddp::{
     AddFileRequest,
+    BuildProgress,
+    BuildProgressPhase,
     Codec,
     CompressionFlag,
     DataType,

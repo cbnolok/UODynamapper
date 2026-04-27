@@ -15,7 +15,13 @@ use std::sync::Arc;
 
 crate::eyre_imports!();
 
-/// Represents the metadata for a texture file.
+// region: --- Internal Raw File-Mapping Structs (Binary Format)
+
+/// Raw metadata header for a texture entry as stored in `Texture.uop`.
+///
+/// This structure mirrors the binary layout of the texture metadata, including
+/// several "unknown" fields (`unk1`, `unk8`, `unk9`). It is used internally
+/// for parsing and should not be used directly by high-level rendering code.
 #[derive(Debug, Clone)]
 pub struct TextureItem {
     pub texture_present: bool,
@@ -37,18 +43,22 @@ pub struct TextureItemImage {
 }
 
 impl TextureItem {
+    pub fn absent() -> Self {
+        Self {
+            texture_present: false,
+            unk1: 0,
+            name_index: 0,
+            images: vec![],
+            unk8: vec![],
+            unk9: vec![],
+        }
+    }
+
     /// Reads a `TextureItem` from a binary reader.
     pub fn read<R: Read>(reader: &mut R) -> eyre::Result<Self> {
         let texture_present = reader.read_u8()? != 0;
         if !texture_present {
-            return Ok(Self {
-                texture_present: false,
-                unk1: 0,
-                name_index: 0,
-                images: vec![],
-                unk8: vec![],
-                unk9: vec![],
-            });
+            return Ok(Self::absent());
         }
 
         let unk1 = reader.read_u8()?;
@@ -88,7 +98,31 @@ impl TextureItem {
     }
 }
 
-/// Identifiers for the underlying raw container formats.
+fn payload_starts_with_raw_image(data: &[u8], format: ECImageFormat) -> bool {
+    match format {
+        ECImageFormat::DDS => data.starts_with(b"DDS "),
+        ECImageFormat::TGA => is_probably_tga(data),
+        ECImageFormat::Unknown => data.starts_with(b"DDS ") || is_probably_tga(data),
+    }
+}
+
+fn is_probably_tga(data: &[u8]) -> bool {
+    if data.len() < 18 {
+        return false;
+    }
+
+    let image_type = data[2];
+    (image_type == 2 || image_type == 10) && data[1] <= 1
+}
+
+// endregion: --- Internal Raw File-Mapping Structs
+
+// region: --- Public API (Convenience & Application Use)
+
+/// Inferred image format used to decide how to handle the raw binary payload.
+///
+/// This is a convenience abstraction. The format is typically inferred from the
+/// file extension within the UOP package or by inspecting the magic bytes of the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ECImageFormat {
     DDS,
@@ -98,6 +132,11 @@ pub enum ECImageFormat {
 
 /// Represents a fully mapped texture file containing both its metadata header
 /// and a zero-copy thread-safe slice of its binary layout.
+/// A fully resolved texture asset ready for consumption by the engine.
+///
+/// This is a public convenience structure that aggregates the raw binary payload
+/// with its associated metadata and inferred format. It provides a clean interface
+/// for the renderer to access raw bytes for GPU upload or perform CPU decoding.
 #[derive(Debug, Clone)]
 pub struct TextureFile {
     pub metadata: TextureItem,
@@ -151,7 +190,11 @@ impl TextureFile {
     }
 }
 
-/// Provides access to textures in a UOP file.
+/// The primary public-facing orchestrator for Enhanced Client textures.
+///
+/// This structure manages the loading and lookup of textures from UOP packages.
+/// It handles path hashing and optional cross-referencing with `tileart.uop`
+/// to provide fully decorated `TextureFile` results.
 pub struct Textures {
     package: UopPackage,
     tileart: Option<UopPackage>, // to be integrated later in tileart.rs port
@@ -176,7 +219,7 @@ impl Textures {
         } else {
             None
         };
-        let is_ec_texture = path.to_string_lossy().ends_with("Texture.uop");
+        let is_ec_texture = path.file_name().map_or(false, |n| n == "Texture.uop");
         Ok(Self {
             package,
             tileart,
@@ -209,20 +252,28 @@ impl Textures {
     pub fn get_from_hash(
         &self,
         hash: u64,
-        _full_tid: Option<&str>,
+        full_tid: Option<&str>,
         format: ECImageFormat,
     ) -> eyre::Result<Option<TextureFile>> {
         if let Some(file) = self.package.get_file_by_hash(hash) {
-            let data = file.unpack()?; // Returns Arc<[u8]>
-            let mut cursor = Cursor::new(&*data);
-
-            let metadata = TextureItem::read(&mut cursor)?;
-            let image_data_pos = cursor.position() as usize;
-
-            let sliced_image: Arc<[u8]> = data[image_data_pos..].into();
+            let data: Arc<[u8]> = file.unpack()?.into();
+            let (metadata, sliced_image) = if payload_starts_with_raw_image(&data, format) {
+                // The EC texture UOPs typically store the DDS/TGA payload directly.
+                // Treat the whole unpacked file as image data in that common case.
+                (TextureItem::absent(), Arc::clone(&data))
+            } else {
+                let mut cursor = Cursor::new(&*data);
+                match TextureItem::read(&mut cursor) {
+                    Ok(metadata) => {
+                        let image_data_pos = cursor.position() as usize;
+                        (metadata, data[image_data_pos..].into())
+                    }
+                    Err(_) => (TextureItem::absent(), Arc::clone(&data)),
+                }
+            };
 
             let mut props = None;
-            if let Some(full_tid) = _full_tid {
+            if let Some(full_tid) = full_tid {
                 if let (Some(tileart), Some(string_dictionary)) =
                     (&self.tileart, &self.string_dictionary)
                 {
@@ -275,3 +326,5 @@ impl Textures {
         self.get_from_name(path)
     }
 }
+
+// endregion: --- Public API

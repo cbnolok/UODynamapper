@@ -7,10 +7,8 @@ use super::texture_array;
 use crate::{
     console_logger::{self, LogAbout, LogSev},
     core::texture_cache::{
-        TextureResidencyPlan,
+        visit_grouped_layer_assignments, visit_grouped_texture_ids, TextureResidencyPlan,
         TextureResidencyStrategy,
-        visit_grouped_layer_assignments,
-        visit_grouped_texture_ids,
     },
 };
 use bevy::prelude::*;
@@ -28,7 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 use uddconv::bc7::{self, RawImageFormat, TextureUploadLayout};
-use uocf::classic::land_texture_2d::{LandTextureSize, TexMap2D};
+use uocf::classic::land_texture::{LandTextureSize, TexMap};
 
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TextureArrayImageHandles {
@@ -112,6 +110,11 @@ pub struct LandTextureCache {
     pub pending_uploads: Vec<TextureArrayUpload>,
     pub upload_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<TextureArrayUpload>>,
     pub upload_sender: std::sync::mpsc::Sender<TextureArrayUpload>,
+
+    // Optional UDDP sources
+    pub cc_art: Option<Arc<uddconv::cc_art::CcArtPackage>>,
+    pub ec_art: Option<Arc<uddconv::ec_art::EcArtPackage>>,
+    pub ec_land: Option<Arc<uddconv::ec_land::EcLandPackage>>,
 }
 
 pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) {
@@ -151,7 +154,8 @@ impl LandTextureCache {
     pub const TILE_BITSET_SIZE: usize = Self::MAX_TILE_ID >> Self::TILE_ID_WORD_SHIFT;
     // Preload mode must use a stable group order so layer assignment stays deterministic
     // across bookkeeping, upload scheduling, and any future debugging tools.
-    const RESIDENCY_GROUP_ORDER: [LandTextureSize; 2] = [LandTextureSize::Small, LandTextureSize::Big];
+    const RESIDENCY_GROUP_ORDER: [LandTextureSize; 2] =
+        [LandTextureSize::Small, LandTextureSize::Big];
 
     pub fn new(
         small_tex_image_handle: Handle<Image>,
@@ -179,6 +183,9 @@ impl LandTextureCache {
             pending_uploads: Vec::new(),
             upload_receiver: std::sync::Mutex::new(upload_receiver),
             upload_sender,
+            cc_art: None,
+            ec_art: None,
+            ec_land: None,
         }
     }
 
@@ -190,10 +197,115 @@ impl LandTextureCache {
         self.residency_strategy.preloads_full_collection()
     }
 
+    pub fn try_load_tile_from_packages(
+        &self,
+        texture_id: u16,
+    ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
+        // 1. Check CC art package (ID < 0x4000 are land)
+        if let Some(cc) = &self.cc_art {
+            if texture_id < 0x4000 {
+                if let Some(slot) = cc.present_slot(texture_id as u32) {
+                    let page_data = cc.read_page_bytes(slot.page_index).ok()?;
+                    let page_meta = cc.pages().get(slot.page_index as usize)?;
+                    let size = if slot.width > 64 || slot.height > 64 {
+                        LandTextureSize::Big
+                    } else {
+                        LandTextureSize::Small
+                    };
+                    let extent = texture_array::texture_extent(size);
+
+                    let tile_bytes = match page_meta.pixel_format {
+                        uddconv::cc_art::PagePixelFormat::Rgba8888 => {
+                            bc7::extract_rgba8888_subrect_arc(
+                                &page_data,
+                                page_meta.used_width,
+                                slot.x as u32,
+                                slot.y as u32,
+                                extent.width(),
+                                extent.height(),
+                            )
+                        }
+                        uddconv::cc_art::PagePixelFormat::Bc7 => {
+                            let blocks = bc7::extract_bc7_subrect(
+                                &page_data,
+                                bc7::ImageExtent::new(cc.atlas_width(), cc.atlas_height()).ok()?,
+                                slot.x as u32,
+                                slot.y as u32,
+                                extent,
+                            );
+                            Arc::from(blocks)
+                        }
+                    };
+
+                    let format = match page_meta.pixel_format {
+                        uddconv::cc_art::PagePixelFormat::Rgba8888 => {
+                            bc7::VramTextureFormat::Rgba8UnormSrgb
+                        }
+                        uddconv::cc_art::PagePixelFormat::Bc7 => {
+                            bc7::VramTextureFormat::Bc7RgbaUnormSrgb
+                        }
+                    };
+
+                    return Some((size, tile_bytes, format.upload_layout(extent)));
+                }
+            }
+        }
+
+        // 2. Check EC land package
+        if let Some(ec) = &self.ec_land {
+            if let Some(slot) = ec.present_slot(texture_id as u32) {
+                let page_data = ec.read_page_bytes(slot.page_index).ok()?;
+                let page_meta = ec.pages().get(slot.page_index as usize)?;
+                let size = if slot.width > 64 || slot.height > 64 {
+                    LandTextureSize::Big
+                } else {
+                    LandTextureSize::Small
+                };
+                let extent = texture_array::texture_extent(size);
+
+                let tile_bytes = match page_meta.pixel_format {
+                    uddconv::cc_art::PagePixelFormat::Rgba8888 => {
+                        bc7::extract_rgba8888_subrect_arc(
+                            &page_data,
+                                page_meta.used_width,
+                            slot.x as u32,
+                            slot.y as u32,
+                            extent.width(),
+                            extent.height(),
+                        )
+                    }
+                    uddconv::cc_art::PagePixelFormat::Bc7 => {
+                        let blocks = bc7::extract_bc7_subrect(
+                            &page_data,
+                            bc7::ImageExtent::new(ec.atlas_width(), ec.atlas_height()).ok()?,
+                            slot.x as u32,
+                            slot.y as u32,
+                            extent,
+                        );
+                        Arc::from(blocks)
+                    }
+                };
+
+                let format = match page_meta.pixel_format {
+                    uddconv::cc_art::PagePixelFormat::Rgba8888 => {
+                        bc7::VramTextureFormat::Rgba8UnormSrgb
+                    }
+                    uddconv::cc_art::PagePixelFormat::Bc7 => {
+                        bc7::VramTextureFormat::Bc7RgbaUnormSrgb
+                    }
+                };
+
+                return Some((size, tile_bytes, format.upload_layout(extent)));
+            }
+        }
+
+        None
+    }
+
     pub fn prime_full_file_residency(
         &mut self,
         plan: &TextureResidencyPlan<LandTextureSize>,
-        texmap_2d: Arc<TexMap2D>,
+        texmap_2d: Arc<TexMap>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -241,43 +353,47 @@ impl LandTextureCache {
     fn enqueue_full_residency_uploads(
         &self,
         plan: &TextureResidencyPlan<LandTextureSize>,
-        texmap_2d: Arc<TexMap2D>,
+        texmap_2d: Arc<TexMap>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
 
-        visit_grouped_texture_ids(plan, &Self::RESIDENCY_GROUP_ORDER, |texture_size, texture_ids| {
-            for (chunk_index, chunk) in texture_ids.chunks(PRECACHE_BATCH_SIZE).enumerate() {
-                let base_layer = chunk_index as u32 * PRECACHE_BATCH_SIZE as u32;
-                let chunk: Vec<(u16, u32)> = chunk
-                    .iter()
-                    .enumerate()
-                    .map(|(index, &texture_id)| (texture_id, base_layer + index as u32 + 1))
-                    .collect();
-                let texmap_2d_arc = texmap_2d.clone();
-                let sender = self.upload_sender.clone();
+        visit_grouped_texture_ids(
+            plan,
+            &Self::RESIDENCY_GROUP_ORDER,
+            |texture_size, texture_ids| {
+                for (chunk_index, chunk) in texture_ids.chunks(PRECACHE_BATCH_SIZE).enumerate() {
+                    let base_layer = chunk_index as u32 * PRECACHE_BATCH_SIZE as u32;
+                    let chunk: Vec<(u16, u32)> = chunk
+                        .iter()
+                        .enumerate()
+                        .map(|(index, &texture_id)| (texture_id, base_layer + index as u32 + 1))
+                        .collect();
+                    let texmap_2d_arc = texmap_2d.clone();
+                    let sender = self.upload_sender.clone();
 
-                let task = pool.spawn(async move {
-                    for (texture_id, layer) in chunk {
-                        let (_, rgba8) = super::texture_array::get_texmap_raw_data(
-                            texture_id,
-                            &texmap_2d_arc,
-                            now,
-                        );
-                        let (tile_bytes, upload_layout) =
-                            prepare_texture_upload_bytes(rgba8, texture_size, compression);
-                        let _ = sender.send(TextureArrayUpload {
-                            layer,
-                            size: texture_size,
-                            bytes: tile_bytes,
-                            upload_layout,
-                        });
-                    }
-                });
-                task.detach();
-            }
-        });
+                    let task = pool.spawn(async move {
+                        for (texture_id, layer) in chunk {
+                            let (_, rgba8) = super::texture_array::get_texmap_raw_data(
+                                texture_id,
+                                &texmap_2d_arc,
+                                now,
+                            );
+                            let (tile_bytes, upload_layout) =
+                                prepare_texture_upload_bytes(rgba8, texture_size, compression);
+                            let _ = sender.send(TextureArrayUpload {
+                                layer,
+                                size: texture_size,
+                                bytes: tile_bytes,
+                                upload_layout,
+                            });
+                        }
+                    });
+                    task.detach();
+                }
+            },
+        );
     }
 
     /// Clears all pinned texture IDs.  Call when the entire chunk set is
@@ -290,7 +406,7 @@ impl LandTextureCache {
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
     pub fn get_texture_size_layer(
         &mut self,
-        texmap_2d: &Arc<TexMap2D>,
+        texmap_2d: &Arc<TexMap>,
         texture_id: u16,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
@@ -302,7 +418,8 @@ impl LandTextureCache {
         }
 
         if self.preloads_full_collection() {
-            if let Some(entry) = &mut self.entry_by_id[texture_array::DEFAULT_ERROR_TEXTURE_ID as usize]
+            if let Some(entry) =
+                &mut self.entry_by_id[texture_array::DEFAULT_ERROR_TEXTURE_ID as usize]
             {
                 entry.1.last_touch = now;
                 return (entry.0, entry.1.layer);
@@ -310,7 +427,13 @@ impl LandTextureCache {
         }
 
         // Not resident: load metadata and attempt to allocate a cache layer.
-        let texture_size = texture_array::get_texmap_size_only(texture_id, &texmap_2d);
+        let package_source = self.try_load_tile_from_packages(texture_id);
+        let texture_size = if let Some((size, _, _)) = &package_source {
+            *size
+        } else {
+            texture_array::get_texmap_size_only(texture_id, &texmap_2d)
+        };
+
         let Some(layer) = self.allocate_layer(texture_size) else {
             // Expansion requested but not applied yet: render with black fallback layer.
             return (texture_size, FALLBACK_BLACK_LAYER);
@@ -320,11 +443,23 @@ impl LandTextureCache {
         // Clone the Arc only on the slow (cache-miss) path.
         let texmap_2d_arc = texmap_2d.clone();
         let sender = self.upload_sender.clone();
+
+        /*
+                let cc_art = self.cc_art.clone();
+                let ec_art = self.ec_art.clone();
+                let ec_land = self.ec_land.clone();
+        */
+
         let task = pool.spawn(async move {
-            let (_, raw_rgba8) =
-                texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, upload_layout) =
-                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
+            let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) = package_source {
+                (bytes, layout)
+            } else {
+                // Not in packages, fall back to TexMap2D (Classic .mul)
+                let (_, raw_rgba8) =
+                    texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression)
+            };
+
             let _ = sender.send(TextureArrayUpload {
                 layer,
                 size: texture_size,
@@ -344,7 +479,7 @@ impl LandTextureCache {
     pub fn precache_textures_parallel(
         &mut self,
         texture_ids: &[u16],
-        texmap_2d: Arc<TexMap2D>,
+        texmap_2d: Arc<TexMap>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -424,7 +559,7 @@ impl LandTextureCache {
     fn prepare_texture_residency(
         &mut self,
         texture_id: u16,
-        texmap_2d: &Arc<TexMap2D>,
+        texmap_2d: &Arc<TexMap>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) -> Option<TextureArrayUpload> {
@@ -629,7 +764,7 @@ impl LandTextureCache {
     pub fn enqueue_reupload_for_size(
         &mut self,
         size: LandTextureSize,
-        texmap_2d: Arc<TexMap2D>,
+        texmap_2d: Arc<TexMap>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -914,17 +1049,11 @@ pub fn sys_render_upload_texture_array(
                 .scratch_bytes
                 .extend_from_slice(&upload.bytes[src_start..src_end]);
             let padded_len = staging.scratch_bytes.len() + (padded_row_bytes - row_bytes);
-            staging
-                .scratch_bytes
-                .resize(padded_len, 0);
+            staging.scratch_bytes.resize(padded_len, 0);
         }
     }
 
-    render_queue.write_buffer(
-        staging.buffer.as_ref().unwrap(),
-        0,
-        &staging.scratch_bytes,
-    );
+    render_queue.write_buffer(staging.buffer.as_ref().unwrap(), 0, &staging.scratch_bytes);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Batched Texture Uploads Encoder"),
