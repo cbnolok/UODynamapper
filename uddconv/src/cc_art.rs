@@ -8,6 +8,17 @@
 //!   the pixel format used for each page.
 //! - `metadata/slots.bin`: sparse slot table with one record per `art_id`, including
 //!   empty slots from `artidx.mul`.
+//!
+//! This module has two layers:
+//! - build-time conversion code that reads classic client art, decodes only the
+//!   present tiles, and packs them into atlas pages.
+//! - runtime loading code that treats the resulting package as a sparse slot table
+//!   plus page table, so the renderer can jump directly from `art_id` to page/rect.
+//!
+//! The key high-level contract is that the slot table is authoritative for lookup,
+//! while the page payloads are just backing storage for the rectangles referenced
+//! by those slots. Empty records are kept on purpose so classic `art_id` lookups
+//! stay O(1) and preserve the original sparse address space.
 
 use std::fs;
 use std::io::{Cursor, Read};
@@ -69,7 +80,7 @@ impl PagePixelFormat {
     }
 }
 const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
-const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -786,6 +797,23 @@ fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.height)?;
     }
     Ok(bytes)
+}
+
+pub fn encode_slot_manifest(
+    slots: &[CcArtSlotRecord],
+    atlas_width: u32,
+    atlas_height: u32,
+    gutter: u16,
+) -> eyre::Result<Vec<u8>> {
+    serialize_slot_manifest(
+        slots,
+        &CcArtAtlasOptions {
+            atlas_width,
+            atlas_height,
+            gutter,
+            use_bc7: false,
+        },
+    )
 }
 
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPageRecord>)> {

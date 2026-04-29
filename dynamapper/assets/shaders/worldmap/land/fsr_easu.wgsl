@@ -9,7 +9,7 @@
 //  Reference: https://www.shadertoy.com/view/stXSWB
 // ============================================================================
 
-#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, tex_small_sampler}
+#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, ec_land_page_atlas, tex_small_sampler}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance}
 
 // ============================================================================
@@ -18,6 +18,11 @@
 
 fn fsr_fetch(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
+  if (tile.texture_size == 2u) {
+    let local_iuv = clamp(iuv, vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
+    let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
+    return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+  }
   if (tile.texture_size == 1u) {
     let dims = vec2<i32>(textureDimensions(tex_big));
     return textureLoad(tex_big, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
@@ -253,11 +258,16 @@ fn fsr_easu(
 /// The upscale ratio is derived from the texture dimensions vs. an effective
 /// higher output resolution (2× in each dimension, matching classic FSR usage).
 fn sample_tile_fsr_easu(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  let dims = select(
-    vec2<f32>(textureDimensions(tex_small)),
-    vec2<f32>(textureDimensions(tex_big)),
-    tile.texture_size == 1u,
-  );
+  var dims = vec2<f32>(0.0);
+  if (tile.texture_size == 2u) {
+    dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
+  } else {
+    dims = select(
+      vec2<f32>(textureDimensions(tex_small)),
+      vec2<f32>(textureDimensions(tex_big)),
+      tile.texture_size == 1u,
+    );
+  }
 
   // Treat the texture as the input viewport and upscale 2× for the EASU pass.
   let output_size = dims * 2.0;

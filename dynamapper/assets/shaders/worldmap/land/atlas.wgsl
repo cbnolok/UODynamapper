@@ -6,14 +6,14 @@
 // The atlas is kept up to date by the CPU via incremental write_texture calls.
 // ============================================================================
 
-#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, CHUNK_TILE_NUM_DIM}
+#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, ec_land_lookup, CHUNK_TILE_NUM_DIM}
 
 // Query world-space (x,z) tile coordinates and map them, through the LRU
 // page table, to the physical GPU atlas layer.  Returns a zero'd TileUniform
 // when the requested tile falls outside the paged region.
 fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   if (world_x < 0 || world_z < 0) {
-    return TileUniform(0.0, 0u, 0u, 0u);
+    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u));
   }
 
   let wx = u32(world_x);
@@ -37,7 +37,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   }
 
   if (layer >= ATLAS.max_layers) {
-    return TileUniform(0.0, 0u, 0u, 0u);
+    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u));
   }
 
   // Load from Rg16Uint texture array
@@ -45,17 +45,35 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   let r = packed.x;
   let g = packed.y;
 
-  let layer_idx = r; // contains only texture layer index (16 bit)
+  let texture_payload = r;
 
   // G channel low byte: height biased by +128 (so 0 = -12.8, 128 = 0.0, 255 = +12.7)
   let height_biased = g & 0xFFu;
   let z_i32 = i32(height_biased) - 128;
   let tile_height = f32(z_i32) * 0.1;
 
-  // G channel high byte: texture size flag (0 = small atlas, 1 = big atlas)
-  let tex_size = (g >> 8u) & 1u;
+  // G channel high byte: terrain texture source/mode.
+  let tex_size = (g >> 8u) & 0xFFu;
 
-  return TileUniform(tile_height, tex_size, layer_idx, 0u);
+  if (tex_size == 2u) {
+    let lookup_dims = textureDimensions(ec_land_lookup);
+    let lookup_uv = vec2<i32>(
+      i32(texture_payload % lookup_dims.x),
+      i32(texture_payload / lookup_dims.x),
+    );
+    let slot = textureLoad(ec_land_lookup, lookup_uv, 0);
+    let packed_wh = slot.w;
+    return TileUniform(
+      tile_height,
+      tex_size,
+      slot.x,
+      0u,
+      vec2<u32>(slot.y, slot.z),
+      vec2<u32>(packed_wh & 0xFFFFu, packed_wh >> 16u),
+    );
+  }
+
+  return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u));
 }
 
 // Convenience wrapper: just return the world-space Y height for a tile.

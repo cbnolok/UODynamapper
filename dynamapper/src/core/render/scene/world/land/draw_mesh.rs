@@ -285,6 +285,8 @@ pub struct DrawMeshLocals {
     pending_blocks: Vec<MapBlockRelPos>,
     /// Track the last observed scale to detect scale changes and clear pinned textures.
     last_scale: u32,
+    /// Set to true after the first EC-mode diagnostic log to avoid spamming each frame.
+    ec_diagnostics_logged: bool,
 }
 
 /// Small wrapper for the frame-pacing resources used by land chunk drawing.
@@ -726,24 +728,280 @@ pub fn sys_draw_spawned_land_chunks(
         &frame_pacing.settings.graphics,
     );
     {
-        let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
-        cache_r.precache_textures_parallel(
-            ids.as_slice(),
-            texmap_2d_r.0.clone(),
-            compression,
-            now,
-        );
+        let use_ec_land_atlas = frame_pacing.settings.graphics.land_texture_source
+            == crate::external_data::settings::ClientTextureSource::Ec
+            && cache_r.ec_land.is_some();
 
-        // Pre-populate lookup cache sequentially so background threads don't need mutable cache access
-        for &id in &*ids {
-            let (size, layer) =
-                cache_r.get_texture_size_layer(&texmap_2d_r.0, id, compression, now);
-            let size_bit = match size {
-                LandTextureSize::Small => 0u32,
-                LandTextureSize::Big => 1u32,
-            };
-            texture_lookup_cache[id as usize] = (layer << 1) | size_bit;
+        let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
+        if !use_ec_land_atlas {
+            cache_r.precache_textures_parallel(
+                ids.as_slice(),
+                texmap_2d_r.0.clone(),
+                compression,
+                now,
+            );
         }
+
+        // Pre-populate lookup cache sequentially so background threads don't need mutable cache access.
+        for &id in &*ids {
+            let resolved_ec_slot = if use_ec_land_atlas {
+                cache_r
+                    .ec_land
+                    .as_ref()
+                    .and_then(|package| package.resolve_runtime_slot_id(id as u32))
+            } else {
+                None
+            };
+
+            if let Some(slot_id) = resolved_ec_slot {
+                texture_lookup_cache[id as usize] = (slot_id << 2) | 2;
+            } else if use_ec_land_atlas {
+                texture_lookup_cache[id as usize] = 3;
+            } else {
+                let (size, layer) =
+                    cache_r.get_texture_size_layer(&texmap_2d_r.0, id, compression, now);
+                let mode = match size {
+                    LandTextureSize::Small => 0u32,
+                    LandTextureSize::Big => 1u32,
+                };
+                texture_lookup_cache[id as usize] = (layer << 2) | mode;
+            }
+        }
+
+        // ── TEMPORARY EC land diagnostics (one-shot per launch) ─────────────────
+        if use_ec_land_atlas && !locals.ec_diagnostics_logged {
+            locals.ec_diagnostics_logged = true;
+            if let Some(ec) = cache_r.ec_land.as_ref() {
+                let provenance = ec.terrain_provenance();
+                let unique_alias_slots: std::collections::HashSet<u32> =
+                    provenance.iter().map(|p| p.alias_slot_id).collect();
+                let present_slot_count = ec.slots().iter().filter(|slot| slot.is_present()).count();
+                let resolve_record_slot =
+                    |record: &uddconv::ec_land::EcLandTerrainProvenanceRecord| -> Option<u32> {
+                        if record.canonical_slot_id != 0
+                            && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                            && ec.present_slot(record.canonical_slot_id).is_some()
+                        {
+                            return Some(record.canonical_slot_id);
+                        }
+
+                        if record.alias_slot_id != 0
+                            && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                            && ec.present_slot(record.alias_slot_id).is_some()
+                        {
+                            return Some(record.alias_slot_id);
+                        }
+
+                        None
+                    };
+                let normalize_runtime_material_id = |terrain_id: u32| -> u32 {
+                    ec.runtime_material_id_overrides()
+                        .binary_search_by_key(&terrain_id, |record| record.terrain_id)
+                        .ok()
+                        .and_then(|index| ec.runtime_material_id_overrides().get(index))
+                        .map(|record| record.normalized_material_id)
+                        .unwrap_or(terrain_id)
+                };
+                let resolve_source = |terrain_id: u32| -> (&'static str, u32, Option<u32>) {
+                    if ec.present_slot(terrain_id).is_some() {
+                        return ("direct", terrain_id, Some(terrain_id));
+                    }
+
+                    if let Some(record) = provenance.iter().find(|record| record.alias_slot_id == terrain_id) {
+                        return ("prov_alias", terrain_id, resolve_record_slot(record));
+                    }
+
+                    let normalized_terrain_id = normalize_runtime_material_id(terrain_id);
+
+                    let material_records = provenance
+                        .iter()
+                        .filter(|record| record.material_id == normalized_terrain_id)
+                        .collect::<Vec<_>>();
+
+                    if let Some(slot_id) = material_records
+                        .iter()
+                        .filter(|record| {
+                            record.alias_slot_id != 0
+                                && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                                && resolve_record_slot(record).is_some()
+                        })
+                        .min_by_key(|record| record.alias_count_index)
+                        .and_then(|record| resolve_record_slot(record))
+                    {
+                        let source = if normalized_terrain_id != terrain_id {
+                            "prov_material_override"
+                        } else {
+                            "prov_material"
+                        };
+                        return (source, normalized_terrain_id, Some(slot_id));
+                    }
+
+                    if let Some(slot_id) = material_records
+                        .iter()
+                        .filter_map(|record| resolve_record_slot(record))
+                        .next()
+                    {
+                        let source = if normalized_terrain_id != terrain_id {
+                            "prov_material_override"
+                        } else {
+                            "prov_material"
+                        };
+                        return (source, normalized_terrain_id, Some(slot_id));
+                    }
+
+                    let source = if normalized_terrain_id != terrain_id {
+                        "missing_after_override"
+                    } else {
+                        "missing"
+                    };
+                    (source, normalized_terrain_id, None)
+                };
+
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    &format!(
+                        "[EC-DIAG] Direct slots: {}/{} present",
+                        present_slot_count,
+                        ec.slots().len()
+                    ),
+                );
+                console_logger::one(LogSev::Info, LogAbout::General,
+                    &format!("[EC-DIAG] Provenance records: {} ({} unique alias_slot_ids)",
+                        provenance.len(), unique_alias_slots.len()));
+                let mut n_prov_resolved = 0usize;
+                let mut n_prov_unresolved = 0usize;
+                for p in provenance {
+                    if resolve_record_slot(p).is_some() {
+                        n_prov_resolved += 1;
+                    } else {
+                        n_prov_unresolved += 1;
+                    }
+                }
+                console_logger::one(LogSev::Info, LogAbout::General,
+                    &format!("[EC-DIAG] Provenance summary: {} resolved, {} unresolved",
+                        n_prov_resolved, n_prov_unresolved));
+
+                if let Some(plane) = map_planes_r
+                    .0
+                    .get(current_map_id as usize)
+                    .and_then(|o| o.as_ref())
+                {
+                    for &bp in blocks_to_draw.iter() {
+                        if let Some(block) = plane.block_no_update(bp) {
+                            for (cell_index, cell) in block.cells.iter().enumerate() {
+                                let local_x = (cell_index as u32) & (MapBlock::CELLS_PER_ROW - 1);
+                                let local_y = (cell_index as u32) / MapBlock::CELLS_PER_ROW;
+                                let world_x = bp.x * TILE_NUM_PER_CHUNK_DIM + local_x;
+                                let world_y = bp.y * TILE_NUM_PER_CHUNK_DIM + local_y;
+                                let packed = texture_lookup_cache[cell.id as usize];
+
+                                if packed == u32::MAX {
+                                    console_logger::one(
+                                        LogSev::Info,
+                                        LogAbout::General,
+                                        &format!(
+                                            "[EC-DIAG] visible world=({world_x},{world_y}) block=({},{}) local=({local_x},{local_y}) cell_id={} z={} source=missing_lookup",
+                                            bp.x,
+                                            bp.y,
+                                            cell.id,
+                                            cell.z,
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let mode = packed & 0x3;
+                                let payload = packed >> 2;
+                                let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16);
+                                let (source, normalized_id, resolved_slot) = resolve_source(cell.id as u32);
+                                let authoritative_slot = match mode {
+                                    2 => Some(payload),
+                                    3 => None,
+                                    _ => resolved_slot,
+                                };
+                                let authoritative_slot_matches_resolution = authoritative_slot == resolved_slot;
+
+                                if let Some(slot_id) = authoritative_slot {
+                                    if let Some(slot) = ec.present_slot(slot_id) {
+                                        console_logger::one(
+                                            LogSev::Info,
+                                            LogAbout::General,
+                                            &format!(
+                                                "[EC-DIAG] visible world=({world_x},{world_y}) block=({},{}) local=({local_x},{local_y}) cell_id={} z={} source={} normalized_id={} packed={} mode={} payload={} slot={} resolved_slot={} slot_match={} meta_r={} meta_g={} page={} pos=({},{}) size={}x{}",
+                                                bp.x,
+                                                bp.y,
+                                                cell.id,
+                                                cell.z,
+                                                source,
+                                                normalized_id,
+                                                packed,
+                                                mode,
+                                                payload,
+                                                slot_id,
+                                                resolved_slot.map_or_else(|| "none".to_string(), |value| value.to_string()),
+                                                authoritative_slot_matches_resolution,
+                                                meta_texel.r,
+                                                meta_texel.g,
+                                                slot.page_index,
+                                                slot.x,
+                                                slot.y,
+                                                slot.width,
+                                                slot.height,
+                                            ),
+                                        );
+                                    } else {
+                                        console_logger::one(
+                                            LogSev::Info,
+                                            LogAbout::General,
+                                            &format!(
+                                                "[EC-DIAG] visible world=({world_x},{world_y}) block=({},{}) local=({local_x},{local_y}) cell_id={} z={} source={} normalized_id={} packed={} mode={} payload={} slot={} resolved_slot={} slot_match={} meta_r={} meta_g={} slot_present=false",
+                                                bp.x,
+                                                bp.y,
+                                                cell.id,
+                                                cell.z,
+                                                source,
+                                                normalized_id,
+                                                packed,
+                                                mode,
+                                                payload,
+                                                slot_id,
+                                                resolved_slot.map_or_else(|| "none".to_string(), |value| value.to_string()),
+                                                authoritative_slot_matches_resolution,
+                                                meta_texel.r,
+                                                meta_texel.g,
+                                            ),
+                                        );
+                                    }
+                                } else {
+                                    console_logger::one(
+                                        LogSev::Info,
+                                        LogAbout::General,
+                                        &format!(
+                                            "[EC-DIAG] visible world=({world_x},{world_y}) block=({},{}) local=({local_x},{local_y}) cell_id={} z={} source={} normalized_id={} packed={} mode={} payload={} resolved_slot={} slot_match={} meta_r={} meta_g={} slot=none",
+                                            bp.x,
+                                            bp.y,
+                                            cell.id,
+                                            cell.z,
+                                            source,
+                                            normalized_id,
+                                            packed,
+                                            mode,
+                                            payload,
+                                            resolved_slot.map_or_else(|| "none".to_string(), |value| value.to_string()),
+                                            authoritative_slot_matches_resolution,
+                                            meta_texel.r,
+                                            meta_texel.g,
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ── END TEMPORARY EC diagnostics ────────────────────────────────────────
     }
 
     let build_time_start = Instant::now();
@@ -820,13 +1078,13 @@ pub fn sys_draw_spawned_land_chunks(
                                     cell.id
                                 );
 
-                                let size_bit = packed & 1;
-                                let layer = packed >> 1;
-                                if layer == 0 {
+                                let mode = packed & 0x3;
+                                let payload = packed >> 2;
+                                if mode < 2 && payload == 0 {
                                     has_fallback = true;
                                 }
                                 texels_local[texel_count] =
-                                    Rg16u::pack(layer as u16, cell.z, size_bit as u16);
+                                    Rg16u::pack(payload as u16, cell.z, mode as u16);
                                 texel_count += 1;
                             }
 

@@ -49,6 +49,8 @@ pub struct SectApp {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct SectUoFiles {
     pub folder: String,
+    #[serde(default)]
+    pub udd_path: Option<String>,
     pub texmaps_preload_full_file: bool,
 }
 
@@ -243,9 +245,51 @@ pub struct SectGraphics {
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
     pub anti_aliasing: AntiAliasingMode,
+    #[serde(default = "default_client_texture_source")]
+    pub art_texture_source: ClientTextureSource,
+    #[serde(default = "default_client_texture_source")]
+    pub land_texture_source: ClientTextureSource,
     pub texture_filtering: u32,      // 0: Point, 1: Linear
     pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0
+}
+
+fn default_client_texture_source() -> ClientTextureSource {
+    ClientTextureSource::default()
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum ClientTextureSource {
+    #[default]
+    #[serde(rename = "cc")]
+    Cc,
+    #[serde(rename = "ec")]
+    Ec,
+}
+
+impl ClientTextureSource {
+    pub const ALL: [Self; 2] = [Self::Cc, Self::Ec];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Cc => "Classic",
+            Self::Ec => "Enhanced",
+        }
+    }
+
+    pub const fn art_label(self) -> &'static str {
+        match self {
+            Self::Cc => "Classic (cc_art.uddp)",
+            Self::Ec => "Enhanced (ec_art.uddp)",
+        }
+    }
+
+    pub const fn land_label(self) -> &'static str {
+        match self {
+            Self::Cc => "Classic (texmaps.mul)",
+            Self::Ec => "Enhanced (ec_land.uddp)",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]

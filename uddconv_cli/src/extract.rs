@@ -7,8 +7,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use uddconv::bc7::{ImageExtent, decode_bc7_to_rgba8888};
 use uddconv::cc_art::{CcArtPackage, PagePixelFormat};
 use uddconv::ec_art::EcArtPackage;
-use uddconv::ec_land::EcLandPackage;
-use uddconv::unified_tiledata::UnifiedTileDataPackage;
+use uddconv::ec_land::{EcLandPackage, MISSING_SLOT_ID, MISSING_TEXTURE_ID};
+use uddconv::tilemeta::TileMetaPackage;
 use uocf::udd::{Codec, LookupMode, UddpReader};
 use uocf::udd::uddp::FileKey;
 
@@ -33,8 +33,8 @@ pub fn extract_package(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
         println!("Extracted ec_land package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_unified_tiledata(&bytes, &out_dir)? {
-        println!("Extracted unified_tiledata package to '{}'", out_dir.display());
+    if extract_tilemeta(&bytes, &out_dir)? {
+        println!("Extracted tilemeta package to '{}'", out_dir.display());
         return Ok(());
     }
 
@@ -153,6 +153,27 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
         }),
     )?;
 
+    let metadata_dir = out_dir.join("metadata");
+    let runtime_override_source = match package.runtime_material_id_override_source() {
+        uddconv::ec_land::EcLandRuntimeMaterialIdOverrideSource::PackageMetadata => {
+            "package_metadata"
+        }
+        uddconv::ec_land::EcLandRuntimeMaterialIdOverrideSource::BundledTomlAsset => {
+            "bundled_toml_fallback"
+        }
+    };
+    let summary = format!(
+        "package=ec_land\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nruntime_material_id_override_source={}\nruntime_material_id_override_rows={}\n",
+        package.atlas_width(),
+        package.atlas_height(),
+        package.gutter(),
+        package.slots().iter().filter(|slot| slot.is_present()).count(),
+        package.terrain_provenance().len(),
+        runtime_override_source,
+        package.runtime_material_id_overrides().len(),
+    );
+    write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
+
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
     for slot in package.slots().iter().filter(|slot| slot.is_present()) {
         let kind = if slot.is_land() { "land" } else { "static" };
@@ -171,18 +192,62 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
         .unwrap();
     }
     write_text_file(&out_dir.join("metadata/present_slots.csv"), &slots_csv)?;
+
+    let mut provenance_csv = String::from(
+        "material_id,material_name_id,alias_count_index,alias_slot_id,alias_tile_flags,selected_texture_id,canonical_slot_id\n",
+    );
+    for record in package.terrain_provenance() {
+        writeln!(
+            provenance_csv,
+            "{},{},{},{},{},{},{}",
+            record.material_id,
+            record.material_name_id,
+            record.alias_count_index,
+            record.alias_slot_id,
+            record.alias_tile_flags,
+            optional_u32_csv(record.selected_texture_id, MISSING_TEXTURE_ID),
+            optional_u32_csv(record.canonical_slot_id, MISSING_SLOT_ID)
+        )
+        .unwrap();
+    }
+    write_text_file(&out_dir.join("metadata/terrain_provenance.csv"), &provenance_csv)?;
+
+    let mut runtime_overrides_csv = String::from("terrain_id,normalized_material_id\n");
+    for record in package.runtime_material_id_overrides() {
+        writeln!(
+            runtime_overrides_csv,
+            "{},{}",
+            record.terrain_id,
+            record.normalized_material_id,
+        )
+        .unwrap();
+    }
+    write_text_file(
+        &out_dir.join("metadata/runtime_material_id_overrides.csv"),
+        &runtime_overrides_csv,
+    )?;
     Ok(true)
 }
 
-fn extract_unified_tiledata(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = UnifiedTileDataPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
+fn extract_tilemeta(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = TileMetaPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
         return Ok(false);
     };
+    let metadata_dir = out_dir.join("metadata");
+    std::fs::create_dir_all(&metadata_dir)
+        .wrap_err_with(|| format!("create {}", metadata_dir.display()))?;
+
+    let summary = format!(
+        "package=tilemeta\nland_tiles={}\nitem_tiles={}\n",
+        package.land_tiles().len(),
+        package.item_tiles().len(),
+    );
+    write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
 
     let mut land_csv = String::from("tile_id,texture_id,tile_type,flags,radar_r,radar_g,radar_b,radar_a,name\n");
     let pb = progress_bar(
         (package.land_tiles().len() + package.item_tiles().len()) as u64,
-        "extracting unified tiledata",
+        "extracting tilemeta",
     );
     for tile in package.land_tiles() {
         pb.inc(1);
@@ -237,7 +302,7 @@ fn extract_unified_tiledata(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> 
         )
         .unwrap();
     }
-    pb.finish_with_message("Unified tiledata extracted");
+    pb.finish_with_message("Tilemeta extracted");
     write_text_file(&out_dir.join("item_tiles.csv"), &item_csv)?;
     Ok(true)
 }
@@ -384,6 +449,14 @@ fn write_text_file(path: &Path, text: &str) -> eyre::Result<()> {
 fn csv_escape(value: &str) -> String {
     let escaped = value.replace('"', "\"\"");
     format!("\"{escaped}\"")
+}
+
+fn optional_u32_csv(value: u32, missing: u32) -> String {
+    if value == missing {
+        String::new()
+    } else {
+        value.to_string()
+    }
 }
 
 fn unpack_codec(meta32: u32) -> Codec {

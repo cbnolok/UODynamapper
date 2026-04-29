@@ -7,6 +7,14 @@
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
 //! - `metadata/pages.bin`: page table with atlas dimensions, occupancy and pixel format.
 //! - `metadata/slots.bin`: sparse slot table with one record per art_id.
+//!
+//! This module deliberately separates three concerns:
+//! - source selection: decide which EC tileart definitions are actually static art
+//!   and which source texture each static should resolve to.
+//! - atlas packing: deduplicate identical source textures, pack the decoded images,
+//!   then alias repeated slots back to the canonical packed rectangle.
+//! - runtime loading: expose a page table and sparse slot table that the renderer
+//!   can query without needing to understand any of the original EC source files.
 
 use std::fs;
 use std::io::{Cursor, Read};
@@ -33,7 +41,7 @@ use uocf::{
         terrain_definition::TerrainDefinitionPackage,
         tile_database::ArtDefinition,
         textures::Textures,
-        tileart::TileType,
+        tileart::{ArtTexture, TileType},
     },
     udd::{
         xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
@@ -46,7 +54,7 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
 const EC_ART_METADATA_VERSION: u32 = 2;
 const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
-const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 
 fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     find_first_existing_file(
@@ -70,6 +78,10 @@ pub struct EcArtAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
+    /// When `true`, trim transparent borders from decoded EC art textures before
+    /// atlas packing. Matching tile metadata must subtract the same top/left crop
+    /// from its EC sampling start coordinates.
+    pub crop_transparent_bounds: bool,
     /// When `true` each atlas page is BC7-compressed on the CPU before being
     /// stored in the UDDP container, reducing VRAM usage by ~8×.
     pub use_bc7: bool,
@@ -81,6 +93,7 @@ impl Default for EcArtAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
+            crop_transparent_bounds: false,
             use_bc7: false,
         }
     }
@@ -93,6 +106,21 @@ pub struct EcArtBuildSummary {
     pub page_count: u32,
     pub atlas_width: u32,
     pub atlas_height: u32,
+    pub cropped_slot_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EcArtCropAdjustment {
+    pub left: u16,
+    pub top: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceClipRect {
+    left: u16,
+    top: u16,
+    right: u16,
+    bottom: u16,
 }
 
 #[allow(dead_code)]
@@ -126,10 +154,36 @@ enum TextureSourceKey {
     Legacy(u32),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+struct RequestedSourceWindow {
+    start_x: i32,
+    start_y: i32,
+    end_x: i32,
+    end_y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CanonicalTileKey {
+    source: TextureSourceKey,
+    window: RequestedSourceWindow,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SlotAlias {
     art_id: u32,
     canonical_art_id: u32,
+}
+
+struct EcArtLoadedSources {
+    tileart_path: PathBuf,
+    terrain_definition_path: PathBuf,
+    stringdict_path: PathBuf,
+    texture_uop_path: Option<PathBuf>,
+    legacy_texture_uop_path: Option<PathBuf>,
+    art_definition: ArtDefinition,
+    land_texture_ids: HashSet<u32>,
+    world_textures: Option<Textures>,
+    legacy_textures: Option<Textures>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,63 +353,29 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
 ) -> eyre::Result<EcArtBuildSummary> {
     validate_options(options)?;
 
-    let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
-        .ok_or_else(|| eyre::eyre!("missing required file: tileart.uop"))?;
-    let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
-        .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
-    let stringdict_path = find_string_dictionary_path(source_dirs)
-        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop or string_Wdictionary.uop"))?;
-    let texture_uop_path = find_first_existing_file(source_dirs, &["Texture.uop"]);
-    let legacy_texture_uop_path = find_first_existing_file(source_dirs, &["LegacyTexture.uop"]);
-
-    if texture_uop_path.is_none() && legacy_texture_uop_path.is_none() {
-        eyre::bail!("missing required files: Texture.uop and LegacyTexture.uop not found");
-    }
+    let sources = load_ec_art_sources(source_dirs)?;
 
     info!("Converting EC Art from Texture.uop / LegacyTexture.uop to {}", out_file.display());
-    println!("Using tileart.uop: {}", tileart_path.display());
-    println!("Using TerrainDefinition.uop: {}", terrain_definition_path.display());
-    println!("Using string dictionary: {}", stringdict_path.display());
-    if let Some(path) = texture_uop_path.as_ref() {
+    println!("Using tileart.uop: {}", sources.tileart_path.display());
+    println!(
+        "Using TerrainDefinition.uop: {}",
+        sources.terrain_definition_path.display()
+    );
+    println!("Using string dictionary: {}", sources.stringdict_path.display());
+    if let Some(path) = sources.texture_uop_path.as_ref() {
         println!("Using Texture.uop: {}", path.display());
     }
-    if let Some(path) = legacy_texture_uop_path.as_ref() {
+    if let Some(path) = sources.legacy_texture_uop_path.as_ref() {
         println!("Using LegacyTexture.uop: {}", path.display());
     }
 
-    let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
-        Some(
-            Textures::new(texture_uop_path, None, None)
-                .wrap_err_with(|| format!("load {}", texture_uop_path.display()))?,
-        )
-    } else {
-        None
-    };
-
-    let legacy_textures = if let Some(legacy_texture_uop_path) = legacy_texture_uop_path.as_ref() {
-        Some(
-            Textures::new(legacy_texture_uop_path, None, None)
-                .wrap_err_with(|| format!("load {}", legacy_texture_uop_path.display()))?,
-        )
-    } else {
-        None
-    };
-
-    let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
-        .wrap_err("load tileart-driven art definition")?;
-    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
-        .wrap_err("load TerrainDefinition.uop")?;
-    let land_texture_ids = terrain_definition
-        .land_source_texture_ids()
-        .into_iter()
-        .collect::<HashSet<_>>();
-
     let slot_count = 0x10000_u32; // 65536 max art items in EC
-    let (decoded_tiles, aliases) = decode_present_tiles(
-        &art_definition,
-        world_textures.as_ref(),
-        legacy_textures.as_ref(),
-        &land_texture_ids,
+    let (decoded_tiles, aliases, crop_adjustments) = decode_present_tiles(
+        &sources.art_definition,
+        sources.world_textures.as_ref(),
+        sources.legacy_textures.as_ref(),
+        &sources.land_texture_ids,
+        options.crop_transparent_bounds,
     )?;
 
     let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
@@ -464,6 +484,80 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
         page_count: pages.len() as u32,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
+        cropped_slot_count: crop_adjustments.values().filter(|adjustment| **adjustment != EcArtCropAdjustment::default()).count() as u32,
+    })
+}
+
+pub fn compute_ec_art_crop_adjustments_from_sources(
+    source_dirs: &[PathBuf],
+) -> eyre::Result<Vec<Option<EcArtCropAdjustment>>> {
+    let sources = load_ec_art_sources(source_dirs)?;
+    let (_decoded_tiles, aliases, canonical_adjustments) = decode_present_tiles(
+        &sources.art_definition,
+        sources.world_textures.as_ref(),
+        sources.legacy_textures.as_ref(),
+        &sources.land_texture_ids,
+        true,
+    )?;
+
+    Ok(build_crop_adjustment_lookup(
+        0x10000,
+        &canonical_adjustments,
+        &aliases,
+    ))
+}
+
+fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSources> {
+    let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
+        .ok_or_else(|| eyre::eyre!("missing required file: tileart.uop"))?;
+    let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
+        .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
+    let stringdict_path = find_string_dictionary_path(source_dirs)
+        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop or string_Wdictionary.uop"))?;
+    let texture_uop_path = find_first_existing_file(source_dirs, &["Texture.uop"]);
+    let legacy_texture_uop_path = find_first_existing_file(source_dirs, &["LegacyTexture.uop"]);
+
+    if texture_uop_path.is_none() && legacy_texture_uop_path.is_none() {
+        eyre::bail!("missing required files: Texture.uop and LegacyTexture.uop not found");
+    }
+
+    let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
+        Some(
+            Textures::new(texture_uop_path, None, None)
+                .wrap_err_with(|| format!("load {}", texture_uop_path.display()))?,
+        )
+    } else {
+        None
+    };
+
+    let legacy_textures = if let Some(legacy_texture_uop_path) = legacy_texture_uop_path.as_ref() {
+        Some(
+            Textures::new(legacy_texture_uop_path, None, None)
+                .wrap_err_with(|| format!("load {}", legacy_texture_uop_path.display()))?,
+        )
+    } else {
+        None
+    };
+
+    let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
+        .wrap_err("load tileart-driven art definition")?;
+    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
+        .wrap_err("load TerrainDefinition.uop")?;
+    let land_texture_ids = terrain_definition
+        .land_source_texture_ids()
+        .into_iter()
+        .collect::<HashSet<_>>();
+
+    Ok(EcArtLoadedSources {
+        tileart_path,
+        terrain_definition_path,
+        stringdict_path,
+        texture_uop_path,
+        legacy_texture_uop_path,
+        art_definition,
+        land_texture_ids,
+        world_textures,
+        legacy_textures,
     })
 }
 
@@ -485,14 +579,22 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     land_texture_ids: &HashSet<u32>,
-) -> eyre::Result<(Vec<DecodedArtTile>, Vec<SlotAlias>)> {
+    crop_transparent_bounds: bool,
+) -> eyre::Result<(
+    Vec<DecodedArtTile>,
+    Vec<SlotAlias>,
+    HashMap<u32, EcArtCropAdjustment>,
+)> {
     // Art ownership comes from tileart definitions. Resolve each item/static's
     // selected EC or CC texture payload, but keep the slot table keyed by art id.
-    // Multiple art ids can intentionally share the same texture payload, so dedupe
-    // by resolved source texture id and alias their slot records afterward.
+    // Multiple art ids can intentionally share the same texture payload, but the
+    // tileart sampling window is still part of the packed-art contract. Deduping
+    // therefore has to key on both the resolved source texture and the requested
+    // per-art source window before aliasing slot records afterward.
     let mut decoded_tiles = Vec::new();
     let mut aliases = Vec::new();
     let mut canonical_by_source = HashMap::new();
+    let mut crop_adjustments = HashMap::new();
     let pb = ProgressBar::new(art_definition.definitions.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding art tiles ({eta})")
@@ -521,7 +623,7 @@ fn decode_present_tiles(
             if let Some(world_textures) = world_textures {
                 world_textures
                     .get_from_id(texture.texture_id)?
-                    .map(|file| (TextureSourceKey::World(texture.texture_id), file))
+                    .map(|file| (TextureSourceKey::World(texture.texture_id), texture, file))
             } else {
                 None
             }
@@ -532,7 +634,7 @@ fn decode_present_tiles(
             if let Some(legacy_textures) = legacy_textures {
                 legacy_textures
                     .get_from_id(texture.texture_id)?
-                    .map(|file| (TextureSourceKey::Legacy(texture.texture_id), file))
+                    .map(|file| (TextureSourceKey::Legacy(texture.texture_id), texture, file))
             } else {
                 None
             }
@@ -540,7 +642,7 @@ fn decode_present_tiles(
             None
         });
 
-        if let Some((source_key, file)) = resolved {
+        if let Some((source_key, texture_bounds, file)) = resolved {
             let is_land_source = match source_key {
                 TextureSourceKey::World(texture_id) | TextureSourceKey::Legacy(texture_id) => {
                     land_texture_ids.contains(&texture_id)
@@ -550,7 +652,12 @@ fn decode_present_tiles(
                 continue;
             }
 
-            if let Some(&canonical_art_id) = canonical_by_source.get(&source_key) {
+            let canonical_key = CanonicalTileKey {
+                source: source_key,
+                window: requested_source_window(texture_bounds),
+            };
+
+            if let Some(&canonical_art_id) = canonical_by_source.get(&canonical_key) {
                 aliases.push(SlotAlias {
                     art_id: art_id as u32,
                     canonical_art_id,
@@ -560,13 +667,39 @@ fn decode_present_tiles(
 
             let img = file.decode_to_rgba()?;
             let rgba = img.to_rgba8();
-            canonical_by_source.insert(source_key, art_id as u32);
+            let clip_rect = normalized_source_clip_rect(
+                rgba.width() as u16,
+                rgba.height() as u16,
+                texture_bounds,
+            );
+            canonical_by_source.insert(canonical_key, art_id as u32);
+            let (width, height, rgba, crop_adjustment) = if crop_transparent_bounds {
+                crop_rgba_tile_to_bounds(
+                    rgba.width() as u16,
+                    rgba.height() as u16,
+                    rgba.into_raw(),
+                    clip_rect,
+                )?
+            } else {
+                (
+                    rgba.width() as u16,
+                    rgba.height() as u16,
+                    rgba.into_raw(),
+                    clip_rect
+                        .map(|clip| EcArtCropAdjustment {
+                            left: clip.left,
+                            top: clip.top,
+                        })
+                        .unwrap_or_default(),
+                )
+            };
+            crop_adjustments.insert(art_id as u32, crop_adjustment);
             decoded_tiles.push(DecodedArtTile {
                 art_id: art_id as u32,
                 kind: ArtTileKind::Static,
-                width: rgba.width() as u16,
-                height: rgba.height() as u16,
-                rgba: rgba.into_raw(),
+                width,
+                height,
+                rgba,
             });
         }
     }
@@ -580,7 +713,175 @@ fn decode_present_tiles(
             .then_with(|| left.art_id.cmp(&right.art_id))
     });
 
-    Ok((decoded_tiles, aliases))
+    Ok((decoded_tiles, aliases, crop_adjustments))
+}
+
+fn requested_source_window(texture: &ArtTexture) -> RequestedSourceWindow {
+    RequestedSourceWindow {
+        start_x: texture.start_x,
+        start_y: texture.start_y,
+        end_x: texture.end_x,
+        end_y: texture.end_y,
+    }
+}
+
+fn normalized_source_clip_rect(
+    width: u16,
+    height: u16,
+    texture: &ArtTexture,
+) -> Option<SourceClipRect> {
+    let left = texture.start_x.max(0).min(i32::from(width)) as u16;
+    let top = texture.start_y.max(0).min(i32::from(height)) as u16;
+    let right = texture.end_x.max(0).min(i32::from(width)) as u16;
+    let bottom = texture.end_y.max(0).min(i32::from(height)) as u16;
+
+    if right <= left || bottom <= top {
+        return None;
+    }
+
+    if left == 0 && top == 0 && right == width && bottom == height {
+        return None;
+    }
+
+    Some(SourceClipRect {
+        left,
+        top,
+        right,
+        bottom,
+    })
+}
+
+fn crop_rgba_tile_to_bounds(
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    clip_rect: Option<SourceClipRect>,
+) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+    let expected_len = width as usize * height as usize * 4;
+    if rgba.len() != expected_len {
+        eyre::bail!(
+            "invalid RGBA payload length for crop {}x{}: expected {}, got {}",
+            width,
+            height,
+            expected_len,
+            rgba.len()
+        );
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let clip_left = clip_rect.map(|clip| clip.left as usize).unwrap_or(0);
+    let clip_top = clip_rect.map(|clip| clip.top as usize).unwrap_or(0);
+    let clip_right = clip_rect.map(|clip| clip.right as usize).unwrap_or(width_usize);
+    let clip_bottom = clip_rect.map(|clip| clip.bottom as usize).unwrap_or(height_usize);
+    let mut min_x = clip_right;
+    let mut min_y = clip_bottom;
+    let mut max_x = clip_left;
+    let mut max_y = clip_top;
+    let mut found_opaque = false;
+
+    for y in clip_top..clip_bottom {
+        for x in clip_left..clip_right {
+            let alpha = rgba[(y * width_usize + x) * 4 + 3];
+            if alpha != 0 {
+                found_opaque = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if !found_opaque {
+        if let Some(clip) = clip_rect {
+            return crop_rgba_subrect(
+                width,
+                height,
+                rgba,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+            );
+        }
+        return Ok((width, height, rgba, EcArtCropAdjustment::default()));
+    }
+
+    if min_x == clip_left
+        && min_y == clip_top
+        && max_x + 1 == clip_right
+        && max_y + 1 == clip_bottom
+    {
+        if let Some(clip) = clip_rect {
+            return crop_rgba_subrect(
+                width,
+                height,
+                rgba,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+            );
+        }
+        return Ok((width, height, rgba, EcArtCropAdjustment::default()));
+    }
+
+    crop_rgba_subrect(width, height, rgba, min_x, min_y, max_x + 1, max_y + 1)
+}
+
+fn crop_rgba_subrect(
+    width: u16,
+    _height: u16,
+    rgba: Vec<u8>,
+    left: usize,
+    top: usize,
+    right: usize,
+    bottom: usize,
+) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+    let cropped_width = (right - left) as u16;
+    let cropped_height = (bottom - top) as u16;
+    let mut cropped = vec![0u8; cropped_width as usize * cropped_height as usize * 4];
+    let src_stride = width as usize * 4;
+    let dst_stride = cropped_width as usize * 4;
+    for row in 0..cropped_height as usize {
+        let src_start = ((top + row) * src_stride) + left * 4;
+        let dst_start = row * dst_stride;
+        cropped[dst_start..dst_start + dst_stride]
+            .copy_from_slice(&rgba[src_start..src_start + dst_stride]);
+    }
+
+    Ok((
+        cropped_width,
+        cropped_height,
+        cropped,
+        EcArtCropAdjustment {
+            left: left as u16,
+            top: top as u16,
+        },
+    ))
+}
+
+fn build_crop_adjustment_lookup(
+    slot_count: usize,
+    canonical_adjustments: &HashMap<u32, EcArtCropAdjustment>,
+    aliases: &[SlotAlias],
+) -> Vec<Option<EcArtCropAdjustment>> {
+    let mut adjustments = vec![None; slot_count];
+    for (&art_id, &adjustment) in canonical_adjustments {
+        if let Some(slot) = adjustments.get_mut(art_id as usize) {
+            *slot = Some(adjustment);
+        }
+    }
+    for alias in aliases {
+        let Some(adjustment) = canonical_adjustments.get(&alias.canonical_art_id).copied() else {
+            continue;
+        };
+        if let Some(slot) = adjustments.get_mut(alias.art_id as usize) {
+            *slot = Some(adjustment);
+        }
+    }
+    adjustments
 }
 
 fn apply_slot_aliases(slots: &mut [EcArtSlotRecord], aliases: &[SlotAlias]) -> eyre::Result<()> {
@@ -850,6 +1151,24 @@ fn serialize_slot_manifest(
     Ok(bytes)
 }
 
+pub fn encode_slot_manifest(
+    slots: &[EcArtSlotRecord],
+    atlas_width: u32,
+    atlas_height: u32,
+    gutter: u16,
+) -> eyre::Result<Vec<u8>> {
+    serialize_slot_manifest(
+        slots,
+        &EcArtAtlasOptions {
+            atlas_width,
+            atlas_height,
+            gutter,
+            crop_transparent_bounds: false,
+            use_bc7: false,
+        },
+    )
+}
+
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<EcArtPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -935,6 +1254,7 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 1,
+            crop_transparent_bounds: false,
             use_bc7: false,
         };
         let tiles = vec![
@@ -957,6 +1277,7 @@ mod tests {
             atlas_width: 8,
             atlas_height: 8,
             gutter: 1,
+            crop_transparent_bounds: false,
             use_bc7: false,
         };
         let tiles = vec![
@@ -979,6 +1300,7 @@ mod tests {
             atlas_width: 4096,
             atlas_height: 2048,
             gutter: 1,
+            crop_transparent_bounds: false,
             use_bc7: false,
         };
         let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
@@ -1000,6 +1322,7 @@ mod tests {
             atlas_width: 8,
             atlas_height: 8,
             gutter: 1,
+            crop_transparent_bounds: false,
             use_bc7: false,
         };
         let tiles = vec![rgba_tile(0, ArtTileKind::Static, 4, 4)];
@@ -1055,6 +1378,7 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 1,
+            crop_transparent_bounds: false,
             use_bc7: false,
         };
         let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];
@@ -1078,6 +1402,120 @@ mod tests {
         assert_eq!(slots[9].y, slots[7].y);
         assert_eq!(slots[9].width, slots[7].width);
         assert_eq!(slots[9].height, slots[7].height);
+    }
+
+    #[test]
+    fn transparent_border_crop_trims_to_opaque_bounds() {
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        for y in 1..=2usize {
+            for x in 1..=2usize {
+                let index = (y * 4 + x) * 4;
+                rgba[index..index + 4].copy_from_slice(&[10, 20, 30, 255]);
+            }
+        }
+
+        let (width, height, cropped, adjustment) = crop_rgba_tile_to_bounds(4, 4, rgba, None)
+            .expect("crop rgba tile");
+
+        assert_eq!(width, 2);
+        assert_eq!(height, 2);
+        assert_eq!(cropped.len(), 2 * 2 * 4);
+        assert_eq!(adjustment, EcArtCropAdjustment { left: 1, top: 1 });
+    }
+
+    #[test]
+    fn clip_rect_is_applied_before_alpha_trim() {
+        let mut rgba = vec![0u8; 6 * 6 * 4];
+        for y in 0..6usize {
+            let index = (y * 6 + 5) * 4;
+            rgba[index..index + 4].copy_from_slice(&[10, 20, 30, 255]);
+        }
+        for y in 2..=3usize {
+            for x in 2..=3usize {
+                let index = (y * 6 + x) * 4;
+                rgba[index..index + 4].copy_from_slice(&[40, 50, 60, 255]);
+            }
+        }
+
+        let (width, height, cropped, adjustment) = crop_rgba_tile_to_bounds(
+            6,
+            6,
+            rgba,
+            Some(SourceClipRect {
+                left: 1,
+                top: 1,
+                right: 5,
+                bottom: 5,
+            }),
+        )
+        .expect("crop clipped rgba tile");
+
+        assert_eq!(width, 2);
+        assert_eq!(height, 2);
+        assert_eq!(cropped.len(), 2 * 2 * 4);
+        assert_eq!(adjustment, EcArtCropAdjustment { left: 2, top: 2 });
+    }
+
+    #[test]
+    fn normalized_source_clip_rect_ignores_empty_rects() {
+        let texture = ArtTexture {
+            texture_id: 1,
+            start_x: 0,
+            start_y: 1,
+            end_x: 0,
+            end_y: 1,
+            offset_x: 0,
+            offset_y: 0,
+        };
+
+        assert_eq!(normalized_source_clip_rect(8, 8, &texture), None);
+    }
+
+    #[test]
+    fn crop_adjustment_lookup_copies_canonical_adjustment_to_aliases() {
+        let lookup = build_crop_adjustment_lookup(
+            16,
+            &HashMap::from([(7, EcArtCropAdjustment { left: 3, top: 4 })]),
+            &[SlotAlias {
+                art_id: 9,
+                canonical_art_id: 7,
+            }],
+        );
+
+        assert_eq!(lookup[7], Some(EcArtCropAdjustment { left: 3, top: 4 }));
+        assert_eq!(lookup[9], Some(EcArtCropAdjustment { left: 3, top: 4 }));
+        assert_eq!(lookup[6], None);
+    }
+
+    #[test]
+    fn canonical_tile_key_distinguishes_different_sampling_windows() {
+        let source = TextureSourceKey::World(77);
+        let canonical = CanonicalTileKey {
+            source,
+            window: requested_source_window(&ArtTexture {
+                texture_id: 77,
+                start_x: 0,
+                start_y: 0,
+                end_x: 32,
+                end_y: 32,
+                offset_x: 0,
+                offset_y: 0,
+            }),
+        };
+        let different_window = CanonicalTileKey {
+            source,
+            window: requested_source_window(&ArtTexture {
+                texture_id: 77,
+                start_x: 8,
+                start_y: 4,
+                end_x: 40,
+                end_y: 36,
+                offset_x: 0,
+                offset_y: 0,
+            }),
+        };
+
+        assert_ne!(canonical, different_window);
     }
 }
 

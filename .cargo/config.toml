@@ -1,3 +1,7 @@
+[build]
+target-dir = "/home/claudio/_builds"
+
+
 # -- Linux, GNU libc (default)
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"

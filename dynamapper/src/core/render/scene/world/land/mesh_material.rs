@@ -16,6 +16,10 @@ pub struct LandMaterialExtension {
     pub texarray_small: Handle<Image>,
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
     pub texarray_big: Handle<Image>,
+    #[texture(109, dimension = "2d_array", visibility(vertex, fragment))]
+    pub ec_land_page_atlas: Handle<Image>,
+    #[texture(110, sample_type = "u_int", visibility(vertex, fragment))]
+    pub ec_land_lookup: Handle<Image>,
     #[texture(
         103,
         dimension = "2d_array",

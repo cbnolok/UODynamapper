@@ -2,16 +2,22 @@
 name = "uddconv_cli"
 version = "0.1.0"
 edition = "2021"
+autobins = false
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }
 color-eyre = "0.6.5"
+csv = "1.4"
 env_logger = "0.11.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 indicatif = "0.18.4"
 uddconv = { path = "../uddconv" }
 uocf = { path = "../uocf" }
 
-#[[bin]]
-#name = "uddconv"
-#path = "src/main.rs"
+[[bin]]
+name = "uddpack"
+path = "src/bin/uddpack.rs"
+
+[[bin]]
+name = "uddtool"
+path = "src/bin/uddtool.rs"

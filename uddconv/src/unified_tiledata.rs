@@ -1,4 +1,16 @@
-//! Build-time and runtime support for `unified_tiledata.uddp`.
+//! Build-time and runtime support for `tilemeta.uddp`.
+//!
+//! Unlike the atlas packages, this module is mostly metadata plumbing. Its job is to
+//! normalize classic `tiledata.mul` and Enhanced Client `tileart.uop` information into
+//! two dense runtime tables with stable binary layouts.
+//!
+//! The high-level contract is:
+//! - `UnifiedLandTile` is the dense runtime record for land tile ids.
+//! - `UnifiedItemTile` is the dense runtime record for item/static tile ids.
+//! - the package stores those tables verbatim so runtime code can bulk-load them
+//!   without interpreting the original source formats again.
+//! - `tilemeta.uddp` is the preferred package name; `unified_tiledata.uddp` remains
+//!   a compatibility name for older tooling.
 //!
 //! Package layout:
 //! - `metadata/land.bin`: dense table for `UnifiedLandTile` entries.
@@ -12,17 +24,42 @@ use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 
+use crate::ec_art::{compute_ec_art_crop_adjustments_from_sources, EcArtCropAdjustment};
 use crate::package_progress::build_and_write_package;
+use crate::source_paths::find_first_existing_file;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::tile_database::ArtDefinition;
 use uocf::udd::{
     xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
     LookupMode, UddpBuilder, UddpReader,
 };
-use crate::source_paths::find_first_existing_file;
 
 pub const UNIFIED_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const UNIFIED_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
+pub const TILEMETA_LAND_ENTRY_PATH: &str = UNIFIED_LAND_ENTRY_PATH;
+pub const TILEMETA_ITEM_ENTRY_PATH: &str = UNIFIED_ITEM_ENTRY_PATH;
+
+pub type TileMetaLandTile = UnifiedLandTile;
+pub type TileMetaItemTile = UnifiedItemTile;
+pub type TileMetaPackage = UnifiedTileDataPackage;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TileMetaBuildOptions {
+    /// When `true`, subtract the EC-art crop delta from the stored EC sampling
+    /// start coordinates so they remain aligned with `pack-ec-art-cropped`.
+    pub adjust_cropped_ec_art: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TileMetaBuildSummary {
+    pub adjusted_ec_item_count: u32,
+}
+
+struct BuiltTileMetaTables {
+    land_tiles: Vec<UnifiedLandTile>,
+    item_tiles: Vec<UnifiedItemTile>,
+    summary: TileMetaBuildSummary,
+}
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -154,13 +191,69 @@ fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
 }
 
 pub fn build_unified_tiledata_uddp(client_dir: &Path, out_file: &Path) -> eyre::Result<()> {
-    build_unified_tiledata_uddp_from_sources(&[client_dir.to_path_buf()], out_file)
+    build_tilemeta_uddp(client_dir, out_file)
 }
 
 pub fn build_unified_tiledata_uddp_from_sources(
     source_dirs: &[PathBuf],
     out_file: &Path,
 ) -> eyre::Result<()> {
+    build_tilemeta_uddp_from_sources(source_dirs, out_file, &TileMetaBuildOptions::default())
+}
+
+pub fn build_tilemeta_uddp(client_dir: &Path, out_file: &Path) -> eyre::Result<()> {
+    build_tilemeta_uddp_from_sources(
+        &[client_dir.to_path_buf()],
+        out_file,
+        &TileMetaBuildOptions::default(),
+    )
+}
+
+pub fn build_tilemeta_uddp_from_sources(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+) -> eyre::Result<()> {
+    let built = build_tilemeta_tables_from_sources(source_dirs, options, "unifying tiledata")?;
+
+    let land_bytes = bytemuck::cast_slice(&built.land_tiles);
+    let item_bytes = bytemuck::cast_slice(&built.item_tiles);
+
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(UNIFIED_LAND_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: land_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: UddCompressionFlag::ZstdNoDict,
+        virtual_path: Some(UNIFIED_ITEM_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: item_bytes,
+    })?;
+    build_and_write_package(&mut package, out_file)?;
+
+    Ok(())
+}
+
+pub fn build_tilemeta_item_payload_from_sources(
+    source_dirs: &[PathBuf],
+    options: &TileMetaBuildOptions,
+) -> eyre::Result<(Vec<u8>, TileMetaBuildSummary)> {
+    let built = build_tilemeta_tables_from_sources(source_dirs, options, "updating tilemeta")?;
+    Ok((bytemuck::cast_slice(&built.item_tiles).to_vec(), built.summary))
+}
+
+fn build_tilemeta_tables_from_sources(
+    source_dirs: &[PathBuf],
+    options: &TileMetaBuildOptions,
+    progress_label: &str,
+) -> eyre::Result<BuiltTileMetaTables> {
     let tiledata_path = find_first_existing_file(source_dirs, &["tiledata.mul"])
         .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
     let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
@@ -172,21 +265,21 @@ pub fn build_unified_tiledata_uddp_from_sources(
     println!("Using tileart.uop: {}", tileart_path.display());
     println!("Using string dictionary: {}", stringdict_path.display());
 
-    info!(
-        "Converting Unified TileData from MUL/UOP sources to {}",
-        out_file.display()
-    );
+    info!("Converting Unified TileData tables from MUL/UOP sources");
 
     let cc_tiledata = TileData::load(tiledata_path.clone())?;
     let ec_art = ArtDefinition::load(&tileart_path, &stringdict_path)?;
+    let ec_art_crop_adjustments = if options.adjust_cropped_ec_art {
+        compute_ec_art_crop_adjustments_from_sources(source_dirs)?
+    } else {
+        Vec::new()
+    };
 
     let mut unified_land = Vec::with_capacity(cc_tiledata.land_tiles().len());
-    let pb =
-        ProgressBar::new((cc_tiledata.land_tiles().len() + cc_tiledata.item_tiles().len()) as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} unifying tiledata ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
+    let pb = tilemeta_progress_bar(
+        (cc_tiledata.land_tiles().len() + cc_tiledata.item_tiles().len()) as u64,
+        progress_label,
+    );
 
     for tile in cc_tiledata.land_tiles() {
         pb.inc(1);
@@ -204,6 +297,7 @@ pub fn build_unified_tiledata_uddp_from_sources(
     }
 
     let mut unified_items = Vec::with_capacity(cc_tiledata.item_tiles().len());
+    let mut adjusted_ec_item_count = 0u32;
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
         let mut u_item = UnifiedItemTile {
@@ -247,10 +341,22 @@ pub fn build_unified_tiledata_uddp_from_sources(
             // Unify EC Texture
             if let Some(ec_tex) = &ec_data.ec_texture {
                 u_item.ec_texture_id = ec_tex.texture_id;
-                u_item.ec_start_x = ec_tex.start_x as i16;
-                u_item.ec_start_y = ec_tex.start_y as i16;
+                let crop_adjustment = ec_art_crop_adjustments
+                    .get(tile.tile_id as usize)
+                    .and_then(|adjustment| *adjustment);
+                let (ec_start_x, ec_start_y) = adjusted_ec_sampling_start(
+                    tile.tile_id as u32,
+                    ec_tex.start_x,
+                    ec_tex.start_y,
+                    crop_adjustment,
+                )?;
+                u_item.ec_start_x = ec_start_x;
+                u_item.ec_start_y = ec_start_y;
                 u_item.ec_offset_x = ec_tex.offset_x as i16;
                 u_item.ec_offset_y = ec_tex.offset_y as i16;
+                if ec_start_x != ec_tex.start_x as i16 || ec_start_y != ec_tex.start_y as i16 {
+                    adjusted_ec_item_count += 1;
+                }
             }
 
             // Unify CC Texture override
@@ -266,29 +372,42 @@ pub fn build_unified_tiledata_uddp_from_sources(
     }
     pb.finish_with_message("TileData unified");
 
-    let land_bytes = bytemuck::cast_slice(&unified_land);
-    let item_bytes = bytemuck::cast_slice(&unified_items);
+    Ok(BuiltTileMetaTables {
+        land_tiles: unified_land,
+        item_tiles: unified_items,
+        summary: TileMetaBuildSummary {
+            adjusted_ec_item_count,
+        },
+    })
+}
 
-    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-    package.add_file(AddFileRequest {
-        data_type: DataType::Metadata as u8,
-        compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(UNIFIED_LAND_ENTRY_PATH),
-        path_hash64: None,
-        id: None,
-        data: land_bytes,
-    })?;
-    package.add_file(AddFileRequest {
-        data_type: DataType::Metadata as u8,
-        compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(UNIFIED_ITEM_ENTRY_PATH),
-        path_hash64: None,
-        id: None,
-        data: item_bytes,
-    })?;
-    build_and_write_package(&mut package, out_file)?;
+fn tilemeta_progress_bar(total: u64, progress_label: &str) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(&format!(
+                "{{spinner:.green}} [{{elapsed_precise}}] [{{bar:40.cyan/blue}}] {{pos}}/{{len}} {progress_label} ({{eta}})"
+            ))
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+    pb
+}
 
-    Ok(())
+fn adjusted_ec_sampling_start(
+    tile_id: u32,
+    start_x: i32,
+    start_y: i32,
+    crop_adjustment: Option<EcArtCropAdjustment>,
+) -> eyre::Result<(i16, i16)> {
+    let adjusted_x = start_x - crop_adjustment.map_or(0, |adjustment| i32::from(adjustment.left));
+    let adjusted_y = start_y - crop_adjustment.map_or(0, |adjustment| i32::from(adjustment.top));
+    Ok((
+        i16::try_from(adjusted_x)
+            .map_err(|_| eyre::eyre!("tile {tile_id} adjusted EC start_x {adjusted_x} does not fit in i16"))?,
+        i16::try_from(adjusted_y)
+            .map_err(|_| eyre::eyre!("tile {tile_id} adjusted EC start_y {adjusted_y} does not fit in i16"))?,
+    ))
 }
 
 /// Explicitly translates Classic Client 32-bit flags into the Enhanced Client 64-bit flag space.
@@ -523,5 +642,18 @@ mod tests {
         assert_eq!(item.name_ascii(), "chair");
         assert_eq!(item.ec_texture_id, 100);
         assert_eq!(item.cc_texture_id, 200);
+    }
+
+    #[test]
+    fn tilemeta_crop_adjustment_shifts_ec_sampling_start_only() {
+        let adjusted = adjusted_ec_sampling_start(
+            42,
+            12,
+            18,
+            Some(EcArtCropAdjustment { left: 5, top: 7 }),
+        )
+        .expect("adjust EC sampling start");
+
+        assert_eq!(adjusted, (7, 11));
     }
 }

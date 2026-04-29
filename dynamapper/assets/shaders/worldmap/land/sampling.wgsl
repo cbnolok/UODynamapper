@@ -11,7 +11,7 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, tex_small_sampler, effects}
+#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, ec_land_page_atlas, tex_small_sampler, effects}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance}
 #import "shaders/worldmap/land/fsr_easu.wgsl"::{sample_tile_fsr_easu}
 
@@ -23,6 +23,24 @@
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
+
+  if (tile.texture_size == 3u) {
+    return vec3<f32>(0.0);
+  }
+
+  if (tile.texture_size == 2u) {
+    let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
+    let atlas_dims = vec2<f32>(textureDimensions(ec_land_page_atlas));
+    if (use_linear) {
+      let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+      let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
+      return textureSample(ec_land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
+    } else {
+      let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
+      let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
+      return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+    }
+  }
 
   if (tile.texture_size == 1u) {
     if (use_linear) {
@@ -46,6 +64,14 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 // Integer-coordinate nearest tap — used by FSR and blur.
 fn sample_tile_albedo_at(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
+  if (tile.texture_size == 3u) {
+    return vec3<f32>(0.0);
+  }
+  if (tile.texture_size == 2u) {
+    let local_iuv = clamp(iuv, vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
+    let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
+    return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+  }
   if (tile.texture_size == 1u) {
     let dims = vec2<i32>(textureDimensions(tex_big));
     return textureLoad(tex_big, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
@@ -61,6 +87,26 @@ fn sample_tile_albedo_at(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
 fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
+
+  if (tile.texture_size == 3u) {
+    return vec3<f32>(0.0);
+  }
+
+  if (tile.texture_size == 2u) {
+    let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
+    if (use_linear) {
+      let atlas_dims = vec2<f32>(textureDimensions(ec_land_page_atlas));
+      let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+      let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
+      let atlas_ddx = ddx_uv * (tile_dims / atlas_dims);
+      let atlas_ddy = ddy_uv * (tile_dims / atlas_dims);
+      return textureSampleGrad(ec_land_page_atlas, tex_small_sampler, atlas_uv, layer, atlas_ddx, atlas_ddy).rgb;
+    } else {
+      let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
+      let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
+      return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+    }
+  }
 
   if (tile.texture_size == 1u) {
     if (use_linear) {
@@ -98,7 +144,12 @@ fn cubic_weight(f: f32, i: f32) -> f32 {
 
 // Bicubic reconstruction: smooth 4×4 tap kernel around the sample point.
 fn sample_tile_bicubic(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  let dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
+  var dims = vec2<f32>(0.0);
+  if (tile.texture_size == 2u) {
+    dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
+  } else {
+    dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
+  }
   let f_uv = uv * dims - 0.5;
   let i_uv = floor(f_uv);
   let f = fract(f_uv);
@@ -127,6 +178,10 @@ fn sample_tile_fsr(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 
 // Dispatch to the correct reconstruction mode (0=nearest, 1=bicubic, 2=FSR-like)
 fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  if (tile.texture_size == 3u) {
+    return vec3<f32>(0.0);
+  }
+
     let mode = effects.reconstruction_mode;
     if (mode == 1u) {
         return sample_tile_bicubic(uv, tile);

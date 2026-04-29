@@ -23,9 +23,17 @@ impl ClassicTileMapper {
             )
         })?;
 
+        Self::from_toml_str(&content)
+    }
+
+    pub fn from_toml_str(content: &str) -> eyre::Result<Self> {
         let file: MapperFile =
             toml::from_str(&content).wrap_err("Failed to parse classic tile mapping TOML")?;
 
+        Ok(Self::from_mapper_file(file))
+    }
+
+    fn from_mapper_file(file: MapperFile) -> Self {
         let mut lookup_table = vec![0u16; u16::MAX as usize + 1];
         for mapping in file.mapping {
             for old_id in mapping.old_ids {
@@ -33,7 +41,7 @@ impl ClassicTileMapper {
             }
         }
 
-        Ok(Self { lookup_table })
+        Self { lookup_table }
     }
 
     #[inline]

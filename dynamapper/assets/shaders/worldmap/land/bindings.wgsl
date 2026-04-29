@@ -18,9 +18,11 @@ const USE_VOLUMETRIC_NOISE: u32 = 1u; // 0=flat fog, 1=domain-warped billow modu
 // R16 channel = texture layer index; G16 = packed [height_biased:low8 | tex_size:high8].
 struct TileUniform {
   tile_height:   f32,
-  texture_size:  u32, // 0=small atlas, 1=big atlas
+  texture_size:  u32, // 0=cc-small array, 1=cc-big array, 2=ec page atlas, 3=missing ec tile
   texture_layer: u32,
   texture_hue:   u32,
+  texture_origin: vec2<u32>,
+  texture_extent: vec2<u32>,
 };
 
 // Parameters for the LRU paged tile metadata atlas.
@@ -145,6 +147,8 @@ struct LandLightingUniforms {
 @group(3) @binding(101) var tex_small: texture_2d_array<f32>;
 @group(3) @binding(102) var tex_big:   texture_2d_array<f32>;
 @group(3) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
+@group(3) @binding(109) var ec_land_page_atlas: texture_2d_array<f32>;
+@group(3) @binding(110) var ec_land_lookup: texture_2d<u32>;
 @group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
 @group(3) @binding(105) var<uniform> scene:        SceneUniform;
 @group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;

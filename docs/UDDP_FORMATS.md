@@ -4,9 +4,11 @@ This document describes the structure of custom binary `.uddp` formats used by U
 
 ---
 
-## 1. `unified_tiledata.uddp`
+## 1. `tilemeta.uddp` (legacy `unified_tiledata.uddp`)
 
 This package merges Classic Client (CC) physical tile properties and Enhanced Client (EC) rendering definitions into a zero-copy, tightly packed binary.
+
+`tilemeta.uddp` is the preferred package name. `unified_tiledata.uddp` remains a legacy-compatible name for older tooling and packages.
 
 **Virtual Files:**
 - `metadata/land.bin`: Dense array of `UnifiedLandTile` structs.
@@ -45,8 +47,8 @@ Represents static map items and artwork.
 | 0x18 | `[u8; 4]` | `radar_color` | RGBA minimap colors. |
 | 0x1C | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
-| 0x34 | `i16` | `ec_start_x` | X bounding box start for EC. |
-| 0x36 | `i16` | `ec_start_y` | Y bounding box start for EC. |
+| 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `ec_art`. |
+| 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `ec_art`. |
 | 0x38 | `i16` | `ec_offset_x` | X draw offset for EC. |
 | 0x3A | `i16` | `ec_offset_y` | Y draw offset for EC. |
 | 0x3C | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
@@ -55,18 +57,26 @@ Represents static map items and artwork.
 | 0x44 | `i16` | `cc_offset_x` | X draw offset for CC. |
 | 0x46 | `i16` | `cc_offset_y` | Y draw offset for CC. |
 
+When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped art payload. `ec_offset_x` and `ec_offset_y` remain the original EC draw offsets.
+
 ---
 
-## 2. `cc_art.uddp`, `ec_art.uddp`, and `ec_land.uddp`
+## 2. `cc_art.uddp`, `ec_art.uddp`, `ec_art_cropped.uddp`, and `ec_land.uddp`
 
 These are GPU texture atlases packed into fixed-size pages to avoid texture array limits.
-`cc_art` packages Classic Art sprites, `ec_art` packages Enhanced Client Art sprites, and `ec_land` packages Enhanced Client Terrain Textures.
+`cc_art` packages Classic Art sprites, `ec_art` packages Enhanced Client Art sprites, `ec_art_cropped` packages the cropped variant of the same EC static-art layout, and `ec_land` packages Enhanced Client Terrain Textures.
 Do not use lossy BC7 compression for art tiles.
 
 **Virtual Files:**
 - `metadata/pages.bin`: Binary array of `PageRecord` structs representing page dimensions and occupancy.
 - `metadata/slots.bin`: Binary array of `SlotRecord` structs indexed by `art_id` containing the UV mapping.
 - `pages/{page_id}.rgba8888`: Raw RGBA8888 pixel payloads (compressed by Zstd via UDDP).
+
+For `ec_art_cropped.uddp`, cropping is performed per art entry, not per decoded source texture. The correct order is:
+1. apply the tileart `start_x/start_y/end_x/end_y` clip rect for that art entry
+2. alpha-trim inside that clipped rectangle
+
+This rule matters because different art ids can reference the same source texture while sampling different sub-rectangles of it.
 
 ### 2.1 Metadata Structures
 

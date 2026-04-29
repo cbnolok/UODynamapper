@@ -1,7 +1,7 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     core::render::{dialogs, scene::camera::UiCameraResource},
-    external_data::settings::AntiAliasingMode,
+    external_data::settings::{AntiAliasingMode, ClientTextureSource},
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
@@ -31,6 +31,8 @@ pub struct PreferencesDialogState {
     /// VSync toggle (synced from SectGraphics).
     pub vsync: bool,
     pub anti_aliasing: AntiAliasingMode,
+    pub art_texture_source: ClientTextureSource,
+    pub land_texture_source: ClientTextureSource,
     /// Texture filtering (0: Point, 1: Linear).
     pub texture_filtering: u32,
     /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
@@ -61,6 +63,8 @@ impl Default for PreferencesDialogState {
             performance_overlay_scale: 1.0,
             vsync: false,
             anti_aliasing: AntiAliasingMode::default(),
+            art_texture_source: ClientTextureSource::default(),
+            land_texture_source: ClientTextureSource::default(),
             texture_filtering: 0,
             texture_reconstruction: 0,
             perspective_camera: false,
@@ -115,6 +119,8 @@ fn sys_sync_settings_to_state(
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
         state.vsync = settings.graphics.vsync;
         state.anti_aliasing = settings.graphics.anti_aliasing;
+        state.art_texture_source = settings.graphics.art_texture_source;
+        state.land_texture_source = settings.graphics.land_texture_source;
         state.texture_filtering = settings.graphics.texture_filtering;
         state.texture_reconstruction = settings.graphics.texture_reconstruction;
         state.perspective_camera = settings.app.window.perspective_camera;
@@ -262,6 +268,36 @@ pub fn sys_render_preferences_dialog(
                         });
                     if settings.graphics.anti_aliasing != state.anti_aliasing {
                         settings.graphics.anti_aliasing = state.anti_aliasing;
+                    }
+
+                    egui::ComboBox::from_label("Art Texture Source")
+                        .selected_text(state.art_texture_source.art_label())
+                        .show_ui(ui, |ui| {
+                            for source in ClientTextureSource::ALL {
+                                ui.selectable_value(
+                                    &mut state.art_texture_source,
+                                    source,
+                                    source.art_label(),
+                                );
+                            }
+                        });
+                    if settings.graphics.art_texture_source != state.art_texture_source {
+                        settings.graphics.art_texture_source = state.art_texture_source;
+                    }
+
+                    egui::ComboBox::from_label("Land Texture Source")
+                        .selected_text(state.land_texture_source.land_label())
+                        .show_ui(ui, |ui| {
+                            for source in ClientTextureSource::ALL {
+                                ui.selectable_value(
+                                    &mut state.land_texture_source,
+                                    source,
+                                    source.land_label(),
+                                );
+                            }
+                        });
+                    if settings.graphics.land_texture_source != state.land_texture_source {
+                        settings.graphics.land_texture_source = state.land_texture_source;
                     }
 
                     ui.add_space(4.0);
