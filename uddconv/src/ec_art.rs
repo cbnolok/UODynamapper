@@ -16,10 +16,10 @@
 //! - runtime loading: expose a page table and sparse slot table that the renderer
 //!   can query without needing to understand any of the original EC source files.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
@@ -205,6 +205,7 @@ struct EcArtLoadedSources {
     stringdict_path: PathBuf,
     texture_uop_path: Option<PathBuf>,
     legacy_texture_uop_path: Option<PathBuf>,
+    terrain_source_texture_ids: HashSet<u32>,
     art_definition: ArtDefinition,
     world_textures: Option<Textures>,
     legacy_textures: Option<Textures>,
@@ -396,6 +397,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
     let slot_count = 0x10000_u32; // 65536 max art items in EC
     let (decoded_tiles, aliases, crop_adjustments) = decode_present_tiles(
         &sources.art_definition,
+        &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
         options.crop_transparent_bounds,
@@ -517,6 +519,7 @@ pub fn compute_ec_art_crop_adjustments_from_sources(
     let sources = load_ec_art_sources(source_dirs)?;
     let (_decoded_tiles, aliases, canonical_adjustments) = decode_present_tiles(
         &sources.art_definition,
+        &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
         true,
@@ -563,7 +566,7 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
 
     let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
         .wrap_err("load tileart-driven art definition")?;
-    TerrainDefinitionPackage::load(&terrain_definition_path)
+    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
 
     Ok(EcArtLoadedSources {
@@ -572,6 +575,7 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
         stringdict_path,
         texture_uop_path,
         legacy_texture_uop_path,
+        terrain_source_texture_ids: terrain_definition.land_source_texture_ids().into_iter().collect(),
         art_definition,
         world_textures,
         legacy_textures,
@@ -593,6 +597,7 @@ fn validate_options(options: &EcArtAtlasOptions) -> eyre::Result<()> {
 
 fn decode_present_tiles(
     art_definition: &ArtDefinition,
+    terrain_source_texture_ids: &HashSet<u32>,
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     crop_transparent_bounds: bool,
@@ -637,10 +642,6 @@ fn decode_present_tiles(
         if art_data.tile_type != TileType::Static {
             continue;
         }
-        if is_flat_material_sheet_static(art_data) {
-            continue;
-        }
-
         let resolved = if let Some(texture) = art_data.ec_texture.as_ref() {
             if let Some(world_textures) = world_textures {
                 world_textures
@@ -665,6 +666,15 @@ fn decode_present_tiles(
         });
 
         if let Some((source_key, texture_bounds, file)) = resolved {
+            if should_skip_terrain_material_static(
+                art_data,
+                texture_bounds,
+                &file,
+                terrain_source_texture_ids,
+            )? {
+                continue;
+            }
+
             // Tileart ownership is authoritative for ec_art packing.
             // A source texture id may legitimately appear in both terrain and tileart
             // metadata, and shared ids should survive in both packages.
@@ -800,6 +810,31 @@ fn is_flat_material_sheet_static(art_data: &ArtData) -> bool {
         && texture.end_y == 0
         && texture.offset_x == 0
         && texture.offset_y == 0
+}
+
+fn should_skip_terrain_material_static(
+    art_data: &ArtData,
+    texture: &ArtTexture,
+    file: &TextureFile,
+    terrain_source_texture_ids: &HashSet<u32>,
+) -> eyre::Result<bool> {
+    if is_flat_material_sheet_static(art_data) {
+        return Ok(true);
+    }
+
+    if !terrain_source_texture_ids.contains(&texture.texture_id) {
+        return Ok(false);
+    }
+
+    if texture.offset_x != 0 || texture.offset_y != 0 {
+        return Ok(false);
+    }
+
+    let image = file.decode_to_rgba()?;
+    let source_width = image.width() as u16;
+    let source_height = image.height() as u16;
+
+    Ok(normalized_source_clip_rect(source_width, source_height, texture).is_none())
 }
 
 fn register_rendered_tile_alias(
