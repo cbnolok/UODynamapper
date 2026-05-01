@@ -19,7 +19,7 @@
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
@@ -40,8 +40,8 @@ use uocf::{
     enhanced::{
         terrain_definition::TerrainDefinitionPackage,
         tile_database::ArtDefinition,
-        textures::Textures,
-        tileart::{ArtTexture, TileType},
+        textures::{TextureFile, Textures},
+        tileart::{ArtData, ArtTexture, TileType},
     },
     udd::{
         xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
@@ -148,6 +148,24 @@ struct DecodedArtTile {
     rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+struct PreparedArtDecodeGroup {
+    canonical_art_id: u32,
+    texture_bounds: ArtTexture,
+    file: TextureFile,
+    alias_art_ids: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct DecodedArtDecodeGroup {
+    canonical_art_id: u32,
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    crop_adjustment: EcArtCropAdjustment,
+    alias_art_ids: Vec<u32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TextureSourceKey {
     World(u32),
@@ -168,6 +186,13 @@ struct CanonicalTileKey {
     window: RequestedSourceWindow,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RenderedTileKey {
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SlotAlias {
     art_id: u32,
@@ -181,7 +206,6 @@ struct EcArtLoadedSources {
     texture_uop_path: Option<PathBuf>,
     legacy_texture_uop_path: Option<PathBuf>,
     art_definition: ArtDefinition,
-    land_texture_ids: HashSet<u32>,
     world_textures: Option<Textures>,
     legacy_textures: Option<Textures>,
 }
@@ -374,7 +398,6 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
         &sources.art_definition,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
-        &sources.land_texture_ids,
         options.crop_transparent_bounds,
     )?;
 
@@ -496,7 +519,6 @@ pub fn compute_ec_art_crop_adjustments_from_sources(
         &sources.art_definition,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
-        &sources.land_texture_ids,
         true,
     )?;
 
@@ -541,12 +563,8 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
 
     let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
         .wrap_err("load tileart-driven art definition")?;
-    let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
+    TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
-    let land_texture_ids = terrain_definition
-        .land_source_texture_ids()
-        .into_iter()
-        .collect::<HashSet<_>>();
 
     Ok(EcArtLoadedSources {
         tileart_path,
@@ -555,7 +573,6 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
         texture_uop_path,
         legacy_texture_uop_path,
         art_definition,
-        land_texture_ids,
         world_textures,
         legacy_textures,
     })
@@ -578,7 +595,6 @@ fn decode_present_tiles(
     art_definition: &ArtDefinition,
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
-    land_texture_ids: &HashSet<u32>,
     crop_transparent_bounds: bool,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
@@ -593,13 +609,9 @@ fn decode_present_tiles(
     // per-art source window before aliasing slot records afterward.
     let mut decoded_tiles = Vec::new();
     let mut aliases = Vec::new();
-    let mut canonical_by_source = HashMap::new();
+    let mut canonical_by_source: HashMap<CanonicalTileKey, usize> = HashMap::new();
+    let mut canonical_by_rendered_tile = HashMap::new();
     let mut crop_adjustments = HashMap::new();
-    let pb = ProgressBar::new(art_definition.definitions.len() as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding art tiles ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
 
     let mut art_ids = art_definition
         .definitions
@@ -608,14 +620,24 @@ fn decode_present_tiles(
         .collect::<Vec<_>>();
     art_ids.sort_unstable();
 
+    let resolve_pb = ProgressBar::new(art_ids.len() as u64);
+    resolve_pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} resolving art tile sources ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    let mut decode_groups: Vec<PreparedArtDecodeGroup> = Vec::new();
+
     for art_id in art_ids {
-        pb.inc(1);
+        resolve_pb.inc(1);
         let art_data = art_definition
             .definitions
             .get(&art_id)
             .context("missing tileart definition during art decode")?;
 
         if art_data.tile_type != TileType::Static {
+            continue;
+        }
+        if is_flat_material_sheet_static(art_data) {
             continue;
         }
 
@@ -643,67 +665,105 @@ fn decode_present_tiles(
         });
 
         if let Some((source_key, texture_bounds, file)) = resolved {
-            let is_land_source = match source_key {
-                TextureSourceKey::World(texture_id) | TextureSourceKey::Legacy(texture_id) => {
-                    land_texture_ids.contains(&texture_id)
-                }
-            };
-            if is_land_source {
-                continue;
-            }
-
+            // Tileart ownership is authoritative for ec_art packing.
+            // A source texture id may legitimately appear in both terrain and tileart
+            // metadata, and shared ids should survive in both packages.
             let canonical_key = CanonicalTileKey {
                 source: source_key,
                 window: requested_source_window(texture_bounds),
             };
 
-            if let Some(&canonical_art_id) = canonical_by_source.get(&canonical_key) {
-                aliases.push(SlotAlias {
-                    art_id: art_id as u32,
-                    canonical_art_id,
-                });
+            if let Some(&group_index) = canonical_by_source.get(&canonical_key) {
+                decode_groups[group_index].alias_art_ids.push(art_id as u32);
                 continue;
             }
 
-            let img = file.decode_to_rgba()?;
+            canonical_by_source.insert(canonical_key, decode_groups.len());
+            decode_groups.push(PreparedArtDecodeGroup {
+                canonical_art_id: art_id as u32,
+                texture_bounds: texture_bounds.clone(),
+                file,
+                alias_art_ids: Vec::new(),
+            });
+        }
+    }
+    resolve_pb.finish_with_message("Art tile sources resolved");
+
+    let decode_pb = ProgressBar::new(decode_groups.len() as u64);
+    decode_pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding unique art tiles ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    let decoded_groups = decode_groups
+        .par_iter()
+        .map(|group| -> eyre::Result<DecodedArtDecodeGroup> {
+            let img = group.file.decode_to_rgba()?;
             let rgba = img.to_rgba8();
+            let source_width = rgba.width() as u16;
+            let source_height = rgba.height() as u16;
             let clip_rect = normalized_source_clip_rect(
-                rgba.width() as u16,
-                rgba.height() as u16,
-                texture_bounds,
+                source_width,
+                source_height,
+                &group.texture_bounds,
             );
-            canonical_by_source.insert(canonical_key, art_id as u32);
             let (width, height, rgba, crop_adjustment) = if crop_transparent_bounds {
                 crop_rgba_tile_to_bounds(
-                    rgba.width() as u16,
-                    rgba.height() as u16,
+                    source_width,
+                    source_height,
                     rgba.into_raw(),
                     clip_rect,
                 )?
             } else {
-                (
-                    rgba.width() as u16,
-                    rgba.height() as u16,
+                apply_requested_clip_rect(source_width,
+                    source_height,
                     rgba.into_raw(),
-                    clip_rect
-                        .map(|clip| EcArtCropAdjustment {
-                            left: clip.left,
-                            top: clip.top,
-                        })
-                        .unwrap_or_default(),
-                )
+                    clip_rect,
+                )?
             };
-            crop_adjustments.insert(art_id as u32, crop_adjustment);
-            decoded_tiles.push(DecodedArtTile {
-                art_id: art_id as u32,
-                kind: ArtTileKind::Static,
+            decode_pb.inc(1);
+            Ok(DecodedArtDecodeGroup {
+                canonical_art_id: group.canonical_art_id,
                 width,
                 height,
                 rgba,
+                crop_adjustment,
+                alias_art_ids: group.alias_art_ids.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    decode_pb.finish_with_message("Unique art tiles decoded");
+
+    for decoded_group in decoded_groups {
+        let decoded_group = decoded_group?;
+        if let Some(rendered_canonical_art_id) = register_rendered_tile_alias(
+            decoded_group.canonical_art_id,
+            decoded_group.width,
+            decoded_group.height,
+            &decoded_group.rgba,
+            &mut canonical_by_rendered_tile,
+        ) {
+            aliases.push(SlotAlias {
+                art_id: decoded_group.canonical_art_id,
+                canonical_art_id: rendered_canonical_art_id,
+            });
+        } else {
+            crop_adjustments.insert(decoded_group.canonical_art_id, decoded_group.crop_adjustment);
+            decoded_tiles.push(DecodedArtTile {
+                art_id: decoded_group.canonical_art_id,
+                kind: ArtTileKind::Static,
+                width: decoded_group.width,
+                height: decoded_group.height,
+                rgba: decoded_group.rgba,
+            });
+        }
+
+        for alias_art_id in decoded_group.alias_art_ids {
+            aliases.push(SlotAlias {
+                art_id: alias_art_id,
+                canonical_art_id: decoded_group.canonical_art_id,
             });
         }
     }
-    pb.finish_with_message("Art tiles decoded");
 
     decoded_tiles.sort_by(|left, right| {
         let left_area = left.width as u32 * left.height as u32;
@@ -722,6 +782,43 @@ fn requested_source_window(texture: &ArtTexture) -> RequestedSourceWindow {
         start_y: texture.start_y,
         end_x: texture.end_x,
         end_y: texture.end_y,
+    }
+}
+
+fn is_flat_material_sheet_static(art_data: &ArtData) -> bool {
+    if art_data.height != 0 {
+        return false;
+    }
+
+    let Some(texture) = art_data.ec_texture.as_ref() else {
+        return false;
+    };
+
+    texture.start_x == 0
+        && texture.start_y == 0
+        && texture.end_x == 0
+        && texture.end_y == 0
+        && texture.offset_x == 0
+        && texture.offset_y == 0
+}
+
+fn register_rendered_tile_alias(
+    art_id: u32,
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+    canonical_by_rendered_tile: &mut HashMap<RenderedTileKey, u32>,
+) -> Option<u32> {
+    let key = RenderedTileKey {
+        width,
+        height,
+        rgba: rgba.to_vec(),
+    };
+    if let Some(&canonical_art_id) = canonical_by_rendered_tile.get(&key) {
+        Some(canonical_art_id)
+    } else {
+        canonical_by_rendered_tile.insert(key, art_id);
+        None
     }
 }
 
@@ -828,6 +925,27 @@ fn crop_rgba_tile_to_bounds(
     }
 
     crop_rgba_subrect(width, height, rgba, min_x, min_y, max_x + 1, max_y + 1)
+}
+
+fn apply_requested_clip_rect(
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    clip_rect: Option<SourceClipRect>,
+) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+    if let Some(clip) = clip_rect {
+        crop_rgba_subrect(
+            width,
+            height,
+            rgba,
+            clip.left as usize,
+            clip.top as usize,
+            clip.right as usize,
+            clip.bottom as usize,
+        )
+    } else {
+        Ok((width, height, rgba, EcArtCropAdjustment::default()))
+    }
 }
 
 fn crop_rgba_subrect(
@@ -1457,6 +1575,39 @@ mod tests {
     }
 
     #[test]
+    fn requested_clip_rect_is_applied_without_alpha_trim() {
+        let mut rgba = vec![0u8; 6 * 6 * 4];
+        for y in 0..6usize {
+            for x in 0..6usize {
+                let index = (y * 6 + x) * 4;
+                rgba[index..index + 4].copy_from_slice(&[x as u8, y as u8, 99, 255]);
+            }
+        }
+
+        let (width, height, cropped, adjustment) = apply_requested_clip_rect(
+            6,
+            6,
+            rgba,
+            Some(SourceClipRect {
+                left: 2,
+                top: 1,
+                right: 4,
+                bottom: 3,
+            }),
+        )
+        .expect("apply clip rect without alpha trim");
+
+        assert_eq!(width, 2);
+        assert_eq!(height, 2);
+        assert_eq!(adjustment, EcArtCropAdjustment { left: 2, top: 1 });
+        assert_eq!(cropped.len(), 2 * 2 * 4);
+        assert_eq!(&cropped[0..4], &[2, 1, 99, 255]);
+        assert_eq!(&cropped[4..8], &[3, 1, 99, 255]);
+        assert_eq!(&cropped[8..12], &[2, 2, 99, 255]);
+        assert_eq!(&cropped[12..16], &[3, 2, 99, 255]);
+    }
+
+    #[test]
     fn normalized_source_clip_rect_ignores_empty_rects() {
         let texture = ArtTexture {
             texture_id: 1,
@@ -1516,6 +1667,24 @@ mod tests {
         };
 
         assert_ne!(canonical, different_window);
+    }
+
+    #[test]
+    fn identical_final_payloads_alias_by_rendered_pixels() {
+        let mut canonical_by_rendered_tile = HashMap::new();
+        let rgba = vec![
+            10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
+        ];
+
+        assert_eq!(
+            register_rendered_tile_alias(7, 2, 2, &rgba, &mut canonical_by_rendered_tile),
+            None
+        );
+        assert_eq!(
+            register_rendered_tile_alias(9, 2, 2, &rgba, &mut canonical_by_rendered_tile),
+            Some(7)
+        );
+        assert_eq!(canonical_by_rendered_tile.len(), 1);
     }
 }
 

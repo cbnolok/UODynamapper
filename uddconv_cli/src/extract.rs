@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use uddconv::bc7::{ImageExtent, decode_bc7_to_rgba8888};
 use uddconv::cc_art::{CcArtPackage, PagePixelFormat};
 use uddconv::ec_art::EcArtPackage;
@@ -65,8 +66,8 @@ fn extract_cc_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
             used_width: page.used_width,
             used_height: page.used_height,
             pixel_format: page.pixel_format,
-            bytes: package.read_page_bytes(page.page_index),
         }),
+        |page_index| package.read_page_bytes(page_index),
     )?;
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
@@ -107,8 +108,8 @@ fn extract_ec_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
             used_width: page.used_width,
             used_height: page.used_height,
             pixel_format: page.pixel_format,
-            bytes: package.read_page_bytes(page.page_index),
         }),
+        |page_index| package.read_page_bytes(page_index),
     )?;
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
@@ -149,8 +150,8 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
             used_width: page.used_width,
             used_height: page.used_height,
             pixel_format: page.pixel_format,
-            bytes: package.read_page_bytes(page.page_index),
         }),
+        |page_index| package.read_page_bytes(page_index),
     )?;
 
     let metadata_dir = out_dir.join("metadata");
@@ -313,35 +314,43 @@ fn extract_generic(bytes: &[u8], out_dir: &Path) -> eyre::Result<()> {
     std::fs::create_dir_all(&payload_dir)
         .wrap_err_with(|| format!("create {}", payload_dir.display()))?;
 
+    let records = package.records();
+    let pb = progress_bar(records.len() as u64, "extracting payloads");
+    let extracted_records = records
+        .par_iter()
+        .map(|record| -> eyre::Result<String> {
+            let (key_name, data) = match record.key {
+                FileKey::PathHash(path_hash) => (
+                    format!("path_hash_{path_hash:016x}"),
+                    package.read_file_by_path_hash(path_hash)?,
+                ),
+                FileKey::Id(id) => match package.lookup_mode() {
+                    LookupMode::DenseId => (format!("id_{id:08}"), package.read_file_by_dense_id(id)?),
+                    LookupMode::SparseId => (format!("id_{id:08}"), package.read_file_by_sparse_id(id)?),
+                    LookupMode::VirtualPathHash => {
+                        unreachable!("path hash packages should not expose id keys")
+                    }
+                },
+            };
+
+            std::fs::write(payload_dir.join(format!("{key_name}.bin")), data)
+                .wrap_err_with(|| format!("write extracted payload {key_name}"))?;
+
+            Ok(format!(
+                "{},{},{},{},{}\n",
+                key_name,
+                record.locator.meta32 & 0x3F,
+                codec_name(unpack_codec(record.locator.meta32)),
+                record.locator.raw_size,
+                reconstruct_stored_size(record.locator.raw_size, record.locator.meta32, record.locator.pos64)
+            ))
+        })
+        .collect::<Vec<_>>();
+
     let mut records_csv = String::from("key,data_type,codec,raw_size,stored_size\n");
-    let pb = progress_bar(package.records().len() as u64, "extracting payloads");
-    for record in package.records() {
+    for extracted_record in extracted_records {
         pb.inc(1);
-        let (key_name, data) = match record.key {
-            FileKey::PathHash(path_hash) => (
-                format!("path_hash_{path_hash:016x}"),
-                package.read_file_by_path_hash(path_hash)?,
-            ),
-            FileKey::Id(id) => match package.lookup_mode() {
-                LookupMode::DenseId => (format!("id_{id:08}"), package.read_file_by_dense_id(id)?),
-                LookupMode::SparseId => (format!("id_{id:08}"), package.read_file_by_sparse_id(id)?),
-                LookupMode::VirtualPathHash => unreachable!("path hash packages should not expose id keys"),
-            },
-        };
-
-        std::fs::write(payload_dir.join(format!("{key_name}.bin")), data)
-            .wrap_err_with(|| format!("write extracted payload {key_name}"))?;
-
-        writeln!(
-            records_csv,
-            "{},{},{},{},{}",
-            key_name,
-            record.locator.meta32 & 0x3F,
-            codec_name(unpack_codec(record.locator.meta32)),
-            record.locator.raw_size,
-            reconstruct_stored_size(record.locator.raw_size, record.locator.meta32, record.locator.pos64)
-        )
-        .unwrap();
+        records_csv.push_str(&extracted_record?);
     }
     pb.finish_with_message("Payloads extracted");
     write_text_file(&out_dir.join("records.csv"), &records_csv)?;
@@ -354,19 +363,24 @@ struct AtlasPageRow {
     used_width: u32,
     used_height: u32,
     pixel_format: PagePixelFormat,
-    bytes: eyre::Result<Vec<u8>>,
 }
 
-fn extract_atlas_pages<I>(
+struct ExtractedAtlasPage {
+    csv_row: String,
+}
+
+fn extract_atlas_pages<I, F>(
     out_dir: &Path,
     package_name: &str,
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
     pages: I,
+    read_page_bytes: F,
 ) -> eyre::Result<()>
 where
     I: IntoIterator<Item = AtlasPageRow>,
+    F: Fn(u32) -> eyre::Result<Vec<u8>> + Sync,
 {
     let pages_dir = out_dir.join("pages");
     let metadata_dir = out_dir.join("metadata");
@@ -381,25 +395,33 @@ where
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
 
     let pages = pages.into_iter().collect::<Vec<_>>();
-    let mut pages_csv = String::from("page_index,tile_count,used_width,used_height,pixel_format,png\n");
     let pb = progress_bar(pages.len() as u64, &format!("extracting {package_name} pages"));
-    for page in pages {
+    let extracted_pages = pages
+        .par_iter()
+        .map(|page| -> eyre::Result<ExtractedAtlasPage> {
+            let encoded = read_page_bytes(page.page_index)?;
+            let rgba =
+                decode_page_to_rgba(&encoded, page.pixel_format, page.used_width, page.used_height)?;
+            let png_name = format!("page_{:05}.png", page.page_index);
+            write_rgba_png(&pages_dir.join(&png_name), page.used_width, page.used_height, &rgba)?;
+            Ok(ExtractedAtlasPage {
+                csv_row: format!(
+                    "{},{},{},{},{},{}\n",
+                    page.page_index,
+                    page.tile_count,
+                    page.used_width,
+                    page.used_height,
+                    page.pixel_format.extension(),
+                    png_name
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut pages_csv = String::from("page_index,tile_count,used_width,used_height,pixel_format,png\n");
+    for extracted_page in extracted_pages {
         pb.inc(1);
-        let encoded = page.bytes?;
-        let rgba = decode_page_to_rgba(&encoded, page.pixel_format, page.used_width, page.used_height)?;
-        let png_name = format!("page_{:05}.png", page.page_index);
-        write_rgba_png(&pages_dir.join(&png_name), page.used_width, page.used_height, &rgba)?;
-        writeln!(
-            pages_csv,
-            "{},{},{},{},{},{}",
-            page.page_index,
-            page.tile_count,
-            page.used_width,
-            page.used_height,
-            page.pixel_format.extension(),
-            png_name
-        )
-        .unwrap();
+        pages_csv.push_str(&extracted_page?.csv_row);
     }
     pb.finish_with_message(format!("{package_name} pages extracted"));
     write_text_file(&metadata_dir.join("pages.csv"), &pages_csv)?;

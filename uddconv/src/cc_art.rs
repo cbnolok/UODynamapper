@@ -460,7 +460,6 @@ fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
     // some slots are structurally present but malformed, so the converter skips
     // those and reports a compact sample instead of aborting the whole package.
     let mut decoded_tiles = Vec::new();
-    let mut scratch_raw = Vec::new();
     let mut skipped_tiles = 0u32;
     let mut skipped_land_tiles = 0u32;
     let mut skipped_static_tiles = 0u32;
@@ -468,60 +467,78 @@ fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
     let mut skipped_static_samples = Vec::new();
 
     let max_id = art_map.max_id();
-    let pb = ProgressBar::new(max_id as u64);
+    let art_ids = (0..max_id)
+        .filter(|&art_id| art_map.has_id(art_id))
+        .collect::<Vec<_>>();
+    let pb = ProgressBar::new(art_ids.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
 
-    for art_id in 0..max_id {
-        pb.inc(1);
-        if !art_map.has_id(art_id) {
-            continue;
-        }
+    enum DecodeOutcome {
+        Decoded(DecodedArtTile),
+        SkippedLand(String),
+        SkippedStatic(String),
+    }
 
-        let kind = if art_id < 0x4000 {
-            ArtTileKind::Land
-        } else {
-            ArtTileKind::Static
-        };
+    let decode_outcomes = art_ids
+        .into_par_iter()
+        .map(|art_id| {
+            let kind = if art_id < 0x4000 {
+                ArtTileKind::Land
+            } else {
+                ArtTileKind::Static
+            };
+            let mut scratch_raw = Vec::new();
 
-        match kind {
-            ArtTileKind::Land => {
-                let mut rgba = [0u8; 44 * 44 * 4];
-                match art_map.decode_land_tile(art_id, &mut scratch_raw, &mut rgba) {
-                    Ok(()) => decoded_tiles.push(DecodedArtTile {
-                        art_id,
-                        kind,
-                        width: 44,
-                        height: 44,
-                        rgba: rgba.to_vec(),
-                    }),
-                    Err(error) => {
-                        skipped_tiles += 1;
-                        skipped_land_tiles += 1;
-                        if skipped_land_samples.len() < 8 {
-                            skipped_land_samples.push(format!("{art_id} ({error})"));
-                        }
+            let outcome = match kind {
+                ArtTileKind::Land => {
+                    let mut rgba = [0u8; 44 * 44 * 4];
+                    match art_map.decode_land_tile(art_id, &mut scratch_raw, &mut rgba) {
+                        Ok(()) => DecodeOutcome::Decoded(DecodedArtTile {
+                            art_id,
+                            kind,
+                            width: 44,
+                            height: 44,
+                            rgba: rgba.to_vec(),
+                        }),
+                        Err(error) => DecodeOutcome::SkippedLand(format!("{art_id} ({error})")),
                     }
                 }
-            }
-            ArtTileKind::Static => {
-                match art_map.decode_static_tile(art_id, &mut scratch_raw) {
-                    Ok((width, height, rgba)) => decoded_tiles.push(DecodedArtTile {
-                        art_id,
-                        kind,
-                        width,
-                        height,
-                        rgba,
-                    }),
-                    Err(error) => {
-                        skipped_tiles += 1;
-                        skipped_static_tiles += 1;
-                        if skipped_static_samples.len() < 8 {
-                            skipped_static_samples.push(format!("{art_id} ({error})"));
-                        }
+                ArtTileKind::Static => {
+                    match art_map.decode_static_tile(art_id, &mut scratch_raw) {
+                        Ok((width, height, rgba)) => DecodeOutcome::Decoded(DecodedArtTile {
+                            art_id,
+                            kind,
+                            width,
+                            height,
+                            rgba,
+                        }),
+                        Err(error) => DecodeOutcome::SkippedStatic(format!("{art_id} ({error})")),
                     }
+                }
+            };
+            pb.inc(1);
+            outcome
+        })
+        .collect::<Vec<_>>();
+
+    for outcome in decode_outcomes {
+        match outcome {
+            DecodeOutcome::Decoded(tile) => decoded_tiles.push(tile),
+            DecodeOutcome::SkippedLand(sample) => {
+                skipped_tiles += 1;
+                skipped_land_tiles += 1;
+                if skipped_land_samples.len() < 8 {
+                    skipped_land_samples.push(sample);
+                }
+            }
+            DecodeOutcome::SkippedStatic(sample) => {
+                skipped_tiles += 1;
+                skipped_static_tiles += 1;
+                if skipped_static_samples.len() < 8 {
+                    skipped_static_samples.push(sample);
                 }
             }
         }

@@ -8,6 +8,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
+
 use super::support::{patch_header_package_hash64, zstd_compress, zstd_compress_with_dict};
 use super::*;
 
@@ -212,41 +214,52 @@ impl UddpBuilder {
             total: self.files.len(),
         });
 
-        let mut files = Vec::with_capacity(self.files.len());
-        for file in &self.files {
-            let (codec, encoded_payload) = match file.compression {
-                CompressionFlag::None => (Codec::None, file.raw_data.clone()),
-                CompressionFlag::ZstdNoDict => {
-                    let encoded = zstd_compress(&file.raw_data).map_err(BuildError::Io)?;
-                    (Codec::ZstdNoDict, encoded)
-                }
-                CompressionFlag::ZstdDict => {
-                    let dict = dicts_by_type
-                        .get(&file.data_type)
-                        .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
-                    let encoded = zstd_compress_with_dict(&file.raw_data, dict).map_err(BuildError::Io)?;
-                    (Codec::ZstdTypeDict, encoded)
-                }
-                CompressionFlag::Auto => choose_auto_compression(file, dicts_by_type.get(&file.data_type))?,
-            };
+        let compressed_files = self
+            .files
+            .par_iter()
+            .map(|file| -> Result<BuiltFile, BuildError> {
+                let (codec, encoded_payload) = match file.compression {
+                    CompressionFlag::None => (Codec::None, file.raw_data.clone()),
+                    CompressionFlag::ZstdNoDict => {
+                        let encoded = zstd_compress(&file.raw_data).map_err(BuildError::Io)?;
+                        (Codec::ZstdNoDict, encoded)
+                    }
+                    CompressionFlag::ZstdDict => {
+                        let dict = dicts_by_type
+                            .get(&file.data_type)
+                            .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
+                        let encoded =
+                            zstd_compress_with_dict(&file.raw_data, dict).map_err(BuildError::Io)?;
+                        (Codec::ZstdTypeDict, encoded)
+                    }
+                    CompressionFlag::Auto => {
+                        choose_auto_compression(file, dicts_by_type.get(&file.data_type))?
+                    }
+                };
 
-            // The packed locator stores only a non-negative `raw_size - stored_size`
-            // delta. If compression grows the payload, the file must fall back to raw
-            // storage even when the caller requested compression explicitly.
-            let (codec, encoded_payload) = if codec == Codec::None || encoded_payload.len() <= file.raw_data.len() {
-                (codec, encoded_payload)
-            } else {
-                (Codec::None, file.raw_data.clone())
-            };
+                // The packed locator stores only a non-negative `raw_size - stored_size`
+                // delta. If compression grows the payload, the file must fall back to raw
+                // storage even when the caller requested compression explicitly.
+                let (codec, encoded_payload) =
+                    if codec == Codec::None || encoded_payload.len() <= file.raw_data.len() {
+                        (codec, encoded_payload)
+                    } else {
+                        (Codec::None, file.raw_data.clone())
+                    };
 
-            files.push(BuiltFile {
-                key: file.key,
-                data_type: file.data_type,
-                codec,
-                raw_size: file.raw_data.len() as u32,
-                encoded_payload,
-            });
+                Ok(BuiltFile {
+                    key: file.key,
+                    data_type: file.data_type,
+                    codec,
+                    raw_size: file.raw_data.len() as u32,
+                    encoded_payload,
+                })
+            })
+            .collect::<Vec<_>>();
 
+        let mut files = Vec::with_capacity(compressed_files.len());
+        for built_file in compressed_files {
+            files.push(built_file?);
             completed += 1;
             progress(BuildProgress {
                 phase: BuildProgressPhase::CompressingFiles,

@@ -5841,6 +5841,7 @@ dependencies = [
  "env_logger",
  "image",
  "indicatif",
+ "rayon",
  "uddconv",
  "uocf",
 ]

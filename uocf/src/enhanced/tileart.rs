@@ -511,17 +511,8 @@ impl TileArtEntry {
                         string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
                     {
                         let mut item = TextureItem::default();
-                        if str.contains("Data\\WorldArt\\") {
-                            item.texture_type = TextureType::WorldArt;
-                        } else if str.contains("Data\\TileArtLegacy\\") {
-                            item.texture_type = TextureType::TileArtLegacy;
-                        } else if str.contains("Data\\TileArtEnhanced\\") {
-                            item.texture_type = TextureType::TileArtEnhanced;
-                        }
-
-                        let numeric_part =
-                            str.chars().filter(|c| c.is_digit(10)).collect::<String>();
-                        if let Ok(id) = numeric_part.parse() {
+                        item.texture_type = classify_texture_path(&str);
+                        if let Some(id) = extract_texture_id_from_path(&str) {
                             item.id = id;
                         }
                         item.path = str.to_string();
@@ -580,15 +571,81 @@ impl TileArtEntry {
         offset: u32,
         string_dictionary: &UoStringDictionary,
     ) -> Option<u32> {
-        if let Some(str_path) = string_dictionary.get_string((offset - 1) as usize) {
-            let numeric_part = str_path
-                .chars()
-                .filter(|c| c.is_digit(10))
-                .collect::<String>();
-            if let Ok(id) = numeric_part.parse() {
-                return Some(id);
-            }
-        }
-        None
+        string_dictionary
+            .get_string((offset - 1) as usize)
+            .and_then(extract_texture_id_from_path)
+    }
+}
+
+fn classify_texture_path(path: &str) -> TextureType {
+    let normalized = normalize_dictionary_path(path);
+    if normalized.contains("data\\worldart\\") {
+        TextureType::WorldArt
+    } else if normalized.contains("data\\tileartlegacy\\") {
+        TextureType::TileArtLegacy
+    } else if normalized.contains("data\\tileartenhanced\\") {
+        TextureType::TileArtEnhanced
+    } else {
+        TextureType::Undefined
+    }
+}
+
+fn extract_texture_id_from_path(path: &str) -> Option<u32> {
+    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+    let stem = file_name.split('.').next().unwrap_or(file_name);
+
+    stem.split('_')
+        .next()
+        .and_then(extract_first_digit_run)
+        .or_else(|| extract_first_digit_run(stem))
+}
+
+fn normalize_dictionary_path(path: &str) -> String {
+    path.replace('/', "\\").to_ascii_lowercase()
+}
+
+fn extract_first_digit_run(segment: &str) -> Option<u32> {
+    let start = segment.find(|c: char| c.is_ascii_digit())?;
+    let digits = segment[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    (!digits.is_empty()).then_some(digits)?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tileart_extract_texture_id_normalizes_dictionary_name_patterns() {
+        assert_eq!(
+            extract_texture_id_from_path("Data\\WorldArt\\00000002_ankh.tga"),
+            Some(2)
+        );
+        assert_eq!(
+            extract_texture_id_from_path("Data\\TileArtLegacy\\3.tga"),
+            Some(3)
+        );
+        assert_eq!(
+            extract_texture_id_from_path("Data/TileArtEnhanced/02000540_Sand_Cliff_EW_A.tga"),
+            Some(2000540)
+        );
+    }
+
+    #[test]
+    fn tileart_classify_texture_path_normalizes_case_and_slashes() {
+        assert_eq!(
+            classify_texture_path("data/worldart/00000002_ankh.tga"),
+            TextureType::WorldArt
+        );
+        assert_eq!(
+            classify_texture_path("DATA\\TILEARTLEGACY\\3.tga"),
+            TextureType::TileArtLegacy
+        );
+        assert_eq!(
+            classify_texture_path("Data/TileArtEnhanced/00000004_tree.tga"),
+            TextureType::TileArtEnhanced
+        );
     }
 }

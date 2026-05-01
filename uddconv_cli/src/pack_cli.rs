@@ -307,13 +307,29 @@ pub fn run() -> eyre::Result<()> {
                 &EcLandAtlasOptions { atlas_width, atlas_height, gutter, use_bc7: bc7 },
             )?;
             println!(
-                "TerrainDefinition collapse: {} entries, {} alias refs, {} unique alias slots, {} selected textures, {} unique packed textures.",
+                "TerrainDefinition raw texture packing: {} entries, {} alias refs, {} unique alias slots, {} source textures, {} selected textures, {} unique packed textures.",
                 summary.terrain_entry_count,
                 summary.terrain_alias_ref_count,
                 summary.unique_alias_slot_count,
+                summary.unique_source_texture_count,
                 summary.unique_texture_selection_count,
                 summary.unique_packed_texture_count,
             );
+            if summary.ignored_source_texture_ids.is_empty() {
+                println!("Ignored terrain source textures: none");
+            } else {
+                let ignored = summary
+                    .ignored_source_texture_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "Ignored terrain source textures ({}): {}",
+                    summary.ignored_source_texture_ids.len(),
+                    ignored
+                );
+            }
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
                 summary.page_count,
