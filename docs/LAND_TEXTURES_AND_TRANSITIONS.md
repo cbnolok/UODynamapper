@@ -203,6 +203,13 @@ For future `ec_land` and `ec_art` packaging, use this policy:
 
 Long-term, a shared EC texture pool with separate semantic lookup tables would be cleaner than pretending all ids are exclusive to one domain.
 
+Current branch direction:
+
+- treat EC `Unused1` as the primary land hint when building the new semantic translation table
+- if `Unused1` is absent, fall back to shader/type, ownership, and terrain-family hints
+- keep `runtime_material_id_overrides.toml` narrow and runtime-only
+- use `TerrainTranscode.json` as the starting point for the hand-tuned Classic land family table
+
 ## 7. Renderer Guidance
 
 Recommended interpretation for future work:
@@ -216,3 +223,5 @@ Recommended interpretation for future work:
   - static world art sprites
 
 This distinction matters for both fidelity and package design.
+
+Future packaging work is expected to split EC textures into land, art, and auxiliary layer outputs, so this doc should be read as the semantic-ownership reference for those outputs rather than a statement that the current package layout is final.

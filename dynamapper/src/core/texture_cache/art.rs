@@ -96,10 +96,13 @@ impl ArtTextureLoader {
         )?;
 
         let metadata = self.tilemeta.as_ref().and_then(|tilemeta| tilemeta.item_tile(art_id));
+        let texture_id = metadata
+            .and_then(|item| (item.cc_texture_id != 0 || art_id == 0).then_some(item.cc_texture_id))
+            .unwrap_or(art_id);
         Ok(Some(LoadedArtTexture {
             art_id,
             source: ClientTextureSource::Cc,
-            texture_id: metadata.map(|item| item.cc_texture_id).unwrap_or(art_id),
+            texture_id,
             sample_start_x: metadata.map(|item| item.cc_start_x).unwrap_or(0),
             sample_start_y: metadata.map(|item| item.cc_start_y).unwrap_or(0),
             offset_x: metadata.map(|item| item.cc_offset_x).unwrap_or(0),

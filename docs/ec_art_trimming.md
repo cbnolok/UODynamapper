@@ -2,6 +2,8 @@
 
 This note documents the cropped Enhanced Client static-art workflow and the matching tilemeta update rules.
 
+The current packer trims each art entry after applying its sampling window. The active design direction is to keep the original large source texture intact and apply sampling windows at runtime, so this document should be treated as the description of current behavior, not the final target.
+
 ## Rules
 
 - Cropping is per art entry, not per shared decoded source texture.
@@ -9,6 +11,7 @@ This note documents the cropped Enhanced Client static-art workflow and the matc
   1. apply the tileart sampling window from `start_x/start_y/end_x/end_y`
   2. alpha-trim inside that window
 - Two art ids may share the same `texture_id` while sampling different windows from it, so trimming one window must not rewrite or constrain another window.
+- That shared-source rule is why the current crop path exists, but it is also why the future full-source packing approach is attractive: it avoids scattering one large source across multiple atlas pages.
 
 ## Why Data Is Not Lost
 
@@ -39,3 +42,5 @@ This note documents the cropped Enhanced Client static-art workflow and the matc
 - Cropped EC art packing reports the number of cropped art slots.
 - When `--uddp-dir` is used, the command also shows an `updating tilemeta` progress bar while rebuilding the derived `metadata/items.bin` payload.
 - After rewriting the derived cropped tilemeta package, the command prints how many item offsets were updated and reminds the user that the raw tilemeta package was left untouched.
+
+If a future branch removes cropped-source packing entirely, this file should be rewritten to describe the runtime sampling-window model instead of the current build-time crop path.

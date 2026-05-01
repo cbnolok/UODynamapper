@@ -2,6 +2,8 @@
 
 This document describes the structure of custom binary `.uddp` formats used by UODynamapper for fast parsing/ram/vram upload and fast rendering. All `.uddp` files are packaged using the core `UddpBuilder` and compressed (typically with `ZstdNoDict`), containing multiple virtual files (metadata tables and texture payloads).
 
+The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
+
 ---
 
 ## 1. `tilemeta.uddp` (legacy `unified_tiledata.uddp`)
@@ -9,6 +11,8 @@ This document describes the structure of custom binary `.uddp` formats used by U
 This package merges Classic Client (CC) physical tile properties and Enhanced Client (EC) rendering definitions into a zero-copy, tightly packed binary.
 
 `tilemeta.uddp` is the preferred package name. `unified_tiledata.uddp` remains a legacy-compatible name for older tooling and packages.
+
+The current wire format stores CC and EC texture-window fields side by side, but CC and EC behavior flags are still collapsed into one unified bitmask. Future work may split those fields so classic behavior and EC behavior can be preserved independently.
 
 **Virtual Files:**
 - `metadata/land.bin`: Dense array of `UnifiedLandTile` structs.
@@ -23,7 +27,7 @@ Represents terrain data.
 | 0x04 | `u16` | `texture_id` | The texture index. |
 | 0x06 | `u8` | `tile_type` | Routing type (0=Standard, 1=Solid, 2=Liquid). |
 | 0x07 | `u8` | `_pad1` | Padding to maintain alignment. |
-| 0x08 | `u64` | `flags` | The 64-bit unified `TaeFlag` bitmask. |
+| 0x08 | `u64` | `flags` | The 64-bit unified `TaeFlag` bitmask. This is the current wire format, but CC and EC flag semantics are treated separately in the planned schema. |
 | 0x10 | `[u8; 4]` | `radar_color` | RGBA values representing minimap colors. |
 | 0x14 | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 
@@ -37,7 +41,7 @@ Represents static map items and artwork.
 | 0x05 | `u8` | `quality` | Item quality (or Layer / Light ID). |
 | 0x06 | `u8` | `quantity` | Stack amount or equipment struct ID. |
 | 0x07 | `u8` | `hue_extra` | Supplementary hue data. |
-| 0x08 | `u64` | `flags` | The 64-bit unified `TaeFlag` bitmask. |
+| 0x08 | `u64` | `flags` | The 64-bit unified `TaeFlag` bitmask. This is the current wire format, but CC and EC flag semantics are treated separately in the planned schema. |
 | 0x10 | `u16` | `anim_id` | Animation mapping ID. |
 | 0x12 | `u8` | `stacking_offset` | Visual Z-offset when stacked. |
 | 0x13 | `u8` | `value` | Item value. |
@@ -59,12 +63,16 @@ Represents static map items and artwork.
 
 When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped art payload. `ec_offset_x` and `ec_offset_y` remain the original EC draw offsets.
 
+Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
+
 ---
 
 ## 2. `cc_art.uddp`, `ec_art.uddp`, `ec_art_cropped.uddp`, and `ec_land.uddp`
 
 These are GPU texture atlases packed into fixed-size pages to avoid texture array limits.
 `cc_art` packages Classic Art sprites, `ec_art` packages Enhanced Client Art sprites, `ec_art_cropped` packages the cropped variant of the same EC static-art layout, and `ec_land` packages Enhanced Client Terrain Textures.
+
+The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
 Do not use lossy BC7 compression for art tiles.
 
 **Virtual Files:**

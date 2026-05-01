@@ -320,7 +320,7 @@ fn build_tilemeta_tables_from_sources(
             ec_start_y: 0,
             ec_offset_x: 0,
             ec_offset_y: 0,
-            cc_texture_id: 0,
+            cc_texture_id: tile.tile_id as u32,
             cc_start_x: 0,
             cc_start_y: 0,
             cc_offset_x: 0,
@@ -655,5 +655,17 @@ mod tests {
         .expect("adjust EC sampling start");
 
         assert_eq!(adjusted, (7, 11));
+    }
+
+    #[test]
+    fn unified_item_defaults_cc_texture_to_owning_tile_id() {
+        let tile_id = 1234u32;
+        let item = UnifiedItemTile {
+            tile_id,
+            cc_texture_id: tile_id,
+            ..UnifiedItemTile::zeroed()
+        };
+
+        assert_eq!(item.cc_texture_id, tile_id);
     }
 }
