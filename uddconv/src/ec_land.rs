@@ -276,6 +276,14 @@ impl EcLandPackage {
         })
     }
 
+    pub fn set_transcode(&mut self, transcode: HashMap<u32, u32>) {
+        self.transcode = transcode;
+    }
+
+    pub fn transcode(&self) -> &HashMap<u32, u32> {
+        &self.transcode
+    }
+
     pub fn package(&self) -> &UddpReader {
         &self.package
     }

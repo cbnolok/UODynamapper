@@ -5,13 +5,13 @@ use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
 //use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uddconv::tilemeta::TileMetaPackage;
 use uocf::classic::tiledata;
 use uocf::classic::{land_texture, map};
-use std::collections::HashMap;
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -193,15 +193,16 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let mut map_planes: Vec<Option<map::MapPlane>> = std::iter::repeat_with(|| None)
         .take((MAX_MAP_INDEX + 1) as usize)
         .collect::<Vec<_>>();
-    let mut statics_stores: Vec<Option<Arc<uocf::classic::statics::StaticsStore>>> = std::iter::repeat_with(|| None)
-        .take((MAX_MAP_INDEX + 1) as usize)
-        .collect::<Vec<_>>();
-        
+    let mut statics_stores: Vec<Option<Arc<uocf::classic::statics::StaticsStore>>> =
+        std::iter::repeat_with(|| None)
+            .take((MAX_MAP_INDEX + 1) as usize)
+            .collect::<Vec<_>>();
+
     for map_plane_index in 0..=MAX_MAP_INDEX {
         if map_plane_index != settings.core.world.start_p.m as u32 {
             continue;
         }
-        
+
         let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
         if map_file.exists() {
             log_source_choice(
@@ -221,7 +222,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             let map_plane =
                 map::MapPlane::init_with_size(map_file, map_plane_index, map_size_override)
                     .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
-                    
+
             let statics_idx_file = uo_path.join(format!("staidx{map_plane_index}.mul"));
             let statics_file = uo_path.join(format!("statics{map_plane_index}.mul"));
             if statics_idx_file.exists() && statics_file.exists() {
@@ -236,13 +237,17 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                     &statics_file,
                     map_plane.size_blocks.width * 8,
                     map_plane.size_blocks.height * 8,
-                ).unwrap_or_else(|_| panic!("Error initializing statics reader for plane {map_plane_index}"));
-                
-                let store = reader.load_all()
-                    .unwrap_or_else(|_| panic!("Error loading statics for plane {map_plane_index}"));
+                )
+                .unwrap_or_else(|_| {
+                    panic!("Error initializing statics reader for plane {map_plane_index}")
+                });
+
+                let store = reader.load_all().unwrap_or_else(|_| {
+                    panic!("Error loading statics for plane {map_plane_index}")
+                });
                 statics_stores[map_plane_index as usize] = Some(Arc::new(store));
             }
-                    
+
             map_planes[map_plane_index as usize] = Some(map_plane);
         }
     }
@@ -324,7 +329,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     };
 
     let ec_land_path = resolve_optional_uddp_path(&udd_path, &uo_path, "ec_land.uddp");
-    let ec_land_package = if let Some(ec_land_path) = ec_land_path {
+    let mut ec_land_package = if let Some(ec_land_path) = ec_land_path {
         log_source_choice(
             &lg,
             "enhanced land package",
@@ -357,22 +362,35 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
-    let transcode_path = Path::new("assets/cc_ec_convtables/TerrainTranscode.kdl");
+    let asset_root = crate::core::constants::valid_asset_dir();
+    let transcode_path = asset_root.join("cc_ec_convtables/TerrainTranscode.kdl");
+    
     if transcode_path.exists() {
-        match uddconv::cc_ec_conv::TerrainTranscode::load(transcode_path) {
+        lg(&format!("Loading TerrainTranscode.kdl from: {}", transcode_path.display()));
+        match uddconv::cc_ec_conv::TerrainTranscode::load(&transcode_path) {
             Ok(transcode) => {
-                lg("Loaded TerrainTranscode.kdl");
-                commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode.to_map())));
+                lg("Loaded TerrainTranscode.kdl (loose file)");
+                let transcode_map = transcode.to_map();
+                
+                // Apply override to EC land package if present
+                if let Some(ec_land) = ec_land_package.as_mut() {
+                    lg("Applying loose TerrainTranscode.kdl as override to EC land package.");
+                    ec_land.set_transcode(transcode_map.clone());
+                }
+
+                commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode_map)));
             }
             Err(e) => {
                 bevy::log::error!("Failed to load TerrainTranscode.kdl: {e}");
             }
         }
+    } else {
+        lg(&format!("TerrainTranscode.kdl not found at {}", transcode_path.display()));
     }
 
-    let definition_path = Path::new("assets/cc_ec_convtables/TerrainDefinition.kdl");
+    let definition_path = asset_root.join("cc_ec_convtables/TerrainDefinition.kdl");
     if definition_path.exists() {
-        match uddconv::cc_ec_conv::TerrainDefinitionKdl::load(definition_path) {
+        match uddconv::cc_ec_conv::TerrainDefinitionKdl::load(&definition_path) {
             Ok(definition) => {
                 lg("Loaded TerrainDefinition.kdl");
                 commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
@@ -381,6 +399,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 bevy::log::error!("Failed to load TerrainDefinition.kdl: {e}");
             }
         }
+    } else {
+        lg(&format!("TerrainDefinition.kdl not found at {}", definition_path.display()));
     }
 
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {

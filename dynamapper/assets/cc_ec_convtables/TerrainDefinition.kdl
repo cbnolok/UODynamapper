@@ -747,3 +747,356 @@ d 197 "Solid"
 d 198 "Solid"
 d 199 "Solid"
 d 200 "Solid"
+
+// --- TODO: Missing definitions identified from TileDictionary.bin ---
+
+// TODO: Unknown (Check transcode context)
+// d 17 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 82 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 83 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 84 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 85 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 86 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 87 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 98 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 99 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 100 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 101 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 102 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 103 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 110 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 111 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 112 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 113 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 114 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 115 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 116 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 117 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 118 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 120 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 121 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 122 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 123 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 124 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 125 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 126 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 127 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 128 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 130 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 131 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 132 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 133 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 134 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 135 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 136 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 137 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 138 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 139 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 140 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 141 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 142 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 143 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 144 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Rock hole
+// d 154 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 160 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 161 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 162 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 163 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Unknown (Check transcode context)
+// d 169 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 172 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 173 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 174 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 175 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 176 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 177 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 178 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 179 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 180 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 181 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 182 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 183 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 184 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 185 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 186 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 187 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 188 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition (ACID TODO)
+// d 189 "Solid" {
+//     t0 00000000 1
+// }
+

@@ -47,12 +47,14 @@ impl MaterialExtension for LandMaterialExtension {
         "shaders/worldmap/land/main.wgsl".into()
     }
 
+    /*
     fn deferred_vertex_shader() -> ShaderRef {
         "shaders/worldmap/land/main.wgsl".into()
     }
     fn deferred_fragment_shader() -> ShaderRef {
         "shaders/worldmap/land/main.wgsl".into()
     }
+    */
 
     fn enable_prepass() -> bool {
         false
