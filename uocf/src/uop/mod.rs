@@ -4,8 +4,6 @@ pub mod file;
 pub mod package;
 pub mod hash;
 pub mod hash_bruteforce;
-#[cfg(test)]
-mod tests;
 pub mod compression;
 
 pub use compression::mythic_decompress;

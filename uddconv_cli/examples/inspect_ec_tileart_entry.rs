@@ -5,7 +5,7 @@ use color_eyre::eyre::{self, WrapErr};
 use uocf::enhanced::tile_database::ArtDefinition;
 
 fn find_string_dictionary_path(ecdir: &PathBuf) -> eyre::Result<PathBuf> {
-    for file_name in ["string_dictionary.uop", "string_Wdictionary.uop"] {
+    for file_name in ["string_dictionary.uop"] {
         let path = ecdir.join(file_name);
         if path.exists() {
             return Ok(path);
@@ -13,7 +13,7 @@ fn find_string_dictionary_path(ecdir: &PathBuf) -> eyre::Result<PathBuf> {
     }
 
     eyre::bail!(
-        "missing string_dictionary.uop or string_Wdictionary.uop in {}",
+        "missing string_dictionary.uop in {}",
         ecdir.display()
     )
 }

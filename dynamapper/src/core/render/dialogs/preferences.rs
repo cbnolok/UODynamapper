@@ -1,7 +1,7 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
+    configs::settings::{AntiAliasingMode, ClientTextureSource},
     core::render::{dialogs, scene::camera::UiCameraResource},
-    external_data::settings::{AntiAliasingMode, ClientTextureSource},
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
@@ -28,6 +28,7 @@ pub struct PreferencesDialogState {
     pub player_position_scale: f32,
     pub sysmessages_scale: f32,
     pub performance_overlay_scale: f32,
+    pub cursor_position_scale: f32,
     /// VSync toggle (synced from SectGraphics).
     pub vsync: bool,
     pub anti_aliasing: AntiAliasingMode,
@@ -38,6 +39,9 @@ pub struct PreferencesDialogState {
     /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
     pub texture_reconstruction: u32,
     pub perspective_camera: bool,
+    pub enable_statics: bool,
+    /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
+    pub apply_timer: Timer,
 }
 
 impl Default for PreferencesDialogState {
@@ -61,6 +65,7 @@ impl Default for PreferencesDialogState {
             player_position_scale: 1.0,
             sysmessages_scale: 1.0,
             performance_overlay_scale: 1.0,
+            cursor_position_scale: 1.0,
             vsync: false,
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
@@ -68,6 +73,12 @@ impl Default for PreferencesDialogState {
             texture_filtering: 0,
             texture_reconstruction: 0,
             perspective_camera: false,
+            enable_statics: true,
+            apply_timer: {
+                let mut t = Timer::from_seconds(0.3, TimerMode::Once);
+                t.pause();
+                t
+            },
         }
     }
 }
@@ -117,6 +128,7 @@ fn sys_sync_settings_to_state(
         state.player_position_scale = settings.app.window.player_position_scale;
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
+        state.cursor_position_scale = settings.app.window.cursor_position_scale;
         state.vsync = settings.graphics.vsync;
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
@@ -124,6 +136,7 @@ fn sys_sync_settings_to_state(
         state.texture_filtering = settings.graphics.texture_filtering;
         state.texture_reconstruction = settings.graphics.texture_reconstruction;
         state.perspective_camera = settings.app.window.perspective_camera;
+        state.enable_statics = settings.worldmap_rendering.enable_statics;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -153,7 +166,75 @@ pub fn sys_render_preferences_dialog(
     mut framepace: ResMut<FramepaceSettings>,
     mut settings: ResMut<Settings>,
     mut windows_q: Query<&mut Window>,
+    time: Res<Time>,
 ) {
+    state.apply_timer.tick(time.delta());
+
+    if state.apply_timer.just_finished() {
+        // ---- Sync UI state to Settings resource ----
+        // This is debounced via state.apply_timer to avoid "scattering" during slider manipulation.
+
+        if (settings.as_ref().app.input.movement_speed_multiplier
+            - state.movement_speed_multiplier)
+            .abs()
+            > 0.001
+        {
+            settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
+        }
+        if settings.as_ref().app.input.smooth_movement != state.smooth_movement {
+            settings.app.input.smooth_movement = state.smooth_movement;
+        }
+        if settings.as_ref().core.world.hide_player != state.hide_player {
+            settings.core.world.hide_player = state.hide_player;
+        }
+        if settings.as_ref().app.performance.show_overlay != state.show_overlay {
+            settings.app.performance.show_overlay = state.show_overlay;
+        }
+        if settings.as_ref().app.performance.frame_limit_enabled != state.frame_limit_enabled {
+            settings.app.performance.frame_limit_enabled = state.frame_limit_enabled;
+        }
+        let target_fps = FPS_PRESETS[state.fps_preset_idx];
+        if settings.as_ref().app.performance.target_fps != target_fps {
+            settings.app.performance.target_fps = target_fps;
+        }
+        if settings.as_ref().app.window.free_camera != state.free_camera {
+            settings.app.window.free_camera = state.free_camera;
+        }
+        if settings.as_ref().app.window.perspective_camera != state.perspective_camera {
+            settings.app.window.perspective_camera = state.perspective_camera;
+        }
+        if settings.as_ref().worldmap_rendering.enable_statics != state.enable_statics {
+            settings.worldmap_rendering.enable_statics = state.enable_statics;
+        }
+        if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
+            settings.app.window.ui_scale = state.ui_scale;
+        }
+        if (settings.as_ref().app.window.player_position_scale - state.player_position_scale)
+            .abs()
+            > 0.001
+        {
+            settings.app.window.player_position_scale = state.player_position_scale;
+        }
+        if (settings.as_ref().app.window.performance_overlay_scale
+            - state.performance_overlay_scale)
+            .abs()
+            > 0.001
+        {
+            settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
+        }
+        if (settings.as_ref().app.window.cursor_position_scale - state.cursor_position_scale)
+            .abs()
+            > 0.001
+        {
+            settings.app.window.cursor_position_scale = state.cursor_position_scale;
+        }
+        if (settings.as_ref().app.window.sysmessages_scale - state.sysmessages_scale).abs()
+            > 0.001
+        {
+            settings.app.window.sysmessages_scale = state.sysmessages_scale;
+        }
+    }
+
     if !state.open {
         return;
     }
@@ -352,13 +433,25 @@ pub fn sys_render_preferences_dialog(
                     // ---- Movement Speed ----
                     ui.horizontal(|ui| {
                         ui.label("Move Speed:");
-                        ui.add(egui::Slider::new(
-                            &mut state.movement_speed_multiplier,
-                            0.1..=500.0,
-                        ));
+                        if ui
+                            .add(egui::Slider::new(
+                                &mut state.movement_speed_multiplier,
+                                0.1..=500.0,
+                            ))
+                            .changed()
+                        {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
                     });
 
-                    ui.checkbox(&mut state.smooth_movement, "Smooth movement");
+                    if ui
+                        .checkbox(&mut state.smooth_movement, "Smooth movement")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
                     ui.label(
                         egui::RichText::new("Interpolates the player between integer tile steps.")
                             .small()
@@ -366,11 +459,29 @@ pub fn sys_render_preferences_dialog(
                     );
 
                     // ---- Visibility ----
-                    ui.checkbox(&mut state.hide_player, "Hide Player Object");
-                    ui.checkbox(&mut state.show_overlay, "Show Performance Overlay");
+                    if ui
+                        .checkbox(&mut state.hide_player, "Hide Player Object")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
+                    if ui
+                        .checkbox(&mut state.show_overlay, "Show Performance Overlay")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
 
                     ui.add_space(4.0);
-                    ui.checkbox(&mut state.free_camera, "Free Camera Mode");
+                    if ui
+                        .checkbox(&mut state.free_camera, "Free Camera Mode")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
                     ui.label(
                         egui::RichText::new("Arrows to pan, Shift+Arrows to elevation.")
                             .small()
@@ -378,7 +489,20 @@ pub fn sys_render_preferences_dialog(
                     );
 
                     ui.add_space(4.0);
-                    ui.checkbox(&mut state.perspective_camera, "Perspective Camera Mode");
+                    if ui
+                        .checkbox(&mut state.perspective_camera, "Perspective Camera Mode")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
+                    if ui
+                        .checkbox(&mut state.enable_statics, "Render Static Items")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
                 }
 
                 // ====================== UI TAB ========================
@@ -388,9 +512,12 @@ pub fn sys_render_preferences_dialog(
 
                     ui.horizontal(|ui| {
                         ui.label("UI Scale:");
-                        let response = ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0));
-                        if response.drag_stopped() {
-                            settings.app.window.ui_scale = state.ui_scale;
+                        if ui
+                            .add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0))
+                            .changed()
+                        {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
                         }
                     });
 
@@ -407,7 +534,8 @@ pub fn sys_render_preferences_dialog(
                             ))
                             .changed()
                         {
-                            settings.app.window.player_position_scale = state.player_position_scale;
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
                         }
                     });
                     ui.horizontal(|ui| {
@@ -416,7 +544,8 @@ pub fn sys_render_preferences_dialog(
                             .add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0))
                             .changed()
                         {
-                            settings.app.window.sysmessages_scale = state.sysmessages_scale;
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
                         }
                     });
                     ui.horizontal(|ui| {
@@ -428,66 +557,28 @@ pub fn sys_render_preferences_dialog(
                             ))
                             .changed()
                         {
-                            settings.app.window.performance_overlay_scale =
-                                state.performance_overlay_scale;
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Cursor Position:");
+                        if ui
+                            .add(egui::Slider::new(
+                                &mut state.cursor_position_scale,
+                                0.5..=3.0,
+                            ))
+                            .changed()
+                        {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
                         }
                     });
                 }
                 _ => {}
             }
 
-            // ---- Sync UI state to Settings resource ----
-            // Only write when values actually differ to avoid triggering the debounced save timer.
-            if (settings.as_ref().app.input.movement_speed_multiplier
-                - state.movement_speed_multiplier)
-                .abs()
-                > 0.001
-            {
-                settings.app.input.movement_speed_multiplier = state.movement_speed_multiplier;
-            }
-            if settings.as_ref().app.input.smooth_movement != state.smooth_movement {
-                settings.app.input.smooth_movement = state.smooth_movement;
-            }
-            if settings.as_ref().core.world.hide_player != state.hide_player {
-                settings.core.world.hide_player = state.hide_player;
-            }
-            if settings.as_ref().app.performance.show_overlay != state.show_overlay {
-                settings.app.performance.show_overlay = state.show_overlay;
-            }
-            if settings.as_ref().app.performance.frame_limit_enabled != state.frame_limit_enabled {
-                settings.app.performance.frame_limit_enabled = state.frame_limit_enabled;
-            }
-            let target_fps = FPS_PRESETS[state.fps_preset_idx];
-            if settings.as_ref().app.performance.target_fps != target_fps {
-                settings.app.performance.target_fps = target_fps;
-            }
-            if settings.as_ref().app.window.free_camera != state.free_camera {
-                settings.app.window.free_camera = state.free_camera;
-            }
-            if settings.as_ref().app.window.perspective_camera != state.perspective_camera {
-                settings.app.window.perspective_camera = state.perspective_camera;
-            }
-            if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
-                settings.app.window.ui_scale = state.ui_scale;
-            }
-            if (settings.as_ref().app.window.player_position_scale - state.player_position_scale)
-                .abs()
-                > 0.001
-            {
-                settings.app.window.player_position_scale = state.player_position_scale;
-            }
-            if (settings.as_ref().app.window.performance_overlay_scale
-                - state.performance_overlay_scale)
-                .abs()
-                > 0.001
-            {
-                settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
-            }
-            if (settings.as_ref().app.window.sysmessages_scale - state.sysmessages_scale).abs()
-                > 0.001
-            {
-                settings.app.window.sysmessages_scale = state.sysmessages_scale;
-            }
+            // (Removed immediate sync block, now handled by debounced timer at the top of the system)
         });
 
     state.open = window_open;

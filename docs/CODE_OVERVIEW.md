@@ -189,6 +189,36 @@ G16: packed metadata
 2. `textureLoad` for deterministic integer lookups of IDs/heights
 3. Neighborhood sampling for bicubic normals/slopes across chunk boundaries
 
+### 2.2.1 EC Texture Resolution Chain (CC ID ➔ EC Atlas Coordinates)
+
+**The Problem**:
+We are rendering legacy maps (`map.mul`), which only contain **CC Tile IDs** (e.g., Tile `168` is Water). The Enhanced Client (EC) textures use completely different IDs, and grouping concepts like "Materials". We need a bridge between them.
+
+To make this efficient, the resolution process is split into two phases: **Build Time** (packing the assets) and **Runtime** (drawing the screen).
+
+#### Phase 1: Build Time (`uddconv_cli build-ec-land`)
+This phase runs once to create `ec_land.uddp`. It completely eliminates the need for the game engine to understand `.uop` files or `.tga` images.
+
+1. **Reads `TerrainDefinition.uop`**: This file is the EC client's blueprint. It defines conceptual "Materials" (e.g., Material `5` is Water) and says exactly which texture hash to use for it. It also declares "Aliases" (e.g., "These 50 dirt materials all use the exact same dirt texture").
+2. **Packs Atlases**: The builder extracts the actual images from `Textures.uop`, deduplicates them using the alias data, and packs them tightly into giant texture arrays (the UDDP "Pages").
+3. **Bakes Slots**: It records the exact physical coordinates `[Page Index, X, Y, Width, Height]` of where each image landed in the atlas. This record is called a **Slot**.
+4. **Bakes Provenance**: It writes a lightweight table (the `terrain_provenance` array) that maps `EC Material ID ➔ Slot ID`.
+
+#### Phase 2: Runtime (`dynamapper`)
+At runtime, the engine has no knowledge of `Textures.uop` or `TerrainDefinition.uop`. It only uses the fast, pre-baked arrays inside `ec_land.uddp`.
+
+When the engine needs to render CC Tile `168`:
+1. **KDL Translation**: It looks up `168` in `TerrainTranscode.kdl`. The KDL says: *"CC Tile 168 translates to EC Material 5"*. (The KDL contains no file names, only ID-to-ID translations).
+2. **Provenance Lookup**: It asks the UDDP's provenance array: *"Which Slot belongs to Material 5?"*. The provenance array answers: *"Canonical Slot 16426"*.
+3. **Slot Lookup**: It looks up `slots[16426]` to get the physical atlas coordinates (e.g., Page 1, X:1543, Y:1).
+4. **GPU Upload**: Those coordinates are uploaded to the `ec_land_lookup` GPU texture, and the shader draws the pixel perfectly.
+
+#### The Fallback (When KDL is Missing)
+If a CC Tile ID has no entry in `TerrainTranscode.kdl`, the engine skips Step 1. It directly asks the provenance array: *"Do you have any legacy alias named after this CC ID?"* 
+Because the EC client imported many legacy CC textures using their original IDs, the provenance array often successfully returns a Slot ID, allowing unmapped legacy tiles to render flawlessly. If it fails, the tile safely renders blank.
+
+---
+
 ### 2.3 Uniform Management
 
 **Shared Bind Group** (group 3):

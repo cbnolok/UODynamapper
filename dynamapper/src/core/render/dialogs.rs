@@ -40,7 +40,7 @@ impl Plugin for DialogsPlugin {
 }
 
 fn sys_sync_egui_context_scale_factor(
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
     egui_ui_camera: Res<UiCameraResource>,
     mut egui_ctx_settings_q: Query<&mut EguiContextSettings>,
 ) {

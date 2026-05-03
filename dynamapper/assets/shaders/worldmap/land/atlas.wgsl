@@ -63,13 +63,20 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
     );
     let slot = textureLoad(ec_land_lookup, lookup_uv, 0);
     let packed_wh = slot.w;
+    let w = packed_wh & 0xFFFFu;
+    let h = packed_wh >> 16u;
+    
+    if (w == 0u && h == 0u) {
+      return TileUniform(tile_height, 3u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u));
+    }
+    
     return TileUniform(
       tile_height,
       tex_size,
       slot.x,
       0u,
       vec2<u32>(slot.y, slot.z),
-      vec2<u32>(packed_wh & 0xFFFFu, packed_wh >> 16u),
+      vec2<u32>(w, h),
     );
   }
 

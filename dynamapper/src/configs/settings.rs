@@ -72,6 +72,8 @@ pub struct SectWindow {
     pub sysmessages_scale: f32,
     /// Per-overlay scale for the performance overlay.
     pub performance_overlay_scale: f32,
+    /// Per-overlay scale for the cursor position overlay.
+    pub cursor_position_scale: f32,
     pub free_camera: bool,
     pub perspective_camera: bool,
 }
@@ -89,12 +91,18 @@ pub struct SectMaps {
 
 #[derive(Clone, Deserialize, Serialize, Default)]
 pub struct SectWorldMapRendering {
+    #[serde(default = "default_enable_statics")]
+    pub enable_statics: bool,
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
     #[serde(default)]
     pub diagnostics: SectWorldMapDiagnostics,
     #[serde(default)]
     pub shader_simplification: SectWorldMapShaderSimplification,
+}
+
+fn default_enable_statics() -> bool {
+    false
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Default)]

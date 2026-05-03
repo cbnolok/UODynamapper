@@ -436,12 +436,10 @@ fn is_probably_tga(data: &[u8]) -> bool {
     (image_type == 2 || image_type == 10) && data[1] <= 1
 }
 
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        decode_land_tile_from_raw, decode_static_tile_from_raw, LAND_DIAMOND_PIXEL_COUNT,
-        LAND_DIMENSION,
-    };
+    use super::*;
 
     fn rgba_at(pixel_data: &[u8], x: usize, y: usize, width: usize) -> [u8; 4] {
         let offset = (y * width + x) * 4;

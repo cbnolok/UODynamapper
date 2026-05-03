@@ -1,7 +1,7 @@
+use crate::configs::settings::Settings;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
-use crate::external_data::settings::Settings;
 
 #[derive(Component)]
 pub struct PlayerDynamicLight {
@@ -26,7 +26,7 @@ impl Plugin for PlayerDynamicLightPlugin {
 pub fn sys_spawn_dynamic_light(
     mut commands: Commands,
     //camera_q: Query<&PlayerDynamicLight>,
-    settings: Res<Settings>
+    settings: Res<Settings>,
 ) {
     log_system_add_startup::<PlayerDynamicLightPlugin>(StartupSysSet::SetupSceneStage2, fname!());
     // Camera position relative to the player: a little south east and higher than the player.

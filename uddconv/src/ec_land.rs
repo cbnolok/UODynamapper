@@ -39,7 +39,6 @@ use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use uocf::{
     enhanced::{
-        classic_tile_mapper::ClassicTileMapper,
         terrain_definition::TerrainDefinitionPackage,
         textures::{ECImageFormat, Textures},
     },
@@ -55,10 +54,9 @@ struct TerrainTextureSelection {
     texture_id: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SlotAlias {
-    art_id: u32,
-    canonical_art_id: u32,
+pub struct SlotAlias {
+    pub art_id: u32,
+    pub canonical_art_id: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -71,19 +69,12 @@ struct DecodedLayerTexture {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
-const RUNTIME_MATERIAL_ID_OVERRIDE_MAGIC: [u8; 4] = *b"ELTO";
 /// Bump version when the binary layout of either manifest changes.
 const EC_LAND_METADATA_VERSION: u32 = 2;
 const EC_LAND_TERRAIN_PROVENANCE_VERSION: u32 = 1;
-const EC_LAND_RUNTIME_MATERIAL_ID_OVERRIDE_VERSION: u32 = 1;
-const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
-pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
-pub const TERRAIN_PROVENANCE_ENTRY_PATH: &str = "metadata/terrain_provenance.bin";
-pub const RUNTIME_MATERIAL_ID_OVERRIDE_ENTRY_PATH: &str =
-    "metadata/runtime_material_id_overrides.bin";
-
-const BUNDLED_RUNTIME_MATERIAL_ID_OVERRIDES_TOML: &str =
-    include_str!("../assets/terrain/runtime_material_id_overrides.toml");
+pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
+pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
+pub const UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH: &str = "metadata/terrain_provenance.bin";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -145,21 +136,9 @@ pub struct EcLandTerrainProvenanceRecord {
     pub canonical_slot_id: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EcLandRuntimeMaterialIdOverride {
-    pub terrain_id: u32,
-    pub normalized_material_id: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EcLandRuntimeMaterialIdOverrideSource {
-    PackageMetadata,
-    BundledTomlAsset,
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ArtTileKind {
+pub enum ArtTileKind {
     Land,
     Static,
 }
@@ -174,12 +153,12 @@ impl ArtTileKind {
 }
 
 #[derive(Debug, Clone)]
-struct DecodedArtTile {
-    art_id: u32,
-    kind: ArtTileKind,
-    width: u16,
-    height: u16,
-    rgba: Vec<u8>,
+pub struct DecodedArtTile {
+    pub art_id: u32,
+    pub kind: ArtTileKind,
+    pub width: u16,
+    pub height: u16,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,21 +211,21 @@ impl EcLandSlotRecord {
 }
 
 #[derive(Debug, Clone)]
-struct PlacedTile {
-    art_id: u32,
-    kind: ArtTileKind,
-    page_tile_index: u16,
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
+pub struct PlacedTile {
+    pub art_id: u32,
+    pub kind: ArtTileKind,
+    pub page_tile_index: u16,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 #[derive(Debug, Clone)]
-struct BuiltPage {
-    record: EcLandPageRecord,
-    pixels: Vec<u8>,
-    placed_tiles: Vec<PlacedTile>,
+pub struct BuiltPage {
+    pub record: EcLandPageRecord,
+    pub pixels: Vec<u8>,
+    pub placed_tiles: Vec<PlacedTile>,
 }
 
 pub struct EcLandPackage {
@@ -257,8 +236,7 @@ pub struct EcLandPackage {
     pages: Vec<EcLandPageRecord>,
     slots: Vec<EcLandSlotRecord>,
     terrain_provenance: Vec<EcLandTerrainProvenanceRecord>,
-    runtime_material_id_overrides: Vec<EcLandRuntimeMaterialIdOverride>,
-    runtime_material_id_override_source: EcLandRuntimeMaterialIdOverrideSource,
+    transcode: HashMap<u32, u32>,
 }
 
 impl EcLandPackage {
@@ -269,35 +247,23 @@ impl EcLandPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
+        let page_manifest = read_path_entry(&package, UDDP_PAGE_MANIFEST_ENTRY_VPATH)
             .context("ec_land.uddp missing metadata/pages.bin")?;
-        let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
+        let slot_manifest = read_path_entry(&package, UDDP_SLOT_MANIFEST_ENTRY_VPATH)
             .context("ec_land.uddp missing metadata/slots.bin")?;
-        let terrain_provenance_manifest = read_path_entry(&package, TERRAIN_PROVENANCE_ENTRY_PATH)
-            .context("ec_land.uddp missing metadata/terrain_provenance.bin")?;
-        let runtime_material_id_override_manifest = package
-            .read_file_by_path_hash(xxh64_virtual_path(RUNTIME_MATERIAL_ID_OVERRIDE_ENTRY_PATH));
+        let terrain_provenance_manifest =
+            read_path_entry(&package, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH)
+                .context("ec_land.uddp missing metadata/terrain_provenance.bin")?;
 
         let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
         let terrain_provenance = parse_terrain_provenance_manifest(&terrain_provenance_manifest)?;
-        let (runtime_material_id_overrides, runtime_material_id_override_source) =
-            if let Ok(bytes) = runtime_material_id_override_manifest {
-                (
-                    parse_runtime_material_id_override_manifest(&bytes)?,
-                    EcLandRuntimeMaterialIdOverrideSource::PackageMetadata,
-                )
-            } else {
-                (
-                    load_bundled_runtime_material_id_overrides()?,
-                    EcLandRuntimeMaterialIdOverrideSource::BundledTomlAsset,
-                )
-            };
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
             eyre::bail!("ec_land metadata headers disagree on atlas dimensions or gutter");
         }
 
+        let transcode = read_transcode_from_package(&package).unwrap_or_default();
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -306,8 +272,7 @@ impl EcLandPackage {
             pages,
             slots,
             terrain_provenance,
-            runtime_material_id_overrides,
-            runtime_material_id_override_source,
+            transcode,
         })
     }
 
@@ -339,14 +304,6 @@ impl EcLandPackage {
         &self.terrain_provenance
     }
 
-    pub fn runtime_material_id_overrides(&self) -> &[EcLandRuntimeMaterialIdOverride] {
-        &self.runtime_material_id_overrides
-    }
-
-    pub fn runtime_material_id_override_source(&self) -> EcLandRuntimeMaterialIdOverrideSource {
-        self.runtime_material_id_override_source
-    }
-
     pub fn slot_record(&self, art_id: u32) -> Option<&EcLandSlotRecord> {
         self.slots.get(art_id as usize)
     }
@@ -357,70 +314,81 @@ impl EcLandPackage {
 
     /// Resolves a runtime terrain id to the packed EC land slot the renderer should sample.
     ///
-    /// Real map data uses a mixed namespace here:
-    /// - some cell ids are direct EC land slot ids (canonical or alias slots)
-    /// - some cell ids are TerrainDefinition material ids
+    /// For CC-sourced map data, the terrain id is a CC tile ID. We must apply the transcode
+    /// mapping unconditionally before attempting any EC slot lookups to avoid namespace collisions
+    /// (where a CC tile ID accidentally equals an EC alias slot ID of a different terrain type).
     ///
-    /// Resolution order therefore stays intentionally conservative:
-    /// 1. if `terrain_id` is itself a present packed slot, return it directly.
-    /// 2. if provenance says `terrain_id` is an alias slot, return its first present
-    ///    canonical slot.
-    /// 3. normalize verified mixed-namespace collisions using package metadata or,
-    ///    if missing, the bundled TOML override table.
-    /// 4. if provenance says the normalized id is a material id, return its first
-    ///    present canonical slot, falling back to a present alias slot when needed.
-    pub fn resolve_runtime_slot_id(&self, terrain_id: u32) -> Option<u32> {
-        // Step 1: direct slot hit (covers canonicals and alias-copied slots).
-        if self.present_slot(terrain_id).is_some() {
-            return Some(terrain_id);
+    /// Resolution order:
+    /// Resolves a Classic Client (CC) Tile ID to a packed EC Slot ID (atlas index).
+    ///
+    /// This function implements the CC ➔ EC Texture Resolution Chain:
+    /// 1. **KDL Lookup**: Maps CC Tile ID ➔ EC Material ID (via TerrainTranscode.kdl).
+    /// 2. **Provenance Lookup**: Maps EC Material ID ➔ EC Canonical/Alias Slot ID (via TerrainDefinition.uop data).
+    /// 3. **Slot Mapping**: The returned ID is an index into the UDDP `slots` table, which holds atlas UVs.
+    ///
+    /// # Logic Steps:
+    /// - **Step 1 (Transcode)**: Check if there's an explicit CC➔EC Material mapping. If so,
+    ///   resolve that material to its best available texture slot (Canonical or Alias).
+    /// - **Step 2 (Legacy Alias)**: If no transcode exists, check if the CC ID itself matches
+    ///   a "legacy alias" slot in the EC provenance records.
+    /// - **Step 3 (Direct Hit)**: Check if the CC ID matches a physical slot ID directly
+    ///   (used for legacy textures that kept their original IDs).
+    pub fn resolve_runtime_slot_id(&self, cc_tile_id: u32) -> Option<u32> {
+        // Step 1: Transcode CC -> EC Material -> EC Slot.
+        // This uses TerrainTranscode.kdl mappings.
+        if let Some(&material_id) = self.transcode.get(&cc_tile_id) {
+            let material_records = self
+                .terrain_provenance
+                .iter()
+                .filter(|r| r.material_id == material_id)
+                .collect::<Vec<_>>();
+
+            // Resolve the material ID to a canonical slot using the best alias available.
+            if let Some(slot_id) = material_records
+                .iter()
+                .filter(|record| {
+                    record.alias_slot_id != 0
+                        && record.alias_slot_id != MISSING_SLOT_ID
+                        && self.resolve_provenance_record_slot(record).is_some()
+                })
+                .min_by_key(|record| record.alias_count_index)
+                .and_then(|record| self.resolve_provenance_record_slot(record))
+            {
+                return Some(slot_id);
+            }
+
+            if let Some(slot_id) = material_records
+                .iter()
+                .filter(|record| {
+                    record.alias_slot_id == 0 && self.resolve_provenance_record_slot(record).is_some()
+                })
+                .min_by_key(|record| record.alias_count_index)
+                .and_then(|record| self.resolve_provenance_record_slot(record))
+            {
+                return Some(slot_id);
+            }
         }
 
-        // Step 2: provenance fallback — terrain_id is an alias art tile ID.
+        // Step 2: Legacy Alias mapping.
+        // If CC ID 168 doesn't have a transcode, but a provenance record says Alias 168 ➔ Slot X,
+        // we use Slot X. This handles legacy assets that were ported with original IDs.
         for record in self
             .terrain_provenance
             .iter()
-            .filter(|r| r.alias_slot_id == terrain_id)
+            .filter(|r| r.alias_slot_id == cc_tile_id)
         {
             if let Some(slot_id) = self.resolve_provenance_record_slot(record) {
                 return Some(slot_id);
             }
         }
 
-        let normalized_terrain_id = self.normalize_runtime_material_id_hint(terrain_id);
-
-        // Material-id fallback can be ambiguous because one material may carry
-        // multiple provenance rows, including placeholder alias_slot_id=0 rows.
-        // Prefer resolvable non-zero alias rows before considering zero-alias
-        // placeholder rows, otherwise many low classic ids collapse onto slot 2.
-        let material_records = self
-            .terrain_provenance
-            .iter()
-            .filter(|r| r.material_id == normalized_terrain_id)
-            .collect::<Vec<_>>();
-
-        if let Some(slot_id) = material_records
-            .iter()
-            .filter(|record| {
-                record.alias_slot_id != 0
-                    && record.alias_slot_id != MISSING_SLOT_ID
-                    && self.resolve_provenance_record_slot(record).is_some()
-            })
-            .min_by_key(|record| record.alias_count_index)
-            .and_then(|record| self.resolve_provenance_record_slot(record))
-        {
-            return Some(slot_id);
+        // Step 3: Direct slot hit. The CC tile ID might be exactly the canonical slot ID 
+        // (e.g. for legacy textures like water that share the same ID).
+        if self.present_slot(cc_tile_id).is_some() {
+            return Some(cc_tile_id);
         }
 
         None
-    }
-
-    fn normalize_runtime_material_id_hint(&self, terrain_id: u32) -> u32 {
-        self.runtime_material_id_overrides
-            .binary_search_by_key(&terrain_id, |record| record.terrain_id)
-            .ok()
-            .and_then(|index| self.runtime_material_id_overrides.get(index))
-            .map(|record| record.normalized_material_id)
-            .unwrap_or(terrain_id)
     }
 
     fn resolve_provenance_record_slot(
@@ -479,8 +447,14 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
         eyre::bail!("missing required files: Texture.uop and LegacyTexture.uop not found");
     }
 
-    info!("Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}", out_file.display());
-    println!("Using TerrainDefinition.uop: {}", terrain_definition_path.display());
+    info!(
+        "Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}",
+        out_file.display()
+    );
+    println!(
+        "Using TerrainDefinition.uop: {}",
+        terrain_definition_path.display()
+    );
     if let Some(path) = texture_uop_path.as_ref() {
         println!("Using Texture.uop: {}", path.display());
     }
@@ -527,11 +501,12 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
         .collect::<Vec<_>>();
     let unique_source_texture_count = source_texture_ids.len() as u32;
     let unique_texture_selection_count = selections.len() as u32;
-    let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) = decode_present_tiles(
-        world_textures.as_ref(),
-        legacy_textures.as_ref(),
-        &terrain_definition,
-    )?;
+    let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
+        decode_present_tiles(
+            world_textures.as_ref(),
+            legacy_textures.as_ref(),
+            &terrain_definition,
+        )?;
     let slot_count = land_slot_ids
         .iter()
         .copied()
@@ -551,19 +526,25 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
         &selections,
         &texture_slot_by_texture_id,
     );
-    let runtime_material_id_overrides = load_bundled_runtime_material_id_overrides()?;
 
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
     let terrain_provenance_manifest = serialize_terrain_provenance_manifest(&terrain_provenance)?;
-    let runtime_material_id_override_manifest =
-        serialize_runtime_material_id_override_manifest(&runtime_material_id_overrides)?;
+
+    let transcode_kdl_path = find_first_existing_file(
+        source_dirs,
+        &[
+            "TerrainTranscode.kdl",
+            "cc_ec_convtables/TerrainTranscode.kdl",
+            "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
+        ],
+    );
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
+        virtual_path: Some(UDDP_PAGE_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
         data: &page_manifest,
@@ -571,7 +552,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
+        virtual_path: Some(UDDP_SLOT_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
         data: &slot_manifest,
@@ -579,19 +560,23 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(TERRAIN_PROVENANCE_ENTRY_PATH),
+        virtual_path: Some(UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH),
         path_hash64: None,
         id: None,
         data: &terrain_provenance_manifest,
     })?;
-    package.add_file(AddFileRequest {
-        data_type: DataType::Metadata as u8,
-        compression: UddCompressionFlag::ZstdNoDict,
-        virtual_path: Some(RUNTIME_MATERIAL_ID_OVERRIDE_ENTRY_PATH),
-        path_hash64: None,
-        id: None,
-        data: &runtime_material_id_override_manifest,
-    })?;
+
+    if let Some(transcode_path) = transcode_kdl_path {
+        let transcode_bytes = fs::read(&transcode_path)?;
+        package.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: UddCompressionFlag::ZstdNoDict,
+            virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: &transcode_bytes,
+        })?;
+    }
 
     // Determine the final pixel format and encoding for atlas pages.
     let encoding = if options.use_bc7 {
@@ -623,10 +608,13 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
             .par_iter()
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
-                let encoded = encode_for_vram(&page.pixels, extent, RawImageFormat::Rgba8888, encoding)
-                    .map_err(|e| eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index))?
-                    .into_bytes()
-                    .to_vec();
+                let encoded =
+                    encode_for_vram(&page.pixels, extent, RawImageFormat::Rgba8888, encoding)
+                        .map_err(|e| {
+                            eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
+                        })?
+                        .into_bytes()
+                        .to_vec();
                 pb.inc(1);
                 Ok((page_path, encoded))
             })
@@ -716,7 +704,11 @@ fn build_terrain_provenance_records(
             .copied()
             .unwrap_or(entry.id);
         for alias in &entry.aliases {
-            let provenance_slot_id = if alias.alias == 0 { runtime_slot_id } else { alias.alias };
+            let provenance_slot_id = if alias.alias == 0 {
+                runtime_slot_id
+            } else {
+                alias.alias
+            };
             let selected_texture_id = selected_texture_by_slot
                 .get(&provenance_slot_id)
                 .copied()
@@ -737,7 +729,13 @@ fn build_terrain_provenance_records(
         }
     }
 
-    records.sort_by_key(|record| (record.alias_slot_id, record.material_id, record.alias_count_index));
+    records.sort_by_key(|record| {
+        (
+            record.alias_slot_id,
+            record.material_id,
+            record.alias_count_index,
+        )
+    });
     records
 }
 
@@ -745,7 +743,12 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     terrain_definition: &TerrainDefinitionPackage,
-) -> eyre::Result<(Vec<DecodedArtTile>, Vec<SlotAlias>, HashMap<u32, u32>, Vec<u32>)> {
+) -> eyre::Result<(
+    Vec<DecodedArtTile>,
+    Vec<SlotAlias>,
+    HashMap<u32, u32>,
+    Vec<u32>,
+)> {
     // Pack raw terrain source textures directly. Runtime terrain shading can
     // decide how to combine them later; build-time packing should not flatten
     // layered materials into one representative image.
@@ -771,11 +774,14 @@ fn decode_present_tiles(
         .progress_chars("#>-"));
     let decoded_textures = texture_ids
         .par_iter()
-        .map(|&texture_id| -> eyre::Result<(u32, Option<DecodedLayerTexture>)> {
-            let decoded = decode_layer_texture_rgba(texture_id, world_textures, legacy_textures)?;
-            texture_pb.inc(1);
-            Ok((texture_id, decoded))
-        })
+        .map(
+            |&texture_id| -> eyre::Result<(u32, Option<DecodedLayerTexture>)> {
+                let decoded =
+                    decode_layer_texture_rgba(texture_id, world_textures, legacy_textures)?;
+                texture_pb.inc(1);
+                Ok((texture_id, decoded))
+            },
+        )
         .collect::<Vec<_>>();
     texture_pb.finish_with_message("Unique land textures decoded");
 
@@ -786,11 +792,7 @@ fn decode_present_tiles(
     }
 
     for texture_id in &texture_ids {
-        let Some(decoded) = decoded_texture_cache
-            .get(texture_id)
-            .cloned()
-            .flatten()
-        else {
+        let Some(decoded) = decoded_texture_cache.get(texture_id).cloned().flatten() else {
             ignored_source_texture_ids.push(*texture_id);
             continue;
         };
@@ -850,13 +852,15 @@ fn decode_present_tiles(
             if alias_art_id == canonical_slot_id {
                 continue;
             }
-            aliases.push(SlotAlias { art_id: alias_art_id, canonical_art_id: canonical_slot_id });
+            aliases.push(SlotAlias {
+                art_id: alias_art_id,
+                canonical_art_id: canonical_slot_id,
+            });
         }
     }
     pb.finish_with_message("Land slots aliased");
 
     decoded_tiles.sort_by(|left, right| {
-
         let left_area = left.width as u32 * left.height as u32;
         let right_area = right.width as u32 * right.height as u32;
         right_area
@@ -864,7 +868,12 @@ fn decode_present_tiles(
             .then_with(|| left.art_id.cmp(&right.art_id))
     });
 
-    Ok((decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids))
+    Ok((
+        decoded_tiles,
+        aliases,
+        texture_slot_by_texture_id,
+        ignored_source_texture_ids,
+    ))
 }
 
 fn decode_layer_texture_rgba(
@@ -872,11 +881,14 @@ fn decode_layer_texture_rgba(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
 ) -> eyre::Result<Option<DecodedLayerTexture>> {
-
     let file = if let Some(wt) = world_textures {
         let world_terrain_path = format!("build/worldart/land/{texture_id:08}.dds");
         let world_terrain_hash = uocf::uop::hash::hash_file_name_single(&world_terrain_path);
-        wt.get_from_hash(world_terrain_hash, Some(&world_terrain_path), ECImageFormat::DDS)?
+        wt.get_from_hash(
+            world_terrain_hash,
+            Some(&world_terrain_path),
+            ECImageFormat::DDS,
+        )?
     } else {
         None
     };
@@ -885,7 +897,11 @@ fn decode_layer_texture_rgba(
         if let Some(lt) = legacy_textures {
             let legacy_terrain_path = format!("build/legacyland/{texture_id:08}.dat");
             let legacy_terrain_hash = uocf::uop::hash::hash_file_name_single(&legacy_terrain_path);
-            lt.get_from_hash(legacy_terrain_hash, Some(&legacy_terrain_path), ECImageFormat::DDS)?
+            lt.get_from_hash(
+                legacy_terrain_hash,
+                Some(&legacy_terrain_path),
+                ECImageFormat::DDS,
+            )?
         } else {
             None
         }
@@ -927,7 +943,10 @@ fn decode_layer_texture_rgba(
     Ok(decoded)
 }
 
-fn apply_slot_aliases(slots: &mut [EcLandSlotRecord], aliases: &[SlotAlias]) -> eyre::Result<()> {
+pub fn apply_slot_aliases(
+    slots: &mut [EcLandSlotRecord],
+    aliases: &[SlotAlias],
+) -> eyre::Result<()> {
     for alias in aliases {
         let canonical = *slots
             .get(alias.canonical_art_id as usize)
@@ -950,7 +969,7 @@ fn apply_slot_aliases(slots: &mut [EcLandSlotRecord], aliases: &[SlotAlias]) -> 
     Ok(())
 }
 
-fn pack_tiles_into_pages(
+pub fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
     options: &EcLandAtlasOptions,
@@ -1124,7 +1143,7 @@ fn blit_rgba_tile(
     Ok(())
 }
 
-fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32) -> Vec<u8> {
+pub fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32) -> Vec<u8> {
     // Copy only the occupied top-left rectangle into the stored payload. Readers use
     // the manifest's `used_*` bounds to reconstruct the compact buffer correctly and
     // the slot metadata still points into the original logical atlas coordinate space.
@@ -1142,7 +1161,7 @@ fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32)
     cropped
 }
 
-fn serialize_page_manifest(
+pub fn serialize_page_manifest(
     pages: &[BuiltPage],
     options: &EcLandAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
@@ -1171,7 +1190,7 @@ fn serialize_page_manifest(
     Ok(bytes)
 }
 
-fn serialize_slot_manifest(
+pub fn serialize_slot_manifest(
     slots: &[EcLandSlotRecord],
     options: &EcLandAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
@@ -1212,7 +1231,7 @@ pub fn encode_slot_manifest(
     )
 }
 
-fn serialize_terrain_provenance_manifest(
+pub fn serialize_terrain_provenance_manifest(
     records: &[EcLandTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(12 + records.len() * 32);
@@ -1235,20 +1254,6 @@ pub fn encode_terrain_provenance_manifest(
     records: &[EcLandTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
     serialize_terrain_provenance_manifest(records)
-}
-
-fn serialize_runtime_material_id_override_manifest(
-    records: &[EcLandRuntimeMaterialIdOverride],
-) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + records.len() * 8);
-    bytes.extend_from_slice(&RUNTIME_MATERIAL_ID_OVERRIDE_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_LAND_RUNTIME_MATERIAL_ID_OVERRIDE_VERSION)?;
-    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
-    for record in records {
-        bytes.write_u32::<LittleEndian>(record.terrain_id)?;
-        bytes.write_u32::<LittleEndian>(record.normalized_material_id)?;
-    }
-    Ok(bytes)
 }
 
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<EcLandPageRecord>)> {
@@ -1312,7 +1317,9 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<EcLandS
     Ok((atlas_width, atlas_height, gutter, slots))
 }
 
-fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<EcLandTerrainProvenanceRecord>> {
+fn parse_terrain_provenance_manifest(
+    bytes: &[u8],
+) -> eyre::Result<Vec<EcLandTerrainProvenanceRecord>> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
@@ -1339,523 +1346,18 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<EcLandTer
     Ok(records)
 }
 
-fn parse_runtime_material_id_override_manifest(
-    bytes: &[u8],
-) -> eyre::Result<Vec<EcLandRuntimeMaterialIdOverride>> {
-    let mut cursor = Cursor::new(bytes);
-    let mut magic = [0u8; 4];
-    cursor.read_exact(&mut magic)?;
-    if magic != RUNTIME_MATERIAL_ID_OVERRIDE_MAGIC {
-        eyre::bail!("invalid ec_land runtime material id override manifest magic");
-    }
-    let version = cursor.read_u32::<LittleEndian>()?;
-    if version != EC_LAND_RUNTIME_MATERIAL_ID_OVERRIDE_VERSION {
-        eyre::bail!("unsupported ec_land runtime material id override manifest version {version}");
-    }
-    let record_count = cursor.read_u32::<LittleEndian>()? as usize;
-    let mut records = Vec::with_capacity(record_count);
-    for _ in 0..record_count {
-        records.push(EcLandRuntimeMaterialIdOverride {
-            terrain_id: cursor.read_u32::<LittleEndian>()?,
-            normalized_material_id: cursor.read_u32::<LittleEndian>()?,
-        });
-    }
-    records.sort_by_key(|record| record.terrain_id);
-    Ok(records)
-}
-
-fn load_bundled_runtime_material_id_overrides() -> eyre::Result<Vec<EcLandRuntimeMaterialIdOverride>> {
-    let mapper = ClassicTileMapper::from_toml_str(BUNDLED_RUNTIME_MATERIAL_ID_OVERRIDES_TOML)
-        .wrap_err("parse bundled runtime material-id override TOML")?;
-    let mut records = Vec::new();
-    for terrain_id in 0..=u16::MAX {
-        let normalized_material_id = mapper.get_base_id(terrain_id);
-        if normalized_material_id == 0 || normalized_material_id == terrain_id {
-            continue;
-        }
-        records.push(EcLandRuntimeMaterialIdOverride {
-            terrain_id: terrain_id as u32,
-            normalized_material_id: normalized_material_id as u32,
-        });
-    }
-    records.sort_by_key(|record| record.terrain_id);
-    Ok(records)
-}
-
-fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
+pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
     format!("pages/{page_index:05}.{}", fmt.extension())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.kdl";
 
-    fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
-        DecodedArtTile {
-            art_id,
-            kind,
-            width,
-            height,
-            rgba: vec![255u8; width as usize * height as usize * 4],
-        }
-    }
-
-    #[test]
-    fn sparse_slots_keep_absent_records() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 16,
-            atlas_height: 16,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![
-            rgba_tile(0, ArtTileKind::Land, 4, 4),
-            rgba_tile(3, ArtTileKind::Land, 4, 4),
-        ];
-
-        let (_pages, slots) = pack_tiles_into_pages(tiles, 5, &options).unwrap();
-
-        assert!(slots[0].is_present());
-        assert!(!slots[1].is_present());
-        assert!(!slots[2].is_present());
-        assert!(slots[3].is_present());
-        assert_eq!(slots[4].page_index, MISSING_PAGE_INDEX);
-    }
-
-    #[test]
-    fn packer_spills_to_multiple_pages() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 8,
-            atlas_height: 8,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![
-            rgba_tile(0, ArtTileKind::Land, 4, 4),
-            rgba_tile(1, ArtTileKind::Land, 4, 4),
-        ];
-
-        let (pages, slots) = pack_tiles_into_pages(tiles, 2, &options).unwrap();
-
-        assert_eq!(pages.len(), 2);
-        assert_eq!(pages[0].record.tile_count, 1);
-        assert_eq!(pages[1].record.tile_count, 1);
-        assert_eq!(slots[0].page_index, 0);
-        assert_eq!(slots[1].page_index, 1);
-    }
-
-    #[test]
-    fn runtime_reader_can_unpack_page_and_slot_metadata() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 8,
-            atlas_height: 8,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
-        let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
-        let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
-        let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
-        let terrain_provenance = vec![EcLandTerrainProvenanceRecord {
-            material_id: 12,
-            material_name_id: 34,
-            alias_count_index: 0,
-            alias_slot_id: 0,
-            alias_tile_flags: 0x55,
-            selected_texture_id: 2_000_540,
-            canonical_slot_id: 0,
-        }];
-        let terrain_provenance_manifest =
-            serialize_terrain_provenance_manifest(&terrain_provenance).unwrap();
-
-        let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &page_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &slot_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(TERRAIN_PROVENANCE_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &terrain_provenance_manifest,
-            })
-            .unwrap();
-        let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
-        let stored_page = crop_rgba_page(
-            &pages[0].pixels,
-            options.atlas_width,
-            pages[0].record.used_width,
-            pages[0].record.used_height,
-        );
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Texture as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(&page_path),
-                path_hash64: None,
-                id: None,
-                data: &stored_page,
-            })
-            .unwrap();
-
-        let package =
-            EcLandPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
-                .unwrap();
-        assert_eq!(package.pages().len(), 1);
-        assert!(package.present_slot(0).unwrap().is_land());
-            assert_eq!(package.terrain_provenance(), terrain_provenance);
-        let page = &package.pages()[0];
-        assert_eq!(package.read_page_bytes(0).unwrap().len(), (page.used_width * page.used_height * 4) as usize);
-    }
-
-    #[test]
-    fn land_alias_slots_reuse_canonical_page_location() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 16,
-            atlas_height: 16,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![rgba_tile(7, ArtTileKind::Land, 4, 4)];
-
-        let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options).unwrap();
-        apply_slot_aliases(
-            &mut slots,
-            &[SlotAlias {
-                art_id: 9,
-                canonical_art_id: 7,
-            }],
-        )
-        .unwrap();
-
-        assert!(slots[7].is_present());
-        assert!(slots[9].is_present());
-        assert_eq!(slots[9].art_id, 9);
-        assert_eq!(slots[9].page_index, slots[7].page_index);
-        assert_eq!(slots[9].page_tile_index, slots[7].page_tile_index);
-        assert_eq!(slots[9].x, slots[7].x);
-        assert_eq!(slots[9].y, slots[7].y);
-        assert_eq!(slots[9].width, slots[7].width);
-        assert_eq!(slots[9].height, slots[7].height);
-    }
-
-    #[test]
-    fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 16,
-            atlas_height: 16,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![
-            rgba_tile(2, ArtTileKind::Land, 4, 4),
-            rgba_tile(26, ArtTileKind::Land, 4, 4),
-            rgba_tile(196, ArtTileKind::Land, 4, 4),
-            rgba_tile(172, ArtTileKind::Land, 4, 4),
-            rgba_tile(581, ArtTileKind::Land, 4, 4),
-            rgba_tile(16_110, ArtTileKind::Land, 4, 4),
-            rgba_tile(16_111, ArtTileKind::Land, 4, 4),
-        ];
-        let (pages, slots) = pack_tiles_into_pages(tiles, 16_112, &options).unwrap();
-        let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
-        let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
-        let terrain_provenance = vec![
-            EcLandTerrainProvenanceRecord {
-                material_id: 54,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 26,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_540,
-                canonical_slot_id: 26,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 171,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 586,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_131,
-                canonical_slot_id: 581,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 4,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 0,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_000,
-                canonical_slot_id: 2,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 4,
-                material_name_id: 0,
-                alias_count_index: 1,
-                alias_slot_id: 196,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_040,
-                canonical_slot_id: 196,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 172,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 0,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_000,
-                canonical_slot_id: 0,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 172,
-                material_name_id: 0,
-                alias_count_index: 1,
-                alias_slot_id: 10_172,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_131,
-                canonical_slot_id: 581,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 198,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 0,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_000,
-                canonical_slot_id: 2,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 198,
-                material_name_id: 0,
-                alias_count_index: 1,
-                alias_slot_id: 16_110,
-                alias_tile_flags: 256,
-                selected_texture_id: 16_110,
-                canonical_slot_id: 16_110,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 199,
-                material_name_id: 0,
-                alias_count_index: 0,
-                alias_slot_id: 0,
-                alias_tile_flags: 0,
-                selected_texture_id: 2_000_000,
-                canonical_slot_id: 2,
-            },
-            EcLandTerrainProvenanceRecord {
-                material_id: 199,
-                material_name_id: 0,
-                alias_count_index: 1,
-                alias_slot_id: 16_111,
-                alias_tile_flags: 256,
-                selected_texture_id: 16_111,
-                canonical_slot_id: 16_111,
-            },
-        ];
-        let terrain_provenance_manifest =
-            serialize_terrain_provenance_manifest(&terrain_provenance).unwrap();
-        let runtime_material_id_override_manifest = serialize_runtime_material_id_override_manifest(&[
-            EcLandRuntimeMaterialIdOverride {
-                terrain_id: 197,
-                normalized_material_id: 4,
-            },
-            EcLandRuntimeMaterialIdOverride {
-                terrain_id: 198,
-                normalized_material_id: 4,
-            },
-            EcLandRuntimeMaterialIdOverride {
-                terrain_id: 199,
-                normalized_material_id: 4,
-            },
-        ])
-        .unwrap();
-
-        let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &page_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &slot_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(TERRAIN_PROVENANCE_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &terrain_provenance_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(RUNTIME_MATERIAL_ID_OVERRIDE_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &runtime_material_id_override_manifest,
-            })
-            .unwrap();
-
-        for (page_index, page) in pages.iter().enumerate() {
-            let page_path = page_entry_path(page_index as u32, PagePixelFormat::Rgba8888);
-            let stored_page = crop_rgba_page(
-                &page.pixels,
-                options.atlas_width,
-                page.record.used_width,
-                page.record.used_height,
-            );
-            package
-                .add_file(AddFileRequest {
-                    data_type: DataType::Texture as u8,
-                    compression: UddCompressionFlag::ZstdNoDict,
-                    virtual_path: Some(&page_path),
-                    path_hash64: None,
-                    id: None,
-                    data: &stored_page,
-                })
-                .unwrap();
-        }
-
-        let package = EcLandPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
-            .unwrap();
-
-        assert_eq!(
-            package.runtime_material_id_override_source(),
-            EcLandRuntimeMaterialIdOverrideSource::PackageMetadata
-        );
-        assert_eq!(package.resolve_runtime_slot_id(54), Some(26));
-        assert_eq!(package.resolve_runtime_slot_id(171), Some(581));
-        assert_eq!(package.resolve_runtime_slot_id(4), Some(196));
-        assert_eq!(package.resolve_runtime_slot_id(197), Some(196));
-        assert_eq!(package.resolve_runtime_slot_id(198), Some(196));
-        assert_eq!(package.resolve_runtime_slot_id(199), Some(196));
-        assert_eq!(package.resolve_runtime_slot_id(172), Some(172));
-        assert_eq!(package.resolve_runtime_slot_id(26), Some(26));
-    }
-
-    #[test]
-    fn runtime_slot_resolution_ignores_zero_alias_placeholder_rows() {
-        let options = EcLandAtlasOptions {
-            atlas_width: 16,
-            atlas_height: 16,
-            gutter: 1,
-            use_bc7: false,
-        };
-        let tiles = vec![rgba_tile(2, ArtTileKind::Land, 4, 4)];
-        let (pages, slots) = pack_tiles_into_pages(tiles, 3, &options).unwrap();
-        let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
-        let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
-        let terrain_provenance = vec![EcLandTerrainProvenanceRecord {
-            material_id: 777,
-            material_name_id: 0,
-            alias_count_index: 0,
-            alias_slot_id: 0,
-            alias_tile_flags: 0,
-            selected_texture_id: 2_000_000,
-            canonical_slot_id: 2,
-        }];
-        let terrain_provenance_manifest =
-            serialize_terrain_provenance_manifest(&terrain_provenance).unwrap();
-        let runtime_material_id_overrides = Vec::<EcLandRuntimeMaterialIdOverride>::new();
-        let runtime_material_id_override_manifest =
-            serialize_runtime_material_id_override_manifest(&runtime_material_id_overrides)
-                .unwrap();
-
-        let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &page_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &slot_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(TERRAIN_PROVENANCE_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &terrain_provenance_manifest,
-            })
-            .unwrap();
-        package
-            .add_file(AddFileRequest {
-                data_type: DataType::Metadata as u8,
-                compression: UddCompressionFlag::ZstdNoDict,
-                virtual_path: Some(RUNTIME_MATERIAL_ID_OVERRIDE_ENTRY_PATH),
-                path_hash64: None,
-                id: None,
-                data: &runtime_material_id_override_manifest,
-            })
-            .unwrap();
-
-        for page in &pages {
-            let page_path = page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888);
-            package
-                .add_file(AddFileRequest {
-                    data_type: DataType::Texture as u8,
-                    compression: UddCompressionFlag::ZstdNoDict,
-                    virtual_path: Some(&page_path),
-                    path_hash64: None,
-                    id: None,
-                    data: &page.pixels,
-                })
-                .unwrap();
-        }
-
-        let package = EcLandPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
-            .unwrap();
-
-        assert_eq!(package.resolve_runtime_slot_id(777), None);
-    }
+fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
+    let bytes = read_path_entry(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
+    let content = String::from_utf8(bytes).ok()?;
+    let transcode: crate::cc_ec_conv::TerrainTranscode =
+        knuffel::parse("transcode.kdl", &content).ok()?;
+    Some(transcode.to_map())
 }
 
 fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {

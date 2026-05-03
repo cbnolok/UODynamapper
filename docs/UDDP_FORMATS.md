@@ -6,19 +6,19 @@ The current implementation still uses a unified `flags` field in `tilemeta.uddp`
 
 ---
 
-## 1. `tilemeta.uddp` (legacy `unified_tiledata.uddp`)
+## 1. `tilemeta.uddp`
 
 This package merges Classic Client (CC) physical tile properties and Enhanced Client (EC) rendering definitions into a zero-copy, tightly packed binary.
 
-`tilemeta.uddp` is the preferred package name. `unified_tiledata.uddp` remains a legacy-compatible name for older tooling and packages.
+`tilemeta.uddp` is the preferred package name.
 
 The current wire format stores CC and EC texture-window fields side by side, but CC and EC behavior flags are still collapsed into one unified bitmask. Future work may split those fields so classic behavior and EC behavior can be preserved independently.
 
 **Virtual Files:**
-- `metadata/land.bin`: Dense array of `UnifiedLandTile` structs.
-- `metadata/items.bin`: Dense array of `UnifiedItemTile` structs.
+- `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
+- `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
 
-### 1.1 `UnifiedLandTile` Struct (48 Bytes, 8-Byte Aligned)
+### 1.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
 Represents terrain data.
 
 | Offset | Type | Name | Description |
@@ -31,7 +31,7 @@ Represents terrain data.
 | 0x10 | `[u8; 4]` | `radar_color` | RGBA values representing minimap colors. |
 | 0x14 | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 
-### 1.2 `UnifiedItemTile` Struct (80 Bytes, 8-Byte Aligned)
+### 1.2 `TileMetaItemTile` Struct (80 Bytes, 8-Byte Aligned)
 Represents static map items and artwork.
 
 | Offset | Type | Name | Description |

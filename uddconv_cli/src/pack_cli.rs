@@ -26,6 +26,8 @@ use uddconv::{
         build_tilemeta_item_payload_from_sources, build_tilemeta_uddp_from_sources,
         TileMetaBuildOptions, TILEMETA_ITEM_ENTRY_PATH,
     },
+    cc_map::convert_map_mul_to_uddp_from_sources,
+    cc_statics::convert_statics_mul_to_uddp_from_sources,
 };
 
 use crate::package_edit;
@@ -55,13 +57,13 @@ fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
 }
 
 fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
-    ["tilemeta.uddp", "unified_tiledata.uddp"]
+    ["tilemeta.uddp"]
         .into_iter()
         .map(|file_name| uddp_dir.join(file_name))
         .find(|candidate| candidate.is_file())
         .ok_or_else(|| {
             eyre::eyre!(
-                "missing raw tilemeta package in '{}': expected tilemeta.uddp or unified_tiledata.uddp",
+                "missing raw tilemeta package in '{}': expected tilemeta.uddp",
                 uddp_dir.display()
             )
         })
@@ -90,6 +92,7 @@ fn update_tilemeta_for_cropped_ec_art(
         source_dirs,
         &TileMetaBuildOptions {
             adjust_cropped_ec_art: true,
+            use_ec_radarcol: false,
         },
     )?;
 
@@ -172,7 +175,7 @@ enum Commands {
         bc7: bool,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
-    #[command(name = "pack-tilemeta", visible_alias = "pack-unified-tiledata")]
+    #[command(name = "pack-tilemeta")]
     PackTilemeta {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -180,6 +183,26 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = false)]
         ec_art_cropped: bool,
+        #[arg(long, default_value_t = false)]
+        use_ec_radarcol: bool,
+    },
+    /// Packs Classic mapX.mul into mapX.uddp blocks.
+    PackMap {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        map_id: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Packs Classic staticsX.mul into staticsX.uddp blocks.
+    PackStatics {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        map_id: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -343,6 +366,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
             ec_art_cropped,
+            use_ec_radarcol,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -351,9 +375,53 @@ pub fn run() -> eyre::Result<()> {
                 &out_file,
                 &TileMetaBuildOptions {
                     adjust_cropped_ec_art: ec_art_cropped,
+                    use_ec_radarcol,
                 },
             )?;
             println!("Wrote tilemeta.uddp to '{}'.", out_file.display());
+        }
+        Commands::PackMap {
+            source_dirs: source_dir_args,
+            map_id,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let default_output = PathBuf::from(format!("map{}.uddp", map_id));
+            let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
+            let summary = convert_map_mul_to_uddp_from_sources(
+                &paths,
+                &out_file,
+                map_id,
+            )?;
+            println!(
+                "Wrote {} blocks for map {} to '{}' ({}x{} blocks).",
+                summary.block_count,
+                summary.map_id,
+                out_file.display(),
+                summary.width_blocks,
+                summary.height_blocks,
+            );
+        }
+        Commands::PackStatics {
+            source_dirs: source_dir_args,
+            map_id,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
+            let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
+            let summary = convert_statics_mul_to_uddp_from_sources(
+                &paths,
+                &out_file,
+                map_id,
+            )?;
+            println!(
+                "Wrote {} blocks with {} total statics for map {} to '{}'.",
+                summary.block_count,
+                summary.total_statics,
+                summary.map_id,
+                out_file.display(),
+            );
         }
     }
 
@@ -393,7 +461,7 @@ mod tests {
     fn cli_parses_pack_tilemeta_alias_with_both_roots() {
         let cli = Cli::try_parse_from([
             "uddpack",
-            "pack-unified-tiledata",
+            "pack-tilemeta",
             "--ccdir",
             "/cc",
             "--ecdir",
@@ -408,11 +476,13 @@ mod tests {
                 source_dirs,
                 output,
                 ec_art_cropped,
+                use_ec_radarcol,
             } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("tiledata.uddp"));
                 assert!(!ec_art_cropped);
+                assert!(!use_ec_radarcol);
             }
             _ => panic!("unexpected command parsed"),
         }

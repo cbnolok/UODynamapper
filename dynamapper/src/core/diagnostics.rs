@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
@@ -7,9 +10,9 @@ use bevy::{
 use parking_lot::Mutex;
 
 use crate::{
+    configs::settings::{SectWorldMapDiagnostics, Settings},
     console_logger::{self, LogAbout, LogSev},
     core::app_states::AppState,
-    external_data::settings::{SectWorldMapDiagnostics, Settings},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,7 +240,10 @@ fn sys_mark_render_phase_sort_end(
     diagnostics: Res<WorldmapCrossAppDiagnostics>,
 ) {
     if let Some(start) = state.phase_sort_start.take() {
-        diagnostics.record(WorldmapCrossAppTimedSystem::RenderPhaseSort, start.elapsed());
+        diagnostics.record(
+            WorldmapCrossAppTimedSystem::RenderPhaseSort,
+            start.elapsed(),
+        );
     }
 }
 
@@ -371,8 +377,7 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldMapDiagnostics) 
                 sys_mark_render_queue_end
                     .after(bevy::render::RenderSystems::Queue)
                     .before(bevy::render::RenderSystems::PhaseSort),
-                sys_mark_render_phase_sort_start
-                    .before(bevy::render::RenderSystems::PhaseSort),
+                sys_mark_render_phase_sort_start.before(bevy::render::RenderSystems::PhaseSort),
                 sys_mark_render_phase_sort_end
                     .after(bevy::render::RenderSystems::PhaseSort)
                     .before(bevy::render::RenderSystems::Prepare),
@@ -568,17 +573,16 @@ fn sys_dump_configurable_diagnostics(
     ));
 
     if config.log_render_breakdown {
-        let main_opaque_gpu = find_diag_value(&diagnostics, "render/main_opaque_pass_3d/elapsed_gpu");
+        let main_opaque_gpu =
+            find_diag_value(&diagnostics, "render/main_opaque_pass_3d/elapsed_gpu");
         let upscaling_gpu = find_diag_value(&diagnostics, "render/upscaling/elapsed_gpu");
         let total_gpu = find_render_stat_total(&diagnostics, "elapsed_gpu");
         let main_frag = find_diag_value(
             &diagnostics,
             "render/main_opaque_pass_3d/fragment_shader_invocations",
         );
-        let upscaling_frag = find_diag_value(
-            &diagnostics,
-            "render/upscaling/fragment_shader_invocations",
-        );
+        let upscaling_frag =
+            find_diag_value(&diagnostics, "render/upscaling/fragment_shader_invocations");
 
         lines.push(format!(
             "Render | total gpu {} | main3d {} | upscale {} | frag main3d {} | frag upscale {}",
@@ -591,7 +595,8 @@ fn sys_dump_configurable_diagnostics(
     }
 
     if config.log_world_state {
-        let upload_backlog = if upload_snapshot.pending_ops > 0 || upload_snapshot.pending_bytes > 0 {
+        let upload_backlog = if upload_snapshot.pending_ops > 0 || upload_snapshot.pending_bytes > 0
+        {
             format!(
                 " | upload backlog {} ops / {} bytes",
                 upload_snapshot.pending_ops, upload_snapshot.pending_bytes,

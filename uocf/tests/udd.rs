@@ -1,14 +1,10 @@
-use super::{
-    canonical_package_hash64, xxh64_virtual_path, AddFileRequest, CompressionFlag, DataType,
-    LookupMode, UddfFile, UddpBuilder, UddpCompression, UddpContentId, UddpReader,
-    UddpiApplier, UddpiBuilder,
-};
+use uocf::udd::*;
 use xxhash_rust::xxh64::xxh64;
 
 #[test]
 fn codec_bits_roundtrip_supports_only_none_and_zstd() {
-    let none_bits = super::CodecBits::new(UddpCompression::None).expect("encode none");
-    let zstd_bits = super::CodecBits::new(UddpCompression::Zstd).expect("encode zstd");
+    let none_bits = CodecBits::new(UddpCompression::None).expect("encode none");
+    let zstd_bits = CodecBits::new(UddpCompression::Zstd).expect("encode zstd");
 
     assert_eq!(none_bits.raw(), 0);
     assert_eq!(zstd_bits.raw(), 1);
@@ -18,9 +14,9 @@ fn codec_bits_roundtrip_supports_only_none_and_zstd() {
 
 #[test]
 fn codec_bits_reject_unknown_compression_ids() {
-    assert!(super::CodecBits::from_raw(2).compression().is_err());
-    assert!(super::CodecBits::from_raw(3).compression().is_err());
-    assert!(super::CodecBits::from_raw(0xFFFF).compression().is_err());
+    assert!(CodecBits::from_raw(2).compression().is_err());
+    assert!(CodecBits::from_raw(3).compression().is_err());
+    assert!(CodecBits::from_raw(0xFFFF).compression().is_err());
 }
 
 #[test]
@@ -241,7 +237,7 @@ fn uddf_roundtrip_preserves_flags_and_payload() {
 
     assert_eq!(loaded.unpack().expect("unpack uddf"), payload);
     assert_eq!(loaded.flags(), 0x1122_3344_5566_7788u64);
-    assert_eq!(loaded.payload_offset() % super::UDDP_DEFAULT_ALIGNMENT, 0);
+    assert_eq!(loaded.payload_offset() % UDDP_DEFAULT_ALIGNMENT, 0);
     assert_eq!(loaded.content_id(), 12);
     assert_eq!(loaded.typed_content_id(), Some(UddpContentId::Unknown));
     assert_eq!(loaded.codec_bits().raw(), 1);

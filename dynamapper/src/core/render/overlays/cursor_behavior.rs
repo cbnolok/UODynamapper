@@ -70,7 +70,7 @@ impl Plugin for CursorBehaviorOverlayPlugin {
 pub fn setup_overlay_cursor_behavior(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
 ) {
     crate::util_lib::tracked_plugin::log_system_add_one_shot::<CursorBehaviorOverlayPlugin>(
         "OnEnter(InGame)",
@@ -88,7 +88,7 @@ pub fn setup_overlay_cursor_behavior(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Start,
                 justify_content: JustifyContent::Start,
-                padding: UiRect::all(Val::Px(7.0 * settings.app.window.player_position_scale)),
+                padding: UiRect::all(Val::Px(7.0 * settings.app.window.cursor_position_scale)),
                 display: if settings.app.performance.show_overlay {
                     Display::Flex
                 } else {
@@ -101,7 +101,7 @@ pub fn setup_overlay_cursor_behavior(
             OverlayCursorBehaviorContainer,
         ))
         .with_children(|builder| {
-            let scale = settings.app.window.player_position_scale;
+            let scale = settings.app.window.cursor_position_scale;
             builder.spawn((
                 Text::new("Cursor mode: Select"),
                 TextFont {
@@ -130,21 +130,21 @@ pub fn setup_overlay_cursor_behavior(
 }
 
 pub fn update_cursor_behavior_text(
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
     cursor: Res<CursorBehavior>,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     map_planes_r: Res<MapPlanesRes>,
     mut mode_text_q: Query<
-        &mut Text,
+        (&mut Text, &mut TextFont, &mut LineHeight),
         (
             With<OverlayCursorModeText>,
             Without<OverlayCursorPositionText>,
         ),
     >,
     mut position_text_q: Query<
-        &mut Text,
+        (&mut Text, &mut TextFont, &mut LineHeight),
         (
             With<OverlayCursorPositionText>,
             Without<OverlayCursorModeText>,
@@ -152,26 +152,43 @@ pub fn update_cursor_behavior_text(
     >,
     mut node_q: Query<&mut Node, With<OverlayCursorBehaviorContainer>>,
     mut last_show_overlay: Local<bool>,
+    mut last_scale: Local<f32>,
     mut last_mode: Local<Option<CursorMode>>,
     mut last_cursor_pos: Local<Option<Vec2>>,
     mut last_window_size: Local<Option<(f32, f32)>>,
     mut last_camera_translation: Local<Option<Vec3>>,
     mut last_player_map_id: Local<Option<u8>>,
 ) {
+    let current_scale = settings.app.window.cursor_position_scale;
+    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+
     let show_overlay = settings.app.performance.show_overlay;
-    if *last_show_overlay != show_overlay {
+    if *last_show_overlay != show_overlay || scale_changed {
         if let Ok(mut node) = node_q.single_mut() {
             node.display = if show_overlay {
                 Display::Flex
             } else {
                 Display::None
             };
+            node.padding = UiRect::all(Val::Px(7.0 * current_scale));
         }
         *last_show_overlay = show_overlay;
     }
 
+    if scale_changed {
+        if let Ok((_, mut text_font, mut line_height)) = mode_text_q.single_mut() {
+            text_font.font_size = FONT_SIZE * current_scale;
+            *line_height = LineHeight::Px(FONT_SIZE * current_scale);
+        }
+        if let Ok((_, mut text_font, mut line_height)) = position_text_q.single_mut() {
+            text_font.font_size = FONT_SIZE * current_scale;
+            *line_height = LineHeight::Px(FONT_SIZE * current_scale);
+        }
+        *last_scale = current_scale;
+    }
+
     if *last_mode != Some(cursor.mode) {
-        if let Ok(mut mode_text) = mode_text_q.single_mut() {
+        if let Ok((mut mode_text, _, _)) = mode_text_q.single_mut() {
             let next_text = format!(
                 "Cursor mode: {}",
                 match cursor.mode {
@@ -236,7 +253,7 @@ pub fn update_cursor_behavior_text(
                 _ => "Cursor position:\n[NA, NA, NA]".to_string(),
             };
 
-        if let Ok(mut position_text) = position_text_q.single_mut() {
+        if let Ok((mut position_text, _, _)) = position_text_q.single_mut() {
             if position_text.0 != cursor_position_label {
                 position_text.0 = cursor_position_label;
             }
@@ -288,7 +305,7 @@ fn sys_teleport_on_click(
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
     cursor: Res<CursorBehavior>,
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,

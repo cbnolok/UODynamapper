@@ -5,12 +5,12 @@
 
 use super::texture_array;
 use crate::{
+    configs::settings::ClientTextureSource,
     console_logger::{self, LogAbout, LogSev},
     core::texture_cache::{
         visit_grouped_layer_assignments, visit_grouped_texture_ids, TextureResidencyPlan,
         TextureResidencyStrategy,
     },
-    external_data::settings::ClientTextureSource,
 };
 use bevy::prelude::*;
 // use bevy::render::render_resource::*;
@@ -831,19 +831,19 @@ impl LandTextureCache {
 
             let task = pool.spawn(async move {
                 for (texture_id, size, layer) in chunk {
-                    let (tile_bytes, upload_layout) =
-                        if let Some((_, bytes, layout)) = try_load_tile_from_packages_with_sources(
+                    let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) =
+                        try_load_tile_from_packages_with_sources(
                             texture_id,
                             preferred_source,
                             cc_art.as_ref(),
                             ec_land.as_ref(),
                         ) {
-                            (bytes, layout)
-                        } else {
-                            let (_, raw_rgba8) =
-                                texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                            prepare_texture_upload_bytes(raw_rgba8, size, compression)
-                        };
+                        (bytes, layout)
+                    } else {
+                        let (_, raw_rgba8) =
+                            texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
+                        prepare_texture_upload_bytes(raw_rgba8, size, compression)
+                    };
 
                     let _ = sender.send(TextureArrayUpload {
                         generation,

@@ -1,7 +1,11 @@
 #![allow(unused_imports)]
 
 #[doc(hidden)]
-pub use crate::{core::app_states::*, console_logger::{self, LogSev, LogAbout}, external_data::settings::*};
+pub use crate::{
+    configs::settings::*,
+    console_logger::{self, LogAbout, LogSev},
+    core::app_states::*,
+};
 
 #[doc(hidden)]
 pub use crate::{fname, impl_tracked_plugin, util_lib::tracked_plugin::*};

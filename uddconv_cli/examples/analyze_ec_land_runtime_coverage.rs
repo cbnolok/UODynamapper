@@ -3,10 +3,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use uddconv::ec_land::{
-    EcLandPackage, EcLandRuntimeMaterialIdOverride, EcLandTerrainProvenanceRecord,
-};
-use uocf::enhanced::facet::read_facet_block;
+use uddconv::ec_land::{EcLandPackage, EcLandTerrainProvenanceRecord};
+use uocf::enhanced::facet_decoder::read_facet_block;
 use uocf::uop::package::UopPackage;
 
 const DEFAULT_TOP_N: usize = 25;
@@ -30,8 +28,8 @@ fn main() -> eyre::Result<()> {
     let package = EcLandPackage::load(&package_path)
         .wrap_err_with(|| format!("load {}", package_path.display()))?;
     let facet_path = facet_uop_path(&ecdir, map_index);
-    let facet_package = UopPackage::load(&facet_path)
-        .wrap_err_with(|| format!("load {}", facet_path.display()))?;
+    let facet_package =
+        UopPackage::load(&facet_path).wrap_err_with(|| format!("load {}", facet_path.display()))?;
     let facet_block_count = facet_block_count(map_index)?;
 
     let mut total_cells = 0u64;
@@ -41,13 +39,8 @@ fn main() -> eyre::Result<()> {
     let mut resolved_by_id = HashMap::<u32, u64>::new();
 
     for block_id in 0..facet_block_count {
-        let decoded = read_facet_block(&facet_package, map_index as u8, block_id).wrap_err_with(|| {
-            format!(
-                "decode {} block {}",
-                facet_path.display(),
-                block_id
-            )
-        })?;
+        let decoded = read_facet_block(&facet_package, map_index as u8, block_id)
+            .wrap_err_with(|| format!("decode {} block {}", facet_path.display(), block_id))?;
         process_decoded_blocks(
             &package,
             decoded.blocks.iter().map(|decoded| &decoded.block.cells),
@@ -68,7 +61,10 @@ fn main() -> eyre::Result<()> {
     println!("resolved_cells={}", resolved_cells);
     println!("unresolved_cells={}", unresolved_cells);
     println!("direct_slot_cells={}", direct_slot_cells);
-    println!("resolved_ratio={:.4}", resolved_cells as f64 / total_cells as f64);
+    println!(
+        "resolved_ratio={:.4}",
+        resolved_cells as f64 / total_cells as f64
+    );
 
     println!("top_unresolved_ids:");
     for (terrain_id, count) in top_counts(&unresolved_by_id, top_n) {
@@ -81,12 +77,10 @@ fn main() -> eyre::Result<()> {
         .filter(|(terrain_id, _)| package.present_slot(*terrain_id).is_none())
         .collect::<HashMap<_, _>>();
     for (terrain_id, count) in top_counts(&resolved_non_direct, top_n) {
-        let override_record = find_override(package.runtime_material_id_overrides(), terrain_id);
         println!(
-            "  terrain_id={} count={} override={:?} material_rows={} alias_rows={}",
+            "  terrain_id={} count={} material_rows={} alias_rows={}",
             terrain_id,
             count,
-            override_record.map(|record| record.normalized_material_id),
             package
                 .terrain_provenance()
                 .iter()
@@ -131,7 +125,6 @@ fn process_decoded_blocks<'a>(
 }
 
 fn print_unresolved_detail(package: &EcLandPackage, terrain_id: u32, count: u64) {
-    let override_record = find_override(package.runtime_material_id_overrides(), terrain_id);
     let material_rows = package
         .terrain_provenance()
         .iter()
@@ -144,10 +137,9 @@ fn print_unresolved_detail(package: &EcLandPackage, terrain_id: u32, count: u64)
         .collect::<Vec<_>>();
 
     println!(
-        "  terrain_id={} count={} override={:?} material_rows={} alias_rows={}",
+        "  terrain_id={} count={} material_rows={} alias_rows={}",
         terrain_id,
         count,
-        override_record.map(|record| record.normalized_material_id),
         material_rows.len(),
         alias_rows.len(),
     );
@@ -174,20 +166,13 @@ fn print_provenance(kind: &str, record: &EcLandTerrainProvenanceRecord) {
 }
 
 fn top_counts(counts: &HashMap<u32, u64>, top_n: usize) -> Vec<(u32, u64)> {
-    let mut pairs = counts.iter().map(|(id, count)| (*id, *count)).collect::<Vec<_>>();
+    let mut pairs = counts
+        .iter()
+        .map(|(id, count)| (*id, *count))
+        .collect::<Vec<_>>();
     pairs.sort_unstable_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
     pairs.truncate(top_n);
     pairs
-}
-
-fn find_override(
-    overrides: &[EcLandRuntimeMaterialIdOverride],
-    terrain_id: u32,
-) -> Option<&EcLandRuntimeMaterialIdOverride> {
-    overrides
-        .binary_search_by_key(&terrain_id, |record| record.terrain_id)
-        .ok()
-        .and_then(|index| overrides.get(index))
 }
 
 fn parse_optional_u32(

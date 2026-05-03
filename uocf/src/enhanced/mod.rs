@@ -5,7 +5,7 @@
 
 pub mod animationframe;
 pub mod classic_tile_mapper;
-pub mod facet;
+pub mod facet_decoder;
 pub mod facet_encoder;
 pub mod mobile_animation;
 pub mod multis;

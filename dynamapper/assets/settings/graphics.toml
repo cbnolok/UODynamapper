@@ -11,6 +11,11 @@ reduce_unfocused_fps = true
 vsync = false
 # Anti-aliasing: "off", "fxaa", "smaa", "msaa_2x", "msaa_4x"
 anti_aliasing = "off"
+# Texture source for static/item art: "cc" or "ec"
+art_texture_source = "cc"
+# Texture source for terrain art: "cc" or "ec"
+#land_texture_source = "cc"
+land_texture_source = "cc"
 
 # Texture filtering: 0 = Point, 1 = Linear
 texture_filtering = 0

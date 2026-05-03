@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::classic::hues::{HueEntry, load_hues};
 use crate::classic::map::{MapBlockRelPos, MapCell, MapPlane};
 use crate::classic::radarcol::load_radarcol;
-use crate::enhanced::facet::StaticTile;
+use crate::enhanced::facet_decoder::StaticTile;
 use crate::uop::file::CompressionFlag;
 use crate::uop::package::UopPackage;
 use crate::utils::color::Rgb555;

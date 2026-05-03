@@ -155,23 +155,13 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
     )?;
 
     let metadata_dir = out_dir.join("metadata");
-    let runtime_override_source = match package.runtime_material_id_override_source() {
-        uddconv::ec_land::EcLandRuntimeMaterialIdOverrideSource::PackageMetadata => {
-            "package_metadata"
-        }
-        uddconv::ec_land::EcLandRuntimeMaterialIdOverrideSource::BundledTomlAsset => {
-            "bundled_toml_fallback"
-        }
-    };
     let summary = format!(
-        "package=ec_land\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nruntime_material_id_override_source={}\nruntime_material_id_override_rows={}\n",
+        "package=ec_land\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\n",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
         package.slots().iter().filter(|slot| slot.is_present()).count(),
         package.terrain_provenance().len(),
-        runtime_override_source,
-        package.runtime_material_id_overrides().len(),
     );
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
 
@@ -212,21 +202,6 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
         .unwrap();
     }
     write_text_file(&out_dir.join("metadata/terrain_provenance.csv"), &provenance_csv)?;
-
-    let mut runtime_overrides_csv = String::from("terrain_id,normalized_material_id\n");
-    for record in package.runtime_material_id_overrides() {
-        writeln!(
-            runtime_overrides_csv,
-            "{},{}",
-            record.terrain_id,
-            record.normalized_material_id,
-        )
-        .unwrap();
-    }
-    write_text_file(
-        &out_dir.join("metadata/runtime_material_id_overrides.csv"),
-        &runtime_overrides_csv,
-    )?;
     Ok(true)
 }
 

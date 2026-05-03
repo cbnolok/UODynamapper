@@ -149,7 +149,7 @@ fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
     }
 
     if let Ok(package) = TileMetaPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) {
-        println!("Recognized package: tilemeta (legacy unified_tiledata)");
+        println!("Recognized package: tilemeta");
         println!("Known logical files: metadata=2");
         println!(
             "Tilemeta: land_tiles={}, item_tiles={}",

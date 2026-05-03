@@ -18,6 +18,7 @@ dds = { version = "0.2", default-features = false } # Portable baseline BC7 enco
 guillotiere = "0.6"
 indicatif = "0.18.4"
 intel_tex_2 = { version = "0.5.0", optional = true }
+knuffel = "3"
 log = "0.4.29"
 rayon = "1.8.0"
 uocf = { path = "../uocf" }

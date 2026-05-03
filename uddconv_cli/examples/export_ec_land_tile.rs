@@ -1,12 +1,15 @@
 use std::env;
 use std::path::PathBuf;
 
-use color_eyre::eyre::{self, ContextCompat, WrapErr};
+use color_eyre::eyre::{self, WrapErr};
 use uocf::enhanced::textures::Textures;
 
 // TODO: check!  EC land tiles might only be in texture.uop, not legacytexture.uop, but i'm not sure.
 
-fn load_tile(ecdir: &PathBuf, tile_id: u32) -> eyre::Result<(String, uocf::enhanced::textures::TextureFile)> {
+fn load_tile(
+    ecdir: &PathBuf,
+    tile_id: u32,
+) -> eyre::Result<(String, uocf::enhanced::textures::TextureFile)> {
     for file_name in ["Texture.uop", "LegacyTexture.uop"] {
         let uop_path = ecdir.join(file_name);
         if !uop_path.exists() {
@@ -31,10 +34,10 @@ fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     let mut args = env::args_os().skip(1);
-    let ecdir = PathBuf::from(
-        args.next()
-            .ok_or_else(|| eyre::eyre!("usage: export_ec_land_tile <ecdir> <tile_id> <output.png>"))?,
-    );
+    let ecdir =
+        PathBuf::from(args.next().ok_or_else(|| {
+            eyre::eyre!("usage: export_ec_land_tile <ecdir> <tile_id> <output.png>")
+        })?);
     let tile_id: u32 = args
         .next()
         .ok_or_else(|| eyre::eyre!("missing tile_id"))?

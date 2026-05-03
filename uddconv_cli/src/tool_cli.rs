@@ -8,22 +8,22 @@ use color_eyre::eyre::{self, WrapErr};
 use csv::{ReaderBuilder, StringRecord, Trim, WriterBuilder};
 use uddconv::{
     cc_art::{
-        CcArtPackage, CcArtSlotRecord, SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH,
-        encode_slot_manifest as encode_cc_slot_manifest,
+        encode_slot_manifest as encode_cc_slot_manifest, CcArtPackage, CcArtSlotRecord,
+        SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH,
     },
     ec_art::{
-        EcArtPackage, EcArtSlotRecord, SLOT_MANIFEST_ENTRY_PATH as EC_ART_SLOT_MANIFEST_ENTRY_PATH,
-        encode_slot_manifest as encode_ec_art_slot_manifest,
+        encode_slot_manifest as encode_ec_art_slot_manifest, EcArtPackage, EcArtSlotRecord,
+        SLOT_MANIFEST_ENTRY_PATH as EC_ART_SLOT_MANIFEST_ENTRY_PATH,
     },
     ec_land::{
+        encode_slot_manifest as encode_ec_land_slot_manifest, encode_terrain_provenance_manifest,
         EcLandPackage, EcLandSlotRecord, EcLandTerrainProvenanceRecord, MISSING_SLOT_ID,
-        MISSING_TEXTURE_ID, SLOT_MANIFEST_ENTRY_PATH as EC_LAND_SLOT_MANIFEST_ENTRY_PATH,
-        TERRAIN_PROVENANCE_ENTRY_PATH, encode_slot_manifest as encode_ec_land_slot_manifest,
-        encode_terrain_provenance_manifest,
+        MISSING_TEXTURE_ID, UDDP_SLOT_MANIFEST_ENTRY_VPATH as EC_LAND_SLOT_MANIFEST_ENTRY_PATH,
+        UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     },
 };
-use uocf::udd::{LookupMode, UddpReader, xxh64_virtual_path};
 use uocf::udd::uddp::FileKey;
+use uocf::udd::{xxh64_virtual_path, LookupMode, UddpReader};
 
 use crate::extract;
 use crate::package_edit;
@@ -159,7 +159,10 @@ pub fn run() -> eyre::Result<()> {
         Commands::Info { file } => package_info::print_package_info(&file)?,
         Commands::Extract { file, output } => extract::extract_package(&file, output.as_deref())?,
         Commands::HashPath { value } => {
-            println!("Path hash for \"{value}\": 0x{:016x}", xxh64_virtual_path(&value));
+            println!(
+                "Path hash for \"{value}\": 0x{:016x}",
+                xxh64_virtual_path(&value)
+            );
         }
         Commands::Replace {
             file,
@@ -168,7 +171,8 @@ pub fn run() -> eyre::Result<()> {
             output,
         } => {
             let output = output.unwrap_or_else(|| derived_output_path(&file, "replaced"));
-            let payload = fs::read(&new_file).wrap_err_with(|| format!("read {}", new_file.display()))?;
+            let payload =
+                fs::read(&new_file).wrap_err_with(|| format!("read {}", new_file.display()))?;
             package_edit::replace_virtual_path_file(&file, &output, &path, &payload)?;
             println!(
                 "Replaced '{}' in '{}' and wrote '{}'.",
@@ -195,7 +199,9 @@ pub fn run() -> eyre::Result<()> {
         } => match kind {
             CsvKind::Auto => import_csv_auto(&file, &csv, output.as_deref())?,
             CsvKind::Slots => import_slots_csv_auto(&file, &csv, output.as_deref())?,
-            CsvKind::TerrainProvenance => import_terrain_provenance_csv(&file, &csv, output.as_deref())?,
+            CsvKind::TerrainProvenance => {
+                import_terrain_provenance_csv(&file, &csv, output.as_deref())?
+            }
         },
         Commands::Diff { left, right, kind } => diff_paths(&left, &right, kind)?,
     }
@@ -222,7 +228,9 @@ fn export_terrain_provenance_csv(file: &Path, output: Option<&Path>) -> eyre::Re
     let output = output.map(Path::to_path_buf).unwrap_or_else(|| {
         file.with_file_name(format!(
             "{}.terrain_provenance.csv",
-            file.file_stem().and_then(|v| v.to_str()).unwrap_or("ec_land")
+            file.file_stem()
+                .and_then(|v| v.to_str())
+                .unwrap_or("ec_land")
         ))
     });
     write_ec_land_terrain_provenance_csv(&output, package.terrain_provenance())?;
@@ -234,7 +242,11 @@ fn export_terrain_provenance_csv(file: &Path, output: Option<&Path>) -> eyre::Re
     Ok(())
 }
 
-fn import_terrain_provenance_csv(file: &Path, csv: &Path, output: Option<&Path>) -> eyre::Result<()> {
+fn import_terrain_provenance_csv(
+    file: &Path,
+    csv: &Path,
+    output: Option<&Path>,
+) -> eyre::Result<()> {
     let package = load_ec_land_package(file)?;
     let records = read_ec_land_terrain_provenance_csv(csv)?;
     validate_ec_land_terrain_provenance(&package, &records)?;
@@ -242,7 +254,12 @@ fn import_terrain_provenance_csv(file: &Path, csv: &Path, output: Option<&Path>)
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| derived_output_path(file, "csv-imported"));
-    package_edit::replace_virtual_path_file(file, &output, TERRAIN_PROVENANCE_ENTRY_PATH, &manifest)?;
+    package_edit::replace_virtual_path_file(
+        file,
+        &output,
+        UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+        &manifest,
+    )?;
     println!(
         "Imported {} ec_land terrain provenance rows from '{}' into '{}'.",
         records.len(),
@@ -254,31 +271,45 @@ fn import_terrain_provenance_csv(file: &Path, csv: &Path, output: Option<&Path>)
 
 fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
     if let Ok(package) = CcArtPackage::load(file) {
-        let output = output.map(Path::to_path_buf).unwrap_or_else(|| default_slots_output(file));
+        let output = output
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &cc_slot_rows(&package))?;
         println!("Wrote cc_art slot CSV to '{}'.", output.display());
         return Ok(());
     }
     if let Ok(package) = EcArtPackage::load(file) {
-        let output = output.map(Path::to_path_buf).unwrap_or_else(|| default_slots_output(file));
+        let output = output
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &ec_art_slot_rows(&package))?;
         println!("Wrote ec_art slot CSV to '{}'.", output.display());
         return Ok(());
     }
     if let Ok(package) = EcLandPackage::load(file) {
-        let output = output.map(Path::to_path_buf).unwrap_or_else(|| default_slots_output(file));
+        let output = output
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &ec_land_slot_rows(&package))?;
         println!("Wrote ec_land slot CSV to '{}'.", output.display());
         return Ok(());
     }
 
-    eyre::bail!("{} is not a supported atlas package for slot CSV export", file.display())
+    eyre::bail!(
+        "{} is not a supported atlas package for slot CSV export",
+        file.display()
+    )
 }
 
 fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre::Result<()> {
     if let Ok(package) = CcArtPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
-        validate_atlas_slot_rows("cc_art", &cc_slot_rows(&package), &cc_page_bounds(&package), &rows)?;
+        validate_atlas_slot_rows(
+            "cc_art",
+            &cc_slot_rows(&package),
+            &cc_page_bounds(&package),
+            &rows,
+        )?;
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
@@ -293,17 +324,36 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
             };
         }
-        let manifest = encode_cc_slot_manifest(&slots, package.atlas_width(), package.atlas_height(), package.gutter())?;
+        let manifest = encode_cc_slot_manifest(
+            &slots,
+            package.atlas_width(),
+            package.atlas_height(),
+            package.gutter(),
+        )?;
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| derived_output_path(file, "csv-imported"));
-        package_edit::replace_virtual_path_file(file, &output, CC_SLOT_MANIFEST_ENTRY_PATH, &manifest)?;
-        println!("Imported {} cc_art slot rows into '{}'.", rows.len(), output.display());
+        package_edit::replace_virtual_path_file(
+            file,
+            &output,
+            CC_SLOT_MANIFEST_ENTRY_PATH,
+            &manifest,
+        )?;
+        println!(
+            "Imported {} cc_art slot rows into '{}'.",
+            rows.len(),
+            output.display()
+        );
         return Ok(());
     }
     if let Ok(package) = EcArtPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
-        validate_atlas_slot_rows("ec_art", &ec_art_slot_rows(&package), &ec_art_page_bounds(&package), &rows)?;
+        validate_atlas_slot_rows(
+            "ec_art",
+            &ec_art_slot_rows(&package),
+            &ec_art_page_bounds(&package),
+            &rows,
+        )?;
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
@@ -318,17 +368,36 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
             };
         }
-        let manifest = encode_ec_art_slot_manifest(&slots, package.atlas_width(), package.atlas_height(), package.gutter())?;
+        let manifest = encode_ec_art_slot_manifest(
+            &slots,
+            package.atlas_width(),
+            package.atlas_height(),
+            package.gutter(),
+        )?;
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| derived_output_path(file, "csv-imported"));
-        package_edit::replace_virtual_path_file(file, &output, EC_ART_SLOT_MANIFEST_ENTRY_PATH, &manifest)?;
-        println!("Imported {} ec_art slot rows into '{}'.", rows.len(), output.display());
+        package_edit::replace_virtual_path_file(
+            file,
+            &output,
+            EC_ART_SLOT_MANIFEST_ENTRY_PATH,
+            &manifest,
+        )?;
+        println!(
+            "Imported {} ec_art slot rows into '{}'.",
+            rows.len(),
+            output.display()
+        );
         return Ok(());
     }
     if let Ok(package) = EcLandPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
-        validate_atlas_slot_rows("ec_land", &ec_land_slot_rows(&package), &ec_land_page_bounds(&package), &rows)?;
+        validate_atlas_slot_rows(
+            "ec_land",
+            &ec_land_slot_rows(&package),
+            &ec_land_page_bounds(&package),
+            &rows,
+        )?;
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
@@ -343,16 +412,33 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
             };
         }
-        let manifest = encode_ec_land_slot_manifest(&slots, package.atlas_width(), package.atlas_height(), package.gutter())?;
+        let manifest = encode_ec_land_slot_manifest(
+            &slots,
+            package.atlas_width(),
+            package.atlas_height(),
+            package.gutter(),
+        )?;
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| derived_output_path(file, "csv-imported"));
-        package_edit::replace_virtual_path_file(file, &output, EC_LAND_SLOT_MANIFEST_ENTRY_PATH, &manifest)?;
-        println!("Imported {} ec_land slot rows into '{}'.", rows.len(), output.display());
+        package_edit::replace_virtual_path_file(
+            file,
+            &output,
+            EC_LAND_SLOT_MANIFEST_ENTRY_PATH,
+            &manifest,
+        )?;
+        println!(
+            "Imported {} ec_land slot rows into '{}'.",
+            rows.len(),
+            output.display()
+        );
         return Ok(());
     }
 
-    eyre::bail!("{} is not a supported atlas package for slot CSV import", file.display())
+    eyre::bail!(
+        "{} is not a supported atlas package for slot CSV import",
+        file.display()
+    )
 }
 
 fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()> {
@@ -431,16 +517,26 @@ fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<(
     println!(
         "Left: rows={}, populated_slots={} | Right: rows={}, populated_slots={}",
         left_package.terrain_provenance().len(),
-        left_package.slots().iter().filter(|slot| slot.is_present()).count(),
+        left_package
+            .slots()
+            .iter()
+            .filter(|slot| slot.is_present())
+            .count(),
         right_package.terrain_provenance().len(),
-        right_package.slots().iter().filter(|slot| slot.is_present()).count(),
+        right_package
+            .slots()
+            .iter()
+            .filter(|slot| slot.is_present())
+            .count(),
     );
     print_set_diff("terrain provenance rows", &left_rows, &right_rows);
     Ok(())
 }
 
 fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
-    if let (Ok(left_package), Ok(right_package)) = (CcArtPackage::load(left), CcArtPackage::load(right)) {
+    if let (Ok(left_package), Ok(right_package)) =
+        (CcArtPackage::load(left), CcArtPackage::load(right))
+    {
         let left_rows = cc_slot_rows(&left_package)
             .into_iter()
             .map(slot_row_key)
@@ -452,7 +548,9 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
         print_set_diff("cc_art slot rows", &left_rows, &right_rows);
         return Ok(());
     }
-    if let (Ok(left_package), Ok(right_package)) = (EcArtPackage::load(left), EcArtPackage::load(right)) {
+    if let (Ok(left_package), Ok(right_package)) =
+        (EcArtPackage::load(left), EcArtPackage::load(right))
+    {
         let left_rows = ec_art_slot_rows(&left_package)
             .into_iter()
             .map(slot_row_key)
@@ -464,7 +562,9 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
         print_set_diff("ec_art slot rows", &left_rows, &right_rows);
         return Ok(());
     }
-    if let (Ok(left_package), Ok(right_package)) = (EcLandPackage::load(left), EcLandPackage::load(right)) {
+    if let (Ok(left_package), Ok(right_package)) =
+        (EcLandPackage::load(left), EcLandPackage::load(right))
+    {
         let left_rows = ec_land_slot_rows(&left_package)
             .into_iter()
             .map(slot_row_key)
@@ -481,8 +581,10 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
 }
 
 fn diff_package_payloads(left: &Path, right: &Path) -> eyre::Result<()> {
-    let left_reader = UddpReader::open(fs::read(left).wrap_err_with(|| format!("read {}", left.display()))?)?;
-    let right_reader = UddpReader::open(fs::read(right).wrap_err_with(|| format!("read {}", right.display()))?)?;
+    let left_reader =
+        UddpReader::open(fs::read(left).wrap_err_with(|| format!("read {}", left.display()))?)?;
+    let right_reader =
+        UddpReader::open(fs::read(right).wrap_err_with(|| format!("read {}", right.display()))?)?;
     println!(
         "Left: lookup_mode={:?}, files={} | Right: lookup_mode={:?}, files={}",
         left_reader.lookup_mode(),
@@ -512,7 +614,9 @@ fn detect_csv_kind(path: &Path) -> eyre::Result<CsvKind> {
 }
 
 fn is_atlas_package(path: &Path) -> bool {
-    CcArtPackage::load(path).is_ok() || EcArtPackage::load(path).is_ok() || EcLandPackage::load(path).is_ok()
+    CcArtPackage::load(path).is_ok()
+        || EcArtPackage::load(path).is_ok()
+        || EcLandPackage::load(path).is_ok()
 }
 
 fn load_ec_land_package(file: &Path) -> eyre::Result<EcLandPackage> {
@@ -521,12 +625,18 @@ fn load_ec_land_package(file: &Path) -> eyre::Result<EcLandPackage> {
 }
 
 fn default_slots_output(file: &Path) -> PathBuf {
-    let stem = file.file_stem().and_then(|value| value.to_str()).unwrap_or("package");
+    let stem = file
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("package");
     file.with_file_name(format!("{stem}.slots.csv"))
 }
 
 fn derived_output_path(file: &Path, suffix: &str) -> PathBuf {
-    let stem = file.file_stem().and_then(|value| value.to_str()).unwrap_or("package");
+    let stem = file
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("package");
     match file.extension().and_then(|value| value.to_str()) {
         Some(ext) => file.with_file_name(format!("{stem}.{suffix}.{ext}")),
         None => file.with_file_name(format!("{stem}.{suffix}")),
@@ -541,7 +651,11 @@ fn cc_slot_rows(package: &CcArtPackage) -> Vec<AtlasSlotCsvRow> {
         .filter(|slot| slot.is_present())
         .map(|slot| AtlasSlotCsvRow {
             art_id: slot.art_id,
-            kind: if slot.is_land() { SlotKind::Land } else { SlotKind::Static },
+            kind: if slot.is_land() {
+                SlotKind::Land
+            } else {
+                SlotKind::Static
+            },
             page_index: slot.page_index,
             page_tile_index: slot.page_tile_index,
             x: slot.x,
@@ -560,7 +674,11 @@ fn ec_art_slot_rows(package: &EcArtPackage) -> Vec<AtlasSlotCsvRow> {
         .filter(|slot| slot.is_present())
         .map(|slot| AtlasSlotCsvRow {
             art_id: slot.art_id,
-            kind: if slot.is_land() { SlotKind::Land } else { SlotKind::Static },
+            kind: if slot.is_land() {
+                SlotKind::Land
+            } else {
+                SlotKind::Static
+            },
             page_index: slot.page_index,
             page_tile_index: slot.page_tile_index,
             x: slot.x,
@@ -649,7 +767,16 @@ fn write_atlas_slot_csv(path: &Path, rows: &[AtlasSlotCsvRow]) -> eyre::Result<(
         .has_headers(true)
         .from_path(path)
         .wrap_err_with(|| format!("write {}", path.display()))?;
-    writer.write_record(["art_id", "kind", "page_index", "page_tile_index", "x", "y", "width", "height"])?;
+    writer.write_record([
+        "art_id",
+        "kind",
+        "page_index",
+        "page_tile_index",
+        "x",
+        "y",
+        "width",
+        "height",
+    ])?;
     for row in rows {
         writer.write_record([
             row.art_id.to_string(),
@@ -693,7 +820,12 @@ fn read_atlas_slot_csv(path: &Path) -> eyre::Result<Vec<AtlasSlotCsvRow>> {
                 line_number,
             )?,
             page_index: parse_u32_field(&row, page_index, "page_index", line_number)?,
-            page_tile_index: parse_u16_field(&row, page_tile_index, "page_tile_index", line_number)?,
+            page_tile_index: parse_u16_field(
+                &row,
+                page_tile_index,
+                "page_tile_index",
+                line_number,
+            )?,
             x: parse_u16_field(&row, x, "x", line_number)?,
             y: parse_u16_field(&row, y, "y", line_number)?,
             width: parse_u16_field(&row, width, "width", line_number)?,
@@ -723,19 +855,31 @@ fn validate_atlas_slot_rows(
         .copied()
         .map(|row| (row.art_id, row))
         .collect::<HashMap<_, _>>();
-    let imported_ids = imported_rows.iter().map(|row| row.art_id).collect::<HashSet<_>>();
-    let current_ids = current_rows.iter().map(|row| row.art_id).collect::<HashSet<_>>();
+    let imported_ids = imported_rows
+        .iter()
+        .map(|row| row.art_id)
+        .collect::<HashSet<_>>();
+    let current_ids = current_rows
+        .iter()
+        .map(|row| row.art_id)
+        .collect::<HashSet<_>>();
     if imported_ids != current_ids {
         eyre::bail!("{package_name} slot CSV must keep the exact set of present art_id rows");
     }
 
     let mut seen = HashSet::new();
     for row in imported_rows {
-        let current = current_by_id
-            .get(&row.art_id)
-            .ok_or_else(|| eyre::eyre!("{package_name} slot CSV art_id {} is not present in the package", row.art_id))?;
+        let current = current_by_id.get(&row.art_id).ok_or_else(|| {
+            eyre::eyre!(
+                "{package_name} slot CSV art_id {} is not present in the package",
+                row.art_id
+            )
+        })?;
         if !seen.insert(row.art_id) {
-            eyre::bail!("{package_name} slot CSV contains duplicate art_id {}", row.art_id);
+            eyre::bail!(
+                "{package_name} slot CSV contains duplicate art_id {}",
+                row.art_id
+            );
         }
         if row.kind != current.kind {
             eyre::bail!(
@@ -746,11 +890,18 @@ fn validate_atlas_slot_rows(
             );
         }
         if row.width == 0 || row.height == 0 {
-            eyre::bail!("{package_name} slot CSV art_id {} must keep non-zero width and height", row.art_id);
+            eyre::bail!(
+                "{package_name} slot CSV art_id {} must keep non-zero width and height",
+                row.art_id
+            );
         }
-        let page = pages
-            .get(&row.page_index)
-            .ok_or_else(|| eyre::eyre!("{package_name} slot CSV art_id {} targets missing page {}", row.art_id, row.page_index))?;
+        let page = pages.get(&row.page_index).ok_or_else(|| {
+            eyre::eyre!(
+                "{package_name} slot CSV art_id {} targets missing page {}",
+                row.art_id,
+                row.page_index
+            )
+        })?;
         if u32::from(row.page_tile_index) >= page.tile_count {
             eyre::bail!(
                 "{package_name} slot CSV art_id {} uses page_tile_index {} outside page {} tile_count {}",
@@ -816,7 +967,9 @@ fn write_ec_land_terrain_provenance_csv(
     Ok(())
 }
 
-fn read_ec_land_terrain_provenance_csv(path: &Path) -> eyre::Result<Vec<EcLandTerrainProvenanceRecord>> {
+fn read_ec_land_terrain_provenance_csv(
+    path: &Path,
+) -> eyre::Result<Vec<EcLandTerrainProvenanceRecord>> {
     let mut reader = ReaderBuilder::new()
         .trim(Trim::All)
         .from_path(path)
@@ -837,10 +990,25 @@ fn read_ec_land_terrain_provenance_csv(path: &Path) -> eyre::Result<Vec<EcLandTe
         let line_number = row_index + 2;
         records.push(EcLandTerrainProvenanceRecord {
             material_id: parse_u32_field(&row, material_id, "material_id", line_number)?,
-            material_name_id: parse_i32_field(&row, material_name_id, "material_name_id", line_number)?,
-            alias_count_index: parse_u32_field(&row, alias_count_index, "alias_count_index", line_number)?,
+            material_name_id: parse_i32_field(
+                &row,
+                material_name_id,
+                "material_name_id",
+                line_number,
+            )?,
+            alias_count_index: parse_u32_field(
+                &row,
+                alias_count_index,
+                "alias_count_index",
+                line_number,
+            )?,
             alias_slot_id: parse_u32_field(&row, alias_slot_id, "alias_slot_id", line_number)?,
-            alias_tile_flags: parse_u64_field(&row, alias_tile_flags, "alias_tile_flags", line_number)?,
+            alias_tile_flags: parse_u64_field(
+                &row,
+                alias_tile_flags,
+                "alias_tile_flags",
+                line_number,
+            )?,
             selected_texture_id: parse_optional_u32_field(
                 &row,
                 selected_texture_id,
@@ -857,7 +1025,13 @@ fn read_ec_land_terrain_provenance_csv(path: &Path) -> eyre::Result<Vec<EcLandTe
             )?,
         });
     }
-    records.sort_by_key(|record| (record.alias_slot_id, record.material_id, record.alias_count_index));
+    records.sort_by_key(|record| {
+        (
+            record.alias_slot_id,
+            record.material_id,
+            record.alias_count_index,
+        )
+    });
     Ok(records)
 }
 
@@ -877,14 +1051,28 @@ fn validate_ec_land_terrain_provenance(
     let slot_count = package.slots().len() as u32;
     let current_keys = current_records
         .iter()
-        .map(|record| (record.material_id, record.alias_slot_id, record.alias_count_index))
+        .map(|record| {
+            (
+                record.material_id,
+                record.alias_slot_id,
+                record.alias_count_index,
+            )
+        })
         .collect::<HashSet<_>>();
     let imported_keys = records
         .iter()
-        .map(|record| (record.material_id, record.alias_slot_id, record.alias_count_index))
+        .map(|record| {
+            (
+                record.material_id,
+                record.alias_slot_id,
+                record.alias_count_index,
+            )
+        })
         .collect::<HashSet<_>>();
     if current_keys != imported_keys {
-        eyre::bail!("ec_land terrain provenance CSV must keep the exact set of material/alias rows");
+        eyre::bail!(
+            "ec_land terrain provenance CSV must keep the exact set of material/alias rows"
+        );
     }
 
     let mut seen = HashSet::new();
@@ -892,7 +1080,13 @@ fn validate_ec_land_terrain_provenance(
     let canonical_targets = records
         .iter()
         .filter(|record| record.selected_texture_id != MISSING_TEXTURE_ID)
-        .map(|record| (record.alias_slot_id, record.selected_texture_id, record.canonical_slot_id))
+        .map(|record| {
+            (
+                record.alias_slot_id,
+                record.selected_texture_id,
+                record.canonical_slot_id,
+            )
+        })
         .collect::<HashSet<_>>();
 
     for record in records {
@@ -910,7 +1104,11 @@ fn validate_ec_land_terrain_provenance(
                 slot_count
             );
         }
-        if !seen.insert((record.material_id, record.alias_slot_id, record.alias_count_index)) {
+        if !seen.insert((
+            record.material_id,
+            record.alias_slot_id,
+            record.alias_count_index,
+        )) {
             eyre::bail!(
                 "duplicate ec_land provenance row for material_id={}, alias_slot_id={}, alias_count_index={}",
                 record.material_id,
@@ -950,7 +1148,11 @@ fn validate_ec_land_terrain_provenance(
             );
         }
 
-        if !canonical_targets.contains(&(record.canonical_slot_id, record.selected_texture_id, record.canonical_slot_id)) {
+        if !canonical_targets.contains(&(
+            record.canonical_slot_id,
+            record.selected_texture_id,
+            record.canonical_slot_id,
+        )) {
             eyre::bail!(
                 "alias_slot_id {} references canonical_slot_id {} without a matching canonical row for selected_texture_id {}",
                 record.alias_slot_id,
@@ -972,7 +1174,9 @@ fn package_file_fingerprints(package: &UddpReader) -> eyre::Result<BTreeMap<Stri
             FileKey::Id(id) => match package.lookup_mode() {
                 LookupMode::DenseId => package.read_file_by_dense_id(id)?,
                 LookupMode::SparseId => package.read_file_by_sparse_id(id)?,
-                LookupMode::VirtualPathHash => unreachable!("path hash packages must use path-hash keys"),
+                LookupMode::VirtualPathHash => {
+                    unreachable!("path hash packages must use path-hash keys")
+                }
             },
         };
         result.insert(key, fingerprint_bytes(&bytes));
@@ -986,7 +1190,9 @@ fn file_key_name(key: FileKey, lookup_mode: LookupMode) -> String {
         FileKey::Id(id) => match lookup_mode {
             LookupMode::DenseId => format!("dense_id:{id}"),
             LookupMode::SparseId => format!("sparse_id:{id}"),
-            LookupMode::VirtualPathHash => unreachable!("path hash packages must use path-hash keys"),
+            LookupMode::VirtualPathHash => {
+                unreachable!("path hash packages must use path-hash keys")
+            }
         },
     }
 }
@@ -1079,28 +1285,48 @@ fn csv_header_index(headers: &StringRecord, name: &str) -> eyre::Result<usize> {
         .ok_or_else(|| eyre::eyre!("missing CSV header '{name}'"))
 }
 
-fn parse_u32_field(row: &StringRecord, index: usize, field_name: &str, line_number: usize) -> eyre::Result<u32> {
+fn parse_u32_field(
+    row: &StringRecord,
+    index: usize,
+    field_name: &str,
+    line_number: usize,
+) -> eyre::Result<u32> {
     row.get(index)
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<u32>()
         .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
 }
 
-fn parse_u16_field(row: &StringRecord, index: usize, field_name: &str, line_number: usize) -> eyre::Result<u16> {
+fn parse_u16_field(
+    row: &StringRecord,
+    index: usize,
+    field_name: &str,
+    line_number: usize,
+) -> eyre::Result<u16> {
     row.get(index)
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<u16>()
         .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
 }
 
-fn parse_i32_field(row: &StringRecord, index: usize, field_name: &str, line_number: usize) -> eyre::Result<i32> {
+fn parse_i32_field(
+    row: &StringRecord,
+    index: usize,
+    field_name: &str,
+    line_number: usize,
+) -> eyre::Result<i32> {
     row.get(index)
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<i32>()
         .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
 }
 
-fn parse_u64_field(row: &StringRecord, index: usize, field_name: &str, line_number: usize) -> eyre::Result<u64> {
+fn parse_u64_field(
+    row: &StringRecord,
+    index: usize,
+    field_name: &str,
+    line_number: usize,
+) -> eyre::Result<u64> {
     row.get(index)
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<u64>()
@@ -1120,9 +1346,9 @@ fn parse_optional_u32_field(
     if value.is_empty() {
         Ok(missing)
     } else {
-        value
-            .parse::<u32>()
-            .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
+        value.parse::<u32>().map_err(|error| {
+            eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
+        })
     }
 }
 

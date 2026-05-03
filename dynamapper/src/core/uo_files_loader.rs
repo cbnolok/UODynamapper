@@ -1,7 +1,7 @@
 #![allow(unused)]
 
+use crate::configs::settings::Settings;
 use crate::core::system_sets::StartupSysSet;
-use crate::external_data::settings::Settings;
 use crate::prelude::*;
 use bevy::prelude::*;
 //use parking_lot::RwLock;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use uddconv::tilemeta::TileMetaPackage;
 use uocf::classic::tiledata;
 use uocf::classic::{land_texture, map};
+use std::collections::HashMap;
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -49,6 +50,22 @@ pub struct EcArtPackageRes(pub Arc<uddconv::ec_art::EcArtPackage>);
 /// Optional prepacked atlas package for EC land art.
 #[derive(Resource)]
 pub struct EcLandPackageRes(pub Arc<uddconv::ec_land::EcLandPackage>);
+
+/// Transcode table for Classic to Enhanced terrain IDs.
+#[derive(Resource)]
+pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
+
+/// Enhanced terrain definitions.
+#[derive(Resource)]
+pub struct TerrainDefinitionRes(pub Arc<HashMap<u32, uddconv::cc_ec_conv::TerrainDefEntry>>);
+
+/// Stored statics data for each map plane.
+#[derive(Resource)]
+pub struct StaticsStoreRes(pub Vec<Option<Arc<uocf::classic::statics::StaticsStore>>>);
+
+/// Radarcol palette for dot mode rendering.
+#[derive(Resource)]
+pub struct RadarColRes(pub Arc<Vec<uocf::utils::color::Rgb555>>);
 
 pub struct UoFilesSettings {
     pub base_folder: PathBuf,
@@ -89,7 +106,11 @@ fn log_source_choice(
     ));
 }
 
-fn resolve_optional_uddp_path(uddp_root: &Path, raw_root: &Path, file_name: &str) -> Option<PathBuf> {
+fn resolve_optional_uddp_path(
+    uddp_root: &Path,
+    raw_root: &Path,
+    file_name: &str,
+) -> Option<PathBuf> {
     let preferred = uddp_root.join(file_name);
     if preferred.is_file() {
         return Some(preferred);
@@ -129,11 +150,12 @@ impl Plugin for UOFilesPlugin {
     }
 }
 
-fn log_ec_land_coverage(
-    lg: &impl Fn(&str),
-    package: &uddconv::ec_land::EcLandPackage,
-) {
-    let populated_slot_count = package.slots().iter().filter(|slot| slot.is_present()).count();
+fn log_ec_land_coverage(lg: &impl Fn(&str), package: &uddconv::ec_land::EcLandPackage) {
+    let populated_slot_count = package
+        .slots()
+        .iter()
+        .filter(|slot| slot.is_present())
+        .count();
     let alias_ref_count = package.terrain_provenance().len();
     let slot_table_len = package.slots().len();
 
@@ -171,7 +193,15 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let mut map_planes: Vec<Option<map::MapPlane>> = std::iter::repeat_with(|| None)
         .take((MAX_MAP_INDEX + 1) as usize)
         .collect::<Vec<_>>();
+    let mut statics_stores: Vec<Option<Arc<uocf::classic::statics::StaticsStore>>> = std::iter::repeat_with(|| None)
+        .take((MAX_MAP_INDEX + 1) as usize)
+        .collect::<Vec<_>>();
+        
     for map_plane_index in 0..=MAX_MAP_INDEX {
+        if map_plane_index != settings.core.world.start_p.m as u32 {
+            continue;
+        }
+        
         let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
         if map_file.exists() {
             log_source_choice(
@@ -191,15 +221,33 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             let map_plane =
                 map::MapPlane::init_with_size(map_file, map_plane_index, map_size_override)
                     .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
+                    
+            let statics_idx_file = uo_path.join(format!("staidx{map_plane_index}.mul"));
+            let statics_file = uo_path.join(format!("statics{map_plane_index}.mul"));
+            if statics_idx_file.exists() && statics_file.exists() {
+                log_source_choice(
+                    &lg,
+                    &format!("statics plane {map_plane_index}"),
+                    SourceContainerKind::Mul,
+                    &[statics_idx_file.clone(), statics_file.clone()],
+                );
+                let mut reader = uocf::classic::statics::StaticsReader::new(
+                    &statics_idx_file,
+                    &statics_file,
+                    map_plane.size_blocks.width * 8,
+                    map_plane.size_blocks.height * 8,
+                ).unwrap_or_else(|_| panic!("Error initializing statics reader for plane {map_plane_index}"));
+                
+                let store = reader.load_all()
+                    .unwrap_or_else(|_| panic!("Error loading statics for plane {map_plane_index}"));
+                statics_stores[map_plane_index as usize] = Some(Arc::new(store));
+            }
+                    
             map_planes[map_plane_index as usize] = Some(map_plane);
         }
     }
 
-    let tilemeta_path = resolve_optional_uddp_paths(
-        &udd_path,
-        &uo_path,
-        &["tilemeta.uddp", "unified_tiledata.uddp"],
-    );
+    let tilemeta_path = resolve_optional_uddp_paths(&udd_path, &uo_path, &["tilemeta.uddp"]);
     let tilemeta_package = if let Some(tilemeta_path) = tilemeta_path {
         log_source_choice(
             &lg,
@@ -243,7 +291,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     let cc_art_path = resolve_optional_uddp_path(&udd_path, &uo_path, "cc_art.uddp");
     let cc_art_package = if let Some(cc_art_path) = cc_art_path {
-        log_source_choice(&lg, "classic art package", SourceContainerKind::Uddp, std::slice::from_ref(&cc_art_path));
+        log_source_choice(
+            &lg,
+            "classic art package",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&cc_art_path),
+        );
         Some(
             uddconv::cc_art::CcArtPackage::load(&cc_art_path)
                 .unwrap_or_else(|_| panic!("Error loading {}", cc_art_path.display())),
@@ -255,7 +308,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     let ec_art_path = resolve_optional_uddp_path(&udd_path, &uo_path, "ec_art.uddp");
     let ec_art_package = if let Some(ec_art_path) = ec_art_path {
-        log_source_choice(&lg, "enhanced art package", SourceContainerKind::Uddp, std::slice::from_ref(&ec_art_path));
+        log_source_choice(
+            &lg,
+            "enhanced art package",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&ec_art_path),
+        );
         Some(
             uddconv::ec_art::EcArtPackage::load(&ec_art_path)
                 .unwrap_or_else(|_| panic!("Error loading {}", ec_art_path.display())),
@@ -267,22 +325,63 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     let ec_land_path = resolve_optional_uddp_path(&udd_path, &uo_path, "ec_land.uddp");
     let ec_land_package = if let Some(ec_land_path) = ec_land_path {
-        log_source_choice(&lg, "enhanced land package", SourceContainerKind::Uddp, std::slice::from_ref(&ec_land_path));
+        log_source_choice(
+            &lg,
+            "enhanced land package",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&ec_land_path),
+        );
         let package = uddconv::ec_land::EcLandPackage::load(&ec_land_path)
             .unwrap_or_else(|_| panic!("Error loading {}", ec_land_path.display()));
         log_ec_land_coverage(&lg, &package);
-        if package.runtime_material_id_override_source()
-            == uddconv::ec_land::EcLandRuntimeMaterialIdOverrideSource::BundledTomlAsset
-        {
-            lg("Enhanced land package missing runtime terrain-id override metadata; falling back to bundled TOML override asset.");
-        }
         Some(package)
     } else {
         lg("No enhanced land package source selected: ec_land.uddp not found in udd_path or raw client folder.");
         None
     };
 
+    let radarcol_path = uo_path.join("radarcol.mul");
+    let radarcol = if radarcol_path.exists() {
+        log_source_choice(
+            &lg,
+            "radar colors",
+            SourceContainerKind::Mul,
+            std::slice::from_ref(&radarcol_path),
+        );
+        Some(uocf::classic::radarcol::load_radarcol(&radarcol_path).expect("Load radarcol"))
+    } else {
+        lg("radarcol.mul not found");
+        None
+    };
+
     lg("Done loading UO Data.");
+
+    // Load CC-EC conversion tables from KDL
+    let transcode_path = Path::new("assets/cc_ec_convtables/TerrainTranscode.kdl");
+    if transcode_path.exists() {
+        match uddconv::cc_ec_conv::TerrainTranscode::load(transcode_path) {
+            Ok(transcode) => {
+                lg("Loaded TerrainTranscode.kdl");
+                commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode.to_map())));
+            }
+            Err(e) => {
+                bevy::log::error!("Failed to load TerrainTranscode.kdl: {e}");
+            }
+        }
+    }
+
+    let definition_path = Path::new("assets/cc_ec_convtables/TerrainDefinition.kdl");
+    if definition_path.exists() {
+        match uddconv::cc_ec_conv::TerrainDefinitionKdl::load(definition_path) {
+            Ok(definition) => {
+                lg("Loaded TerrainDefinition.kdl");
+                commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
+            }
+            Err(e) => {
+                bevy::log::error!("Failed to load TerrainDefinition.kdl: {e}");
+            }
+        }
+    }
 
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
         base_folder: uo_path,
@@ -305,8 +404,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     if let Some(ec_land_package) = ec_land_package {
         commands.insert_resource(EcLandPackageRes(Arc::new(ec_land_package)));
     }
+    commands.insert_resource(StaticsStoreRes(statics_stores));
+    if let Some(radarcol) = radarcol {
+        commands.insert_resource(RadarColRes(Arc::new(radarcol)));
+    }
 
-    if settings.graphics.art_texture_source == crate::external_data::settings::ClientTextureSource::Ec
+    if settings.graphics.art_texture_source == crate::configs::settings::ClientTextureSource::Ec
         && tilemeta_package.is_none()
     {
         console_logger::one(

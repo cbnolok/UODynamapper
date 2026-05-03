@@ -10,6 +10,7 @@ mod texture_cache;
 mod uo_files_loader;
 
 use crate::{
+    configs::{settings, ExternalDataPlugin},
     console_logger::{self, LogAbout, LogSev},
     core::{
         app_states::*,
@@ -17,13 +18,13 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin},
         render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
-    external_data::{settings, ExternalDataPlugin},
     impl_tracked_plugin,
     util_lib::tracked_plugin::{
         log_plugin_build, set_plugin_log_toggles, sys_log_plugin_registry_tree, TrackedPlugin,
     },
 };
 use bevy::{
+    ecs::schedule::ScheduleLabel,
     //ecs::schedule::ExecutorKind,
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
@@ -239,32 +240,26 @@ pub fn run_bevy_app() -> ExitCode {
             }),
     );
 
-    app.edit_schedule(Update, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    })
-    .edit_schedule(PreUpdate, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    })
-    .edit_schedule(PostUpdate, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    })
-    .edit_schedule(FixedUpdate, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    })
-    .edit_schedule(FixedPreUpdate, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    })
-    .edit_schedule(FixedPostUpdate, |schedule| {
-        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-    });
+    for sched in [
+        Update.intern(),
+        PreUpdate.intern(),
+        PostUpdate.intern(),
+        FixedUpdate.intern(),
+        FixedPreUpdate.intern(),
+        FixedPostUpdate.intern(),
+    ] {
+        app.edit_schedule(sched, |schedule| {
+            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        });
+    }
 
     if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-        render_app.edit_schedule(bevy::render::Render, |schedule| {
-            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-        });
-        render_app.edit_schedule(bevy::render::ExtractSchedule, |schedule| {
-            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-        });
+        use bevy::render;
+        for sched in [render::Render.intern(), render::ExtractSchedule.intern()] {
+            render_app.edit_schedule(sched, |schedule| {
+                schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+            });
+        }
     }
 
     {

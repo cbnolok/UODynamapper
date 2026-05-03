@@ -1,7 +1,7 @@
+use crate::configs::settings::Settings;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::{color, prelude::*};
-use crate::external_data::settings::Settings;
 
 #[derive(Component)]
 pub struct Player {
@@ -20,7 +20,10 @@ impl Plugin for PlayerPlugin {
             Startup,
             sys_spawn_player_entity.in_set(StartupSysSet::SetupSceneStage1),
         )
-        .add_systems(Update, sys_update_player_visibility.run_if(in_state(AppState::InGame)));
+        .add_systems(
+            Update,
+            sys_update_player_visibility.run_if(in_state(AppState::InGame)),
+        );
     }
 }
 
@@ -56,10 +59,7 @@ pub fn sys_spawn_player_entity(
     ));
 
     if !settings.core.world.hide_player {
-        player_entity.insert((
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(material_handle),
-        ));
+        player_entity.insert((Mesh3d(mesh_handle), MeshMaterial3d(material_handle)));
     }
 
     console_logger::one(
@@ -82,7 +82,9 @@ pub fn sys_update_player_visibility(
 
     if hide && is_rendered {
         for entity in render_q.iter() {
-            commands.entity(entity).remove::<(Mesh3d, MeshMaterial3d<StandardMaterial>)>();
+            commands
+                .entity(entity)
+                .remove::<(Mesh3d, MeshMaterial3d<StandardMaterial>)>();
         }
     } else if !hide && !is_rendered {
         // We need the handles again. Since we don't store them, we recreate them or

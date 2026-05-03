@@ -2,8 +2,6 @@ pub mod codec;
 pub mod uddf;
 pub mod uddp;
 
-#[cfg(test)]
-mod tests;
 
 pub use uddp::{
     AddFileRequest,

@@ -42,7 +42,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use crate::classic::map::MapBlock;
-use crate::enhanced::facet::StaticTile;
+use crate::enhanced::facet_decoder::StaticTile;
 use crate::uop;
 use crate::uop::package::UopPackage;
 
@@ -128,7 +128,7 @@ pub fn decode_facet_bin(
     data: &[u8],
     tile_dictionary: &HashMap<u16, (u16, u8)>,
     static_dictionary: &HashSet<u16>,
-) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
+) -> eyre::Result<crate::enhanced::facet_decoder::DecodedFacet> {
     let mut cursor: Cursor<&[u8]> = Cursor::new(data);
 
     // 1. Read Header
@@ -136,14 +136,14 @@ pub fn decode_facet_bin(
     let _file_id: u16 = cursor.read_u16::<LittleEndian>()?;
 
     // Initialize the 64 classic empty blocks
-    let mut decoded_blocks: Vec<crate::enhanced::facet::DecodedBlockClassic> = (0..64)
+    let mut decoded_blocks: Vec<crate::enhanced::facet_decoder::DecodedBlockClassic> = (0..64)
         .map(|i| {
             let block_x = (i % 8) as u32;
             let block_y = (i / 8) as u32;
             let mut block = MapBlock::default();
             block.internal_coords.x = block_x;
             block.internal_coords.y = block_y;
-            crate::enhanced::facet::DecodedBlockClassic {
+            crate::enhanced::facet_decoder::DecodedBlockClassic {
                 block,
                 statics: Vec::new(),
             }
@@ -218,7 +218,7 @@ pub fn decode_facet_bin(
         }
     }
 
-    Ok(crate::enhanced::facet::DecodedFacet {
+    Ok(crate::enhanced::facet_decoder::DecodedFacet {
         blocks: decoded_blocks,
     })
 }
@@ -230,7 +230,7 @@ pub fn read_facet_block(
     block_id: u32,
     tile_dictionary: &HashMap<u16, (u16, u8)>,
     static_dictionary: &HashSet<u16>,
-) -> eyre::Result<crate::enhanced::facet::DecodedFacet> {
+) -> eyre::Result<crate::enhanced::facet_decoder::DecodedFacet> {
     use std::io::Write;
     let mut path_buf = [0u8; 64];
     let mut slice = &mut path_buf[..];

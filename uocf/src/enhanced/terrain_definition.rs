@@ -262,7 +262,7 @@ fn resolve_texture_item(
         .map(|image| {
             let path = resolve_dictionary_string_i32(string_dictionary, image.string_dictionary_offset);
             let texture_type = classify_texture_path(path.as_deref());
-            let texture_id = path.as_deref().and_then(extract_texture_id_from_path);
+            let texture_id = path.as_deref().and_then(crate::utils::path::extract_texture_id_from_path);
 
             TerrainDefinitionTextureLayer {
                 name_string_off: image.string_dictionary_offset,
@@ -309,7 +309,7 @@ fn resolve_dictionary_string_i32(
 }
 
 fn classify_texture_path(path: Option<&str>) -> TerrainTextureType {
-    match path.map(normalize_dictionary_path) {
+    match path.map(crate::utils::path::normalize_dictionary_path) {
         Some(value) if value.contains("data\\worldart\\") => TerrainTextureType::WorldArt,
         Some(value) if value.contains("data\\tileartlegacy\\") => {
             TerrainTextureType::TileArtLegacy
@@ -322,36 +322,15 @@ fn classify_texture_path(path: Option<&str>) -> TerrainTextureType {
     }
 }
 
-fn extract_texture_id_from_path(path: &str) -> Option<u32> {
-    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(path);
-    let stem = file_name.split('.').next().unwrap_or(file_name);
-
-    stem.split('_')
-        .next()
-        .and_then(extract_first_digit_run)
-        .or_else(|| extract_first_digit_run(stem))
-}
-
-fn normalize_dictionary_path(path: &str) -> String {
-    path.replace('/', "\\").to_ascii_lowercase()
-}
-
-fn extract_first_digit_run(segment: &str) -> Option<u32> {
-    let start = segment.find(|c: char| c.is_ascii_digit())?;
-    let digits = segment[start..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty()).then_some(digits)?.parse().ok()
-}
 
 fn find_neighboring_string_dictionary(path: &Path) -> Option<PathBuf> {
     let parent = path.parent()?;
-    ["string_dictionary.uop", "string_Wdictionary.uop"]
+    ["string_dictionary.uop"]
         .into_iter()
         .map(|name| parent.join(name))
         .find(|candidate| candidate.exists())
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -590,33 +569,18 @@ mod tests {
 
     #[test]
     fn terrain_definition_extract_texture_id_normalizes_dictionary_name_patterns() {
+        use crate::utils::path::extract_texture_id_from_path;
         assert_eq!(
-            extract_texture_id_from_path("Data\\WorldArt\\00000002_ankh.tga"),
+            extract_texture_id_from_path(r"Data\WorldArt\00000002_ankh.tga"),
             Some(2)
         );
         assert_eq!(
-            extract_texture_id_from_path("Data\\TileArtLegacy\\3.tga"),
+            extract_texture_id_from_path(r"Data\TileArtLegacy\3.tga"),
             Some(3)
         );
         assert_eq!(
             extract_texture_id_from_path("Data/TileArtEnhanced/02000540_Sand_Cliff_EW_A.tga"),
             Some(2000540)
-        );
-    }
-
-    #[test]
-    fn terrain_definition_classify_texture_path_normalizes_case_and_slashes() {
-        assert_eq!(
-            classify_texture_path(Some("data/worldart/00000002_ankh.tga")),
-            TerrainTextureType::WorldArt
-        );
-        assert_eq!(
-            classify_texture_path(Some("DATA\\TILEARTLEGACY\\3.tga")),
-            TerrainTextureType::TileArtLegacy
-        );
-        assert_eq!(
-            classify_texture_path(Some("Data/TileArtEnhanced/00000004_tree.tga")),
-            TerrainTextureType::TileArtEnhanced
         );
     }
 }

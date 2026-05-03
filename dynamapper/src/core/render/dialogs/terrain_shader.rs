@@ -9,8 +9,8 @@
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
+    configs::shader_presets::{build_save_presets, save_shader_settings, UniformState},
     core::render::{dialogs, scene::camera::UiCameraResource},
-    external_data::shader_presets::{build_save_presets, save_shader_settings, UniformState},
     impl_tracked_plugin,
     prelude::*,
     util_lib::tracked_plugin::*,

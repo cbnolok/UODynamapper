@@ -1,8 +1,10 @@
 pub mod bc7;
 pub mod cc_art;
+pub mod cc_ec_conv;
+pub mod cc_map;
+pub mod cc_statics;
 pub mod ec_art;
 pub mod ec_land;
 pub mod package_progress;
 pub mod source_paths;
 pub mod tilemeta;
-pub mod unified_tiledata;

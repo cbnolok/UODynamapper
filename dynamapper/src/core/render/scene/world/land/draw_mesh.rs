@@ -24,7 +24,7 @@ use uocf::classic::{
 use super::chunk_loader;
 
 use super::TILE_NUM_PER_CHUNK_DIM;
-use super::{mesh_material::*, LandUploadBudget, LCMesh, TILE_NUM_PER_CHUNK_TOTAL};
+use super::{mesh_material::*, LCMesh, LandUploadBudget, TILE_NUM_PER_CHUNK_TOTAL};
 use crate::{
     core::{
         constants,
@@ -298,7 +298,7 @@ pub struct DrawMeshLocals {
 #[derive(SystemParam)]
 pub struct LandFramePacing<'w> {
     pub upload_budget: Res<'w, LandUploadBudget>,
-    pub settings: Res<'w, crate::external_data::settings::Settings>,
+    pub settings: Res<'w, crate::configs::settings::Settings>,
     pub time: Res<'w, Time<Real>>,
 }
 
@@ -729,7 +729,7 @@ pub fn sys_draw_spawned_land_chunks(
     );
     {
         let use_ec_land_atlas = frame_pacing.settings.graphics.land_texture_source
-            == crate::external_data::settings::ClientTextureSource::Ec
+            == crate::configs::settings::ClientTextureSource::Ec
             && cache_r.ec_land.is_some();
 
         let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
@@ -753,8 +753,8 @@ pub fn sys_draw_spawned_land_chunks(
                 None
             };
 
-            if let Some(slot_id) = resolved_ec_slot {
-                texture_lookup_cache[id as usize] = (slot_id << 2) | 2;
+            if let Some(_slot_id) = resolved_ec_slot {
+                texture_lookup_cache[id as usize] = ((id as u32) << 2) | 2;
             } else if use_ec_land_atlas {
                 texture_lookup_cache[id as usize] = 3;
             } else {
@@ -794,24 +794,20 @@ pub fn sys_draw_spawned_land_chunks(
 
                         None
                     };
-                let normalize_runtime_material_id = |terrain_id: u32| -> u32 {
-                    ec.runtime_material_id_overrides()
-                        .binary_search_by_key(&terrain_id, |record| record.terrain_id)
-                        .ok()
-                        .and_then(|index| ec.runtime_material_id_overrides().get(index))
-                        .map(|record| record.normalized_material_id)
-                        .unwrap_or(terrain_id)
-                };
+
                 let resolve_source = |terrain_id: u32| -> (&'static str, u32, Option<u32>) {
                     if ec.present_slot(terrain_id).is_some() {
                         return ("direct", terrain_id, Some(terrain_id));
                     }
 
-                    if let Some(record) = provenance.iter().find(|record| record.alias_slot_id == terrain_id) {
+                    if let Some(record) = provenance
+                        .iter()
+                        .find(|record| record.alias_slot_id == terrain_id)
+                    {
                         return ("prov_alias", terrain_id, resolve_record_slot(record));
                     }
 
-                    let normalized_terrain_id = normalize_runtime_material_id(terrain_id);
+                    let normalized_terrain_id = terrain_id;
 
                     let material_records = provenance
                         .iter()
@@ -866,9 +862,15 @@ pub fn sys_draw_spawned_land_chunks(
                         ec.slots().len()
                     ),
                 );
-                console_logger::one(LogSev::Info, LogAbout::General,
-                    &format!("[EC-DIAG] Provenance records: {} ({} unique alias_slot_ids)",
-                        provenance.len(), unique_alias_slots.len()));
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    &format!(
+                        "[EC-DIAG] Provenance records: {} ({} unique alias_slot_ids)",
+                        provenance.len(),
+                        unique_alias_slots.len()
+                    ),
+                );
                 let mut n_prov_resolved = 0usize;
                 let mut n_prov_unresolved = 0usize;
                 for p in provenance {
@@ -878,9 +880,14 @@ pub fn sys_draw_spawned_land_chunks(
                         n_prov_unresolved += 1;
                     }
                 }
-                console_logger::one(LogSev::Info, LogAbout::General,
-                    &format!("[EC-DIAG] Provenance summary: {} resolved, {} unresolved",
-                        n_prov_resolved, n_prov_unresolved));
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    &format!(
+                        "[EC-DIAG] Provenance summary: {} resolved, {} unresolved",
+                        n_prov_resolved, n_prov_unresolved
+                    ),
+                );
 
                 if let Some(plane) = map_planes_r
                     .0
@@ -914,13 +921,15 @@ pub fn sys_draw_spawned_land_chunks(
                                 let mode = packed & 0x3;
                                 let payload = packed >> 2;
                                 let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16);
-                                let (source, normalized_id, resolved_slot) = resolve_source(cell.id as u32);
+                                let (source, normalized_id, resolved_slot) =
+                                    resolve_source(cell.id as u32);
                                 let authoritative_slot = match mode {
                                     2 => Some(payload),
                                     3 => None,
                                     _ => resolved_slot,
                                 };
-                                let authoritative_slot_matches_resolution = authoritative_slot == resolved_slot;
+                                let authoritative_slot_matches_resolution =
+                                    authoritative_slot == resolved_slot;
 
                                 if let Some(slot_id) = authoritative_slot {
                                     if let Some(slot) = ec.present_slot(slot_id) {
@@ -1126,10 +1135,8 @@ pub fn sys_draw_spawned_land_chunks(
                 let off_x_in_page = chunk_origin_tile_units_x & (page_w - 1);
                 let off_y_in_page = chunk_origin_tile_units_z & (page_h - 1);
 
-                let (layer, _) = tile_atlas_r.ensure_layer_for_page(bevy::prelude::IVec2::new(
-                    page_x as i32,
-                    page_y as i32,
-                ));
+                let (layer, _) = tile_atlas_r
+                    .ensure_layer_for_page(bevy::prelude::IVec2::new(page_x as i32, page_y as i32));
 
                 tile_atlas_r.enqueue_rg16u_block(
                     layer,

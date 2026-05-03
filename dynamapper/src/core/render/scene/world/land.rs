@@ -1,8 +1,8 @@
 pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
-pub mod setup_base_mesh;
 pub mod profiling;
+pub mod setup_base_mesh;
 pub mod tile_atlas;
 
 use crate::core::system_sets::*;
@@ -10,8 +10,8 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
 use mesh_material::LandCustomMeshMaterial;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// How many tiles per chunk row/column? (chunks are squared)
 pub const TILE_NUM_PER_CHUNK_DIM: u32 = 8;
@@ -58,7 +58,7 @@ impl Default for LandUploadBudget {
 }
 
 impl LandUploadBudget {
-    pub fn from_settings(settings: &crate::external_data::settings::Settings) -> Self {
+    pub fn from_settings(settings: &crate::configs::settings::Settings) -> Self {
         let land_streaming = &settings.worldmap_rendering.land_streaming;
         Self {
             prepare_max_blocks_per_frame: land_streaming.prepare_max_blocks_per_frame,
@@ -161,7 +161,9 @@ impl LandUploadTelemetry {
         self.shared
             .submitted_bytes
             .store(submitted_bytes, Ordering::Relaxed);
-        self.shared.pending_ops.store(pending_ops, Ordering::Relaxed);
+        self.shared
+            .pending_ops
+            .store(pending_ops, Ordering::Relaxed);
         self.shared
             .pending_bytes
             .store(pending_bytes, Ordering::Relaxed);
@@ -174,7 +176,7 @@ impl LandUploadTelemetry {
 /// render-world atlas uploads, so we update it whenever settings change instead of making
 /// those systems reach into the full Settings resource directly.
 fn sys_sync_land_upload_budget(
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
     mut upload_budget: ResMut<LandUploadBudget>,
 ) {
     if !settings.is_changed() && !upload_budget.is_added() {
@@ -185,11 +187,11 @@ fn sys_sync_land_upload_budget(
 }
 
 fn sys_apply_land_shader_simplification_override(
-    settings: Res<crate::external_data::settings::Settings>,
-    uniform_state: Res<crate::external_data::shader_presets::UniformState>,
+    settings: Res<crate::configs::settings::Settings>,
+    uniform_state: Res<crate::configs::shader_presets::UniformState>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    mut last_override: Local<Option<crate::external_data::settings::SectWorldMapShaderSimplification>>,
+    mut last_override: Local<Option<crate::configs::settings::SectWorldMapShaderSimplification>>,
 ) {
     let override_config = settings.worldmap_rendering.shader_simplification.clone();
     let force_changed = *last_override != Some(override_config.clone());
@@ -273,7 +275,7 @@ pub fn sys_update_shared_land_material(
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
-    uniform_state: Res<crate::external_data::shader_presets::UniformState>,
+    uniform_state: Res<crate::configs::shader_presets::UniformState>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,

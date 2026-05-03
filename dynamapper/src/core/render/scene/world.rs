@@ -1,4 +1,5 @@
 pub mod land;
+pub mod art;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
@@ -31,9 +32,10 @@ impl Plugin for WorldPlugin
                     .in_set(StartupSysSet::SetupSceneStage1)
                     .after(StartupSysSet::LoadStartupUOFiles),
             )
-            .add_plugins(
+            .add_plugins((
                 land::DrawLandChunkMeshPlugin { registered_by: "WorldPlugin" },
-            );
+                art::DrawStaticSpritesPlugin { registered_by: "WorldPlugin" },
+            ));
     }
 }
 

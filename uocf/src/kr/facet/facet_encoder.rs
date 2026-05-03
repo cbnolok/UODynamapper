@@ -43,7 +43,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use crate::classic::map::{MapPlane, MapCell};
-use crate::enhanced::facet::StaticTile;
+use crate::enhanced::facet_decoder::StaticTile;
 use crate::uop::file::CompressionFlag;
 use crate::uop::package::UopPackage;
 #[cfg(feature ="tile_mappings_builder")]

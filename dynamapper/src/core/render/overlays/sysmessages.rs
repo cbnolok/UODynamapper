@@ -30,7 +30,7 @@ const LOG_CLEANUP_INTERVAL_SEC: f32 = 0.5;
 fn sys_render_sysmessages(
     mut contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
-    settings: Res<crate::external_data::settings::Settings>,
+    settings: Res<crate::configs::settings::Settings>,
     time: Res<Time>,
     mut last_cleanup_acc: Local<f32>,
     mut cached_logs: Local<Vec<InGameLog>>,

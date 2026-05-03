@@ -27,7 +27,7 @@ The current packer trims each art entry after applying its sampling window. The 
 
 ## CLI Flow
 
-- `uddpack pack-ec-art-cropped --uddp-dir /path/to/packages` looks for a raw `tilemeta.uddp` or legacy `unified_tiledata.uddp` in that directory.
+- `uddpack pack-ec-art-cropped --uddp-dir /path/to/packages` looks for a raw `tilemeta.uddp` in that directory.
 - It writes a derived cropped tilemeta package by replacing only `metadata/items.bin` with values regenerated from raw source assets plus the EC crop adjustments.
 - The derived output file name is the raw package stem plus `_ec_art_cropped`, for example `tilemeta_ec_art_cropped.uddp`.
 

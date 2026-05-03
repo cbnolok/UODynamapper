@@ -1,9 +1,9 @@
 #![allow(unused)]
 
 use crate::{
+    configs::settings::{LossyTextureCompressionBackend, SectGraphics},
     core::texture_cache::TextureResidencyPlan,
     core::uo_files_loader::TexMap2DRes,
-    external_data::settings::{LossyTextureCompressionBackend, SectGraphics},
     prelude::*,
     util_lib::image::*,
 };
@@ -99,15 +99,15 @@ impl TerrainTextureCompression {
         match self {
             Self::Rgba8 => "RGBA8",
             Self::Bc7(LossyTextureCompressionBackend::Dds) => "BC7/dds",
-            Self::Bc7(LossyTextureCompressionBackend::BlockCompression) => {
-                "BC7/block_compression"
-            }
+            Self::Bc7(LossyTextureCompressionBackend::BlockCompression) => "BC7/block_compression",
             Self::Bc7(LossyTextureCompressionBackend::Ispc) => "BC7/ispc",
         }
     }
 }
 
-pub fn build_texture_residency_plan(texmap_2d_res: &TexMap) -> TextureResidencyPlan<LandTextureSize> {
+pub fn build_texture_residency_plan(
+    texmap_2d_res: &TexMap,
+) -> TextureResidencyPlan<LandTextureSize> {
     let mut plan = TextureResidencyPlan::new();
 
     for texture_id in 0..texmap_2d_res.len() {
@@ -230,10 +230,7 @@ pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 
 /// Try to get actual texture for provided texture_id.
 /// If invalid, return UNUSED texture.
-pub fn get_texmap_size_only(
-    texture_id: u16,
-    texmap_2d_res: &TexMap,
-) -> LandTextureSize {
+pub fn get_texmap_size_only(texture_id: u16, texmap_2d_res: &TexMap) -> LandTextureSize {
     if let Some(element) = texmap_2d_res.element(texture_id as usize) {
         return *element.size();
     }
@@ -255,10 +252,12 @@ pub fn get_texmap_raw_data(
     }
 
     let tex_size_and_rgba = {
-        texmap_2d_res.get_pixel_data(texture_id as usize, now).map(|data| {
-            let size = *texmap_2d_res.element(texture_id as usize).unwrap().size();
-            (size, data)
-        })
+        texmap_2d_res
+            .get_pixel_data(texture_id as usize, now)
+            .map(|data| {
+                let size = *texmap_2d_res.element(texture_id as usize).unwrap().size();
+                (size, data)
+            })
     };
 
     if let Some((size, buffer)) = tex_size_and_rgba {
@@ -282,4 +281,3 @@ pub fn get_texmap_raw_data(
         .size();
     (err_size, err_data)
 }
-

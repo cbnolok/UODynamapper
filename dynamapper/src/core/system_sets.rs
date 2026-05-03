@@ -16,6 +16,11 @@ pub enum SceneRenderLandSysSet {
     SyncLandChunks,
     RenderLandChunks,
 }
+#[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
+pub enum SceneRenderArtSysSet {
+    CollectVisibleStatics,
+    RenderStaticSprites,
+}
 
 #[derive(strum_macros::AsRefStr, SystemSet, Debug, Clone, Hash, PartialEq, Eq)]
 pub enum MovementSysSet {

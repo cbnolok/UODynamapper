@@ -12,4 +12,4 @@ pub mod generic_index;
 pub mod kr;
 pub mod udd;
 pub mod uop;
-mod utils;
+pub mod utils;

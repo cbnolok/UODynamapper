@@ -113,11 +113,11 @@ Use these sources as the first discriminator:
 | Source | Classify As | Why |
 | ------ | ----------- | --- |
 | `map*.mul` land ids + classic land tile table | `land` | Authoritative ground ownership |
-| `UnifiedLandTile` / `texture_id` | `land` | Current unified terrain path stores land material textures here |
+| `TileMetaLandTile` / `texture_id` | `land` | Current unified terrain path stores land material textures here |
 | `terrain.toml` / `TerrainDefinition` entries | `land` | Explicit terrain semantics for EC-style land rendering |
 | classic item tiledata | `art` | Object/floor/bridge/static ownership |
 | EC `tileart.uop` -> `ArtData` | `art` | Tileart is item/static-oriented, even when the visual looks like terrain |
-| `UnifiedItemTile` / `ec_texture_id` / `cc_texture_id` | `art` | Current unified item path stores object art references here |
+| `TileMetaItemTile` / `ec_texture_id` / `cc_texture_id` | `art` | Current unified item path stores object art references here |
 
 ### 6.3 Shader Interpretation Rules
 
@@ -166,7 +166,7 @@ They are not the primary source of truth for deciding `land` versus `art`.
 
 | Condition | Result | Notes |
 | --------- | ------ | ----- |
-| Referenced by map land id / `UnifiedLandTile` / `terrain.toml` | `land` | Authoritative terrain ownership |
+| Referenced by map land id / `TileMetaLandTile` / `terrain.toml` | `land` | Authoritative terrain ownership |
 | Referenced by classic item tiledata or EC `ArtData` | `art` | Even if flat, floor-like, or terrain-looking |
 | EC tileart record with `UOStaticTerrainShader` | `art`, subtype `terrain-like floor art` | Do not promote to map land automatically |
 | EC tileart record with `UOWaterShader` | `art`, subtype `liquid-like art` | Useful for special render handling, still item-owned |

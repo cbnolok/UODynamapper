@@ -1,7 +1,7 @@
+use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
-use crate::external_data::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::prelude::*;
 use crate::util_lib::math::Between;
 use bevy::anti_alias::{fxaa::Fxaa, smaa::Smaa};

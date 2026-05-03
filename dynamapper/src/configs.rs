@@ -2,7 +2,7 @@ pub mod settings;
 pub mod shader_presets;
 
 use crate::{
-    external_data::{settings::SettingsPlugin, shader_presets::ShaderPresetsPlugin},
+    configs::{settings::SettingsPlugin, shader_presets::ShaderPresetsPlugin},
     impl_tracked_plugin,
     util_lib::tracked_plugin::*,
 };

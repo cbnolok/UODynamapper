@@ -1,6 +1,6 @@
-use crate::uop::file::CompressionFlag;
-use crate::uop::hash::hash_file_name_single;
-use crate::uop::package::{LoadMode, UopPackage};
+use uocf::uop::file::CompressionFlag;
+use uocf::uop::hash::hash_file_name_single;
+use uocf::uop::package::{LoadMode, UopPackage};
 use flate2::Compression;
 use std::io::Write;
 use std::fs;

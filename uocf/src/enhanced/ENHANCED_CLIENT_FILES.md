@@ -8,7 +8,7 @@ These files are responsible for bit-for-bit decoding of raw `.uop` blocks into i
 
 | Rust Module | Target UOP File | Content Description |
 |:---|:---|:---|
-| `string_dictionary.rs` | `string_Wdictionary.uop` | A dictionary of virtual paths (e.g., `build/tileart/00000001.dat`) indexed by an internal ID. Crucial for mapping IDs to binary blocks. |
+| `string_dictionary.rs` | `string_dictionary.uop` | A dictionary of virtual paths (e.g., `build/tileart/00000001.dat`) indexed by an internal ID. Crucial for mapping IDs to binary blocks. |
 | `tileart.rs` | `tileart.uop` | Detailed metadata for "Art Tiles" (statics). Contains flags, heights, radar colors, and pointers to textures. |
 | `textures.rs` | `Texture.uop`, `LegacyTexture.uop` | The actual image payloads. Stores metadata headers followed by raw DDS (BC1/BC3/BC7) or TGA blobs. |
 | `animationframe.rs` | `animationframe.uop` | Frame-by-frame metadata for animations, including coordinates and RLE encoding info. |
