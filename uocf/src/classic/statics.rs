@@ -142,12 +142,25 @@ impl<R: Read + Seek> StaticsReader<R> {
     pub fn load_all(&mut self) -> eyre::Result<StaticsStore> {
         let num_blocks = self.block_width * self.block_height;
         let mut offsets = Vec::with_capacity(num_blocks as usize + 1);
-        let mut tiles = Vec::new();
         
+        // Pre-calculate total tile count to avoid reallocations
+        let mut total_tile_count = 0;
+        for i in 0..num_blocks {
+            if let Ok(entry) = self.index.element(i as usize) {
+                if let Some(size) = entry.len() {
+                    total_tile_count += (size as usize) / StaticTile::RAW_SIZE;
+                }
+            }
+        }
+
+        let mut tiles = Vec::with_capacity(total_tile_count);
         offsets.push(0);
         
-        for block_y in 0..self.block_height {
-            for block_x in 0..self.block_width {
+        // Use column-major iteration (X then Y) to match UO's file layout.
+        // This ensures sequential reading of both staidx and statics.mul,
+        // which is significantly faster for BufReader and the OS disk cache.
+        for block_x in 0..self.block_width {
+            for block_y in 0..self.block_height {
                 let block_id = block_x * self.block_height + block_y;
                 let index_element = self.index.element(block_id as usize)?;
                 

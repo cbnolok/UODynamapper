@@ -186,6 +186,25 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         use_ec_radarcol: bool,
     },
+    /// Generates a radar map (facet0X.dds) from Classic map and statics.
+    PackRadar {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        map_id: u32,
+        #[arg(long = "uddpdir")]
+        uddp_dir: Option<PathBuf>,
+        #[arg(long = "outdir")]
+        outdir: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Output format: rgba8, bc7, bc7ktx2
+        #[arg(long, default_value = "bc7")]
+        format: String,
+        /// Zstd compression level for KTX2 (1-22)
+        #[arg(long, default_value_t = 3)]
+        zstd_level: i32,
+    },
     /// Packs Classic mapX.mul into mapX.uddp blocks.
     PackMap {
         #[command(flatten)]
@@ -422,6 +441,57 @@ pub fn run() -> eyre::Result<()> {
                 summary.map_id,
                 out_file.display(),
             );
+        }
+        Commands::PackRadar {
+            source_dirs: source_dir_args,
+            map_id,
+            uddp_dir,
+            outdir,
+            output,
+            format,
+            zstd_level,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+
+            let radar_format = match format.to_lowercase().as_str() {
+                "rgba8" => uddconv::cc_radar::RadarFormat::Rgba8,
+                "bc7" => uddconv::cc_radar::RadarFormat::Bc7,
+                "bc7ktx2" => uddconv::cc_radar::RadarFormat::Bc7Ktx2,
+                _ => eyre::bail!("Invalid format: {}. Valid: rgba8, bc7, bc7ktx2", format),
+            };
+
+            let default_output = PathBuf::from(format!("facet0{}.{}", map_id, radar_format.extension()));
+
+            let output_path_to_use = output.as_ref().unwrap_or(&default_output);
+            let out_file = if let Some(dir) = &outdir {
+                dir.join(output_path_to_use)
+            } else {
+                resolve_output_path(&paths, output_path_to_use)
+            };
+
+            let uddp_dir = uddp_dir.unwrap_or_else(|| PathBuf::from("."));
+            let tilemeta_path = find_raw_tilemeta_package(&uddp_dir)?;
+
+            if radar_format == uddconv::cc_radar::RadarFormat::Bc7Ktx2 {
+                uddconv_ktx2::build_facet_radar_ktx2(
+                    &paths,
+                    &tilemeta_path,
+                    &out_file,
+                    map_id,
+                    zstd_level,
+                )?;
+            } else {
+                uddconv::cc_radar::build_facet_radar_dds(
+                    &paths,
+                    &tilemeta_path,
+                    &out_file,
+                    map_id,
+                    &uddconv::cc_radar::RadarBuildOptions {
+                        format: radar_format,
+                        zstd_level,
+                    }
+                )?;
+            }
         }
     }
 

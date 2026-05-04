@@ -1,10 +1,11 @@
 #![allow(unused)]
 
 use crate::configs::settings::Settings;
+use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
 use bevy::prelude::*;
-//use parking_lot::RwLock;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -57,15 +58,9 @@ pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
 
 /// Enhanced terrain definitions.
 #[derive(Resource)]
-pub struct TerrainDefinitionRes(pub Arc<HashMap<u32, uddconv::cc_ec_conv::TerrainDefEntry>>);
-
-/// Stored statics data for each map plane.
-#[derive(Resource)]
-pub struct StaticsStoreRes(pub Vec<Option<Arc<uocf::classic::statics::StaticsStore>>>);
-
-/// Radarcol palette for dot mode rendering.
-#[derive(Resource)]
-pub struct RadarColRes(pub Arc<Vec<uocf::utils::color::Rgb555>>);
+pub struct TerrainDefinitionRes(
+    pub Arc<HashMap<u32, uddconv::cc_ec_land_transcode::TerrainDefEntry>>,
+);
 
 pub struct UoFilesSettings {
     pub base_folder: PathBuf,
@@ -193,7 +188,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let mut map_planes: Vec<Option<map::MapPlane>> = std::iter::repeat_with(|| None)
         .take((MAX_MAP_INDEX + 1) as usize)
         .collect::<Vec<_>>();
-    let mut statics_stores: Vec<Option<Arc<uocf::classic::statics::StaticsStore>>> =
+    let mut statics_stores: Vec<Option<Mutex<LazyStaticsStore>>> =
         std::iter::repeat_with(|| None)
             .take((MAX_MAP_INDEX + 1) as usize)
             .collect::<Vec<_>>();
@@ -232,7 +227,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                     SourceContainerKind::Mul,
                     &[statics_idx_file.clone(), statics_file.clone()],
                 );
-                let mut reader = uocf::classic::statics::StaticsReader::new(
+                let store = LazyStaticsStore::new(
                     &statics_idx_file,
                     &statics_file,
                     map_plane.size_blocks.width * 8,
@@ -241,11 +236,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 .unwrap_or_else(|_| {
                     panic!("Error initializing statics reader for plane {map_plane_index}")
                 });
-
-                let store = reader.load_all().unwrap_or_else(|_| {
-                    panic!("Error loading statics for plane {map_plane_index}")
-                });
-                statics_stores[map_plane_index as usize] = Some(Arc::new(store));
+                statics_stores[map_plane_index as usize] = Some(Mutex::new(store));
             }
 
             map_planes[map_plane_index as usize] = Some(map_plane);
@@ -345,33 +336,22 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
-    let radarcol_path = uo_path.join("radarcol.mul");
-    let radarcol = if radarcol_path.exists() {
-        log_source_choice(
-            &lg,
-            "radar colors",
-            SourceContainerKind::Mul,
-            std::slice::from_ref(&radarcol_path),
-        );
-        Some(uocf::classic::radarcol::load_radarcol(&radarcol_path).expect("Load radarcol"))
-    } else {
-        lg("radarcol.mul not found");
-        None
-    };
-
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
     let asset_root = crate::core::constants::valid_asset_dir();
     let transcode_path = asset_root.join("cc_ec_convtables/TerrainTranscode.kdl");
-    
+
     if transcode_path.exists() {
-        lg(&format!("Loading TerrainTranscode.kdl from: {}", transcode_path.display()));
-        match uddconv::cc_ec_conv::TerrainTranscode::load(&transcode_path) {
+        lg(&format!(
+            "Loading TerrainTranscode.kdl from: {}",
+            transcode_path.display()
+        ));
+        match uddconv::cc_ec_land_transcode::TerrainTranscode::load(&transcode_path) {
             Ok(transcode) => {
                 lg("Loaded TerrainTranscode.kdl (loose file)");
                 let transcode_map = transcode.to_map();
-                
+
                 // Apply override to EC land package if present
                 if let Some(ec_land) = ec_land_package.as_mut() {
                     lg("Applying loose TerrainTranscode.kdl as override to EC land package.");
@@ -385,12 +365,15 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             }
         }
     } else {
-        lg(&format!("TerrainTranscode.kdl not found at {}", transcode_path.display()));
+        lg(&format!(
+            "TerrainTranscode.kdl not found at {}",
+            transcode_path.display()
+        ));
     }
 
     let definition_path = asset_root.join("cc_ec_convtables/TerrainDefinition.kdl");
     if definition_path.exists() {
-        match uddconv::cc_ec_conv::TerrainDefinitionKdl::load(&definition_path) {
+        match uddconv::cc_ec_land_transcode::TerrainDefinitionKdl::load(&definition_path) {
             Ok(definition) => {
                 lg("Loaded TerrainDefinition.kdl");
                 commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
@@ -400,7 +383,10 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             }
         }
     } else {
-        lg(&format!("TerrainDefinition.kdl not found at {}", definition_path.display()));
+        lg(&format!(
+            "TerrainDefinition.kdl not found at {}",
+            definition_path.display()
+        ));
     }
 
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
@@ -425,9 +411,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         commands.insert_resource(EcLandPackageRes(Arc::new(ec_land_package)));
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
-    if let Some(radarcol) = radarcol {
-        commands.insert_resource(RadarColRes(Arc::new(radarcol)));
-    }
 
     if settings.graphics.art_texture_source == crate::configs::settings::ClientTextureSource::Ec
         && tilemeta_package.is_none()

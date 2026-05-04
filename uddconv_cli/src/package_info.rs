@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
@@ -86,8 +85,8 @@ fn page_pixel_format_name(byte_len: usize, width: u32, height: u32) -> &'static 
     }
 }
 
-fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
-    if let Ok(package) = CcArtPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) {
+fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
+    if let Ok(package) = CcArtPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
         let first_page_format = package
             .pages()
@@ -115,7 +114,7 @@ fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
         return Ok(true);
     }
 
-    if let Ok(package) = EcArtPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) {
+    if let Ok(package) = EcArtPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
         println!("Recognized package: ec_art");
         println!("Known logical files: metadata=2, textures={}", package.pages().len());
@@ -131,7 +130,7 @@ fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
         return Ok(true);
     }
 
-    if let Ok(package) = EcLandPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) {
+    if let Ok(package) = EcLandPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
         println!("Recognized package: ec_land");
         println!("Known logical files: metadata=3, textures={}", package.pages().len());
@@ -148,7 +147,7 @@ fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
         return Ok(true);
     }
 
-    if let Ok(package) = TileMetaPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) {
+    if let Ok(package) = TileMetaPackage::from_uddp_package(package.clone()) {
         println!("Recognized package: tilemeta");
         println!("Known logical files: metadata=2");
         println!(
@@ -163,8 +162,7 @@ fn print_known_package_summary(bytes: &[u8]) -> eyre::Result<bool> {
 }
 
 pub fn print_package_info(path: &Path) -> eyre::Result<()> {
-    let bytes = fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?;
-    let package = UddpReader::open(bytes.clone())?;
+    let package = UddpReader::load(path).wrap_err_with(|| format!("load {}", path.display()))?;
     let header = package.header();
     let kind = match header.magic {
         UDDP_MAGIC => "UDDP",
@@ -220,7 +218,7 @@ pub fn print_package_info(path: &Path) -> eyre::Result<()> {
         );
     }
 
-    let recognized = print_known_package_summary(&bytes)?;
+    let recognized = print_known_package_summary(&package)?;
     if !recognized {
         println!(
             "Payload totals: raw={} stored={} saved={}",
@@ -248,4 +246,95 @@ pub fn print_package_info(path: &Path) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+pub fn get_package_info_string(path: &Path) -> eyre::Result<String> {
+    use std::fmt::Write;
+    let mut out = String::new();
+    
+    let package = UddpReader::load(path).wrap_err_with(|| format!("load {}", path.display()))?;
+    let header = package.header();
+    let kind = match header.magic {
+        UDDP_MAGIC => "UDDP",
+        UDPI_MAGIC => "UDDPI",
+        _ => "Unknown",
+    };
+
+    let mut codec_counts: BTreeMap<&'static str, u32> = BTreeMap::new();
+    let mut type_counts: BTreeMap<u8, (u32, u64, u64)> = BTreeMap::new();
+    let mut raw_total = 0u64;
+    let mut stored_total = 0u64;
+
+    for record in package.records() {
+        let codec = unpack_codec_local(record.locator.meta32);
+        let data_type = unpack_type_local(record.locator.meta32);
+        let stored_size = reconstruct_stored_size_local(
+            record.locator.raw_size,
+            record.locator.meta32,
+            record.locator.pos64,
+        ) as u64;
+        let raw_size = record.locator.raw_size as u64;
+
+        *codec_counts.entry(codec_name(codec)).or_default() += 1;
+        let entry = type_counts.entry(data_type).or_insert((0, 0, 0));
+        entry.0 += 1;
+        entry.1 += raw_size;
+        entry.2 += stored_size;
+        raw_total += raw_size;
+        stored_total += stored_size;
+    }
+
+    writeln!(out, "File: {}", path.display())?;
+    writeln!(out, "Kind: {}", kind)?;
+    writeln!(out, "Lookup mode: {}", lookup_mode_name(package.lookup_mode()))?;
+    writeln!(out, "Package bytes: {}", package.package_size_bytes())?;
+    writeln!(out, "Header file count: {}", header.file_count)?;
+    writeln!(out, "Stored package hash64: {:#018x}", package.stored_package_hash64())?;
+    writeln!(out, "Computed package hash64: {:#018x}", package.computed_package_hash64())?;
+    match package.lookup_mode() {
+        LookupMode::VirtualPathHash => writeln!(out, "Logical key counts: path_hashes={}", header.file_count)?,
+        LookupMode::DenseId | LookupMode::SparseId => writeln!(out, "Logical key counts: ids={}", header.file_count)?,
+    }
+
+    let dictionaries = package.dictionary_records();
+    writeln!(out, "Dictionaries: {}", dictionaries.len())?;
+    for (data_type, codec, size) in dictionaries {
+        writeln!(
+            out,
+            "  {} ({}) : codec={}, bytes={}",
+            data_type_name(data_type),
+            data_type,
+            codec_name(codec),
+            size
+        )?;
+    }
+
+    // Note: print_known_package_summary still prints to stdout, 
+    // but for the GUI we mostly care about the generic info or 
+    // we should refactor that too.
+    
+    writeln!(out, "\nPayload totals: raw={} stored={} saved={}",
+        raw_total,
+        stored_total,
+        raw_total.saturating_sub(stored_total)
+    )?;
+
+    writeln!(out, "Compression:")?;
+    for (codec, count) in codec_counts {
+        writeln!(out, "  {}: {} files", codec, count)?;
+    }
+
+    writeln!(out, "Data types:")?;
+    for (data_type, (count, raw_size, stored_size)) in type_counts {
+        writeln!(
+            out,
+            "  {} ({}) : {} files, raw={}, stored={}",
+            data_type_name(data_type),
+            data_type,
+            count,
+            raw_size,
+            stored_size
+        )?;
+    }
+
+    Ok(out)
 }

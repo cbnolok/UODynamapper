@@ -101,7 +101,7 @@ enum CsvKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
-enum DiffKind {
+pub enum DiffKind {
     #[default]
     Auto,
     Slots,
@@ -441,7 +441,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
     )
 }
 
-fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()> {
+pub fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()> {
     let left_is_csv = left.extension().and_then(|value| value.to_str()) == Some("csv");
     let right_is_csv = right.extension().and_then(|value| value.to_str()) == Some("csv");
 
@@ -581,10 +581,8 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
 }
 
 fn diff_package_payloads(left: &Path, right: &Path) -> eyre::Result<()> {
-    let left_reader =
-        UddpReader::open(fs::read(left).wrap_err_with(|| format!("read {}", left.display()))?)?;
-    let right_reader =
-        UddpReader::open(fs::read(right).wrap_err_with(|| format!("read {}", right.display()))?)?;
+    let left_reader = UddpReader::load(left).wrap_err_with(|| format!("load {}", left.display()))?;
+    let right_reader = UddpReader::load(right).wrap_err_with(|| format!("load {}", right.display()))?;
     println!(
         "Left: lookup_mode={:?}, files={} | Right: lookup_mode={:?}, files={}",
         left_reader.lookup_mode(),

@@ -4,6 +4,14 @@ This document describes the structure of custom binary `.uddp` formats used by U
 
 The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
 
+For EC-specific content, remember that the UOP source set is mixed and semantic:
+- `Texture.uop` and `LegacyTexture.uop` are shared texture pools.
+- `tileart.uop` carries static-art ownership, per-entry clip windows, shader/type hints, and EC item/static metadata.
+- `TerrainDefinition.uop` carries land/material ownership, aliases, selected textures, and runtime slot relationships.
+- `string_dictionary.uop` and `string_Wdictionary.uop` are string resource packages and are not visual art sources.
+
+That means `ec_art.uddp`, `ec_land.uddp`, and the planned `ec_textures_layers.uddp` are semantic outputs, not simple id-range slices of the same raw pool.
+
 ---
 
 ## 1. `tilemeta.uddp`
@@ -13,6 +21,7 @@ This package merges Classic Client (CC) physical tile properties and Enhanced Cl
 `tilemeta.uddp` is the preferred package name.
 
 The current wire format stores CC and EC texture-window fields side by side, but CC and EC behavior flags are still collapsed into one unified bitmask. Future work may split those fields so classic behavior and EC behavior can be preserved independently.
+The long-term schema direction is to keep CC and EC ownership/behavior separate in the wire format instead of relying on runtime inference.
 
 **Virtual Files:**
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
@@ -64,6 +73,7 @@ Represents static map items and artwork.
 When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped art payload. `ec_offset_x` and `ec_offset_y` remain the original EC draw offsets.
 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
+When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
 
 ---
 
@@ -75,6 +85,12 @@ These are GPU texture atlases packed into fixed-size pages to avoid texture arra
 The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
 Do not use lossy BC7 compression for art tiles.
 
+Current EC packing semantics:
+- `ec_art.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
+- `ec_land.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
+- `ec_textures_layers.uddp` is the planned destination for extra shared layers, masks, and noise-like resources that are referenced semantically but do not belong to the primary land/art splits.
+- If a source texture is claimed by both art and land semantics, duplication across outputs is valid and should be decided by ownership, not by avoiding repeated ids.
+
 **Virtual Files:**
 - `metadata/pages.bin`: Binary array of `PageRecord` structs representing page dimensions and occupancy.
 - `metadata/slots.bin`: Binary array of `SlotRecord` structs indexed by `art_id` containing the UV mapping.
@@ -85,6 +101,7 @@ For `ec_art_cropped.uddp`, cropping is performed per art entry, not per decoded 
 2. alpha-trim inside that clipped rectangle
 
 This rule matters because different art ids can reference the same source texture while sampling different sub-rectangles of it.
+It also explains why `tileart.uop` must be treated as the source of entry-local EC art semantics rather than as a blunt texture-id list.
 
 ### 2.1 Metadata Structures
 

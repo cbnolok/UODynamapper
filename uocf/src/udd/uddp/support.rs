@@ -140,15 +140,18 @@ pub(crate) fn zstd_decompress_with_dict(
 /// the serialized `package_hash64` field itself is treated as zero. This breaks
 /// the self-reference while still tying the hash to every other byte.
 pub fn canonical_package_hash64(bytes: &[u8]) -> u64 {
-    if bytes.len() < UddpHeader::SERIALIZED_SIZE {
+    if bytes.len() < HEADER_PACKAGE_HASH_OFFSET + 8 {
         return xxh64(bytes, 0);
     }
 
-    let mut tmp = bytes.to_vec();
-    for byte in &mut tmp[HEADER_PACKAGE_HASH_OFFSET..HEADER_PACKAGE_HASH_OFFSET + 8] {
-        *byte = 0;
-    }
-    xxh64(&tmp, 0)
+    let mut state = xxhash_rust::xxh64::Xxh64::new(0);
+    // Hash prefix before the package hash field.
+    state.update(&bytes[..HEADER_PACKAGE_HASH_OFFSET]);
+    // Hash 8 zero bytes instead of the actual embedded hash.
+    state.update(&[0u8; 8]);
+    // Hash everything after the hash field.
+    state.update(&bytes[HEADER_PACKAGE_HASH_OFFSET + 8..]);
+    state.digest()
 }
 
 /// Patch the serialized header hash field in-place.
@@ -364,6 +367,5 @@ pub fn write_package(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), std::io
 
 /// Read a package image from disk and immediately parse it with `UddpReader`.
 pub fn read_package(path: impl AsRef<Path>) -> Result<super::reader::UddpReader, Box<dyn std::error::Error>> {
-    let bytes = std::fs::read(path)?;
-    Ok(super::reader::UddpReader::open(bytes)?)
+    Ok(super::reader::UddpReader::load(path)?)
 }

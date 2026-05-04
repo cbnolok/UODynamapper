@@ -3,9 +3,12 @@ resolver = "2"
 members = [
     "dynamapper",
     "uddconv",
+    "uddconv_ktx2",
     "uddconv_cli",
     "uocf",
-    "uocf_cli"
+    "uocf_cli",
+    "uddconv_gui",
+    "uddp_inspector"
 ]
 
 
@@ -55,28 +58,84 @@ panic = "abort"
 
 # --------- Debug
 
-# Enable a small amount of optimization in debug mode for our crate.
-[profile.dev]
-opt-level = 1
-# codegen-units = = 16      # Default, faster compilation
-incremental = true
-debug = true
-debug-assertions = true     # Additional safety checks (including arithmetic overflow).
+# NOTE: In a Cargo workspace, [profile.dev.package."*"] overrides the top-level [profile.dev] 
+# for ALL packages (including workspace members). 
+# To have different settings for your own code (like keeping debug info), 
+# you must explicitly override them again in their own [profile.dev.package.NAME] sections.
 
-# Specifically optimize uocf (workspace member) for map processing performance
+[profile.dev]
+opt-level = 1               # Default for the profile, but shadowed by "*" below
+incremental = true          # Default for the profile, but shadowed by "*" below
+debug = true                # Default for the profile, but shadowed by "*" below
+debug-assertions = true     # Default for the profile, but shadowed by "*" below
+
+# By default, build scripts and procedural macros (like serde_derive) are compiled
+# with the same profile settings as the other code. This can make them slower.
+# so we override the profile for build scripts and procedural macros.
+[profile.dev.build-override]
+opt-level = 3               # Makes the proc-macros run faster
+debug = false
+strip = true
+
+# Settings for dependencies (incl. Bevy) AND workspace members (unless overridden below):
+[profile.dev.package."*"]
+opt-level = "s"             # Selective size optimization (better for behemoths like bevy_dylib)
+incremental = false         # Disable incremental for dependencies to save disk space
+debug = false               # Disable generation of debug info (save RAM/Disk)
+debug-assertions = false    # Disable additional safety checks (including arithmetic overflow).
+strip = true                # Strip debug symbols
+
+# --- Workspace Member Overrides
+# Since "*" above is very aggressive, we must opt-back-in to debug info for our own code.
+
+# Specifically optimize uocf for map processing performance
 [profile.dev.package.uocf]
 opt-level = 3
 codegen-units = 1
-incremental = true
 debug = true
 debug-assertions = true
+strip = false
 
-# Settings for dependencies (incl. Bevy), but not for our main code:
-[profile.dev.package."*"]
-opt-level = "s"         # Selective size optimization (better for behemoths like bevy_dylib)
+[profile.dev.package.dynamapper]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uddconv]
+opt-level = 3
 codegen-units = 1
-#lto = "thin"           # `lto` may not be specified in a `package` profile
-incremental = false
-debug = false           # Disable generation of debug info (save RAM/Disk)
-strip = true            # Strip debug symbols
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uddconv_cli]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uddconv_gui]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uddp_inspector]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uddconv_ktx2]
+opt-level = 3
+codegen-units = 1
+debug = true
+strip = false
+
+[profile.dev.package.uocf_cli]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
 

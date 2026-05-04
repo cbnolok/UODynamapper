@@ -17,7 +17,6 @@
 //!   can query without needing to understand any of the original EC source files.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
@@ -287,8 +286,14 @@ pub struct EcArtPackage {
 
 impl EcArtPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let package = UddpReader::open(fs::read(path.as_ref())?)
+        let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
+        Self::from_uddp_package(package)
+    }
+
+    pub fn load_in_memory(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let package = UddpReader::load_in_memory(path.as_ref())
+            .wrap_err_with(|| format!("load_in_memory {}", path.as_ref().display()))?;
         Self::from_uddp_package(package)
     }
 

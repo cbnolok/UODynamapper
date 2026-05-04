@@ -2,6 +2,8 @@ use crate::core::render::scene::world::art::statics_collect::{
     RenderStaticInstances, SpriteInstance,
 };
 use crate::core::texture_cache::art::{ArtPageAtlas, ArtPageAtlasHandle};
+use bevy::camera::visibility::NoFrustumCulling;
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
@@ -25,6 +27,12 @@ pub struct ArtSpriteMaterialExtension {
     pub instances: Handle<ShaderStorageBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
+}
+
+#[derive(Resource, Clone)]
+pub struct ArtSpriteRenderAssets {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<ArtSpriteMaterial>,
 }
 
 impl MaterialExtension for ArtSpriteMaterialExtension {
@@ -140,35 +148,64 @@ pub fn sys_setup_art_page_atlas(
         vec![[1.0, 1.0, 1.0, 1.0]; 4],
     );
 
-    commands.spawn((
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(material_handle),
-        Transform::from_translation(Vec3::ZERO),
-        bevy::camera::visibility::NoFrustumCulling,
-        StaticsDrawEntity,
-    ));
+    let mesh_handle = meshes.add(mesh);
+
+    commands.insert_resource(ArtSpriteRenderAssets {
+        mesh: mesh_handle,
+        material: material_handle,
+    });
+}
+
+pub fn sys_sync_static_sprite_entities(
+    mut commands: Commands,
+    instances: Res<RenderStaticInstances>,
+    render_assets: Res<ArtSpriteRenderAssets>,
+    existing_q: Query<(Entity, &MeshTag), With<StaticsDrawEntity>>,
+) {
+    let desired_count = instances.0.len();
+    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+
+    for entity in existing_entities.by_ref().skip(desired_count) {
+        let _ = commands.entity(entity).despawn();
+    }
+
+    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+        let desired_tag = MeshTag(slot_index as u32);
+        if *mesh_tag != desired_tag {
+            let _ = commands.entity(entity).insert(desired_tag);
+        }
+    }
+
+    let existing_count = existing_q.iter().count();
+    for slot_index in existing_count..desired_count {
+        commands.spawn((
+            Mesh3d(render_assets.mesh.clone()),
+            MeshMaterial3d(render_assets.material.clone()),
+            MeshTag(slot_index as u32),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            StaticsDrawEntity,
+        ));
+    }
 }
 
 pub fn sys_update_sprite_instance_buffer(
     instances: Res<RenderStaticInstances>,
+    render_assets: Res<ArtSpriteRenderAssets>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
-    q_entity: Query<&MeshMaterial3d<ArtSpriteMaterial>, With<StaticsDrawEntity>>,
     zoom: Res<crate::core::render::scene::camera::RenderZoom>,
 ) {
     if instances.0.is_empty() {
         return;
     }
 
-    let Some(material_handle) = q_entity.iter().next() else {
-        return;
-    };
-    let Some(material) = materials.get_mut(&material_handle.0) else {
+    let Some(material) = materials.get_mut(&render_assets.material) else {
         return;
     };
 
     // Update buffer with new instances
-    storage_buffers.insert(
+    let _ = storage_buffers.insert(
         &material.extension.instances,
         ShaderStorageBuffer::from(instances.0.clone()),
     );

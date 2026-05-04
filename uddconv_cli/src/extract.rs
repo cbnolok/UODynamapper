@@ -20,26 +20,26 @@ pub fn extract_package(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
     std::fs::create_dir_all(&out_dir)
         .wrap_err_with(|| format!("create {}", out_dir.display()))?;
 
-    let bytes = std::fs::read(file).wrap_err_with(|| format!("read {}", file.display()))?;
+    let package = UddpReader::load(file).wrap_err_with(|| format!("load {}", file.display()))?;
 
-    if extract_cc_art(&bytes, &out_dir)? {
+    if extract_cc_art(&package, &out_dir)? {
         println!("Extracted cc_art package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_ec_art(&bytes, &out_dir)? {
+    if extract_ec_art(&package, &out_dir)? {
         println!("Extracted ec_art package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_ec_land(&bytes, &out_dir)? {
+    if extract_ec_land(&package, &out_dir)? {
         println!("Extracted ec_land package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_tilemeta(&bytes, &out_dir)? {
+    if extract_tilemeta(&package, &out_dir)? {
         println!("Extracted tilemeta package to '{}'", out_dir.display());
         return Ok(());
     }
 
-    extract_generic(&bytes, &out_dir)?;
+    extract_generic(&package, &out_dir)?;
     println!("Extracted generic package to '{}'", out_dir.display());
     Ok(())
 }
@@ -49,8 +49,8 @@ fn default_output_dir(file: &Path) -> PathBuf {
     file.with_file_name(format!("{stem}.extract"))
 }
 
-fn extract_cc_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = CcArtPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
+fn extract_cc_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = CcArtPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
@@ -91,8 +91,8 @@ fn extract_cc_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_ec_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = EcArtPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
+fn extract_ec_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = EcArtPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
@@ -133,8 +133,8 @@ fn extract_ec_art(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = EcLandPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
+fn extract_ec_land(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = EcLandPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
@@ -205,8 +205,8 @@ fn extract_ec_land(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_tilemeta(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = TileMetaPackage::from_uddp_package(UddpReader::open(bytes.to_vec())?) else {
+fn extract_tilemeta(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = TileMetaPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
     let metadata_dir = out_dir.join("metadata");
@@ -283,8 +283,7 @@ fn extract_tilemeta(bytes: &[u8], out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_generic(bytes: &[u8], out_dir: &Path) -> eyre::Result<()> {
-    let package = UddpReader::open(bytes.to_vec())?;
+fn extract_generic(package: &UddpReader, out_dir: &Path) -> eyre::Result<()> {
     let payload_dir = out_dir.join("payloads");
     std::fs::create_dir_all(&payload_dir)
         .wrap_err_with(|| format!("create {}", payload_dir.display()))?;

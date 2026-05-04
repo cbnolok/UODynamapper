@@ -236,13 +236,19 @@ pub struct EcLandPackage {
     pages: Vec<EcLandPageRecord>,
     slots: Vec<EcLandSlotRecord>,
     terrain_provenance: Vec<EcLandTerrainProvenanceRecord>,
-    transcode: HashMap<u32, u32>,
+    pub transcode: HashMap<u32, u32>,
 }
 
 impl EcLandPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let package = UddpReader::open(fs::read(path.as_ref())?)
+        let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
+        Self::from_uddp_package(package)
+    }
+
+    pub fn load_in_memory(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let package = UddpReader::load_in_memory(path.as_ref())
+            .wrap_err_with(|| format!("load_in_memory {}", path.as_ref().display()))?;
         Self::from_uddp_package(package)
     }
 
@@ -327,7 +333,12 @@ impl EcLandPackage {
     /// (where a CC tile ID accidentally equals an EC alias slot ID of a different terrain type).
     ///
     /// Resolution order:
-    /// Resolves a Classic Client (CC) Tile ID to a packed EC Slot ID (atlas index).
+    /// Resolves a Classic Client (CC) Tile ID to a packed UDDP Slot Index (atlas coordinate index).
+    ///
+    /// ### The Three ID Systems:
+    /// 1. **CC Tile ID**: The ID stored in legacy `map.mul` files (e.g., `168` for water).
+    /// 2. **EC Material ID**: A canonical category ID (e.g., Material `5` is "Water").
+    /// 3. **UDDP Slot Index (Runtime)**: The pre-computed index in our `slots` table (e.g., `16426`).
     ///
     /// This function implements the CC ➔ EC Texture Resolution Chain:
     /// 1. **KDL Lookup**: Maps CC Tile ID ➔ EC Material ID (via TerrainTranscode.kdl).
@@ -368,7 +379,8 @@ impl EcLandPackage {
             if let Some(slot_id) = material_records
                 .iter()
                 .filter(|record| {
-                    record.alias_slot_id == 0 && self.resolve_provenance_record_slot(record).is_some()
+                    record.alias_slot_id == 0
+                        && self.resolve_provenance_record_slot(record).is_some()
                 })
                 .min_by_key(|record| record.alias_count_index)
                 .and_then(|record| self.resolve_provenance_record_slot(record))
@@ -390,7 +402,7 @@ impl EcLandPackage {
             }
         }
 
-        // Step 3: Direct slot hit. The CC tile ID might be exactly the canonical slot ID 
+        // Step 3: Direct slot hit. The CC tile ID might be exactly the canonical slot ID
         // (e.g. for legacy textures like water that share the same ID).
         if self.present_slot(cc_tile_id).is_some() {
             return Some(cc_tile_id);
@@ -1363,7 +1375,7 @@ pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.kdl";
 fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
     let bytes = read_path_entry(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
     let content = String::from_utf8(bytes).ok()?;
-    let transcode: crate::cc_ec_conv::TerrainTranscode =
+    let transcode: crate::cc_ec_land_transcode::TerrainTranscode =
         knuffel::parse("transcode.kdl", &content).ok()?;
     Some(transcode.to_map())
 }

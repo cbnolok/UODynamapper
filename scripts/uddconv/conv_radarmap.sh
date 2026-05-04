@@ -1,0 +1,1 @@
+cargo run -p uddconv_cli --features ispc --bin uddpack -- pack-radar --map-id 0 --ccdir "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/" --ecdir "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced/" --uddpdir ~/test/uddp --outdir ~/test/uddp

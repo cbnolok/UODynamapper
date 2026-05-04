@@ -88,6 +88,10 @@ Packages:
 - `Texture.uop` / `build/worldart/*.dds` is a mixed pool, not a pure terrain-only pool.
 - `tileart.uop` shader/type information helps distinguish sprite, water, and static-terrain usage.
 - terrain packaging decisions are likely more correct when driven by terrain definitions or shader semantics than by simple id slicing.
+- The current EC package set also includes `LegacyTexture.uop` alongside `Texture.uop`, plus `string_dictionary.uop` and `string_Wdictionary.uop` for shared text resources. Those string packages are not visual inputs, but they are part of the EC source bundle and often travel with the same client installation.
+- `tileart.uop` is the authoritative EC static-art source for ownership, clipping windows, and item-side metadata.
+- `TerrainDefinition.uop` is the authoritative EC land source for material semantics, selected textures, alias chains, and canonical slot relationships.
+- EC art and EC land are both semantic outputs from the same shared texture pools, so the same raw texture id can legitimately appear in both packages when ownership differs.
 
 That aligns with the current UODynamapper investigation: `ec_land.uddp` should probably be defined by terrain semantics, not just by scanning the first `0x4000` generic texture ids.
 
@@ -118,6 +122,13 @@ Use these sources as the first discriminator:
 | classic item tiledata | `art` | Object/floor/bridge/static ownership |
 | EC `tileart.uop` -> `ArtData` | `art` | Tileart is item/static-oriented, even when the visual looks like terrain |
 | `TileMetaItemTile` / `ec_texture_id` / `cc_texture_id` | `art` | Current unified item path stores object art references here |
+
+Additional EC source guidance:
+
+- `Texture.uop` and `LegacyTexture.uop` are shared texture pools and should be treated as the common decode backend.
+- `tileart.uop` contributes entry-local EC art semantics: shader type, tile type, ownership, sampling windows, and item-specific behavior hints.
+- `TerrainDefinition.uop` contributes EC land semantics: land source texture ids, aliases, selected textures, runtime slots, and provenance.
+- `string_dictionary.uop` and `string_Wdictionary.uop` are auxiliary package resources, not art classification inputs.
 
 ### 6.3 Shader Interpretation Rules
 
@@ -209,6 +220,8 @@ Current branch direction:
 - if `Unused1` is absent, fall back to shader/type, ownership, and terrain-family hints
 - keep `runtime_material_id_overrides.toml` narrow and runtime-only
 - use `TerrainTranscode.json` as the starting point for the hand-tuned Classic land family table
+
+That direction is specifically aimed at reconciling the shared EC texture pools with distinct semantic outputs instead of pretending the pools are disjoint.
 
 ## 7. Renderer Guidance
 

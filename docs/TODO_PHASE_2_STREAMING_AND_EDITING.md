@@ -36,6 +36,13 @@ Mandatory per-entry fields:
 - `raw_size: u32`
 - `checksum/hash: u32 or u64`
 
+For EC texture outputs, the package layer should preserve semantic ownership rather than collapsing everything into one atlas family. The target outputs are:
+- `ec_textures_land.uddp`
+- `ec_textures_art.uddp`
+- `ec_textures_layers.uddp`
+
+Those outputs are meant to be built from one shared classification pass over `Texture.uop`, `LegacyTexture.uop`, `tileart.uop`, and `TerrainDefinition.uop`.
+
 ## 1.2 UDDF Wrapper (Single Payload)
 
 UDDF wraps one logical payload for tooling and modular artifacts.
@@ -88,6 +95,8 @@ Decode helpers:
 - Dictionaries are mandatory for very small repetitive payload families.
 - Dictionaries are optional for medium chunks.
 - Dictionaries are generally pointless for already compressed BC formats.
+
+For EC packages, small repetitive payload families may include semantic metadata and provenance records alongside the texture data. Keep those dictionaries specific to the package family rather than reusing a generic art dictionary across land, art, and layers.
 
 ## 3. Chunking and Transport Unit
 

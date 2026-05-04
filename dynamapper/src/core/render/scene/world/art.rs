@@ -18,7 +18,7 @@ impl Plugin for DrawStaticSpritesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.init_resource::<statics_collect::RenderStaticInstances>();
-        
+
         app.add_plugins(MaterialPlugin::<statics_draw::ArtSpriteMaterial>::default())
            .add_systems(Startup, statics_draw::sys_setup_art_page_atlas
                .in_set(StartupSysSet::SetupSceneStage1)
@@ -28,6 +28,8 @@ impl Plugin for DrawStaticSpritesPlugin {
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
                    .after(SceneRenderLandSysSet::RenderLandChunks),
+               statics_draw::sys_sync_static_sprite_entities
+                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_update_sprite_instance_buffer
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),

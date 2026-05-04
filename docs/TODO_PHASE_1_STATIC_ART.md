@@ -27,6 +27,12 @@ Out of scope:
 - `tiledata.mul` flags for behavior (`Wall`, `Window`, `Roof`, etc.).
 - Optional KR/EC assets for future extension (not required for Phase 1 runtime).
 
+If EC assets are present, they should be understood as a mixed source bundle rather than a single texture list:
+- `Texture.uop` and `LegacyTexture.uop` are the shared texture pools.
+- `tileart.uop` supplies EC static-art ownership, shader/type hints, and per-entry sampling windows.
+- `TerrainDefinition.uop` supplies EC land ownership, aliases, and terrain-material semantics.
+- `string_dictionary.uop` and `string_Wdictionary.uop` are supporting EC resources, not render inputs.
+
 ## 2.2 Decode Rules
 
 - Decode source art losslessly to CPU intermediate.
@@ -58,6 +64,8 @@ Rationale:
 - Keep at least 1px gutter (2px recommended) to avoid bleed under non-integer zoom.
 - For BC7 atlas pages, enforce 4x4 alignment on allocation and write regions.
 - Keep immutable atlas page dimensions per pool (example: 2048x2048).
+
+For the EC path, packing should eventually be driven by semantic ownership first, not by a flat texture-id sweep. The current raw texture pools contain art-like and terrain-like content together, so any EC packer that ignores `tileart.uop` and `TerrainDefinition.uop` will misclassify content.
 
 ## 3. Runtime Data Model
 

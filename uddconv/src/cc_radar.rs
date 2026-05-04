@@ -1,0 +1,261 @@
+//! Build-time support for creating radar maps (`facet0X.dds` or `.ktx2`).
+//!
+//! This module emulates the logic from the Enhanced Map Converter to create
+//! top-down radar textures for the Enhanced Client, using `tilemeta.uddp` as
+//! the color source and various compression options.
+
+use std::path::{Path, PathBuf};
+use color_eyre::eyre::{self, Context};
+use indicatif::{ProgressBar, ProgressStyle};
+
+use uocf::classic::map::{MapPlane};
+use uocf::classic::statics::{StaticsReader};
+use uocf::classic::hues::{load_hues};
+use crate::tilemeta::{TileMetaPackage};
+use crate::source_paths::find_first_existing_file;
+use crate::bc7::{encode_to_bc7, Bc7EncoderBackend, Bc7TextureData, ImageExtent, RawImageFormat, preferred_bc7_encoder_backend};
+
+const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
+    match backend {
+        Bc7EncoderBackend::Dds => "dds baseline (portable, non-ISPC)",
+        Bc7EncoderBackend::BlockCompression => "block_compression (pure Rust)",
+        Bc7EncoderBackend::Ispc => "intel_tex_2 (ISPC)",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RadarFormat {
+    /// Uncompressed RGBA8 (DDS)
+    Rgba8,
+    /// BC7 Compressed (DDS)
+    Bc7,
+    /// BC7 Compressed + KTX2 Container + Zstd Supercompression
+    Bc7Ktx2,
+}
+
+impl RadarFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Rgba8 | Self::Bc7 => "dds",
+            Self::Bc7Ktx2 => "ktx2",
+        }
+    }
+}
+
+pub struct RadarBuildOptions {
+    pub format: RadarFormat,
+    pub zstd_level: i32,
+}
+
+fn build_radar_rgba_pixels(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+) -> eyre::Result<(u32, u32, Vec<u8>)> {
+    // 1. Locate source files
+    let map_file_name = format!("map{}.mul", map_id);
+    let map_path = find_first_existing_file(source_dirs, &[&map_file_name])
+        .ok_or_else(|| eyre::eyre!("missing {}", map_file_name))?;
+
+    let statics_file_name = format!("statics{}.mul", map_id);
+    let statics_path = find_first_existing_file(source_dirs, &[&statics_file_name])
+        .ok_or_else(|| eyre::eyre!("missing {}", statics_file_name))?;
+
+    let staidx_file_name = format!("staidx{}.mul", map_id);
+    let staidx_path = find_first_existing_file(source_dirs, &[&staidx_file_name])
+        .ok_or_else(|| eyre::eyre!("missing {}", staidx_file_name))?;
+
+    let hues_path = find_first_existing_file(source_dirs, &["hues.mul"])
+        .ok_or_else(|| eyre::eyre!("missing hues.mul"))?;
+
+    println!("Loading tilemeta.uddp from {}...", tilemeta_path.display());
+    let tilemeta = TileMetaPackage::load(tilemeta_path)?;
+
+    println!("Loading hues.mul...");
+    let hues = load_hues(&hues_path)?;
+
+    println!("Initializing MapPlane...");
+    let mut plane = MapPlane::init(map_path, map_id)?;
+    let width_tiles = plane.size_cells().width;
+    let height_tiles = plane.size_cells().height;
+
+    println!("Loading all statics into memory...");
+    let mut statics_reader = StaticsReader::new(&staidx_path, &statics_path, width_tiles, height_tiles)?;
+    let statics_store = statics_reader.load_all()?;
+
+    println!("Generating radar image ({}x{})...", width_tiles, height_tiles);
+
+    let mut rgba_pixels = vec![0u8; (width_tiles * height_tiles * 4) as usize];
+
+    let pb = ProgressBar::new(width_tiles as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} columns ({eta})")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+
+    for x in 0..width_tiles {
+        let block_x = x / 8;
+        let cell_x = x % 8;
+
+        for y in 0..height_tiles {
+            let block_y = y / 8;
+            let cell_y = y % 8;
+
+            let block_pos = uocf::classic::map::MapBlockRelPos { x: block_x, y: block_y };
+            if !plane.is_block_cached(&block_pos) {
+                plane.load_blocks(&mut [block_pos])?;
+            }
+
+            let land_cell = plane.block(block_pos).unwrap().cell(cell_x, cell_y)?;
+            let land_z = land_cell.z;
+            let land_id = land_cell.id as u32;
+
+            let static_tiles = statics_store.block_tiles(block_x, block_y);
+            let mut highest_static = None;
+
+            for statics_tile in static_tiles {
+                if statics_tile.x_offset() as u32 == cell_x && statics_tile.y_offset() as u32 == cell_y {
+                    match highest_static {
+                        None => highest_static = Some(statics_tile),
+                        Some(previous) if statics_tile.z > previous.z => highest_static = Some(statics_tile),
+                        _ => {}
+                    }
+                }
+            }
+
+            let final_rgba = match highest_static {
+                Some(statics_tile) if statics_tile.z >= land_z => {
+                    if let Some(meta) = tilemeta.item_tile(statics_tile.graphic as u32) {
+                        let base_color = meta.radar_color;
+
+                        if statics_tile.hue > 0 && (statics_tile.hue as usize) < hues.len() {
+                            let r_idx = (base_color[2] >> 3) as usize;
+                            let hued_15 = hues[statics_tile.hue as usize].color_table[r_idx.min(31)];
+
+                            let hr = ((hued_15 >> 10) & 0x1F) as u8;
+                            let hg = ((hued_15 >> 5) & 0x1F) as u8;
+                            let hb = (hued_15 & 0x1F) as u8;
+
+                            [
+                                (hr << 3) | (hr >> 2),
+                                (hg << 3) | (hg >> 2),
+                                (hb << 3) | (hb >> 2),
+                                255,
+                            ]
+                        } else {
+                            [base_color[2], base_color[1], base_color[0], 255]
+                        }
+                    } else {
+                        [0, 0, 0, 255]
+                    }
+                }
+                _ => {
+                    if let Some(meta) = tilemeta.land_tile(land_id) {
+                        let base_color = meta.radar_color;
+                        [base_color[2], base_color[1], base_color[0], 255]
+                    } else {
+                        [0, 0, 0, 255]
+                    }
+                }
+            };
+
+            let offset = ((y * width_tiles + x) * 4) as usize;
+            rgba_pixels[offset..offset + 4].copy_from_slice(&final_rgba);
+        }
+
+        if x % 64 == 0 {
+            plane.evict_idle_blocks(std::time::Duration::from_secs(0));
+        }
+
+        pb.inc(1);
+    }
+    pb.finish_with_message("Radar pixels generated");
+
+    Ok((width_tiles, height_tiles, rgba_pixels))
+}
+
+pub fn build_facet_radar_bc7(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+) -> eyre::Result<Bc7TextureData> {
+    let (width_tiles, height_tiles, rgba_pixels) = build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id)?;
+    build_radar_bc7_from_rgba(width_tiles, height_tiles, &rgba_pixels)
+}
+
+fn build_radar_bc7_from_rgba(
+    width_tiles: u32,
+    height_tiles: u32,
+    rgba_pixels: &[u8],
+) -> eyre::Result<Bc7TextureData> {
+    let backend = preferred_bc7_encoder_backend();
+    println!(
+        "Compressing payload to BC7 with {} backend...",
+        bc7_backend_label(backend)
+    );
+    let extent = ImageExtent::new(width_tiles, height_tiles)?;
+    Ok(encode_to_bc7(rgba_pixels, extent, RawImageFormat::Rgba8888, backend)?)
+}
+
+pub fn build_facet_radar_dds(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    output_path: &Path,
+    map_id: u32,
+    options: &RadarBuildOptions,
+) -> eyre::Result<()> {
+    let (width_tiles, height_tiles, rgba_pixels) = build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id)?;
+
+    match options.format {
+        RadarFormat::Bc7 => {
+            let bc7_data = build_radar_bc7_from_rgba(width_tiles, height_tiles, &rgba_pixels)?;
+            println!("Writing DDS file with BC7 payload ({}x{})...", width_tiles, height_tiles);
+            let mut output_file = std::fs::File::create(output_path)
+                .wrap_err_with(|| format!("Failed to create output file: {:?}", output_path))?;
+            use ddsfile::{Dds, DxgiFormat, NewDxgiParams};
+            let params = NewDxgiParams {
+                height: height_tiles,
+                width: width_tiles,
+                depth: None,
+                format: DxgiFormat::BC7_UNorm,
+                mipmap_levels: None,
+                array_layers: None,
+                caps2: None,
+                is_cubemap: false,
+                resource_dimension: ddsfile::D3D10ResourceDimension::Texture2D,
+                alpha_mode: ddsfile::AlphaMode::Opaque,
+            };
+            let mut dds = Dds::new_dxgi(params)?;
+            dds.data = bc7_data.into_blocks();
+            dds.write(&mut output_file).map_err(|error| eyre::eyre!("Failed to write DDS: {}", error))?;
+            println!("Successfully created facet0{}.dds (BC7 compressed)", map_id);
+        }
+        RadarFormat::Bc7Ktx2 => {
+            return Err(eyre::eyre!(
+                "KTX2 radar export lives in the uddconv_ktx2 helper crate; use the CLI or GUI path that routes through it"
+            ));
+        }
+        RadarFormat::Rgba8 => {
+            println!("Saving as uncompressed RGBA8 DDS...");
+            let mut output_file = std::fs::File::create(output_path)
+                .wrap_err_with(|| format!("Failed to create output file: {:?}", output_path))?;
+            use ddsfile::{Dds, D3DFormat, NewD3dParams};
+            let params = NewD3dParams {
+                height: height_tiles,
+                width: width_tiles,
+                depth: None,
+                format: D3DFormat::A8R8G8B8,
+                mipmap_levels: None,
+                caps2: None,
+            };
+            let mut dds = Dds::new_d3d(params)?;
+            dds.data = rgba_pixels;
+            dds.write(&mut output_file).map_err(|e| eyre::eyre!("Failed to write DDS: {}", e))?;
+            println!("Successfully created facet0{}.dds (RGBA8888)", map_id);
+        }
+    }
+
+    Ok(())
+}

@@ -15,7 +15,6 @@
 //! - `metadata/items.bin`: dense table for `TileMetaItemTile` entries.
 
 use bytemuck::{Pod, Zeroable};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
@@ -122,8 +121,14 @@ pub struct TileMetaPackage {
 
 impl TileMetaPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let package = UddpReader::open(fs::read(path.as_ref())?)
+        let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
+        Self::from_uddp_package(package)
+    }
+
+    pub fn load_in_memory(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let package = UddpReader::load_in_memory(path.as_ref())
+            .wrap_err_with(|| format!("load_in_memory {}", path.as_ref().display()))?;
         Self::from_uddp_package(package)
     }
 

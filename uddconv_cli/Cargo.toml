@@ -13,7 +13,12 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 indicatif = "0.18.4"
 rayon = "1.8.0"
 uddconv = { path = "../uddconv" }
+uddconv_ktx2 = { path = "../uddconv_ktx2" }
 uocf = { path = "../uocf" }
+
+[features]
+default = []
+ispc = ["uddconv/ispc"]
 
 [[bin]]
 name = "uddpack"

@@ -7,7 +7,10 @@
 
 use std::collections::HashMap;
 
-use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict};
+use std::sync::Arc;
+
+use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict, Cursor};
+use memmap2::Mmap;
 use super::*;
 
 #[derive(Debug, Clone, Copy)]
@@ -17,18 +20,28 @@ struct RuntimeDictRef {
     codec: Codec,
 }
 
-/// Fully parsed in-memory package view.
+pub enum UddpData {
+    Owned(Vec<u8>),
+    Mmap(Mmap),
+}
+
+impl std::ops::Deref for UddpData {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(v) => v,
+            Self::Mmap(m) => m,
+        }
+    }
+}
+
+/// Fully parsed package view.
 ///
-/// The reader stores the raw package bytes and then materializes the lookup
-/// tables needed by the selected package mode:
-/// - dense-id packages get a direct locator array
-/// - path-hash packages get a sorted `path_hash64 -> locator` table
-/// - sparse-id packages get a sorted `id -> locator` table
-///
-/// Dictionary references are also resolved eagerly so that payload decoding can
-/// look up the right implicit dictionary without reparsing the package header.
+/// The reader can either own the entire package image in-memory or
+/// use a memory-mapped view for zero-copy access to large packages.
+#[derive(Clone)]
 pub struct UddpReader {
-    bytes: Vec<u8>,
+    data: Arc<UddpData>,
     header: UddpHeader,
     lookup_mode: LookupMode,
     dict_by_type: HashMap<u8, RuntimeDictRef>,
@@ -38,14 +51,29 @@ pub struct UddpReader {
 }
 
 impl UddpReader {
+    /// Open and fully parse a package from a file using memory mapping.
+    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, FormatError> {
+        let file = std::fs::File::open(path).map_err(FormatError::Io)?;
+        let mmap = unsafe { Mmap::map(&file).map_err(FormatError::Io)? };
+        Self::open_data(UddpData::Mmap(mmap))
+    }
+
     /// Open and fully parse a package from its complete in-memory byte image.
-    ///
-    /// The reader validates only the structural invariants needed for safe
-    /// indexing and decoding. Higher-level semantic validation, such as patch
-    /// manifest interpretation, is intentionally deferred to the code that owns
-    /// those concepts.
     pub fn open(bytes: Vec<u8>) -> Result<Self, FormatError> {
-        let mut cur = Cursor::new(&bytes);
+        Self::open_data(UddpData::Owned(bytes))
+    }
+
+    /// Read a file completely into RAM and then parse it as a package.
+    ///
+    /// Use this if you want to avoid memory-mapped I/O overhead or if you
+    /// need to modify the bytes (though UddpReader is currently read-only).
+    pub fn load_in_memory(path: impl AsRef<std::path::Path>) -> Result<Self, FormatError> {
+        let bytes = std::fs::read(path).map_err(FormatError::Io)?;
+        Self::open(bytes)
+    }
+
+    fn open_data(data: UddpData) -> Result<Self, FormatError> {
+        let mut cur = Cursor::new(&*data);
         let header = UddpHeader::read_from(&mut cur)?;
 
         if header.magic != UDDP_MAGIC && header.magic != UDPI_MAGIC {
@@ -55,7 +83,7 @@ impl UddpReader {
         let lookup_mode = LookupMode::from_u8(header.lookup_mode)?;
 
         let mut this = Self {
-            bytes,
+            data: Arc::new(data),
             header,
             lookup_mode,
             dict_by_type: HashMap::new(),
@@ -81,7 +109,7 @@ impl UddpReader {
 
     /// Recompute the canonical package hash by zeroing the embedded hash field.
     pub fn computed_package_hash64(&self) -> u64 {
-        canonical_package_hash64(&self.bytes)
+        canonical_package_hash64(&self.data)
     }
 
     /// Return the package hash stored inside the serialized header.
@@ -179,11 +207,11 @@ impl UddpReader {
         let dict = self.dict_by_type.get(&data_type)?;
         let start = usize::try_from(dict.offset).ok()?;
         let end = start.checked_add(dict.size as usize)?;
-        self.bytes.get(start..end)
+        self.data.get(start..end)
     }
 
     pub fn package_size_bytes(&self) -> usize {
-        self.bytes.len()
+        self.data.len()
     }
 
     pub fn dictionary_records(&self) -> Vec<(u8, Codec, u32)> {
@@ -209,8 +237,8 @@ impl UddpReader {
     fn read_dictionary_table(&mut self) -> Result<(), FormatError> {
         let start = usize::try_from(self.header.dict_table_offset).map_err(|_| FormatError::Overflow)?;
         let len = self.header.dict_count as usize;
-        let range = checked_region(start, len, UddpDictRef::SERIALIZED_SIZE, self.bytes.len())?;
-        let mut cur = Cursor::new(&self.bytes[range]);
+        let range = checked_region(start, len, UddpDictRef::SERIALIZED_SIZE, self.data.len())?;
+        let mut cur = Cursor::new(&self.data[range]);
 
         for _ in 0..len {
             let dict = UddpDictRef::read_from(&mut cur)?;
@@ -233,8 +261,8 @@ impl UddpReader {
 
         match self.lookup_mode {
             LookupMode::DenseId => {
-                let range = checked_region(start, count, UddpLocator::SERIALIZED_SIZE, self.bytes.len())?;
-                let mut cur = Cursor::new(&self.bytes[range]);
+                let range = checked_region(start, count, UddpLocator::SERIALIZED_SIZE, self.data.len())?;
+                let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     entries.push(UddpLocator::read_from(&mut cur)?);
@@ -242,8 +270,8 @@ impl UddpReader {
                 self.dense_index = Some(entries);
             }
             LookupMode::VirtualPathHash => {
-                let range = checked_region(start, count, UddpPathEntry::SERIALIZED_SIZE, self.bytes.len())?;
-                let mut cur = Cursor::new(&self.bytes[range]);
+                let range = checked_region(start, count, UddpPathEntry::SERIALIZED_SIZE, self.data.len())?;
+                let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     entries.push(UddpPathEntry::read_from(&mut cur)?);
@@ -251,8 +279,8 @@ impl UddpReader {
                 self.path_index = Some(entries);
             }
             LookupMode::SparseId => {
-                let range = checked_region(start, count, UddpSparseIdEntry::SERIALIZED_SIZE, self.bytes.len())?;
-                let mut cur = Cursor::new(&self.bytes[range]);
+                let range = checked_region(start, count, UddpSparseIdEntry::SERIALIZED_SIZE, self.data.len())?;
+                let mut cur = Cursor::new(&self.data[range]);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     entries.push(UddpSparseIdEntry::read_from(&mut cur)?);
@@ -268,7 +296,7 @@ impl UddpReader {
         let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
         let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
         let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
-        let data = self.bytes.get(offset..end).ok_or(FormatError::Truncated)?;
+        let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
 
         match unpack_codec(locator.meta32) {
             Codec::None => Ok(data.to_vec()),

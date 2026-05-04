@@ -148,10 +148,10 @@ impl Rgba8888 {
     }
     pub fn components(&self) -> (u8, u8, u8, u8) {
         (
-            ((self.value >> 24) & 0xFF) as u8,
-            ((self.value >> 16) & 0xFF) as u8,
-            ((self.value >> 8) & 0xFF) as u8,
             (self.value & 0xFF) as u8,
+            ((self.value >> 8) & 0xFF) as u8,
+            ((self.value >> 16) & 0xFF) as u8,
+            ((self.value >> 24) & 0xFF) as u8,
         )
     }
 }

@@ -5,6 +5,7 @@ pub mod controls;
 mod diagnostics;
 pub mod maps;
 pub mod render;
+pub mod statics;
 pub mod system_sets;
 mod texture_cache;
 mod uo_files_loader;

@@ -209,13 +209,22 @@ At runtime, the engine has no knowledge of `Textures.uop` or `TerrainDefinition.
 
 When the engine needs to render CC Tile `168`:
 1. **KDL Translation**: It looks up `168` in `TerrainTranscode.kdl`. The KDL says: *"CC Tile 168 translates to EC Material 5"*. (The KDL contains no file names, only ID-to-ID translations).
-2. **Provenance Lookup**: It asks the UDDP's provenance array: *"Which Slot belongs to Material 5?"*. The provenance array answers: *"Canonical Slot 16426"*.
+2. **Provenance Lookup**: It asks the UDDP's provenance array: *"Which UDDP Slot Index belongs to Material 5?"*. The provenance array answers: *"Index 16426"*.
 3. **Slot Lookup**: It looks up `slots[16426]` to get the physical atlas coordinates (e.g., Page 1, X:1543, Y:1).
 4. **GPU Upload**: Those coordinates are uploaded to the `ec_land_lookup` GPU texture, and the shader draws the pixel perfectly.
 
 #### The Fallback (When KDL is Missing)
 If a CC Tile ID has no entry in `TerrainTranscode.kdl`, the engine skips Step 1. It directly asks the provenance array: *"Do you have any legacy alias named after this CC ID?"* 
 Because the EC client imported many legacy CC textures using their original IDs, the provenance array often successfully returns a Slot ID, allowing unmapped legacy tiles to render flawlessly. If it fails, the tile safely renders blank.
+
+#### 2.2.2 Understanding the ID Spaces
+To navigate this resolution chain, it is critical to distinguish between the three ID spaces:
+
+1.  **Classic Client ID (CC ID)**: The 16-bit ID stored in legacy `map.mul` files (e.g., `168` for water).
+2.  **EC Material ID**: A canonical category ID used by the EC Client to group related textures (e.g., Material `5` is "Water").
+3.  **UDDP Slot Index (Runtime)**: A direct index into the pre-computed `slots` table in the `.uddp` package. This is what the engine uses at runtime to find atlas coordinates.
+
+**Note on the Build Phase**: During the conversion stage (`uddconv_cli`), the builder uses **EC ArtIDs** (the internal slot IDs in `Texture.uop`) to resolve provenance. However, once the UDDP is baked, these are translated into the **Slot Indices** used by the engine, completely abstracting away the EC Client's internal ID system.
 
 ---
 

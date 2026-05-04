@@ -1,5 +1,6 @@
 #import bevy_pbr::{
     forward_io::{Vertex, VertexOutput},
+    mesh_functions,
     view_transformations,
 }
 
@@ -28,18 +29,18 @@ struct SpriteParams {
 
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
-    let inst = instances[vertex.instance_index];
-    
+    let inst = instances[mesh_functions::get_tag(vertex.instance_index)];
+
     // We can use vertex.position.x and .z for corner offsets (0.0 to 1.0)
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
-    
+
     // In Bevy's 3D view, x and z are horizontal, y is up.
     let world_pos = vec3<f32>(
         inst.world_x + corner.x * inst.pixel_size.x,
         inst.world_y,
         inst.world_z + corner.y * inst.pixel_size.y,
     );
-    
+
     var out: VertexOutput;
     out.position = view_transformations::position_world_to_clip(world_pos);
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
@@ -55,12 +56,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // Dot mode (radarcol)
         return in.color;
     }
-    
+
     let layer = u32(in.uv_b.x);
     let color = textureSample(art_atlas, art_atlas_sampler, in.uv, i32(layer));
     if color.a < sprite_params.alpha_cutoff {
         discard;
     }
-    
+
     return color * in.color;
 }

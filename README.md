@@ -65,6 +65,15 @@ This project is organized as a Cargo workspace with several specialized componen
 
 ### Package Notes
 
+- EC source packages are not a single asset stream. The current packers read and classify content from a mixed set of UOP inputs:
+  - `Texture.uop` and `LegacyTexture.uop`: shared texture pools used by both EC land and EC static-art classification
+  - `tileart.uop`: EC static/art metadata, including sampling windows, shader/type hints, ownership, and entry-specific flags
+  - `TerrainDefinition.uop`: EC land/material semantics, selected textures, aliases, and runtime slot/provenance relationships
+  - `string_dictionary.uop` and `string_Wdictionary.uop`: shared EC string resources used by the client package set, not visual art sources
+- The important distinction is ownership, not raw id range. A texture id can legitimately appear in both `ec_art` and `ec_land` if the semantic sources require it.
+- `Unused1` on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
+- `runtime_material_id_overrides.toml` is intentionally narrow and only normalizes known runtime collisions; it is not the full Classic-to-EC translation table.
+
 - `cc_art.uddp` stores classic land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
 - `ec_art.uddp` stores Enhanced Client statics only. Terrain-owned source textures are excluded using `TerrainDefinition.uop` so terrain data does not leak into static art packages.
 - `ec_art_cropped.uddp` uses the same static-art contract as `ec_art.uddp`, but first clips each art entry to the tileart `start_x/start_y/end_x/end_y` sampling window and only then trims transparent borders inside that window. This changes the packed source rect, so any matching item metadata must be built with `pack-tilemeta --ec-art-cropped`.
@@ -73,6 +82,8 @@ This project is organized as a Cargo workspace with several specialized componen
 - `tilemeta.uddp` stores dense land/item metadata tables used by the runtime to merge classic tiledata with Enhanced Client metadata.
 - When `tilemeta.uddp` is built with `--ec-art-cropped`, the EC sampling start coordinates are shifted to match the cropped `ec_art` payloads while preserving the original EC draw offsets.
 - Different tileart entries can share the same decoded source texture while sampling different sub-rectangles of it. Because of that, cropped EC art must never globally trim or rewrite a shared non-alpha source texture without first applying the per-entry tileart clip rect.
+- Current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
+- The long-term direction is to keep the shared source textures intact and let runtime sampling windows and semantic lookup tables choose the right sub-rect or layer at render time.
 - `runtime_material_id_overrides.toml` is a narrow runtime collision table for `ec_land`, not the full Classic-to-EC terrain translation table.
 - `TerrainTranscode.json` is the semantic-family seed for Classic land normalization and is the right starting point for a hand-tuned translation table.
 
