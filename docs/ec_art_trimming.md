@@ -31,22 +31,8 @@ The EC source package split matters here:
 - Cropped EC art needs a matching cropped tilemeta package whose `ec_start_x/ec_start_y` are shifted by the recorded top/left crop delta.
 - `ec_offset_x/ec_offset_y` stay unchanged. They are draw offsets, not crop offsets.
 
-## CLI Flow
+## CLI Status
 
-- `uddpack pack-ec-art-cropped --uddp-dir /path/to/packages` looks for a raw `tilemeta.uddp` in that directory.
-- It writes a derived cropped tilemeta package by replacing only `metadata/items.bin` with values regenerated from raw source assets plus the EC crop adjustments.
-- The derived output file name is the raw package stem plus `_ec_art_cropped`, for example `tilemeta_ec_art_cropped.uddp`.
-
-## Repeated Test Conversions
-
-- The raw tilemeta package is never edited in place.
-- Every cropped conversion regenerates updated item metadata from raw client files and the raw tilemeta package, then rewrites the derived cropped package.
-- Because the command always starts from the raw package and raw source metadata, repeated cropped-art conversions do not stack offset edits.
-
-## Progress And Output
-
-- Cropped EC art packing reports the number of cropped art slots.
-- When `--uddp-dir` is used, the command also shows an `updating tilemeta` progress bar while rebuilding the derived `metadata/items.bin` payload.
-- After rewriting the derived cropped tilemeta package, the command prints how many item offsets were updated and reminds the user that the raw tilemeta package was left untouched.
-
-If a future branch removes cropped-source packing entirely, this file should be rewritten to describe the runtime sampling-window model instead of the current build-time crop path.
+- The standalone cropped EC-art command has been removed.
+- EC package creation now goes through the shared `uddpack pack-ec-textures` pass.
+- This file remains as a description of the historical cropped-art behavior and matching tilemeta contract, not as a supported current workflow.

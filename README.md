@@ -41,12 +41,8 @@ This project is organized as a Cargo workspace with several specialized componen
 
 - `uddpack`: build runtime packages from source assets.
   - `pack-art`: pack classic `art.mul` / `artidx.mul` into `cc_art.uddp`.
-  - `pack-ec-art`: pack Enhanced Client statics into `ec_art.uddp`.
-  - `pack-ec-art-cropped`: pack Enhanced Client statics into `ec_art_cropped.uddp` after clipping each tileart sampling window and trimming transparent borders inside that window.
-  - `pack-ec-art-cropped --uddp-dir /path/to/packages`: find the raw `tilemeta.uddp` in that directory and write a derived `*_ec_art_cropped.uddp` tilemeta package with updated EC sampling offsets.
-  - `pack-ec-land`: pack Enhanced Client terrain textures into `ec_land.uddp` and print TerrainDefinition raw-texture coverage plus ignored source ids.
+  - `pack-ec-textures`: pack Enhanced Client statics and terrain textures together in one shared pass, writing `ec_tex_art.uddp` and `ec_tex_land.uddp` by default.
   - `pack-tilemeta`: build `tilemeta.uddp` from classic `tiledata.mul` plus Enhanced `tileart.uop` metadata.
-  - `pack-tilemeta --ec-art-cropped`: shift EC sampling start coordinates so tile metadata stays aligned with `pack-ec-art-cropped` output.
   - `pack-unified-tiledata`: compatibility alias for `pack-tilemeta`.
 - `uddtool`: inspect and edit already-built packages.
   - `info`: print package structure, logical file counts, recognized package summaries, and `ec_land` terrain provenance row counts.
@@ -75,13 +71,9 @@ This project is organized as a Cargo workspace with several specialized componen
 - `runtime_material_id_overrides.toml` is intentionally narrow and only normalizes known runtime collisions; it is not the full Classic-to-EC translation table.
 
 - `cc_art.uddp` stores classic land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
-- `ec_art.uddp` stores Enhanced Client statics only. Terrain-owned source textures are excluded using `TerrainDefinition.uop` so terrain data does not leak into static art packages.
-- `ec_art_cropped.uddp` uses the same static-art contract as `ec_art.uddp`, but first clips each art entry to the tileart `start_x/start_y/end_x/end_y` sampling window and only then trims transparent borders inside that window. This changes the packed source rect, so any matching item metadata must be built with `pack-tilemeta --ec-art-cropped`.
-- `pack-ec-art-cropped --uddp-dir` derives a second tilemeta package from the raw package in that directory by rewriting only `metadata/items.bin`. The raw tilemeta package is left untouched, so repeated cropped-art test conversions do not stack offset edits.
-- `ec_land.uddp` stores one representative terrain image per land slot plus required `metadata/terrain_provenance.bin`, which preserves how TerrainDefinition material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
+- `ec_tex_art.uddp` stores Enhanced Client statics from the shared EC texture classification pass.
+- `ec_tex_land.uddp` stores one representative terrain image per land slot plus required `metadata/terrain_provenance.bin`, preserving how TerrainDefinition material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
 - `tilemeta.uddp` stores dense land/item metadata tables used by the runtime to merge classic tiledata with Enhanced Client metadata.
-- When `tilemeta.uddp` is built with `--ec-art-cropped`, the EC sampling start coordinates are shifted to match the cropped `ec_art` payloads while preserving the original EC draw offsets.
-- Different tileart entries can share the same decoded source texture while sampling different sub-rectangles of it. Because of that, cropped EC art must never globally trim or rewrite a shared non-alpha source texture without first applying the per-entry tileart clip rect.
 - Current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
 - The long-term direction is to keep the shared source textures intact and let runtime sampling windows and semantic lookup tables choose the right sub-rect or layer at render time.
 - `runtime_material_id_overrides.toml` is a narrow runtime collision table for `ec_land`, not the full Classic-to-EC terrain translation table.
@@ -89,15 +81,12 @@ This project is organized as a Cargo workspace with several specialized componen
 
 ### Recommended Workflows
 
-- Standard EC static packaging:
-  - `uddpack pack-ec-art --ecdir /path/to/ec --output ec_art.uddp`
+- Shared EC texture packaging:
+  - `uddpack pack-ec-textures --ecdir /path/to/ec --art-output ec_tex_art.uddp --land-output ec_tex_land.uddp`
   - `uddpack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp`
-- Cropped EC static packaging:
-  - `uddpack pack-ec-art-cropped --ecdir /path/to/ec --output ec_art_cropped.uddp --uddp-dir /path/to/packages`
-  - This writes cropped art plus a derived cropped tilemeta package such as `tilemeta_ec_art_cropped.uddp` while keeping the raw `tilemeta.uddp` unchanged.
 - Inspecting package metadata:
   - `uddtool info tilemeta.uddp`
-  - `uddtool extract ec_art_cropped.uddp --output ec_art_cropped.extract`
+  - `uddtool extract ec_tex_art.uddp --output ec_tex_art.extract`
 
 ### CSV Editing Notes
 

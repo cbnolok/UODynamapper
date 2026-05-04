@@ -33,7 +33,7 @@ pub struct SectKeybindings {
     pub keybindings_help: KeyCode,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectCore {
     pub world: SectWorld,
 }
@@ -78,7 +78,7 @@ pub struct SectWindow {
     pub perspective_camera: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
@@ -89,7 +89,7 @@ pub struct SectMaps {
     pub maps: Vec<SectMapSize>,
 }
 
-#[derive(Clone, Deserialize, Serialize, Default)]
+#[derive(Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct SectWorldMapRendering {
     #[serde(default = "default_enable_statics")]
     pub enable_statics: bool,
@@ -154,7 +154,7 @@ impl Default for SectWorldMapDiagnostics {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectLandStreaming {
     /// Main-world terrain preparation budget measured in equivalent 8x8 map blocks.
     ///
@@ -678,6 +678,55 @@ pub fn save_graphics_settings(settings: &Settings) {
     }
 }
 
+pub fn save_core_settings(settings: &Settings) {
+    let assets_path = crate::core::constants::valid_asset_dir();
+    let core_path = assets_path.join(CORE_CONFIG_FILE);
+
+    #[derive(Serialize)]
+    struct CoreWrapper<'a> {
+        core: &'a SectCore,
+        logging: &'a SectLogging,
+    }
+
+    match toml::to_string_pretty(&CoreWrapper {
+        core: &settings.core,
+        logging: &settings.logging,
+    }) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&core_path, toml_str) {
+                paris::error!("Failed to save core.toml: {}", e);
+            } else {
+                console_logger::one(LogSev::Info, LogAbout::General, "Saved core.toml");
+            }
+        }
+        Err(e) => {
+            paris::error!("Failed to serialize core settings: {}", e);
+        }
+    }
+}
+
+pub fn save_worldmap_rendering_settings(settings: &Settings) {
+    let assets_path = crate::core::constants::valid_asset_dir();
+    let path = assets_path.join(WORLDMAP_RENDERING_CONFIG_FILE);
+
+    match toml::to_string_pretty(&settings.worldmap_rendering) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&path, toml_str) {
+                paris::error!("Failed to save core_worldmap_rendering.toml: {}", e);
+            } else {
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::General,
+                    "Saved core_worldmap_rendering.toml",
+                );
+            }
+        }
+        Err(e) => {
+            paris::error!("Failed to serialize worldmap rendering settings: {}", e);
+        }
+    }
+}
+
 // ----
 
 pub struct SettingsPlugin {
@@ -974,11 +1023,15 @@ fn sys_debounced_save(
     mut last_saved_app: Local<Option<SectApp>>,
     mut last_saved_graphics: Local<Option<SectGraphics>>,
     mut last_saved_keybindings: Local<Option<SectKeybindings>>,
+    mut last_saved_core: Local<Option<SectCore>>,
+    mut last_saved_worldmap_rendering: Local<Option<SectWorldMapRendering>>,
 ) {
     if settings.is_added() {
         *last_saved_app = Some(settings.app.clone());
         *last_saved_graphics = Some(settings.graphics.clone());
         *last_saved_keybindings = Some(settings.keybindings.clone());
+        *last_saved_core = Some(settings.core.clone());
+        *last_saved_worldmap_rendering = Some(settings.worldmap_rendering.clone());
         return;
     }
 
@@ -991,8 +1044,14 @@ fn sys_debounced_save(
     let graphics_changed = last_saved_graphics
         .as_ref()
         .map_or(true, |last| last != &settings.graphics);
+    let core_changed = last_saved_core
+        .as_ref()
+        .map_or(true, |last| last != &settings.core);
+    let worldmap_rendering_changed = last_saved_worldmap_rendering
+        .as_ref()
+        .map_or(true, |last| last != &settings.worldmap_rendering);
 
-    if app_changed || graphics_changed || kb_changed {
+    if app_changed || graphics_changed || kb_changed || core_changed || worldmap_rendering_changed {
         // Reset timer whenever a change occurs
         save_timer.0.reset();
         save_timer.0.unpause();
@@ -1014,6 +1073,16 @@ fn sys_debounced_save(
             if kb_changed {
                 save_keybindings(&settings);
                 *last_saved_keybindings = Some(settings.keybindings.clone());
+            }
+
+            if core_changed {
+                save_core_settings(&settings);
+                *last_saved_core = Some(settings.core.clone());
+            }
+
+            if worldmap_rendering_changed {
+                save_worldmap_rendering_settings(&settings);
+                *last_saved_worldmap_rendering = Some(settings.worldmap_rendering.clone());
             }
 
             save_timer.0.pause();

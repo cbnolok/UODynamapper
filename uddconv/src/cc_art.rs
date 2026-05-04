@@ -594,10 +594,13 @@ pub fn pack_tiles_into_pages(
         .map(CcArtSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    remaining.sort_by_key(|tile| tile.art_id);
     let mut page_index = 0u32;
 
     while !remaining.is_empty() {
-        let (page, leftovers) = build_page(page_index, remaining, options)?;
+        let (page_tiles, leftovers) = take_page_tile_prefix(remaining, options)?;
+        let (page, unplaced) = build_page(page_index, page_tiles, options)?;
+        debug_assert!(unplaced.is_empty(), "selected page tile prefix must fit entirely");
         if page.placed_tiles.is_empty() {
             eyre::bail!(
                 "could not fit any art tile into atlas page {}x{}",
@@ -630,9 +633,92 @@ pub fn pack_tiles_into_pages(
     Ok((pages, slot_records))
 }
 
+fn take_page_tile_prefix(
+    tiles: Vec<DecodedArtTile>,
+    options: &CcArtAtlasOptions,
+) -> eyre::Result<(Vec<DecodedArtTile>, Vec<DecodedArtTile>)> {
+    let prefix_len = max_fitting_page_prefix_len(&tiles, options)?;
+
+    if prefix_len == 0 {
+        eyre::bail!(
+            "could not fit any art tile into atlas page {}x{}",
+            options.atlas_width,
+            options.atlas_height
+        );
+    }
+
+    let mut leftovers = tiles;
+    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
+    Ok((selected, leftovers))
+}
+
+fn max_fitting_page_prefix_len(
+    tiles: &[DecodedArtTile],
+    options: &CcArtAtlasOptions,
+) -> eyre::Result<usize> {
+    let mut low = 1usize;
+    let mut high = tiles.len();
+    let mut best = 0usize;
+
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if page_prefix_fits(&tiles[..mid], options)? {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+
+    Ok(best)
+}
+
+fn page_prefix_fits(tiles: &[DecodedArtTile], options: &CcArtAtlasOptions) -> eyre::Result<bool> {
+    let mut to_pack = tiles.to_vec();
+    sort_tiles_within_page(&mut to_pack);
+
+    let mut allocator = AtlasAllocator::new(size2(
+        options.atlas_width as i32,
+        options.atlas_height as i32,
+    ));
+    let gutter = i32::from(options.gutter);
+
+    for tile in &to_pack {
+        let alloc_width = tile.width as i32 + gutter * 2;
+        let alloc_height = tile.height as i32 + gutter * 2;
+        if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
+            eyre::bail!(
+                "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
+                tile.art_id,
+                tile.width,
+                tile.height,
+                options.atlas_width,
+                options.atlas_height,
+                options.gutter
+            );
+        }
+
+        if allocator.allocate(size2(alloc_width, alloc_height)).is_none() {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn sort_tiles_within_page(tiles: &mut [DecodedArtTile]) {
+    tiles.sort_by(|left, right| {
+        let left_area = left.width as u32 * left.height as u32;
+        let right_area = right.width as u32 * right.height as u32;
+        right_area
+            .cmp(&left_area)
+            .then_with(|| left.art_id.cmp(&right.art_id))
+    });
+}
+
 fn build_page(
     page_index: u32,
-    tiles: Vec<DecodedArtTile>,
+    mut tiles: Vec<DecodedArtTile>,
     options: &CcArtAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // Pages are always assembled as full-size RGBA images in memory even when the
@@ -648,6 +734,8 @@ fn build_page(
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let gutter = i32::from(options.gutter);
+
+    sort_tiles_within_page(&mut tiles);
 
     for tile in tiles {
         // The allocator reserves the requested gutter as part of the rectangle so

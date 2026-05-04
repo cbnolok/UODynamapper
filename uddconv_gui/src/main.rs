@@ -108,13 +108,38 @@ enum Tab {
     Tools,
 }
 
+fn config_file_path() -> std::path::PathBuf {
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        return std::path::PathBuf::from(manifest_dir).join("config.toml");
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            return parent.join("config.toml");
+        }
+    }
+    std::path::PathBuf::from("config.toml")
+}
+
+fn load_settings() -> AppSettings {
+    let path = config_file_path();
+    if let Ok(contents) = std::fs::read_to_string(&path) {
+        toml::from_str(&contents).unwrap_or_default()
+    } else {
+        AppSettings::default()
+    }
+}
+
+fn save_settings(settings: &AppSettings) {
+    let path = config_file_path();
+    if let Ok(contents) = toml::to_string_pretty(settings) {
+        let _ = std::fs::write(path, contents);
+    }
+}
+
 impl UddConvApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let settings = if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            AppSettings::default()
-        };
+        let _ = cc; // eframe storage not used; settings come from config.toml
+        let settings = load_settings();
 
         Self {
             settings,
@@ -222,8 +247,8 @@ impl eframe::App for UddConvApp {
         }
     }
 
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, &self.settings);
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        save_settings(&self.settings);
     }
 }
 
@@ -575,7 +600,7 @@ impl UddConvApp {
         self.spawn_task("Tilemeta Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
-            build_tilemeta_uddp_from_sources(&sources, &output, &TileMetaBuildOptions { adjust_cropped_ec_art: false, use_ec_radarcol: false })?;
+            build_tilemeta_uddp_from_sources(&sources, &output, &TileMetaBuildOptions { adjust_ec_art_sampling: false, use_ec_radarcol: false })?;
             Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
         });
     }

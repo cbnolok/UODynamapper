@@ -49,6 +49,13 @@ pub struct ResolvedArtSprite {
     pub pixel_height: u16,
 }
 
+#[derive(Debug, Clone)]
+pub struct ArtPageUpload {
+    pub page_index: u32,
+    pub layer: u32,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Resource)]
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
@@ -56,8 +63,8 @@ pub struct ArtPageAtlas {
     layer_to_page: Vec<Option<u32>>,
     layer_access_tick: Vec<u64>,
     current_tick: u64,
-    pub pending_uploads: Vec<(u32, Vec<u8>)>,
-    pub extract_staging: Vec<(u32, Vec<u8>)>,
+    pub pending_uploads: Vec<ArtPageUpload>,
+    pub extract_staging: Vec<ArtPageUpload>,
     pub page_width: u32,
     pub page_height: u32,
     pub max_layers: u32,
@@ -83,18 +90,26 @@ impl ArtPageAtlas {
         let art_id = graphic as u32;
         let slot = cc_art.present_slot(art_id)?;
         let page_index = slot.page_index;
-        
+        let page_upload_pending = self
+            .pending_uploads
+            .iter()
+            .any(|upload| upload.page_index == page_index)
+            || self
+                .extract_staging
+                .iter()
+                .any(|upload| upload.page_index == page_index);
+
         self.current_tick += 1;
-        
+
         let layer = if let Some(&layer) = self.page_to_layer.get(&page_index) {
             self.layer_access_tick[layer as usize] = self.current_tick;
+            if page_upload_pending {
+                return None;
+            }
             layer
         } else {
             // Need to allocate a layer for this page. Check if we already requested it.
-            if self.pending_uploads.iter().any(|(p, _)| *p == page_index) {
-                return None; // Still uploading
-            }
-            if self.extract_staging.iter().any(|(p, _)| *p == page_index) {
+            if page_upload_pending {
                 return None; // Still uploading
             }
 
@@ -108,7 +123,7 @@ impl ArtPageAtlas {
                 }
                 lru_layer
             };
-            
+
             // Queue the page upload
             if let Ok(page_data) = cc_art.read_page_bytes(page_index) {
                 if let Some(page_meta) = cc_art.pages().get(page_index as usize) {
@@ -135,7 +150,11 @@ impl ArtPageAtlas {
                             let dst_end = dst_start + copy_width * 4;
                             full_page[dst_start..dst_end].copy_from_slice(&rgba[src_start..src_end]);
                         }
-                        self.pending_uploads.push((page_index, full_page));
+                        self.pending_uploads.push(ArtPageUpload {
+                            page_index,
+                            layer,
+                            rgba: full_page,
+                        });
                     }
                 }
             }
@@ -143,7 +162,7 @@ impl ArtPageAtlas {
             self.page_to_layer.insert(page_index, layer);
             self.layer_to_page[layer as usize] = Some(page_index);
             self.layer_access_tick[layer as usize] = self.current_tick;
-            
+
             return None; // Wait for upload
         };
 
@@ -154,6 +173,14 @@ impl ArtPageAtlas {
             pixel_width: slot.width,
             pixel_height: slot.height,
         })
+    }
+
+    pub fn resident_page_count(&self) -> usize {
+        self.page_to_layer.len()
+    }
+
+    pub fn pending_page_count(&self) -> usize {
+        self.pending_uploads.len() + self.extract_staging.len()
     }
 }
 
@@ -359,7 +386,7 @@ fn sys_setup_art_texture_loader(
 }
 
 #[derive(Resource, Default)]
-pub struct RenderArtPageUploads(pub Vec<(u32, Vec<u8>)>);
+pub struct RenderArtPageUploads(pub Vec<ArtPageUpload>);
 
 pub fn sys_stage_art_page_uploads(mut atlas: ResMut<ArtPageAtlas>) {
     atlas.extract_staging.clear();
@@ -393,12 +420,16 @@ pub fn sys_render_upload_art_pages(
 
     use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
-    let mut submitted = 0;
-    for (layer, data) in uploads.0.iter() {
+    let submitted = uploads.0.len();
+    for upload in uploads.0.iter() {
         let destination = TexelCopyTextureInfo {
             texture: &*gpu_image.texture,
             mip_level: 0,
-            origin: Origin3d { x: 0, y: 0, z: *layer },
+            origin: Origin3d {
+                x: 0,
+                y: 0,
+                z: upload.layer,
+            },
             aspect: bevy::render::render_resource::TextureAspect::All,
         };
 
@@ -416,13 +447,7 @@ pub fn sys_render_upload_art_pages(
             depth_or_array_layers: 1,
         };
 
-        render_queue.write_texture(destination, data, data_layout, extent);
-        submitted += 1;
-        
-        // Budget cap: max 1 page per frame (16MB each)
-        if submitted >= 1 {
-            break;
-        }
+        render_queue.write_texture(destination, &upload.rgba, data_layout, extent);
     }
 
     if submitted > 0 {

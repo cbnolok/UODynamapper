@@ -2,6 +2,7 @@ use crate::core::render::scene::world::art::statics_collect::{
     RenderStaticInstances, SpriteInstance,
 };
 use crate::core::texture_cache::art::{ArtPageAtlas, ArtPageAtlasHandle};
+use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
@@ -35,6 +36,12 @@ pub struct ArtSpriteRenderAssets {
     pub material: Handle<ArtSpriteMaterial>,
 }
 
+#[derive(Resource, Default)]
+pub struct StaticArtDrawDebugState {
+    pub last_entity_count: Option<usize>,
+    pub last_uploaded_instances: Option<usize>,
+}
+
 impl MaterialExtension for ArtSpriteMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
         "shaders/worldmap/art/main.wgsl".into()
@@ -54,7 +61,9 @@ pub fn sys_setup_art_page_atlas(
     mut meshes: ResMut<Assets<Mesh>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
 ) {
-    let max_layers = 16;
+    // 32 layers still churns too aggressively for visible classic static-art page sets.
+    // Keep this aligned with the working budget discussed in the render investigation.
+    let max_layers = 64;
     let page_width = 2048;
     let page_height = 2048;
 
@@ -72,6 +81,10 @@ pub fn sys_setup_art_page_atlas(
         bevy::asset::RenderAssetUsages::default(),
     );
     image.texture_descriptor.usage |= TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
+    image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+        dimension: Some(bevy::render::render_resource::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
 
     let atlas_handle = images.add(image);
 
@@ -90,8 +103,8 @@ pub fn sys_setup_art_page_atlas(
         layer: 0,
         uv_min: [0.0, 0.0],
         uv_max: [0.0, 0.0],
-        pixel_size: [0.0, 0.0],
-        _pad: [0.0, 0.0],
+        local_min: [0.0, 0.0],
+        local_max: [0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
@@ -100,6 +113,7 @@ pub fn sys_setup_art_page_atlas(
     let material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
             alpha_mode: AlphaMode::Mask(0.5),
+            cull_mode: None,
             unlit: true,
             ..default()
         },
@@ -160,9 +174,11 @@ pub fn sys_sync_static_sprite_entities(
     mut commands: Commands,
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
     existing_q: Query<(Entity, &MeshTag), With<StaticsDrawEntity>>,
 ) {
     let desired_count = instances.0.len();
+    let existing_count = existing_q.iter().count();
     let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
 
     for entity in existing_entities.by_ref().skip(desired_count) {
@@ -176,7 +192,6 @@ pub fn sys_sync_static_sprite_entities(
         }
     }
 
-    let existing_count = existing_q.iter().count();
     for slot_index in existing_count..desired_count {
         commands.spawn((
             Mesh3d(render_assets.mesh.clone()),
@@ -187,6 +202,19 @@ pub fn sys_sync_static_sprite_entities(
             StaticsDrawEntity,
         ));
     }
+
+    if debug_state.last_entity_count != Some(desired_count) {
+        console_logger::one(
+            LogSev::Warn,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art draw entities: existing={} desired={}",
+                existing_count,
+                desired_count,
+            ),
+        );
+        debug_state.last_entity_count = Some(desired_count);
+    }
 }
 
 pub fn sys_update_sprite_instance_buffer(
@@ -195,6 +223,7 @@ pub fn sys_update_sprite_instance_buffer(
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
     zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
     if instances.0.is_empty() {
         return;
@@ -211,5 +240,22 @@ pub fn sys_update_sprite_instance_buffer(
     );
 
     // Update render mode based on zoom
-    material.extension.params.render_mode = if zoom.0 >= 20.0 { 1 } else { 0 };
+    material.extension.params.render_mode = if zoom.0 >= 20.0 {
+        1
+    } else {
+        0
+    };
+
+    if debug_state.last_uploaded_instances != Some(instances.0.len()) {
+        console_logger::one(
+            LogSev::Warn,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art upload: instances={} render_mode={}",
+                instances.0.len(),
+                material.extension.params.render_mode,
+            ),
+        );
+        debug_state.last_uploaded_instances = Some(instances.0.len());
+    }
 }

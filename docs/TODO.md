@@ -181,6 +181,7 @@ Acceptance:
 
 ## Deferred but Tracked
 
+- [ ] Improve `uddp_inspector` atlas preview path with selective CPU decode for BC7 sub-rects instead of decoding full atlas pages first. Keep this explicitly lower priority than the RGBA path, because most current UDDP texture payloads are plain uncompressed RGBA rather than BC7.
 - [ ] Full lighting model parity with original client time-of-day rules.
 - [ ] Networking protocol integration.
 - [ ] Editor UX layer for live map sculpting and tile painting.

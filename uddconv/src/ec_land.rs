@@ -502,6 +502,33 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
 
     let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
+
+    convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
+        source_dirs,
+        &terrain_definition_path,
+        texture_uop_path.as_deref(),
+        legacy_texture_uop_path.as_deref(),
+        &terrain_definition,
+        world_textures.as_ref(),
+        legacy_textures.as_ref(),
+        out_file,
+        options,
+    )
+}
+
+pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
+    source_dirs: &[PathBuf],
+    terrain_definition_path: &Path,
+    texture_uop_path: Option<&Path>,
+    legacy_texture_uop_path: Option<&Path>,
+    terrain_definition: &TerrainDefinitionPackage,
+    world_textures: Option<&Textures>,
+    legacy_textures: Option<&Textures>,
+    out_file: &Path,
+    options: &EcLandAtlasOptions,
+) -> eyre::Result<EcLandBuildSummary> {
+    validate_options(options)?;
+
     let terrain_entry_count = terrain_definition.entries.len() as u32;
     let terrain_alias_ref_count = terrain_definition
         .entries
@@ -522,11 +549,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
     let unique_source_texture_count = source_texture_ids.len() as u32;
     let unique_texture_selection_count = selections.len() as u32;
     let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
-        decode_present_tiles(
-            world_textures.as_ref(),
-            legacy_textures.as_ref(),
-            &terrain_definition,
-        )?;
+        decode_present_tiles(world_textures, legacy_textures, terrain_definition)?;
     let slot_count = land_slot_ids
         .iter()
         .copied()
@@ -559,6 +582,21 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
             "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
         ],
     );
+
+    info!(
+        "Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}",
+        out_file.display()
+    );
+    println!(
+        "Using TerrainDefinition.uop: {}",
+        terrain_definition_path.display()
+    );
+    if let Some(path) = texture_uop_path {
+        println!("Using Texture.uop: {}", path.display());
+    }
+    if let Some(path) = legacy_texture_uop_path {
+        println!("Using LegacyTexture.uop: {}", path.display());
+    }
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {

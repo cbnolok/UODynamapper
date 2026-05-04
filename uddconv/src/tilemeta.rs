@@ -37,8 +37,8 @@ pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
-    /// start coordinates so they remain aligned with `pack-ec-art-cropped`.
-    pub adjust_cropped_ec_art: bool,
+    /// start coordinates so they remain aligned with the shared EC texture pass.
+    pub adjust_ec_art_sampling: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
@@ -262,7 +262,7 @@ fn build_tilemeta_tables_from_sources(
 
     let cc_tiledata = TileData::load(tiledata_path.clone())?;
     let ec_art = ArtDefinition::load(&tileart_path, &stringdict_path)?;
-    let ec_art_crop_adjustments = if options.adjust_cropped_ec_art {
+    let ec_art_crop_adjustments = if options.adjust_ec_art_sampling {
         compute_ec_art_crop_adjustments_from_sources(source_dirs)?
     } else {
         Vec::new()
@@ -281,19 +281,19 @@ fn build_tilemeta_tables_from_sources(
     let get_radar_color = |id: u32, is_item: bool, ec_radar: Option<&uocf::enhanced::tileart::TaeRadarcol>| -> [u8; 4] {
         if options.use_ec_radarcol {
             if let Some(ec) = ec_radar {
-                return [ec.b, ec.g, ec.r, ec.a];
+                return [ec.r, ec.g, ec.b, ec.a];
             }
         }
-        
+
         // Fallback to radarcol.mul
         if let Some(ref colors) = cc_radarcol {
             let index = if is_item { id + 0x4000 } else { id } as usize;
             if index < colors.len() {
                 let (r, g, b, a) = colors[index].as_rgba8888().components();
-                return [b, g, r, a];
+                return [r, g, b, a];
             }
         }
-        
+
         [0, 0, 0, 0]
     };
 

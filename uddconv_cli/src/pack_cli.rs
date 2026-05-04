@@ -13,24 +13,22 @@ use uddconv::{
         DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH, EcArtAtlasOptions,
-        convert_ec_art_uop_to_ec_art_uddp_from_sources,
+        convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources,
+        load_ec_art_sources,
     },
     ec_land::{
         DEFAULT_ATLAS_GUTTER as EC_LAND_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH, EcLandAtlasOptions,
-        convert_ec_land_uop_to_ec_land_uddp_from_sources,
+        convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources,
     },
     source_paths::{gather_source_dirs, resolve_output_path},
     tilemeta::{
-        build_tilemeta_item_payload_from_sources, build_tilemeta_uddp_from_sources,
-        TileMetaBuildOptions, TILEMETA_ITEM_ENTRY_PATH,
+        build_tilemeta_uddp_from_sources, TileMetaBuildOptions,
     },
     cc_map::convert_map_mul_to_uddp_from_sources,
     cc_statics::convert_statics_mul_to_uddp_from_sources,
 };
-
-use crate::package_edit;
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
 #[derive(Parser)]
@@ -69,47 +67,6 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
         })
 }
 
-fn cropped_tilemeta_output_path(raw_tilemeta: &Path) -> eyre::Result<PathBuf> {
-    let stem = raw_tilemeta
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .ok_or_else(|| eyre::eyre!("invalid raw tilemeta package name: {}", raw_tilemeta.display()))?;
-    let extension = raw_tilemeta
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("uddp");
-
-    Ok(raw_tilemeta.with_file_name(format!("{stem}_ec_art_cropped.{extension}")))
-}
-
-fn update_tilemeta_for_cropped_ec_art(
-    source_dirs: &[PathBuf],
-    uddp_dir: &Path,
-) -> eyre::Result<(PathBuf, PathBuf, u32)> {
-    let raw_tilemeta = find_raw_tilemeta_package(uddp_dir)?;
-    let cropped_tilemeta = cropped_tilemeta_output_path(&raw_tilemeta)?;
-    let (item_payload, summary) = build_tilemeta_item_payload_from_sources(
-        source_dirs,
-        &TileMetaBuildOptions {
-            adjust_cropped_ec_art: true,
-            use_ec_radarcol: false,
-        },
-    )?;
-
-    package_edit::replace_virtual_path_file(
-        &raw_tilemeta,
-        &cropped_tilemeta,
-        TILEMETA_ITEM_ENTRY_PATH,
-        &item_payload,
-    )?;
-
-    Ok((
-        raw_tilemeta,
-        cropped_tilemeta,
-        summary.adjusted_ec_item_count,
-    ))
-}
-
 #[derive(Subcommand)]
 enum Commands {
     /// Packs classic art.mul/artidx.mul into cc_art.uddp atlas pages.
@@ -127,52 +84,28 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         bc7: bool,
     },
-    /// Packs Enhanced Client Texture.uop worldart statics into ec_art.uddp atlas pages.
-    PackEcArt {
+    /// Packs EC art and land in one shared source pass into ec_tex_art.uddp and ec_tex_land.uddp.
+    PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_art.uddp")]
-        output: PathBuf,
+        #[arg(long, default_value = "ec_tex_art.uddp")]
+        art_output: PathBuf,
+        #[arg(long, default_value = "ec_tex_land.uddp")]
+        land_output: PathBuf,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
-        atlas_width: u32,
+        art_atlas_width: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT)]
-        atlas_height: u32,
+        art_atlas_height: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_GUTTER)]
-        gutter: u16,
-        #[arg(long, default_value_t = false)]
-        bc7: bool,
-    },
-    /// Packs cropped Enhanced Client Texture.uop worldart statics into ec_art_cropped.uddp atlas pages.
-    PackEcArtCropped {
-        #[command(flatten)]
-        source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_art_cropped.uddp")]
-        output: PathBuf,
-        #[arg(long)]
-        uddp_dir: Option<PathBuf>,
-        #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
-        atlas_width: u32,
-        #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT)]
-        atlas_height: u32,
-        #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_GUTTER)]
-        gutter: u16,
-        #[arg(long, default_value_t = false)]
-        bc7: bool,
-    },
-    /// Packs Enhanced Client Texture.uop land textures into ec_land.uddp atlas pages.
-    PackEcLand {
-        #[command(flatten)]
-        source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_land.uddp")]
-        output: PathBuf,
+        art_gutter: u16,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH)]
-        atlas_width: u32,
+        land_atlas_width: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT)]
-        atlas_height: u32,
+        land_atlas_height: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
-        gutter: u16,
+        land_gutter: u16,
         #[arg(long, default_value_t = false)]
-        bc7: bool,
+        land_bc7: bool,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
@@ -254,131 +187,74 @@ pub fn run() -> eyre::Result<()> {
                 out_file.display()
             );
         }
-        Commands::PackEcArt {
+        Commands::PackEcTextures {
             source_dirs: source_dir_args,
-            output,
-            atlas_width,
-            atlas_height,
-            gutter,
-            bc7,
+            art_output,
+            land_output,
+            art_atlas_width,
+            art_atlas_height,
+            art_gutter,
+            land_atlas_width,
+            land_atlas_height,
+            land_gutter,
+            land_bc7,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
-            let summary = convert_ec_art_uop_to_ec_art_uddp_from_sources(
-                &paths,
-                &out_file,
+            let art_out_file = resolve_output_path(&paths, &art_output);
+            let land_out_file = resolve_output_path(&paths, &land_output);
+            let shared_sources = load_ec_art_sources(&paths)?;
+
+            let art_summary = convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
+                &shared_sources,
+                &art_out_file,
                 &EcArtAtlasOptions {
-                    atlas_width,
-                    atlas_height,
-                    gutter,
+                    atlas_width: art_atlas_width,
+                    atlas_height: art_atlas_height,
+                    gutter: art_gutter,
                     crop_transparent_bounds: false,
-                    use_bc7: bc7,
+                    use_bc7: false,
                 },
             )?;
             println!(
-                "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
-                summary.page_count,
-                if bc7 { "BC7" } else { "RGBA8888" },
-                summary.populated_slot_count,
-                summary.slot_count,
-                out_file.display()
+                "Wrote {} pages (RGBA8888) for {} populated art slots out of {} total slots to '{}'.",
+                art_summary.page_count,
+                art_summary.populated_slot_count,
+                art_summary.slot_count,
+                art_out_file.display()
             );
-        }
-        Commands::PackEcArtCropped {
-            source_dirs: source_dir_args,
-            output,
-            uddp_dir,
-            atlas_width,
-            atlas_height,
-            gutter,
-            bc7,
-        } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
-            let summary = convert_ec_art_uop_to_ec_art_uddp_from_sources(
+
+            let land_summary = convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
                 &paths,
-                &out_file,
-                &EcArtAtlasOptions {
-                    atlas_width,
-                    atlas_height,
-                    gutter,
-                    crop_transparent_bounds: true,
-                    use_bc7: bc7,
+                &shared_sources.terrain_definition_path,
+                shared_sources.texture_uop_path.as_deref(),
+                shared_sources.legacy_texture_uop_path.as_deref(),
+                shared_sources.terrain_definition(),
+                shared_sources.world_textures.as_ref(),
+                shared_sources.legacy_textures.as_ref(),
+                &land_out_file,
+                &EcLandAtlasOptions {
+                    atlas_width: land_atlas_width,
+                    atlas_height: land_atlas_height,
+                    gutter: land_gutter,
+                    use_bc7: land_bc7,
                 },
-            )?;
-            println!(
-                "Cropped {} populated EC static slots before packing.",
-                summary.cropped_slot_count,
-            );
-            println!(
-                "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
-                summary.page_count,
-                if bc7 { "BC7" } else { "RGBA8888" },
-                summary.populated_slot_count,
-                summary.slot_count,
-                out_file.display()
-            );
-            if let Some(uddp_dir) = uddp_dir {
-                let resolved_uddp_dir = resolve_output_path(&paths, &uddp_dir);
-                let (raw_tilemeta, cropped_tilemeta, adjusted_item_count) =
-                    update_tilemeta_for_cropped_ec_art(&paths, &resolved_uddp_dir)?;
-                println!(
-                    "Updated EC sampling offsets for {} tilemeta items in '{}' using raw '{}'.",
-                    adjusted_item_count,
-                    cropped_tilemeta.display(),
-                    raw_tilemeta.display(),
-                );
-                println!(
-                    "The raw tilemeta package was left untouched so repeated cropped-art test conversions do not stack offset edits."
-                );
-            }
-        }
-        Commands::PackEcLand {
-            source_dirs: source_dir_args,
-            output,
-            atlas_width,
-            atlas_height,
-            gutter,
-            bc7,
-        } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
-            let summary = convert_ec_land_uop_to_ec_land_uddp_from_sources(
-                &paths,
-                &out_file,
-                &EcLandAtlasOptions { atlas_width, atlas_height, gutter, use_bc7: bc7 },
             )?;
             println!(
                 "TerrainDefinition raw texture packing: {} entries, {} alias refs, {} unique alias slots, {} source textures, {} selected textures, {} unique packed textures.",
-                summary.terrain_entry_count,
-                summary.terrain_alias_ref_count,
-                summary.unique_alias_slot_count,
-                summary.unique_source_texture_count,
-                summary.unique_texture_selection_count,
-                summary.unique_packed_texture_count,
+                land_summary.terrain_entry_count,
+                land_summary.terrain_alias_ref_count,
+                land_summary.unique_alias_slot_count,
+                land_summary.unique_source_texture_count,
+                land_summary.unique_texture_selection_count,
+                land_summary.unique_packed_texture_count,
             );
-            if summary.ignored_source_texture_ids.is_empty() {
-                println!("Ignored terrain source textures: none");
-            } else {
-                let ignored = summary
-                    .ignored_source_texture_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!(
-                    "Ignored terrain source textures ({}): {}",
-                    summary.ignored_source_texture_ids.len(),
-                    ignored
-                );
-            }
             println!(
-                "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
-                summary.page_count,
-                if bc7 { "BC7" } else { "RGBA8888" },
-                summary.populated_slot_count,
-                summary.slot_count,
-                out_file.display()
+                "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
+                land_summary.page_count,
+                if land_bc7 { "BC7" } else { "RGBA8888" },
+                land_summary.populated_slot_count,
+                land_summary.slot_count,
+                land_out_file.display()
             );
         }
         Commands::PackTilemeta {
@@ -393,7 +269,7 @@ pub fn run() -> eyre::Result<()> {
                 &paths,
                 &out_file,
                 &TileMetaBuildOptions {
-                    adjust_cropped_ec_art: ec_art_cropped,
+                    adjust_ec_art_sampling: ec_art_cropped,
                     use_ec_radarcol,
                 },
             )?;
@@ -559,62 +435,35 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_pack_ec_art_cropped() {
+    fn cli_parses_pack_ec_textures() {
         let cli = Cli::try_parse_from([
             "uddpack",
-            "pack-ec-art-cropped",
+            "pack-ec-textures",
             "--ecdir",
             "/ec",
-            "--output",
-            "ec_art_cropped.uddp",
+            "--art-output",
+            "ec_tex_art.uddp",
+            "--land-output",
+            "ec_tex_land.uddp",
+            "--land-bc7",
         ])
-        .expect("parse cropped ec art args");
+        .expect("parse unified ec texture args");
 
         match cli.command {
-            Commands::PackEcArtCropped {
+            Commands::PackEcTextures {
                 source_dirs,
-                output,
-                uddp_dir,
+                art_output,
+                land_output,
+                land_bc7,
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert_eq!(output, PathBuf::from("ec_art_cropped.uddp"));
-                assert_eq!(uddp_dir, None);
+                assert_eq!(art_output, PathBuf::from("ec_tex_art.uddp"));
+                assert_eq!(land_output, PathBuf::from("ec_tex_land.uddp"));
+                assert!(land_bc7);
             }
             _ => panic!("unexpected command parsed"),
         }
     }
 
-    #[test]
-    fn cli_parses_pack_ec_art_cropped_with_uddp_dir() {
-        let cli = Cli::try_parse_from([
-            "uddpack",
-            "pack-ec-art-cropped",
-            "--ecdir",
-            "/ec",
-            "--uddp-dir",
-            "/packages",
-        ])
-        .expect("parse cropped ec art args with uddp dir");
-
-        match cli.command {
-            Commands::PackEcArtCropped {
-                source_dirs,
-                uddp_dir,
-                ..
-            } => {
-                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert_eq!(uddp_dir, Some(PathBuf::from("/packages")));
-            }
-            _ => panic!("unexpected command parsed"),
-        }
-    }
-
-    #[test]
-    fn cropped_tilemeta_output_path_appends_cropped_suffix() {
-        let output = cropped_tilemeta_output_path(Path::new("/tmp/tilemeta.uddp"))
-            .expect("derive cropped tilemeta output path");
-
-        assert_eq!(output, PathBuf::from("/tmp/tilemeta_ec_art_cropped.uddp"));
-    }
 }

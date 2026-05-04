@@ -55,24 +55,18 @@ echo "Target: $OUTPUT_DIR"
 # Convert assets
 cargo run --release --bin uddpack -- pack-art "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/cc_art.uddp"
 echo
-cargo run --release --bin uddpack -- pack-ec-art "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/ec_art.uddp"
-echo
-cargo run --release --bin uddpack -- pack-ec-land "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/ec_land.uddp"
+cargo run --release --bin uddpack -- pack-ec-textures "${SOURCE_ARGS[@]}" --art-output "$OUTPUT_DIR/ec_tex_art.uddp" --land-output "$OUTPUT_DIR/ec_tex_land.uddp"
 echo
 
 # Convert metadata
 cargo run --release --bin uddpack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/tilemeta.uddp"
-echo
-cargo run --release --bin uddpack -- pack-ec-art-cropped "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/ec_art_cropped.uddp" --uddp-dir "$OUTPUT_DIR"
 
 echo
 echo "Generated packages:"
 echo "  - $OUTPUT_DIR/cc_art.uddp"
-echo "  - $OUTPUT_DIR/ec_art.uddp"
-echo "  - $OUTPUT_DIR/ec_art_cropped.uddp"
-echo "  - $OUTPUT_DIR/ec_land.uddp"
+echo "  - $OUTPUT_DIR/ec_tex_art.uddp"
+echo "  - $OUTPUT_DIR/ec_tex_land.uddp"
 echo "  - $OUTPUT_DIR/tilemeta.uddp"
-echo "  - $OUTPUT_DIR/tilemeta_ec_art_cropped.uddp"
 
 echo "Conversion complete!"
 

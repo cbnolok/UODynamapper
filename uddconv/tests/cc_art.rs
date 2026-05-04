@@ -59,6 +59,29 @@ fn packer_spills_to_multiple_pages() {
 }
 
 #[test]
+fn later_ids_do_not_backfill_an_earlier_page() {
+    let options = CcArtAtlasOptions {
+        atlas_width: 10,
+        atlas_height: 6,
+        gutter: 0,
+        use_bc7: false,
+    };
+    let tiles = vec![
+        rgba_tile(0, ArtTileKind::Static, 6, 6),
+        rgba_tile(1, ArtTileKind::Static, 6, 6),
+        rgba_tile(2, ArtTileKind::Static, 1, 1),
+    ];
+
+    let (pages, slots) = pack_tiles_into_pages(tiles, 3, &options).unwrap();
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(slots[0].page_index, 0);
+    assert_eq!(pages[0].record.tile_count, 1);
+    assert_eq!(slots[1].page_index, 1);
+    assert_eq!(slots[2].page_index, 1);
+}
+
+#[test]
 fn runtime_reader_can_unpack_page_and_slot_metadata() {
     let options = CcArtAtlasOptions {
         atlas_width: 8,

@@ -201,10 +201,17 @@ pub struct EcArtLoadedSources {
     pub stringdict_path: PathBuf,
     pub texture_uop_path: Option<PathBuf>,
     pub legacy_texture_uop_path: Option<PathBuf>,
+    pub terrain_definition: TerrainDefinitionPackage,
     pub terrain_source_texture_ids: HashSet<u32>,
     pub art_definition: ArtDefinition,
     pub world_textures: Option<Textures>,
     pub legacy_textures: Option<Textures>,
+}
+
+impl EcArtLoadedSources {
+    pub fn terrain_definition(&self) -> &TerrainDefinitionPackage {
+        &self.terrain_definition
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,9 +385,17 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
     out_file: &Path,
     options: &EcArtAtlasOptions,
 ) -> eyre::Result<EcArtBuildSummary> {
-    validate_options(options)?;
-
     let sources = load_ec_art_sources(source_dirs)?;
+
+    convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(&sources, out_file, options)
+}
+
+pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
+    sources: &EcArtLoadedSources,
+    out_file: &Path,
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<EcArtBuildSummary> {
+    validate_options(options)?;
 
     info!("Converting EC Art from Texture.uop / LegacyTexture.uop to {}", out_file.display());
     println!("Using tileart.uop: {}", sources.tileart_path.display());
@@ -534,7 +549,7 @@ pub fn compute_ec_art_crop_adjustments_from_sources(
     ))
 }
 
-fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSources> {
+pub fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSources> {
     let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
         .ok_or_else(|| eyre::eyre!("missing required file: tileart.uop"))?;
     let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
@@ -570,6 +585,10 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
         .wrap_err("load tileart-driven art definition")?;
     let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
+    let terrain_source_texture_ids = terrain_definition
+        .land_source_texture_ids()
+        .into_iter()
+        .collect();
 
     Ok(EcArtLoadedSources {
         tileart_path,
@@ -577,7 +596,8 @@ fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSourc
         stringdict_path,
         texture_uop_path,
         legacy_texture_uop_path,
-        terrain_source_texture_ids: terrain_definition.land_source_texture_ids().into_iter().collect(),
+        terrain_definition,
+        terrain_source_texture_ids,
         art_definition,
         world_textures,
         legacy_textures,
@@ -1070,10 +1090,13 @@ pub fn pack_tiles_into_pages(
         .map(EcArtSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    remaining.sort_by_key(|tile| tile.art_id);
     let mut page_index = 0u32;
 
     while !remaining.is_empty() {
-        let (page, leftovers) = build_page(page_index, remaining, options)?;
+        let (page_tiles, leftovers) = take_page_tile_prefix(remaining, options)?;
+        let (page, unplaced) = build_page(page_index, page_tiles, options)?;
+        debug_assert!(unplaced.is_empty(), "selected page tile prefix must fit entirely");
         if page.placed_tiles.is_empty() {
             eyre::bail!(
                 "could not fit any art tile into atlas page {}x{}",
@@ -1106,9 +1129,101 @@ pub fn pack_tiles_into_pages(
     Ok((pages, slot_records))
 }
 
+fn take_page_tile_prefix(
+    tiles: Vec<DecodedArtTile>,
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<(Vec<DecodedArtTile>, Vec<DecodedArtTile>)> {
+    let prefix_len = max_fitting_page_prefix_len(&tiles, options)?;
+
+    if prefix_len == 0 {
+        eyre::bail!(
+            "could not fit any art tile into atlas page {}x{}",
+            options.atlas_width,
+            options.atlas_height
+        );
+    }
+
+    let mut leftovers = tiles;
+    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
+    Ok((selected, leftovers))
+}
+
+fn max_fitting_page_prefix_len(
+    tiles: &[DecodedArtTile],
+    options: &EcArtAtlasOptions,
+) -> eyre::Result<usize> {
+    let mut low = 1usize;
+    let mut high = tiles.len();
+    let mut best = 0usize;
+
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if page_prefix_fits(&tiles[..mid], options)? {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+
+    Ok(best)
+}
+
+fn page_prefix_fits(tiles: &[DecodedArtTile], options: &EcArtAtlasOptions) -> eyre::Result<bool> {
+    let mut to_pack = tiles.to_vec();
+    sort_tiles_within_page(&mut to_pack);
+
+    let mut allocator = AtlasAllocator::new(size2(
+        options.atlas_width as i32,
+        options.atlas_height as i32,
+    ));
+
+    for tile in &to_pack {
+        let gutter_x = if tile.width as u32 + (options.gutter as u32 * 2) > options.atlas_width {
+            0
+        } else {
+            i32::from(options.gutter)
+        };
+        let gutter_y = if tile.height as u32 + (options.gutter as u32 * 2) > options.atlas_height {
+            0
+        } else {
+            i32::from(options.gutter)
+        };
+        let alloc_width = tile.width as i32 + gutter_x * 2;
+        let alloc_height = tile.height as i32 + gutter_y * 2;
+        if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
+            eyre::bail!(
+                "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
+                tile.art_id,
+                tile.width,
+                tile.height,
+                options.atlas_width,
+                options.atlas_height,
+                options.gutter
+            );
+        }
+
+        if allocator.allocate(size2(alloc_width, alloc_height)).is_none() {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn sort_tiles_within_page(tiles: &mut [DecodedArtTile]) {
+    tiles.sort_by(|left, right| {
+        let left_area = left.width as u32 * left.height as u32;
+        let right_area = right.width as u32 * right.height as u32;
+        right_area
+            .cmp(&left_area)
+            .then_with(|| left.art_id.cmp(&right.art_id))
+    });
+}
+
 fn build_page(
     page_index: u32,
-    tiles: Vec<DecodedArtTile>,
+    mut tiles: Vec<DecodedArtTile>,
     options: &EcArtAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // The working page is always a full-size RGBA canvas. Cropping happens only
@@ -1123,6 +1238,8 @@ fn build_page(
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let gutter = i32::from(options.gutter);
+
+    sort_tiles_within_page(&mut tiles);
 
     for tile in tiles {
         // A few EC statics legitimately span the full atlas width. Keep the gutter

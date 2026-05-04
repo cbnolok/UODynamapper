@@ -18,6 +18,11 @@ impl Plugin for DrawStaticSpritesPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.init_resource::<statics_collect::RenderStaticInstances>();
+        app.init_resource::<statics_collect::StaticArtCollectDebugState>();
+        app.init_resource::<statics_draw::StaticArtDrawDebugState>();
+        app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+            crate::core::texture_cache::art::ArtPageAtlasHandle,
+        >::default());
 
         app.add_plugins(MaterialPlugin::<statics_draw::ArtSpriteMaterial>::default())
            .add_systems(Startup, statics_draw::sys_setup_art_page_atlas
@@ -38,5 +43,10 @@ impl Plugin for DrawStaticSpritesPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<crate::core::texture_cache::art::RenderArtPageUploads>();
         render_app.add_systems(ExtractSchedule, crate::core::texture_cache::art::sys_extract_art_page_uploads);
+        render_app.add_systems(
+            bevy::render::Render,
+            crate::core::texture_cache::art::sys_render_upload_art_pages
+                .in_set(bevy::render::RenderSystems::Queue),
+        );
     }
 }

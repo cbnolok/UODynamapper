@@ -3,7 +3,8 @@
 
 [core.world]
 # Default starting position in UO coordinates [X, Y, Z, MapID]
-start_p = [1100, 1800, 20, 0]
+#start_p = [1100, 1800, 20, 0]
+start_p = [1355, 1732, 20, 0]
 # Whether to hide the player cube on startup
 hide_player = false
 

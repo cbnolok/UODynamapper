@@ -131,7 +131,7 @@ fn build_radar_rgba_pixels(
                         let base_color = meta.radar_color;
 
                         if statics_tile.hue > 0 && (statics_tile.hue as usize) < hues.len() {
-                            let r_idx = (base_color[2] >> 3) as usize;
+                            let r_idx = (base_color[0] >> 3) as usize;
                             let hued_15 = hues[statics_tile.hue as usize].color_table[r_idx.min(31)];
 
                             let hr = ((hued_15 >> 10) & 0x1F) as u8;
@@ -145,7 +145,7 @@ fn build_radar_rgba_pixels(
                                 255,
                             ]
                         } else {
-                            [base_color[2], base_color[1], base_color[0], 255]
+                            [base_color[0], base_color[1], base_color[2], 255]
                         }
                     } else {
                         [0, 0, 0, 255]
@@ -154,7 +154,7 @@ fn build_radar_rgba_pixels(
                 _ => {
                     if let Some(meta) = tilemeta.land_tile(land_id) {
                         let base_color = meta.radar_color;
-                        [base_color[2], base_color[1], base_color[0], 255]
+                        [base_color[0], base_color[1], base_color[2], 255]
                     } else {
                         [0, 0, 0, 255]
                     }
