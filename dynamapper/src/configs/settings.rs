@@ -46,7 +46,7 @@ pub struct SectApp {
     pub performance: SectPerformance,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectUoFiles {
     pub folder: String,
     #[serde(default)]
@@ -84,7 +84,7 @@ pub struct SectWorld {
     pub hide_player: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectMaps {
     pub maps: Vec<SectMapSize>,
 }
@@ -188,7 +188,7 @@ impl SectMaps {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectMapSize {
     pub id: u32,
     pub width: u32,
@@ -473,7 +473,7 @@ impl Default for SettingsFileWatcher {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectLogging {
     pub min_severity: LogSev,
     #[serde(default = "default_emit_true")]
@@ -483,7 +483,7 @@ pub struct SectLogging {
     pub filters: Vec<LogFilterSetting>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct LogFilterSetting {
     pub sev: Option<LogSev>,
     pub about: Option<LogAbout>,
@@ -624,13 +624,21 @@ pub fn save_app_settings(settings: &Settings) {
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&user_path, toml_str) {
-                paris::error!("Failed to save preferences.toml: {}", e);
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save preferences.toml: {}", e),
+                );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved preferences.toml");
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved preferences.toml");
             }
         }
         Err(e) => {
-            paris::error!("Failed to serialize user preferences: {}", e);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize user preferences: {}", e),
+            );
         }
     }
 }
@@ -642,13 +650,21 @@ pub fn save_keybindings(settings: &Settings) {
     match toml::to_string_pretty(&settings.keybindings) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&kb_path, toml_str) {
-                paris::error!("Failed to save keybindings.toml: {}", e);
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save keybindings.toml: {}", e),
+                );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved keybindings.toml");
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved keybindings.toml");
             }
         }
         Err(e) => {
-            paris::error!("Failed to serialize keybindings: {}", e);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize keybindings: {}", e),
+            );
         }
     }
 }
@@ -667,13 +683,21 @@ pub fn save_graphics_settings(settings: &Settings) {
     }) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&graphics_path, toml_str) {
-                paris::error!("Failed to save graphics.toml: {}", e);
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save graphics.toml: {}", e),
+                );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved graphics.toml");
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved graphics.toml");
             }
         }
         Err(e) => {
-            paris::error!("Failed to serialize graphics settings: {}", e);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize graphics settings: {}", e),
+            );
         }
     }
 }
@@ -694,13 +718,21 @@ pub fn save_core_settings(settings: &Settings) {
     }) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&core_path, toml_str) {
-                paris::error!("Failed to save core.toml: {}", e);
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save core.toml: {}", e),
+                );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::General, "Saved core.toml");
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved core.toml");
             }
         }
         Err(e) => {
-            paris::error!("Failed to serialize core settings: {}", e);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize core settings: {}", e),
+            );
         }
     }
 }
@@ -712,17 +744,25 @@ pub fn save_worldmap_rendering_settings(settings: &Settings) {
     match toml::to_string_pretty(&settings.worldmap_rendering) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&path, toml_str) {
-                paris::error!("Failed to save core_worldmap_rendering.toml: {}", e);
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save core_worldmap_rendering.toml: {}", e),
+                );
             } else {
                 console_logger::one(
                     LogSev::Info,
-                    LogAbout::General,
+                    LogAbout::Settings,
                     "Saved core_worldmap_rendering.toml",
                 );
             }
         }
         Err(e) => {
-            paris::error!("Failed to serialize worldmap rendering settings: {}", e);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize worldmap rendering settings: {}", e),
+            );
         }
     }
 }
@@ -755,8 +795,16 @@ impl Plugin for SettingsPlugin {
                     sys_evlisten_switch_wireframe,
                     sys_debounced_save,
                     sys_hotreload_settings,
+                    sys_sync_app_settings_to_resources,
                 ),
             );
+    }
+}
+
+/// Syncs runtime resources back to Settings so they can be persisted by sys_debounced_save.
+fn sys_sync_app_settings_to_resources(zoom: Res<RenderZoom>, mut settings: ResMut<Settings>) {
+    if (settings.app.window.zoom - zoom.0).abs() > 0.001 {
+        settings.app.window.zoom = zoom.0;
     }
 }
 
@@ -1024,6 +1072,9 @@ fn sys_debounced_save(
     mut last_saved_graphics: Local<Option<SectGraphics>>,
     mut last_saved_keybindings: Local<Option<SectKeybindings>>,
     mut last_saved_core: Local<Option<SectCore>>,
+    mut last_saved_logging: Local<Option<SectLogging>>,
+    mut last_saved_uo_files: Local<Option<SectUoFiles>>,
+    mut last_saved_maps: Local<Option<SectMaps>>,
     mut last_saved_worldmap_rendering: Local<Option<SectWorldMapRendering>>,
 ) {
     if settings.is_added() {
@@ -1031,6 +1082,9 @@ fn sys_debounced_save(
         *last_saved_graphics = Some(settings.graphics.clone());
         *last_saved_keybindings = Some(settings.keybindings.clone());
         *last_saved_core = Some(settings.core.clone());
+        *last_saved_logging = Some(settings.logging.clone());
+        *last_saved_uo_files = Some(settings.uo_files.clone());
+        *last_saved_maps = Some(settings.maps.clone());
         *last_saved_worldmap_rendering = Some(settings.worldmap_rendering.clone());
         return;
     }
@@ -1047,14 +1101,34 @@ fn sys_debounced_save(
     let core_changed = last_saved_core
         .as_ref()
         .map_or(true, |last| last != &settings.core);
+    let logging_changed = last_saved_logging
+        .as_ref()
+        .map_or(true, |last| last != &settings.logging);
+    let uo_files_changed = last_saved_uo_files
+        .as_ref()
+        .map_or(true, |last| last != &settings.uo_files);
+    let maps_changed = last_saved_maps
+        .as_ref()
+        .map_or(true, |last| last != &settings.maps);
     let worldmap_rendering_changed = last_saved_worldmap_rendering
         .as_ref()
         .map_or(true, |last| last != &settings.worldmap_rendering);
 
-    if app_changed || graphics_changed || kb_changed || core_changed || worldmap_rendering_changed {
-        // Reset timer whenever a change occurs
-        save_timer.0.reset();
-        save_timer.0.unpause();
+    if app_changed
+        || graphics_changed
+        || kb_changed
+        || core_changed
+        || logging_changed
+        || uo_files_changed
+        || maps_changed
+        || worldmap_rendering_changed
+    {
+        // Start the timer if it's not already running.
+        // We don't call reset() here because app_changed will remain true
+        // until the timer finishes and saves, which would cause an infinite reset loop.
+        if save_timer.0.is_paused() {
+            save_timer.0.unpause();
+        }
     }
 
     if !save_timer.0.is_paused() {
@@ -1075,9 +1149,21 @@ fn sys_debounced_save(
                 *last_saved_keybindings = Some(settings.keybindings.clone());
             }
 
-            if core_changed {
+            if core_changed || logging_changed {
                 save_core_settings(&settings);
                 *last_saved_core = Some(settings.core.clone());
+                *last_saved_logging = Some(settings.logging.clone());
+            }
+
+            if uo_files_changed {
+                // save_uo_files_settings is missing, but uo_files are generally read-only in UI.
+                // If we had a saver, we'd call it here. For now just update the local to stop the timer.
+                *last_saved_uo_files = Some(settings.uo_files.clone());
+            }
+
+            if maps_changed {
+                // save_maps_settings is missing.
+                *last_saved_maps = Some(settings.maps.clone());
             }
 
             if worldmap_rendering_changed {

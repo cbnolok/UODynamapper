@@ -44,6 +44,7 @@
 
 mod builder;
 mod patch;
+mod planar;
 mod reader;
 mod support;
 
@@ -67,6 +68,7 @@ pub use self::support::{
     unpack_delta_hi8,
     unpack_delta_lo24,
     unpack_offset40,
+    unpack_planar,
     unpack_type,
     write_package,
     xxh64_virtual_path,
@@ -539,6 +541,7 @@ pub struct FileRecord {
 pub struct AddFileRequest<'a> {
     pub data_type: u8,
     pub compression: CompressionFlag,
+    pub apply_planar: bool,
     pub virtual_path: Option<&'a str>,
     pub path_hash64: Option<u64>,
     pub id: Option<u32>,

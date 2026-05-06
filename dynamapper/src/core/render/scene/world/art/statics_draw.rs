@@ -2,6 +2,7 @@ use crate::core::render::scene::world::art::statics_collect::{
     RenderStaticInstances, SpriteInstance,
 };
 use crate::core::texture_cache::art::{ArtPageAtlas, ArtPageAtlasHandle};
+use crate::core::uo_files_loader::{CcArtPackageRes, EcArtPackageRes, EcLandPackageRes};
 use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::MeshTag;
@@ -60,12 +61,31 @@ pub fn sys_setup_art_page_atlas(
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    cc_art_res: Option<Res<CcArtPackageRes>>,
+    ec_art_res: Option<Res<EcArtPackageRes>>,
+    ec_land_res: Option<Res<EcLandPackageRes>>,
 ) {
     // 32 layers still churns too aggressively for visible classic static-art page sets.
     // Keep this aligned with the working budget discussed in the render investigation.
     let max_layers = 64;
-    let page_width = 2048;
-    let page_height = 2048;
+    let page_width = cc_art_res
+        .as_ref()
+        .map(|package| package.0.atlas_width())
+        .into_iter()
+        .chain(ec_art_res.as_ref().map(|package| package.0.atlas_width()))
+        .chain(ec_land_res.as_ref().map(|package| package.0.atlas_width()))
+        .max()
+        .unwrap_or(2048)
+        .max(2048);
+    let page_height = cc_art_res
+        .as_ref()
+        .map(|package| package.0.atlas_height())
+        .into_iter()
+        .chain(ec_art_res.as_ref().map(|package| package.0.atlas_height()))
+        .chain(ec_land_res.as_ref().map(|package| package.0.atlas_height()))
+        .max()
+        .unwrap_or(2048)
+        .max(2048);
 
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 

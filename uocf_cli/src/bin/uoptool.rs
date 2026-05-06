@@ -4,12 +4,12 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use uocf_cli::parse_hex_u64;
+use std::sync::atomic::AtomicBool;
 use uocf::uop::file::{CompressionFlag, UopFile};
 use uocf::uop::hash_bruteforce;
 use uocf::uop::package::UopPackage;
+use uocf_cli::parse_hex_u64;
 
 /// UO Package Tool - A utility for inspecting, hashing, and modifying Ultima Online .uop files.
 #[derive(Parser, Debug)]
@@ -81,6 +81,20 @@ enum Commands {
         #[arg(required = true)]
         uop_file: PathBuf,
     },
+    /// Extract all files from a UOP package.
+    Extract {
+        /// The path to the UOP file.
+        #[arg(required = true)]
+        uop_file: PathBuf,
+
+        /// The directory to extract files into.
+        #[arg(required = true)]
+        out_dir: PathBuf,
+
+        /// Optional path to a string dictionary UOP to resolve hashes.
+        #[arg(long)]
+        dictionary: Option<PathBuf>,
+    },
 }
 
 fn main() -> eyre::Result<()> {
@@ -132,7 +146,12 @@ fn main() -> eyre::Result<()> {
                     *threads,
                     stop_signal,
                 ),
-                _ => return Err(eyre::eyre!("Invalid cracking method: {}. Use 'parallel-simd' or 'parallel-scalar'.", method)),
+                _ => {
+                    return Err(eyre::eyre!(
+                        "Invalid cracking method: {}. Use 'parallel-simd' or 'parallel-scalar'.",
+                        method
+                    ));
+                }
             };
 
             match result {
@@ -192,6 +211,94 @@ fn main() -> eyre::Result<()> {
                 .with_context(|| "Failed to replace old UOP file with the new one")?;
 
             println!("Successfully rebuilt and saved the UOP package.");
+        }
+        Commands::Extract {
+            uop_file,
+            out_dir,
+            dictionary,
+        } => {
+            println!(
+                "Extracting {} to {}...",
+                uop_file.display(),
+                out_dir.display()
+            );
+            fs::create_dir_all(out_dir).with_context(|| "Failed to create output directory")?;
+
+            let uop = UopPackage::load(uop_file)
+                .with_context(|| format!("Failed to load UOP file: {}", uop_file.display()))?;
+
+            let mut name_map = std::collections::HashMap::new();
+            if let Some(dict_path) = dictionary {
+                println!("Loading dictionary: {}...", dict_path.display());
+                match uocf::enhanced::string_dictionary::UoStringDictionary::load(&dict_path) {
+                    Ok(dict) => {
+                        for i in 0.. {
+                            if let Some(s) = dict.get_string(i) {
+                                let h = uocf::uop::hash::hash_file_name_single(s);
+                                name_map.insert(h, s.to_string());
+                            } else {
+                                break;
+                            }
+                        }
+                        println!("Loaded {} strings from dictionary.", name_map.len());
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to load dictionary: {}", e);
+                    }
+                }
+            }
+
+            // TODO: add it only for Texture.uop
+            // Add common EC guesses. TODO: review the string generating code with plausible bigger numerical strings.
+            for i in 0..65536 {
+                let s1 = format!("build/worldart/{:08}.dds", i);
+                name_map.insert(uocf::uop::hash::hash_file_name_single(&s1), s1);
+                let s2 = format!("build/worldart/{:08}.tga", i);
+                name_map.insert(uocf::uop::hash::hash_file_name_single(&s2), s2);
+                let s3 = format!("build/tileartlegacy/{:08}.dds", i);
+                name_map.insert(uocf::uop::hash::hash_file_name_single(&s3), s3);
+                let s4 = format!("build/tileartlegacy/{:08}.tga", i);
+                name_map.insert(uocf::uop::hash::hash_file_name_single(&s4), s4);
+            }
+
+            let mut count = 0;
+            for file in uop.iter_files() {
+                let hash = file.filename_hash();
+                if !file.has_size() {
+                    continue;
+                }
+
+                let data = file
+                    .unpack()
+                    .with_context(|| format!("Failed to unpack file with hash 0x{:016x}", hash))?;
+
+                // Detect extension
+                let ext = if data.starts_with(b"DDS ") {
+                    "dds"
+                } else if data.starts_with(b"\x89PNG") {
+                    "png"
+                } else if data.starts_with(b"BM") {
+                    "bmp"
+                } else {
+                    "dat"
+                };
+
+                let out_path = if let Some(name) = name_map.get(&hash) {
+                    let sanitized = name.replace('\\', "/");
+                    let p = out_dir.join(sanitized);
+                    if let Some(parent) = p.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    p
+                } else {
+                    out_dir.join(format!("0x{:016x}.{}", hash, ext))
+                };
+
+                fs::write(&out_path, data)
+                    .with_context(|| format!("Failed to write file: {}", out_path.display()))?;
+                count += 1;
+            }
+            println!("Successfully extracted {} files.", count);
         }
     }
 

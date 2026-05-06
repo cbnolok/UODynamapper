@@ -15,7 +15,6 @@ use bevy::{
 use bytemuck::Zeroable;
 use std::sync::Arc;
 use std::time::Instant;
-use uocf::classic::map::MapPlane;
 use uocf::classic::{
     land_texture::{LandTextureSize, TexMap},
     map::{MapBlock, MapBlockRelPos},
@@ -33,12 +32,14 @@ const EC_DIAG_LOG_VISIBLE_TILES: bool = false;
 /// When true, visible tile logs are restricted to those that failed to resolve to an EC texture.
 const EC_DIAG_LOG_ONLY_MISSING: bool = true;
 
-use super::TILE_NUM_PER_CHUNK_DIM;
-use super::{mesh_material::*, LCMesh, LandUploadBudget, TILE_NUM_PER_CHUNK_TOTAL};
+use super::{
+    mesh_material::*, CHUNK_STORAGE_BLOCKS_DIM, LCMesh, LandUploadBudget,
+    MAP_STORAGE_BLOCK_TILE_DIM, MAP_STORAGE_BLOCK_TILE_TOTAL, TILE_NUM_PER_CHUNK_DIM,
+};
 use crate::{
     core::{
         constants,
-        maps::MapPlaneMetadata,
+        maps::{MapPlane, MapPlaneMetadata},
         render::scene::{
             camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
         },
@@ -451,8 +452,8 @@ pub fn sys_draw_spawned_land_chunks(
             .get(&current_map_id)
             .expect("Requested metadata for uncached map");
         (
-            (map_meta.width / TILE_NUM_PER_CHUNK_DIM) as i32,
-            (map_meta.height / TILE_NUM_PER_CHUNK_DIM) as i32,
+            (map_meta.width / MAP_STORAGE_BLOCK_TILE_DIM) as i32,
+            (map_meta.height / MAP_STORAGE_BLOCK_TILE_DIM) as i32,
         )
     };
 
@@ -475,6 +476,9 @@ pub fn sys_draw_spawned_land_chunks(
             let gx = target.chunk_origin_chunk_units_x;
             let gy = target.chunk_origin_chunk_units_z;
             let scale = target.chunk_scale as i32;
+            let chunk_block_origin_x = gx as i32 * CHUNK_STORAGE_BLOCKS_DIM as i32;
+            let chunk_block_origin_y = gy as i32 * CHUNK_STORAGE_BLOCKS_DIM as i32;
+            let chunk_block_span = scale * CHUNK_STORAGE_BLOCKS_DIM as i32;
 
             let mut all_cached = true;
 
@@ -487,10 +491,8 @@ pub fn sys_draw_spawned_land_chunks(
             }
 
             if !skip_core_loop {
-                for sx in -1..=scale {
-                    for sz in -1..=scale {
-                        let bx = gx as i32 + sx;
-                        let bz = gy as i32 + sz;
+                for bx in chunk_block_origin_x..(chunk_block_origin_x + chunk_block_span) {
+                    for bz in chunk_block_origin_y..(chunk_block_origin_y + chunk_block_span) {
                         if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
                             continue;
                         }
@@ -516,14 +518,15 @@ pub fn sys_draw_spawned_land_chunks(
             // Also dispatch border ring blocks to the loader (but don't
             // gate readiness on them).
             if !locals.pending {
-                for sx in -1..=scale {
-                    for sz in -1..=scale {
-                        // Skip the interior — already handled above.
-                        if sx >= 0 && sx < scale && sz >= 0 && sz < scale {
+                for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span) {
+                    for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span) {
+                        if bx >= chunk_block_origin_x
+                            && bx < chunk_block_origin_x + chunk_block_span
+                            && bz >= chunk_block_origin_y
+                            && bz < chunk_block_origin_y + chunk_block_span
+                        {
                             continue;
                         }
-                        let bx = gx as i32 + sx;
-                        let bz = gy as i32 + sz;
                         if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
                             continue;
                         }
@@ -585,7 +588,7 @@ pub fn sys_draw_spawned_land_chunks(
             .as_ref()
             .unwrap()
             .send_request(chunk_loader::LoadRequest {
-                map_file_path: plane_ref.file_path().to_path_buf(),
+                map_package: plane_ref.package(),
                 size_blocks_height: plane_ref.size_blocks.height,
                 blocks_to_load: uncached_blocks,
                 texmap_2d: texmap_2d_r.0.clone(),
@@ -615,7 +618,7 @@ pub fn sys_draw_spawned_land_chunks(
         let mut remaining = max_atlas_blocks_per_frame;
         let mut count = 0usize;
         for t in ready_targets.iter() {
-            let cost = (t.chunk_scale as usize + 2).pow(2);
+            let cost = ((t.chunk_scale * CHUNK_STORAGE_BLOCKS_DIM + 2) as usize).pow(2);
             if count > 0 && remaining < cost {
                 break;
             }
@@ -645,12 +648,13 @@ pub fn sys_draw_spawned_land_chunks(
             let gx = target.chunk_origin_chunk_units_x;
             let gy = target.chunk_origin_chunk_units_z;
             let scale = target.chunk_scale as i32;
+            let chunk_block_origin_x = gx as i32 * CHUNK_STORAGE_BLOCKS_DIM as i32;
+            let chunk_block_origin_y = gy as i32 * CHUNK_STORAGE_BLOCKS_DIM as i32;
+            let chunk_block_span = scale * CHUNK_STORAGE_BLOCKS_DIM as i32;
 
             // All sub-blocks inside the super-chunk + 1-block border for atlas edge data.
-            for sx in -1..=scale {
-                for sz in -1..=scale {
-                    let bx = gx as i32 + sx;
-                    let bz = gy as i32 + sz;
+            for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span) {
+                for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span) {
                     if bx >= 0 && bx < max_chunk_x && bz >= 0 && bz < max_chunk_y {
                         let idx = (bx as usize * max_chunk_y as usize) + bz as usize;
                         let word = idx >> 6; // / 64
@@ -808,7 +812,7 @@ pub fn sys_draw_spawned_land_chunks(
         bx: u32,
         bz: u32,
         has_fallback: bool,
-        texels: [Rg16u; TILE_NUM_PER_CHUNK_TOTAL],
+        texels: [Rg16u; MAP_STORAGE_BLOCK_TILE_TOTAL],
     }
     struct SuperChunkResult {
         target_idx: usize,
@@ -828,8 +832,13 @@ pub fn sys_draw_spawned_land_chunks(
                     let gx = chunk_data.chunk_origin_chunk_units_x as i32;
                     let gy = chunk_data.chunk_origin_chunk_units_z as i32;
                     let scale = chunk_data.chunk_scale as i32;
+                    let chunk_block_origin_x = gx * CHUNK_STORAGE_BLOCKS_DIM as i32;
+                    let chunk_block_origin_y = gy * CHUNK_STORAGE_BLOCKS_DIM as i32;
+                    let chunk_block_span = scale * CHUNK_STORAGE_BLOCKS_DIM as i32;
 
-                    let mut sub_chunks = Vec::with_capacity(((scale + 2) * (scale + 2)) as usize);
+                    let mut sub_chunks = Vec::with_capacity(
+                        ((chunk_block_span + 2) * (chunk_block_span + 2)) as usize,
+                    );
 
                     // Re-hydrate the raw pointer back to a slice safely (reads only)
                     let lookup_slice = unsafe {
@@ -839,10 +848,8 @@ pub fn sys_draw_spawned_land_chunks(
                         )
                     };
 
-                    for sx in -1..=scale {
-                        for sz in -1..=scale {
-                            let bx = gx + sx;
-                            let bz = gy + sz;
+                    for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span) {
+                        for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span) {
                             if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
                                 continue;
                             }
@@ -855,7 +862,7 @@ pub fn sys_draw_spawned_land_chunks(
                                 continue;
                             };
 
-                            let mut texels_local = [Rg16u::zeroed(); TILE_NUM_PER_CHUNK_TOTAL];
+                            let mut texels_local = [Rg16u::zeroed(); MAP_STORAGE_BLOCK_TILE_TOTAL];
                             let mut texel_count = 0;
                             let mut has_fallback = false;
 
@@ -907,8 +914,8 @@ pub fn sys_draw_spawned_land_chunks(
             let page_h = tile_atlas_r.params.page_texels.y;
 
             for sub in res.sub_chunks {
-                let chunk_origin_tile_units_x = sub.bx * TILE_NUM_PER_CHUNK_DIM;
-                let chunk_origin_tile_units_z = sub.bz * TILE_NUM_PER_CHUNK_DIM;
+                let chunk_origin_tile_units_x = sub.bx * MAP_STORAGE_BLOCK_TILE_DIM;
+                let chunk_origin_tile_units_z = sub.bz * MAP_STORAGE_BLOCK_TILE_DIM;
 
                 let page_x = chunk_origin_tile_units_x >> page_w.trailing_zeros();
                 let page_y = chunk_origin_tile_units_z >> page_h.trailing_zeros();
@@ -922,7 +929,10 @@ pub fn sys_draw_spawned_land_chunks(
                 tile_atlas_r.enqueue_rg16u_block(
                     layer,
                     bevy::prelude::UVec2::new(off_x_in_page, off_y_in_page),
-                    bevy::prelude::UVec2::new(TILE_NUM_PER_CHUNK_DIM, TILE_NUM_PER_CHUNK_DIM),
+                    bevy::prelude::UVec2::new(
+                        MAP_STORAGE_BLOCK_TILE_DIM,
+                        MAP_STORAGE_BLOCK_TILE_DIM,
+                    ),
                     sub.texels.as_slice(),
                 );
 
@@ -1176,8 +1186,8 @@ fn log_ec_land_diagnostics(
                     for (cell_index, cell) in block.cells.iter().enumerate() {
                         let local_x = (cell_index as u32) & (MapBlock::CELLS_PER_ROW - 1);
                         let local_y = (cell_index as u32) / MapBlock::CELLS_PER_ROW;
-                        let world_x = bp.x * TILE_NUM_PER_CHUNK_DIM + local_x;
-                        let world_y = bp.y * TILE_NUM_PER_CHUNK_DIM + local_y;
+                        let world_x = bp.x * MAP_STORAGE_BLOCK_TILE_DIM + local_x;
+                        let world_y = bp.y * MAP_STORAGE_BLOCK_TILE_DIM + local_y;
                         let packed = texture_lookup_cache[cell.id as usize];
 
                         if packed == u32::MAX {

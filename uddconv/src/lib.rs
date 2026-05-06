@@ -9,3 +9,4 @@ pub mod ec_land;
 pub mod package_progress;
 pub mod source_paths;
 pub mod tilemeta;
+pub mod upscale;

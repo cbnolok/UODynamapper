@@ -41,7 +41,7 @@ This project is organized as a Cargo workspace with several specialized componen
 
 - `uddpack`: build runtime packages from source assets.
   - `pack-art`: pack classic `art.mul` / `artidx.mul` into `cc_art.uddp`.
-  - `pack-ec-textures`: pack Enhanced Client statics and terrain textures together in one shared pass, writing `ec_tex_art.uddp` and `ec_tex_land.uddp` by default.
+  - `pack-ec-textures`: pack Enhanced Client statics and terrain textures together in one shared pass, writing `ec_art.uddp` and `ec_land.uddp` by default.
   - `pack-tilemeta`: build `tilemeta.uddp` from classic `tiledata.mul` plus Enhanced `tileart.uop` metadata.
   - `pack-unified-tiledata`: compatibility alias for `pack-tilemeta`.
 - `uddtool`: inspect and edit already-built packages.
@@ -71,8 +71,8 @@ This project is organized as a Cargo workspace with several specialized componen
 - `runtime_material_id_overrides.toml` is intentionally narrow and only normalizes known runtime collisions; it is not the full Classic-to-EC translation table.
 
 - `cc_art.uddp` stores classic land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
-- `ec_tex_art.uddp` stores Enhanced Client statics from the shared EC texture classification pass.
-- `ec_tex_land.uddp` stores one representative terrain image per land slot plus required `metadata/terrain_provenance.bin`, preserving how TerrainDefinition material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
+- `ec_art.uddp` stores Enhanced Client statics from the shared EC texture classification pass.
+- `ec_land.uddp` stores one representative terrain image per land slot plus required `metadata/terrain_provenance.bin`, preserving how TerrainDefinition material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
 - `tilemeta.uddp` stores dense land/item metadata tables used by the runtime to merge classic tiledata with Enhanced Client metadata.
 - Current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
 - The long-term direction is to keep the shared source textures intact and let runtime sampling windows and semantic lookup tables choose the right sub-rect or layer at render time.
@@ -82,11 +82,11 @@ This project is organized as a Cargo workspace with several specialized componen
 ### Recommended Workflows
 
 - Shared EC texture packaging:
-  - `uddpack pack-ec-textures --ecdir /path/to/ec --art-output ec_tex_art.uddp --land-output ec_tex_land.uddp`
+  - `uddpack pack-ec-textures --ecdir /path/to/ec --art-output ec_art.uddp --land-output ec_land.uddp`
   - `uddpack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp`
 - Inspecting package metadata:
   - `uddtool info tilemeta.uddp`
-  - `uddtool extract ec_tex_art.uddp --output ec_tex_art.extract`
+  - `uddtool extract ec_art.uddp --output ec_art.extract`
 
 ### CSV Editing Notes
 

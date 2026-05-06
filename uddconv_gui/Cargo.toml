@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.31.0", features = ["persistence"] }
-egui = "0.31.0"
-egui_extras = { version = "0.31.0", features = ["image"] }
+eframe = { version = "0.31.1", features = ["persistence"] }
+egui = "0.31.1"
+egui_extras = { version = "0.31.1", features = ["image"] }
 rfd = "0.14"
 color-eyre = "0.6.5"
 log = "0.4"
@@ -15,7 +15,7 @@ uddconv = { path = "../uddconv" }
 uddconv_ktx2 = { path = "../uddconv_ktx2" }
 uocf = { path = "../uocf" }
 uddconv_cli = { path = "../uddconv_cli" }
-tokio = { version = "1.36", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }

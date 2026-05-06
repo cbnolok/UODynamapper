@@ -25,7 +25,7 @@ use crate::ec_art::{compute_ec_art_crop_adjustments_from_sources, EcArtCropAdjus
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use uocf::classic::tiledata::TileData;
-use uocf::enhanced::tile_database::ArtDefinition;
+use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
 use uocf::udd::{
     xxh64_virtual_path, AddFileRequest, CompressionFlag as UddCompressionFlag, DataType,
     LookupMode, UddpBuilder, UddpReader,
@@ -105,10 +105,79 @@ pub struct TileMetaItemTile {
     pub cc_offset_y: i16,
 } // 48 + 4+2+2+2+2 (12) + 12 = 72 bytes. Aligned to 8.
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TileMetaItemVisualKind {
+    #[default]
+    RegularArt = 0,
+    SurfaceLike = 1,
+}
+
 impl TileMetaItemTile {
     pub fn name_ascii(&self) -> &str {
         let null_pos = self.name.iter().position(|&byte| byte == 0).unwrap_or(20);
         std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
+    }
+
+    pub fn visual_kind(&self) -> TileMetaItemVisualKind {
+        match self._pad1 {
+            1 => TileMetaItemVisualKind::SurfaceLike,
+            _ => TileMetaItemVisualKind::RegularArt,
+        }
+    }
+
+    pub fn is_surface_like(&self) -> bool {
+        self.visual_kind() == TileMetaItemVisualKind::SurfaceLike
+    }
+
+    pub fn set_visual_kind(&mut self, kind: TileMetaItemVisualKind) {
+        self._pad1 = kind as u8;
+    }
+}
+
+fn classify_item_visual_kind(
+    tile_id: u32,
+    ec_data: Option<&ArtData>,
+) -> TileMetaItemVisualKind {
+    if let Some(ec_data) = ec_data {
+        if ec_data.tile_type != uocf::enhanced::tileart::TileType::Static {
+            return TileMetaItemVisualKind::SurfaceLike;
+        }
+    }
+
+    let _ = tile_id;
+    TileMetaItemVisualKind::RegularArt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uocf::enhanced::tileart::TileType;
+
+    #[test]
+    fn classify_item_visual_kind_marks_solid_entries_as_surface_like() {
+        let art_data = ArtData {
+            tile_type: TileType::Solid,
+            ..ArtData::default()
+        };
+
+        assert_eq!(
+            classify_item_visual_kind(1444, Some(&art_data)),
+            TileMetaItemVisualKind::SurfaceLike,
+        );
+    }
+
+    #[test]
+    fn classify_item_visual_kind_keeps_static_entries_as_regular_art() {
+        let art_data = ArtData {
+            tile_type: TileType::Static,
+            ..ArtData::default()
+        };
+
+        assert_eq!(
+            classify_item_visual_kind(172, Some(&art_data)),
+            TileMetaItemVisualKind::RegularArt,
+        );
     }
 }
 
@@ -212,6 +281,7 @@ pub fn build_tilemeta_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -220,6 +290,7 @@ pub fn build_tilemeta_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -351,6 +422,7 @@ fn build_tilemeta_tables_from_sources(
 
         if let Some(ec_data) = ec_art.definitions.get(&(tile.tile_id as u16)) {
             tile_meta_item.flags |= ec_data.flags.bits();
+            tile_meta_item.set_visual_kind(classify_item_visual_kind(tile.tile_id as u32, Some(ec_data)));
 
             // Unify radar color
             tile_meta_item.radar_color = get_radar_color(tile.tile_id as u32, true, Some(&ec_data.radar_color));
@@ -384,6 +456,8 @@ fn build_tilemeta_tables_from_sources(
                 tile_meta_item.cc_offset_x = cc_tex.offset_x as i16;
                 tile_meta_item.cc_offset_y = cc_tex.offset_y as i16;
             }
+        } else {
+            tile_meta_item.set_visual_kind(classify_item_visual_kind(tile.tile_id as u32, None));
         }
         tilemeta_items.push(tile_meta_item);
     }

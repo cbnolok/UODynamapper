@@ -5,9 +5,11 @@
 crate::eyre_imports!();
 use crate::generic_index::IndexFile;
 use bytemuck::{Pod, Zeroable};
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use rayon::prelude::*;
+use std::fs;
 use std::path::Path;
+
+pub const UO_BLOCK_DIM: u32 = 8;
 
 /// Represents a single static item entry optimized for SIMD/GPU alignment (8 bytes).
 /// The original disk format is 7 bytes; this struct includes 1 byte of padding.
@@ -32,20 +34,35 @@ impl StaticTile {
     pub const RAW_SIZE: usize = 7;
 }
 
+/// The raw 7-byte structure as it appears on disk in `statics.mul`.
+#[repr(C, packed)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct RawStaticTile {
+    graphic: u16,
+    x: u8,
+    y: u8,
+    z: i8,
+    hue: u16,
+}
+
 /// Packed 6-byte static tile for bulk in-memory storage.
 /// Trades alignment for density.
 #[repr(C, packed)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
 pub struct PackedStaticTile {
-    pub graphic: u16,       // art_id for cc_art lookup
-    pub xy_packed: u8,      // x_offset:3 | y_offset:3 | _reserved:2
-    pub z: i8,              // altitude
-    pub hue: u16,           // color index (0 = default)
+    pub graphic: u16,  // art_id for cc_art lookup
+    pub xy_packed: u8, // x_offset:3 | y_offset:3 | _reserved:2
+    pub z: i8,         // altitude
+    pub hue: u16,      // color index (0 = default)
 }
 
 impl PackedStaticTile {
-    pub fn x_offset(self) -> u8 { self.xy_packed & 0x07 }
-    pub fn y_offset(self) -> u8 { (self.xy_packed >> 3) & 0x07 }
+    pub fn x_offset(self) -> u8 {
+        self.xy_packed & 0x07
+    }
+    pub fn y_offset(self) -> u8 {
+        (self.xy_packed >> 3) & 0x07
+    }
 }
 
 /// All statics for one map plane, stored as a flat CSR array.
@@ -53,8 +70,8 @@ impl PackedStaticTile {
 pub struct StaticsStore {
     pub block_width: u32,
     pub block_height: u32,
-    pub offsets: Vec<u32>,              // len = num_blocks + 1
-    pub tiles: Vec<PackedStaticTile>,   // all tiles, contiguous
+    pub offsets: Vec<u32>,            // len = num_blocks + 1
+    pub tiles: Vec<PackedStaticTile>, // all tiles, contiguous
 }
 
 impl StaticsStore {
@@ -69,36 +86,31 @@ impl StaticsStore {
     }
 }
 
-
 /// A highly optimized reader for `statics.mul` and `staidx.mul` files.
-pub struct StaticsReader<R: Read + Seek> {
+/// All data is fully loaded into memory on initialization.
+pub struct StaticsReader {
     pub index: IndexFile,
-    pub mul_reader: BufReader<R>,
+    pub mul_data: Vec<u8>,
     pub block_width: u32,
     pub block_height: u32,
-    read_buffer: Vec<u8>,
 }
 
-impl StaticsReader<File> {
-    /// Creates a new `StaticsReader` from file paths.
+impl StaticsReader {
+    /// Creates a new `StaticsReader` from file paths, loading everything into RAM.
     pub fn new(index_path: &Path, mul_path: &Path, width: u32, height: u32) -> eyre::Result<Self> {
         let index = IndexFile::load(index_path.to_path_buf())?;
-        let mul_file = File::open(mul_path).wrap_err("Failed to open statics.mul")?;
-        let mul_reader = BufReader::with_capacity(1024 * 1024, mul_file); // 1MB buffer
+        let mul_data = fs::read(mul_path).wrap_err("Failed to read statics.mul into memory")?;
 
         Ok(Self {
             index,
-            mul_reader,
-            block_width: width / 8,
-            block_height: height / 8,
-            read_buffer: Vec::new(),
+            mul_data,
+            block_width: width / UO_BLOCK_DIM,
+            block_height: height / UO_BLOCK_DIM,
         })
     }
-}
 
-impl<R: Read + Seek> StaticsReader<R> {
     /// Reads the static tiles for a given map block.
-    pub fn read_block(&mut self, block_x: u32, block_y: u32) -> eyre::Result<Vec<StaticTile>> {
+    pub fn read_block(&self, block_x: u32, block_y: u32) -> eyre::Result<Vec<StaticTile>> {
         if block_x >= self.block_width || block_y >= self.block_height {
             eyre::bail!("Block coordinates out of bounds");
         }
@@ -111,15 +123,18 @@ impl<R: Read + Seek> StaticsReader<R> {
                 return Ok(Vec::new());
             }
 
-            self.mul_reader.seek(SeekFrom::Start(lookup as u64))?;
+            let lookup = lookup as usize;
+            let size = size as usize;
+            let end = lookup + size;
 
-            let count = (size as usize) / StaticTile::RAW_SIZE;
-            self.read_buffer.resize(size as usize, 0);
-            self.mul_reader.read_exact(&mut self.read_buffer)?;
+            if end > self.mul_data.len() {
+                eyre::bail!("Statics index points outside mul_data range");
+            }
+
+            let raw_bytes = &self.mul_data[lookup..end];
+            let count = size / StaticTile::RAW_SIZE;
 
             let mut tiles = Vec::with_capacity(count);
-            let raw_bytes = &self.read_buffer;
-
             for i in 0..count {
                 let base = i * StaticTile::RAW_SIZE;
                 tiles.push(StaticTile {
@@ -139,58 +154,61 @@ impl<R: Read + Seek> StaticsReader<R> {
     }
 
     /// Reads every block from statics.mul into a compact in-memory store.
-    pub fn load_all(&mut self) -> eyre::Result<StaticsStore> {
+    pub fn load_all(&self) -> eyre::Result<StaticsStore> {
         let num_blocks = self.block_width * self.block_height;
-        let mut offsets = Vec::with_capacity(num_blocks as usize + 1);
-        
-        // Pre-calculate total tile count to avoid reallocations
+
+        // Step 1: Pre-calculate offsets and total count in a single fast pass over the index.
         let mut total_tile_count = 0;
+        let mut offsets = Vec::with_capacity(num_blocks as usize + 1);
+        offsets.push(0);
         for i in 0..num_blocks {
-            if let Ok(entry) = self.index.element(i as usize) {
-                if let Some(size) = entry.len() {
-                    total_tile_count += (size as usize) / StaticTile::RAW_SIZE;
-                }
-            }
+            let entry = self.index.element(i as usize)?;
+            total_tile_count += (entry.len().unwrap_or(0) as usize) / StaticTile::RAW_SIZE;
+            offsets.push(total_tile_count as u32);
         }
 
-        let mut tiles = Vec::with_capacity(total_tile_count);
-        offsets.push(0);
-        
-        // Use column-major iteration (X then Y) to match UO's file layout.
-        // This ensures sequential reading of both staidx and statics.mul,
-        // which is significantly faster for BufReader and the OS disk cache.
-        for block_x in 0..self.block_width {
-            for block_y in 0..self.block_height {
-                let block_id = block_x * self.block_height + block_y;
-                let index_element = self.index.element(block_id as usize)?;
-                
-                if let (Some(lookup), Some(size)) = (index_element.lookup(), index_element.len()) {
-                    if size > 0 {
-                        self.mul_reader.seek(SeekFrom::Start(lookup as u64))?;
-                        let count = (size as usize) / StaticTile::RAW_SIZE;
-                        self.read_buffer.resize(size as usize, 0);
-                        self.mul_reader.read_exact(&mut self.read_buffer)?;
-                        
-                        let raw_bytes = &self.read_buffer;
-                        for i in 0..count {
-                            let base = i * StaticTile::RAW_SIZE;
-                            let x_offset = raw_bytes[base + 2];
-                            let y_offset = raw_bytes[base + 3];
-                            let xy_packed = (x_offset & 0x07) | ((y_offset & 0x07) << 3);
-                            
-                            tiles.push(PackedStaticTile {
-                                graphic: u16::from_le_bytes([raw_bytes[base], raw_bytes[base + 1]]),
-                                xy_packed,
-                                z: raw_bytes[base + 4] as i8,
-                                hue: u16::from_le_bytes([raw_bytes[base + 5], raw_bytes[base + 6]]),
-                            });
-                        }
+        let mut tiles = vec![PackedStaticTile::default(); total_tile_count];
+
+        // Step 2: Parse blocks using parallel processing over the in-memory buffer.
+        let mul_data_ref = &self.mul_data;
+        let index = &self.index;
+        let offsets_ref = &offsets;
+
+        let tiles_ptr = tiles.as_mut_ptr() as usize;
+        (0..num_blocks as usize)
+            .into_par_iter()
+            .for_each(|block_id| {
+                let start_idx = offsets_ref[block_id] as usize;
+                let end_idx = offsets_ref[block_id + 1] as usize;
+                if start_idx == end_idx {
+                    return;
+                }
+
+                let entry = index.element(block_id).unwrap();
+                let lookup = entry.lookup().unwrap() as usize;
+                let count = end_idx - start_idx;
+
+                let src = &mul_data_ref[lookup..lookup + count * StaticTile::RAW_SIZE];
+
+                // Safety: Each parallel iteration writes to a disjoint range of the 'tiles' vector
+                unsafe {
+                    let dst = (tiles_ptr as *mut PackedStaticTile).add(start_idx);
+                    for j in 0..count {
+                        let base = j * StaticTile::RAW_SIZE;
+                        let x = src[base + 2];
+                        let y = src[base + 3];
+                        let xy_packed = (x & 0x07) | ((y & 0x07) << 3);
+
+                        *dst.add(j) = PackedStaticTile {
+                            graphic: u16::from_le_bytes([src[base], src[base + 1]]),
+                            xy_packed,
+                            z: src[base + 4] as i8,
+                            hue: u16::from_le_bytes([src[base + 5], src[base + 6]]),
+                        };
                     }
                 }
-                offsets.push(tiles.len() as u32);
-            }
-        }
-        
+            });
+
         Ok(StaticsStore {
             block_width: self.block_width,
             block_height: self.block_height,

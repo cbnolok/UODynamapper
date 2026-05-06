@@ -52,20 +52,20 @@ if [ -n "$EC_PATH" ]; then
 fi
 echo "Target: $OUTPUT_DIR"
 
+# Convert metadata
+cargo run --release --bin uddpack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/tilemeta.uddp"
+echo
+
 # Convert assets
 cargo run --release --bin uddpack -- pack-art "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/cc_art.uddp"
 echo
-cargo run --release --bin uddpack -- pack-ec-textures "${SOURCE_ARGS[@]}" --art-output "$OUTPUT_DIR/ec_tex_art.uddp" --land-output "$OUTPUT_DIR/ec_tex_land.uddp"
-echo
-
-# Convert metadata
-cargo run --release --bin uddpack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/tilemeta.uddp"
+cargo run --release --bin uddpack -- pack-ec-textures "${SOURCE_ARGS[@]}" --art-output "$OUTPUT_DIR/ec_art.uddp" --land-output "$OUTPUT_DIR/ec_land.uddp"
 
 echo
 echo "Generated packages:"
 echo "  - $OUTPUT_DIR/cc_art.uddp"
-echo "  - $OUTPUT_DIR/ec_tex_art.uddp"
-echo "  - $OUTPUT_DIR/ec_tex_land.uddp"
+echo "  - $OUTPUT_DIR/ec_art.uddp"
+echo "  - $OUTPUT_DIR/ec_land.uddp"
 echo "  - $OUTPUT_DIR/tilemeta.uddp"
 
 echo "Conversion complete!"

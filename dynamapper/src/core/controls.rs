@@ -70,6 +70,8 @@ fn sys_dispatch_keyboard_input(
             commands.trigger(ActionToggleTeleportDialog);
         } else if key == KeyCode::KeyT && ctrl {
             commands.trigger(ActionToggleCursorTeleportMode);
+        } else if key == KeyCode::KeyI && !ctrl && !alt {
+            commands.trigger(ActionToggleCursorInspectPanel);
         }
     }
 }

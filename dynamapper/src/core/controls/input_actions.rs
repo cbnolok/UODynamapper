@@ -24,6 +24,10 @@ pub struct ActionToggleTeleportDialog;
 #[derive(Event)]
 pub struct ActionToggleCursorTeleportMode;
 
+/// Action to toggle the cursor tile inspection panel (I)
+#[derive(Event)]
+pub struct ActionToggleCursorInspectPanel;
+
 /// Action to close the active dialog (Escape)
 #[derive(Event)]
 pub struct ActionCloseActiveDialog;

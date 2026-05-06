@@ -133,6 +133,7 @@ impl UddpiBuilder {
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
+            apply_planar: false,
             virtual_path: None,
             path_hash64: None,
             id: Some(0),
@@ -143,6 +144,7 @@ impl UddpiBuilder {
             builder.add_file(AddFileRequest {
                 data_type: replacement.data_type,
                 compression: CompressionFlag::Auto,
+                apply_planar: false,
                 virtual_path: None,
                 path_hash64: None,
                 id: Some((index as u32) + 1),
@@ -294,6 +296,7 @@ impl UddpiApplier {
                 FileKey::PathHash(path_hash64) => builder.add_file(AddFileRequest {
                     data_type,
                     compression: original_flag,
+                    apply_planar: unpack_planar(record.locator.meta32),
                     virtual_path: None,
                     path_hash64: Some(path_hash64),
                     id: None,
@@ -302,6 +305,7 @@ impl UddpiApplier {
                 FileKey::Id(id) => builder.add_file(AddFileRequest {
                     data_type,
                     compression: original_flag,
+                    apply_planar: unpack_planar(record.locator.meta32),
                     virtual_path: None,
                     path_hash64: None,
                     id: Some(id),
@@ -336,7 +340,7 @@ fn record_key_path(path_hash64: u64) -> FileKey {
 
 /// Parse the patch manifest stored in dense-id file 0.
 fn parse_patch_manifest(bytes: &[u8]) -> Result<ParsedPatchManifest, PatchError> {
-    let mut cur = Cursor::new(bytes);
+    let mut cur = support::Cursor::new(bytes);
     let header = PatchManifestHeader::read_from(&mut cur).map_err(PatchError::Format)?;
     if header.magic != PMAN_MAGIC {
         return Err(PatchError::InvalidPatchManifest);

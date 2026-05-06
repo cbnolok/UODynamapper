@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 
 use super::support::{patch_header_package_hash64, zstd_compress, zstd_compress_with_dict};
+use super::planar;
 use super::*;
 
 const DICT_TRAIN_MIN_SAMPLE_BYTES: usize = 128;
@@ -29,6 +30,7 @@ struct PendingFile {
     key: PendingKey,
     data_type: u8,
     compression: CompressionFlag,
+    apply_planar: bool,
     raw_data: Vec<u8>,
 }
 
@@ -44,6 +46,7 @@ struct BuiltFile {
     key: PendingKey,
     data_type: u8,
     codec: Codec,
+    planar: bool,
     raw_size: u32,
     encoded_payload: Vec<u8>,
 }
@@ -140,6 +143,7 @@ impl UddpBuilder {
             key,
             data_type: req.data_type,
             compression: req.compression,
+            apply_planar: req.apply_planar,
             raw_data: req.data.to_vec(),
         });
 
@@ -218,10 +222,18 @@ impl UddpBuilder {
             .files
             .par_iter()
             .map(|file| -> Result<BuiltFile, BuildError> {
+                let data_to_compress = if file.apply_planar && file.raw_data.len() % 4 == 0 {
+                    let mut planar_buf = vec![0u8; file.raw_data.len()];
+                    planar::transform_rgba_to_planar(&file.raw_data, &mut planar_buf);
+                    planar_buf
+                } else {
+                    file.raw_data.clone()
+                };
+
                 let (codec, encoded_payload) = match file.compression {
-                    CompressionFlag::None => (Codec::None, file.raw_data.clone()),
+                    CompressionFlag::None => (Codec::None, data_to_compress.clone()),
                     CompressionFlag::ZstdNoDict => {
-                        let encoded = zstd_compress(&file.raw_data).map_err(BuildError::Io)?;
+                        let encoded = zstd_compress(&data_to_compress).map_err(BuildError::Io)?;
                         (Codec::ZstdNoDict, encoded)
                     }
                     CompressionFlag::ZstdDict => {
@@ -229,28 +241,32 @@ impl UddpBuilder {
                             .get(&file.data_type)
                             .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
                         let encoded =
-                            zstd_compress_with_dict(&file.raw_data, dict).map_err(BuildError::Io)?;
+                            zstd_compress_with_dict(&data_to_compress, dict).map_err(BuildError::Io)?;
                         (Codec::ZstdTypeDict, encoded)
                     }
                     CompressionFlag::Auto => {
-                        choose_auto_compression(file, dicts_by_type.get(&file.data_type))?
+                        // For auto-compression, we use the potentially planar-transformed data
+                        let mut auto_file = file.clone();
+                        auto_file.raw_data = data_to_compress.clone();
+                        choose_auto_compression(&auto_file, dicts_by_type.get(&file.data_type))?
                     }
                 };
 
                 // The packed locator stores only a non-negative `raw_size - stored_size`
                 // delta. If compression grows the payload, the file must fall back to raw
                 // storage even when the caller requested compression explicitly.
-                let (codec, encoded_payload) =
-                    if codec == Codec::None || encoded_payload.len() <= file.raw_data.len() {
-                        (codec, encoded_payload)
+                let (codec, encoded_payload, planar) =
+                    if codec != Codec::None && encoded_payload.len() < file.raw_data.len() {
+                        (codec, encoded_payload, file.apply_planar && file.raw_data.len() % 4 == 0)
                     } else {
-                        (Codec::None, file.raw_data.clone())
+                        (Codec::None, file.raw_data.clone(), false)
                     };
 
                 Ok(BuiltFile {
                     key: file.key,
                     data_type: file.data_type,
                     codec,
+                    planar,
                     raw_size: file.raw_data.len() as u32,
                     encoded_payload,
                 })
@@ -333,7 +349,7 @@ impl UddpBuilder {
         for file in &plan.files {
             let stored_size = file.encoded_payload.len() as u32;
             let delta = file.raw_size - stored_size;
-            let meta32 = pack_meta32(file.data_type, file.codec, delta);
+            let meta32 = pack_meta32(file.data_type, file.codec, delta, file.planar);
             let pos64 = pack_pos64(blob_cursor, delta);
             locator_records.push((
                 file.key,

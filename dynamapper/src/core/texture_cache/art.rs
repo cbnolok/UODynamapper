@@ -17,6 +17,7 @@ use uddconv::{
     bc7::{self, ImageExtent},
     cc_art::{CcArtPackage, PagePixelFormat},
     ec_art::EcArtPackage,
+    ec_land::EcLandPackage,
     tilemeta::TileMetaPackage,
 };
 use std::collections::HashMap;
@@ -51,6 +52,7 @@ pub struct ResolvedArtSprite {
 
 #[derive(Debug, Clone)]
 pub struct ArtPageUpload {
+    pub cache_key: u64,
     pub page_index: u32,
     pub layer: u32,
     pub rgba: Vec<u8>,
@@ -59,8 +61,8 @@ pub struct ArtPageUpload {
 #[derive(Resource)]
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
-    page_to_layer: HashMap<u32, u32>,
-    layer_to_page: Vec<Option<u32>>,
+    page_to_layer: HashMap<u64, u32>,
+    layer_to_page: Vec<Option<u64>>,
     layer_access_tick: Vec<u64>,
     current_tick: u64,
     pub pending_uploads: Vec<ArtPageUpload>,
@@ -68,6 +70,13 @@ pub struct ArtPageAtlas {
     pub page_width: u32,
     pub page_height: u32,
     pub max_layers: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ArtPageSource {
+    Cc,
+    EcArt,
+    EcLand,
 }
 
 impl ArtPageAtlas {
@@ -86,22 +95,130 @@ impl ArtPageAtlas {
         }
     }
 
-    pub fn resolve(&mut self, cc_art: &CcArtPackage, graphic: u16) -> Option<ResolvedArtSprite> {
+    pub fn clear(&mut self) {
+        self.page_to_layer.clear();
+        self.layer_to_page.fill(None);
+        self.layer_access_tick.fill(0);
+        self.current_tick = 0;
+        self.pending_uploads.clear();
+        self.extract_staging.clear();
+    }
+
+    fn cache_key_for_page_source(source: ArtPageSource, page_index: u32) -> u64 {
+        let source_bits = match source {
+            ArtPageSource::Cc => 0u64,
+            ArtPageSource::EcArt => 1u64,
+            ArtPageSource::EcLand => 2u64,
+        };
+        (source_bits << 32) | page_index as u64
+    }
+
+    pub fn cache_key_for_page(source: ClientTextureSource, page_index: u32) -> u64 {
+        let page_source = match source {
+            ClientTextureSource::Cc => ArtPageSource::Cc,
+            ClientTextureSource::Ec => ArtPageSource::EcArt,
+        };
+        Self::cache_key_for_page_source(page_source, page_index)
+    }
+
+    pub fn cache_key_for_ec_land_page(page_index: u32) -> u64 {
+        Self::cache_key_for_page_source(ArtPageSource::EcLand, page_index)
+    }
+
+    pub fn resolve_cc(&mut self, cc_art: &CcArtPackage, graphic: u16) -> Option<ResolvedArtSprite> {
         let art_id = graphic as u32;
         let slot = cc_art.present_slot(art_id)?;
-        let page_index = slot.page_index;
+        self.resolve_slot(
+            ArtPageSource::Cc,
+            slot.page_index,
+            slot.x,
+            slot.y,
+            slot.width,
+            slot.height,
+            cc_art.atlas_width(),
+            cc_art.atlas_height(),
+            cc_art.pages().get(slot.page_index as usize)?.used_width,
+            cc_art.pages().get(slot.page_index as usize)?.used_height,
+            cc_art.pages().get(slot.page_index as usize)?.pixel_format,
+            || cc_art.read_page_bytes(slot.page_index),
+        )
+    }
+
+    pub fn resolve_ec(&mut self, ec_art: &EcArtPackage, art_id: u32) -> Option<ResolvedArtSprite> {
+        let slot = ec_art.present_slot(art_id)?;
+        self.resolve_slot(
+            ArtPageSource::EcArt,
+            slot.page_index,
+            slot.x,
+            slot.y,
+            slot.width,
+            slot.height,
+            ec_art.atlas_width(),
+            ec_art.atlas_height(),
+            ec_art.pages().get(slot.page_index as usize)?.used_width,
+            ec_art.pages().get(slot.page_index as usize)?.used_height,
+            ec_art.pages().get(slot.page_index as usize)?.pixel_format,
+            || ec_art.read_page_bytes(slot.page_index),
+        )
+    }
+
+    pub fn resolve_ec_land(
+        &mut self,
+        ec_land: &EcLandPackage,
+        art_id: u32,
+    ) -> Option<ResolvedArtSprite> {
+        let slot = ec_land.present_slot(art_id)?;
+        self.resolve_slot(
+            ArtPageSource::EcLand,
+            slot.page_index,
+            slot.x,
+            slot.y,
+            slot.width,
+            slot.height,
+            ec_land.atlas_width(),
+            ec_land.atlas_height(),
+            ec_land.pages().get(slot.page_index as usize)?.used_width,
+            ec_land.pages().get(slot.page_index as usize)?.used_height,
+            ec_land.pages().get(slot.page_index as usize)?.pixel_format,
+            || ec_land.read_page_bytes(slot.page_index),
+        )
+    }
+
+    fn resolve_slot<F>(
+        &mut self,
+        source: ArtPageSource,
+        page_index: u32,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        atlas_width: u32,
+        atlas_height: u32,
+        used_width: u32,
+        used_height: u32,
+        pixel_format: PagePixelFormat,
+        read_page_bytes: F,
+    ) -> Option<ResolvedArtSprite>
+    where
+        F: FnOnce() -> eyre::Result<Vec<u8>>,
+    {
+        if atlas_width > self.page_width || atlas_height > self.page_height {
+            return None;
+        }
+
+        let cache_key = Self::cache_key_for_page_source(source, page_index);
         let page_upload_pending = self
             .pending_uploads
             .iter()
-            .any(|upload| upload.page_index == page_index)
+            .any(|upload| upload.cache_key == cache_key)
             || self
                 .extract_staging
                 .iter()
-                .any(|upload| upload.page_index == page_index);
+                .any(|upload| upload.cache_key == cache_key);
 
         self.current_tick += 1;
 
-        let layer = if let Some(&layer) = self.page_to_layer.get(&page_index) {
+        let layer = if let Some(&layer) = self.page_to_layer.get(&cache_key) {
             self.layer_access_tick[layer as usize] = self.current_tick;
             if page_upload_pending {
                 return None;
@@ -125,42 +242,40 @@ impl ArtPageAtlas {
             };
 
             // Queue the page upload
-            if let Ok(page_data) = cc_art.read_page_bytes(page_index) {
-                if let Some(page_meta) = cc_art.pages().get(page_index as usize) {
-                    // Extract full RGBA page
-                    if let Ok(rgba) = extract_slot_rgba(
-                        &page_data,
-                        cc_art.atlas_width(),
-                        cc_art.atlas_height(),
-                        page_meta.used_width,
-                        page_meta.used_height,
-                        page_meta.pixel_format,
-                        0,
-                        0,
-                        page_meta.used_width as u16,
-                        page_meta.used_height as u16,
-                    ) {
-                        let mut full_page = vec![0; (self.page_width * self.page_height * 4) as usize];
-                        let copy_width = (page_meta.used_width as usize).min(self.page_width as usize);
-                        let copy_height = (page_meta.used_height as usize).min(self.page_height as usize);
-                        for y in 0..copy_height {
-                            let src_start = y * (page_meta.used_width as usize) * 4;
-                            let src_end = src_start + copy_width * 4;
-                            let dst_start = y * (self.page_width as usize) * 4;
-                            let dst_end = dst_start + copy_width * 4;
-                            full_page[dst_start..dst_end].copy_from_slice(&rgba[src_start..src_end]);
-                        }
-                        self.pending_uploads.push(ArtPageUpload {
-                            page_index,
-                            layer,
-                            rgba: full_page,
-                        });
+            if let Ok(page_data) = read_page_bytes() {
+                if let Ok(rgba) = extract_slot_rgba(
+                    &page_data,
+                    atlas_width,
+                    atlas_height,
+                    used_width,
+                    used_height,
+                    pixel_format,
+                    0,
+                    0,
+                    used_width as u16,
+                    used_height as u16,
+                ) {
+                    let mut full_page = vec![0; (self.page_width * self.page_height * 4) as usize];
+                    let copy_width = used_width as usize;
+                    let copy_height = used_height as usize;
+                    for y in 0..copy_height {
+                        let src_start = y * used_width as usize * 4;
+                        let src_end = src_start + copy_width * 4;
+                        let dst_start = y * self.page_width as usize * 4;
+                        let dst_end = dst_start + copy_width * 4;
+                        full_page[dst_start..dst_end].copy_from_slice(&rgba[src_start..src_end]);
                     }
+                    self.pending_uploads.push(ArtPageUpload {
+                        cache_key,
+                        page_index,
+                        layer,
+                        rgba: full_page,
+                    });
                 }
             }
 
-            self.page_to_layer.insert(page_index, layer);
-            self.layer_to_page[layer as usize] = Some(page_index);
+            self.page_to_layer.insert(cache_key, layer);
+            self.layer_to_page[layer as usize] = Some(cache_key);
             self.layer_access_tick[layer as usize] = self.current_tick;
 
             return None; // Wait for upload
@@ -168,10 +283,10 @@ impl ArtPageAtlas {
 
         Some(ResolvedArtSprite {
             layer,
-            uv_min: Vec2::new(slot.x as f32 / self.page_width as f32, slot.y as f32 / self.page_height as f32),
-            uv_max: Vec2::new((slot.x + slot.width) as f32 / self.page_width as f32, (slot.y + slot.height) as f32 / self.page_height as f32),
-            pixel_width: slot.width,
-            pixel_height: slot.height,
+            uv_min: Vec2::new(x as f32 / self.page_width as f32, y as f32 / self.page_height as f32),
+            uv_max: Vec2::new((x + width) as f32 / self.page_width as f32, (y + height) as f32 / self.page_height as f32),
+            pixel_width: width,
+            pixel_height: height,
         })
     }
 
@@ -199,12 +314,29 @@ impl ArtTextureLoader {
         }
     }
 
+    pub fn resolve_effective_source(
+        &self,
+        requested_source: ClientTextureSource,
+    ) -> Option<ClientTextureSource> {
+        if self.source_available(requested_source) {
+            return Some(requested_source);
+        }
+
+        ClientTextureSource::ALL.into_iter().find(|candidate| {
+            *candidate != requested_source && self.source_available(*candidate)
+        })
+    }
+
     pub fn load_selected_texture(
         &self,
         art_id: u32,
         settings: &crate::configs::settings::SectGraphics,
     ) -> eyre::Result<Option<LoadedArtTexture>> {
-        self.load_texture(art_id, settings.art_texture_source)
+        let Some(source) = self.resolve_effective_source(settings.art_texture_source) else {
+            return Ok(None);
+        };
+
+        self.load_texture(art_id, source)
     }
 
     pub fn load_texture(

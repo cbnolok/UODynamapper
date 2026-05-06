@@ -45,6 +45,8 @@ use uocf::{
     },
 };
 
+use crate::upscale::UpscaleFilter;
+
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 /// Bump version when the binary layout of either manifest changes.
@@ -91,7 +93,6 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CcArtAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
@@ -100,6 +101,8 @@ pub struct CcArtAtlasOptions {
     /// stored in the UDDP container, reducing VRAM usage by ~8×. Requires
     /// extra CPU time during the build step.
     pub use_bc7: bool,
+    pub planar_shuffle: bool,
+    pub upscale: UpscaleFilter,
 }
 
 impl Default for CcArtAtlasOptions {
@@ -109,6 +112,8 @@ impl Default for CcArtAtlasOptions {
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         }
     }
 }
@@ -337,7 +342,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
         .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
 
     let slot_count = art_map.max_id();
-    let decoded_tiles = decode_present_tiles(&art_map)?;
+    let decoded_tiles = decode_present_tiles(&art_map, options)?;
     let populated_slot_count = decoded_tiles.len() as u32;
 
     let (pages, slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
@@ -348,6 +353,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -356,6 +362,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -428,6 +435,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression,
+            apply_planar: options.planar_shuffle,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -460,7 +468,10 @@ fn validate_options(options: &CcArtAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
+fn decode_present_tiles(
+    art_map: &ArtMap,
+    options: &CcArtAtlasOptions,
+) -> eyre::Result<Vec<DecodedArtTile>> {
     // Decode every occupied art slot up front so the packer can sort by area and
     // feed the atlas allocator largest-first. Classic clients are messy in practice:
     // some slots are structurally present but malformed, so the converter skips
@@ -502,28 +513,32 @@ fn decode_present_tiles(art_map: &ArtMap) -> eyre::Result<Vec<DecodedArtTile>> {
                 ArtTileKind::Land => {
                     let mut rgba = [0u8; 44 * 44 * 4];
                     match art_map.decode_land_tile(art_id, &mut scratch_raw, &mut rgba) {
-                        Ok(()) => DecodeOutcome::Decoded(DecodedArtTile {
-                            art_id,
-                            kind,
-                            width: 44,
-                            height: 44,
-                            rgba: rgba.to_vec(),
-                        }),
+                        Ok(()) => {
+                            let (w, h, rgba) = options.upscale.apply(44, 44, &rgba);
+                            DecodeOutcome::Decoded(DecodedArtTile {
+                                art_id,
+                                kind,
+                                width: w as u16,
+                                height: h as u16,
+                                rgba,
+                            })
+                        }
                         Err(error) => DecodeOutcome::SkippedLand(format!("{art_id} ({error})")),
                     }
                 }
-                ArtTileKind::Static => {
-                    match art_map.decode_static_tile(art_id, &mut scratch_raw) {
-                        Ok((width, height, rgba)) => DecodeOutcome::Decoded(DecodedArtTile {
+                ArtTileKind::Static => match art_map.decode_static_tile(art_id, &mut scratch_raw) {
+                    Ok((width, height, rgba)) => {
+                        let (w, h, rgba) = options.upscale.apply(width as u32, height as u32, &rgba);
+                        DecodeOutcome::Decoded(DecodedArtTile {
                             art_id,
                             kind,
-                            width,
-                            height,
+                            width: w as u16,
+                            height: h as u16,
                             rgba,
-                        }),
-                        Err(error) => DecodeOutcome::SkippedStatic(format!("{art_id} ({error})")),
+                        })
                     }
-                }
+                    Err(error) => DecodeOutcome::SkippedStatic(format!("{art_id} ({error})")),
+                },
             };
             pb.inc(1);
             outcome
@@ -923,6 +938,8 @@ pub fn encode_slot_manifest(
             atlas_height,
             gutter,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         },
     )
 }

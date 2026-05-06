@@ -66,16 +66,16 @@ fn build_chunk_mesh(chunk_tiles: usize, step_tiles: usize) -> Mesh {
 /// This startup system generates shared terrain meshes for multiple LODs and scales.
 pub fn setup_land_mesh(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     log_system_add_startup::<super::DrawLandChunkMeshPlugin>(StartupSysSet::SetupSceneStage1, fname!());
-    // Standard 8×8 tile meshes at three vertex-density LODs:
-    let high = meshes.add(build_chunk_mesh(8, 1));   // 81 verts  (zoom < 4)
-    let medium = meshes.add(build_chunk_mesh(8, 2)); // 25 verts  (zoom 4–10)
-    let low = meshes.add(build_chunk_mesh(8, 4));    //  9 verts  (zoom 10+ fallback)
+    // Standard 32×32 tile meshes at three vertex-density LODs:
+    let high = meshes.add(build_chunk_mesh(32, 1));   // 1089 verts (zoom < 4)
+    let medium = meshes.add(build_chunk_mesh(32, 2)); // 289 verts  (zoom 4–10)
+    let low = meshes.add(build_chunk_mesh(32, 4));    // 81 verts   (zoom 10+ fallback)
     // Wide meshes for reduced entity count at high zoom:
-    let wide16 = meshes.add(build_chunk_mesh(16, 2)); // 81 verts, covers 16×16 tiles (zoom 10–25)
-    let wide32 = meshes.add(build_chunk_mesh(32, 4)); // 81 verts, covers 32×32 tiles (zoom 25–50)
-    let wide64 = meshes.add(build_chunk_mesh(64, 8)); // 81 verts, covers 64×64 tiles (zoom ≥50)
-    let wide128 = meshes.add(build_chunk_mesh(128, 16)); // 81 verts, covers 128×128 tiles (extreme zoom-out)
-    let wide256 = meshes.add(build_chunk_mesh(256, 32)); // 81 verts, covers 256×256 tiles (maximum zoom-out)
+    let wide16 = meshes.add(build_chunk_mesh(64, 2)); // 1089 verts, covers 64×64 tiles (zoom 10–25)
+    let wide32 = meshes.add(build_chunk_mesh(128, 4)); // 1089 verts, covers 128×128 tiles (zoom 25–50)
+    let wide64 = meshes.add(build_chunk_mesh(256, 8)); // 1089 verts, covers 256×256 tiles (zoom ≥50)
+    let wide128 = meshes.add(build_chunk_mesh(512, 16)); // 1089 verts, covers 512×512 tiles (extreme zoom-out)
+    let wide256 = meshes.add(build_chunk_mesh(1024, 32)); // 1089 verts, covers 1024×1024 tiles (maximum zoom-out)
 
     commands.insert_resource(LandMeshHandles {
         high,

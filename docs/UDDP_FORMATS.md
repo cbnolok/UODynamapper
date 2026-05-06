@@ -77,17 +77,17 @@ When the schema is eventually widened, the CC texture coordinates, EC texture co
 
 ---
 
-## 2. `cc_art.uddp`, `ec_tex_art.uddp`, `ec_tex_land.uddp`, and related EC texture packages
+## 2. `cc_art.uddp`, `ec_art.uddp`, `ec_land.uddp`, and related EC texture packages
 
 These are GPU texture atlases packed into fixed-size pages to avoid texture array limits.
-`cc_art` packages Classic Art sprites, `ec_tex_art` packages Enhanced Client Art sprites from the shared EC texture pass, and `ec_tex_land` packages Enhanced Client Terrain Textures from the same pass.
+`cc_art` packages Classic Art sprites, `ec_art` packages Enhanced Client Art sprites from the shared EC texture pass, and `ec_land` packages Enhanced Client Terrain Textures from the same pass.
 
 The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
 Do not use lossy BC7 compression for art tiles.
 
 Current EC packing semantics:
-- `ec_tex_art.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
-- `ec_tex_land.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
+- `ec_art.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
+- `ec_land.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
 - `ec_textures_layers.uddp` is the planned destination for extra shared layers, masks, and noise-like resources that are referenced semantically but do not belong to the primary land/art splits.
 - If a source texture is claimed by both art and land semantics, duplication across outputs is valid and should be decided by ownership, not by avoiding repeated ids.
 

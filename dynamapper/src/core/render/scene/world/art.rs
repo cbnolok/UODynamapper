@@ -19,6 +19,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         log_plugin_build(self);
         app.init_resource::<statics_collect::RenderStaticInstances>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
+        app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             crate::core::texture_cache::art::ArtPageAtlasHandle,
@@ -29,6 +30,7 @@ impl Plugin for DrawStaticSpritesPlugin {
                .in_set(StartupSysSet::SetupSceneStage1)
                .after(StartupSysSet::LoadStartupUOFiles))
            .add_systems(Update, (
+               statics_collect::sys_sync_static_art_source,
                crate::core::texture_cache::art::sys_stage_art_page_uploads,
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
@@ -38,7 +40,7 @@ impl Plugin for DrawStaticSpritesPlugin {
                statics_draw::sys_update_sprite_instance_buffer
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
-           ).run_if(in_state(AppState::InGame)));
+           ).chain().run_if(in_state(AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.init_resource::<crate::core::texture_cache::art::RenderArtPageUploads>();

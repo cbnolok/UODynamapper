@@ -512,10 +512,8 @@ pub fn sys_render_preferences_dialog(
 
                     ui.horizontal(|ui| {
                         ui.label("UI Scale:");
-                        if ui
-                            .add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0))
-                            .changed()
-                        {
+                        let res = ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=3.0));
+                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }
@@ -527,49 +525,41 @@ pub fn sys_render_preferences_dialog(
 
                     ui.horizontal(|ui| {
                         ui.label("Player Position:");
-                        if ui
-                            .add(egui::Slider::new(
-                                &mut state.player_position_scale,
-                                0.5..=3.0,
-                            ))
-                            .changed()
-                        {
+                        let res = ui.add(egui::Slider::new(
+                            &mut state.player_position_scale,
+                            0.5..=3.0,
+                        ));
+                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }
                     });
                     ui.horizontal(|ui| {
                         ui.label("System Messages:");
-                        if ui
-                            .add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0))
-                            .changed()
-                        {
+                        let res = ui.add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0));
+                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }
                     });
                     ui.horizontal(|ui| {
                         ui.label("Performance Overlay:");
-                        if ui
-                            .add(egui::Slider::new(
-                                &mut state.performance_overlay_scale,
-                                0.5..=3.0,
-                            ))
-                            .changed()
-                        {
+                        let res = ui.add(egui::Slider::new(
+                            &mut state.performance_overlay_scale,
+                            0.5..=3.0,
+                        ));
+                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }
                     });
                     ui.horizontal(|ui| {
                         ui.label("Cursor Position:");
-                        if ui
-                            .add(egui::Slider::new(
-                                &mut state.cursor_position_scale,
-                                0.5..=3.0,
-                            ))
-                            .changed()
-                        {
+                        let res = ui.add(egui::Slider::new(
+                            &mut state.cursor_position_scale,
+                            0.5..=3.0,
+                        ));
+                        if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }

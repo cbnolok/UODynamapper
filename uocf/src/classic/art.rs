@@ -60,7 +60,6 @@ const RGBA_BYTES_PER_PIXEL: usize = 4;
 const STATIC_HEADER_BYTES: usize = 8;
 const LOOKUP_ENTRY_BYTES: usize = 2;
 
-#[inline(always)]
 fn classic_art_payload_is_structurally_valid(art_id: u32, size: u32) -> bool {
     if art_id < ART_ITEM_ID_OFFSET {
         size as usize >= LAND_DIAMOND_BYTE_COUNT
@@ -69,7 +68,6 @@ fn classic_art_payload_is_structurally_valid(art_id: u32, size: u32) -> bool {
     }
 }
 
-#[inline(always)]
 fn read_u16_le(bytes: &[u8], offset: usize) -> eyre::Result<u16> {
     let end = offset + LOOKUP_ENTRY_BYTES;
     if end > bytes.len() {
@@ -82,7 +80,6 @@ fn read_u16_le(bytes: &[u8], offset: usize) -> eyre::Result<u16> {
     Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
 }
 
-#[inline(always)]
 fn read_u32_le(bytes: &[u8], offset: usize) -> eyre::Result<u32> {
     let end = offset + std::mem::size_of::<u32>();
     if end > bytes.len() {
@@ -100,7 +97,6 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> eyre::Result<u32> {
     ]))
 }
 
-#[inline(always)]
 fn read_unaligned_u16_le(bytes: &[u8], offset: usize) -> u16 {
     debug_assert!(offset + LOOKUP_ENTRY_BYTES <= bytes.len());
 
@@ -108,8 +104,7 @@ fn read_unaligned_u16_le(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le(unsafe { raw_ptr.read_unaligned() })
 }
 
-#[inline(always)]
-fn decode_land_tile_from_raw(
+pub fn decode_land_tile_from_raw(
     raw_data: &[u8],
     pixel_data_out: &mut [u8; LAND_DIMENSION * LAND_DIMENSION * RGBA_BYTES_PER_PIXEL],
 ) -> eyre::Result<()> {
@@ -164,8 +159,7 @@ fn decode_land_tile_from_raw(
     Ok(())
 }
 
-#[inline(always)]
-fn decode_static_tile_from_raw(raw_data: &[u8]) -> eyre::Result<(u16, u16, Vec<u8>)> {
+pub fn decode_static_tile_from_raw(raw_data: &[u8]) -> eyre::Result<(u16, u16, Vec<u8>)> {
     let _flags = read_u32_le(raw_data, 0)?;
     let width = read_u16_le(raw_data, 4)?;
     let height = read_u16_le(raw_data, 6)?;
@@ -435,7 +429,6 @@ fn is_probably_tga(data: &[u8]) -> bool {
     let image_type = data[2];
     (image_type == 2 || image_type == 10) && data[1] <= 1
 }
-
 
 #[cfg(test)]
 mod tests {

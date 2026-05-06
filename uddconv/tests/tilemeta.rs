@@ -85,6 +85,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
+            apply_planar: false,
             virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -95,6 +96,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
+            apply_planar: false,
             virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -114,6 +116,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
     assert_eq!(item.name_ascii(), "chair");
     assert_eq!(item.ec_texture_id, 100);
     assert_eq!(item.cc_texture_id, 200);
+    assert_eq!(item.visual_kind(), TileMetaItemVisualKind::RegularArt);
 }
 
 #[test]
@@ -139,4 +142,13 @@ fn tilemeta_item_defaults_cc_texture_to_owning_tile_id() {
     };
 
     assert_eq!(item.cc_texture_id, tile_id);
+}
+
+#[test]
+fn tilemeta_item_visual_kind_roundtrips_in_padding_byte() {
+    let mut item = TileMetaItemTile::zeroed();
+    item.set_visual_kind(TileMetaItemVisualKind::SurfaceLike);
+
+    assert!(item.is_surface_like());
+    assert_eq!(item.visual_kind(), TileMetaItemVisualKind::SurfaceLike);
 }

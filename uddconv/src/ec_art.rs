@@ -48,6 +48,8 @@ use uocf::{
     },
 };
 
+use crate::upscale::UpscaleFilter;
+
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
@@ -69,7 +71,6 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EcArtAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
@@ -81,6 +82,8 @@ pub struct EcArtAtlasOptions {
     /// When `true` each atlas page is BC7-compressed on the CPU before being
     /// stored in the UDDP container, reducing VRAM usage by ~8×.
     pub use_bc7: bool,
+    pub planar_shuffle: bool,
+    pub upscale: UpscaleFilter,
 }
 
 impl Default for EcArtAtlasOptions {
@@ -91,6 +94,8 @@ impl Default for EcArtAtlasOptions {
             gutter: DEFAULT_ATLAS_GUTTER,
             crop_transparent_bounds: false,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         }
     }
 }
@@ -417,7 +422,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
         &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
-        options.crop_transparent_bounds,
+        options,
     )?;
 
     let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
@@ -430,6 +435,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -438,6 +444,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -510,6 +517,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression,
+            apply_planar: options.planar_shuffle && !options.use_bc7,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -534,12 +542,15 @@ pub fn compute_ec_art_crop_adjustments_from_sources(
     source_dirs: &[PathBuf],
 ) -> eyre::Result<Vec<Option<EcArtCropAdjustment>>> {
     let sources = load_ec_art_sources(source_dirs)?;
+    let mut options = EcArtAtlasOptions::default();
+    options.crop_transparent_bounds = true;
+
     let (_decoded_tiles, aliases, canonical_adjustments) = decode_present_tiles(
         &sources.art_definition,
         &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
-        true,
+        &options,
     )?;
 
     Ok(build_crop_adjustment_lookup(
@@ -622,7 +633,7 @@ fn decode_present_tiles(
     terrain_source_texture_ids: &HashSet<u32>,
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
-    crop_transparent_bounds: bool,
+    options: &EcArtAtlasOptions,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
@@ -738,7 +749,7 @@ fn decode_present_tiles(
                 source_height,
                 &group.texture_bounds,
             );
-            let (width, height, rgba, crop_adjustment) = if crop_transparent_bounds {
+            let (width, height, rgba, crop_adjustment) = if options.crop_transparent_bounds {
                 crop_rgba_tile_to_bounds(
                     source_width,
                     source_height,
@@ -746,12 +757,21 @@ fn decode_present_tiles(
                     clip_rect,
                 )?
             } else {
-                apply_requested_clip_rect(source_width,
+                apply_requested_clip_rect(
+                    source_width,
                     source_height,
                     rgba.into_raw(),
                     clip_rect,
                 )?
             };
+
+            let (width, height, rgba) = if !matches!(options.upscale, UpscaleFilter::None) {
+                let (w, h, rgba) = options.upscale.apply(width as u32, height as u32, &rgba);
+                (w as u16, h as u16, rgba)
+            } else {
+                (width, height, rgba)
+            };
+
             decode_pb.inc(1);
             Ok(DecodedArtDecodeGroup {
                 canonical_art_id: group.canonical_art_id,
@@ -1433,6 +1453,8 @@ pub fn encode_slot_manifest(
             gutter,
             crop_transparent_bounds: false,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         },
     )
 }

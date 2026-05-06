@@ -3,9 +3,9 @@
 //! This module converts Classic Client `mapX.mul` files into UODynamapper's
 //! compressed runtime format.
 //!
-//! The goal is to store each 8x8 map block as a separate entry in a `.uddp`
+//! The goal is to store each 32x32 map chunk as a separate entry in a `.uddp`
 //! package, using a format that matches the GPU's metadata atlas:
-//! - Each block is 64 tiles.
+//! - Each package chunk is 1024 tiles, laid out as a 32x32 texel grid.
 //! - Each tile is stored as a 4-byte `Rg16u` (matching the shader's `TileUniform`).
 //! - `Rg16u.r`: Initialized with the Classic `tile_id`.
 //! - `Rg16u.g`: Initialized with `[height_biased:low 8 | mode:high 8]`.
@@ -42,11 +42,15 @@ impl Rg16u {
     }
 }
 
+const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
+const PACKAGE_CHUNK_TILE_DIM: usize = 32;
+const PACKAGE_CHUNK_TEXEL_COUNT: usize = PACKAGE_CHUNK_TILE_DIM * PACKAGE_CHUNK_TILE_DIM;
+
 pub struct CcMapBuildSummary {
     pub map_id: u32,
-    pub block_count: u32,
-    pub width_blocks: u32,
-    pub height_blocks: u32,
+    pub chunk_count: u32,
+    pub width_chunks: u32,
+    pub height_chunks: u32,
 }
 
 pub fn convert_map_mul_to_uddp_from_sources(
@@ -63,66 +67,80 @@ pub fn convert_map_mul_to_uddp_from_sources(
     let mut plane = MapPlane::init(map_path, map_id)?;
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;
-    let total_blocks = width_blocks * height_blocks;
+    let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
+    let height_chunks = height_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
+    let total_chunks = width_chunks * height_chunks;
 
     let mut builder = UddpBuilder::new(LookupMode::DenseId);
-    
-    let pb = ProgressBar::new(total_blocks as u64);
+
+    let pb = ProgressBar::new(total_chunks as u64);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} blocks ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} chunks ({eta})")
             .unwrap()
             .progress_chars("#>-"),
     );
 
-    // We process the map in batches of blocks to improve disk I/O.
-    let batch_size = 1024;
-    let mut current_batch = Vec::with_capacity(batch_size);
+    for chunk_x in 0..width_chunks {
+        for chunk_y in 0..height_chunks {
+            let block_origin_x = chunk_x * PACKAGE_CHUNK_BLOCK_DIM;
+            let block_origin_y = chunk_y * PACKAGE_CHUNK_BLOCK_DIM;
+            let block_end_x = (block_origin_x + PACKAGE_CHUNK_BLOCK_DIM).min(width_blocks);
+            let block_end_y = (block_origin_y + PACKAGE_CHUNK_BLOCK_DIM).min(height_blocks);
 
-    for x in 0..width_blocks {
-        for y in 0..height_blocks {
-            current_batch.push(uocf::classic::map::MapBlockRelPos { x, y });
-
-            if current_batch.len() >= batch_size || (x == width_blocks - 1 && y == height_blocks - 1) {
-                plane.load_blocks(&mut current_batch)?;
-
-                for &pos in &current_batch {
-                    let block = plane.block(pos).ok_or_else(|| eyre::eyre!("failed to load block at {},{}", pos.x, pos.y))?;
-                    
-                    let mut texels = [Rg16u { r: 0, g: 0 }; 64];
-                    for (i, cell) in block.cells.iter().enumerate() {
-                        texels[i] = Rg16u::pack(cell.id, cell.z, 0);
-                    }
-                    
-                    let block_index = pos.x * height_blocks + pos.y;
-                    builder.add_file(AddFileRequest {
-                        data_type: DataType::Map as u8,
-                        compression: CompressionFlag::ZstdNoDict,
-                        virtual_path: None,
-                        path_hash64: None,
-                        id: Some(block_index),
-                        data: bytemuck::cast_slice(&texels),
-                    })?;
-                    
-                    pb.inc(1);
+            let mut block_positions = Vec::with_capacity(PACKAGE_CHUNK_TEXEL_COUNT / 64);
+            for block_x in block_origin_x..block_end_x {
+                for block_y in block_origin_y..block_end_y {
+                    block_positions.push(uocf::classic::map::MapBlockRelPos {
+                        x: block_x,
+                        y: block_y,
+                    });
                 }
-                
-                // Evict blocks from plane to keep memory usage low.
-                // MapPlane doesn't have a direct "clear cache" but we can use evict_idle_blocks with 0 timeout.
-                plane.evict_idle_blocks(std::time::Duration::from_secs(0));
-                current_batch.clear();
             }
+
+            plane.load_blocks(&mut block_positions)?;
+
+            let mut texels = [Rg16u { r: 0, g: 0 }; PACKAGE_CHUNK_TEXEL_COUNT];
+            for &pos in &block_positions {
+                let block = plane
+                    .block(pos)
+                    .ok_or_else(|| eyre::eyre!("failed to load block at {},{}", pos.x, pos.y))?;
+                let block_base_x = ((pos.x - block_origin_x) * 8) as usize;
+                let block_base_y = ((pos.y - block_origin_y) * 8) as usize;
+
+                for (cell_index, cell) in block.cells.iter().enumerate() {
+                    let local_x = cell_index & 7;
+                    let local_y = cell_index >> 3;
+                    let texel_index =
+                        (block_base_y + local_y) * PACKAGE_CHUNK_TILE_DIM + (block_base_x + local_x);
+                    texels[texel_index] = Rg16u::pack(cell.id, cell.z, 0);
+                }
+            }
+
+            let chunk_index = chunk_x * height_chunks + chunk_y;
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Map as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                apply_planar: false,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(chunk_index),
+                data: bytemuck::cast_slice(&texels),
+            })?;
+
+            plane.evict_idle_blocks(std::time::Duration::from_secs(0));
+            pb.inc(1);
         }
     }
-    
-    pb.finish_with_message("Map blocks packed");
-    
+
+    pb.finish_with_message("Map chunks packed");
+
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(CcMapBuildSummary {
         map_id,
-        block_count: total_blocks,
-        width_blocks,
-        height_blocks,
+        chunk_count: total_chunks,
+        width_chunks,
+        height_chunks,
     })
 }

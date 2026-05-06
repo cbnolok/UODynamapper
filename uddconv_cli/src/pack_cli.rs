@@ -28,6 +28,7 @@ use uddconv::{
     },
     cc_map::convert_map_mul_to_uddp_from_sources,
     cc_statics::convert_statics_mul_to_uddp_from_sources,
+    upscale::UpscaleFilter,
 };
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
@@ -67,6 +68,30 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
         })
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default)]
+enum CliUpscaleFilter {
+    #[default]
+    None,
+    Lq2x,
+    Lq3x,
+    Lq4x,
+    SuperSai,
+    AmdEasu,
+}
+
+impl From<CliUpscaleFilter> for UpscaleFilter {
+    fn from(val: CliUpscaleFilter) -> Self {
+        match val {
+            CliUpscaleFilter::None => UpscaleFilter::None,
+            CliUpscaleFilter::Lq2x => UpscaleFilter::Lq2x,
+            CliUpscaleFilter::Lq3x => UpscaleFilter::Lq3x,
+            CliUpscaleFilter::Lq4x => UpscaleFilter::Lq4x,
+            CliUpscaleFilter::SuperSai => UpscaleFilter::SuperSai,
+            CliUpscaleFilter::AmdEasu => UpscaleFilter::AmdEasu,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Packs classic art.mul/artidx.mul into cc_art.uddp atlas pages.
@@ -81,16 +106,20 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, help = "Use BC7 compression (VRAM optimization). Mutually exclusive with --planar.")]
         bc7: bool,
+        #[arg(long, default_value_t = false, help = "Use planar shuffle (Storage optimization). Mutually exclusive with --bc7.")]
+        planar: bool,
+        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
+        upscale: CliUpscaleFilter,
     },
-    /// Packs EC art and land in one shared source pass into ec_tex_art.uddp and ec_tex_land.uddp.
+    /// Packs EC art and land in one shared source pass into ec_art.uddp and ec_land.uddp.
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_tex_art.uddp")]
+        #[arg(long, default_value = "ec_art.uddp")]
         art_output: PathBuf,
-        #[arg(long, default_value = "ec_tex_land.uddp")]
+        #[arg(long, default_value = "ec_land.uddp")]
         land_output: PathBuf,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
         art_atlas_width: u32,
@@ -104,8 +133,12 @@ enum Commands {
         land_atlas_height: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
         land_gutter: u16,
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, help = "Use BC7 compression for land (VRAM optimization). Mutually exclusive with --planar.")]
         land_bc7: bool,
+        #[arg(long, default_value_t = false, help = "Use planar shuffle (Storage optimization). Mutually exclusive with --land-bc7.")]
+        planar: bool,
+        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
+        upscale: CliUpscaleFilter,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
@@ -170,13 +203,18 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             bc7,
+            planar,
+            upscale,
         } => {
+            if bc7 && planar {
+                eprintln!("WARNING: Both --bc7 and --planar provided. BC7 takes precedence; planar shuffle will be disabled.");
+            }
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let summary = convert_art_mul_to_cc_art_uddp_from_sources(
                 &paths,
                 &out_file,
-                &CcArtAtlasOptions { atlas_width, atlas_height, gutter, use_bc7: bc7 },
+                &CcArtAtlasOptions { atlas_width, atlas_height, gutter, use_bc7: bc7, planar_shuffle: planar, upscale: upscale.into() },
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
@@ -198,12 +236,17 @@ pub fn run() -> eyre::Result<()> {
             land_atlas_height,
             land_gutter,
             land_bc7,
+            planar,
+            upscale,
         } => {
+            if land_bc7 && planar {
+                eprintln!("WARNING: Both --land-bc7 and --planar provided. Land planar shuffle will be disabled.");
+            }
             let paths = collect_source_dirs(&source_dir_args)?;
             let art_out_file = resolve_output_path(&paths, &art_output);
             let land_out_file = resolve_output_path(&paths, &land_output);
             let shared_sources = load_ec_art_sources(&paths)?;
-
+            let upscale_filter = UpscaleFilter::from(upscale);
             let art_summary = convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
@@ -213,11 +256,14 @@ pub fn run() -> eyre::Result<()> {
                     gutter: art_gutter,
                     crop_transparent_bounds: false,
                     use_bc7: false,
+                    planar_shuffle: planar,
+                    upscale: upscale_filter,
                 },
             )?;
             println!(
-                "Wrote {} pages (RGBA8888) for {} populated art slots out of {} total slots to '{}'.",
+                "Wrote {} pages (RGBA8888{}) for {} populated art slots out of {} total slots to '{}'.",
                 art_summary.page_count,
+                if planar { " + Planar" } else { "" },
                 art_summary.populated_slot_count,
                 art_summary.slot_count,
                 art_out_file.display()
@@ -237,6 +283,8 @@ pub fn run() -> eyre::Result<()> {
                     atlas_height: land_atlas_height,
                     gutter: land_gutter,
                     use_bc7: land_bc7,
+                    planar_shuffle: planar,
+                    upscale: upscale_filter,
                 },
             )?;
             println!(
@@ -289,12 +337,12 @@ pub fn run() -> eyre::Result<()> {
                 map_id,
             )?;
             println!(
-                "Wrote {} blocks for map {} to '{}' ({}x{} blocks).",
-                summary.block_count,
+                "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
+                summary.chunk_count,
                 summary.map_id,
                 out_file.display(),
-                summary.width_blocks,
-                summary.height_blocks,
+                summary.width_chunks,
+                summary.height_chunks,
             );
         }
         Commands::PackStatics {
@@ -311,8 +359,8 @@ pub fn run() -> eyre::Result<()> {
                 map_id,
             )?;
             println!(
-                "Wrote {} blocks with {} total statics for map {} to '{}'.",
-                summary.block_count,
+                "Wrote {} chunks with {} total statics for map {} to '{}'.",
+                summary.chunk_count,
                 summary.total_statics,
                 summary.map_id,
                 out_file.display(),
@@ -442,9 +490,9 @@ mod tests {
             "--ecdir",
             "/ec",
             "--art-output",
-            "ec_tex_art.uddp",
+            "ec_art.uddp",
             "--land-output",
-            "ec_tex_land.uddp",
+            "ec_land.uddp",
             "--land-bc7",
         ])
         .expect("parse unified ec texture args");
@@ -458,8 +506,8 @@ mod tests {
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert_eq!(art_output, PathBuf::from("ec_tex_art.uddp"));
-                assert_eq!(land_output, PathBuf::from("ec_tex_land.uddp"));
+                assert_eq!(art_output, PathBuf::from("ec_art.uddp"));
+                assert_eq!(land_output, PathBuf::from("ec_land.uddp"));
                 assert!(land_bc7);
             }
             _ => panic!("unexpected command parsed"),

@@ -80,7 +80,7 @@ fn build_radar_rgba_pixels(
     let height_tiles = plane.size_cells().height;
 
     println!("Loading all statics into memory...");
-    let mut statics_reader = StaticsReader::new(&staidx_path, &statics_path, width_tiles, height_tiles)?;
+    let statics_reader = StaticsReader::new(&staidx_path, &statics_path, width_tiles, height_tiles)?;
     let statics_store = statics_reader.load_all()?;
 
     println!("Generating radar image ({}x{})...", width_tiles, height_tiles);

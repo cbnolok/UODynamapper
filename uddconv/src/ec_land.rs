@@ -48,6 +48,8 @@ use uocf::{
     },
 };
 
+use crate::upscale::UpscaleFilter;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TerrainTextureSelection {
     slot_id: u32,
@@ -88,7 +90,6 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EcLandAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
@@ -96,6 +97,8 @@ pub struct EcLandAtlasOptions {
     /// When `true` each atlas page is BC7-compressed on the CPU before being
     /// stored in the UDDP container, reducing VRAM usage by ~8×.
     pub use_bc7: bool,
+    pub planar_shuffle: bool,
+    pub upscale: UpscaleFilter,
 }
 
 impl Default for EcLandAtlasOptions {
@@ -105,6 +108,8 @@ impl Default for EcLandAtlasOptions {
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         }
     }
 }
@@ -549,7 +554,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     let unique_source_texture_count = source_texture_ids.len() as u32;
     let unique_texture_selection_count = selections.len() as u32;
     let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
-        decode_present_tiles(world_textures, legacy_textures, terrain_definition)?;
+        decode_present_tiles(world_textures, legacy_textures, terrain_definition, options)?;
     let slot_count = land_slot_ids
         .iter()
         .copied()
@@ -602,6 +607,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(UDDP_PAGE_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -610,6 +616,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(UDDP_SLOT_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -618,6 +625,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
+        apply_planar: false,
         virtual_path: Some(UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -629,6 +637,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
+            apply_planar: false,
             virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -705,6 +714,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression,
+            apply_planar: options.planar_shuffle && !options.use_bc7,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -801,6 +811,7 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     terrain_definition: &TerrainDefinitionPackage,
+    options: &EcLandAtlasOptions,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
@@ -846,11 +857,19 @@ fn decode_present_tiles(
     let mut decoded_texture_cache = HashMap::with_capacity(decoded_textures.len());
     for decoded_texture in decoded_textures {
         let (texture_id, decoded) = decoded_texture?;
-        decoded_texture_cache.insert(texture_id, decoded);
+        if let Some(mut decoded) = decoded {
+            if !matches!(options.upscale, UpscaleFilter::None) {
+                let (w, h, rgba) = options.upscale.apply(decoded.width, decoded.height, &decoded.rgba);
+                decoded.width = w;
+                decoded.height = h;
+                decoded.rgba = rgba;
+            }
+            decoded_texture_cache.insert(texture_id, decoded);
+        }
     }
 
     for texture_id in &texture_ids {
-        let Some(decoded) = decoded_texture_cache.get(texture_id).cloned().flatten() else {
+        let Some(decoded) = decoded_texture_cache.get(texture_id).cloned() else {
             ignored_source_texture_ids.push(*texture_id);
             continue;
         };
@@ -1285,6 +1304,8 @@ pub fn encode_slot_manifest(
             atlas_height,
             gutter,
             use_bc7: false,
+            planar_shuffle: false,
+            upscale: UpscaleFilter::default(),
         },
     )
 }

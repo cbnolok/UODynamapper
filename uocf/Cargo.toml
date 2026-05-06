@@ -24,13 +24,13 @@ wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
 bitflags = "2"
 nohash-hasher = "0.2.0"
-indexmap = "2.13.0"
+indexmap = "2.14.0"
 # Standard Rust log facade — allows uocf to emit log events without
 # coupling to any specific logger implementation (the app provides the backend).
 log = { version = "0.4", default-features = false }
 adler32 = "1.2.0"
-flate2 = { version = "1.0.30", features = ["zlib-ng"], default-features = false }
-rayon = "1.8.0"
+flate2 = { version = "1.1.9", features = ["zlib-ng"], default-features = false }
+rayon = "1.12.0"
 zstd = "0.13"
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -42,4 +42,4 @@ profiling = []
 tile_mappings_builder = []
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.8.6"

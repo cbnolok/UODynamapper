@@ -78,8 +78,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-x86_64
+          mkdir -p artifact/dynamapper-linux-x86_64/utils
           cp target/release/dynamapper artifact/dynamapper-linux-x86_64/
+          cp target/release/uddp_inspector target/release/uddconv_cli target/release/uddconv_gui target/release/uoptool target/release/cc_uop_mul_converter artifact/dynamapper-linux-x86_64/utils/
           cp -r assets artifact/dynamapper-linux-x86_64/
           cp README.md artifact/dynamapper-linux-x86_64/ 2>/dev/null || true
 
@@ -134,8 +135,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-arm64
+          mkdir -p artifact/dynamapper-linux-arm64/utils
           cp target/aarch64-unknown-linux-gnu/release/dynamapper artifact/dynamapper-linux-arm64/
+          cp target/aarch64-unknown-linux-gnu/release/uddp_inspector target/aarch64-unknown-linux-gnu/release/uddconv_cli target/aarch64-unknown-linux-gnu/release/uddconv_gui target/aarch64-unknown-linux-gnu/release/uoptool target/aarch64-unknown-linux-gnu/release/cc_uop_mul_converter artifact/dynamapper-linux-arm64/utils/
           cp -r assets artifact/dynamapper-linux-arm64/
           cp README.md artifact/dynamapper-linux-arm64/ 2>/dev/null || true
 
@@ -185,8 +187,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-x86_64-musl
+          mkdir -p artifact/dynamapper-linux-x86_64-musl/utils
           cp target/x86_64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-x86_64-musl/
+          cp target/x86_64-unknown-linux-musl/release/uddp_inspector target/x86_64-unknown-linux-musl/release/uddconv_cli target/x86_64-unknown-linux-musl/release/uddconv_gui target/x86_64-unknown-linux-musl/release/uoptool target/x86_64-unknown-linux-musl/release/cc_uop_mul_converter artifact/dynamapper-linux-x86_64-musl/utils/
           cp -r assets artifact/dynamapper-linux-x86_64-musl/
           cp README.md artifact/dynamapper-linux-x86_64-musl/ 2>/dev/null || true
 
@@ -236,8 +239,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-arm64-musl
+          mkdir -p artifact/dynamapper-linux-arm64-musl/utils
           cp target/aarch64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-arm64-musl/
+          cp target/aarch64-unknown-linux-musl/release/uddp_inspector target/aarch64-unknown-linux-musl/release/uddconv_cli target/aarch64-unknown-linux-musl/release/uddconv_gui target/aarch64-unknown-linux-musl/release/uoptool target/aarch64-unknown-linux-musl/release/cc_uop_mul_converter artifact/dynamapper-linux-arm64-musl/utils/
           cp -r assets artifact/dynamapper-linux-arm64-musl/
           cp README.md artifact/dynamapper-linux-arm64-musl/ 2>/dev/null || true
 
@@ -279,8 +283,9 @@ jobs:
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64" | Out-Null
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64/utils" | Out-Null
           Copy-Item -Path "target/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64/"
+          Copy-Item -Path "target/release/uddp_inspector.exe", "target/release/uddconv_cli.exe", "target/release/uddconv_gui.exe", "target/release/uoptool.exe", "target/release/cc_uop_mul_converter.exe" -Destination "artifact/dynamapper-windows-x86_64/utils/"
           Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64/" -Recurse
           if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64/" }
 
@@ -342,8 +347,9 @@ jobs:
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64-clang" | Out-Null
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64-clang/utils" | Out-Null
           Copy-Item -Path "target/x86_64-pc-windows-gnu/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64-clang/"
+          Copy-Item -Path "target/x86_64-pc-windows-gnu/release/uddp_inspector.exe", "target/x86_64-pc-windows-gnu/release/uddconv_cli.exe", "target/x86_64-pc-windows-gnu/release/uddconv_gui.exe", "target/x86_64-pc-windows-gnu/release/uoptool.exe", "target/x86_64-pc-windows-gnu/release/cc_uop_mul_converter.exe" -Destination "artifact/dynamapper-windows-x86_64-clang/utils/"
           Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64-clang/" -Recurse
           if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64-clang/" }
 
@@ -387,8 +393,9 @@ jobs:
       - name: Package binary and assets
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-arm64" | Out-Null
+          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-arm64/utils" | Out-Null
           Copy-Item -Path "target/aarch64-pc-windows-msvc/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-arm64/"
+          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/uddp_inspector.exe", "target/aarch64-pc-windows-msvc/release/uddconv_cli.exe", "target/aarch64-pc-windows-msvc/release/uddconv_gui.exe", "target/aarch64-pc-windows-msvc/release/uoptool.exe", "target/aarch64-pc-windows-msvc/release/cc_uop_mul_converter.exe" -Destination "artifact/dynamapper-windows-arm64/utils/"
           Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-arm64/" -Recurse
           if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-arm64/" }
 
@@ -432,8 +439,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-macos-x86_64
+          mkdir -p artifact/dynamapper-macos-x86_64/utils
           cp target/x86_64-apple-darwin/release/dynamapper artifact/dynamapper-macos-x86_64/
+          cp target/x86_64-apple-darwin/release/uddp_inspector target/x86_64-apple-darwin/release/uddconv_cli target/x86_64-apple-darwin/release/uddconv_gui target/x86_64-apple-darwin/release/uoptool target/x86_64-apple-darwin/release/cc_uop_mul_converter artifact/dynamapper-macos-x86_64/utils/
           cp -r assets artifact/dynamapper-macos-x86_64/
           cp README.md artifact/dynamapper-macos-x86_64/ 2>/dev/null || true
 
@@ -477,8 +485,9 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-macos-arm64
+          mkdir -p artifact/dynamapper-macos-arm64/utils
           cp target/aarch64-apple-darwin/release/dynamapper artifact/dynamapper-macos-arm64/
+          cp target/aarch64-apple-darwin/release/uddp_inspector target/aarch64-apple-darwin/release/uddconv_cli target/aarch64-apple-darwin/release/uddconv_gui target/aarch64-apple-darwin/release/uoptool target/aarch64-apple-darwin/release/cc_uop_mul_converter artifact/dynamapper-macos-arm64/utils/
           cp -r assets artifact/dynamapper-macos-arm64/
           cp README.md artifact/dynamapper-macos-arm64/ 2>/dev/null || true
 

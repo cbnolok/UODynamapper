@@ -9,8 +9,9 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 
-use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict, Cursor};
+use super::support::{checked_region, unpack_planar, zstd_decompress, zstd_decompress_with_dict, Cursor};
 use memmap2::Mmap;
+use super::planar;
 use super::*;
 
 #[derive(Debug, Clone, Copy)]
@@ -214,6 +215,15 @@ impl UddpReader {
         self.data.len()
     }
 
+    /// Reads raw bytes from the package image at the given offset.
+    pub fn read_entry(&self, offset: u64, dest: &mut [u8]) -> Result<(), FormatError> {
+        let offset = usize::try_from(offset).map_err(|_| FormatError::Overflow)?;
+        let end = offset.checked_add(dest.len()).ok_or(FormatError::Overflow)?;
+        let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
+        dest.copy_from_slice(data);
+        Ok(())
+    }
+
     pub fn dictionary_records(&self) -> Vec<(u8, Codec, u32)> {
         let mut records = self
             .dict_by_type
@@ -298,17 +308,25 @@ impl UddpReader {
         let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
         let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
 
-        match unpack_codec(locator.meta32) {
-            Codec::None => Ok(data.to_vec()),
-            Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io),
+        let mut decoded = match unpack_codec(locator.meta32) {
+            Codec::None => data.to_vec(),
+            Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
             Codec::ZstdTypeDict => {
                 let data_type = unpack_type(locator.meta32);
                 let dict = self
                     .dictionary_for_type(data_type)
                     .ok_or(FormatError::MissingDictionary(data_type))?;
-                zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)
+                zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)?
             }
-            Codec::Reserved => Err(FormatError::UnsupportedCodec),
+            Codec::Reserved => return Err(FormatError::UnsupportedCodec),
+        };
+
+        if unpack_planar(locator.meta32) {
+            let mut rgba = vec![0u8; decoded.len()];
+            planar::transform_planar_to_rgba(&decoded, &mut rgba);
+            decoded = rgba;
         }
+
+        Ok(decoded)
     }
 }

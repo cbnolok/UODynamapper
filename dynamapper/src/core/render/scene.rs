@@ -98,13 +98,18 @@ pub fn sys_setup_scene(mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
 pub fn sys_update_scene_on_window_resize(
     mut resize_events: MessageReader<WindowResized>,
     mut writer: MessageWriter<RecomputeVisibleChunksEvent>,
+    mut settings: ResMut<Settings>,
 ) {
     let mut saw_resize = false;
-    for _ in resize_events.read() {
+    let mut last_size = (0.0, 0.0);
+    for event in resize_events.read() {
         saw_resize = true;
+        last_size = (event.width, event.height);
     }
 
     if saw_resize {
+        settings.app.window.width = last_size.0;
+        settings.app.window.height = last_size.1;
         writer.write(RecomputeVisibleChunksEvent {});
     }
 }
@@ -133,10 +138,8 @@ fn log_chunk_despawn(gx: u32, gy: u32, map: u32) {
 /// `Camera::viewport_to_world()` which relies on Bevy's internal
 /// view-projection matrices that are 1 frame stale during `Update`.
 ///
-/// When `chunk_scale > 1`, the grid is iterated at a coarser granularity:
-///   scale 2 → 16×16 tile super-chunks (4× fewer entities)
-///   scale 4 → 32×32 tile super-chunks (16× fewer entities)
-/// Returned coordinates are in the base 8×8 grid, aligned to `chunk_scale` boundaries.
+/// When `chunk_scale > 1`, the grid is iterated at a coarser granularity.
+/// Returned coordinates are in the base logical 32×32 grid, aligned to `chunk_scale` boundaries.
 fn compute_visible_chunks(
     player_translation: Vec3,
     zoom: f32,
@@ -207,7 +210,7 @@ fn compute_visible_chunks(
         Vec::with_capacity(((chunk_x1 - chunk_x0) * (chunk_y1 - chunk_y0)).max(0) as usize);
     for gx in chunk_x0.max(0)..chunk_x1 {
         for gy in chunk_y0.max(0)..chunk_y1 {
-            // Coordinates in the base 8×8 grid, aligned to chunk_scale boundaries.
+            // Coordinates in the base logical 32×32 grid, aligned to chunk_scale boundaries.
             let base_gx = (gx as u32) * chunk_scale;
             let base_gy = (gy as u32) * chunk_scale;
             // Ensure the ENTIRE super-chunk fits within map bounds.

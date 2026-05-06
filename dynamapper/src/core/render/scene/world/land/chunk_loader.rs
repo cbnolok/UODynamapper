@@ -6,7 +6,7 @@
 //! ## Protocol
 //!
 //! 1. The main-thread draw system sends a [`LoadRequest`] with the list of
-//!    uncached block coordinates, the map-file path, and an `Arc<TexMap2D>`.
+//!    uncached block coordinates, the map package reader, and an `Arc<TexMap2D>`.
 //! 2. This thread breaks the request into sub-batches of `SUB_BATCH_SIZE`
 //!    blocks, loading each batch and sending a [`LoadResult`] back immediately.
 //!    This lets the main thread start rendering deferred chunks progressively
@@ -14,17 +14,15 @@
 //! 3. The final sub-batch has `is_final = true`, signalling to the main thread
 //!    that the request is complete and a new one can be dispatched.
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use uocf::classic::land_texture::TexMap;
-use uocf::classic::map::{self, MapBlock, MapBlockRelPos};
+use uocf::classic::map::{MapBlock, MapBlockRelPos};
+use uocf::udd::UddpReader;
 
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::maps;
 
 /// Number of blocks per sub-batch.  Tuned so each sub-batch takes ~10-30 ms,
 /// giving the main thread frequent opportunities to poll and render while
@@ -36,7 +34,7 @@ const SUB_BATCH_SIZE: usize = 8192;
 // ---------------------------------------------------------------------------
 
 pub struct LoadRequest {
-    pub map_file_path: PathBuf,
+    pub map_package: Arc<UddpReader>,
     pub size_blocks_height: u32,
     pub blocks_to_load: Vec<MapBlockRelPos>,
     /// Shared handle used to warm the texture pixel-data cache on this thread
@@ -98,18 +96,7 @@ impl ChunkLoaderThread {
 // Thread entry-point
 // ---------------------------------------------------------------------------
 
-/// Per-map persistent file state kept alive across requests so we don't
-/// re-open the file for every zoom/pan.
-struct MapFileState {
-    reader: BufReader<File>,
-    size_blocks_height: u32,
-    read_buffer: Vec<u8>,
-    seen_ids: Box<[u64; 1024]>,
-}
-
 fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResult>) {
-    let mut open_maps: HashMap<PathBuf, MapFileState> = HashMap::new();
-
     while let Ok(req) = rx.recv() {
         let t0 = Instant::now();
         let total_blocks = req.blocks_to_load.len();
@@ -117,24 +104,6 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
             "worldmap::chunk_loader_request",
             requested_blocks = total_blocks
         );
-
-        // Get (or lazily open) a persistent file handle for this map file.
-        let state = open_maps
-            .entry(req.map_file_path.clone())
-            .or_insert_with(|| {
-                let file = File::open(&req.map_file_path).unwrap_or_else(|e| {
-                    panic!(
-                        "chunk-loader: failed to open {:?}: {}",
-                        req.map_file_path, e
-                    )
-                });
-                MapFileState {
-                    reader: BufReader::new(file),
-                    size_blocks_height: req.size_blocks_height,
-                    read_buffer: Vec::new(),
-                    seen_ids: Box::new([0u64; 1024]),
-                }
-            });
 
         // ── Process in sub-batches ───────────────────────────────────────
         let chunks_iter = req.blocks_to_load.chunks(SUB_BATCH_SIZE);
@@ -159,7 +128,7 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
         // even though the same ID may appear in thousands of cells across hundreds
         // of map blocks.
         let mut seen_count = 0usize;
-        state.seen_ids.fill(0);
+        let mut seen_ids = Box::new([0u64; 1024]);
 
         for batch_slice in chunks_iter {
             batch_idx += 1;
@@ -171,11 +140,10 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                 is_final = is_final
             );
 
-            let loaded_blocks = map::load_blocks_from_reader(
-                &mut state.reader,
+            let loaded_blocks = maps::load_blocks_from_package(
+                req.map_package.as_ref(),
                 batch_slice,
-                state.size_blocks_height,
-                &mut state.read_buffer,
+                req.size_blocks_height,
             )
             .unwrap_or_else(|e| {
                 eprintln!("chunk-loader: load_blocks failed: {e}");
@@ -188,8 +156,8 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                 for cell in &block.cells {
                     let word = (cell.id as usize) >> 6;
                     let bit = (cell.id as usize) & 63;
-                    if (state.seen_ids[word] & (1 << bit)) == 0 {
-                        state.seen_ids[word] |= 1 << bit;
+                    if (seen_ids[word] & (1u64 << bit)) == 0 {
+                        seen_ids[word] |= 1u64 << bit;
                         seen_count += 1;
                         let _ = req.texmap_2d.preload_pixel_data(cell.id as usize);
                     }

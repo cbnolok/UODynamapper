@@ -19,15 +19,21 @@ use super::*;
 
 const ZSTD_LEVEL: i32 = 9;
 
+/// If set, the payload has been de-interleaved into planar format
+/// (all R, then all G, then all B, then all A) before compression.
+pub const META_PLANAR_FLAG: u32 = 1 << 16;
+
 /// Pack the public metadata word stored in every file locator.
-pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32) -> Meta32 {
+pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32, planar: bool) -> Meta32 {
     let ty = (data_type as u32) & 0x3F;
     let co = ((codec as u32) & 0x03) << 6;
     let delta_hi = ((delta32 >> 24) & 0xFF) << 8;
-    ty | co | delta_hi
+    let pla = if planar { META_PLANAR_FLAG } else { 0 };
+    ty | co | delta_hi | pla
 }
 
 /// Extract the 6-bit type id from a packed metadata word.
+#[inline(always)]
 pub fn unpack_type(meta32: Meta32) -> u8 {
     (meta32 & 0x3F) as u8
 }
@@ -38,8 +44,15 @@ pub fn unpack_codec(meta32: Meta32) -> Codec {
 }
 
 /// Extract the high 8 bits of the 32-bit compression delta.
+#[inline(always)]
 pub fn unpack_delta_hi8(meta32: Meta32) -> u32 {
     (meta32 >> 8) & 0xFF
+}
+
+/// Extract the planar transform flag from a packed metadata word.
+#[inline(always)]
+pub fn unpack_planar(meta32: Meta32) -> bool {
+    (meta32 & META_PLANAR_FLAG) != 0
 }
 
 /// Pack the payload offset and low 24 delta bits into the position word.
@@ -50,11 +63,13 @@ pub fn pack_pos64(offset: u64, delta32: u32) -> Pos64 {
 }
 
 /// Extract the 40-bit payload offset from a packed position word.
+#[inline(always)]
 pub fn unpack_offset40(pos64: Pos64) -> u64 {
     pos64 & ((1u64 << 40) - 1)
 }
 
 /// Extract the low 24 bits of the 32-bit compression delta.
+#[inline(always)]
 pub fn unpack_delta_lo24(pos64: Pos64) -> u32 {
     (pos64 >> 40) as u32
 }
@@ -68,7 +83,9 @@ pub fn unpack_delta32(meta32: Meta32, pos64: Pos64) -> u32 {
 pub fn reconstruct_stored_size(raw_size: u32, meta32: Meta32, pos64: Pos64) -> u32 {
     match unpack_codec(meta32) {
         Codec::None => raw_size,
-        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Reserved => raw_size - unpack_delta32(meta32, pos64),
+        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Reserved => {
+            raw_size - unpack_delta32(meta32, pos64)
+        }
     }
 }
 
@@ -301,7 +318,9 @@ impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingIdForSparseMode => write!(f, "missing id for sparse-id package"),
-            Self::MissingPathForPathMode => write!(f, "missing path or path hash for path-hash package"),
+            Self::MissingPathForPathMode => {
+                write!(f, "missing path or path hash for path-hash package")
+            }
             Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::FileTooLarge(v) => write!(f, "file too large: {v}"),
             Self::PackageTooLarge(v) => write!(f, "package too large: {v}"),
@@ -347,10 +366,16 @@ impl fmt::Display for PatchError {
             Self::InvalidPatchContainer => write!(f, "invalid patch container"),
             Self::InvalidPatchManifest => write!(f, "invalid patch manifest"),
             Self::WrongBasePackageHash { expected, got } => {
-                write!(f, "wrong base package hash: expected {expected:#x}, got {got:#x}")
+                write!(
+                    f,
+                    "wrong base package hash: expected {expected:#x}, got {got:#x}"
+                )
             }
             Self::WrongResultPackageHash { expected, got } => {
-                write!(f, "wrong resulting package hash: expected {expected:#x}, got {got:#x}")
+                write!(
+                    f,
+                    "wrong resulting package hash: expected {expected:#x}, got {got:#x}"
+                )
             }
             Self::OldFileHashMismatch => write!(f, "old file hash mismatch"),
             Self::ReplacementHashMismatch => write!(f, "replacement file hash mismatch"),
@@ -366,6 +391,36 @@ pub fn write_package(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), std::io
 }
 
 /// Read a package image from disk and immediately parse it with `UddpReader`.
-pub fn read_package(path: impl AsRef<Path>) -> Result<super::reader::UddpReader, Box<dyn std::error::Error>> {
+pub fn read_package(
+    path: impl AsRef<Path>,
+) -> Result<super::reader::UddpReader, Box<dyn std::error::Error>> {
     Ok(super::reader::UddpReader::load(path)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_meta32_packing() {
+        let data_type = 42; // arbitrary
+        let codec = Codec::ZstdNoDict;
+        let delta = 0xAA000000; // Only high byte is stored
+        let planar = true;
+
+        let packed = pack_meta32(data_type, codec, delta, planar);
+
+        assert_eq!(unpack_type(packed), data_type);
+        assert_eq!(unpack_codec(packed), codec);
+        assert!(unpack_planar(packed));
+        
+        // Size delta check (high 8 bits only in meta32)
+        assert_eq!(unpack_delta_hi8(packed), 0xAA);
+    }
+
+    #[test]
+    fn test_meta32_no_planar() {
+        let packed = pack_meta32(0, Codec::None, 0, false);
+        assert!(!unpack_planar(packed));
+    }
 }

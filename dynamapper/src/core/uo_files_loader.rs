@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use crate::configs::settings::Settings;
+use crate::core::maps::MapPlane;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
@@ -11,8 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uddconv::tilemeta::TileMetaPackage;
-use uocf::classic::tiledata;
-use uocf::classic::{land_texture, map};
+use uocf::classic::{land_texture, map::MapSizeCells};
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -24,12 +24,7 @@ pub struct UoFilesSettingsRes(pub Arc<UoFilesSettings>);
 /// Not wrapped in Arc: owned exclusively by the Bevy main world.
 /// Accessed only via Res<MapPlanesRes> on the main thread.
 #[derive(Resource)]
-pub struct MapPlanesRes(pub Vec<Option<map::MapPlane>>);
-
-/// Arc: will be cloned and sent to background threads for tiledata lookups
-/// (e.g. future item/static rendering, pathfinding).
-#[derive(Resource)]
-pub struct TileDataRes(pub Arc<tiledata::TileData>);
+pub struct MapPlanesRes(pub Vec<Option<MapPlane>>);
 
 /// Preferred runtime metadata package for static/item rendering.
 #[derive(Resource)]
@@ -51,6 +46,33 @@ pub struct EcArtPackageRes(pub Arc<uddconv::ec_art::EcArtPackage>);
 /// Optional prepacked atlas package for EC land art.
 #[derive(Resource)]
 pub struct EcLandPackageRes(pub Arc<uddconv::ec_land::EcLandPackage>);
+
+pub fn resolve_ec_land_source_texture_slot_id(
+    package: &uddconv::ec_land::EcLandPackage,
+    texture_id: u32,
+) -> Option<u32> {
+    package
+        .terrain_provenance()
+        .iter()
+        .filter(|record| record.selected_texture_id == texture_id)
+        .find_map(|record| {
+            if record.canonical_slot_id != 0
+                && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                && package.present_slot(record.canonical_slot_id).is_some()
+            {
+                return Some(record.canonical_slot_id);
+            }
+
+            if record.alias_slot_id != 0
+                && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                && package.present_slot(record.alias_slot_id).is_some()
+            {
+                return Some(record.alias_slot_id);
+            }
+
+            None
+        })
+}
 
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
@@ -180,12 +202,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Start loading UO Data.");
     lg(&format!(
-        "Resolved source roots with priority uddp > mul > uop. Raw client root: '{}'. UDDP root: '{}'.",
+        "Resolved source roots. Raw client root: '{}'. UDDP root: '{}'.",
         uo_path.display(),
         udd_path.display()
     ));
 
-    let mut map_planes: Vec<Option<map::MapPlane>> = std::iter::repeat_with(|| None)
+    let mut map_planes: Vec<Option<MapPlane>> = std::iter::repeat_with(|| None)
         .take((MAX_MAP_INDEX + 1) as usize)
         .collect::<Vec<_>>();
     let mut statics_stores: Vec<Option<Mutex<LazyStaticsStore>>> =
@@ -198,38 +220,37 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             continue;
         }
 
-        let map_file = uo_path.join(format!("map{map_plane_index}.mul"));
-        if map_file.exists() {
+        let map_file_name = format!("map{map_plane_index}.uddp");
+        let map_path = resolve_optional_uddp_path(&udd_path, &uo_path, &map_file_name);
+        if let Some(map_path) = map_path {
             log_source_choice(
                 &lg,
                 &format!("map plane {map_plane_index}"),
-                SourceContainerKind::Mul,
-                std::slice::from_ref(&map_file),
+                SourceContainerKind::Uddp,
+                std::slice::from_ref(&map_path),
             );
             let map_size_override =
                 settings
                     .maps
                     .map_size(map_plane_index)
-                    .map(|map_size| map::MapSizeCells {
+                    .map(|map_size| MapSizeCells {
                         width: map_size.width,
                         height: map_size.height,
                     });
-            let map_plane =
-                map::MapPlane::init_with_size(map_file, map_plane_index, map_size_override)
-                    .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
+            let map_plane = MapPlane::load(map_path.clone(), map_plane_index, map_size_override)
+                .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
 
-            let statics_idx_file = uo_path.join(format!("staidx{map_plane_index}.mul"));
-            let statics_file = uo_path.join(format!("statics{map_plane_index}.mul"));
-            if statics_idx_file.exists() && statics_file.exists() {
+            let statics_file_name = format!("statics{map_plane_index}.uddp");
+            let statics_path = resolve_optional_uddp_path(&udd_path, &uo_path, &statics_file_name);
+            if let Some(statics_path) = statics_path {
                 log_source_choice(
                     &lg,
                     &format!("statics plane {map_plane_index}"),
-                    SourceContainerKind::Mul,
-                    &[statics_idx_file.clone(), statics_file.clone()],
+                    SourceContainerKind::Uddp,
+                    std::slice::from_ref(&statics_path),
                 );
                 let store = LazyStaticsStore::new(
-                    &statics_idx_file,
-                    &statics_file,
+                    &statics_path,
                     map_plane.size_blocks.width * 8,
                     map_plane.size_blocks.height * 8,
                 )
@@ -237,43 +258,32 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                     panic!("Error initializing statics reader for plane {map_plane_index}")
                 });
                 statics_stores[map_plane_index as usize] = Some(Mutex::new(store));
+            } else {
+                lg(&format!(
+                    "No statics source selected for plane {map_plane_index}: {statics_file_name} not found in udd_path or raw client folder."
+                ));
             }
 
             map_planes[map_plane_index as usize] = Some(map_plane);
+        } else {
+            lg(&format!(
+                "No map source selected for plane {map_plane_index}: {map_file_name} not found in udd_path or raw client folder."
+            ));
         }
     }
 
-    let tilemeta_path = resolve_optional_uddp_paths(&udd_path, &uo_path, &["tilemeta.uddp"]);
-    let tilemeta_package = if let Some(tilemeta_path) = tilemeta_path {
-        log_source_choice(
-            &lg,
-            "tile metadata",
-            SourceContainerKind::Uddp,
-            std::slice::from_ref(&tilemeta_path),
-        );
-        Some(Arc::new(
-            TileMetaPackage::load(&tilemeta_path)
-                .unwrap_or_else(|_| panic!("Error loading {}", tilemeta_path.display())),
-        ))
-    } else {
-        lg("No tilemeta package source selected: tilemeta.uddp not found in udd_path or raw client folder.");
-        None
-    };
-
-    let tiledata = if tilemeta_package.is_none() {
-        let tiledata_path = uo_path.join("tiledata.mul");
-        log_source_choice(
-            &lg,
-            "tiledata fallback",
-            SourceContainerKind::Mul,
-            std::slice::from_ref(&tiledata_path),
-        );
-        Some(Arc::new(
-            tiledata::TileData::load(tiledata_path).expect("Load tiledata"),
-        ))
-    } else {
-        None
-    };
+    let tilemeta_path = resolve_optional_uddp_paths(&udd_path, &uo_path, &["tilemeta.uddp"])
+        .unwrap_or_else(|| panic!("tilemeta.uddp is required in udd_path or raw client folder"));
+    log_source_choice(
+        &lg,
+        "tile metadata",
+        SourceContainerKind::Uddp,
+        std::slice::from_ref(&tilemeta_path),
+    );
+    let tilemeta_package = Arc::new(
+        TileMetaPackage::load(&tilemeta_path)
+            .unwrap_or_else(|_| panic!("Error loading {}", tilemeta_path.display())),
+    );
 
     let texmaps_path = uo_path.join("texmaps.mul");
     let texidx_path = uo_path.join("texidx.mul");
@@ -394,12 +404,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         udd_folder: udd_path,
     })));
     commands.insert_resource(MapPlanesRes(map_planes));
-    if let Some(tilemeta_package) = tilemeta_package.clone() {
-        commands.insert_resource(TileMetaPackageRes(tilemeta_package));
-    }
-    if let Some(tiledata) = tiledata {
-        commands.insert_resource(TileDataRes(tiledata));
-    }
+    commands.insert_resource(TileMetaPackageRes(tilemeta_package.clone()));
     commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
     if let Some(cc_art_package) = cc_art_package {
         commands.insert_resource(CcArtPackageRes(Arc::new(cc_art_package)));
@@ -411,14 +416,4 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         commands.insert_resource(EcLandPackageRes(Arc::new(ec_land_package)));
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
-
-    if settings.graphics.art_texture_source == crate::configs::settings::ClientTextureSource::Ec
-        && tilemeta_package.is_none()
-    {
-        console_logger::one(
-            console_logger::LogSev::Warn,
-            console_logger::LogAbout::UoFiles,
-            "EC art graphics requested, but tilemeta.uddp is unavailable. EC art retrieval will be disabled until tilemeta is loaded.",
-        );
-    }
 }

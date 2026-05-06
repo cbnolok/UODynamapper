@@ -7,7 +7,7 @@ use uocf::udd::{
     AddFileRequest, Codec, CompressionFlag, LookupMode, UddpBuilder, UddpReader,
     xxh64_virtual_path,
 };
-use uocf::udd::uddp::FileKey;
+use uocf::udd::uddp::{FileKey, unpack_codec, unpack_offset40, unpack_planar, unpack_type};
 
 pub fn rebuild_package(input: &Path, output: &Path) -> eyre::Result<()> {
     rewrite_package(input, output, &HashMap::new())
@@ -36,7 +36,7 @@ fn rewrite_package(
     builder.set_version(reader.header().version_major, reader.header().version_minor);
 
     let mut records = reader.records();
-    records.sort_by_key(|record| unpack_offset40_local(record.locator.pos64));
+    records.sort_by_key(|record| unpack_offset40(record.locator.pos64));
     let mut replaced_count = 0usize;
 
     for record in records {
@@ -62,16 +62,18 @@ fn rewrite_package(
 
         match record.key {
             FileKey::PathHash(path_hash64) => builder.add_file(AddFileRequest {
-                data_type: unpack_type_local(record.locator.meta32),
-                compression: codec_to_compression_flag_local(unpack_codec_local(record.locator.meta32)),
+                data_type: unpack_type(record.locator.meta32),
+                compression: codec_to_compression_flag_local(unpack_codec(record.locator.meta32)),
+                apply_planar: unpack_planar(record.locator.meta32),
                 virtual_path: None,
                 path_hash64: Some(path_hash64),
                 id: None,
                 data: payload,
             })?,
             FileKey::Id(id) => builder.add_file(AddFileRequest {
-                data_type: unpack_type_local(record.locator.meta32),
-                compression: codec_to_compression_flag_local(unpack_codec_local(record.locator.meta32)),
+                data_type: unpack_type(record.locator.meta32),
+                compression: codec_to_compression_flag_local(unpack_codec(record.locator.meta32)),
+                apply_planar: unpack_planar(record.locator.meta32),
                 virtual_path: None,
                 path_hash64: None,
                 id: Some(id),
@@ -105,27 +107,10 @@ fn write_output(path: &Path, bytes: &[u8]) -> eyre::Result<()> {
     Ok(())
 }
 
-fn unpack_type_local(meta32: u32) -> u8 {
-    (meta32 & 0x3F) as u8
-}
-
-fn unpack_codec_local(meta32: u32) -> Codec {
-    match ((meta32 >> 6) & 0x03) as u8 {
-        0 => Codec::None,
-        1 => Codec::ZstdNoDict,
-        2 => Codec::ZstdTypeDict,
-        _ => Codec::Reserved,
-    }
-}
-
 fn codec_to_compression_flag_local(codec: Codec) -> CompressionFlag {
     match codec {
         Codec::None => CompressionFlag::None,
         Codec::ZstdNoDict => CompressionFlag::ZstdNoDict,
         Codec::ZstdTypeDict | Codec::Reserved => CompressionFlag::Auto,
     }
-}
-
-fn unpack_offset40_local(pos64: u64) -> u64 {
-    pos64 & ((1u64 << 40) - 1)
 }

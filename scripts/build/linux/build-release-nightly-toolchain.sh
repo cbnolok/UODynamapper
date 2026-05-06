@@ -51,7 +51,19 @@ if [[ -n "${CARGO_FEATURES:-}" ]]; then
     build_args+=(--features "$CARGO_FEATURES")
 fi
 
-build_args+=("$@")
-cargo "${build_args[@]}"
+# Build main application
+echo "Building dynamapper..."
+cargo "${build_args[@]}" "$@"
+
+# Build utilities
+echo "Building utilities (uddp_inspector, uddconv_cli, uddconv_gui, uocf_cli)..."
+cargo +nightly build --release --locked \
+    --package uddp_inspector \
+    --package uddconv_cli \
+    --package uddconv_gui \
+    --package uocf_cli \
+    -Z build-std=std,panic_abort \
+    -Z build-std-features=optimize_for_size \
+    "$@"
 
 echo "Build complete."

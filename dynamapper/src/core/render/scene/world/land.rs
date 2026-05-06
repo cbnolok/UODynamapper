@@ -13,9 +13,16 @@ use mesh_material::LandCustomMeshMaterial;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// How many tiles per chunk row/column? (chunks are squared)
-pub const TILE_NUM_PER_CHUNK_DIM: u32 = 8;
-/// How many tiles in one chunk total?
+/// Native map storage block size in tiles.
+pub const MAP_STORAGE_BLOCK_TILE_DIM: u32 = 8;
+/// How many tiles are stored in one native map block.
+pub const MAP_STORAGE_BLOCK_TILE_TOTAL: usize =
+    (MAP_STORAGE_BLOCK_TILE_DIM * MAP_STORAGE_BLOCK_TILE_DIM) as usize;
+/// How many tiles per logical terrain chunk row/column? (chunks are squared)
+pub const TILE_NUM_PER_CHUNK_DIM: u32 = 32;
+/// How many native 8x8 map blocks fit in one logical chunk row/column?
+pub const CHUNK_STORAGE_BLOCKS_DIM: u32 = TILE_NUM_PER_CHUNK_DIM / MAP_STORAGE_BLOCK_TILE_DIM;
+/// How many tiles in one logical chunk total?
 pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
     (TILE_NUM_PER_CHUNK_DIM * TILE_NUM_PER_CHUNK_DIM) as usize;
 
@@ -24,7 +31,7 @@ pub const TILE_NUM_PER_CHUNK_TOTAL: usize =
 pub struct LCMesh {
     #[allow(unused)]
     pub parent_map_id: u32,
-    pub gx: u32, // chunk grid coordinates (in base 8×8 grid)
+    pub gx: u32, // chunk grid coordinates (in base 32×32 grid)
     pub gy: u32,
     /// Determines which mesh and AABB are used.
     pub scale: u32,

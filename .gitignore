@@ -1,7 +1,8 @@
+.idea/
+.cargo/
+archive/
 ClassicUO/
 compare_impl/
-archive/
+old/
 target/
 tools/
-
-target
