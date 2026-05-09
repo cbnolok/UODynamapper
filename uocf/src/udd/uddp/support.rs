@@ -19,17 +19,13 @@ use super::*;
 
 const ZSTD_LEVEL: i32 = 9;
 
-/// If set, the payload has been de-interleaved into planar format
-/// (all R, then all G, then all B, then all A) before compression.
-pub const META_PLANAR_FLAG: u32 = 1 << 16;
 
 /// Pack the public metadata word stored in every file locator.
-pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32, planar: bool) -> Meta32 {
+pub fn pack_meta32(data_type: u8, codec: Codec, delta32: u32) -> Meta32 {
     let ty = (data_type as u32) & 0x3F;
     let co = ((codec as u32) & 0x03) << 6;
     let delta_hi = ((delta32 >> 24) & 0xFF) << 8;
-    let pla = if planar { META_PLANAR_FLAG } else { 0 };
-    ty | co | delta_hi | pla
+    ty | co | delta_hi
 }
 
 /// Extract the 6-bit type id from a packed metadata word.
@@ -49,11 +45,6 @@ pub fn unpack_delta_hi8(meta32: Meta32) -> u32 {
     (meta32 >> 8) & 0xFF
 }
 
-/// Extract the planar transform flag from a packed metadata word.
-#[inline(always)]
-pub fn unpack_planar(meta32: Meta32) -> bool {
-    (meta32 & META_PLANAR_FLAG) != 0
-}
 
 /// Pack the payload offset and low 24 delta bits into the position word.
 pub fn pack_pos64(offset: u64, delta32: u32) -> Pos64 {
@@ -83,7 +74,7 @@ pub fn unpack_delta32(meta32: Meta32, pos64: Pos64) -> u32 {
 pub fn reconstruct_stored_size(raw_size: u32, meta32: Meta32, pos64: Pos64) -> u32 {
     match unpack_codec(meta32) {
         Codec::None => raw_size,
-        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::Reserved => {
+        Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::JpegXl => {
             raw_size - unpack_delta32(meta32, pos64)
         }
     }
@@ -133,6 +124,53 @@ pub(crate) fn zstd_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
 pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut compressor = Compressor::with_dictionary(ZSTD_LEVEL, dict)?;
     compressor.compress(data)
+}
+
+/// Jxl compression helper.
+pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    use jpegxl_rs::encoder_builder;
+    use jpegxl_rs::encode::EncoderSpeed;
+
+    let mut encoder = encoder_builder()
+        .lossless(true)
+        .speed(EncoderSpeed::Falcon)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let encoded = encoder.encode::<u8, u8>(data, width, height)
+        .map_err(|e| e.to_string())?;
+
+    let mut final_payload = Vec::with_capacity(encoded.len() + 8);
+    final_payload.extend_from_slice(&width.to_le_bytes());
+    final_payload.extend_from_slice(&height.to_le_bytes());
+    final_payload.extend_from_slice(&encoded);
+    Ok(final_payload)
+}
+
+/// Jxl decompression helper.
+pub(crate) fn jxl_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    use jpegxl_rs::decoder_builder;
+    use jpegxl_rs::decode::Pixels;
+
+    if data.len() < 8 {
+        return Err("JXL payload too small for header".to_string());
+    }
+
+    // Header is ignored by decoder, it needs the raw stream
+    let encoded = &data[8..];
+
+    let decoder = decoder_builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let (_, pixels) = decoder.decode(encoded)
+        .map_err(|e| e.to_string())?;
+    
+    // We expect RGBA8 (8-bit per channel)
+    match pixels {
+        Pixels::Uint8(v) => Ok(v),
+        _ => Err("Unexpected JXL pixel format (expected 8-bit)".to_string()),
+    }
 }
 
 /// Plain Zstd decompression helper.
@@ -310,8 +348,8 @@ pub enum BuildError {
     WrongKeyForLookupMode,
     PatchKeyModeMismatch,
     MalformedOutput,
-    EmptyDictionaryTrainingSet,
     Io(std::io::Error),
+    CodecError(String),
 }
 
 impl fmt::Display for BuildError {
@@ -331,8 +369,8 @@ impl fmt::Display for BuildError {
             Self::WrongKeyForLookupMode => write!(f, "wrong key for lookup mode"),
             Self::PatchKeyModeMismatch => write!(f, "patch key does not match target lookup mode"),
             Self::MalformedOutput => write!(f, "malformed output buffer"),
-            Self::EmptyDictionaryTrainingSet => write!(f, "empty dictionary training set"),
             Self::Io(e) => write!(f, "{e}"),
+            Self::CodecError(e) => write!(f, "Codec error: {e}"),
         }
     }
 }
@@ -397,30 +435,4 @@ pub fn read_package(
     Ok(super::reader::UddpReader::load(path)?)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_meta32_packing() {
-        let data_type = 42; // arbitrary
-        let codec = Codec::ZstdNoDict;
-        let delta = 0xAA000000; // Only high byte is stored
-        let planar = true;
-
-        let packed = pack_meta32(data_type, codec, delta, planar);
-
-        assert_eq!(unpack_type(packed), data_type);
-        assert_eq!(unpack_codec(packed), codec);
-        assert!(unpack_planar(packed));
-        
-        // Size delta check (high 8 bits only in meta32)
-        assert_eq!(unpack_delta_hi8(packed), 0xAA);
-    }
-
-    #[test]
-    fn test_meta32_no_planar() {
-        let packed = pack_meta32(0, Codec::None, 0, false);
-        assert!(!unpack_planar(packed));
-    }
-}

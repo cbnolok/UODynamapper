@@ -27,6 +27,7 @@ ddsfile = "0.5.2"
 serde = { version = "1.0", features = ["derive"] }
 zstd = "0.13"
 image = { version = "0.25", default-features = false, features = ["png"] }
+xbrz-rs = "0.1.0"
 
 [features]
 default = []

@@ -3,10 +3,10 @@
 //! optimized structures.
 
 crate::eyre_imports!();
-use crate::generic_index::IndexFile;
+use crate::classic::generic_index::IndexFile;
 use bytemuck::{Pod, Zeroable};
 use rayon::prelude::*;
-use std::fs;
+use std::fs::File;
 use std::path::Path;
 
 pub const UO_BLOCK_DIM: u32 = 8;
@@ -86,24 +86,27 @@ impl StaticsStore {
     }
 }
 
+use memmap2::Mmap;
+
 /// A highly optimized reader for `statics.mul` and `staidx.mul` files.
-/// All data is fully loaded into memory on initialization.
+/// Uses memory mapping for zero-copy access to static data.
 pub struct StaticsReader {
     pub index: IndexFile,
-    pub mul_data: Vec<u8>,
+    pub mul_mmap: Mmap,
     pub block_width: u32,
     pub block_height: u32,
 }
 
 impl StaticsReader {
-    /// Creates a new `StaticsReader` from file paths, loading everything into RAM.
+    /// Creates a new `StaticsReader` using memory mapping.
     pub fn new(index_path: &Path, mul_path: &Path, width: u32, height: u32) -> eyre::Result<Self> {
         let index = IndexFile::load(index_path.to_path_buf())?;
-        let mul_data = fs::read(mul_path).wrap_err("Failed to read statics.mul into memory")?;
+        let mul_file = File::open(mul_path).wrap_err("Failed to open statics.mul")?;
+        let mul_mmap = unsafe { Mmap::map(&mul_file)? };
 
         Ok(Self {
             index,
-            mul_data,
+            mul_mmap,
             block_width: width / UO_BLOCK_DIM,
             block_height: height / UO_BLOCK_DIM,
         })
@@ -127,11 +130,11 @@ impl StaticsReader {
             let size = size as usize;
             let end = lookup + size;
 
-            if end > self.mul_data.len() {
-                eyre::bail!("Statics index points outside mul_data range");
+            if end > self.mul_mmap.len() {
+                eyre::bail!("Statics index points outside mul_mmap range");
             }
 
-            let raw_bytes = &self.mul_data[lookup..end];
+            let raw_bytes = &self.mul_mmap[lookup..end];
             let count = size / StaticTile::RAW_SIZE;
 
             let mut tiles = Vec::with_capacity(count);
@@ -170,7 +173,7 @@ impl StaticsReader {
         let mut tiles = vec![PackedStaticTile::default(); total_tile_count];
 
         // Step 2: Parse blocks using parallel processing over the in-memory buffer.
-        let mul_data_ref = &self.mul_data;
+        let mul_mmap_ref = &self.mul_mmap;
         let index = &self.index;
         let offsets_ref = &offsets;
 
@@ -188,7 +191,7 @@ impl StaticsReader {
                 let lookup = entry.lookup().unwrap() as usize;
                 let count = end_idx - start_idx;
 
-                let src = &mul_data_ref[lookup..lookup + count * StaticTile::RAW_SIZE];
+                let src = &mul_mmap_ref[lookup..lookup + count * StaticTile::RAW_SIZE];
 
                 // Safety: Each parallel iteration writes to a disjoint range of the 'tiles' vector
                 unsafe {

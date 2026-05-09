@@ -165,7 +165,7 @@ fn create_ec_land_shader_images(
     let lookup_width = 256u32;
     let lookup_height = (max_cc_tile_id + lookup_width - 1) / lookup_width;
     let mut lookup_bytes = vec![0u8; (lookup_width * lookup_height * 16) as usize];
-    
+
     for tile_id in 0..max_cc_tile_id {
         let texel_offset = (tile_id as usize) * 16;
         let values = if let Some(slot_id) = package.resolve_runtime_slot_id(tile_id) {

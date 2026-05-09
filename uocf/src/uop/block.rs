@@ -13,6 +13,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use crate::uop::file::UopFile;
 
 /// Represents a block of files within a UOP package.
+#[derive(Clone)]
 pub struct UopBlock {
     /// The address of the next block in the UOP file.
     next_block_address: u64,

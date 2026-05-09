@@ -47,33 +47,6 @@ pub struct EcArtPackageRes(pub Arc<uddconv::ec_art::EcArtPackage>);
 #[derive(Resource)]
 pub struct EcLandPackageRes(pub Arc<uddconv::ec_land::EcLandPackage>);
 
-pub fn resolve_ec_land_source_texture_slot_id(
-    package: &uddconv::ec_land::EcLandPackage,
-    texture_id: u32,
-) -> Option<u32> {
-    package
-        .terrain_provenance()
-        .iter()
-        .filter(|record| record.selected_texture_id == texture_id)
-        .find_map(|record| {
-            if record.canonical_slot_id != 0
-                && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
-                && package.present_slot(record.canonical_slot_id).is_some()
-            {
-                return Some(record.canonical_slot_id);
-            }
-
-            if record.alias_slot_id != 0
-                && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
-                && package.present_slot(record.alias_slot_id).is_some()
-            {
-                return Some(record.alias_slot_id);
-            }
-
-            None
-        })
-}
-
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
@@ -210,10 +183,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let mut map_planes: Vec<Option<MapPlane>> = std::iter::repeat_with(|| None)
         .take((MAX_MAP_INDEX + 1) as usize)
         .collect::<Vec<_>>();
-    let mut statics_stores: Vec<Option<Mutex<LazyStaticsStore>>> =
-        std::iter::repeat_with(|| None)
-            .take((MAX_MAP_INDEX + 1) as usize)
-            .collect::<Vec<_>>();
+    let mut statics_stores: Vec<Option<Mutex<LazyStaticsStore>>> = std::iter::repeat_with(|| None)
+        .take((MAX_MAP_INDEX + 1) as usize)
+        .collect::<Vec<_>>();
 
     for map_plane_index in 0..=MAX_MAP_INDEX {
         if map_plane_index != settings.core.world.start_p.m as u32 {

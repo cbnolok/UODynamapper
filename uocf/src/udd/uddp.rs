@@ -44,7 +44,6 @@
 
 mod builder;
 mod patch;
-mod planar;
 mod reader;
 mod support;
 
@@ -68,7 +67,6 @@ pub use self::support::{
     unpack_delta_hi8,
     unpack_delta_lo24,
     unpack_offset40,
-    unpack_planar,
     unpack_type,
     write_package,
     xxh64_virtual_path,
@@ -148,8 +146,8 @@ pub enum Codec {
     /// Zstd with dictionary resolved implicitly from the file type.
     ZstdTypeDict = 2,
 
-    /// Reserved for future use.
-    Reserved = 3,
+    /// Jpeg XL lossless.
+    JpegXl = 3,
 }
 
 impl Codec {
@@ -158,7 +156,7 @@ impl Codec {
             0 => Ok(Self::None),
             1 => Ok(Self::ZstdNoDict),
             2 => Ok(Self::ZstdTypeDict),
-            3 => Ok(Self::Reserved),
+            3 => Ok(Self::JpegXl),
             _ => Err(FormatError::InvalidCodec(v)),
         }
     }
@@ -178,6 +176,9 @@ pub enum CompressionFlag {
 
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
+
+    /// Force Jpeg XL lossless.
+    JpegXl,
 }
 
 /// Convenience starter type ids.
@@ -541,7 +542,8 @@ pub struct FileRecord {
 pub struct AddFileRequest<'a> {
     pub data_type: u8,
     pub compression: CompressionFlag,
-    pub apply_planar: bool,
+    pub width: u32,
+    pub height: u32,
     pub virtual_path: Option<&'a str>,
     pub path_hash64: Option<u64>,
     pub id: Option<u32>,

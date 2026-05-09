@@ -25,18 +25,15 @@ pub struct LazyStaticsStore {
 impl LazyStaticsStore {
     pub fn new(package_path: &Path, width: u32, height: u32) -> eyre::Result<Self> {
         let package_path = package_path.canonicalize()?;
-        let package = Arc::new(
-            UddpReader::load(&package_path).map_err(|error| eyre::eyre!("{error}"))?,
-        );
+        let package =
+            Arc::new(UddpReader::load(&package_path).map_err(|error| eyre::eyre!("{error}"))?);
         let block_width = width / 8;
         let block_height = height / 8;
         let package_chunk_width = block_width.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
         let package_chunk_height = block_height.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
         let num_blocks = (block_width * block_height) as usize;
         let num_package_chunks = (package_chunk_width * package_chunk_height) as usize;
-        let cached_blocks = std::iter::repeat_with(|| None)
-            .take(num_blocks)
-            .collect();
+        let cached_blocks = std::iter::repeat_with(|| None).take(num_blocks).collect();
 
         Ok(Self {
             package,
@@ -126,9 +123,8 @@ impl LazyStaticsStore {
                 let native_block_index = self
                     .block_index(native_block_x, native_block_y)
                     .expect("validated native block index");
-                self.cached_blocks[native_block_index] = Some(
-                    std::mem::take(&mut per_block_tiles[block_slot]).into_boxed_slice(),
-                );
+                self.cached_blocks[native_block_index] =
+                    Some(std::mem::take(&mut per_block_tiles[block_slot]).into_boxed_slice());
             }
         }
 

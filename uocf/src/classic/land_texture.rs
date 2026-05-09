@@ -22,7 +22,7 @@ use std::fs::File;
 
 use std::path::PathBuf;
 
-use crate::generic_index;
+use crate::classic::generic_index;
 use crate::utils::math::*;
 use bytemuck;
 use std::io::{prelude::*, BufReader, SeekFrom};
@@ -145,10 +145,7 @@ impl TexMap {
         Some(element)
     }
 
-    pub fn load(
-        texmap_file_path: PathBuf,
-        texmap_idx_file_path: PathBuf,
-    ) -> eyre::Result<TexMap> {
+    pub fn load(texmap_file_path: PathBuf, texmap_idx_file_path: PathBuf) -> eyre::Result<TexMap> {
         /* Open texmap.mul */
         let texmap_file_name = texmap_file_path
             .file_name()

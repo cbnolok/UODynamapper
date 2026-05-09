@@ -4,7 +4,7 @@ use uocf::udd::{
 
 use uddconv::ec_land::*;
 use uddconv::cc_art::PagePixelFormat;
-use uddconv::upscale::UpscaleFilter;
+use uddconv::upscale::{UpscaleConfig};
 
 pub fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
     DecodedArtTile {
@@ -22,9 +22,10 @@ fn sparse_slots_keep_absent_records() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
-        upscale: UpscaleFilter::default(),
+        compression: UddCompressionFlag::ZstdNoDict,
+        upscale_64: UpscaleConfig::default(),
+        upscale_128: UpscaleConfig::default(),
+        upscale_256: UpscaleConfig::default(),
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -46,9 +47,10 @@ fn packer_spills_to_multiple_pages() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
-        upscale: UpscaleFilter::default(),
+        compression: UddCompressionFlag::ZstdNoDict,
+        upscale_64: UpscaleConfig::default(),
+        upscale_128: UpscaleConfig::default(),
+        upscale_256: UpscaleConfig::default(),
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -70,9 +72,10 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
-        upscale: UpscaleFilter::default(),
+        compression: UddCompressionFlag::ZstdNoDict,
+        upscale_64: UpscaleConfig::default(),
+        upscale_128: UpscaleConfig::default(),
+        upscale_256: UpscaleConfig::default(),
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
@@ -95,7 +98,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_PAGE_MANIFEST_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -106,7 +109,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_SLOT_MANIFEST_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -117,7 +120,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -135,7 +138,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -162,9 +165,10 @@ fn land_alias_slots_reuse_canonical_page_location() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
-        upscale: UpscaleFilter::default(),
+        compression: UddCompressionFlag::ZstdNoDict,
+        upscale_64: UpscaleConfig::default(),
+        upscale_128: UpscaleConfig::default(),
+        upscale_256: UpscaleConfig::default(),
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Land, 4, 4)];
 
@@ -195,9 +199,10 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
-        upscale: UpscaleFilter::default(),
+        compression: UddCompressionFlag::ZstdNoDict,
+        upscale_64: UpscaleConfig::default(),
+        upscale_128: UpscaleConfig::default(),
+        upscale_256: UpscaleConfig::default(),
     };
     let tiles = vec![
         rgba_tile(2, ArtTileKind::Land, 4, 4),
@@ -329,7 +334,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_PAGE_MANIFEST_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -340,7 +345,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_SLOT_MANIFEST_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -351,7 +356,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -371,7 +376,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             .add_file(AddFileRequest {
                 data_type: DataType::Texture as u8,
                 compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
                 virtual_path: Some(&page_path),
                 path_hash64: None,
                 id: None,

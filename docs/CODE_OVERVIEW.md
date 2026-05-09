@@ -205,7 +205,7 @@ This phase runs once to create `ec_land.uddp`. It completely eliminates the need
 4. **Bakes Provenance**: It writes a lightweight table (the `terrain_provenance` array) that maps `EC Material ID ➔ Slot ID`.
 
 #### Phase 2: Runtime (`dynamapper`)
-At runtime, the engine has no knowledge of `Textures.uop` or `TerrainDefinition.uop`. It only uses the fast, pre-baked arrays inside `ec_land.uddp`.
+At runtime, the engine has no knowledge of `Textures.uop` or `TerrainDefinition.uop`. It only uses the fast, pre-baked arrays inside `ec_land.uddp` plus an optional loose `TerrainTranscode.kdl` override for classic-to-EC land-family remapping.
 
 When the engine needs to render CC Tile `168`:
 1. **KDL Translation**: It looks up `168` in `TerrainTranscode.kdl`. The KDL says: *"CC Tile 168 translates to EC Material 5"*. (The KDL contains no file names, only ID-to-ID translations).
@@ -216,6 +216,18 @@ When the engine needs to render CC Tile `168`:
 #### The Fallback (When KDL is Missing)
 If a CC Tile ID has no entry in `TerrainTranscode.kdl`, the engine skips Step 1. It directly asks the provenance array: *"Do you have any legacy alias named after this CC ID?"* 
 Because the EC client imported many legacy CC textures using their original IDs, the provenance array often successfully returns a Slot ID, allowing unmapped legacy tiles to render flawlessly. If it fails, the tile safely renders blank.
+
+#### Historical Note About `TerrainDefinition.kdl`
+
+`TerrainDefinition.kdl` was an earlier loose override used before the repo could decode `TerrainDefinition.uop` correctly.
+That file is no longer the authoritative source for EC land semantics.
+Today the authoritative chain is:
+
+1. `TerrainDefinition.uop` during build time
+2. baked `terrain_provenance` inside `ec_land.uddp`
+3. optional `TerrainTranscode.kdl` at runtime for classic-id remapping
+
+The old `TerrainDefinition.kdl` may still be loaded into a resource for inspection or compatibility, but the runtime land renderer does not use it as the source of truth.
 
 #### 2.2.2 Understanding the ID Spaces
 To navigate this resolution chain, it is critical to distinguish between the three ID spaces:

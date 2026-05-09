@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::classic::hues::{HueEntry, load_hues};
+use crate::classic::hues::{load_hues, HueEntry};
 use crate::classic::map::{MapBlockRelPos, MapCell, MapPlane};
 use crate::classic::radarcol::load_radarcol;
 use crate::enhanced::facet_decoder::StaticTile;
@@ -116,7 +116,12 @@ pub fn encode_map_plane(
             use std::io::Write;
             let mut path_buf = [0u8; 64];
             let mut slice = &mut path_buf[..];
-            write!(slice, "build/sectors/facet_0{}/{:08}.bin", map_index, file_id).unwrap();
+            write!(
+                slice,
+                "build/sectors/facet_0{}/{:08}.bin",
+                map_index, file_id
+            )
+            .unwrap();
             let len = 64 - slice.len();
             let internal_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
             package.add_file_from_memory(&bin_data, internal_path, CompressionFlag::Zlib)?;

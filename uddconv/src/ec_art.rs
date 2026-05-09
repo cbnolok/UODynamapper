@@ -79,10 +79,7 @@ pub struct EcArtAtlasOptions {
     /// atlas packing. Matching tile metadata must subtract the same top/left crop
     /// from its EC sampling start coordinates.
     pub crop_transparent_bounds: bool,
-    /// When `true` each atlas page is BC7-compressed on the CPU before being
-    /// stored in the UDDP container, reducing VRAM usage by ~8×.
-    pub use_bc7: bool,
-    pub planar_shuffle: bool,
+    pub compression: UddCompressionFlag,
     pub upscale: UpscaleFilter,
 }
 
@@ -93,8 +90,7 @@ impl Default for EcArtAtlasOptions {
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
             crop_transparent_bounds: false,
-            use_bc7: false,
-            planar_shuffle: false,
+            compression: UddCompressionFlag::None,
             upscale: UpscaleFilter::default(),
         }
     }
@@ -435,7 +431,8 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -444,7 +441,8 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -452,21 +450,15 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
     })?;
 
     // Determine the final pixel format and encoding for atlas pages.
-    let encoding = if options.use_bc7 {
-        VramTextureEncoding::Bc7(preferred_bc7_encoder_backend())
+    let use_bc7 = options.compression == UddCompressionFlag::None;
+    
+    let (encoding, pixel_format) = if use_bc7 {
+        (VramTextureEncoding::Bc7(preferred_bc7_encoder_backend()), PagePixelFormat::Bc7)
     } else {
-        VramTextureEncoding::Rgba8UnormSrgb
+        (VramTextureEncoding::Rgba8UnormSrgb, PagePixelFormat::Rgba8888)
     };
-    let pixel_format = if options.use_bc7 {
-        PagePixelFormat::Bc7
-    } else {
-        PagePixelFormat::Rgba8888
-    };
-    let compression = if options.use_bc7 {
-        UddCompressionFlag::None
-    } else {
-        UddCompressionFlag::ZstdNoDict
-    };
+
+    let compression = options.compression;
 
     let pb = ProgressBar::new(pages.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
@@ -474,7 +466,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
         .unwrap()
         .progress_chars("#>-"));
 
-    let encoded_pages = if options.use_bc7 {
+    let encoded_pages = if use_bc7 {
         let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
             .map_err(|e| eyre::eyre!("{e}"))?;
         let encoded_pages = pages
@@ -486,9 +478,9 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
                     .into_bytes()
                     .to_vec();
                 pb.inc(1);
-                Ok((page_path, encoded))
+                Ok((page_path, encoded, options.atlas_width, options.atlas_height))
             })
-            .collect::<Vec<eyre::Result<(String, Vec<u8>)>>>();
+            .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
 
         let mut resolved = Vec::with_capacity(encoded_pages.len());
         for page in encoded_pages {
@@ -508,16 +500,19 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
                         page.record.used_width,
                         page.record.used_height,
                     ),
+                    page.record.used_width,
+                    page.record.used_height,
                 )
             })
             .collect()
     };
 
-    for (page_path, encoded) in encoded_pages {
+    for (page_path, encoded, width, height) in encoded_pages {
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression,
-            apply_planar: options.planar_shuffle && !options.use_bc7,
+            width,
+            height,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -616,7 +611,7 @@ pub fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedS
 }
 
 fn validate_options(options: &EcArtAtlasOptions) -> eyre::Result<()> {
-    if options.use_bc7 {
+    if options.compression == UddCompressionFlag::None {
         eyre::bail!("BC7 output is disabled for ec_art atlas pages because small art tiles lose sharpness");
     }
     if options.atlas_width == 0 || options.atlas_height == 0 {
@@ -1393,7 +1388,7 @@ pub fn serialize_page_manifest(
     // Manifest records tell the reader how to reinterpret cropped payloads as
     // logical atlas pages. `used_width/used_height` describe the stored bytes,
     // while `atlas_width/atlas_height` keep the public coordinate system stable.
-    let pixel_format = if options.use_bc7 {
+    let pixel_format = if options.compression == UddCompressionFlag::None {
         PagePixelFormat::Bc7
     } else {
         PagePixelFormat::Rgba8888
@@ -1452,8 +1447,7 @@ pub fn encode_slot_manifest(
             atlas_height,
             gutter,
             crop_transparent_bounds: false,
-            use_bc7: false,
-            planar_shuffle: false,
+            compression: UddCompressionFlag::None,
             upscale: UpscaleFilter::default(),
         },
     )

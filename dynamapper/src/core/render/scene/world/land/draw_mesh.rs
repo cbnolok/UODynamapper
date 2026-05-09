@@ -33,7 +33,7 @@ const EC_DIAG_LOG_VISIBLE_TILES: bool = false;
 const EC_DIAG_LOG_ONLY_MISSING: bool = true;
 
 use super::{
-    mesh_material::*, CHUNK_STORAGE_BLOCKS_DIM, LCMesh, LandUploadBudget,
+    mesh_material::*, LCMesh, LandUploadBudget, CHUNK_STORAGE_BLOCKS_DIM,
     MAP_STORAGE_BLOCK_TILE_DIM, MAP_STORAGE_BLOCK_TILE_TOTAL, TILE_NUM_PER_CHUNK_DIM,
 };
 use crate::{
@@ -519,7 +519,8 @@ pub fn sys_draw_spawned_land_chunks(
             // gate readiness on them).
             if !locals.pending {
                 for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span) {
-                    for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span) {
+                    for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span)
+                    {
                         if bx >= chunk_block_origin_x
                             && bx < chunk_block_origin_x + chunk_block_span
                             && bz >= chunk_block_origin_y
@@ -848,8 +849,11 @@ pub fn sys_draw_spawned_land_chunks(
                         )
                     };
 
-                    for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span) {
-                        for bz in (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span) {
+                    for bx in (chunk_block_origin_x - 1)..=(chunk_block_origin_x + chunk_block_span)
+                    {
+                        for bz in
+                            (chunk_block_origin_y - 1)..=(chunk_block_origin_y + chunk_block_span)
+                        {
                             if bx < 0 || bx >= max_chunk_x || bz < 0 || bz >= max_chunk_y {
                                 continue;
                             }

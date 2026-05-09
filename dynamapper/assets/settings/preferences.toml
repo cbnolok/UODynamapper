@@ -4,8 +4,8 @@ smooth_movement = true
 
 [window]
 height = 768.0
-width = 1024.0
-zoom = 0.6
+width = 1025.0
+zoom = 1.2068142
 ui_scale = 1.0
 player_position_scale = 1.0
 sysmessages_scale = 1.0

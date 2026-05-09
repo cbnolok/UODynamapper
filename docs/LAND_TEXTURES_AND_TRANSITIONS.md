@@ -82,18 +82,18 @@ Important takeaways:
 
 - A low numeric id range does not automatically mean "terrain-only" visuals.
 - A terrain-related visual may live in a shared texture pool and still require metadata to classify it correctly.
+- The numeric vpath/id overlap between EC and CC is useful for locating payloads, but it is not sufficient to decide whether a tile belongs to terrain, static art, or a flat floor-like static render path.
 
 Packages:
 
 - `Texture.uop` / `build/worldart/*.dds` is a mixed pool, not a pure terrain-only pool.
-- `tileart.uop` shader/type information helps distinguish sprite, water, and static-terrain usage.
-- terrain packaging decisions are likely more correct when driven by terrain definitions or shader semantics than by simple id slicing.
-- The current EC package set also includes `LegacyTexture.uop` alongside `Texture.uop`, plus `string_dictionary.uop` and `string_Wdictionary.uop` for shared text resources. Those string packages are not visual inputs, but they are part of the EC source bundle and often travel with the same client installation.
+- `LegacyTexture.uop` is part of the same source bundle and supplies the EC-side legacy-style image references.
 - `tileart.uop` is the authoritative EC static-art source for ownership, clipping windows, and item-side metadata.
 - `TerrainDefinition.uop` is the authoritative EC land source for material semantics, selected textures, alias chains, and canonical slot relationships.
+- `string_dictionary.uop` and `string_Wdictionary.uop` are required support packages for resolving virtual paths, but they are not visual sources themselves.
 - EC art and EC land are both semantic outputs from the same shared texture pools, so the same raw texture id can legitimately appear in both packages when ownership differs.
 
-That aligns with the current UODynamapper investigation: `ec_land.uddp` should probably be defined by terrain semantics, not just by scanning the first `0x4000` generic texture ids.
+That aligns with the current UODynamapper investigation: `ec_land.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
 
 ## 6. Classification Matrix For This Repo
 
@@ -130,22 +130,33 @@ Additional EC source guidance:
 - `TerrainDefinition.uop` contributes EC land semantics: land source texture ids, aliases, selected textures, runtime slots, and provenance.
 - `string_dictionary.uop` and `string_Wdictionary.uop` are auxiliary package resources, not art classification inputs.
 
-### 6.3 Shader Interpretation Rules
+### 6.3 Shader And Flag Interpretation Rules
 
 EC shader names are useful semantic hints, but they do not override ownership:
 
 - `UOWaterShader`: water-like visual semantics
 - `UOStaticTerrainShader`: terrain-like flat or ground-like object semantics
-- `UOSpriteShader`: regular sprite/static semantics, unless stretch rules imply a flatter solid surface
+- `UOSpriteShader`: sprite/static semantics, but some entries still need terrain-style flat rendering
 
-In this repo, the current EC parser already maps those names to `TileType` in `uocf/src/enhanced/tileart.rs`.
-
-Practical rule:
+The verified rule in this repo is:
 
 - if a record comes from `tileart.uop`, keep it in the `art` domain even when its shader is `UOStaticTerrainShader`
-- use the shader only to subtype the art record as floor-like, liquid-like, or regular static-like
+- use shader plus flags to subtype the art record as floor-like, liquid-like, roof-like, or regular static-like
 
-That avoids misclassifying bridge decks, suspended floors, under-terrain floors, and terrain-looking object overlays as map land.
+The important reverse-engineered refinement is that `UOSpriteShader` is not equivalent to "billboard sprite".
+Some EC tileart entries use `UOSpriteShader` while still representing flat floor or roof visuals that the client renders as a surface-like tile.
+
+Current parser rule:
+
+- `UOWaterShader` -> `TileType::Liquid`
+- `UOStaticTerrainShader` -> `TileType::Solid`
+- `UOSpriteShader` with `Unused1` -> `TileType::Solid`
+- `UOSpriteShader` with primary texture `stretch != 1.0` -> `TileType::Solid`
+- otherwise -> `TileType::Static`
+
+This rule was derived from verified EC examples such as wood boards (`1211`), sandstone floor (`2077`), and palm-frond roof (`1510`): all are flat 44x44 classic-style tiles with zero offsets, all carry `Unused1`, and all must be treated as surface-like in the EC path even though they do not come through `UOStaticTerrainShader`.
+
+That avoids misclassifying bridge decks, suspended floors, under-terrain floors, roofs, and terrain-looking object overlays as map land while still keeping them out of the billboard/static path.
 
 ### 6.4 Flag Interpretation Rules
 
@@ -158,12 +169,14 @@ Useful examples:
 - `wet`: liquid-adjacent or water-like content
 - `background`: often flat/decal-like or floor-like placement behavior
 - `wall` / `roof`: structural art, not land
+- `unused1`: verified EC-side hint that some `tileart.uop` entries should be rendered as flat surface-like tiles even when their shader is `UOSpriteShader`
 
 Practical rule:
 
 - `surface` and `bridge` strongly suggest floor-like or deck-like object art when the owner is tileart/item data
 - `wet` plus water-oriented shader suggests liquid-style treatment, but still not necessarily map land if owned by tileart
 - `wall` and `roof` should rule out land classification immediately
+- `unused1` should be treated as a secondary EC render-mode hint, not as proof of terrain ownership
 
 Flags are therefore best treated as:
 
@@ -173,6 +186,8 @@ Flags are therefore best treated as:
 
 They are not the primary source of truth for deciding `land` versus `art`.
 
+In other words: `Unused1` says "render this tileart entry like a flat surface", not "this texture belongs to the terrain material system".
+
 ### 6.5 Decision Table
 
 | Condition | Result | Notes |
@@ -181,6 +196,7 @@ They are not the primary source of truth for deciding `land` versus `art`.
 | Referenced by classic item tiledata or EC `ArtData` | `art` | Even if flat, floor-like, or terrain-looking |
 | EC tileart record with `UOStaticTerrainShader` | `art`, subtype `terrain-like floor art` | Do not promote to map land automatically |
 | EC tileart record with `UOWaterShader` | `art`, subtype `liquid-like art` | Useful for special render handling, still item-owned |
+| EC tileart record with `UOSpriteShader` and `Unused1` | `art`, subtype `surface-like floor/roof art` | Covers flat boards, roofs, sandstone floor tiles, and similar EC land-like statics |
 | EC tileart record with `UOSpriteShader` and walkable/surface-like flags | `art`, subtype `floor or deck art` | Covers docks, platforms, suspended floors |
 | `wall` or `roof` flags present | `art` | Strong negative evidence against land |
 | Same EC `worldart` texture id used by both domains | keep both semantic references | Shared texture content is valid; do not force exclusivity |
@@ -191,7 +207,9 @@ Do not classify as `land` merely because:
 
 - the texture lives under `build/worldart/...`
 - the numeric id is low
+- the numeric vpath matches a classic art id
 - the art looks like a flat diamond ground tile
+- the tile carries `Unused1`
 - the object is walkable
 
 Those signals are insufficient on their own. They are compatible with:
@@ -216,8 +234,9 @@ Long-term, a shared EC texture pool with separate semantic lookup tables would b
 
 Current branch direction:
 
-- treat EC `Unused1` as the primary land hint when building the new semantic translation table
-- if `Unused1` is absent, fall back to shader/type, ownership, and terrain-family hints
+- keep terrain ownership anchored in `TerrainDefinition.uop`
+- keep item/static ownership anchored in `tileart.uop`
+- use EC `Unused1` plus shader/type to decide whether a tileart entry is surface-like and should avoid the billboard/static path
 - keep `runtime_material_id_overrides.toml` narrow and runtime-only
 - use `TerrainTranscode.json` as the starting point for the hand-tuned Classic land family table
 

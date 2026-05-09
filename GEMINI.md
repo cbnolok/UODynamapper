@@ -14,8 +14,12 @@ This document provides essential information for AI agents to effectively assist
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
 - `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
 - `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
-- `uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
-- `uocf_cli/` - Generic UO tooling CLI crate with multiple binaries such as `uoptool` and `cc_uop_mul_converter`
+- `tools/uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
+- `tools/uocf_cli/` - Generic UO tooling CLI crate with multiple binaries such as `uoptool` and `cc_uop_mul_converter`
+- `tools/uddp_inspector/` - GUI for inspecting .uddp package contents
+- `tools/uddconv_gui/` - GUI frontend for asset conversion
+- `tools/uop_inspector/` - GUI for inspecting .uop files
+- `tools/uop_populator_gui/` - GUI for populating UOP hash dictionaries
 
 ---
 

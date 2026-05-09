@@ -36,7 +36,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     let local = mix(inst.local_min, inst.local_max, vec2<f32>(corner.x, 1.0 - corner.y));
-
     let world_pos = vec3<f32>(
         inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x,
         inst.world_y + local.y,

@@ -22,25 +22,27 @@
 //! the new color for that pixel. This allows for a wide range of color variations for a single
 //! base asset.
 
-use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Read;
+use std::fs::File;
 use std::path::Path;
-use byteorder::{LittleEndian, ReadBytesExt};
 
 crate::eyre_imports!();
 
-const HUES_MUL_ENTRY_SIZE: usize = 88;
+const HUE_ENTRY_SIZE: usize = 88;
+const HUE_BLOCK_SIZE: usize = 708; // 4 byte header + 8 * 88 byte entries
+const HUES_PER_BLOCK: usize = 8;
 
 /// Represents a single hue entry from hues.mul, containing a color table and metadata.
 #[derive(Debug, Clone, Copy)]
 pub struct HueEntry {
+    pub id: u32,
     pub color_table: [u16; 32],
     pub table_start: u16,
     pub table_end: u16,
     pub name: [u8; 20],
 }
 
-/// Loads the hues.mul file into a vector of HueEntry structs.
+/// Loads the hues.mul file into memory.
 ///
 /// # Arguments
 ///
@@ -51,25 +53,43 @@ pub struct HueEntry {
 /// A `Result` containing a `Vec<HueEntry>`, or an `eyre::Report` on failure.
 ///
 pub fn load_hues(path: &Path) -> eyre::Result<Vec<HueEntry>> {
-    let file_data: Vec<u8> = fs::read(path)?;
-    let num_entries: usize = file_data.len() / HUES_MUL_ENTRY_SIZE;
-    let mut hues: Vec<HueEntry> = Vec::with_capacity(num_entries);
-    let mut cursor: Cursor<Vec<u8>> = Cursor::new(file_data);
+    let mut file = File::open(path).wrap_err("Failed to open hues.mul")?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
 
-    for _ in 0..num_entries {
-        let mut entry = HueEntry {
-            color_table: [0; 32],
-            table_start: 0,
-            table_end: 0,
-            name: [0; 20]
-        };
-        for i in 0..32 {
-            entry.color_table[i] = cursor.read_u16::<LittleEndian>()?;
+    let num_blocks = buffer.len() / HUE_BLOCK_SIZE;
+    let mut hues = Vec::with_capacity(num_blocks * HUES_PER_BLOCK);
+
+    for block_idx in 0..num_blocks {
+        let block_offset = block_idx * HUE_BLOCK_SIZE;
+        // Skip 4-byte header
+        let entries_offset = block_offset + 4;
+
+        for entry_idx in 0..HUES_PER_BLOCK {
+            let offset = entries_offset + entry_idx * HUE_ENTRY_SIZE;
+            if offset + HUE_ENTRY_SIZE > buffer.len() {
+                break;
+            }
+
+            let entry_data = &buffer[offset..offset + HUE_ENTRY_SIZE];
+            let mut color_table = [0u16; 32];
+            for i in 0..32 {
+                color_table[i] = u16::from_le_bytes([entry_data[i * 2], entry_data[i * 2 + 1]]);
+            }
+
+            let table_start = u16::from_le_bytes([entry_data[64], entry_data[65]]);
+            let table_end = u16::from_le_bytes([entry_data[66], entry_data[67]]);
+            let mut name = [0u8; 20];
+            name.copy_from_slice(&entry_data[68..88]);
+
+            hues.push(HueEntry {
+                id: (block_idx * HUES_PER_BLOCK + entry_idx + 1) as u32,
+                color_table,
+                table_start,
+                table_end,
+                name,
+            });
         }
-        entry.table_start = cursor.read_u16::<LittleEndian>()?;
-        entry.table_end = cursor.read_u16::<LittleEndian>()?;
-        cursor.read_exact(&mut entry.name)?;
-        hues.push(entry);
     }
 
     Ok(hues)

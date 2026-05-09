@@ -31,7 +31,6 @@ crate::eyre_imports!();
 use bytemuck::{cast_slice, Pod, Zeroable};
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use std::fs::File;
-use std::io::{prelude::*, BufReader, SeekFrom};
 use std::path::PathBuf;
 
 /// Represents a single cell (or tile) in the map.
@@ -213,12 +212,15 @@ impl MapBlock {
     }
 }
 
+use memmap2::Mmap;
+use std::sync::Arc;
+
 /// Represents a map plane, which is a 2D grid of blocks.
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
     map_file_path: PathBuf,
-    map_file_mul_rdr: BufReader<File>,
+    pub map_mmap: Arc<Mmap>,
     cached_block_indices: Vec<u32>,
     cached_blocks_arena: Vec<CachedBlock>,
     cached_blocks_free_list: Vec<u32>,
@@ -482,7 +484,8 @@ impl MapPlane {
             .metadata()
             .wrap_err_with(|| format!("Get map{map_index}.mul metadata"))?;
 
-        let map_file_mul_rdr = BufReader::new(map_file_mul_handle);
+        let map_mmap = unsafe { Mmap::map(&map_file_mul_handle)? };
+        let map_mmap = Arc::new(map_mmap);
 
         let map_size_tiles = match map_size_tiles_override {
             Some(size) => {
@@ -550,7 +553,7 @@ impl MapPlane {
             index: map_index,
             size_blocks: map_size_blocks,
             map_file_path: map_file_mul_path.clone(),
-            map_file_mul_rdr,
+            map_mmap,
             cached_block_indices,
             cached_blocks_arena: Vec::new(),
             cached_blocks_free_list: Vec::new(),
@@ -649,28 +652,14 @@ impl MapPlane {
             let end_idx = indexed_blocks[range_end].idx;
             let num_blocks = (end_idx - start_idx + 1) as usize;
 
-            let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
-            self.map_file_mul_rdr
-                .seek(SeekFrom::Start(offset))
-                .wrap_err_with(|| {
-                    format!(
-                        "Failed to seek to offset {} for block index {}",
-                        offset, start_idx
-                    )
-                })?;
+            let offset = start_idx as usize * MapBlock::PACKED_SIZE;
+            let end = offset + num_blocks * MapBlock::PACKED_SIZE;
+            
+            if end > self.map_mmap.len() {
+                 eyre::bail!("Map index out of range for map plane {}", self.index);
+            }
 
-            let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
-            self.read_buffer.resize(buffer_len, 0);
-            self.map_file_mul_rdr
-                .read_exact(&mut self.read_buffer)
-                .wrap_err_with(|| {
-                    format!(
-                        "Failed to read {} blocks from offset {}",
-                        num_blocks, offset
-                    )
-                })?;
-
-            let raw_blocks: &[RawMapBlock] = cast_slice(&self.read_buffer);
+            let raw_blocks: &[RawMapBlock] = cast_slice(&self.map_mmap[offset..end]);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
                 if block_pos.x >= self.size_blocks.width || block_pos.y >= self.size_blocks.height {
@@ -713,18 +702,12 @@ impl MapPlane {
     }
 }
 
-/// Loads map blocks from an arbitrary [`Read`]+[`Seek`] source, returning them
-/// without inserting into any cache.  Designed for the background chunk-loader
-/// thread which opens its own file handle to avoid holding a lock on the
-/// main-thread [`MapPlane`].
-///
-/// `read_buffer` is a caller-owned scratch buffer that is reused across calls
-/// to avoid repeated heap allocation.
-pub fn load_blocks_from_reader<R: Read + Seek>(
-    reader: &mut R,
+/// Loads map blocks from a memory-mapped source, returning them
+/// without inserting into any cache.
+pub fn load_blocks_from_mmap(
+    mmap: &Mmap,
     blocks_to_load: &[MapBlockRelPos],
     size_blocks_height: u32,
-    read_buffer: &mut Vec<u8>,
 ) -> eyre::Result<Vec<MapBlock>> {
     if blocks_to_load.is_empty() {
         return Ok(Vec::new());
@@ -798,18 +781,14 @@ pub fn load_blocks_from_reader<R: Read + Seek>(
             let end_idx = indexed_blocks[range_end].idx;
             let num_blocks = (end_idx - start_idx + 1) as usize;
 
-            let offset = (start_idx as usize * MapBlock::PACKED_SIZE) as u64;
-            reader
-                .seek(SeekFrom::Start(offset))
-                .wrap_err_with(|| format!("bg-loader: seek to offset {offset}"))?;
+            let offset = start_idx as usize * MapBlock::PACKED_SIZE;
+            let end = offset + num_blocks * MapBlock::PACKED_SIZE;
 
-            let buffer_len = num_blocks * MapBlock::PACKED_SIZE;
-            read_buffer.resize(buffer_len, 0);
-            reader.read_exact(read_buffer).wrap_err_with(|| {
-                format!("bg-loader: read {num_blocks} blocks at offset {offset}")
-            })?;
+            if end > mmap.len() {
+                eyre::bail!("bg-loader: Map index out of range");
+            }
 
-            let raw_blocks: &[RawMapBlock] = cast_slice(read_buffer);
+            let raw_blocks: &[RawMapBlock] = cast_slice(&mmap[offset..end]);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
                 let mut new_block = MapBlock::default();

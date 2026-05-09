@@ -48,7 +48,7 @@ use uocf::{
     },
 };
 
-use crate::upscale::UpscaleFilter;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TerrainTextureSelection {
@@ -90,15 +90,16 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
+use crate::upscale::{UpscaleConfig, UpscaleFilter};
+
 pub struct EcLandAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
-    /// When `true` each atlas page is BC7-compressed on the CPU before being
-    /// stored in the UDDP container, reducing VRAM usage by ~8×.
-    pub use_bc7: bool,
-    pub planar_shuffle: bool,
-    pub upscale: UpscaleFilter,
+    pub compression: UddCompressionFlag,
+    pub upscale_64: UpscaleConfig,
+    pub upscale_128: UpscaleConfig,
+    pub upscale_256: UpscaleConfig,
 }
 
 impl Default for EcLandAtlasOptions {
@@ -107,9 +108,10 @@ impl Default for EcLandAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            use_bc7: false,
-            planar_shuffle: false,
-            upscale: UpscaleFilter::default(),
+            compression: UddCompressionFlag::None,
+            upscale_64: UpscaleConfig::default(),
+            upscale_128: UpscaleConfig::default(),
+            upscale_256: UpscaleConfig::default(),
         }
     }
 }
@@ -607,7 +609,8 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(UDDP_PAGE_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -616,7 +619,8 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(UDDP_SLOT_MANIFEST_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -625,7 +629,8 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH),
         path_hash64: None,
         id: None,
@@ -637,7 +642,8 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0,
+            height: 0,
             virtual_path: Some(UDDP_TRANSCODE_ENTRY_VPATH),
             path_hash64: None,
             id: None,
@@ -646,21 +652,15 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     }
 
     // Determine the final pixel format and encoding for atlas pages.
-    let encoding = if options.use_bc7 {
-        VramTextureEncoding::Bc7(preferred_bc7_encoder_backend())
+    let use_bc7 = options.compression == UddCompressionFlag::None;
+    
+    let (encoding, pixel_format) = if use_bc7 {
+        (VramTextureEncoding::Bc7(preferred_bc7_encoder_backend()), PagePixelFormat::Bc7)
     } else {
-        VramTextureEncoding::Rgba8UnormSrgb
+        (VramTextureEncoding::Rgba8UnormSrgb, PagePixelFormat::Rgba8888)
     };
-    let pixel_format = if options.use_bc7 {
-        PagePixelFormat::Bc7
-    } else {
-        PagePixelFormat::Rgba8888
-    };
-    let compression = if options.use_bc7 {
-        UddCompressionFlag::None
-    } else {
-        UddCompressionFlag::ZstdNoDict
-    };
+
+    let compression = options.compression;
 
     let pb = ProgressBar::new(pages.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
@@ -668,7 +668,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
         .unwrap()
         .progress_chars("#>-"));
 
-    let encoded_pages = if options.use_bc7 {
+    let encoded_pages = if use_bc7 {
         let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
             .map_err(|e| eyre::eyre!("{e}"))?;
         let encoded_pages = pages
@@ -683,9 +683,9 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
                         .into_bytes()
                         .to_vec();
                 pb.inc(1);
-                Ok((page_path, encoded))
+                Ok((page_path, encoded, options.atlas_width, options.atlas_height))
             })
-            .collect::<Vec<eyre::Result<(String, Vec<u8>)>>>();
+            .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
 
         let mut resolved = Vec::with_capacity(encoded_pages.len());
         for page in encoded_pages {
@@ -705,16 +705,19 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
                         page.record.used_width,
                         page.record.used_height,
                     ),
+                    page.record.used_width,
+                    page.record.used_height,
                 )
             })
             .collect()
     };
 
-    for (page_path, encoded) in encoded_pages {
+    for (page_path, encoded, width, height) in encoded_pages {
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression,
-            apply_planar: options.planar_shuffle && !options.use_bc7,
+            width,
+            height,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -748,7 +751,7 @@ fn validate_options(options: &EcLandAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width > u16::MAX as u32 || options.atlas_height > u16::MAX as u32 {
         eyre::bail!("atlas dimensions must fit into metadata u16 fields");
     }
-    if options.use_bc7 && (options.atlas_width % 4 != 0 || options.atlas_height % 4 != 0) {
+    if options.compression == UddCompressionFlag::None && (options.atlas_width % 4 != 0 || options.atlas_height % 4 != 0) {
         eyre::bail!("BC7 compression requires atlas dimensions divisible by 4");
     }
     Ok(())
@@ -858,11 +861,26 @@ fn decode_present_tiles(
     for decoded_texture in decoded_textures {
         let (texture_id, decoded) = decoded_texture?;
         if let Some(mut decoded) = decoded {
-            if !matches!(options.upscale, UpscaleFilter::None) {
-                let (w, h, rgba) = options.upscale.apply(decoded.width, decoded.height, &decoded.rgba);
-                decoded.width = w;
-                decoded.height = h;
-                decoded.rgba = rgba;
+            let upscale_config = match (decoded.width, decoded.height) {
+                (64, 64) => Some(&options.upscale_64),
+                (128, 128) => Some(&options.upscale_128),
+                (256, 256) => Some(&options.upscale_256),
+                _ => None,
+            };
+
+            if let Some(cfg) = upscale_config {
+                if cfg.target_size > 0 && !matches!(cfg.filter, UpscaleFilter::None) {
+                    let rgba = cfg.filter.apply_to_size(
+                        decoded.width,
+                        decoded.height,
+                        &decoded.rgba,
+                        cfg.target_size,
+                        cfg.target_size,
+                    );
+                    decoded.width = cfg.target_size;
+                    decoded.height = cfg.target_size;
+                    decoded.rgba = rgba;
+                }
             }
             decoded_texture_cache.insert(texture_id, decoded);
         }
@@ -1245,7 +1263,7 @@ pub fn serialize_page_manifest(
     // The manifest separates two concerns: logical atlas dimensions for consumers,
     // and compact stored bounds for I/O. That split is what lets the package shrink
     // aggressively without changing any slot coordinates.
-    let pixel_format = if options.use_bc7 {
+    let pixel_format = if options.compression == UddCompressionFlag::None {
         PagePixelFormat::Bc7
     } else {
         PagePixelFormat::Rgba8888
@@ -1303,9 +1321,10 @@ pub fn encode_slot_manifest(
             atlas_width,
             atlas_height,
             gutter,
-            use_bc7: false,
-            planar_shuffle: false,
-            upscale: UpscaleFilter::default(),
+            compression: UddCompressionFlag::None,
+            upscale_64: UpscaleConfig::default(),
+            upscale_128: UpscaleConfig::default(),
+            upscale_256: UpscaleConfig::default(),
         },
     )
 }

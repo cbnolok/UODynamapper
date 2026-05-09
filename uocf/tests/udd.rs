@@ -42,7 +42,7 @@ fn path_hash_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some("metadata/demo.bin"),
             path_hash64: None,
             id: None,
@@ -53,7 +53,7 @@ fn path_hash_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: CompressionFlag::None,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some("pages/0000.rgba"),
             path_hash64: None,
             id: None,
@@ -86,7 +86,7 @@ fn dense_id_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Sector as u8,
             compression: CompressionFlag::None,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: None,
             path_hash64: None,
             id: Some(0),
@@ -97,7 +97,7 @@ fn dense_id_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Sector as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: None,
             path_hash64: None,
             id: Some(1),
@@ -120,7 +120,7 @@ fn sparse_id_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Tile as u8,
             compression: CompressionFlag::None,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: None,
             path_hash64: None,
             id: Some(3),
@@ -131,7 +131,7 @@ fn sparse_id_package_roundtrip_reads_entries() {
         .add_file(AddFileRequest {
             data_type: DataType::Tile as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: None,
             path_hash64: None,
             id: Some(9),
@@ -155,7 +155,7 @@ fn uddpi_patch_replaces_target_file_and_recomputes_hash() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(path),
             path_hash64: None,
             id: None,
@@ -166,7 +166,7 @@ fn uddpi_patch_replaces_target_file_and_recomputes_hash() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::None,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some("metadata/keep.bin"),
             path_hash64: None,
             id: None,
@@ -180,7 +180,7 @@ fn uddpi_patch_replaces_target_file_and_recomputes_hash() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(path),
             path_hash64: None,
             id: None,
@@ -191,7 +191,7 @@ fn uddpi_patch_replaces_target_file_and_recomputes_hash() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::None,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some("metadata/keep.bin"),
             path_hash64: None,
             id: None,

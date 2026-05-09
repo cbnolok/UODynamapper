@@ -9,6 +9,7 @@ folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
 # When set, UODynamapper checks this folder first for UDDP assets before falling back to the raw client folder.
 # Source priority is: uddp > mul > uop
 #udd_path = "/mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/scripts/uddconv"
+udd_path = "/home/claudio/test/uddp/"
 
 # If true, preload all land texmaps into fixed GPU array layers at startup.
 # If false, use the existing LRU-backed terrain texture cache.

@@ -41,22 +41,21 @@
 crate::eyre_imports!();
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use bytemuck::cast_slice_mut;
 
-use crate::generic_index::IndexFile;
+use crate::classic::generic_index::IndexFile;
 use crate::uop::package::UopPackage;
 use crate::utils::color::color_lut;
 
 const ART_ITEM_ID_OFFSET: u32 = 0x4000;
-const LAND_DIMENSION: usize = 44;
+pub const LAND_DIMENSION: usize = 44;
 const LAND_HALF_ROWS: usize = LAND_DIMENSION / 2;
-const LAND_DIAMOND_PIXEL_COUNT: usize = LAND_HALF_ROWS * (LAND_HALF_ROWS + 1) * 2;
+pub const LAND_DIAMOND_PIXEL_COUNT: usize = LAND_HALF_ROWS * (LAND_HALF_ROWS + 1) * 2;
 const LAND_DIAMOND_BYTE_COUNT: usize = LAND_DIAMOND_PIXEL_COUNT * 2;
-const RGBA_BYTES_PER_PIXEL: usize = 4;
+pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 const STATIC_HEADER_BYTES: usize = 8;
 const LOOKUP_ENTRY_BYTES: usize = 2;
 
@@ -245,21 +244,41 @@ pub fn decode_static_tile_from_raw(raw_data: &[u8]) -> eyre::Result<(u16, u16, V
     Ok((width, height, pixel_data_out))
 }
 
+use memmap2::Mmap;
+
+#[derive(Clone)]
 pub struct ArtMap {
     client_path: PathBuf,
     idx_file: Option<IndexFile>,
-    art_file: Option<Mutex<BufReader<File>>>,
+    art_mmap: Option<Arc<Mmap>>,
     uop_package: Option<UopPackage>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtSource {
+    Mul,
+    CcUop,
+    EcUop,
+    Any,
+}
+
 impl ArtMap {
+    pub fn load_standalone_uop(uop: UopPackage) -> Self {
+        Self {
+            client_path: PathBuf::new(),
+            idx_file: None,
+            art_mmap: None,
+            uop_package: Some(uop),
+        }
+    }
+
     pub fn load(client_path: impl AsRef<Path>) -> eyre::Result<Self> {
         let client_path = client_path.as_ref().to_path_buf();
         let idx_path = client_path.join("artidx.mul");
         let mul_path = client_path.join("art.mul");
 
         // Find artlegacymul.uop case-insensitively
-        let uop_candidates = ["artlegacymul.uop", "artLegacyMUL.uop"];
+        let uop_candidates = ["artlegacymul.uop", "artLegacyMUL.uop", "LegacyTexture.uop"];
         let mut uop_path = None;
         for &name in &uop_candidates {
             let path = client_path.join(name);
@@ -270,7 +289,7 @@ impl ArtMap {
         }
 
         let mut idx_file = None;
-        let mut art_file = None;
+        let mut art_mmap = None;
         let mut uop_package = None;
 
         if idx_path.exists() && mul_path.exists() {
@@ -278,8 +297,9 @@ impl ArtMap {
 
             let mul_handle = File::open(&mul_path)
                 .wrap_err_with(|| format!("Failed to open {}", mul_path.display()))?;
-            art_file = Some(Mutex::new(BufReader::new(mul_handle)));
-            log::info!("uocf: Loaded classic Art.mul format");
+            let mmap = unsafe { Mmap::map(&mul_handle)? };
+            art_mmap = Some(Arc::new(mmap));
+            log::info!("uocf: Loaded classic Art.mul format (memory-mapped)");
         }
 
         if let Some(path) = uop_path {
@@ -296,41 +316,58 @@ impl ArtMap {
         Ok(Self {
             client_path,
             idx_file,
-            art_file,
+            art_mmap,
             uop_package,
         })
     }
 
-    /// Fetches the raw compressed bytes for a given `art_id` without parsing its internal format.
-    /// Puts the result into the provided `scratch_buffer` to avoid memory allocation.
-    pub fn get_raw_art_data(&self, art_id: u32, scratch_buffer: &mut Vec<u8>) -> eyre::Result<()> {
+    pub fn with_uop(mut self, uop: UopPackage) -> Self {
+        self.uop_package = Some(uop);
+        self
+    }
+    /// Fetches the raw compressed bytes for a given `art_id` from a specific source.
+    pub fn get_raw_art_data_from_source(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+        scratch_buffer: &mut Vec<u8>,
+    ) -> eyre::Result<()> {
         scratch_buffer.clear();
 
-        // Attempt the classic mul path first to preserve the existing compatibility order.
-        if let (Some(idx), Some(art_mutex)) = (&self.idx_file, &self.art_file) {
-            if let Ok(entry) = idx.element(art_id as usize) {
-                if let (Some(lookup), Some(size)) = (entry.lookup(), entry.len()) {
-                    if classic_art_payload_is_structurally_valid(art_id, size) {
-                        let target_size = size as usize;
-                        scratch_buffer.resize(target_size, 0);
+        if source == ArtSource::Mul || source == ArtSource::Any {
+            if let (Some(idx), Some(art_mmap)) = (&self.idx_file, &self.art_mmap) {
+                if let Ok(entry) = idx.element(art_id as usize) {
+                    if let (Some(lookup), Some(size)) = (entry.lookup(), entry.len()) {
+                        if classic_art_payload_is_structurally_valid(art_id, size) {
+                            let lookup = lookup as usize;
+                            let size = size as usize;
+                            let end = lookup + size;
 
-                        let mut art_reader = art_mutex.lock().unwrap();
-                        art_reader.seek(SeekFrom::Start(lookup as u64))?;
-                        art_reader.read_exact(scratch_buffer)?;
+                            if end > art_mmap.len() {
+                                eyre::bail!(
+                                    "Art index points outside mmap range for art_id {}",
+                                    art_id
+                                );
+                            }
 
-                        return Ok(());
+                            scratch_buffer.extend_from_slice(&art_mmap[lookup..end]);
+                            return Ok(());
+                        }
                     }
                 }
             }
         }
 
         if let Some(uop) = &self.uop_package {
-            // Try multiple vpath candidates?
-            let candidates = [
-                format!("build/artlegacymul/{:08}.tga", art_id),
-                //format!("build/artlegacy/{:08}.dat", art_id),
-                //format!("build/art/{:08}.tga", art_id),
-            ];
+            let mut candidates = Vec::new();
+            if source == ArtSource::CcUop || source == ArtSource::Any {
+                candidates.push(format!("build/artlegacymul/{:08}.tga", art_id));
+            }
+            if source == ArtSource::EcUop || source == ArtSource::Any {
+                candidates.push(format!("build/tileartlegacy/{:08}.dds", art_id));
+                candidates.push(format!("build/tileartlegacy/{:08}.tga", art_id));
+                candidates.push(format!("build/legacytexture/{:08}.tga", art_id));
+            }
 
             for file_name in candidates {
                 let hash = crate::uop::hash::hash_file_name_single(&file_name);
@@ -341,7 +378,29 @@ impl ArtMap {
             }
         }
 
-        eyre::bail!("Could not find art data for ID {}", art_id);
+        eyre::bail!(
+            "Could not find art data for ID {} in source {:?}",
+            art_id,
+            source
+        );
+    }
+
+    /// Fetches the raw compressed bytes for a given `art_id` without parsing its internal format.
+    /// Puts the result into the provided `scratch_buffer` to avoid memory allocation.
+    pub fn get_raw_art_data(&self, art_id: u32, scratch_buffer: &mut Vec<u8>) -> eyre::Result<()> {
+        self.get_raw_art_data_from_source(art_id, ArtSource::Any, scratch_buffer)
+    }
+
+    /// Reads and parses an Art Land tile (44x44 isometric diamond surface) from a specific source.
+    pub fn decode_land_tile_from_source(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+        scratch_raw_buffer: &mut Vec<u8>,
+        pixel_data_out: &mut [u8; LAND_DIMENSION * LAND_DIMENSION * RGBA_BYTES_PER_PIXEL],
+    ) -> eyre::Result<()> {
+        self.get_raw_art_data_from_source(art_id, source, scratch_raw_buffer)?;
+        decode_land_tile_from_raw(scratch_raw_buffer, pixel_data_out)
     }
 
     /// Reads and parses an Art Land tile (44x44 isometric diamond surface).
@@ -352,20 +411,22 @@ impl ArtMap {
         scratch_raw_buffer: &mut Vec<u8>,
         pixel_data_out: &mut [u8; LAND_DIMENSION * LAND_DIMENSION * RGBA_BYTES_PER_PIXEL],
     ) -> eyre::Result<()> {
-        self.get_raw_art_data(art_id, scratch_raw_buffer)?;
-        decode_land_tile_from_raw(scratch_raw_buffer, pixel_data_out)
+        self.decode_land_tile_from_source(
+            art_id,
+            ArtSource::Any,
+            scratch_raw_buffer,
+            pixel_data_out,
+        )
     }
 
-    /// Reads and parses an Art Static tile (RLE encoded image).
-    /// Modifies the `scratch_raw_buffer` and returns `(width, height, pixel_data)`.
-    /// Reads and parses an Art Static tile (RLE encoded image).
-    /// Modifies the `scratch_raw_buffer` and returns `(width, height, pixel_data)`.
-    pub fn decode_static_tile(
+    /// Reads and parses an Art Static tile (RLE encoded image) from a specific source.
+    pub fn decode_static_tile_from_source(
         &self,
         art_id: u32,
+        source: ArtSource,
         scratch_raw_buffer: &mut Vec<u8>,
     ) -> eyre::Result<(u16, u16, Vec<u8>)> {
-        self.get_raw_art_data(art_id, scratch_raw_buffer)?;
+        self.get_raw_art_data_from_source(art_id, source, scratch_raw_buffer)?;
 
         // Check if it's a TGA (common in UOP versions)
         if scratch_raw_buffer.len() >= 18
@@ -379,6 +440,16 @@ impl ArtMap {
         }
 
         decode_static_tile_from_raw(scratch_raw_buffer)
+    }
+
+    /// Reads and parses an Art Static tile (RLE encoded image).
+    /// Modifies the `scratch_raw_buffer` and returns `(width, height, pixel_data)`.
+    pub fn decode_static_tile(
+        &self,
+        art_id: u32,
+        scratch_raw_buffer: &mut Vec<u8>,
+    ) -> eyre::Result<(u16, u16, Vec<u8>)> {
+        self.decode_static_tile_from_source(art_id, ArtSource::Any, scratch_raw_buffer)
     }
 
     pub fn max_id(&self) -> u32 {
@@ -428,66 +499,4 @@ fn is_probably_tga(data: &[u8]) -> bool {
     // image_type 2 is uncompressed RGB/RGBA, 10 is RLE RGB/RGBA
     let image_type = data[2];
     (image_type == 2 || image_type == 10) && data[1] <= 1
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rgba_at(pixel_data: &[u8], x: usize, y: usize, width: usize) -> [u8; 4] {
-        let offset = (y * width + x) * 4;
-        [
-            pixel_data[offset],
-            pixel_data[offset + 1],
-            pixel_data[offset + 2],
-            pixel_data[offset + 3],
-        ]
-    }
-
-    #[test]
-    fn land_decode_clears_transparent_corners() {
-        let raw_data = vec![0xFFu8; LAND_DIAMOND_PIXEL_COUNT * 2];
-        let mut pixel_data = [0x7Fu8; LAND_DIMENSION * LAND_DIMENSION * 4];
-
-        decode_land_tile_from_raw(&raw_data, &mut pixel_data).unwrap();
-
-        assert_eq!(rgba_at(&pixel_data, 0, 0, LAND_DIMENSION), [0, 0, 0, 0]);
-        assert_eq!(
-            rgba_at(&pixel_data, LAND_DIMENSION - 1, 0, LAND_DIMENSION),
-            [0, 0, 0, 0]
-        );
-        assert_eq!(
-            rgba_at(
-                &pixel_data,
-                LAND_DIMENSION / 2,
-                LAND_DIMENSION / 2,
-                LAND_DIMENSION
-            ),
-            [248, 248, 248, 255]
-        );
-    }
-
-    #[test]
-    fn static_decode_preserves_rle_positions() {
-        let raw_data = vec![
-            0, 0, 0, 0, // flags
-            4, 0, // width
-            1, 0, // height
-            0, 0, // lookup for row 0
-            1, 0, // x_offset
-            2, 0, // x_run
-            0x00, 0x7C, // red
-            0xE0, 0x03, // green
-            0, 0, // row terminator
-            0, 0,
-        ];
-
-        let (width, height, pixel_data) = decode_static_tile_from_raw(&raw_data).unwrap();
-
-        assert_eq!((width, height), (4, 1));
-        assert_eq!(rgba_at(&pixel_data, 0, 0, width as usize), [0, 0, 0, 0]);
-        assert_eq!(rgba_at(&pixel_data, 1, 0, width as usize), [248, 0, 0, 255]);
-        assert_eq!(rgba_at(&pixel_data, 2, 0, width as usize), [0, 248, 0, 255]);
-        assert_eq!(rgba_at(&pixel_data, 3, 0, width as usize), [0, 0, 0, 0]);
-    }
 }

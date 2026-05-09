@@ -274,10 +274,7 @@ fn infer_map_size_tiles(map_index: u32, total_chunks: u32) -> eyre::Result<MapSi
     }
 }
 
-fn decode_map_block_from_chunk(
-    bytes: &[u8],
-    block_pos: MapBlockRelPos,
-) -> eyre::Result<MapBlock> {
+fn decode_map_block_from_chunk(bytes: &[u8], block_pos: MapBlockRelPos) -> eyre::Result<MapBlock> {
     let texels: &[PackedMapTexel] = bytemuck::try_cast_slice(bytes)
         .map_err(|_| eyre::eyre!("invalid packed map chunk size {}", bytes.len()))?;
     if texels.len() != PACKAGE_CHUNK_TEXEL_COUNT {

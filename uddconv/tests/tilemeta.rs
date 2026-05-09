@@ -85,7 +85,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -96,7 +96,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -152,3 +152,32 @@ fn tilemeta_item_visual_kind_roundtrips_in_padding_byte() {
     assert!(item.is_surface_like());
     assert_eq!(item.visual_kind(), TileMetaItemVisualKind::SurfaceLike);
 }
+
+#[test]
+fn classify_item_visual_kind_marks_solid_entries_as_surface_like() {
+    use uocf::enhanced::tileart::{ArtData, TileType};
+    let art_data = ArtData {
+        tile_type: TileType::Solid,
+        ..ArtData::default()
+    };
+
+    assert_eq!(
+        classify_item_visual_kind(1444, Some(&art_data)),
+        TileMetaItemVisualKind::SurfaceLike,
+    );
+}
+
+#[test]
+fn classify_item_visual_kind_keeps_static_entries_as_regular_art() {
+    use uocf::enhanced::tileart::{ArtData, TileType};
+    let art_data = ArtData {
+        tile_type: TileType::Static,
+        ..ArtData::default()
+    };
+
+    assert_eq!(
+        classify_item_visual_kind(172, Some(&art_data)),
+        TileMetaItemVisualKind::RegularArt,
+    );
+}
+

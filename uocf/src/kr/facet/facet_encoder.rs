@@ -42,15 +42,14 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::classic::map::{MapPlane, MapCell};
+#[cfg(feature = "tile_mappings_builder")]
+use super::tile_mappings_builder::*;
+#[cfg(not(feature = "tile_mappings_builder"))]
+use super::tile_mappings_loader::*;
+use crate::classic::map::{MapCell, MapPlane};
 use crate::enhanced::facet_decoder::StaticTile;
 use crate::uop::file::CompressionFlag;
 use crate::uop::package::UopPackage;
-#[cfg(feature ="tile_mappings_builder")]
-use super::tile_mappings_builder::*;
-#[cfg(not(feature ="tile_mappings_builder"))]
-use super::tile_mappings_loader::*;
-
 
 /// Encodes a classic map plane and its associated statics into a facet.uop file.
 ///
@@ -92,7 +91,10 @@ pub fn encode_map_plane(
     #[cfg(feature = "tile_mappings_builder")]
     {
         tile_dictionary = get_tile_map();
-        static_dictionary = get_statics_table().into_iter().map(|id| id as u16).collect();
+        static_dictionary = get_statics_table()
+            .into_iter()
+            .map(|id| id as u16)
+            .collect();
     }
 
     #[cfg(not(feature = "tile_mappings_builder"))]
@@ -157,10 +159,15 @@ pub fn encode_map_plane(
             use std::io::Write;
             let mut path_buf = [0u8; 64];
             let mut slice = &mut path_buf[..];
-            write!(slice, "build/sectors/facet_0{}/{:08}.bin", map_index, file_id).unwrap();
+            write!(
+                slice,
+                "build/sectors/facet_0{}/{:08}.bin",
+                map_index, file_id
+            )
+            .unwrap();
             let len = 64 - slice.len();
             let internal_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-            
+
             package.add_file_from_memory(&bin_data, internal_path, CompressionFlag::Zlib)?; // Zlib compression as per C#
 
             file_id += 1;
@@ -174,7 +181,7 @@ pub fn encode_map_plane(
     write!(slice, "facet{}.uop", map_index).unwrap();
     let len = 32 - slice.len();
     let facet_filename = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-    
+
     let uop_path: std::path::PathBuf = output_dir.join(facet_filename);
     package.finalize_and_save(&uop_path)?; // Finalize and save
 
@@ -228,7 +235,8 @@ pub fn generate_kr_bin_data(
 
             // Land Tile
             cursor.write_i8(cell.z)?;
-            let (kr_land_graphic_id, kr_land_unknown_byte) = *tile_dictionary.get(&cell.id).unwrap_or(&(0, 0)); // Default to 0 if not found
+            let (kr_land_graphic_id, kr_land_unknown_byte) =
+                *tile_dictionary.get(&cell.id).unwrap_or(&(0, 0)); // Default to 0 if not found
             cursor.write_u16::<LittleEndian>(kr_land_graphic_id)?;
             cursor.write_u8(kr_land_unknown_byte)?;
             cursor.write_u8((cell.id & 0xFF) as u8)?;
@@ -353,10 +361,20 @@ fn write_kr_delimiters(
         let ny = global_y as i32 + dy;
 
         // Ensure neighbor coordinates are within valid bounds of the map plane
-        if nx >= 0 && ny >= 0 && (nx as u32) < map_size_cells.width && (ny as u32) < map_size_cells.height {
+        if nx >= 0
+            && ny >= 0
+            && (nx as u32) < map_size_cells.width
+            && (ny as u32) < map_size_cells.height
+        {
             if let Some(cell) = get_cell_from_plane(map_plane, nx as u32, ny as u32) {
-                let (kr_land_graphic_id, kr_land_unknown_byte) = *tile_dictionary.get(&cell.id).unwrap_or(&(0, 0));
-                delimiters_to_write.push((direction_byte, cell.z, kr_land_graphic_id, kr_land_unknown_byte));
+                let (kr_land_graphic_id, kr_land_unknown_byte) =
+                    *tile_dictionary.get(&cell.id).unwrap_or(&(0, 0));
+                delimiters_to_write.push((
+                    direction_byte,
+                    cell.z,
+                    kr_land_graphic_id,
+                    kr_land_unknown_byte,
+                ));
             }
         }
         Ok(())
@@ -393,11 +411,16 @@ fn write_kr_delimiters(
         add_delimiter(1, -1, 7)?; // TopRight (7)
     }
     // BottomLeft corner
-    if on_bottom_edge_64 && on_left_edge_64 && global_x > 0 && global_y < map_size_cells.height - 1 {
+    if on_bottom_edge_64 && on_left_edge_64 && global_x > 0 && global_y < map_size_cells.height - 1
+    {
         add_delimiter(-1, 1, 6)?; // BottomLeft (6)
     }
     // BottomRight corner
-    if on_bottom_edge_64 && on_right_edge_64 && global_x < map_size_cells.width - 1 && global_y < map_size_cells.height - 1 {
+    if on_bottom_edge_64
+        && on_right_edge_64
+        && global_x < map_size_cells.width - 1
+        && global_y < map_size_cells.height - 1
+    {
         add_delimiter(1, 1, 4)?; // BottomRight (4)
     }
 

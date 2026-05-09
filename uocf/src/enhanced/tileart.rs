@@ -526,7 +526,7 @@ impl TileArtEntry {
         texture_ids
     }
 
-    fn get_tile_type(
+    pub fn get_tile_type(
         &self,
         texture_block: &TaeTexture,
         string_dictionary: &UoStringDictionary,
@@ -538,6 +538,9 @@ impl TileArtEntry {
                 "UOWaterShader" => TileType::Liquid,
                 "UOStaticTerrainShader" => TileType::Solid,
                 "UOSpriteShader" => {
+                    if self.flags1.contains(TaeFlag::Unused1) {
+                        return TileType::Solid;
+                    }
                     if let Some(item) = texture_block.texture_items.get(0) {
                         if item.texture_stretch != 1.0 {
                             return TileType::Solid;
@@ -577,7 +580,7 @@ impl TileArtEntry {
     }
 }
 
-fn classify_texture_path(path: &str) -> TextureType {
+pub fn classify_texture_path(path: &str) -> TextureType {
     let normalized = crate::utils::path::normalize_dictionary_path(path);
     if normalized.contains("data\\worldart\\") {
         TextureType::WorldArt
@@ -592,40 +595,4 @@ fn classify_texture_path(path: &str) -> TextureType {
 
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::path::extract_texture_id_from_path;
 
-    #[test]
-    fn tileart_extract_texture_id_normalizes_dictionary_name_patterns() {
-        assert_eq!(
-            extract_texture_id_from_path(r"Data\WorldArt\00000002_ankh.tga"),
-            Some(2)
-        );
-        assert_eq!(
-            extract_texture_id_from_path(r"Data\TileArtLegacy\3.tga"),
-            Some(3)
-        );
-        assert_eq!(
-            extract_texture_id_from_path("Data/TileArtEnhanced/02000540_Sand_Cliff_EW_A.tga"),
-            Some(2000540)
-        );
-    }
-
-    #[test]
-    fn tileart_classify_texture_path_normalizes_case_and_slashes() {
-        assert_eq!(
-            classify_texture_path("data/worldart/00000002_ankh.tga"),
-            TextureType::WorldArt
-        );
-        assert_eq!(
-            classify_texture_path(r"DATA\TILEARTLEGACY\3.tga"),
-            TextureType::TileArtLegacy
-        );
-        assert_eq!(
-            classify_texture_path("Data/TileArtEnhanced/00000004_tree.tga"),
-            TextureType::TileArtEnhanced
-        );
-    }
-}

@@ -1,51 +1,18 @@
-# Developer-facing worldmap rendering controls.
-#
-# Keep these values in a text file instead of the in-app preferences UI:
-# they are intended for renderer tuning and regression diagnosis, not
-# for normal end-user tweaking.
+enable_statics = true
 
 [land_streaming]
-# Main-world terrain preparation budget measured in equivalent 8x8 map blocks.
-# Set to 0 to remove this cap entirely.
 prepare_max_blocks_per_frame = 32768
-
-# Maximum number of metadata-atlas write_texture uploads submitted in one frame.
-# Set to 0 to remove this cap entirely.
 upload_max_ops_per_frame = 8
-
-# Maximum metadata-atlas bytes uploaded in one frame.
-# Set to 0 to remove this cap entirely.
 upload_max_bytes_per_frame = 16777216
 
 [diagnostics]
-# Enables Bevy's low-level render diagnostics plugin.
-# This gathers GPU pass timings and pipeline statistics, but can slow rendering on some drivers.
-# Restart required after changing it.
 enable_render_diagnostics = false
-
-# Emits a compact worldmap diagnostics block to the console at a fixed cadence.
-# Intended for regression capture and later analysis, not for normal play.
 dump_to_console = false
-
-# Seconds between compact diagnostics dumps.
 dump_interval_sec = 2.0
-
-# Include a short render-pass GPU breakdown. Requires enable_render_diagnostics.
 log_render_breakdown = false
-
-# Include world/chunk state (target count, scales, pending work, live chunks).
 log_world_state = false
-
-# Include CPU-side timings for the main worldmap systems, auxiliary
-# upload/extract helpers, and a residual frame-gap estimate.
 log_system_timers = false
 
 [shader_simplification]
-# Forces a temporary minimal terrain shader configuration on the shared land material.
-# Useful when checking whether the bottleneck is in the terrain fragment path.
-# Does not modify saved shader presets; hot-reload works if preferences debug.hot_reload_enabled is on.
 force_minimal_shader = false
-
-# Stronger diagnostic: the terrain fragment shader returns a flat debug color immediately.
-# Keeps geometry and fragment count, but strips almost all terrain fragment work.
 force_flat_fragment_shader = false

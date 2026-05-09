@@ -8,15 +8,15 @@
 //! the 32x32 chunk origin.
 //! The lookup mode is `DenseId` where ID is the block index.
 
-use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::path::{Path, PathBuf};
 
-use uocf::classic::map::MapPlane;
-use uocf::classic::statics::{StaticsReader, StaticTile};
-use uocf::udd::{UddpBuilder, LookupMode, AddFileRequest, DataType, CompressionFlag};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
+use uocf::classic::map::MapPlane;
+use uocf::classic::statics::{StaticTile, StaticsReader};
+use uocf::udd::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 
@@ -42,7 +42,11 @@ pub fn convert_statics_mul_to_uddp_from_sources(
     let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
         .ok_or_else(|| eyre::eyre!("missing {}", mul_file_name))?;
 
-    println!("Converting statics for map {} to {}", map_id, output_path.display());
+    println!(
+        "Converting statics for map {} to {}",
+        map_id,
+        output_path.display()
+    );
 
     // We use MapPlane just to resolve the map dimensions correctly.
     let plane = MapPlane::init(map_path, map_id)?;
@@ -105,7 +109,8 @@ pub fn convert_statics_mul_to_uddp_from_sources(
                 builder.add_file(AddFileRequest {
                     data_type: DataType::Static as u8,
                     compression: CompressionFlag::None, // No point compressing empty
-                    apply_planar: false,
+                    width: 0,
+                    height: 0,
                     virtual_path: None,
                     path_hash64: None,
                     id: Some(chunk_index),
@@ -115,7 +120,8 @@ pub fn convert_statics_mul_to_uddp_from_sources(
                 builder.add_file(AddFileRequest {
                     data_type: DataType::Static as u8,
                     compression: CompressionFlag::ZstdNoDict,
-                    apply_planar: false,
+                    width: 0,
+                    height: 0,
                     virtual_path: None,
                     path_hash64: None,
                     id: Some(chunk_index),

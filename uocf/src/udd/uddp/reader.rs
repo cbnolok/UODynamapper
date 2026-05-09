@@ -9,9 +9,8 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 
-use super::support::{checked_region, unpack_planar, zstd_decompress, zstd_decompress_with_dict, Cursor};
+use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict, jxl_decompress, Cursor};
 use memmap2::Mmap;
-use super::planar;
 use super::*;
 
 #[derive(Debug, Clone, Copy)]
@@ -308,7 +307,7 @@ impl UddpReader {
         let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
         let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
 
-        let mut decoded = match unpack_codec(locator.meta32) {
+        let decoded = match unpack_codec(locator.meta32) {
             Codec::None => data.to_vec(),
             Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
             Codec::ZstdTypeDict => {
@@ -318,14 +317,12 @@ impl UddpReader {
                     .ok_or(FormatError::MissingDictionary(data_type))?;
                 zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)?
             }
-            Codec::Reserved => return Err(FormatError::UnsupportedCodec),
+            Codec::JpegXl => {
+                jxl_decompress(data)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    .map_err(FormatError::Io)?
+            }
         };
-
-        if unpack_planar(locator.meta32) {
-            let mut rgba = vec![0u8; decoded.len()];
-            planar::transform_planar_to_rgba(&decoded, &mut rgba);
-            decoded = rgba;
-        }
 
         Ok(decoded)
     }

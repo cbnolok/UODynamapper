@@ -69,6 +69,8 @@ This project is organized as a Cargo workspace with several specialized componen
 - The important distinction is ownership, not raw id range. A texture id can legitimately appear in both `ec_art` and `ec_land` if the semantic sources require it.
 - `Unused1` on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
 - `runtime_material_id_overrides.toml` is intentionally narrow and only normalizes known runtime collisions; it is not the full Classic-to-EC translation table.
+- `TerrainTranscode.kdl` is still the active loose override for mapping classic land ids to EC material ids at runtime.
+- `TerrainDefinition.kdl` is legacy override data from before this repo could parse `TerrainDefinition.uop` correctly. It may still be loaded for inspection/backward compatibility, but it is no longer the authoritative source for EC land semantics.
 
 - `cc_art.uddp` stores classic land/static atlas pages plus a sparse slot table keyed by classic `art_id`.
 - `ec_art.uddp` stores Enhanced Client statics from the shared EC texture classification pass.

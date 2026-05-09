@@ -2,13 +2,15 @@
 resolver = "2"
 members = [
     "dynamapper",
+    "uocf",
     "uddconv",
     "uddconv_ktx2",
-    "uddconv_cli",
-    "uocf",
-    "uocf_cli",
-    "uddconv_gui",
-    "uddp_inspector"
+    "tools/uddconv_cli",
+    "tools/uocf_cli",
+    "tools/uddconv_gui",
+    "tools/uddp_inspector",
+    "tools/uop_inspector",
+    "tools/uop_populator_gui"
 ]
 
 
@@ -134,6 +136,16 @@ debug = true
 strip = false
 
 [profile.dev.package.uocf_cli]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+[profile.dev.package.uop_inspector]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+[profile.dev.package.uop_populator_gui]
 opt-level = 1
 debug = true
 debug-assertions = true

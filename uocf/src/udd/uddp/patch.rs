@@ -133,7 +133,8 @@ impl UddpiBuilder {
         builder.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0,
+            height: 0,
             virtual_path: None,
             path_hash64: None,
             id: Some(0),
@@ -144,7 +145,8 @@ impl UddpiBuilder {
             builder.add_file(AddFileRequest {
                 data_type: replacement.data_type,
                 compression: CompressionFlag::Auto,
-                apply_planar: false,
+                width: 0,
+                height: 0,
                 virtual_path: None,
                 path_hash64: None,
                 id: Some((index as u32) + 1),
@@ -296,7 +298,8 @@ impl UddpiApplier {
                 FileKey::PathHash(path_hash64) => builder.add_file(AddFileRequest {
                     data_type,
                     compression: original_flag,
-                    apply_planar: unpack_planar(record.locator.meta32),
+                    width: 0,
+                    height: 0,
                     virtual_path: None,
                     path_hash64: Some(path_hash64),
                     id: None,
@@ -305,7 +308,8 @@ impl UddpiApplier {
                 FileKey::Id(id) => builder.add_file(AddFileRequest {
                     data_type,
                     compression: original_flag,
-                    apply_planar: unpack_planar(record.locator.meta32),
+                    width: 0,
+                    height: 0,
                     virtual_path: None,
                     path_hash64: None,
                     id: Some(id),

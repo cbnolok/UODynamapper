@@ -1,25 +1,11 @@
-# Graphics settings for UODynamapper
-# These values are tunable from the UI.
-
 [graphics]
-# Use BC7 texture compression to save VRAM
 lossy_texture_compression = false
-# BC7 encoder backend: "dds", "block_compression", or "ispc"
 lossy_texture_compression_backend = "dds"
-# Lower frame rate when the window is not focused
 reduce_unfocused_fps = true
 vsync = false
-# Anti-aliasing: "off", "fxaa", "smaa", "msaa_2x", "msaa_4x"
 anti_aliasing = "off"
-# Texture source for static/item art: "cc" or "ec"
 art_texture_source = "cc"
-# Texture source for terrain art: "cc" or "ec"
-#land_texture_source = "cc"
 land_texture_source = "cc"
-
-# Texture filtering: 0 = Point, 1 = Linear
 texture_filtering = 0
-# Reconstruction mode: 0 = None, 1 = Bicubic, 2 = FSR
 texture_reconstruction = 0
-# Per-frame sharpening applied by shader (0.0 to 1.0)
 sharpening_strength = 0.0

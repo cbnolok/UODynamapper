@@ -329,9 +329,8 @@ pub fn sys_refresh_process_metrics(
         metrics.mem_usage_mib = mem;
 
         // Use ACTUAL current layer counts, not theoretical maximums.
-        let compression = tex_consts::TerrainTextureCompression::from_graphics_settings(
-            &settings.graphics,
-        );
+        let compression =
+            tex_consts::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
         let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, compression)
             * tex_cache.small.active_layers as usize;
         let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, compression)
@@ -400,10 +399,9 @@ pub fn update_performance_text(
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
         let upload_snapshot = land_upload_telemetry.snapshot();
-        let tex_mode = tex_consts::TerrainTextureCompression::from_graphics_settings(
-            &settings.graphics,
-        )
-        .label();
+        let tex_mode =
+            tex_consts::TerrainTextureCompression::from_graphics_settings(&settings.graphics)
+                .label();
 
         // Read render pipeline statistics from RenderDiagnosticsPlugin.
         // Paths are dynamic strings: "render/{span_name}/{stat}".

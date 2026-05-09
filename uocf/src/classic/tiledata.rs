@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 
 crate::eyre_imports!();
+use bytemuck::{Pod, Zeroable};
 use derive_new::new;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
-use bytemuck::{Pod, Zeroable};
 
 /* Struct to manage Flags for LandTile and ItemTile */
 
 #[repr(C)]
-#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, Pod, Zeroable, Debug)]
 pub struct Flags {
     pub internal_flags: u32,
 }
@@ -168,7 +168,11 @@ impl LandTile {
     pub fn name_ascii(&self) -> &str {
         // Names are null-terminated ASCII strings. Find the null terminator
         // and convert the slice up to that point to a &str.
-        let null_pos = self.name.iter().position(|&c| c == 0).unwrap_or(Self::NAME_LEN);
+        let null_pos = self
+            .name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(Self::NAME_LEN);
         std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
     }
 
@@ -271,7 +275,11 @@ impl ItemTile {
     pub fn name_ascii(&self) -> &str {
         // Names are null-terminated ASCII strings. Find the null terminator
         // and convert the slice up to that point to a &str.
-        let null_pos = self.name.iter().position(|&c| c == 0).unwrap_or(Self::NAME_LEN);
+        let null_pos = self
+            .name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(Self::NAME_LEN);
         std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
     }
 
@@ -440,6 +448,16 @@ impl TileData {
         &self.item_data
     }
 
+    pub fn new_empty() -> Self {
+        Self {
+            land_tile_binary_size: LandTileBinSize::Classic,
+            item_tile_binary_size: ItemTileBinSize::Classic,
+            max_item_rev: ItemTileMaxIdxRev::Revision1,
+            land_data: Vec::new(),
+            item_data: Vec::new(),
+        }
+    }
+
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
         let file_path = file_path
             .canonicalize()
@@ -540,7 +558,7 @@ impl TileData {
         tiledata.item_data = Vec::with_capacity(1 + tiledata.max_item_rev as usize);
 
         log::info!(
-        "uocf: Found Tiledata with size: {file_size}. \n\
+            "uocf: Found Tiledata with size: {file_size}. \n\
         Detected LandTile size: {:?}, ItemTile size: {:?}, Max Item count: {:?} (0x{:X})",
             tiledata.land_tile_binary_size,
             tiledata.item_tile_binary_size,
@@ -555,7 +573,6 @@ impl TileData {
                 .wrap_err("Read tiledata.mul")?;
             buf
         };
-
 
         // Read LandTiles
         // Optimization: We use bulk parsing to avoid thousands of individual I/O reads.
@@ -603,7 +620,8 @@ impl TileData {
         };
 
         // The item section starts immediately after the land section
-        let item_bytes = &tiledata_file_bytes[land_section_len..land_section_len + item_section_len];
+        let item_bytes =
+            &tiledata_file_bytes[land_section_len..land_section_len + item_section_len];
 
         if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
             let blocks: &[RawBlock<RawItemTileClassic>] = bytemuck::cast_slice(item_bytes);

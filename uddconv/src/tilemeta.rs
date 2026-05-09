@@ -135,7 +135,7 @@ impl TileMetaItemTile {
     }
 }
 
-fn classify_item_visual_kind(
+pub fn classify_item_visual_kind(
     tile_id: u32,
     ec_data: Option<&ArtData>,
 ) -> TileMetaItemVisualKind {
@@ -147,38 +147,6 @@ fn classify_item_visual_kind(
 
     let _ = tile_id;
     TileMetaItemVisualKind::RegularArt
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use uocf::enhanced::tileart::TileType;
-
-    #[test]
-    fn classify_item_visual_kind_marks_solid_entries_as_surface_like() {
-        let art_data = ArtData {
-            tile_type: TileType::Solid,
-            ..ArtData::default()
-        };
-
-        assert_eq!(
-            classify_item_visual_kind(1444, Some(&art_data)),
-            TileMetaItemVisualKind::SurfaceLike,
-        );
-    }
-
-    #[test]
-    fn classify_item_visual_kind_keeps_static_entries_as_regular_art() {
-        let art_data = ArtData {
-            tile_type: TileType::Static,
-            ..ArtData::default()
-        };
-
-        assert_eq!(
-            classify_item_visual_kind(172, Some(&art_data)),
-            TileMetaItemVisualKind::RegularArt,
-        );
-    }
 }
 
 pub struct TileMetaPackage {
@@ -253,10 +221,7 @@ fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
 }
 
 pub fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
-    find_first_existing_file(
-        source_dirs,
-        &["string_dictionary.uop"],
-    )
+    find_first_existing_file(source_dirs, &["string_dictionary.uop"])
 }
 
 pub fn build_tilemeta_uddp(client_dir: &Path, out_file: &Path) -> eyre::Result<()> {
@@ -281,7 +246,8 @@ pub fn build_tilemeta_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -290,7 +256,8 @@ pub fn build_tilemeta_uddp_from_sources(
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: UddCompressionFlag::ZstdNoDict,
-        apply_planar: false,
+        width: 0,
+        height: 0,
         virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
         path_hash64: None,
         id: None,
@@ -306,7 +273,10 @@ pub fn build_tilemeta_item_payload_from_sources(
     options: &TileMetaBuildOptions,
 ) -> eyre::Result<(Vec<u8>, TileMetaBuildSummary)> {
     let built = build_tilemeta_tables_from_sources(source_dirs, options, "updating tilemeta")?;
-    Ok((bytemuck::cast_slice(&built.item_tiles).to_vec(), built.summary))
+    Ok((
+        bytemuck::cast_slice(&built.item_tiles).to_vec(),
+        built.summary,
+    ))
 }
 
 fn build_tilemeta_tables_from_sources(
@@ -349,7 +319,10 @@ fn build_tilemeta_tables_from_sources(
         None
     };
 
-    let get_radar_color = |id: u32, is_item: bool, ec_radar: Option<&uocf::enhanced::tileart::TaeRadarcol>| -> [u8; 4] {
+    let get_radar_color = |id: u32,
+                           is_item: bool,
+                           ec_radar: Option<&uocf::enhanced::tileart::TaeRadarcol>|
+     -> [u8; 4] {
         if options.use_ec_radarcol {
             if let Some(ec) = ec_radar {
                 return [ec.r, ec.g, ec.b, ec.a];
@@ -384,7 +357,14 @@ fn build_tilemeta_tables_from_sources(
             tile_type: 0,
             _pad1: 0,
             flags: map_cc_flags_to_tilemeta(tile.flags.internal_flags),
-            radar_color: get_radar_color(tile.tile_id as u32, false, ec_art.definitions.get(&(tile.tile_id as u16)).map(|d| &d.radar_color)),
+            radar_color: get_radar_color(
+                tile.tile_id as u32,
+                false,
+                ec_art
+                    .definitions
+                    .get(&(tile.tile_id as u16))
+                    .map(|d| &d.radar_color),
+            ),
             name: tile.name,
         });
     }
@@ -422,10 +402,14 @@ fn build_tilemeta_tables_from_sources(
 
         if let Some(ec_data) = ec_art.definitions.get(&(tile.tile_id as u16)) {
             tile_meta_item.flags |= ec_data.flags.bits();
-            tile_meta_item.set_visual_kind(classify_item_visual_kind(tile.tile_id as u32, Some(ec_data)));
+            tile_meta_item.set_visual_kind(classify_item_visual_kind(
+                tile.tile_id as u32,
+                Some(ec_data),
+            ));
 
             // Unify radar color
-            tile_meta_item.radar_color = get_radar_color(tile.tile_id as u32, true, Some(&ec_data.radar_color));
+            tile_meta_item.radar_color =
+                get_radar_color(tile.tile_id as u32, true, Some(&ec_data.radar_color));
 
             // Unify EC Texture
             if let Some(ec_tex) = &ec_data.ec_texture {
@@ -494,10 +478,12 @@ pub fn adjusted_ec_sampling_start(
     let adjusted_x = start_x - adjustment.map_or(0, |adjustment| i32::from(adjustment.left));
     let adjusted_y = start_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.top));
     Ok((
-        i16::try_from(adjusted_x)
-            .map_err(|_| eyre::eyre!("tile {texture_id} adjusted EC start_x {adjusted_x} does not fit in i16"))?,
-        i16::try_from(adjusted_y)
-            .map_err(|_| eyre::eyre!("tile {texture_id} adjusted EC start_y {adjusted_y} does not fit in i16"))?,
+        i16::try_from(adjusted_x).map_err(|_| {
+            eyre::eyre!("tile {texture_id} adjusted EC start_x {adjusted_x} does not fit in i16")
+        })?,
+        i16::try_from(adjusted_y).map_err(|_| {
+            eyre::eyre!("tile {texture_id} adjusted EC start_y {adjusted_y} does not fit in i16")
+        })?,
     ))
 }
 
@@ -607,4 +593,3 @@ fn map_cc_flags_to_tilemeta(cc: u32) -> u64 {
 
     ec
 }
-

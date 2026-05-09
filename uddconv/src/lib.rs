@@ -1,3 +1,4 @@
+#![allow(unused)]
 pub mod bc7;
 pub mod cc_art;
 pub mod cc_ec_land_transcode;
@@ -9,4 +10,7 @@ pub mod ec_land;
 pub mod package_progress;
 pub mod source_paths;
 pub mod tilemeta;
-pub mod upscale;
+pub mod upscaling;
+pub use upscaling as upscale;
+
+pub use uocf::udd::CompressionFlag as UddCompressionFlag;

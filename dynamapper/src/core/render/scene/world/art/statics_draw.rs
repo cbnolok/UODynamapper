@@ -1,5 +1,5 @@
 use crate::core::render::scene::world::art::statics_collect::{
-    RenderStaticInstances, SpriteInstance,
+    GroundTileInstance, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
 };
 use crate::core::texture_cache::art::{ArtPageAtlas, ArtPageAtlasHandle};
 use crate::core::uo_files_loader::{CcArtPackageRes, EcArtPackageRes, EcLandPackageRes};
@@ -19,9 +19,21 @@ pub struct SpriteParams {
 }
 
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
+pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 pub struct ArtSpriteMaterialExtension {
+    #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
+    #[sampler(100, visibility(vertex, fragment))]
+    pub atlas: Handle<Image>,
+    #[storage(102, read_only, visibility(vertex, fragment))]
+    pub instances: Handle<ShaderStorageBuffer>,
+    #[uniform(103, visibility(vertex, fragment))]
+    pub params: SpriteParams,
+}
+
+#[derive(Asset, AsBindGroup, TypePath, Clone)]
+pub struct ArtGroundMaterialExtension {
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
     pub atlas: Handle<Image>,
@@ -37,10 +49,18 @@ pub struct ArtSpriteRenderAssets {
     pub material: Handle<ArtSpriteMaterial>,
 }
 
+#[derive(Resource, Clone)]
+pub struct ArtGroundRenderAssets {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<ArtGroundMaterial>,
+}
+
 #[derive(Resource, Default)]
 pub struct StaticArtDrawDebugState {
     pub last_entity_count: Option<usize>,
     pub last_uploaded_instances: Option<usize>,
+    pub last_ground_entity_count: Option<usize>,
+    pub last_uploaded_ground_instances: Option<usize>,
 }
 
 impl MaterialExtension for ArtSpriteMaterialExtension {
@@ -52,13 +72,26 @@ impl MaterialExtension for ArtSpriteMaterialExtension {
     }
 }
 
+impl MaterialExtension for ArtGroundMaterialExtension {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        "shaders/worldmap/art/ground.wgsl".into()
+    }
+    fn fragment_shader() -> bevy::shader::ShaderRef {
+        "shaders/worldmap/art/ground.wgsl".into()
+    }
+}
+
 #[derive(Component)]
 pub struct StaticsDrawEntity;
+
+#[derive(Component)]
+pub struct StaticsGroundDrawEntity;
 
 pub fn sys_setup_art_page_atlas(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
     cc_art_res: Option<Res<CcArtPackageRes>>,
@@ -129,6 +162,8 @@ pub fn sys_setup_art_page_atlas(
     }]);
 
     let buffer_handle = storage_buffers.add(initial_buffer);
+    let sprite_atlas_handle = atlas_handle.clone();
+    let ground_atlas_handle = atlas_handle.clone();
 
     let material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
@@ -138,8 +173,37 @@ pub fn sys_setup_art_page_atlas(
             ..default()
         },
         extension: ArtSpriteMaterialExtension {
-            atlas: atlas_handle,
+            atlas: sprite_atlas_handle,
             instances: buffer_handle.clone(),
+            params: SpriteParams {
+                render_mode: 0,
+                alpha_cutoff: 0.5,
+                _pad: Vec2::ZERO,
+            },
+        },
+    });
+
+    let initial_ground_buffer = ShaderStorageBuffer::from(vec![GroundTileInstance {
+        world_x: 0.0,
+        world_z: 0.0,
+        world_y: 0.0,
+        layer: 0,
+        uv_min: [0.0, 0.0],
+        uv_max: [0.0, 0.0],
+        color_rgba: [0.0, 0.0, 0.0, 0.0],
+    }]);
+    let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
+
+    let ground_material_handle = ground_materials.add(ArtGroundMaterial {
+        base: StandardMaterial {
+            alpha_mode: AlphaMode::Mask(0.5),
+            cull_mode: None,
+            unlit: true,
+            ..default()
+        },
+        extension: ArtGroundMaterialExtension {
+            atlas: ground_atlas_handle,
+            instances: ground_buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
                 alpha_cutoff: 0.5,
@@ -185,8 +249,12 @@ pub fn sys_setup_art_page_atlas(
     let mesh_handle = meshes.add(mesh);
 
     commands.insert_resource(ArtSpriteRenderAssets {
-        mesh: mesh_handle,
+        mesh: mesh_handle.clone(),
         material: material_handle,
+    });
+    commands.insert_resource(ArtGroundRenderAssets {
+        mesh: mesh_handle,
+        material: ground_material_handle,
     });
 }
 
@@ -237,6 +305,53 @@ pub fn sys_sync_static_sprite_entities(
     }
 }
 
+pub fn sys_sync_static_ground_entities(
+    mut commands: Commands,
+    instances: Res<RenderStaticLandInstances>,
+    render_assets: Res<ArtGroundRenderAssets>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
+    existing_q: Query<(Entity, &MeshTag), With<StaticsGroundDrawEntity>>,
+) {
+    let desired_count = instances.0.len();
+    let existing_count = existing_q.iter().count();
+    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+
+    for entity in existing_entities.by_ref().skip(desired_count) {
+        let _ = commands.entity(entity).despawn();
+    }
+
+    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+        let desired_tag = MeshTag(slot_index as u32);
+        if *mesh_tag != desired_tag {
+            let _ = commands.entity(entity).insert(desired_tag);
+        }
+    }
+
+    for slot_index in existing_count..desired_count {
+        commands.spawn((
+            Mesh3d(render_assets.mesh.clone()),
+            MeshMaterial3d(render_assets.material.clone()),
+            MeshTag(slot_index as u32),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            StaticsGroundDrawEntity,
+        ));
+    }
+
+    if debug_state.last_ground_entity_count != Some(desired_count) {
+        console_logger::one(
+            LogSev::Warn,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static ground draw entities: existing={} desired={}",
+                existing_count,
+                desired_count,
+            ),
+        );
+        debug_state.last_ground_entity_count = Some(desired_count);
+    }
+}
+
 pub fn sys_update_sprite_instance_buffer(
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
@@ -277,5 +392,35 @@ pub fn sys_update_sprite_instance_buffer(
             ),
         );
         debug_state.last_uploaded_instances = Some(instances.0.len());
+    }
+}
+
+pub fn sys_update_ground_instance_buffer(
+    instances: Res<RenderStaticLandInstances>,
+    render_assets: Res<ArtGroundRenderAssets>,
+    mut materials: ResMut<Assets<ArtGroundMaterial>>,
+    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
+) {
+    if instances.0.is_empty() {
+        return;
+    }
+
+    let Some(material) = materials.get_mut(&render_assets.material) else {
+        return;
+    };
+
+    let _ = storage_buffers.insert(
+        &material.extension.instances,
+        ShaderStorageBuffer::from(instances.0.clone()),
+    );
+
+    if debug_state.last_uploaded_ground_instances != Some(instances.0.len()) {
+        console_logger::one(
+            LogSev::Warn,
+            LogAbout::RenderWorldArt,
+            &format!("static ground upload: instances={}", instances.0.len()),
+        );
+        debug_state.last_uploaded_ground_instances = Some(instances.0.len());
     }
 }

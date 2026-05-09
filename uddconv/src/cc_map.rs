@@ -14,14 +14,14 @@
 //! GPU texture layer and update the `mode` bits, without re-parsing the
 //! variable-length or misaligned original formats.
 
-use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::path::{Path, PathBuf};
 
-use uocf::classic::map::{MapPlane};
-use uocf::udd::{UddpBuilder, LookupMode, AddFileRequest, DataType, CompressionFlag};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
+use uocf::classic::map::MapPlane;
+use uocf::udd::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 // We need Rg16u from dynamapper, but uddconv doesn't depend on dynamapper.
 // We'll redefine a compatible struct here or use a raw [u8; 4].
@@ -62,7 +62,11 @@ pub fn convert_map_mul_to_uddp_from_sources(
     let map_path = find_first_existing_file(source_dirs, &[&map_file_name])
         .ok_or_else(|| eyre::eyre!("missing {}", map_file_name))?;
 
-    println!("Converting {} to {}", map_path.display(), output_path.display());
+    println!(
+        "Converting {} to {}",
+        map_path.display(),
+        output_path.display()
+    );
 
     let mut plane = MapPlane::init(map_path, map_id)?;
     let width_blocks = plane.size_blocks.width;
@@ -111,8 +115,8 @@ pub fn convert_map_mul_to_uddp_from_sources(
                 for (cell_index, cell) in block.cells.iter().enumerate() {
                     let local_x = cell_index & 7;
                     let local_y = cell_index >> 3;
-                    let texel_index =
-                        (block_base_y + local_y) * PACKAGE_CHUNK_TILE_DIM + (block_base_x + local_x);
+                    let texel_index = (block_base_y + local_y) * PACKAGE_CHUNK_TILE_DIM
+                        + (block_base_x + local_x);
                     texels[texel_index] = Rg16u::pack(cell.id, cell.z, 0);
                 }
             }
@@ -121,7 +125,8 @@ pub fn convert_map_mul_to_uddp_from_sources(
             builder.add_file(AddFileRequest {
                 data_type: DataType::Map as u8,
                 compression: CompressionFlag::ZstdNoDict,
-                apply_planar: false,
+                width: 0,
+                height: 0,
                 virtual_path: None,
                 path_hash64: None,
                 id: Some(chunk_index),

@@ -156,11 +156,22 @@ impl AnimationFrame {
         })
     }
 
-    /// Decodes a single frame using RLE.
+    /// Decodes a single frame using RLE with alpha blending.
     pub fn decode_frame(&self, frame_entry: &FrameEntry) -> eyre::Result<DecodedFrame> {
         let width = (frame_entry.end_coords_x - frame_entry.init_coords_x).abs() as u16;
         let height = (frame_entry.end_coords_y - frame_entry.init_coords_y).abs() as u16;
-        let mut decoded_data = vec![0; width as usize * height as usize * 4];
+        
+        if width == 0 || height == 0 {
+            return Ok(DecodedFrame {
+                width: 0,
+                height: 0,
+                center_x: 0,
+                center_y: 0,
+                data: Vec::new(),
+            });
+        }
+
+        let mut decoded_data = vec![0u8; width as usize * height as usize * 4];
 
         // Calculate offset relative to the image_data slice
         let start_pos = self.frames_offset + self.frames_count * 16;
@@ -171,44 +182,89 @@ impl AnimationFrame {
         }
 
         let mut data_cursor = &self.image_data[relative_offset..];
+        let mut cur_x = 0i32;
+        let mut cur_y = 0i32;
 
-        let mut x = 0;
-        let mut y = 0;
+        let next_coord = |x: &mut i32, y: &mut i32, w: i32| {
+            *x += 1;
+            if *x >= w {
+                *x = 0;
+                *y += 1;
+            }
+        };
 
-        while y < height && !data_cursor.is_empty() {
-            let rle_tag = data_cursor[0];
+        let set_pixel = |data: &mut [u8], x: i32, y: i32, w: i32, h: i32, color: [u8; 4], factor: u8| {
+            if x < 0 || x >= w || y < 0 || y >= h { return; }
+            let idx = ((y * w + x) * 4) as usize;
+            if factor == 16 {
+                data[idx..idx+4].copy_from_slice(&color);
+            } else if factor > 0 {
+                // Alpha blend with existing pixel
+                let f = factor as f32 / 16.0;
+                let inv_f = 1.0 - f;
+                
+                let r = (color[0] as f32 * f + data[idx] as f32 * inv_f) as u8;
+                let g = (color[1] as f32 * f + data[idx+1] as f32 * inv_f) as u8;
+                let b = (color[2] as f32 * f + data[idx+2] as f32 * inv_f) as u8;
+                let a = (color[3] as f32 * f + data[idx+3] as f32 * inv_f) as u8;
+                
+                data[idx] = r;
+                data[idx+1] = g;
+                data[idx+2] = b;
+                data[idx+3] = a;
+            }
+        };
+
+        while (cur_y as u16) < height && !data_cursor.is_empty() {
+            let curr = data_cursor[0];
             data_cursor = &data_cursor[1..];
 
-            if rle_tag < 128 {
-                // Transparent run: skip pixels
-                x += rle_tag as u16;
-                while x >= width {
-                    x -= width;
-                    y += 1;
+            if curr < 128 {
+                // Skip pixels
+                for _ in 0..curr {
+                    next_coord(&mut cur_x, &mut cur_y, width as i32);
                 }
             } else {
-                // Color run: draw pixels
-                let count = rle_tag - 128;
-                for _ in 0..count {
-                    if data_cursor.is_empty() {
-                        break;
-                    }
-                    let color_index = data_cursor[0] as usize;
+                // Run of pixels
+                if data_cursor.is_empty() { break; }
+                let next = data_cursor[0];
+                data_cursor = &data_cursor[1..];
+
+                let factor1 = next / 16;
+                let factor2 = next % 16;
+
+                // Handle first pixel with factor1
+                if factor1 > 0 {
+                    if data_cursor.is_empty() { break; }
+                    let color_idx = data_cursor[0] as usize;
                     data_cursor = &data_cursor[1..];
-
-                    if color_index < self.colours.len() {
-                        let color = self.colours[color_index];
-                        let index = ((y * width + x) * 4) as usize;
-                        if index + 4 <= decoded_data.len() {
-                            decoded_data[index..index + 4].copy_from_slice(&color);
-                        }
+                    if let Some(&color) = self.colours.get(color_idx) {
+                        set_pixel(&mut decoded_data, cur_x, cur_y, width as i32, height as i32, color, factor1);
                     }
+                    next_coord(&mut cur_x, &mut cur_y, width as i32);
+                }
 
-                    x += 1;
-                    if x >= width {
-                        x = 0;
-                        y += 1;
+                // Solid run
+                let count = curr - 128;
+                for _ in 0..count {
+                    if data_cursor.is_empty() { break; }
+                    let color_idx = data_cursor[0] as usize;
+                    data_cursor = &data_cursor[1..];
+                    if let Some(&color) = self.colours.get(color_idx) {
+                        set_pixel(&mut decoded_data, cur_x, cur_y, width as i32, height as i32, color, 16);
                     }
+                    next_coord(&mut cur_x, &mut cur_y, width as i32);
+                }
+
+                // Handle last pixel with factor2
+                if factor2 > 0 {
+                    if data_cursor.is_empty() { break; }
+                    let color_idx = data_cursor[0] as usize;
+                    data_cursor = &data_cursor[1..];
+                    if let Some(&color) = self.colours.get(color_idx) {
+                        set_pixel(&mut decoded_data, cur_x, cur_y, width as i32, height as i32, color, factor2);
+                    }
+                    next_coord(&mut cur_x, &mut cur_y, width as i32);
                 }
             }
         }

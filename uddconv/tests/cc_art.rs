@@ -21,8 +21,7 @@ fn sparse_slots_keep_absent_records() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::None,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -45,8 +44,7 @@ fn packer_spills_to_multiple_pages() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::None,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -69,8 +67,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         atlas_width: 10,
         atlas_height: 6,
         gutter: 0,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::None,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -94,8 +91,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
@@ -108,7 +104,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -119,7 +115,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -137,7 +133,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,

@@ -25,8 +25,7 @@ fn sparse_slots_keep_absent_records() {
         atlas_height: 16,
         gutter: 1,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -50,8 +49,7 @@ fn packer_spills_to_multiple_pages() {
         atlas_height: 8,
         gutter: 1,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -75,8 +73,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         atlas_height: 6,
         gutter: 0,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![
@@ -101,8 +98,7 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
         atlas_height: 2048,
         gutter: 1,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
@@ -125,8 +121,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         atlas_height: 8,
         gutter: 1,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Static, 4, 4)];
@@ -139,7 +134,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(PAGE_MANIFEST_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -150,7 +145,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(SLOT_MANIFEST_ENTRY_PATH),
             path_hash64: None,
             id: None,
@@ -168,7 +163,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: UddCompressionFlag::ZstdNoDict,
-            apply_planar: false,
+            width: 0, height: 0,
             virtual_path: Some(&page_path),
             path_hash64: None,
             id: None,
@@ -192,8 +187,7 @@ fn alias_slots_reuse_canonical_page_location() {
         atlas_height: 16,
         gutter: 1,
         crop_transparent_bounds: false,
-        use_bc7: false,
-        planar_shuffle: false,
+        compression: UddCompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];

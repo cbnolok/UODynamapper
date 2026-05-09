@@ -1,0 +1,251 @@
+//! # UO Classic Animation Parser
+//!
+//! This module handles the parsing of `anim*.mul` and `anim*.idx` files.
+//! These files contain the RLE-encoded animations for mobiles and effects.
+
+crate::eyre_imports!();
+
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::fs::File;
+use std::path::Path;
+
+use crate::classic::generic_index::IndexFile;
+
+pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
+
+/// Represents a single decoded animation frame from a MUL file.
+#[derive(Debug, Clone)]
+pub struct AnimFrame {
+    pub width: u16,
+    pub height: u16,
+    pub center_x: i16,
+    pub center_y: i16,
+    pub data: Vec<u8>, // RGBA8888
+}
+
+/// Manages multiple animation MUL sources.
+pub struct AnimMap {
+    sources: Vec<Option<AnimSource>>,
+}
+
+struct AnimSource {
+    idx: IndexFile,
+    mul: memmap2::Mmap,
+}
+
+impl AnimMap {
+    pub fn load(client_path: impl AsRef<Path>) -> eyre::Result<Self> {
+        let client_path = client_path.as_ref();
+        let mut sources = Vec::with_capacity(MAX_ANIM_FILES as usize);
+
+        for i in 0..MAX_ANIM_FILES {
+            let suffix = if i == 0 {
+                "".to_string()
+            } else {
+                (i + 1).to_string()
+            };
+            let idx_name = format!("anim{}.idx", suffix);
+            let mul_name = format!("anim{}.mul", suffix);
+
+            let idx_path = client_path.join(&idx_name);
+            let mul_path = client_path.join(&mul_name);
+
+            if idx_path.exists() && mul_path.exists() {
+                let idx = IndexFile::load(idx_path)?;
+                let mul_file = File::open(mul_path)?;
+                let mul = unsafe { memmap2::Mmap::map(&mul_file)? };
+                sources.push(Some(AnimSource { idx, mul }));
+                log::info!("uocf: Loaded animation source {}", idx_name);
+            } else {
+                sources.push(None);
+            }
+        }
+
+        Ok(Self { sources })
+    }
+
+    pub fn has_anim(&self, file_idx: u8, anim_id: u32) -> bool {
+        if let Some(Some(source)) = self.sources.get(file_idx as usize) {
+            if let Ok(entry) = source.idx.element(anim_id as usize) {
+                return entry.lookup().is_some();
+            }
+        }
+        false
+    }
+
+    /// Decodes an animation from a specific MUL file.
+    /// Returns a list of frames.
+    pub fn decode_animation(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<AnimFrame>> {
+        let source = self
+            .sources
+            .get(file_idx as usize)
+            .and_then(|s| s.as_ref())
+            .ok_or_else(|| eyre!("Animation source {} not loaded", file_idx))?;
+
+        let entry = source.idx.element(anim_id as usize)?;
+        let lookup = entry
+            .lookup()
+            .ok_or_else(|| eyre!("Animation {} not found in source {}", anim_id, file_idx))?
+            as usize;
+
+        if lookup + 2 >= source.mul.len() {
+            eyre::bail!("Animation offset {} out of bounds", lookup);
+        }
+
+        let mut mul_ptr = &source.mul[lookup..];
+
+        // Read Palette (256 colors, RGB555)
+        let mut palette = [0u16; 256];
+        for i in 0..256 {
+            palette[i] = mul_ptr.read_u16::<LittleEndian>()?;
+        }
+
+        // Convert palette to RGBA8888
+        let mut rgba_palette = [[0u8; 4]; 256];
+        for i in 0..256 {
+            let c = palette[i];
+            if c != 0 {
+                let r = (((c >> 10) & 0x1F) << 3) as u8;
+                let g = (((c >> 5) & 0x1F) << 3) as u8;
+                let b = ((c & 0x1F) << 3) as u8;
+                rgba_palette[i] = [r, g, b, 255];
+            }
+        }
+
+        let frame_count = mul_ptr.read_u32::<LittleEndian>()?;
+        if frame_count > 1000 {
+            eyre::bail!("Suspiciously high frame count: {}", frame_count);
+        }
+
+        let mut frame_offsets = Vec::with_capacity(frame_count as usize);
+        for _ in 0..frame_count {
+            frame_offsets.push(mul_ptr.read_u32::<LittleEndian>()?);
+        }
+
+        let mut frames = Vec::with_capacity(frame_count as usize);
+        for i in 0..frame_count {
+            let offset = frame_offsets[i as usize] as usize;
+            let frame_start = lookup + offset;
+            if frame_start >= source.mul.len() {
+                eyre::bail!("Frame offset {} out of bounds", frame_start);
+            }
+
+            let mut frame_ptr = &source.mul[frame_start..];
+
+            let center_x = frame_ptr.read_i16::<LittleEndian>()?;
+            let center_y = frame_ptr.read_i16::<LittleEndian>()?;
+            let width = frame_ptr.read_u16::<LittleEndian>()?;
+            let height = frame_ptr.read_u16::<LittleEndian>()?;
+
+            if width == 0 || height == 0 {
+                frames.push(AnimFrame {
+                    width: 0,
+                    height: 0,
+                    center_x,
+                    center_y,
+                    data: Vec::new(),
+                });
+                continue;
+            }
+
+            let mut pixel_data = vec![0u8; width as usize * height as usize * 4];
+
+            // RLE Decoding
+            loop {
+                let header = match frame_ptr.read_u32::<LittleEndian>() {
+                    Ok(h) => h,
+                    Err(_) => break,
+                };
+
+                if header == 0x7FFF7FFF {
+                    break;
+                }
+
+                let x_run = (header & 0xFFF) as usize;
+                let mut x_offset = ((header >> 22) & 0x3FF) as i32;
+                let mut y_offset = ((header >> 12) & 0x3FF) as i32;
+
+                // Sign-extend 10-bit values
+                if (x_offset & 0x200) != 0 {
+                    x_offset |= !0x3FF;
+                }
+                if (y_offset & 0x200) != 0 {
+                    y_offset |= !0x3FF;
+                }
+
+                let x = (x_offset + center_x as i32) as i32;
+                let y = (y_offset + center_y as i32 + height as i32) as i32;
+
+                if y >= 0 && y < height as i32 {
+                    for k in 0..x_run {
+                        let final_x = x + k as i32;
+                        if final_x >= 0 && final_x < width as i32 {
+                            let palette_index = frame_ptr.read_u8()? as usize;
+                            let color = rgba_palette[palette_index];
+                            let pixel_idx = ((y * width as i32 + final_x) * 4) as usize;
+                            pixel_data[pixel_idx..pixel_idx + 4].copy_from_slice(&color);
+                        } else {
+                            // Skip the byte even if out of bounds
+                            frame_ptr.read_u8()?;
+                        }
+                    }
+                } else {
+                    // Skip the bytes for this run
+                    for _ in 0..x_run {
+                        frame_ptr.read_u8()?;
+                    }
+                }
+            }
+
+            frames.push(AnimFrame {
+                width,
+                height,
+                center_x,
+                center_y,
+                data: pixel_data,
+            });
+        }
+
+        Ok(frames)
+    }
+}
+
+/// Handles AnimationDefinition.uop parsing for Body ID redirects (aliasing).
+pub struct AnimationDefinition {
+    pub redirects: std::collections::HashMap<u32, u32>,
+}
+
+impl AnimationDefinition {
+    pub fn new() -> Self {
+        Self {
+            redirects: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Parses an AnimationDefinition entry from a byte slice (usually from UOP).
+    pub fn parse(data: &[u8]) -> eyre::Result<Self> {
+        let mut reader = std::io::Cursor::new(data);
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        // Format: u32 version (usually 1), u32 count, then count * (u32 original_id, u32 new_id)
+        if data.len() < 8 {
+            eyre::bail!("AnimationDefinition data too small");
+        }
+        let _version = reader.read_u32::<LittleEndian>()?;
+        let count = reader.read_u32::<LittleEndian>()?;
+
+        let mut redirects = std::collections::HashMap::with_capacity(count as usize);
+        for _ in 0..count {
+            let original_id = reader.read_u32::<LittleEndian>()?;
+            let new_id = reader.read_u32::<LittleEndian>()?;
+            redirects.insert(original_id, new_id);
+        }
+
+        Ok(Self { redirects })
+    }
+
+    /// Resolves a Body ID to its redirected ID, if any.
+    pub fn resolve(&self, body_id: u32) -> u32 {
+        *self.redirects.get(&body_id).unwrap_or(&body_id)
+    }
+}

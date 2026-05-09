@@ -46,6 +46,7 @@ pub enum LoadMode {
 }
 
 /// UOP package reader/writer with selectable payload loading and a package-level hash index.
+#[derive(Clone)]
 pub struct UopPackage {
     /// The version of the UOP package.
     version: u32,
