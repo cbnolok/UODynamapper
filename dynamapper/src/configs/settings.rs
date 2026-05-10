@@ -141,6 +141,9 @@ pub struct SectWorldMapDiagnostics {
     /// upload/extract helpers and a residual frame-gap estimate.
     #[serde(default = "default_worldmap_diagnostics_log_system_timers")]
     pub log_system_timers: bool,
+    /// Draw a debug outline around the currently hovered static-world object.
+    #[serde(default)]
+    pub highlight_hovered_static_object: bool,
 }
 
 impl Default for SectWorldMapDiagnostics {
@@ -152,6 +155,7 @@ impl Default for SectWorldMapDiagnostics {
             log_render_breakdown: default_worldmap_diagnostics_log_render_breakdown(),
             log_world_state: default_worldmap_diagnostics_log_world_state(),
             log_system_timers: default_worldmap_diagnostics_log_system_timers(),
+            highlight_hovered_static_object: false,
         }
     }
 }

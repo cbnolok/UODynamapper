@@ -12,6 +12,7 @@ dump_interval_sec = 2.0
 log_render_breakdown = false
 log_world_state = false
 log_system_timers = false
+highlight_hovered_static_object = false
 
 [shader_simplification]
 force_minimal_shader = false

@@ -16,10 +16,60 @@ use bevy::render::render_resource::ShaderType;
 use std::collections::{HashSet, BTreeSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const CC_WORLD_XZ_PER_PIXEL: f32 = 1.41421356237 / 44.0;
-const CC_WORLD_Y_PER_PIXEL: f32 = (7.5 * 0.1) * CC_WORLD_XZ_PER_PIXEL;
+const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = 1.41421356237;
+const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
+const EC_TILE_PIXEL_WIDTH: f32 = 64.0;
+const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = 7.5 * 0.1;
+const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
+const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
+const EC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / EC_TILE_PIXEL_WIDTH;
+const EC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * EC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
 const GROUND_ART_Y_BIAS: f32 = 0.001;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StaticBillboardBounds {
+    pub local_min_x: f32,
+    pub local_max_x: f32,
+    pub local_min_y: f32,
+    pub local_max_y: f32,
+}
+
+fn static_world_xz_per_pixel(source: ClientTextureSource) -> f32 {
+    match source {
+        ClientTextureSource::Cc => CC_WORLD_XZ_PER_PIXEL,
+        ClientTextureSource::Ec => EC_WORLD_XZ_PER_PIXEL,
+    }
+}
+
+fn static_world_y_per_pixel(source: ClientTextureSource) -> f32 {
+    match source {
+        ClientTextureSource::Cc => CC_WORLD_Y_PER_PIXEL,
+        ClientTextureSource::Ec => EC_WORLD_Y_PER_PIXEL,
+    }
+}
+
+pub(crate) fn resolve_static_billboard_bounds(
+    source: ClientTextureSource,
+    offset_x_pixels: i16,
+    offset_y_pixels: i16,
+    pixel_width: u16,
+    pixel_height: u16,
+) -> StaticBillboardBounds {
+    let world_xz_per_pixel = static_world_xz_per_pixel(source);
+    let world_y_per_pixel = static_world_y_per_pixel(source);
+    let local_min_x = offset_x_pixels as f32 * world_xz_per_pixel;
+    let local_max_x = local_min_x + pixel_width as f32 * world_xz_per_pixel;
+    let local_min_y = -(offset_y_pixels as f32 * world_y_per_pixel);
+    let local_max_y = local_min_y + pixel_height as f32 * world_y_per_pixel;
+
+    StaticBillboardBounds {
+        local_min_x,
+        local_max_x,
+        local_min_y,
+        local_max_y,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticVisualKind {
@@ -580,17 +630,13 @@ pub fn sys_collect_visible_statics(
                             depth_class,
                         );
                         let world_y = base_world_y + bias;
-                        let (offset_x_world, offset_y_world, resolved_sprite) = match visual_kind {
+                        let (billboard_source, offset_x_pixels, offset_y_pixels, resolved_sprite) = match visual_kind {
                             StaticVisualKind::CcRegularArt { art_id } => {
                                 let Some(cc_art) = cc_art_res.as_ref().map(|x| &x.0) else {
                                     continue;
                                 };
-                                let offset_x_world = tilemeta
-                                    .map(|meta| meta.cc_offset_x as f32 * CC_WORLD_XZ_PER_PIXEL)
-                                    .unwrap_or(0.0);
-                                let offset_y_world = tilemeta
-                                    .map(|meta| meta.cc_offset_y as f32 * CC_WORLD_Y_PER_PIXEL)
-                                    .unwrap_or(0.0);
+                                let offset_x_pixels = tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
+                                let offset_y_pixels = tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
 
                                 if let Some(slot) = cc_art.present_slot(art_id as u32) {
                                     unique_requested_pages.insert(
@@ -598,7 +644,12 @@ pub fn sys_collect_visible_statics(
                                     );
                                 }
 
-                                (offset_x_world, offset_y_world, art_atlas.resolve_cc(cc_art, art_id))
+                                (
+                                    ClientTextureSource::Cc,
+                                    offset_x_pixels,
+                                    offset_y_pixels,
+                                    art_atlas.resolve_cc(cc_art, art_id),
+                                )
                             }
                             StaticVisualKind::EcLandArt { .. } => {
                                 let Some(ec_land) = ec_land_res.as_ref().map(|x| &x.0) else {
@@ -614,18 +665,19 @@ pub fn sys_collect_visible_statics(
                                     );
                                 }
 
-                                (0.0, 0.0, art_atlas.resolve_ec_land(ec_land, runtime_slot_id))
+                                (
+                                    ClientTextureSource::Ec,
+                                    0,
+                                    0,
+                                    art_atlas.resolve_ec_land(ec_land, runtime_slot_id),
+                                )
                             }
                             StaticVisualKind::EcRegularArt { art_id } => {
                                 let Some(ec_art) = ec_art_res.as_ref().map(|x| &x.0) else {
                                     continue;
                                 };
-                                let offset_x_world = tilemeta
-                                    .map(|meta| meta.ec_offset_x as f32 * CC_WORLD_XZ_PER_PIXEL)
-                                    .unwrap_or(0.0);
-                                let offset_y_world = tilemeta
-                                    .map(|meta| meta.ec_offset_y as f32 * CC_WORLD_Y_PER_PIXEL)
-                                    .unwrap_or(0.0);
+                                let offset_x_pixels = tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
+                                let offset_y_pixels = tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
 
                                 if let Some(slot) = ec_art.present_slot(art_id) {
                                     unique_requested_pages.insert(
@@ -633,7 +685,12 @@ pub fn sys_collect_visible_statics(
                                     );
                                 }
 
-                                (offset_x_world, offset_y_world, art_atlas.resolve_ec(ec_art, art_id))
+                                (
+                                    ClientTextureSource::Ec,
+                                    offset_x_pixels,
+                                    offset_y_pixels,
+                                    art_atlas.resolve_ec(ec_art, art_id),
+                                )
                             }
                         };
 
@@ -658,12 +715,13 @@ pub fn sys_collect_visible_statics(
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             } else {
-                                let world_w = resolved.pixel_width as f32 * CC_WORLD_XZ_PER_PIXEL;
-                                let world_h = resolved.pixel_height as f32 * CC_WORLD_Y_PER_PIXEL;
-                                let local_min_x = offset_x_world;
-                                let local_max_x = offset_x_world + world_w;
-                                let local_min_y = -offset_y_world;
-                                let local_max_y = local_min_y + world_h;
+                                let bounds = resolve_static_billboard_bounds(
+                                    billboard_source,
+                                    offset_x_pixels,
+                                    offset_y_pixels,
+                                    resolved.pixel_width,
+                                    resolved.pixel_height,
+                                );
 
                                 instances.0.push(SpriteInstance {
                                     world_x,
@@ -674,8 +732,8 @@ pub fn sys_collect_visible_statics(
                                     base_world_y,
                                     uv_min: [resolved.uv_min.x, resolved.uv_min.y],
                                     uv_max: [resolved.uv_max.x, resolved.uv_max.y],
-                                    local_min: [local_min_x, local_min_y],
-                                    local_max: [local_max_x, local_max_y],
+                                    local_min: [bounds.local_min_x, bounds.local_min_y],
+                                    local_max: [bounds.local_max_x, bounds.local_max_y],
                                     tile_x: world_x,
                                     tile_y: world_z,
                                     priority_z_units,
@@ -772,11 +830,42 @@ pub fn sys_collect_visible_statics(
 mod tests {
     use super::*;
 
+    fn approx_eq(left: f32, right: f32) {
+        assert!((left - right).abs() < 1.0e-6, "left={left} right={right}");
+    }
+
     fn item_tile_with_flags(flags: u64, visual_kind: uddconv::tilemeta::TileMetaItemVisualKind) -> uddconv::tilemeta::TileMetaItemTile {
         let mut tile = uddconv::tilemeta::TileMetaItemTile::zeroed();
         tile.flags = flags;
         tile.set_visual_kind(visual_kind);
         tile
+    }
+
+    #[test]
+    fn classic_billboard_bounds_keep_existing_scale() {
+        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44, 88);
+
+        approx_eq(bounds.local_min_x, 11.0 * CC_WORLD_XZ_PER_PIXEL);
+        approx_eq(bounds.local_max_x, (11.0 + 44.0) * CC_WORLD_XZ_PER_PIXEL);
+        approx_eq(bounds.local_min_y, -(7.0 * CC_WORLD_Y_PER_PIXEL));
+        approx_eq(bounds.local_max_y, (88.0 - 7.0) * CC_WORLD_Y_PER_PIXEL);
+    }
+
+    #[test]
+    fn enhanced_billboard_bounds_normalize_to_classic_world_footprint() {
+        let cc_bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 0, 0, 44, 44);
+        let ec_bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 0, 0, 64, 64);
+
+        approx_eq(ec_bounds.local_max_x - ec_bounds.local_min_x, cc_bounds.local_max_x - cc_bounds.local_min_x);
+        approx_eq(ec_bounds.local_max_y - ec_bounds.local_min_y, cc_bounds.local_max_y - cc_bounds.local_min_y);
+    }
+
+    #[test]
+    fn enhanced_billboard_offsets_use_enhanced_pixel_ratio() {
+        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 64, 32, 64, 64);
+
+        approx_eq(bounds.local_min_x, ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS);
+        approx_eq(bounds.local_min_y, -(32.0 * EC_WORLD_Y_PER_PIXEL));
     }
 
     #[test]

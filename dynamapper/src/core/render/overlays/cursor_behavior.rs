@@ -2,7 +2,8 @@ use crate::core::controls::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
 use crate::core::render::scene::world::art::statics_collect::{
-    resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
+    resolve_priority_z_units, resolve_static_billboard_bounds, resolve_static_depth_class,
+    static_depth_key,
 };
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
@@ -30,11 +31,10 @@ use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const CC_WORLD_XZ_PER_PIXEL: f32 = 1.41421356237 / 44.0;
-const CC_WORLD_Y_PER_PIXEL: f32 = (7.5 * 0.1) * CC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
 const INV_SQRT_2: f32 = 0.70710678118;
 const BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(INV_SQRT_2, -INV_SQRT_2);
+const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorMode {
@@ -114,6 +114,7 @@ impl Plugin for CursorBehaviorOverlayPlugin {
                 (
                     update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
                     update_cursor_inspect_text.run_if(in_state(AppState::InGame)),
+                    sys_draw_hovered_static_highlight.run_if(in_state(AppState::InGame)),
                     sys_teleport_on_click.run_if(in_state(AppState::InGame)),
                 ),
             );
@@ -542,9 +543,84 @@ enum HoveredObjectKind {
 struct HoveredStaticMatch {
     tile: uocf::classic::statics::PackedStaticTile,
     kind: HoveredObjectKind,
+    corners: [Vec3; 4],
     depth_key: f32,
     global_x: u16,
     global_y: u16,
+}
+
+fn sys_draw_hovered_static_highlight(
+    settings: Res<crate::configs::settings::Settings>,
+    player_q: Query<&Player>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    statics_res: Res<StaticsStoreRes>,
+    cc_art_res: Option<Res<CcArtPackageRes>>,
+    ec_art_res: Option<Res<EcArtPackageRes>>,
+    ec_land_res: Option<Res<EcLandPackageRes>>,
+    tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    mut gizmos: Gizmos,
+) {
+    if !settings
+        .worldmap_rendering
+        .diagnostics
+        .highlight_hovered_static_object
+    {
+        return;
+    }
+
+    let Some(cursor_pos) = windows.single().ok().and_then(|window| window.cursor_position()) else {
+        return;
+    };
+    let Some((camera, camera_tf)) = camera_q.single().ok() else {
+        return;
+    };
+    let Some(player) = player_q.single().ok() else {
+        return;
+    };
+    let Some((map_id, x, y)) = resolve_cursor_tile_coords(
+        Some(cursor_pos),
+        Some((camera, camera_tf)),
+        Some(player),
+        &settings,
+    ) else {
+        return;
+    };
+
+    let Some(best_match) = find_hovered_static_object(
+        cursor_pos,
+        camera,
+        camera_tf,
+        &settings,
+        &statics_res,
+        cc_art_res.as_deref(),
+        ec_art_res.as_deref(),
+        ec_land_res.as_deref(),
+        tilemeta_res.as_deref(),
+        map_id,
+        x,
+        y,
+    ) else {
+        return;
+    };
+
+    let color = match best_match.kind {
+        HoveredObjectKind::Sprite => Color::srgb(0.1, 1.0, 0.2),
+        HoveredObjectKind::Ground => Color::srgb(1.0, 0.85, 0.2),
+    };
+    let lift = Vec3::new(0.0, HOVERED_STATIC_HIGHLIGHT_Y_LIFT, 0.0);
+    let [corner0, corner1, corner2, corner3] = best_match.corners;
+    let corner0 = corner0 + lift;
+    let corner1 = corner1 + lift;
+    let corner2 = corner2 + lift;
+    let corner3 = corner3 + lift;
+
+    gizmos.line(corner0, corner1, color);
+    gizmos.line(corner1, corner3, color);
+    gizmos.line(corner3, corner2, color);
+    gizmos.line(corner2, corner0, color);
+    gizmos.line(corner0, corner3, color);
+    gizmos.line(corner1, corner2, color);
 }
 
 fn describe_hovered_object(
@@ -710,6 +786,7 @@ fn hovered_static_match(
     Some(HoveredStaticMatch {
         tile,
         kind,
+        corners,
         depth_key,
         global_x: world_x as u16,
         global_y: world_z as u16,
@@ -734,28 +811,23 @@ fn resolve_hovered_static_geometry(
                 .unwrap_or(graphic);
             let art_id = cc_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
             let slot = cc_art_res?.0.present_slot(art_id as u32)?;
-            let offset_x_world = tilemeta
-                .map(|meta| meta.cc_offset_x as f32 * CC_WORLD_XZ_PER_PIXEL)
-                .unwrap_or(0.0);
-            let offset_y_world = tilemeta
-                .map(|meta| meta.cc_offset_y as f32 * CC_WORLD_Y_PER_PIXEL)
-                .unwrap_or(0.0);
-            let world_w = slot.width as f32 * CC_WORLD_XZ_PER_PIXEL;
-            let world_h = slot.height as f32 * CC_WORLD_Y_PER_PIXEL;
-            let local_min_x = offset_x_world;
-            let local_max_x = offset_x_world + world_w;
-            let local_min_y = -offset_y_world;
-            let local_max_y = local_min_y + world_h;
+            let bounds = resolve_static_billboard_bounds(
+                crate::configs::settings::ClientTextureSource::Cc,
+                tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0),
+                tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0),
+                slot.width,
+                slot.height,
+            );
             Some((
                 HoveredObjectKind::Sprite,
                 billboard_corners(
                     world_x,
                     world_y,
                     world_z,
-                    local_min_x,
-                    local_max_x,
-                    local_min_y,
-                    local_max_y,
+                    bounds.local_min_x,
+                    bounds.local_max_x,
+                    bounds.local_min_y,
+                    bounds.local_max_y,
                 ),
             ))
         }
@@ -781,28 +853,23 @@ fn resolve_hovered_static_geometry(
             }
 
             let slot = ec_art_res?.0.present_slot(graphic as u32)?;
-            let offset_x_world = tilemeta
-                .map(|meta| meta.ec_offset_x as f32 * CC_WORLD_XZ_PER_PIXEL)
-                .unwrap_or(0.0);
-            let offset_y_world = tilemeta
-                .map(|meta| meta.ec_offset_y as f32 * CC_WORLD_Y_PER_PIXEL)
-                .unwrap_or(0.0);
-            let world_w = slot.width as f32 * CC_WORLD_XZ_PER_PIXEL;
-            let world_h = slot.height as f32 * CC_WORLD_Y_PER_PIXEL;
-            let local_min_x = offset_x_world;
-            let local_max_x = offset_x_world + world_w;
-            let local_min_y = -offset_y_world;
-            let local_max_y = local_min_y + world_h;
+            let bounds = resolve_static_billboard_bounds(
+                crate::configs::settings::ClientTextureSource::Ec,
+                tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0),
+                tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0),
+                slot.width,
+                slot.height,
+            );
             Some((
                 HoveredObjectKind::Sprite,
                 billboard_corners(
                     world_x,
                     world_y,
                     world_z,
-                    local_min_x,
-                    local_max_x,
-                    local_min_y,
-                    local_max_y,
+                    bounds.local_min_x,
+                    bounds.local_max_x,
+                    bounds.local_min_y,
+                    bounds.local_max_y,
                 ),
             ))
         }
