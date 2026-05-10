@@ -15,8 +15,8 @@ This document lists the keyboard shortcuts used in UODynamapper.
 | `S` | Move South-East (UO Down) |
 | `A` | Move South-West (UO Left) |
 | `D` | Move North-East (UO Right) |
-| `PageUp` | Increase Height / Altitude |
-| `PageDown` | Decrease Height / Altitude |
+| `PageUp` | Increase Height / Altitude (Configurable) |
+| `PageDown` | Decrease Height / Altitude (Configurable) |
 
 
 ## Application
@@ -40,9 +40,9 @@ This document lists the keyboard shortcuts used in UODynamapper.
 ## Developer & Settings
 | Key | Action | Default |
 |-----|--------|---------|
-| `F1` | Keybindings Help | `F1` |
-| `F2` | Options Menu | `F2` |
-| `F3` | Terrain Shader Controls | `F3` |
+| `F1` | Keybindings Help | `F1` (Configurable) |
+| `F2` | Options Menu | `F2` (Configurable) |
+| `F3` | Terrain Shader Controls | `F3` (Configurable) |
 
 > [!NOTE]
 > Keybindings are configurable! You can change them by editing the `assets/keybindings.toml` file.

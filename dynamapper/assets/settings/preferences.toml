@@ -3,9 +3,9 @@ movement_speed_multiplier = 1.0
 smooth_movement = true
 
 [window]
-height = 768.0
-width = 1025.0
-zoom = 1.2068142
+height = 1187.0
+width = 1584.0
+zoom = 0.7935
 ui_scale = 1.0
 player_position_scale = 1.0
 sysmessages_scale = 1.0

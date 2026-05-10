@@ -2,7 +2,7 @@
 
 A dynamic map renderer for Ultima Online, built with Rust and Bevy. Plans are to recreate both classic and modern (Kingdom Reborn/Enhanced Client) visuals with a single codebase.
 It's still in an early stage.  
-Status: Land/terrain rendering supported.
+Status: Land/terrain rendering supported. Multi-map support, BC7 compression, and modular shaders implemented.
 
 ![Current state of version 0.1](./docs/screenshot-0.1.webp)
 
@@ -12,17 +12,33 @@ Status: Land/terrain rendering supported.
 
 This project is organized as a Cargo workspace with several specialized components:
 
-### Applications & Tools
+### Main App & Tools
 
-- **[dynamapper](dynamapper/)**: The main application.
-- **[uddconv_cli](uddconv_cli/)**: CLI tooling for packing, inspecting, editing, diffing, and extracting UODynamapper `.uddp` packages.
-- **[uocf_cli](uocf_cli/)**: General-purpose UO tooling, providing:
+### Dynamapper
+
+- **[dynamapper](dynamapper/)**: The main application (Bevy-based renderer).
+  - **Requirements**: A valid Ultima Online installation (Classic and/or Enhanced Client).
+  - **Assets**: Shared assets (shaders, fonts, settings) are located in `dynamapper/assets/`. Runtime data (`.uddp` packages) should be placed or linked there.
+  - **Configuration**: Managed via modular TOML files in `dynamapper/assets/settings/`.
+
+### Tools
+
+- **[uddconv_cli](tools/uddconv_cli/)**: CLI tooling for packing, inspecting, editing, diffing, and extracting UODynamapper `.uddp` packages.
+- **[uocf_cli](tools/uocf_cli/)**: General-purpose UO tooling, providing:
   - `uoptool`: Utility for hashing, brute-force cracking, replacing files inside, and rebuilding modern `.uop` package files.
-  - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
+  - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats for Classic Client.
+  - `texture_scanner`: Identification and isolation of land/terrain candidates from UO texture pools.
+  - `uop_dict_populator`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
+- **[uddp_inspector](tools/uddp_inspector/)**: GUI for inspecting `.uddp` package contents, atlas layers, and metadata slots.
+- **[uop_inspector](tools/uop_inspector/)**: GUI for inspecting `.uop` package structures, files, and hash redirects.
+- **[uddconv_gui](tools/uddconv_gui/)**: GUI frontend for the asset conversion pipeline.
+- **[uop_populator_gui](tools/uop_populator_gui/)**: GUI for building and expanding UOP hash dictionaries.
+
 
 ### Libraries
 
 - **[uocf](uocf/)**: A parser library for core Ultima Online file formats (Map, Art, Tiledata, UOP) for Classic, Enhanced and Kingdom Reborn clients. Support for custom formats is being added (Michelangelo's `.uop`, `.vd` files).
+It adds support for the custom formats `.uddp` and `.uddf`.
 - **[uddconv](uddconv/)**: Shared library for UODynamapper-specific asset conversion and runtime data loading.
 
 ---
@@ -39,25 +55,21 @@ This project is organized as a Cargo workspace with several specialized componen
 
 #### `uddconv_cli`
 
-- `uddpack`: build runtime packages from source assets.
-  - `pack-art`: pack classic `art.mul` / `artidx.mul` into `cc_art.uddp`.
-  - `pack-ec-textures`: pack Enhanced Client statics and terrain textures together in one shared pass, writing `ec_art.uddp` and `ec_land.uddp` by default.
-  - `pack-tilemeta`: build `tilemeta.uddp` from classic `tiledata.mul` plus Enhanced `tileart.uop` metadata.
-  - `pack-unified-tiledata`: compatibility alias for `pack-tilemeta`.
-- `uddtool`: inspect and edit already-built packages.
-  - `info`: print package structure, logical file counts, recognized package summaries, and `ec_land` terrain provenance row counts.
-  - `extract`: unpack known atlas packages to PNG pages plus CSV metadata. `tilemeta.uddp` is recognized directly.
-  - `rebuild`: rebuild a package image while preserving its logical files.
-  - `replace`: replace one logical path-addressed file by virtual path and write a rebuilt package.
-  - `hash-path`: compute the `xxh64` hash used by path-addressed UDDP packages.
-  - `export-csv`: export editable CSV metadata.
-    - `--kind terrain-provenance` for `ec_land` TerrainDefinition provenance rows.
-    - `--kind slots` for `cc_art`, `ec_art`, and `ec_land` slot metadata.
-  - `import-csv`: validate edited CSV metadata and write it back into a rebuilt package.
-  - `diff`: compare two packages or two metadata CSV files.
-    - `--kind package` compares logical payload fingerprints.
-    - `--kind slots` compares atlas slot metadata.
-    - `--kind terrain-provenance` compares `ec_land` TerrainDefinition provenance.
+`uddpack`: build runtime packages from source assets.
+- `pack-art`: pack classic `art.mul` / `artidx.mul` into `cc_art.uddp`.
+- `pack-ec-textures`: pack Enhanced Client statics and terrain textures into `ec_art.uddp` and `ec_land.uddp`.
+- `pack-tilemeta`: pack CC tiledata and EC tileart into `tilemeta.uddp`.
+- `pack-radar`: generate a radar map (`facet0X.dds`) from Classic map and statics.
+- `pack-map` / `pack-statics`: pack Classic `.mul` files into `.uddp` block-based packages.
+
+`uddtool`: inspect and edit already-built packages.
+- `info`: print package structure, logical file counts, and metadata summaries.
+- `extract`: unpack atlas packages to PNG pages plus CSV metadata.
+- `diff`: compare two packages or metadata CSV files (kind: `package`, `slots`, `terrain-provenance`).
+- `replace`: replace one logical file in a path-addressed package.
+- `rebuild`: rebuild a package image while preserving its logical files.
+- `hash-path`: compute the `xxh64` hash used by path-addressed packages.
+- `export-csv` / `import-csv`: manage editable CSV metadata (kind: `terrain-provenance`).
 
 ### Package Notes
 
@@ -65,10 +77,9 @@ This project is organized as a Cargo workspace with several specialized componen
   - `Texture.uop` and `LegacyTexture.uop`: shared texture pools used by both EC land and EC static-art classification
   - `tileart.uop`: EC static/art metadata, including sampling windows, shader/type hints, ownership, and entry-specific flags
   - `TerrainDefinition.uop`: EC land/material semantics, selected textures, aliases, and runtime slot/provenance relationships
-  - `string_dictionary.uop` and `string_Wdictionary.uop`: shared EC string resources used by the client package set, not visual art sources
+  - `string_dictionary.uop`: shared EC string resource used by the client package set, not visual art sources
 - The important distinction is ownership, not raw id range. A texture id can legitimately appear in both `ec_art` and `ec_land` if the semantic sources require it.
 - `Unused1` on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
-- `runtime_material_id_overrides.toml` is intentionally narrow and only normalizes known runtime collisions; it is not the full Classic-to-EC translation table.
 - `TerrainTranscode.kdl` is still the active loose override for mapping classic land ids to EC material ids at runtime.
 - `TerrainDefinition.kdl` is legacy override data from before this repo could parse `TerrainDefinition.uop` correctly. It may still be loaded for inspection/backward compatibility, but it is no longer the authoritative source for EC land semantics.
 
@@ -78,7 +89,6 @@ This project is organized as a Cargo workspace with several specialized componen
 - `tilemeta.uddp` stores dense land/item metadata tables used by the runtime to merge classic tiledata with Enhanced Client metadata.
 - Current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
 - The long-term direction is to keep the shared source textures intact and let runtime sampling windows and semantic lookup tables choose the right sub-rect or layer at render time.
-- `runtime_material_id_overrides.toml` is a narrow runtime collision table for `ec_land`, not the full Classic-to-EC terrain translation table.
 - `TerrainTranscode.json` is the semantic-family seed for Classic land normalization and is the right starting point for a hand-tuned translation table.
 
 ### Recommended Workflows
@@ -106,7 +116,7 @@ This project is organized as a Cargo workspace with several specialized componen
 
 ---
 
-## Configuration
+## Dynamapper Configuration
 
 Edit `assets/settings.toml` to set your Ultima Online installation directory:
 
@@ -119,16 +129,16 @@ Check other toml configuration files in the 'assets' folder.
 
 ---
 
-## Keybindings
+## Dynamapper Keybindings
 
 | Key | Action |
 | --- | ------ |
 | `W` / `A` / `S` / `D` | Move player (NW / SW / SE / NE) |
-| `PageUp` / `PageDown` | Increase / Decrease altitude |
+| `PageUp` / `PageDown` | Increase / Decrease altitude (Configurable) |
 | `Scroll Wheel` | Zoom in / out |
-| `F1` | Keybindings help overlay |
-| `F2` | Options menu |
-| `F3` | Terrain shader controls |
+| `F1` | Keybindings help overlay (Configurable) |
+| `F2` | Options menu (Configurable) |
+| `F3` | Terrain shader controls (Configurable) |
 | `Ctrl+G` | Teleport dialog |
 | `F11` / `Alt+Enter` | Toggle fullscreen |
 | `Esc` | Close dialogs |
@@ -144,10 +154,11 @@ See [docs/keybindings.md](docs/keybindings.md) for the complete list with descri
 
 | Document | Description |
 | -------- | ----------- |
+| **[docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md)** | Authoritative technical specs, data formats, and shared constants |
 | **[docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)** | High-level project summary, quick start, and current status |
 | **[docs/CONTRIBUTORS_GUIDE.md](docs/CONTRIBUTORS_GUIDE.md)** | Quick file reference, common workflows, and troubleshooting |
-| **[docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md)** | Low-level architecture details and design choices |
-| **[docs/ec_art_trimming.md](docs/ec_art_trimming.md)** | Cropped EC art rules, tilemeta update flow, and why repeated conversions stay safe |
+| **[docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md)** | Code flow and high-level system interactions |
+| **[docs/ec_art_trimming.md](docs/ec_art_trimming.md)** | Cropped EC art rules and tilemeta update flow |
 | **[docs/keybindings.md](docs/keybindings.md)** | Complete list of keyboard shortcuts |
 | **[docs/TODO.md](docs/TODO.md)** | Planned features and future improvements |
 | **[GEMINI.md](GEMINI.md)** | AI agent instructions and best practices |
@@ -156,4 +167,4 @@ See [docs/keybindings.md](docs/keybindings.md) for the complete list with descri
 
 1. **New users**: Start with [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)
 2. **Contributors**: Read [CONTRIBUTORS_GUIDE.md](docs/CONTRIBUTORS_GUIDE.md) for quick reference
-3. **Deep dive**: Consult [CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) for architecture details
+3. **Deep dive**: Consult [CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) for code flow, then [TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) for specs.

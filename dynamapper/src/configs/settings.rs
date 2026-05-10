@@ -31,6 +31,8 @@ pub struct SectKeybindings {
     pub shader_settings: KeyCode,
     pub user_settings: KeyCode,
     pub keybindings_help: KeyCode,
+    pub increase_z: KeyCode,
+    pub decrease_z: KeyCode,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]

@@ -41,7 +41,11 @@ impl Plugin for DrawStaticSpritesPlugin {
                    .after(SceneRenderLandSysSet::RenderLandChunks),
                statics_draw::sys_sync_static_sprite_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
+               statics_draw::sys_sync_static_sprite_transparent_entities
+                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_ground_entities
+                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+               statics_draw::sys_sync_static_ground_transparent_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_update_sprite_instance_buffer
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)

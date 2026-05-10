@@ -1,6 +1,9 @@
 use crate::core::controls::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
+use crate::core::render::scene::world::art::statics_collect::{
+    resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
+};
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
     dialogs,
@@ -540,6 +543,8 @@ struct HoveredStaticMatch {
     tile: uocf::classic::statics::PackedStaticTile,
     kind: HoveredObjectKind,
     depth_key: f32,
+    global_x: u16,
+    global_y: u16,
 }
 
 fn describe_hovered_object(
@@ -580,7 +585,9 @@ fn describe_hovered_object(
     };
 
     format!(
-        "hovered_object: {}",
+        "hovered_object: xy=[{}, {}] {}",
+        best_match.global_x,
+        best_match.global_y,
         describe_static_tile_details(
             settings,
             cc_art_res,
@@ -697,11 +704,15 @@ fn hovered_static_match(
         return None;
     }
 
-    let depth_key = world_z + tile.z as f32;
+    let depth_class = resolve_static_depth_class(tilemeta);
+    let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
+    let depth_key = static_depth_key(world_x, world_z, priority_z_units, depth_class);
     Some(HoveredStaticMatch {
         tile,
         kind,
         depth_key,
+        global_x: world_x as u16,
+        global_y: world_z as u16,
     })
 }
 

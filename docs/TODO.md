@@ -51,13 +51,13 @@ Notes:
 
 ## M0. Baseline and Instrumentation
 
-- [ ] Add frame-time breakdown telemetry: CPU update, extraction, upload, render.
-- [ ] Add upload statistics: queued writes, bytes/frame, batch count.
-- [ ] Add cache diagnostics: LRU hit rate, eviction reason, hysteresis counters.
+- [x] Add frame-time breakdown telemetry: CPU update, extraction, upload, render.
+- [x] Add upload statistics: queued writes, bytes/frame, batch count.
+- [x] Add cache diagnostics: LRU hit rate, eviction reason, hysteresis counters.
 - [ ] Define golden benchmark scenes and reproducible camera paths.
 
 Acceptance:
-- [ ] Metrics visible in debug overlay and persisted in logs for A/B runs.
+- [x] Metrics visible in debug overlay and persisted in logs for A/B runs.
 
 ## M1. Static Art Pipeline (Orthographic Military)
 
@@ -73,17 +73,119 @@ Acceptance:
 - [ ] One shared material path for static art in military mode.
 - [ ] No visible sorting artifacts on masked sprites in baseline test map.
 
+### M1.x UO-Style Static Depth, Transparency, and Building Occlusion Follow-Up
+
+Status:
+- Current runtime state after the first fixed-depth port:
+  - foliage ordering improved materially
+  - terrain-versus-land-static fighting improved partially
+  - remaining wall-vs-wall and similar same-band fighting is still effectively unchanged in live testing
+- Conclusion:
+  - the current projected logical-depth path is not sufficient
+  - the next required step is an explicit UO-style depth key derived from tile coordinates and priority Z, not more ad hoc bias tuning
+
+#### Technical Specification
+
+- Replace clip-space-derived logical ordering for statics with an explicit UO ordering metric.
+- Keep visual billboard placement and logical depth computation independent.
+- Preserve the current split between:
+  - visual position (`world_y`, billboard offsets, ground quad placement)
+  - logical ordering inputs (`tile_x`, `tile_y`, `priority_z_units`, class depth offset)
+
+Target logical depth model:
+
+- `priority_z_units` is the effective UO Z used for ordering and occlusion, not necessarily the raw tile base Z.
+- `depth_key = (tile_x + tile_y) + (127 + priority_z_units) * 0.01`
+- Convert `depth_key` to stable GPU `frag_depth` in a deterministic way.
+- Do not feed visual Y bias into the logical depth formula.
+
+Priority Z rules to preserve:
+
+- Default static priority Z: `tile_z + effective_height`
+- Effective height rules:
+  - use metadata `height` when nonzero
+  - if `height == 0` and the tile is not `Background` and not `Surface`, use fallback height `10`
+  - if `Bridge`, halve the effective height
+- Surface-like floor/land-backed static tiles should keep using the base tile Z unless a verified client rule requires otherwise.
+
+Flag-based logical depth offset rules currently targeted from client analysis:
+
+- `Background` -> `-0.001`
+- `Roof` -> `+0.002`
+- `Foliage` -> client reference uses a much larger positive offset; runtime tuning in this renderer may differ
+- default -> `0.0`
+
+Depth-class precedence must remain:
+
+- `Background`
+- `Roof`
+- `Foliage`
+- `SurfaceLikeFloor`
+- `Regular`
+
+Transparency / second-pass behavior:
+
+- Opaque art/static pass:
+  - alpha-mask style discard
+  - writes logical `frag_depth`
+- Transparent art/static pass:
+  - draws alpha below the cutoff only
+  - should not reuse opaque fixed-depth blindly if that causes artifacts
+  - uses client-style color modulation for translucent pixels
+
+Opacity smoothing target behavior to port:
+
+- introduce timer-based alpha lerp rather than sudden opacity changes
+- target cadence: 20 ms
+- target step: 25 alpha units
+- full fade duration target: about 220 ms
+- applies to foliage fades, roofs, circle/transparency effects, and upper-floor occlusion fades
+
+Building / roof / upper-floor occlusion target behavior:
+
+- add `_maxZ` / `_maxGroundZ` style state derived from a local vertical scan at the player tile
+- detect overhead `Surface` / `Roof` above `player_z + 14`
+- when found, treat that overhead surface as the current building ceiling/floor cutoff
+- roofs above that level can be hidden
+- upper-floor statics above that level should fade or be excluded according to the later alpha/occlusion policy
+
+UO coordinate translation notes to preserve:
+
+- screen-space vertical movement: 1 UO Z unit corresponds to 4 screen pixels in the classic isometric projection
+- current render-side world placement still uses the engine's own world units for visuals
+- the important porting requirement is that logical ordering follows UO depth semantics even if the visual world-space scale differs
+
+#### Implementation Plan
+
+- [ ] Freeze the explicit UO depth-key formula in code comments, docs, and shader/Rust contracts before further tuning.
+- [ ] Add `tile_x`, `tile_y`, and `priority_z_units` as first-class logical-depth inputs for static instances.
+- [ ] Stop using projected clip depth as the final ordering source for statics; use the explicit UO depth key instead.
+- [ ] Reapply the class offset table on top of `priority_z_units`, not on visual Y.
+- [ ] Re-tune foliage only after the explicit depth key is live.
+- [ ] Implement timer-based alpha lerp for fade-in/fade-out behavior.
+- [ ] Add player-local `_maxZ` building scan.
+- [ ] Hide/fade roofs and upper floors above `_maxZ`.
+- [ ] Validate all of the above in dense town/building scenes with equal-Z walls, foliage near walls, and terrain/land-static overlap.
+
+#### Validation Requirements
+
+- Verify equal-Z walls in towns/buildings specifically; this is the current known failure that remained unchanged after the priority-height experiment.
+- Verify terrain versus land-backed static tiles after explicit depth-key migration.
+- Verify foliage against walls and dense tree clusters after the explicit depth-key migration, not before.
+- Verify roof hiding and upper-floor fade behavior while walking into and out of buildings.
+- Record representative before/after captures for regression comparison.
+
 ## M2. Streaming Core (UDDP/UDDF + mmap + upload scheduler)
 
-- [ ] Finalize UDDP on-disk layout with sections:
-  - [ ] header
-  - [ ] dictionary index section
-  - [ ] dictionary blobs section
-  - [ ] entry table
-  - [ ] data blocks
-- [ ] Keep UDDF as single-object envelope for standalone resources and tooling.
-- [ ] Implement async read/decompress tasks via Bevy task pools.
-- [ ] Implement upload scheduler that merges writes and emits bounded GPU copy batches each frame.
+- [x] Finalize UDDP on-disk layout with sections:
+  - [x] header
+  - [x] dictionary index section
+  - [x] dictionary blobs section
+  - [x] entry table
+  - [x] data blocks
+- [x] Keep UDDF as single-object envelope for standalone resources and tooling.
+- [x] Implement async read/decompress tasks via Bevy task pools.
+- [x] Implement upload scheduler that merges writes and emits bounded GPU copy batches each frame.
 - [ ] Implement per-content dictionary handling for small payload classes.
 - [ ] Implement fallback decode paths per content type.
 - [ ] Adopt `64x64` as the preferred UDDP transport/decompression unit for terrain payloads.

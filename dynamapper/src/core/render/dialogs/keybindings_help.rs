@@ -105,7 +105,10 @@ pub fn sys_render_keybindings_help(
                     ui.end_row();
 
                     ui.label("Altitude Up/Down");
-                    ui.label("PageUp / PageDown");
+                    ui.label(format!(
+                        "{:?} / {:?}",
+                        settings.keybindings.increase_z, settings.keybindings.decrease_z
+                    ));
                     ui.end_row();
                 });
 

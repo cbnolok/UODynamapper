@@ -14,8 +14,13 @@ This document provides essential information for AI agents to effectively assist
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
 - `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
 - `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
+- `uddconv_ktx2/` - KTX2 texture handling
 - `tools/uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
-- `tools/uocf_cli/` - Generic UO tooling CLI crate with multiple binaries such as `uoptool` and `cc_uop_mul_converter`
+- `tools/uocf_cli/` - Generic UO tooling CLI crate with multiple binaries:
+  - `uoptool`: Utility for hashing, brute-force cracking, and rebuilding `.uop` files.
+  - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
+  - `texture_scanner`: Utility for identifying and isolating land/terrain candidates from UO texture pools.
+  - `uop_dict_populator`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
 - `tools/uddp_inspector/` - GUI for inspecting .uddp package contents
 - `tools/uddconv_gui/` - GUI frontend for asset conversion
 - `tools/uop_inspector/` - GUI for inspecting .uop files
@@ -28,90 +33,36 @@ This document provides essential information for AI agents to effectively assist
 | Document | Purpose |
 |----------|---------|
 | **GEMINI.md** (this file) | AI agent workflow, rules, and task-specific guidance |
+| **docs/TECHNICAL_REFERENCE.md** | Authoritative tech specs, data formats, and constants |
 | **docs/CONTRIBUTORS_GUIDE.md** | Quick reference for file locations and common tasks |
 | **docs/PROJECT_OVERVIEW.md** | High-level project summary, goals, and status |
 | **docs/CODE_OVERVIEW.md** | Low-level design choices and architecture details |
 
 **When starting a task**:
-1. Check `docs/CONTRIBUTORS_GUIDE.md` for file locations
-2. Read relevant sections in this file for workflow guidance
-3. Consult `docs/CODE_OVERVIEW.md` for detailed architecture if needed
+1. Check **docs/TECHNICAL_REFERENCE.md** for technical specs.
+2. Check `docs/CONTRIBUTORS_GUIDE.md` for file locations.
+3. Read relevant sections in this file for workflow guidance.
+
+**Note**: Asset paths in this document and others are relative to the workspace root. Shaders, settings, and defaults are under `dynamapper/assets/`.
 
 ---
 
-## 3. Core Architectural Concepts
+## 3. Core Architectural Concepts (Summary)
+
+For full technical specifications, data formats, and constants, see **[docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md)**.
 
 ### 3.1 Rendering Presets
-
-The terrain shader supports three modes controlled by uniforms:
-
-| Mode | Value | Normals | Shading | Features |
-|------|-------|---------|---------|----------|
-| **Classic 2D** | 0 | Geometric | Gouraud (vertex) | Lambert only |
-| **Enhanced Classic** | 1 | Bicubic | Per-fragment | Diffuse + subtle fill |
-| **KR-like** | 2 | Bicubic + Bent | Per-fragment | Full stack: rim/spec/fill + fog + grading + tonemap |
-
-When making changes, always consider how they affect each preset.
+The renderer supports **Classic 2D (0)**, **Enhanced Classic (1)**, and **KR-like (2)** modes. Each affects normal generation and lighting complexity.
 
 ### 3.2 Paged Tile Metadata Atlas
-
-Map data is stored in UO mul/uop files as blocks (8x8 tiles each). Instead of per-chunk uniforms:
-
-- **Atlas Format**: Layered `Rg16Uint` GPU texture array
-  - **R16**: `tile_id` (0..65535)
-  - **G16**: Packed `[height_biased:low 8 | tex_size:high 8]` where `height_biased = height + 128`
-- **LRU Paging**: World pages (2048x2048 tiles) mapped to physical GPU layers
-- **Incremental Updates**: Uploads via `queue.write_texture` on the fly
-- **Neighborhood Sampling**: Shader samples across chunk boundaries seamlessly
-
-**Key Files**:
-- `dynamapper/src/core/render/scene/world/land/tile_atlas.rs` - LRU cache management
-- `dynamapper/src/core/render/scene/world/land/draw_mesh.rs` - Mesh creation, atlas uploads
-- `dynamapper/src/core/render/scene/world/land/mesh_material.rs` - Rust uniform structs
-- `assets/shaders/worldmap/land/` - Modular WGSL shader directory (see Shader Modules below)
+Map metadata is stored in a layered `Rg16Uint` texture array (R16=ID, G16=Height/Size). This allows massive maps without material churn.
 
 ### 3.3 Modular Shader Architecture
+Terrain shaders are in `dynamapper/assets/shaders/worldmap/land/` as WGSL modules using **naga_oil** `#import`. 
+*Note: WGSL variable names cannot end with a digit (naga_oil constraint).*
 
-The terrain shader is split into modular WGSL files composed at compile time via **naga_oil** `#import` directives:
-
-| File | Purpose |
-|------|---------|
-| `main.wgsl` | Entry point: vertex/fragment functions, lighting composition, fog |
-| `bindings.wgsl` | Struct definitions and `@group(3)` bind group declarations |
-| `atlas.wgsl` | Tile metadata atlas lookups (page → layer → UV) |
-| `sampling.wgsl` | Texture sampling (small/big atlas, filtering) |
-| `normals.wgsl` | Normal generation (geometric, bicubic, bent) |
-| `shading.wgsl` | Shading models (Gouraud, per-fragment, color grading) |
-| `lighting.wgsl` | Light evaluation (Lambert, rim, specular, fill, tonemap) |
-| `noise.wgsl` | Noise utilities |
-
-**naga_oil Naming Constraint**: Variable and uniform names in WGSL **cannot end with a digit** (naga_oil limitation). Use a trailing underscore for padding fields (e.g., `_pad0_` instead of `_pad0`).
-
-### 3.4 Uniform-Driven Shaders
-
-Visual features are controlled by uniforms in shared bind groups, split into three uniform buffers for clear separation of concerns:
-
-**Binding Indices** (MUST match between Rust and WGSL):
-```rust
-#[uniform(104)] pub atlas_params: AtlasParams           // Tile atlas paging params
-#[uniform(105)] pub scene_uniform: SceneUniform          // Camera, light direction, zoom
-#[uniform(106)] pub effects_uniform: LandEffectsUniform  // Texture/rendering toggles
-#[uniform(107)] pub global_lighting_uniform: GlobalLightingUniforms  // Shared lighting (fog, tonemap, grading, gloom)
-#[uniform(108)] pub land_lighting_uniform: LandLightingUniforms     // Land-specific lighting (bent, rim, fill, specular)
-```
-
-**WGSL variable names** (in `bindings.wgsl`):
-```wgsl
-@binding(106) var<uniform> effects:      LandEffectsUniform;
-@binding(107) var<uniform> global_light:  GlobalLightingUniforms;
-@binding(108) var<uniform> land_light:   LandLightingUniforms;
-```
-
-**Design Rationale**: `GlobalLightingUniforms` contains lighting parameters that apply to all geometry (fog, tonemap, color grading, ambient) and will be shared with future art/item shaders. `LandLightingUniforms` contains parameters specific to land terrain that require 3D normals (bent normals, rim light, specular, fill sky/ground).
-
-**BC7 Compression**: When enabled in settings, terrain textures are compressed to BC7 on CPU using `dds` as the portable baseline backend, with `block_compression` or `intel_tex_2` as alternatives, reducing VRAM usage ~8x (~160MB → ~20MB).
-
-**CRITICAL**: Rust struct layout in `mesh_material.rs` must **exactly** match shader structs in `bindings.wgsl`, including `std140` alignment and padding.
+### 3.4 Uniform Binding Protocol
+Rust `#[uniform(10X)]` must match WGSL `@binding(10X)`. See `mesh_material.rs` and `bindings.wgsl` for current bindings.
 
 ---
 
@@ -129,6 +80,7 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
  default values in Rust code.
 - **Explicit Configuration**: All settings must be explicitly defined in TOML files. Hidden defaults in Rust code are difficult to discover and lead to configuration drift.
 - **Fail Fast**: If a required setting is missing from the TOML file, the application should fail with a clear error message indicating which setting is missing.
+- **Modular Keybindings**: All primary keybindings (F1-F3, Altitude, etc.) must be defined in `assets/settings/keybindings.toml` and accessed via `Settings.keybindings`. Do NOT hardcode KeyCodes for these actions.
 - **Example Pattern**:
   ```rust
   // WRONG - hidden default
@@ -168,39 +120,26 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
 
 ### Task: Modify a Visual Effect in the Shader
 
-1. **Identify Target**: Shader files are in `assets/shaders/worldmap/land/` (see section 3.3 for module list)
-   - Lighting/shading logic → `shading.wgsl` and `lighting.wgsl`
-   - Texture sampling → `sampling.wgsl`
-   - Normal generation → `normals.wgsl`
-   - Fragment entry point / fog → `main.wgsl`
-   - Struct definitions / bindings → `bindings.wgsl`
-2. **Locate Logic**: Find relevant section in the appropriate module
+1. **Identify Target**: Shader files are in `dynamapper/assets/shaders/worldmap/land/`
+2. **Locate Logic**: Find relevant section in the appropriate `.wgsl` module
 3. **Use Hot-Reload**: Test changes via F3 UI without recompiling Rust
-4. **Verify Presets**: Check all three rendering modes
+4. **Verify Presets**: Check all three rendering modes (Classic, Enhanced, KR-like)
 
 ### Task: Add a New Uniform Parameter
 
 **Follow this exact order**:
 
-1. **Step 1: Rust Struct** - Add field to appropriate struct in `mesh_material.rs`
-   - Choose correct struct: `LandEffectsUniform` (texture/rendering), `GlobalLightingUniforms` (shared lighting), or `LandLightingUniforms` (land-specific lighting)
-   - Ensure `#[repr(C, align(16))]` and `ShaderType` derive
-   - Add padding fields as needed for `std140` alignment
-   - Padding field names must NOT end with a digit (naga_oil constraint)
-
-2. **Step 2: Populate Uniform** - In `draw_mesh.rs`, inside `create_land_chunk_material`, set the value
-
-3. **Step 3: Shader Struct** - Add corresponding field in `bindings.wgsl`
-
+1. **Step 1: Rust Struct** - Add field to appropriate struct in `dynamapper/src/core/render/scene/world/land/mesh_material.rs`
+2. **Step 2: Populate Uniform** - In `dynamapper/src/core/render/scene/world/land/draw_mesh.rs`, inside `create_land_chunk_material`, set the value
+3. **Step 3: Shader Struct** - Add corresponding field in `dynamapper/assets/shaders/worldmap/land/bindings.wgsl`
 4. **Step 4: Use in Shader** - Use the new parameter in the appropriate shader module
-
-5. **Step 5: Verify Bindings** - Ensure binding indices match between Rust and WGSL
+5. **Step 5: Verify Bindings** - Ensure binding indices match between Rust `#[uniform(10X)]` and WGSL `@binding(10X)`
 
 ### Task: Debug Common Issues
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Binding is missing from pipeline layout` | `#[uniform(10X)]` ≠ `@binding(10X)` | Verify binding indices are identical in `mesh_material.rs` and `bindings.wgsl` |
+| `Binding is missing from pipeline layout` | `#[uniform(10X)]` ≠ `@binding(10X)` | Verify indices match in Rust and WGSL files |
 | Colors washed out / grayish | Double gamma correction | Remove manual `pow(color, 1.0/2.2)` - Bevy handles gamma |
 | Shader compile error | WGSL syntax/alignment | Read wgpu error (points to exact line) |
 | High GPU usage (70%+) idle | `get_mut()` in hot path | Use `get()` or `write_texture` to atlas |
@@ -208,104 +147,52 @@ Visual features are controlled by uniforms in shared bind groups, split into thr
 
 ---
 
-## 6. Performance & Memory Management
+## 6. Performance & Memory Management (Summary)
+
+Detailed specifications can be found in **[docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md)**.
 
 ### 6.1 CRITICAL: Avoid `get_mut()` in Hot Paths
+Calling `get_mut()` on Materials triggers expensive re-extraction and re-binding every frame. Use `get()` for read-checks.
 
-**The Problem**:
-Calling `get_mut()` on Materials or Assets inside Update systems triggers Bevy's change detection. For large assets like terrain materials (binding global texture arrays), this forces expensive **re-extraction** (copying to Render World) and **re-binding** (updating GPU bind groups) every frame.
+### 6.2 Idle Eviction
+MapBlocks and texture pixel data are evicted after **60 seconds** of inactivity.
 
-**Result**: 70%+ GPU usage even when idle, micro-stutters, UI changes overwritten.
-
-**Solutions**:
-- Use `get()` for read-only checks
-- Only use `get_mut()` if comparison (using `Local` or `is_changed()`) proves data changed
-- For terrain metadata: use **direct GPU write** via `write_texture` to Tile Atlas
-
-### 6.2 Idle Eviction (60s)
-
-- **What**: MapBlocks in `MapPlane`, texture pixel data in `TexMap2D`
-- **When**: Not accessed for 60 seconds
-- **Check**: Every 5 seconds via `sys_evict_map_blocks`
-
-### 6.3 BC7 Compression & VRAM
-
-- **Savings**: ~160MB → ~20MB (~8x reduction)
-- **Preferred Library**: `dds`
-- **Optional Accelerator**: `intel_tex_2` with `alpha_basic_settings`
-- **Alignment**: `bytes_per_row = (width + 3) / 4 * 16` (4x4 blocks)
-
-### 6.4 Build Optimizations
-
-- **Linker**: `mold` (3-5x faster linking, CI only)
-- **Release**: `opt-level = "s"` + LTO + strip
-- **Debug**: `opt-level = 1`, incremental enabled
+### 6.3 BC7 Compression
+Reduces VRAM usage ~8x. Align row bytes to 16-byte blocks.
 
 ---
 
 ## 7. Common Pitfalls & Debugging
 
 ### Color Space Issues
-
-**Symptom**: Colors appear washed out, whitish, or grayish.
-
-**Cause**: Double gamma correction. Bevy's rendering pipeline expects linear color output and performs gamma correction itself.
-
-**Fix**: Do NOT add manual `pow(color, 1.0/2.2)`. Output linear color from fragment shader.
+Avoid double gamma correction; Bevy handles gamma automatically.
 
 ### Texture Upload Alignment
-
-**BC7**: `bytes_per_row = (width + 3) / 4 * 16` (16 bytes per 4x4 block)
-
-**Rg16u**: `bytes_per_row = width * 4` (4 bytes per texel)
-
-### WGSL Strictness
-
-WGSL is more strict than GLSL:
-- No implicit type conversions
-- Explicit padding for `std140` alignment
-- Error messages point to exact line
+- **BC7**: `(width + 3) / 4 * 16`
+- **Rg16u**: `width * 4`
 
 ---
 
 ## 8. Testing & Verification
 
-### Before Committing Changes
-
-1. **Build**: `cargo build` - ensure no compile errors
-2. **Lint**: `cargo clippy` - fix any warnings
-3. **Format**: `cargo fmt` - ensure consistent formatting
-4. **Test Presets**: Verify all three shader modes work correctly
-5. **Check Performance**: Ensure no new GPU overhead introduced
-
-### Visual Testing Workflow
-
-1. Use F3 dialog to toggle between Classic/Enhanced/KR modes
-2. Adjust lighting/fog/grading sliders in real-time
-3. Verify changes look correct in all three modes
-4. Check performance overlay (top-right) for GPU impact
+1. `cargo build` + `cargo clippy` + `cargo fmt`.
+2. Test all three shader modes (**Classic**, **Enhanced**, **KR-like**).
+3. Use **F3 UI** for real-time uniform testing.
 
 ---
 
 ## 9. When Searching Code
 
-### Recommended Tools
-
-- **`glob`**: Find files by pattern (e.g., `**/*.wgsl`)
-- **`grep_search`**: Search for keywords in file contents
-- **`task` agent**: Complex multi-file searches requiring multiple rounds
-
-### Search Strategy
-
-1. Start with specific file patterns if you know the location
-2. Use keyword search for concepts (e.g., "tile_atlas", "uniform")
-3. For open-ended exploration, use the task agent
+- Use **`glob`** for file patterns.
+- Use **`grep_search`** for keywords.
+- Use **`task`** agent for multi-round exploration.
 
 ---
 
 ## 10. Related Documentation
 
-- **docs/CONTRIBUTORS_GUIDE.md**: Quick file reference and common workflows
-- **docs/PROJECT_OVERVIEW.md**: High-level project summary and status
-- **docs/CODE_OVERVIEW.md**: Detailed architecture and design choices
-- **docs/TODO.md**: Planned features and improvements
+- **docs/TECHNICAL_REFERENCE.md**: Authoritative tech specs and constants.
+- **docs/CONTRIBUTORS_GUIDE.md**: Quick file reference.
+- **docs/PROJECT_OVERVIEW.md**: High-level status and goals.
+- **docs/CODE_OVERVIEW.md**: Detailed architecture details.
+- **docs/TODO.md**: Roadmap.

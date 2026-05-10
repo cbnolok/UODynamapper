@@ -11,29 +11,27 @@ High-level summary of the UODynamapper project for contributors and AI agents to
 **Tech Stack**:
 - **Language**: Rust (Edition 2024)
 - **Engine**: Bevy v0.18.1
-- **Shaders**: WGSL (WESL + naga-oil)
+- **Shaders**: WGSL (with naga-oil)
 - **GPU API**: wgpu
 
 **Workspace Members**:
-
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
 - `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
 - `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
-- `uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
-- `uocf_cli/` - Generic UO tooling CLI crate for UOP/package operations and format conversion utilities
+- `uddconv_ktx2/` - KTX2 texture handling
+- `tools/uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
+- `tools/uocf_cli/` - Generic UO tooling CLI crate for UOP/package operations and format conversion utilities
 
 ---
 
 ## 2. Quick Start
 
 ### Entry Points
-
 ```text
 main.rs → core.rs (Bevy app setup) → AppState machine
 ```
 
 ### Key Files at a Glance
-
 | File | Purpose |
 | ---- | ------- |
 | `dynamapper/src/main.rs` | Application entry point |
@@ -46,271 +44,93 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 ## 3. Core Features
 
 ### Rendering
-
 - **Three Shader Modes**: Classic 2D, Enhanced Classic, KR-like
 - **Paged Tile Atlas**: GPU-driven terrain metadata for massive maps
 - **BC7 Compression**: 8x VRAM reduction (~160MB → ~20MB)
-- **Zoom-Driven Chunk Scaling**: 8x8 / 16x16 / 32x32 / 64x64 chunk coverage depending on zoom
-- **Exact Viewport Visibility**: Uses Bevy camera ray projection rather than manual ortho estimation
+- **Zoom-Driven Chunk Scaling**: Dynamic chunk coverage (8x8 up to 256x256)
+- **Exact Viewport Visibility**: Uses Bevy camera ray projection
 - **Hot-Reload**: Shader changes apply automatically
 
 ### User Interface
-
 - **Performance Overlay**: FPS, CPU%, RAM (top-right)
 - **Player Position**: Coordinates display (top-left)
 - **System Messages**: In-game log with severity colors (bottom-left)
-- **Dialogs**:
-  - F1: Keybindings help
-  - F3: Terrain shader controls
-  - Ctrl+G: Teleport to coordinates
+- **Dialogs**: F1 (Help), F2 (Options), F3 (Shader Controls) — all configurable — plus Ctrl+G (Teleport)
 
 ### Configuration
-
-- **Keybindings**: Fully runtime-configurable (`assets/settings/keybindings.toml`)
-- **Shader Presets**: Stored in `assets/defaults/shader_presets.toml` (3 modes × 4 times of day = 12 presets)
-- **Settings**: Split into modular TOML files under `assets/settings/`:
-  - `core.toml` — Window, debug options, power saving
-  - `uo_files.toml` — UO installation paths
-  - `graphics.toml` — Rendering settings (BC7, wireframe)
-  - `maps.toml` — Map configuration
-  - `preferences.toml` — User preferences
-  - `keybindings.toml` — Keyboard shortcuts
-- **Texture Residency Toggle**: `assets/settings/uo_files.toml` can switch terrain texmaps between LRU residency and full-file preload residency
-
-### Performance
-
-- **Idle Eviction**: 60s timeout for inactive data
-- **Lazy Loading**: Textures load on-demand
-- **Optional Full Preload**: Terrain texmaps can reserve deterministic layers for the full collection at startup
-- **Power Saving**: Reactive low-power mode when unfocused
-- **Spawn Throttling**: New chunk entities spawn center-out, capped per frame
-- **Shared-Material Stability**: Terrain material updates only when relevant state changes
-- **Dynamic Texture Array Expansion**: Small/big terrain arrays can grow on demand
+- **Modular TOML**: Settings split into `core.toml`, `uo_files.toml`, `graphics.toml`, etc. under `assets/settings/`.
+- **Shader Presets**: Stored in `assets/defaults/shader_presets.toml`.
 
 ---
 
 ## 4. Documentation Structure
 
-| Document | Purpose | Audience |
-| -------- | ------- | -------- |
-| **docs/CONTRIBUTORS_GUIDE.md** | Quick file reference, common tasks | Humans + AI |
-| **GEMINI.md** | AI agent workflow and best practices | AI agents |
-| **docs/CODE_OVERVIEW.md** | Low-level architecture details | Developers |
-| **docs/TEXTURE_RESIDENCY.md** | Shared texture residency abstraction | Developers |
-| **docs/PROJECT_OVERVIEW.md** | This file - high-level summary | Everyone |
-| **docs/TODO.md** | Planned features | Developers |
-
-**Recommended Reading Order**:
-
-1. **New contributors**: Start here → `CONTRIBUTORS_GUIDE.md` → `CODE_OVERVIEW.md`
-2. **AI agents**: `GEMINI.md` → `CONTRIBUTORS_GUIDE.md`
-3. **Quick lookup**: `CONTRIBUTORS_GUIDE.md`
+| Document | Purpose |
+| -------- | ------- |
+| **docs/TECHNICAL_REFERENCE.md** | Authoritative tech specs, data formats, and constants |
+| **docs/CONTRIBUTORS_GUIDE.md** | Quick file reference, common tasks |
+| **GEMINI.md** | AI agent workflow and best practices |
+| **docs/CODE_OVERVIEW.md** | Low-level architecture details |
+| **docs/TODO.md** | Roadmap and planned features |
 
 ---
 
 ## 5. Application States
-
 ```text
 StartupSetup → InGame
 ```
-
-- **StartupSetup**: Default state. Startup systems load UO files, set up the scene (camera, player, terrain)
-- **InGame**: Main interactive state (player movement, rendering, UI)
-- **Stop**: Shutdown state
-
-There is no intermediate `AssetsLoading` state — asset loading runs within the `Startup` schedule system sets (see CODE_OVERVIEW.md for details).
+- **StartupSetup**: Default state. Loads UO files, sets up scene.
+- **InGame**: Main interactive state.
+- **Stop**: Shutdown state.
 
 ---
 
 ## 6. Plugin Architecture
-
-Core plugins registered in `core.rs` (top-level only):
-
-| Plugin | Purpose | Registered By |
-| ------ | ------- | ------------- |
-| `ExternalDataPlugin` | Settings + shader presets loading | Core |
-| `ControlsPlugin` | Player input (WASD, PageUp/Down for Z) | Core |
-| `RenderPlugin` | Scene, camera, overlays, dialogs | Core |
-| `TextureCachePlugin` | Cache land/item textures | Core |
-| `UOFilesPlugin` | Load Ultima Online game files | Core |
-| `WireframePanicFixPlugin`| Fix for Bevy 0.18.1 Node3d panic | Core |
-| `DefaultPlugins` | Bevy engine core systems | Core (Manual) |
-| `WireframePlugin` | Debug wireframe rendering | Core (Manual) |
-| `FramepacePlugin` | Framerate limiting | Core (Manual) |
-| `EguiPlugin` | egui integration | Core (Manual) |
-
-**Internal Sub-plugins:**
-- `ExternalDataPlugin` → `SettingsPlugin`, `ShaderPresetsPlugin`
-- `RenderPlugin` → `ScenePlugin`, `OverlaysPlugin`, `DialogsPlugin`, `LandProfilingPlugin`
-- `ScenePlugin` → `WorldPlugin`, `PlayerDynamicLightPlugin`, `CameraPlugin`, `PlayerPlugin`
-- `TextureCachePlugin` → `LandTextureCachePlugin`
+Core plugins are registered in `core.rs`. For details on sub-plugins and hierarchy, see **[docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md)**.
 
 ---
 
-## 7. Terrain Rendering Concepts
+## 7. Core Architecture Concepts (Summary)
 
-### Paged Tile Metadata Atlas
+For full technical specifications, data formats, and constants, see **[docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md)**.
 
-Instead of per-chunk uniforms, terrain metadata uses a **layered Rg16Uint texture array**:
+### 7.1 Paged Tile Metadata Atlas
+Terrain metadata is stored in a layered `Rg16Uint` texture array. This eliminates per-chunk uniform updates and allows massive maps with minimal draw calls.
 
-```text
-Format: 4 bytes per tile
-├─ R16: tile_id (0..65535)
-└─ G16: packed [height_biased:low 8 | tex_size:high 8]
-```
+### 7.2 Multi-Scale Chunk Rendering
+The renderer merges base 8x8 blocks into larger "super-chunks" (up to 256x256) as zoom increases to reduce draw-entity pressure.
 
-**Benefits**:
-
-- Eliminates material churn (thousands of chunks share one material)
-- Enables massive maps (10,000x10,000+ tiles)
-- Seamless neighborhood sampling across chunk boundaries
-
-### Multi-Scale Chunk Rendering
-
-Terrain rendering keeps the base logical chunk size at `8x8` tiles, but the renderer can merge base chunks into larger draw units as zoom increases:
-
-| Zoom Range | Chunk Scale | Mesh Coverage | Typical Goal |
-| ---------- | ----------- | ------------- | ------------ |
-| `< 10` | 1 | 8x8 tiles | Near view detail |
-| `10-25` | 2 | 16x16 tiles | Reduce entity count |
-| `25-50` | 4 | 32x32 tiles | Far zoom-out |
-| `50-64` | 8 | 64x64 tiles | Extreme zoom-out |
-| `64-80` | 16 | 128x128 tiles | Huge zoom-out |
-| `>= 80` | 32 | 256x256 tiles | Full-map view |
-
-At scale=1, a secondary LOD system selects between three mesh detail levels (81 / 25 / 9 vertices) for minor vertex savings. This LOD distinction is negligible for real-time rendering but becomes meaningful for offline full-map exports (e.g. 7000×4000 tiles at 1:1 → 35 M vertices at High, 4 M at Low). See `CODE_OVERVIEW.md` §2.4 for the full rationale.
-
-This keeps the shader path unified while reducing draw-entity pressure dramatically at high zoom.
-
-### Shader Presets
-
-| Mode | Value | Characteristics |
-| ---- | ----- | --------------- |
-| Classic 2D | 0 | Faceted look, geometric normals, Gouraud lighting |
-| Enhanced Classic | 1 | Smooth normals, per-fragment lighting, fill light |
-| KR-like | 2 | Full suite: rim/spec highlights, fog, grading, tonemap |
+### 7.3 Rendering Presets
+Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes with unified shader paths.
 
 ---
 
-## 8. Multi-Map Support
-
-- Auto-discovers `map0.mul` through `map5.mul`
-- Each map plane indexed by ID (0-5)
-- Teleport dialog supports M (map plane) coordinate
-
----
-
-## 9. Development Workflow
-
-### Build Commands
-
-```bash
-cargo build              # Debug build
-cargo build --release    # Release build (optimized)
-cargo run                # Run debug
-cargo clippy             # Lint
-cargo fmt                # Format
-```
-
-### Hot-Reload Workflow
-
-1. Shader changes → automatic hot-reload (Bevy file watcher)
-2. Uniform tweaks → F3 UI for runtime testing
-3. Preset changes → edit `assets/defaults/shader_presets.toml`, restart
-
-### Testing Visual Changes
-
-1. Press F3 to open terrain shader controls
-2. Toggle between Classic/Enhanced/KR modes
-3. Adjust lighting/fog/grading sliders in real-time
-4. Verify all three presets after code changes
+## 8. Performance Targets
+- **60s Idle Eviction**: Automatic memory management for stale data.
+- **BC7 Compression**: 8x VRAM reduction.
+- **Zero-Copy Streaming**: Memory-mapped UDDP files.
 
 ---
 
-## 10. Current Status
+## 9. Current Status
 
 ### Implemented ✓
-
 - [x] Land tile rendering with Paged Tile Atlas
-- [x] Player movement (WASD + PageUp/Down for Z)
-- [x] Camera follow + zoom
-- [x] Exponential camera zoom
 - [x] Three shader modes (Classic, Enhanced, KR-like)
-- [x] LRU texture eviction (60s)
-- [x] BC7 compression support
-- [x] Multi-map discovery (map0-map5)
-- [x] Performance overlay (FPS, CPU, RAM)
-- [x] In-game logger with severity colors
-- [x] Configurable keybindings
-- [x] Teleport dialog (Ctrl+G)
-- [x] Power saving mode
-- [x] Shared-material change gating (no per-frame terrain material churn)
-- [x] Exact camera-projected visible chunk computation
-- [x] Chunk spawn throttling with center-out ordering
-- [x] Zoom-based mesh LOD selection
-- [x] Zoom-based chunk scaling (1/2/4/8)
-- [x] Dynamic terrain texture-array expansion
-- [x] Map-edge boundary validation for super-chunks and atlas uploads
+- [x] Multi-map discovery and support (map0-map5)
+- [x] BC7 compression & LRU eviction
+- [x] Zoom-based chunk scaling and LOD selection
+- [x] Exact camera-projected visibility computation
+- [x] Async asset streaming via Bevy task pools
 
 ### Planned (docs/TODO.md)
-
-- [ ] Split WGSL shader into multiple files
-- [ ] Further optimize block acquisition and in-memory map-block storage
-- [ ] Reduce idle CPU further with more event-driven scheduling
+- [ ] Reduce idle CPU further with event-driven scheduling
 - [ ] Adapt 'far' projection to zoom level
 - [ ] Hot-reload settings and presets
 - [ ] Reduce temporary allocations in chunk build/upload paths
 
 ---
 
-## 11. Key Constants
-
-```rust
-// Chunk dimensions
-TILE_NUM_PER_CHUNK_DIM = 8       // 8x8 tiles per chunk
-TILE_NUM_PER_CHUNK_TOTAL = 64
-
-// Chunk scaling by zoom
-scale 1 -> 8x8 tiles
-scale 2 -> 16x16 tiles
-scale 4 -> 32x32 tiles
-scale 8 -> 64x64 tiles
-
-// Atlas paging
-PAGE_TEXELS = 2048               // World page size
-MAX_LAYERS = 8                   // Metadata atlas layers
-
-// Land texture arrays
-SMALL_INITIAL_LAYERS = 256
-BIG_INITIAL_LAYERS = 128
-```
-
----
-
-## 12. Common Issues Quick Reference
-
-| Issue | Quick Fix |
-| ----- | --------- |
-| `Binding is missing` | Verify `#[uniform(10X)]` = `@binding(10X)` |
-| Colors washed out | Remove manual gamma correction |
-| High GPU usage idle | Check for `get_mut()` or other asset-change triggers in hot paths |
-| Missing edge chunks | Verify `compute_visible_chunks()` still uses camera ray projection and full super-chunk bounds checks |
-| Crash while zoomed far out | Verify small/big texture array layer counts match the actual GPU array sizes |
-| Dialogs not showing | Use `EguiPrimaryContextPass` schedule |
-
-For detailed troubleshooting, see `docs/CONTRIBUTORS_GUIDE.md` or `GEMINI.md`.
-
----
-
-## 13. Getting Help
-
-- **File locations**: `docs/CONTRIBUTORS_GUIDE.md`
-- **Architecture details**: `docs/CODE_OVERVIEW.md`
-- **AI agent workflow**: `GEMINI.md`
-- **Planned features**: `docs/TODO.md`
-
----
-
-**Last Updated**: giovedì 2 aprile 2026  
+**Last Updated**: May 2026  
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024

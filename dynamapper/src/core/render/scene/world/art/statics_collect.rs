@@ -28,6 +28,131 @@ enum StaticVisualKind {
     EcLandArt { art_id: u32 },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaticDepthClass {
+    Regular,
+    Background,
+    Foliage,
+    Roof,
+    SurfaceLikeFloor,
+}
+
+impl StaticDepthClass {
+    fn encoded(self) -> u32 {
+        match self {
+            StaticDepthClass::Regular => 0,
+            StaticDepthClass::Background => 1,
+            StaticDepthClass::Foliage => 2,
+            StaticDepthClass::Roof => 3,
+            StaticDepthClass::SurfaceLikeFloor => 4,
+        }
+    }
+}
+
+const TILE_FLAG_BACKGROUND: u64 = 0x01;
+const TILE_FLAG_SURFACE: u64 = 0x200;
+const TILE_FLAG_BRIDGE: u64 = 0x400;
+const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
+const TILE_FLAG_ROOF: u64 = 0x1000_0000;
+const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
+
+pub(crate) fn resolve_static_depth_class(
+    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
+) -> StaticDepthClass {
+    let Some(meta) = tilemeta else {
+        return StaticDepthClass::Regular;
+    };
+
+    if meta.flags & TILE_FLAG_BACKGROUND != 0 {
+        return StaticDepthClass::Background;
+    }
+
+    if meta.flags & TILE_FLAG_ROOF != 0 {
+        return StaticDepthClass::Roof;
+    }
+
+    if meta.flags & TILE_FLAG_FOLIAGE != 0 {
+        return StaticDepthClass::Foliage;
+    }
+
+    if meta.is_surface_like() {
+        return StaticDepthClass::SurfaceLikeFloor;
+    }
+
+    StaticDepthClass::Regular
+}
+
+fn depth_class_y_bias(depth_class: StaticDepthClass) -> f32 {
+    match depth_class {
+        StaticDepthClass::SurfaceLikeFloor => GROUND_ART_Y_BIAS,
+        StaticDepthClass::Regular
+        | StaticDepthClass::Background
+        | StaticDepthClass::Foliage
+        | StaticDepthClass::Roof => STATIC_ART_Y_BIAS,
+    }
+}
+
+fn effective_priority_height(tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>) -> i8 {
+    let Some(meta) = tilemeta else {
+        return 0;
+    };
+
+    let mut height = meta.height;
+    let has_background_or_surface = meta.flags & (TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE) != 0;
+
+    if height == 0 && !has_background_or_surface {
+        height = DEFAULT_PRIORITY_HEIGHT;
+    }
+
+    if meta.flags & TILE_FLAG_BRIDGE != 0 {
+        height /= 2;
+    }
+
+    height
+}
+
+pub(crate) fn resolve_priority_z_units(
+    tile_z: i8,
+    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
+    depth_class: StaticDepthClass,
+) -> f32 {
+    if depth_class == StaticDepthClass::SurfaceLikeFloor {
+        return tile_z as f32;
+    }
+
+    tile_z as f32 + effective_priority_height(tilemeta) as f32
+}
+
+fn depth_class_logical_offset(depth_class: StaticDepthClass) -> f32 {
+    match depth_class {
+        StaticDepthClass::Background => -0.001,
+        StaticDepthClass::Roof => 0.002,
+        StaticDepthClass::Foliage => 2.0,
+        StaticDepthClass::Regular | StaticDepthClass::SurfaceLikeFloor => 0.0,
+    }
+}
+
+fn decode_depth_class(encoded: u32) -> StaticDepthClass {
+    match encoded {
+        1 => StaticDepthClass::Background,
+        2 => StaticDepthClass::Foliage,
+        3 => StaticDepthClass::Roof,
+        4 => StaticDepthClass::SurfaceLikeFloor,
+        _ => StaticDepthClass::Regular,
+    }
+}
+
+pub(crate) fn static_depth_key(
+    tile_x: f32,
+    tile_y: f32,
+    priority_z_units: f32,
+    depth_class: StaticDepthClass,
+) -> f32 {
+    (tile_x + tile_y)
+        + (127.0 + priority_z_units) * 0.01
+        + depth_class_logical_offset(depth_class)
+}
+
 fn resolve_surface_like_ec_land_slot_id(
     tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
     ec_land: Option<&uddconv::ec_land::EcLandPackage>,
@@ -126,10 +251,17 @@ pub struct SpriteInstance {
     pub world_z: f32,       // tile_y + y_offset
     pub world_y: f32,       // z * height_scale (isometric altitude)
     pub layer: u32,         // atlas page layer
+    pub depth_class: u32,   // encoded StaticDepthClass for future logical-depth policy
+    pub base_world_y: f32,  // raw tile-base height for logical depth
     pub uv_min: [f32; 2],   // normalized UV
     pub uv_max: [f32; 2],   // normalized UV
     pub local_min: [f32; 2], // local quad bounds from tile origin
     pub local_max: [f32; 2], // local quad bounds from tile origin
+    pub tile_x: f32,
+    pub tile_y: f32,
+    pub priority_z_units: f32,
+    pub _pad1: u32,
+    pub _pad2: [u32; 2],
     pub color_rgba: [f32; 4], // for dot mode
 }
 
@@ -140,8 +272,15 @@ pub struct GroundTileInstance {
     pub world_z: f32,
     pub world_y: f32,
     pub layer: u32,
+    pub depth_class: u32,
+    pub base_world_y: f32,
     pub uv_min: [f32; 2],
     pub uv_max: [f32; 2],
+    pub tile_x: f32,
+    pub tile_y: f32,
+    pub priority_z_units: f32,
+    pub _pad1: u32,
+    pub _pad2: [u32; 2],
     pub color_rgba: [f32; 4],
 }
 
@@ -382,14 +521,18 @@ pub fn sys_collect_visible_statics(
 
                     let world_x = (gx * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.x_offset() as f32;
                     let world_z = (gy * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.y_offset() as f32;
+                    let depth_class = resolve_static_depth_class(tilemeta);
 
                     if is_dot_mode {
-                        let bias = if tilemeta.map_or(false, |m| m.is_surface_like()) {
-                            GROUND_ART_Y_BIAS
-                        } else {
-                            STATIC_ART_Y_BIAS
-                        };
-                        let world_y = (tile.z as f32) * height_scale + bias;
+                        let base_world_y = (tile.z as f32) * height_scale;
+                        let priority_z_units = resolve_priority_z_units(
+                            tile.z,
+                            tilemeta,
+                            depth_class,
+                        );
+                        let bias = depth_class_y_bias(depth_class);
+                        let encoded_depth_class = depth_class.encoded();
+                        let world_y = base_world_y + bias;
 
                         if let Some(meta) = tilemeta {
                             let color = meta.radar_color;
@@ -398,10 +541,17 @@ pub fn sys_collect_visible_statics(
                                 world_z,
                                 world_y,
                                 layer: 0,
+                                depth_class: encoded_depth_class,
+                                base_world_y,
                                 uv_min: [0.0, 0.0],
                                 uv_max: [0.0, 0.0],
                                 local_min: [0.0, 0.0],
                                 local_max: [1.0, 1.0],
+                                tile_x: world_x,
+                                tile_y: world_z,
+                                priority_z_units,
+                                _pad1: 0,
+                                _pad2: [0, 0],
                                 color_rgba: [color[2] as f32 / 255.0, color[1] as f32 / 255.0, color[0] as f32 / 255.0, 1.0],
                             });
                         }
@@ -417,10 +567,19 @@ pub fn sys_collect_visible_statics(
                             ec_land_res.as_ref().map(|package| &*package.0),
                         );
 
-                        let is_ground = matches!(visual_kind, StaticVisualKind::EcLandArt { .. })
-                            || tilemeta.map_or(false, |m| m.is_surface_like());
-                        let bias = if is_ground { GROUND_ART_Y_BIAS } else { STATIC_ART_Y_BIAS };
-                        let world_y = (tile.z as f32) * height_scale + bias;
+                        let bias = if matches!(visual_kind, StaticVisualKind::EcLandArt { .. }) {
+                            GROUND_ART_Y_BIAS
+                        } else {
+                            depth_class_y_bias(depth_class)
+                        };
+                        let encoded_depth_class = depth_class.encoded();
+                        let base_world_y = (tile.z as f32) * height_scale;
+                        let priority_z_units = resolve_priority_z_units(
+                            tile.z,
+                            tilemeta,
+                            depth_class,
+                        );
+                        let world_y = base_world_y + bias;
                         let (offset_x_world, offset_y_world, resolved_sprite) = match visual_kind {
                             StaticVisualKind::CcRegularArt { art_id } => {
                                 let Some(cc_art) = cc_art_res.as_ref().map(|x| &x.0) else {
@@ -487,8 +646,15 @@ pub fn sys_collect_visible_statics(
                                     world_z,
                                     world_y,
                                     layer: resolved.layer,
+                                    depth_class: encoded_depth_class,
+                                    base_world_y,
                                     uv_min: [resolved.uv_min.x, resolved.uv_min.y],
                                     uv_max: [resolved.uv_max.x, resolved.uv_max.y],
+                                    tile_x: world_x,
+                                    tile_y: world_z,
+                                    priority_z_units,
+                                    _pad1: 0,
+                                    _pad2: [0, 0],
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             } else {
@@ -504,10 +670,17 @@ pub fn sys_collect_visible_statics(
                                     world_z,
                                     world_y,
                                     layer: resolved.layer,
+                                    depth_class: encoded_depth_class,
+                                    base_world_y,
                                     uv_min: [resolved.uv_min.x, resolved.uv_min.y],
                                     uv_max: [resolved.uv_max.x, resolved.uv_max.y],
                                     local_min: [local_min_x, local_min_y],
                                     local_max: [local_max_x, local_max_y],
+                                    tile_x: world_x,
+                                    tile_y: world_z,
+                                    priority_z_units,
+                                    _pad1: 0,
+                                    _pad2: [0, 0],
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             }
@@ -520,25 +693,39 @@ pub fn sys_collect_visible_statics(
         }
     }
 
-    // Refined isometric depth: (X + Y) + Z
-    // We use a stable sort by including the original collection index to preserve MUL stack order.
-    let mut sort_indices: Vec<usize> = (0..instances.0.len()).collect();
-    sort_indices.sort_by(|&a_idx, &b_idx| {
-        let a = &instances.0[a_idx];
-        let b = &instances.0[b_idx];
-        
-        // Isometric depth = (X + Y) + Z
-        // Using world_y / height_scale converts our world vertical coordinate back to tile Z units.
-        let depth_a = a.world_x + a.world_z + a.world_y / height_scale;
-        let depth_b = b.world_x + b.world_z + b.world_y / height_scale;
-        
-        depth_a.partial_cmp(&depth_b)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a_idx.cmp(&b_idx))
+    // Keep instance order aligned with the explicit UO depth key used in the shader,
+    // while preserving original collection order for equal-depth ties.
+    instances.0.sort_by(|a, b| {
+        let depth_a = static_depth_key(
+            a.tile_x,
+            a.tile_y,
+            a.priority_z_units,
+            decode_depth_class(a.depth_class),
+        );
+        let depth_b = static_depth_key(
+            b.tile_x,
+            b.tile_y,
+            b.priority_z_units,
+            decode_depth_class(b.depth_class),
+        );
+        depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let sorted_instances: Vec<SpriteInstance> = sort_indices.iter().map(|&i| instances.0[i]).collect();
-    instances.0 = sorted_instances;
+    land_instances.0.sort_by(|a, b| {
+        let depth_a = static_depth_key(
+            a.tile_x,
+            a.tile_y,
+            a.priority_z_units,
+            decode_depth_class(a.depth_class),
+        );
+        let depth_b = static_depth_key(
+            b.tile_x,
+            b.tile_y,
+            b.priority_z_units,
+            decode_depth_class(b.depth_class),
+        );
+        depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let stats = StaticArtCollectStats {
         map_id,
@@ -585,6 +772,13 @@ pub fn sys_collect_visible_statics(
 mod tests {
     use super::*;
 
+    fn item_tile_with_flags(flags: u64, visual_kind: uddconv::tilemeta::TileMetaItemVisualKind) -> uddconv::tilemeta::TileMetaItemTile {
+        let mut tile = uddconv::tilemeta::TileMetaItemTile::zeroed();
+        tile.flags = flags;
+        tile.set_visual_kind(visual_kind);
+        tile
+    }
+
     #[test]
     fn surface_like_ec_tiles_prefer_land_path_over_direct_art_slot() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, true);
@@ -604,4 +798,182 @@ mod tests {
             StaticVisualKind::EcRegularArt { art_id: 196 },
         );
     }
+
+    #[test]
+    fn depth_class_defaults_to_regular_without_metadata() {
+        assert_eq!(resolve_static_depth_class(None), StaticDepthClass::Regular);
+    }
+
+    #[test]
+    fn depth_class_promotes_surface_like_floor_tiles() {
+        let tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+
+        assert_eq!(
+            resolve_static_depth_class(Some(&tile)),
+            StaticDepthClass::SurfaceLikeFloor,
+        );
+    }
+
+    #[test]
+    fn depth_class_gives_roof_priority_over_surface_like_hint() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_ROOF,
+            uddconv::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+
+        assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
+    }
+
+    #[test]
+    fn depth_class_gives_background_priority_over_roof_and_foliage() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_BACKGROUND | TILE_FLAG_ROOF | TILE_FLAG_FOLIAGE,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+
+        assert_eq!(
+            resolve_static_depth_class(Some(&tile)),
+            StaticDepthClass::Background,
+        );
+    }
+
+    #[test]
+    fn depth_class_gives_roof_priority_over_foliage() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_ROOF | TILE_FLAG_FOLIAGE,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+
+        assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
+    }
+
+    #[test]
+    fn depth_class_separates_background_and_foliage_tiles() {
+        let background = item_tile_with_flags(
+            TILE_FLAG_BACKGROUND,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+        let foliage = item_tile_with_flags(
+            TILE_FLAG_FOLIAGE,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+
+        assert_eq!(
+            resolve_static_depth_class(Some(&background)),
+            StaticDepthClass::Background,
+        );
+        assert_eq!(
+            resolve_static_depth_class(Some(&foliage)),
+            StaticDepthClass::Foliage,
+        );
+    }
+
+    #[test]
+    fn depth_class_y_bias_keeps_surface_like_tiles_on_ground_bias() {
+        assert_eq!(
+            depth_class_y_bias(StaticDepthClass::SurfaceLikeFloor),
+            GROUND_ART_Y_BIAS,
+        );
+    }
+
+    #[test]
+    fn depth_class_y_bias_keeps_non_surface_tiles_on_static_bias() {
+        assert_eq!(
+            depth_class_y_bias(StaticDepthClass::Regular),
+            STATIC_ART_Y_BIAS,
+        );
+        assert_eq!(
+            depth_class_y_bias(StaticDepthClass::Background),
+            STATIC_ART_Y_BIAS,
+        );
+        assert_eq!(
+            depth_class_y_bias(StaticDepthClass::Foliage),
+            STATIC_ART_Y_BIAS,
+        );
+        assert_eq!(
+            depth_class_y_bias(StaticDepthClass::Roof),
+            STATIC_ART_Y_BIAS,
+        );
+    }
+
+    #[test]
+    fn depth_class_encoding_is_stable() {
+        assert_eq!(StaticDepthClass::Regular.encoded(), 0);
+        assert_eq!(StaticDepthClass::Background.encoded(), 1);
+        assert_eq!(StaticDepthClass::Foliage.encoded(), 2);
+        assert_eq!(StaticDepthClass::Roof.encoded(), 3);
+        assert_eq!(StaticDepthClass::SurfaceLikeFloor.encoded(), 4);
+    }
+
+    #[test]
+    fn effective_priority_height_defaults_zero_height_regulars_to_ten() {
+        let tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::RegularArt);
+
+        assert_eq!(effective_priority_height(Some(&tile)), 10);
+    }
+
+    #[test]
+    fn effective_priority_height_keeps_background_zero_height_at_zero() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_BACKGROUND,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+
+        assert_eq!(effective_priority_height(Some(&tile)), 0);
+    }
+
+    #[test]
+    fn effective_priority_height_halves_bridge_height() {
+        let mut tile = item_tile_with_flags(
+            TILE_FLAG_BRIDGE,
+            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+        tile.height = 12;
+
+        assert_eq!(effective_priority_height(Some(&tile)), 6);
+    }
+
+    #[test]
+    fn surface_like_priority_z_units_stay_on_base_z() {
+        let priority_z_units = resolve_priority_z_units(
+            7,
+            None,
+            StaticDepthClass::SurfaceLikeFloor,
+        );
+
+        assert_eq!(priority_z_units, 7.0);
+    }
+
+    #[test]
+    fn regular_priority_z_units_include_effective_height() {
+        let mut tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::RegularArt);
+        tile.height = 12;
+
+        let priority_z_units = resolve_priority_z_units(
+            7,
+            Some(&tile),
+            StaticDepthClass::Regular,
+        );
+
+        assert_eq!(priority_z_units, 19.0);
+    }
+
+    #[test]
+    fn static_depth_key_applies_background_offset() {
+        let regular = static_depth_key(100.0, 200.0, 19.0, StaticDepthClass::Regular);
+        let background = static_depth_key(100.0, 200.0, 19.0, StaticDepthClass::Background);
+
+        assert!(background < regular);
+    }
+
+    #[test]
+    fn sprite_instance_stride_stays_16_byte_aligned() {
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), 96);
+    }
+
+    #[test]
+    fn ground_instance_stride_stays_16_byte_aligned() {
+        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 80);
+    }
+
 }

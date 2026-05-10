@@ -237,8 +237,7 @@ Current branch direction:
 - keep terrain ownership anchored in `TerrainDefinition.uop`
 - keep item/static ownership anchored in `tileart.uop`
 - use EC `Unused1` plus shader/type to decide whether a tileart entry is surface-like and should avoid the billboard/static path
-- keep `runtime_material_id_overrides.toml` narrow and runtime-only
-- use `TerrainTranscode.json` as the starting point for the hand-tuned Classic land family table
+- use `TerrainTranscode.kdl` as the starting point for the hand-tuned Classic land family table
 
 That direction is specifically aimed at reconciling the shared EC texture pools with distinct semantic outputs instead of pretending the pools are disjoint.
 

@@ -66,6 +66,7 @@ fn sys_player_input(
     mut move_dir: ResMut<MoveDirection>,
     mut egui_contexts: bevy_egui::EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
+    settings: Res<Settings>,
 ) {
     // Keep movement and mouse cursor input separate.
     if let Ok(ctx) = egui_contexts.ctx_mut() {
@@ -99,7 +100,7 @@ fn sys_player_input(
         move_dir.speed_multiplier = 1.0;
     }
 
-    move_dir.vertical_dir = parse_vertical_movement(&keyboard_input);
+    move_dir.vertical_dir = parse_vertical_movement(&keyboard_input, &settings);
 }
 
 fn advance_horizontal_position(current_pos: UOVec4, dir: IVec2, max_x: u32, max_y: u32) -> UOVec4 {
@@ -201,12 +202,12 @@ fn parse_mouse_movement(
     Some((snapped_dir, speed_multiplier))
 }
 
-fn parse_vertical_movement(keyboard_input: &Res<ButtonInput<KeyCode>>) -> i32 {
+fn parse_vertical_movement(keyboard_input: &Res<ButtonInput<KeyCode>>, settings: &Settings) -> i32 {
     let mut v_dir = 0;
-    if keyboard_input.pressed(KeyCode::PageUp) {
+    if keyboard_input.pressed(settings.keybindings.increase_z) {
         v_dir += 1;
     }
-    if keyboard_input.pressed(KeyCode::PageDown) {
+    if keyboard_input.pressed(settings.keybindings.decrease_z) {
         v_dir -= 1;
     }
     v_dir

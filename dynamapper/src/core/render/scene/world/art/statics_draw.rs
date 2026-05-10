@@ -15,8 +15,15 @@ use bevy::render::storage::ShaderStorageBuffer;
 pub struct SpriteParams {
     pub render_mode: u32,
     pub alpha_cutoff: f32,
-    pub _pad: Vec2,
+    pub pass_mode: u32,
+    pub _pad: u32,
+    pub map_width_tiles: f32,
+    pub map_height_tiles: f32,
+    pub _pad2: UVec2,
 }
+
+const PASS_MODE_OPAQUE: u32 = 0;
+const PASS_MODE_TRANSPARENT: u32 = 1;
 
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
 pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
@@ -46,20 +53,24 @@ pub struct ArtGroundMaterialExtension {
 #[derive(Resource, Clone)]
 pub struct ArtSpriteRenderAssets {
     pub mesh: Handle<Mesh>,
-    pub material: Handle<ArtSpriteMaterial>,
+    pub opaque_material: Handle<ArtSpriteMaterial>,
+    pub transparent_material: Handle<ArtSpriteMaterial>,
 }
 
 #[derive(Resource, Clone)]
 pub struct ArtGroundRenderAssets {
     pub mesh: Handle<Mesh>,
-    pub material: Handle<ArtGroundMaterial>,
+    pub opaque_material: Handle<ArtGroundMaterial>,
+    pub transparent_material: Handle<ArtGroundMaterial>,
 }
 
 #[derive(Resource, Default)]
 pub struct StaticArtDrawDebugState {
     pub last_entity_count: Option<usize>,
+    pub last_transparent_entity_count: Option<usize>,
     pub last_uploaded_instances: Option<usize>,
     pub last_ground_entity_count: Option<usize>,
+    pub last_ground_transparent_entity_count: Option<usize>,
     pub last_uploaded_ground_instances: Option<usize>,
 }
 
@@ -85,7 +96,13 @@ impl MaterialExtension for ArtGroundMaterialExtension {
 pub struct StaticsDrawEntity;
 
 #[derive(Component)]
+pub struct StaticsTransparentDrawEntity;
+
+#[derive(Component)]
 pub struct StaticsGroundDrawEntity;
+
+#[derive(Component)]
+pub struct StaticsGroundTransparentDrawEntity;
 
 pub fn sys_setup_art_page_atlas(
     mut commands: Commands,
@@ -154,10 +171,17 @@ pub fn sys_setup_art_page_atlas(
         world_z: 0.0,
         world_y: 0.0,
         layer: 0,
+        depth_class: 0,
+        base_world_y: 0.0,
         uv_min: [0.0, 0.0],
         uv_max: [0.0, 0.0],
         local_min: [0.0, 0.0],
         local_max: [0.0, 0.0],
+        tile_x: 0.0,
+        tile_y: 0.0,
+        priority_z_units: 0.0,
+        _pad1: 0,
+        _pad2: [0, 0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
@@ -165,7 +189,7 @@ pub fn sys_setup_art_page_atlas(
     let sprite_atlas_handle = atlas_handle.clone();
     let ground_atlas_handle = atlas_handle.clone();
 
-    let material_handle = materials.add(ArtSpriteMaterial {
+    let opaque_material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
             alpha_mode: AlphaMode::Mask(0.5),
             cull_mode: None,
@@ -178,7 +202,33 @@ pub fn sys_setup_art_page_atlas(
             params: SpriteParams {
                 render_mode: 0,
                 alpha_cutoff: 0.5,
-                _pad: Vec2::ZERO,
+                pass_mode: PASS_MODE_OPAQUE,
+                _pad: 0,
+                map_width_tiles: 1.0,
+                map_height_tiles: 1.0,
+                _pad2: UVec2::ZERO,
+            },
+        },
+    });
+
+    let transparent_material_handle = materials.add(ArtSpriteMaterial {
+        base: StandardMaterial {
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            unlit: true,
+            ..default()
+        },
+        extension: ArtSpriteMaterialExtension {
+            atlas: atlas_handle.clone(),
+            instances: buffer_handle.clone(),
+            params: SpriteParams {
+                render_mode: 0,
+                alpha_cutoff: 0.5,
+                pass_mode: PASS_MODE_TRANSPARENT,
+                _pad: 0,
+                map_width_tiles: 1.0,
+                map_height_tiles: 1.0,
+                _pad2: UVec2::ZERO,
             },
         },
     });
@@ -188,8 +238,15 @@ pub fn sys_setup_art_page_atlas(
         world_z: 0.0,
         world_y: 0.0,
         layer: 0,
+        depth_class: 0,
+        base_world_y: 0.0,
         uv_min: [0.0, 0.0],
         uv_max: [0.0, 0.0],
+        tile_x: 0.0,
+        tile_y: 0.0,
+        priority_z_units: 0.0,
+        _pad1: 0,
+        _pad2: [0, 0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
@@ -207,7 +264,33 @@ pub fn sys_setup_art_page_atlas(
             params: SpriteParams {
                 render_mode: 0,
                 alpha_cutoff: 0.5,
-                _pad: Vec2::ZERO,
+                pass_mode: PASS_MODE_OPAQUE,
+                _pad: 0,
+                map_width_tiles: 1.0,
+                map_height_tiles: 1.0,
+                _pad2: UVec2::ZERO,
+            },
+        },
+    });
+
+    let transparent_ground_material_handle = ground_materials.add(ArtGroundMaterial {
+        base: StandardMaterial {
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            unlit: true,
+            ..default()
+        },
+        extension: ArtGroundMaterialExtension {
+            atlas: atlas_handle.clone(),
+            instances: ground_buffer_handle.clone(),
+            params: SpriteParams {
+                render_mode: 0,
+                alpha_cutoff: 0.5,
+                pass_mode: PASS_MODE_TRANSPARENT,
+                _pad: 0,
+                map_width_tiles: 1.0,
+                map_height_tiles: 1.0,
+                _pad2: UVec2::ZERO,
             },
         },
     });
@@ -250,11 +333,13 @@ pub fn sys_setup_art_page_atlas(
 
     commands.insert_resource(ArtSpriteRenderAssets {
         mesh: mesh_handle.clone(),
-        material: material_handle,
+        opaque_material: opaque_material_handle,
+        transparent_material: transparent_material_handle,
     });
     commands.insert_resource(ArtGroundRenderAssets {
         mesh: mesh_handle,
-        material: ground_material_handle,
+        opaque_material: ground_material_handle,
+        transparent_material: transparent_ground_material_handle,
     });
 }
 
@@ -283,7 +368,7 @@ pub fn sys_sync_static_sprite_entities(
     for slot_index in existing_count..desired_count {
         commands.spawn((
             Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.material.clone()),
+            MeshMaterial3d(render_assets.opaque_material.clone()),
             MeshTag(slot_index as u32),
             Transform::IDENTITY,
             NoFrustumCulling,
@@ -302,6 +387,44 @@ pub fn sys_sync_static_sprite_entities(
             ),
         );
         debug_state.last_entity_count = Some(desired_count);
+    }
+}
+
+pub fn sys_sync_static_sprite_transparent_entities(
+    mut commands: Commands,
+    instances: Res<RenderStaticInstances>,
+    render_assets: Res<ArtSpriteRenderAssets>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
+    existing_q: Query<(Entity, &MeshTag), With<StaticsTransparentDrawEntity>>,
+) {
+    let desired_count = instances.0.len();
+    let existing_count = existing_q.iter().count();
+    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+
+    for entity in existing_entities.by_ref().skip(desired_count) {
+        let _ = commands.entity(entity).despawn();
+    }
+
+    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+        let desired_tag = MeshTag(slot_index as u32);
+        if *mesh_tag != desired_tag {
+            let _ = commands.entity(entity).insert(desired_tag);
+        }
+    }
+
+    for slot_index in existing_count..desired_count {
+        commands.spawn((
+            Mesh3d(render_assets.mesh.clone()),
+            MeshMaterial3d(render_assets.transparent_material.clone()),
+            MeshTag(slot_index as u32),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            StaticsTransparentDrawEntity,
+        ));
+    }
+
+    if debug_state.last_transparent_entity_count != Some(desired_count) {
+        debug_state.last_transparent_entity_count = Some(desired_count);
     }
 }
 
@@ -330,7 +453,7 @@ pub fn sys_sync_static_ground_entities(
     for slot_index in existing_count..desired_count {
         commands.spawn((
             Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.material.clone()),
+            MeshMaterial3d(render_assets.opaque_material.clone()),
             MeshTag(slot_index as u32),
             Transform::IDENTITY,
             NoFrustumCulling,
@@ -352,34 +475,89 @@ pub fn sys_sync_static_ground_entities(
     }
 }
 
+pub fn sys_sync_static_ground_transparent_entities(
+    mut commands: Commands,
+    instances: Res<RenderStaticLandInstances>,
+    render_assets: Res<ArtGroundRenderAssets>,
+    mut debug_state: ResMut<StaticArtDrawDebugState>,
+    existing_q: Query<(Entity, &MeshTag), With<StaticsGroundTransparentDrawEntity>>,
+) {
+    let desired_count = instances.0.len();
+    let existing_count = existing_q.iter().count();
+    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+
+    for entity in existing_entities.by_ref().skip(desired_count) {
+        let _ = commands.entity(entity).despawn();
+    }
+
+    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+        let desired_tag = MeshTag(slot_index as u32);
+        if *mesh_tag != desired_tag {
+            let _ = commands.entity(entity).insert(desired_tag);
+        }
+    }
+
+    for slot_index in existing_count..desired_count {
+        commands.spawn((
+            Mesh3d(render_assets.mesh.clone()),
+            MeshMaterial3d(render_assets.transparent_material.clone()),
+            MeshTag(slot_index as u32),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            StaticsGroundTransparentDrawEntity,
+        ));
+    }
+
+    if debug_state.last_ground_transparent_entity_count != Some(desired_count) {
+        debug_state.last_ground_transparent_entity_count = Some(desired_count);
+    }
+}
+
 pub fn sys_update_sprite_instance_buffer(
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
     zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    scene_state: Res<crate::core::render::scene::SceneStateData>,
+    world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
     if instances.0.is_empty() {
         return;
     }
 
-    let Some(material) = materials.get_mut(&render_assets.material) else {
-        return;
+    let render_mode = if zoom.0 >= 20.0 { 1 } else { 0 };
+    let (map_width_tiles, map_height_tiles) = world_geo
+        .maps
+        .get(&scene_state.map_id)
+        .map(|meta| (meta.width as f32, meta.height as f32))
+        .unwrap_or((1.0, 1.0));
+
+    let opaque_buffer_handle = {
+        let Some(material) = materials.get_mut(&render_assets.opaque_material) else {
+            return;
+        };
+        material.extension.params.render_mode = render_mode;
+        material.extension.params.map_width_tiles = map_width_tiles;
+        material.extension.params.map_height_tiles = map_height_tiles;
+        material.extension.instances.clone()
     };
+
+    {
+        let Some(transparent_material) = materials.get_mut(&render_assets.transparent_material) else {
+            return;
+        };
+        transparent_material.extension.params.render_mode = render_mode;
+        transparent_material.extension.params.map_width_tiles = map_width_tiles;
+        transparent_material.extension.params.map_height_tiles = map_height_tiles;
+    }
 
     // Update buffer with new instances
     let _ = storage_buffers.insert(
-        &material.extension.instances,
+        &opaque_buffer_handle,
         ShaderStorageBuffer::from(instances.0.clone()),
     );
-
-    // Update render mode based on zoom
-    material.extension.params.render_mode = if zoom.0 >= 20.0 {
-        1
-    } else {
-        0
-    };
 
     if debug_state.last_uploaded_instances != Some(instances.0.len()) {
         console_logger::one(
@@ -388,7 +566,7 @@ pub fn sys_update_sprite_instance_buffer(
             &format!(
                 "static art upload: instances={} render_mode={}",
                 instances.0.len(),
-                material.extension.params.render_mode,
+                render_mode,
             ),
         );
         debug_state.last_uploaded_instances = Some(instances.0.len());
@@ -400,18 +578,39 @@ pub fn sys_update_ground_instance_buffer(
     render_assets: Res<ArtGroundRenderAssets>,
     mut materials: ResMut<Assets<ArtGroundMaterial>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    scene_state: Res<crate::core::render::scene::SceneStateData>,
+    world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
     if instances.0.is_empty() {
         return;
     }
 
-    let Some(material) = materials.get_mut(&render_assets.material) else {
-        return;
+    let (map_width_tiles, map_height_tiles) = world_geo
+        .maps
+        .get(&scene_state.map_id)
+        .map(|meta| (meta.width as f32, meta.height as f32))
+        .unwrap_or((1.0, 1.0));
+
+    let opaque_buffer_handle = {
+        let Some(material) = materials.get_mut(&render_assets.opaque_material) else {
+            return;
+        };
+        material.extension.params.map_width_tiles = map_width_tiles;
+        material.extension.params.map_height_tiles = map_height_tiles;
+        material.extension.instances.clone()
     };
 
+    {
+        let Some(transparent_material) = materials.get_mut(&render_assets.transparent_material) else {
+            return;
+        };
+        transparent_material.extension.params.map_width_tiles = map_width_tiles;
+        transparent_material.extension.params.map_height_tiles = map_height_tiles;
+    }
+
     let _ = storage_buffers.insert(
-        &material.extension.instances,
+        &opaque_buffer_handle,
         ShaderStorageBuffer::from(instances.0.clone()),
     );
 
