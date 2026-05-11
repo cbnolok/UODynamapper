@@ -1,6 +1,5 @@
 #import bevy_pbr::{
     forward_io::Vertex,
-    mesh_functions,
     view_transformations,
 }
 
@@ -104,7 +103,7 @@ fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
 
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
-    let inst = instances[mesh_functions::get_tag(vertex.instance_index)];
+    let inst = instances[u32(vertex.uv_b.x + 0.5)];
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     let local = mix(inst.local_min, inst.local_max, vec2<f32>(corner.x, 1.0 - corner.y));

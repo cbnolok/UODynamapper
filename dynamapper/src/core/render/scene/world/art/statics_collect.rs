@@ -7,13 +7,12 @@ use crate::core::uo_files_loader::{
     CcArtPackageRes, EcArtPackageRes, EcLandPackageRes, TileMetaPackageRes,
 };
 use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
-use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::world::land::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
 use crate::core::render::scene::camera::RenderZoom;
 use bytemuck::{Pod, Zeroable};
 use bevy::render::render_resource::ShaderType;
-use std::collections::{HashSet, BTreeSet};
+use std::collections::{BTreeSet, HashSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = 1.41421356237;
@@ -428,6 +427,27 @@ pub struct RenderStaticInstances(pub Vec<SpriteInstance>);
 #[derive(Resource, Default)]
 pub struct RenderStaticLandInstances(pub Vec<GroundTileInstance>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StaticChunkBatchKey {
+    pub map_id: u32,
+    pub gx: u32,
+    pub gy: u32,
+    pub scale: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StaticChunkBatch {
+    pub key: StaticChunkBatchKey,
+    pub start: u32,
+    pub count: u32,
+}
+
+#[derive(Resource, Default)]
+pub struct RenderStaticChunkBatches {
+    pub sprite: Vec<StaticChunkBatch>,
+    pub ground: Vec<StaticChunkBatch>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StaticArtCollectStats {
     pub map_id: u32,
@@ -577,9 +597,9 @@ pub fn sys_collect_visible_statics(
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
     zoom: Res<RenderZoom>,
-    _world_geo: Res<WorldGeoData>,
     mut instances: ResMut<RenderStaticInstances>,
     mut land_instances: ResMut<RenderStaticLandInstances>,
+    mut chunk_batches: ResMut<RenderStaticChunkBatches>,
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
     // TODO: Need a way to get the currently visible chunks from the terrain system.
@@ -588,6 +608,8 @@ pub fn sys_collect_visible_statics(
 ) {
     instances.0.clear();
     land_instances.0.clear();
+    chunk_batches.sprite.clear();
+    chunk_batches.ground.clear();
 
     if !settings.worldmap_rendering.enable_statics {
         return;
@@ -629,6 +651,15 @@ pub fn sys_collect_visible_statics(
         }
 
         visible_chunks += 1;
+
+        let chunk_key = StaticChunkBatchKey {
+            map_id,
+            gx: tcm.gx,
+            gy: tcm.gy,
+            scale: tcm.scale,
+        };
+        let mut chunk_sprite_instances = Vec::new();
+        let mut chunk_ground_instances = Vec::new();
 
         let chunk_scale = tcm.scale;
 
@@ -673,7 +704,7 @@ pub fn sys_collect_visible_statics(
 
                         if let Some(meta) = tilemeta {
                             let color = meta.radar_color;
-                            instances.0.push(SpriteInstance {
+                            chunk_sprite_instances.push(SpriteInstance {
                                 world_x,
                                 world_z,
                                 world_y,
@@ -783,7 +814,7 @@ pub fn sys_collect_visible_statics(
                             if matches!(visual_kind, StaticVisualKind::EcLandArt { .. }) {
                                 ground_land_tiles += 1;
                                 let bounds = resolve_surface_like_ground_quad_bounds();
-                                land_instances.0.push(GroundTileInstance {
+                                chunk_ground_instances.push(GroundTileInstance {
                                     world_x: anchored_world_x,
                                     world_z: anchored_world_z,
                                     world_y,
@@ -810,7 +841,7 @@ pub fn sys_collect_visible_statics(
                                     resolved.pixel_height,
                                 );
 
-                                instances.0.push(SpriteInstance {
+                                chunk_sprite_instances.push(SpriteInstance {
                                     world_x: anchored_world_x,
                                     world_z: anchored_world_z,
                                     world_y,
@@ -836,43 +867,63 @@ pub fn sys_collect_visible_statics(
                 }
             }
         }
+
+        chunk_sprite_instances.sort_by(|a, b| {
+            let depth_a = static_depth_key(
+                a.tile_x,
+                a.tile_y,
+                a.priority_z_units,
+                decode_depth_class(a.depth_class),
+            );
+            let depth_b = static_depth_key(
+                b.tile_x,
+                b.tile_y,
+                b.priority_z_units,
+                decode_depth_class(b.depth_class),
+            );
+            depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        assign_sprite_depth_tie_breakers(&mut chunk_sprite_instances);
+
+        chunk_ground_instances.sort_by(|a, b| {
+            let depth_a = static_depth_key(
+                a.tile_x,
+                a.tile_y,
+                a.priority_z_units,
+                decode_depth_class(a.depth_class),
+            );
+            let depth_b = static_depth_key(
+                b.tile_x,
+                b.tile_y,
+                b.priority_z_units,
+                decode_depth_class(b.depth_class),
+            );
+            depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        assign_ground_depth_tie_breakers(&mut chunk_ground_instances);
+
+        if !chunk_sprite_instances.is_empty() {
+            let start = instances.0.len() as u32;
+            let count = chunk_sprite_instances.len() as u32;
+            instances.0.extend(chunk_sprite_instances);
+            chunk_batches.sprite.push(StaticChunkBatch {
+                key: chunk_key,
+                start,
+                count,
+            });
+        }
+
+        if !chunk_ground_instances.is_empty() {
+            let start = land_instances.0.len() as u32;
+            let count = chunk_ground_instances.len() as u32;
+            land_instances.0.extend(chunk_ground_instances);
+            chunk_batches.ground.push(StaticChunkBatch {
+                key: chunk_key,
+                start,
+                count,
+            });
+        }
     }
-
-    // Keep instance order aligned with the explicit UO depth key used in the shader,
-    // while preserving original collection order for equal-depth ties.
-    instances.0.sort_by(|a, b| {
-        let depth_a = static_depth_key(
-            a.tile_x,
-            a.tile_y,
-            a.priority_z_units,
-            decode_depth_class(a.depth_class),
-        );
-        let depth_b = static_depth_key(
-            b.tile_x,
-            b.tile_y,
-            b.priority_z_units,
-            decode_depth_class(b.depth_class),
-        );
-        depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    assign_sprite_depth_tie_breakers(&mut instances.0);
-
-    land_instances.0.sort_by(|a, b| {
-        let depth_a = static_depth_key(
-            a.tile_x,
-            a.tile_y,
-            a.priority_z_units,
-            decode_depth_class(a.depth_class),
-        );
-        let depth_b = static_depth_key(
-            b.tile_x,
-            b.tile_y,
-            b.priority_z_units,
-            decode_depth_class(b.depth_class),
-        );
-        depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    assign_ground_depth_tie_breakers(&mut land_instances.0);
 
     let stats = StaticArtCollectStats {
         map_id,

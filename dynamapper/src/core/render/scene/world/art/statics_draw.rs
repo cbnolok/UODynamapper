@@ -1,5 +1,6 @@
 use crate::core::render::scene::world::art::statics_collect::{
-    GroundTileInstance, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
+    GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances,
+    RenderStaticLandInstances, SpriteInstance, StaticChunkBatchKey,
 };
 use crate::configs::settings::{ClientTextureSource, Settings};
 use crate::core::texture_cache::art::{
@@ -11,12 +12,12 @@ use crate::core::uo_files_loader::{
 };
 use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::render::storage::ShaderStorageBuffer;
+use std::collections::HashMap;
 use uddconv::bc7::{ImageExtent, VramTextureFormat};
 use uddconv::cc_art::PagePixelFormat;
 
@@ -127,12 +128,59 @@ pub struct StaticsGroundDrawEntity;
 #[derive(Component)]
 pub struct StaticsGroundTransparentDrawEntity;
 
-fn sprite_instance_transform(instance: &SpriteInstance) -> Transform {
-    Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StaticChunkBatchEntity {
+    pub key: StaticChunkBatchKey,
+    pub start: u32,
+    pub count: u32,
 }
 
-fn ground_instance_transform(instance: &GroundTileInstance) -> Transform {
-    Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
+fn build_art_batch_mesh(start: u32, count: u32) -> Mesh {
+    use bevy::mesh::Indices;
+
+    let quad_count = count as usize;
+    let vertex_count = quad_count * 4;
+    let mut positions = Vec::with_capacity(vertex_count);
+    let mut normals = Vec::with_capacity(vertex_count);
+    let mut uv0 = Vec::with_capacity(vertex_count);
+    let mut uv1 = Vec::with_capacity(vertex_count);
+    let mut colors = Vec::with_capacity(vertex_count);
+    let mut indices = Vec::with_capacity(quad_count * 6);
+
+    for local_index in 0..count {
+        let instance_index = start + local_index;
+        let vertex_base = local_index * 4;
+        positions.extend_from_slice(&[
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ]);
+        normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+        uv0.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
+        uv1.extend_from_slice(&[[instance_index as f32, 0.0]; 4]);
+        colors.extend_from_slice(&[[1.0, 1.0, 1.0, 1.0]; 4]);
+        indices.extend_from_slice(&[
+            vertex_base,
+            vertex_base + 2,
+            vertex_base + 1,
+            vertex_base + 1,
+            vertex_base + 2,
+            vertex_base + 3,
+        ]);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv0);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
 fn source_available(
@@ -758,39 +806,53 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
 
 pub fn sys_sync_static_sprite_entities(
     mut commands: Commands,
-    instances: Res<RenderStaticInstances>,
+    chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsDrawEntity>>,
+    existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsDrawEntity>>,
 ) {
-    let desired_count = instances.0.len();
+    let desired_count = chunk_batches.sprite.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
+    let existing_by_key: HashMap<_, _> = existing_q
+        .iter()
+        .map(|(entity, batch)| (batch.key, (entity, *batch)))
+        .collect();
 
-    for entity in existing_entities.by_ref().skip(desired_count) {
-        let _ = commands.entity(entity).despawn();
+    for batch in &chunk_batches.sprite {
+        if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
+            if current_batch.start != batch.start || current_batch.count != batch.count {
+                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+                let _ = commands.entity(*entity).insert((
+                    Mesh3d(mesh_handle),
+                    StaticChunkBatchEntity {
+                        key: batch.key,
+                        start: batch.start,
+                        count: batch.count,
+                    },
+                ));
+            }
+        } else {
+            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+            commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(render_assets.opaque_material.clone()),
+                Transform::IDENTITY,
+                NoFrustumCulling,
+                StaticChunkBatchEntity {
+                    key: batch.key,
+                    start: batch.start,
+                    count: batch.count,
+                },
+                StaticsDrawEntity,
+            ));
+        }
     }
 
-    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
-        let desired_tag = MeshTag(slot_index as u32);
-        if *mesh_tag != desired_tag {
-            let _ = commands.entity(entity).insert(desired_tag);
+    for (entity, batch) in existing_q.iter() {
+        if !chunk_batches.sprite.iter().any(|desired| desired.key == batch.key) {
+            let _ = commands.entity(entity).despawn();
         }
-        let desired_transform = sprite_instance_transform(&instances.0[slot_index]);
-        if *transform != desired_transform {
-            *transform = desired_transform;
-        }
-    }
-
-    for slot_index in existing_count..desired_count {
-        commands.spawn((
-            Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.opaque_material.clone()),
-            MeshTag(slot_index as u32),
-            sprite_instance_transform(&instances.0[slot_index]),
-            NoFrustumCulling,
-            StaticsDrawEntity,
-        ));
     }
 
     if debug_state.last_entity_count != Some(desired_count) {
@@ -809,39 +871,52 @@ pub fn sys_sync_static_sprite_entities(
 
 pub fn sys_sync_static_sprite_transparent_entities(
     mut commands: Commands,
-    instances: Res<RenderStaticInstances>,
+    chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsTransparentDrawEntity>>,
+    existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsTransparentDrawEntity>>,
 ) {
-    let desired_count = instances.0.len();
-    let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
+    let desired_count = chunk_batches.sprite.len();
+    let existing_by_key: HashMap<_, _> = existing_q
+        .iter()
+        .map(|(entity, batch)| (batch.key, (entity, *batch)))
+        .collect();
 
-    for entity in existing_entities.by_ref().skip(desired_count) {
-        let _ = commands.entity(entity).despawn();
+    for batch in &chunk_batches.sprite {
+        if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
+            if current_batch.start != batch.start || current_batch.count != batch.count {
+                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+                let _ = commands.entity(*entity).insert((
+                    Mesh3d(mesh_handle),
+                    StaticChunkBatchEntity {
+                        key: batch.key,
+                        start: batch.start,
+                        count: batch.count,
+                    },
+                ));
+            }
+        } else {
+            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+            commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(render_assets.transparent_material.clone()),
+                Transform::IDENTITY,
+                NoFrustumCulling,
+                StaticChunkBatchEntity {
+                    key: batch.key,
+                    start: batch.start,
+                    count: batch.count,
+                },
+                StaticsTransparentDrawEntity,
+            ));
+        }
     }
 
-    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
-        let desired_tag = MeshTag(slot_index as u32);
-        if *mesh_tag != desired_tag {
-            let _ = commands.entity(entity).insert(desired_tag);
+    for (entity, batch) in existing_q.iter() {
+        if !chunk_batches.sprite.iter().any(|desired| desired.key == batch.key) {
+            let _ = commands.entity(entity).despawn();
         }
-        let desired_transform = sprite_instance_transform(&instances.0[slot_index]);
-        if *transform != desired_transform {
-            *transform = desired_transform;
-        }
-    }
-
-    for slot_index in existing_count..desired_count {
-        commands.spawn((
-            Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.transparent_material.clone()),
-            MeshTag(slot_index as u32),
-            sprite_instance_transform(&instances.0[slot_index]),
-            NoFrustumCulling,
-            StaticsTransparentDrawEntity,
-        ));
     }
 
     if debug_state.last_transparent_entity_count != Some(desired_count) {
@@ -851,39 +926,53 @@ pub fn sys_sync_static_sprite_transparent_entities(
 
 pub fn sys_sync_static_ground_entities(
     mut commands: Commands,
-    instances: Res<RenderStaticLandInstances>,
+    chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtGroundRenderAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsGroundDrawEntity>>,
+    existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundDrawEntity>>,
 ) {
-    let desired_count = instances.0.len();
+    let desired_count = chunk_batches.ground.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
+    let existing_by_key: HashMap<_, _> = existing_q
+        .iter()
+        .map(|(entity, batch)| (batch.key, (entity, *batch)))
+        .collect();
 
-    for entity in existing_entities.by_ref().skip(desired_count) {
-        let _ = commands.entity(entity).despawn();
+    for batch in &chunk_batches.ground {
+        if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
+            if current_batch.start != batch.start || current_batch.count != batch.count {
+                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+                let _ = commands.entity(*entity).insert((
+                    Mesh3d(mesh_handle),
+                    StaticChunkBatchEntity {
+                        key: batch.key,
+                        start: batch.start,
+                        count: batch.count,
+                    },
+                ));
+            }
+        } else {
+            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+            commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(render_assets.opaque_material.clone()),
+                Transform::IDENTITY,
+                NoFrustumCulling,
+                StaticChunkBatchEntity {
+                    key: batch.key,
+                    start: batch.start,
+                    count: batch.count,
+                },
+                StaticsGroundDrawEntity,
+            ));
+        }
     }
 
-    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
-        let desired_tag = MeshTag(slot_index as u32);
-        if *mesh_tag != desired_tag {
-            let _ = commands.entity(entity).insert(desired_tag);
+    for (entity, batch) in existing_q.iter() {
+        if !chunk_batches.ground.iter().any(|desired| desired.key == batch.key) {
+            let _ = commands.entity(entity).despawn();
         }
-        let desired_transform = ground_instance_transform(&instances.0[slot_index]);
-        if *transform != desired_transform {
-            *transform = desired_transform;
-        }
-    }
-
-    for slot_index in existing_count..desired_count {
-        commands.spawn((
-            Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.opaque_material.clone()),
-            MeshTag(slot_index as u32),
-            ground_instance_transform(&instances.0[slot_index]),
-            NoFrustumCulling,
-            StaticsGroundDrawEntity,
-        ));
     }
 
     if debug_state.last_ground_entity_count != Some(desired_count) {
@@ -902,39 +991,52 @@ pub fn sys_sync_static_ground_entities(
 
 pub fn sys_sync_static_ground_transparent_entities(
     mut commands: Commands,
-    instances: Res<RenderStaticLandInstances>,
+    chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtGroundRenderAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsGroundTransparentDrawEntity>>,
+    existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundTransparentDrawEntity>>,
 ) {
-    let desired_count = instances.0.len();
-    let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
+    let desired_count = chunk_batches.ground.len();
+    let existing_by_key: HashMap<_, _> = existing_q
+        .iter()
+        .map(|(entity, batch)| (batch.key, (entity, *batch)))
+        .collect();
 
-    for entity in existing_entities.by_ref().skip(desired_count) {
-        let _ = commands.entity(entity).despawn();
+    for batch in &chunk_batches.ground {
+        if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
+            if current_batch.start != batch.start || current_batch.count != batch.count {
+                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+                let _ = commands.entity(*entity).insert((
+                    Mesh3d(mesh_handle),
+                    StaticChunkBatchEntity {
+                        key: batch.key,
+                        start: batch.start,
+                        count: batch.count,
+                    },
+                ));
+            }
+        } else {
+            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+            commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(render_assets.transparent_material.clone()),
+                Transform::IDENTITY,
+                NoFrustumCulling,
+                StaticChunkBatchEntity {
+                    key: batch.key,
+                    start: batch.start,
+                    count: batch.count,
+                },
+                StaticsGroundTransparentDrawEntity,
+            ));
+        }
     }
 
-    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
-        let desired_tag = MeshTag(slot_index as u32);
-        if *mesh_tag != desired_tag {
-            let _ = commands.entity(entity).insert(desired_tag);
+    for (entity, batch) in existing_q.iter() {
+        if !chunk_batches.ground.iter().any(|desired| desired.key == batch.key) {
+            let _ = commands.entity(entity).despawn();
         }
-        let desired_transform = ground_instance_transform(&instances.0[slot_index]);
-        if *transform != desired_transform {
-            *transform = desired_transform;
-        }
-    }
-
-    for slot_index in existing_count..desired_count {
-        commands.spawn((
-            Mesh3d(render_assets.mesh.clone()),
-            MeshMaterial3d(render_assets.transparent_material.clone()),
-            MeshTag(slot_index as u32),
-            ground_instance_transform(&instances.0[slot_index]),
-            NoFrustumCulling,
-            StaticsGroundTransparentDrawEntity,
-        ));
     }
 
     if debug_state.last_ground_transparent_entity_count != Some(desired_count) {
