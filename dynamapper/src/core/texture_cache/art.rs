@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -14,7 +15,7 @@ use crate::{
     prelude::*,
 };
 use uddconv::{
-    bc7::{self, ImageExtent},
+    bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat},
     cc_art::{CcArtPackage, PagePixelFormat},
     ec_art::EcArtPackage,
     ec_land::EcLandPackage,
@@ -52,46 +53,53 @@ pub struct ResolvedArtSprite {
 
 #[derive(Debug, Clone)]
 pub struct ArtPageUpload {
-    pub cache_key: u64,
     pub page_index: u32,
     pub layer: u32,
-    pub rgba: Vec<u8>,
+    pub bytes: Vec<u8>,
+    pub upload_layout: TextureUploadLayout,
+    pub upload_width: u32,
+    pub upload_height: u32,
 }
 
-#[derive(Resource)]
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
-    page_to_layer: HashMap<u64, u32>,
-    layer_to_page: Vec<Option<u64>>,
+    page_to_layer: HashMap<u32, u32>,
+    layer_to_page: Vec<Option<u32>>,
     layer_access_tick: Vec<u64>,
     current_tick: u64,
     pub pending_uploads: Vec<ArtPageUpload>,
     pub extract_staging: Vec<ArtPageUpload>,
     pub page_width: u32,
     pub page_height: u32,
+    pub active_layers: u32,
     pub max_layers: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ArtPageSource {
-    Cc,
-    EcArt,
-    EcLand,
+    pub pixel_format: PagePixelFormat,
+    pub requested_resize_to: Option<u32>,
 }
 
 impl ArtPageAtlas {
-    pub fn new(gpu_handle: Handle<Image>, page_width: u32, page_height: u32, max_layers: u32) -> Self {
+    pub fn new(
+        gpu_handle: Handle<Image>,
+        page_width: u32,
+        page_height: u32,
+        active_layers: u32,
+        max_layers: u32,
+        pixel_format: PagePixelFormat,
+    ) -> Self {
         Self {
             gpu_handle,
             page_to_layer: HashMap::new(),
-            layer_to_page: vec![None; max_layers as usize],
-            layer_access_tick: vec![0; max_layers as usize],
+            layer_to_page: vec![None; active_layers as usize],
+            layer_access_tick: vec![0; active_layers as usize],
             current_tick: 0,
             pending_uploads: Vec::new(),
             extract_staging: Vec::new(),
             page_width,
             page_height,
+            active_layers,
             max_layers,
+            pixel_format,
+            requested_resize_to: None,
         }
     }
 
@@ -102,34 +110,120 @@ impl ArtPageAtlas {
         self.current_tick = 0;
         self.pending_uploads.clear();
         self.extract_staging.clear();
+        self.requested_resize_to = None;
     }
 
-    fn cache_key_for_page_source(source: ArtPageSource, page_index: u32) -> u64 {
-        let source_bits = match source {
-            ArtPageSource::Cc => 0u64,
-            ArtPageSource::EcArt => 1u64,
-            ArtPageSource::EcLand => 2u64,
-        };
-        (source_bits << 32) | page_index as u64
+    pub fn request_growth(&mut self) -> Option<u32> {
+        if self.active_layers >= self.max_layers {
+            return None;
+        }
+
+        let target_layers = (((self.active_layers as f32) * 1.5).ceil() as u32)
+            .max(self.active_layers.saturating_add(1))
+            .min(self.max_layers);
+        self.requested_resize_to = Some(
+            self.requested_resize_to
+                .unwrap_or(target_layers)
+                .max(target_layers),
+        );
+        self.requested_resize_to
     }
 
-    pub fn cache_key_for_page(source: ClientTextureSource, page_index: u32) -> u64 {
-        let page_source = match source {
-            ClientTextureSource::Cc => ArtPageSource::Cc,
-            ClientTextureSource::Ec => ArtPageSource::EcArt,
-        };
-        Self::cache_key_for_page_source(page_source, page_index)
+    pub fn take_resize_request(&mut self) -> Option<u32> {
+        self.requested_resize_to.take()
     }
 
-    pub fn cache_key_for_ec_land_page(page_index: u32) -> u64 {
-        Self::cache_key_for_page_source(ArtPageSource::EcLand, page_index)
+    pub fn resident_page_layers(&self) -> Vec<(u32, u32)> {
+        self.page_to_layer
+            .iter()
+            .map(|(&page_index, &layer)| (page_index, layer))
+            .collect()
+    }
+
+    pub fn queue_page_upload<F>(
+        &mut self,
+        page_index: u32,
+        layer: u32,
+        used_width: u32,
+        used_height: u32,
+        pixel_format: PagePixelFormat,
+        read_page_bytes: F,
+    ) where
+        F: FnOnce() -> eyre::Result<Vec<u8>>,
+    {
+        let page_upload_pending = self
+            .pending_uploads
+            .iter()
+            .any(|upload| upload.page_index == page_index)
+            || self
+                .extract_staging
+                .iter()
+                .any(|upload| upload.page_index == page_index);
+        if page_upload_pending {
+            return;
+        }
+
+        if let Ok(page_data) = read_page_bytes() {
+            if let Some((bytes, upload_layout)) = prepare_page_upload_bytes(
+                &page_data,
+                used_width,
+                used_height,
+                pixel_format,
+            ) {
+                self.pending_uploads.push(ArtPageUpload {
+                    page_index,
+                    layer,
+                    bytes,
+                    upload_layout,
+                    upload_width: used_width,
+                    upload_height: used_height,
+                });
+            }
+        }
+    }
+
+    pub fn apply_resize(&mut self, new_handle: Handle<Image>, new_layers: u32) {
+        if new_layers == self.active_layers {
+            self.requested_resize_to = None;
+            return;
+        }
+
+        let old_layers = self.active_layers;
+        if new_layers > old_layers {
+            let staged_uploads = std::mem::take(&mut self.extract_staging);
+            self.gpu_handle = new_handle;
+            self.active_layers = new_layers;
+            self.layer_to_page.resize(new_layers as usize, None);
+            self.layer_access_tick.resize(new_layers as usize, 0);
+            self.requested_resize_to = None;
+
+            for upload in staged_uploads {
+                if !self
+                    .pending_uploads
+                    .iter()
+                    .any(|pending| pending.page_index == upload.page_index)
+                {
+                    self.pending_uploads.push(upload);
+                }
+            }
+            return;
+        }
+
+        self.gpu_handle = new_handle;
+        self.active_layers = new_layers;
+        self.layer_to_page = vec![None; new_layers as usize];
+        self.layer_access_tick = vec![0; new_layers as usize];
+        self.page_to_layer.clear();
+        self.pending_uploads.clear();
+        self.extract_staging.clear();
+        self.current_tick = 0;
+        self.requested_resize_to = None;
     }
 
     pub fn resolve_cc(&mut self, cc_art: &CcArtPackage, graphic: u16) -> Option<ResolvedArtSprite> {
         let art_id = graphic as u32;
         let slot = cc_art.present_slot(art_id)?;
         self.resolve_slot(
-            ArtPageSource::Cc,
             slot.page_index,
             slot.x,
             slot.y,
@@ -147,7 +241,6 @@ impl ArtPageAtlas {
     pub fn resolve_ec(&mut self, ec_art: &EcArtPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = ec_art.present_slot(art_id)?;
         self.resolve_slot(
-            ArtPageSource::EcArt,
             slot.page_index,
             slot.x,
             slot.y,
@@ -169,7 +262,6 @@ impl ArtPageAtlas {
     ) -> Option<ResolvedArtSprite> {
         let slot = ec_land.present_slot(art_id)?;
         self.resolve_slot(
-            ArtPageSource::EcLand,
             slot.page_index,
             slot.x,
             slot.y,
@@ -186,7 +278,6 @@ impl ArtPageAtlas {
 
     fn resolve_slot<F>(
         &mut self,
-        source: ArtPageSource,
         page_index: u32,
         x: u16,
         y: u16,
@@ -206,19 +297,18 @@ impl ArtPageAtlas {
             return None;
         }
 
-        let cache_key = Self::cache_key_for_page_source(source, page_index);
         let page_upload_pending = self
             .pending_uploads
             .iter()
-            .any(|upload| upload.cache_key == cache_key)
+            .any(|upload| upload.page_index == page_index)
             || self
                 .extract_staging
                 .iter()
-                .any(|upload| upload.cache_key == cache_key);
+                .any(|upload| upload.page_index == page_index);
 
         self.current_tick += 1;
 
-        let layer = if let Some(&layer) = self.page_to_layer.get(&cache_key) {
+        let layer = if let Some(&layer) = self.page_to_layer.get(&page_index) {
             self.layer_access_tick[layer as usize] = self.current_tick;
             if page_upload_pending {
                 return None;
@@ -233,6 +323,9 @@ impl ArtPageAtlas {
             // Find free layer or evict LRU
             let layer = if let Some(free_layer) = self.layer_to_page.iter().position(|p| p.is_none()) {
                 free_layer as u32
+            } else if self.active_layers < self.max_layers {
+                self.request_growth();
+                return None;
             } else {
                 let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
                 if let Some(evicted_page) = self.layer_to_page[lru_layer as usize] {
@@ -241,41 +334,17 @@ impl ArtPageAtlas {
                 lru_layer
             };
 
-            // Queue the page upload
-            if let Ok(page_data) = read_page_bytes() {
-                if let Ok(rgba) = extract_slot_rgba(
-                    &page_data,
-                    atlas_width,
-                    atlas_height,
-                    used_width,
-                    used_height,
-                    pixel_format,
-                    0,
-                    0,
-                    used_width as u16,
-                    used_height as u16,
-                ) {
-                    let mut full_page = vec![0; (self.page_width * self.page_height * 4) as usize];
-                    let copy_width = used_width as usize;
-                    let copy_height = used_height as usize;
-                    for y in 0..copy_height {
-                        let src_start = y * used_width as usize * 4;
-                        let src_end = src_start + copy_width * 4;
-                        let dst_start = y * self.page_width as usize * 4;
-                        let dst_end = dst_start + copy_width * 4;
-                        full_page[dst_start..dst_end].copy_from_slice(&rgba[src_start..src_end]);
-                    }
-                    self.pending_uploads.push(ArtPageUpload {
-                        cache_key,
-                        page_index,
-                        layer,
-                        rgba: full_page,
-                    });
-                }
-            }
+            self.queue_page_upload(
+                page_index,
+                layer,
+                used_width,
+                used_height,
+                pixel_format,
+                read_page_bytes,
+            );
 
-            self.page_to_layer.insert(cache_key, layer);
-            self.layer_to_page[layer as usize] = Some(cache_key);
+            self.page_to_layer.insert(page_index, layer);
+            self.layer_to_page[layer as usize] = Some(page_index);
             self.layer_access_tick[layer as usize] = self.current_tick;
 
             return None; // Wait for upload
@@ -296,6 +365,133 @@ impl ArtPageAtlas {
 
     pub fn pending_page_count(&self) -> usize {
         self.pending_uploads.len() + self.extract_staging.len()
+    }
+}
+
+fn page_pixel_vram_format(pixel_format: PagePixelFormat) -> VramTextureFormat {
+    match pixel_format {
+        PagePixelFormat::Rgba8888 => VramTextureFormat::Rgba8UnormSrgb,
+        PagePixelFormat::Bc7 => VramTextureFormat::Bc7RgbaUnormSrgb,
+    }
+}
+
+fn prepare_page_upload_bytes(
+    page_data: &[u8],
+    used_width: u32,
+    used_height: u32,
+    pixel_format: PagePixelFormat,
+) -> Option<(Vec<u8>, TextureUploadLayout)> {
+    let extent = ImageExtent::new(used_width.max(1), used_height.max(1)).ok()?;
+    let format = page_pixel_vram_format(pixel_format);
+    if page_data.len() != format.expected_byte_len(extent) {
+        return None;
+    }
+
+    Some((page_data.to_vec(), format.upload_layout(extent)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_growth_uses_ceil_1p5x_and_clamps_to_max_layers() {
+        let mut atlas = ArtPageAtlas::new(
+            Handle::default(),
+            64,
+            64,
+            4,
+            5,
+            PagePixelFormat::Rgba8888,
+        );
+
+        assert_eq!(atlas.request_growth(), Some(5));
+        assert_eq!(atlas.take_resize_request(), Some(5));
+    }
+
+    #[test]
+    fn apply_resize_growth_preserves_resident_pages_and_staged_uploads() {
+        let mut atlas = ArtPageAtlas::new(
+            Handle::default(),
+            64,
+            64,
+            2,
+            8,
+            PagePixelFormat::Rgba8888,
+        );
+        atlas.page_to_layer.insert(7, 1);
+        atlas.layer_to_page[1] = Some(7);
+        atlas.layer_access_tick[1] = 11;
+        atlas.current_tick = 23;
+        atlas.extract_staging.push(ArtPageUpload {
+            page_index: 7,
+            layer: 1,
+            bytes: vec![1, 2, 3, 4],
+            upload_layout: TextureUploadLayout {
+                bytes_per_row: 4,
+                rows_per_image: 1,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            },
+            upload_width: 1,
+            upload_height: 1,
+        });
+
+        atlas.apply_resize(Handle::default(), 3);
+
+        assert_eq!(atlas.active_layers, 3);
+        assert_eq!(atlas.page_to_layer.get(&7), Some(&1));
+        assert_eq!(atlas.layer_to_page[1], Some(7));
+        assert_eq!(atlas.layer_to_page[2], None);
+        assert_eq!(atlas.layer_access_tick[1], 11);
+        assert_eq!(atlas.current_tick, 23);
+        assert_eq!(atlas.pending_uploads.len(), 1);
+        assert!(atlas.extract_staging.is_empty());
+    }
+
+    #[test]
+    fn prepare_page_upload_bytes_uses_bc7_layout_for_bc7_pages() {
+        let extent = ImageExtent::new(8, 8).unwrap();
+        let bytes = vec![0; VramTextureFormat::Bc7RgbaUnormSrgb.expected_byte_len(extent)];
+
+        let (_, layout) = prepare_page_upload_bytes(&bytes, 8, 8, PagePixelFormat::Bc7).unwrap();
+
+        assert_eq!(layout.bytes_per_row, 32);
+        assert_eq!(layout.rows_per_image, 2);
+        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+    }
+}
+
+#[derive(Resource)]
+pub struct SpriteArtPageAtlas(pub ArtPageAtlas);
+
+impl Deref for SpriteArtPageAtlas {
+    type Target = ArtPageAtlas;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SpriteArtPageAtlas {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Resource)]
+pub struct GroundArtPageAtlas(pub ArtPageAtlas);
+
+impl Deref for GroundArtPageAtlas {
+    type Target = ArtPageAtlas;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for GroundArtPageAtlas {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -518,17 +714,35 @@ fn sys_setup_art_texture_loader(
 }
 
 #[derive(Resource, Default)]
-pub struct RenderArtPageUploads(pub Vec<ArtPageUpload>);
+pub struct RenderSpriteArtPageUploads(pub Vec<ArtPageUpload>);
 
-pub fn sys_stage_art_page_uploads(mut atlas: ResMut<ArtPageAtlas>) {
+#[derive(Resource, Default)]
+pub struct RenderGroundArtPageUploads(pub Vec<ArtPageUpload>);
+
+pub fn sys_stage_sprite_art_page_uploads(mut atlas: ResMut<SpriteArtPageAtlas>) {
     atlas.extract_staging.clear();
     let mut pending = std::mem::take(&mut atlas.pending_uploads);
     atlas.extract_staging.append(&mut pending);
 }
 
-pub fn sys_extract_art_page_uploads(
-    atlas: Extract<Res<ArtPageAtlas>>,
-    mut render_uploads: ResMut<RenderArtPageUploads>,
+pub fn sys_stage_ground_art_page_uploads(mut atlas: ResMut<GroundArtPageAtlas>) {
+    atlas.extract_staging.clear();
+    let mut pending = std::mem::take(&mut atlas.pending_uploads);
+    atlas.extract_staging.append(&mut pending);
+}
+
+pub fn sys_extract_sprite_art_page_uploads(
+    atlas: Extract<Res<SpriteArtPageAtlas>>,
+    mut render_uploads: ResMut<RenderSpriteArtPageUploads>,
+) {
+    if !atlas.extract_staging.is_empty() {
+        render_uploads.0.extend(atlas.extract_staging.clone());
+    }
+}
+
+pub fn sys_extract_ground_art_page_uploads(
+    atlas: Extract<Res<GroundArtPageAtlas>>,
+    mut render_uploads: ResMut<RenderGroundArtPageUploads>,
 ) {
     if !atlas.extract_staging.is_empty() {
         render_uploads.0.extend(atlas.extract_staging.clone());
@@ -536,24 +750,45 @@ pub fn sys_extract_art_page_uploads(
 }
 
 #[derive(Resource, Clone, ExtractResource)]
-pub struct ArtPageAtlasHandle(pub Handle<Image>);
+pub struct SpriteArtPageAtlasHandle(pub Handle<Image>);
 
-pub fn sys_render_upload_art_pages(
-    mut uploads: ResMut<RenderArtPageUploads>,
-    atlas_handle: Option<Res<ArtPageAtlasHandle>>,
+#[derive(Resource, Clone, ExtractResource)]
+pub struct GroundArtPageAtlasHandle(pub Handle<Image>);
+
+pub fn sys_render_upload_sprite_art_pages(
+    mut uploads: ResMut<RenderSpriteArtPageUploads>,
+    atlas_handle: Option<Res<SpriteArtPageAtlasHandle>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     render_queue: Res<RenderQueue>,
 ) {
-    if uploads.0.is_empty() {
+    render_art_page_uploads(&mut uploads.0, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images, &render_queue);
+}
+
+pub fn sys_render_upload_ground_art_pages(
+    mut uploads: ResMut<RenderGroundArtPageUploads>,
+    atlas_handle: Option<Res<GroundArtPageAtlasHandle>>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    render_queue: Res<RenderQueue>,
+) {
+    render_art_page_uploads(&mut uploads.0, atlas_handle.as_ref().map(|handle| &handle.0), &gpu_images, &render_queue);
+}
+
+fn render_art_page_uploads(
+    uploads: &mut Vec<ArtPageUpload>,
+    atlas_handle: Option<&Handle<Image>>,
+    gpu_images: &RenderAssets<GpuImage>,
+    render_queue: &RenderQueue,
+) {
+    if uploads.is_empty() {
         return;
     }
     let Some(atlas_handle) = atlas_handle else { return };
-    let Some(gpu_image) = gpu_images.get(&atlas_handle.0) else { return };
+    let Some(gpu_image) = gpu_images.get(atlas_handle) else { return };
 
     use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
-    let submitted = uploads.0.len();
-    for upload in uploads.0.iter() {
+    let submitted = uploads.len();
+    for upload in uploads.iter() {
         let destination = TexelCopyTextureInfo {
             texture: &*gpu_image.texture,
             mip_level: 0,
@@ -565,24 +800,22 @@ pub fn sys_render_upload_art_pages(
             aspect: bevy::render::render_resource::TextureAspect::All,
         };
 
-        let width = gpu_image.size.width;
-        let height = gpu_image.size.height;
         let data_layout = TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
+            bytes_per_row: Some(upload.upload_layout.bytes_per_row),
+            rows_per_image: Some(upload.upload_layout.rows_per_image),
         };
 
         let extent = Extent3d {
-            width,
-            height,
+            width: upload.upload_width,
+            height: upload.upload_height,
             depth_or_array_layers: 1,
         };
 
-        render_queue.write_texture(destination, &upload.rgba, data_layout, extent);
+        render_queue.write_texture(destination, &upload.bytes, data_layout, extent);
     }
 
     if submitted > 0 {
-        uploads.0.drain(0..submitted);
+        uploads.drain(0..submitted);
     }
 }

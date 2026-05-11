@@ -233,7 +233,7 @@ pub fn run_bevy_app() -> ExitCode {
             .set(custom_window_plugin_settings(window_size, vsync_enabled))
             .set(custom_threadpool_settings())
             .set(custom_render_plugin_settings())
-            .set(ImagePlugin::default_linear())
+            .set(ImagePlugin::default_nearest())
             .set(AssetPlugin {
                 //watch_for_changes_override: true,
                 file_path: assets_folder.to_str().unwrap().to_string(),

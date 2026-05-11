@@ -13,10 +13,12 @@ struct GroundTileInstance {
     base_world_y: f32,
     uv_min: vec2<f32>,
     uv_max: vec2<f32>,
+    local_min: vec2<f32>,
+    local_max: vec2<f32>,
     tile_x: f32,
     tile_y: f32,
     priority_z_units: f32,
-    _pad1: u32,
+    sort_bias_ordinal: u32,
     _pad2: vec2<u32>,
     color_rgba: vec4<f32>,
 }
@@ -55,12 +57,19 @@ const DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const DEPTH_CLASS_ROOF: u32 = 3u;
 const PASS_MODE_OPAQUE: u32 = 0u;
 const PASS_MODE_TRANSPARENT: u32 = 1u;
+const DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
+const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
+const STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON: f32 = 0.000001;
 
 fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
     return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
 }
 
 fn depth_class_logical_offset(depth_class: u32) -> f32 {
+    if (depth_class == DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
+        return SURFACE_LIKE_DEPTH_CLASS_OFFSET;
+    }
+
     if (depth_class == DEPTH_CLASS_BACKGROUND) {
         return -0.001;
     }
@@ -85,22 +94,30 @@ fn logical_depth_from_projected_priority(inst: GroundTileInstance) -> f32 {
     return clip_depth_to_frag_depth(view_transformations::position_world_to_clip(logical_world_pos));
 }
 
+fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
+    return clamp(depth - f32(sort_bias_ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> GroundVertexOutput {
     let inst = instances[mesh_functions::get_tag(vertex.instance_index)];
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
+    let local = mix(inst.local_min, inst.local_max, corner);
     let world_pos = vec3<f32>(
-        inst.world_x + corner.x,
+        inst.world_x + local.x,
         inst.world_y,
-        inst.world_z + corner.y,
+        inst.world_z + local.y,
     );
     var out: GroundVertexOutput;
     out.position = view_transformations::position_world_to_clip(world_pos);
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
-    out.logical_depth = logical_depth_from_projected_priority(inst);
+    out.logical_depth = apply_sort_bias_to_frag_depth(
+        logical_depth_from_projected_priority(inst),
+        inst.sort_bias_ordinal,
+    );
     return out;
 }
 
@@ -120,7 +137,7 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         if color.a >= sprite_params.alpha_cutoff {
             discard;
         }
-        out.depth = in.position.z;
+        out.depth = in.logical_depth;
     }
 
     var shaded = color * in.color;

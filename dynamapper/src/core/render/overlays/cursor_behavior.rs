@@ -2,8 +2,8 @@ use crate::core::controls::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
 use crate::core::render::scene::world::art::statics_collect::{
-    resolve_priority_z_units, resolve_static_billboard_bounds, resolve_static_depth_class,
-    static_depth_key,
+    depth_class_y_bias, resolve_priority_z_units, resolve_static_billboard_bounds,
+    resolve_static_depth_class, resolve_surface_like_ground_quad_bounds, static_depth_key,
 };
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
@@ -31,7 +31,6 @@ use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const STATIC_ART_Y_BIAS: f32 = 0.002;
 const INV_SQRT_2: f32 = 0.70710678118;
 const BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(INV_SQRT_2, -INV_SQRT_2);
 const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
@@ -756,11 +755,12 @@ fn hovered_static_match(
 ) -> Option<HoveredStaticMatch> {
     let graphic = tile.graphic;
     let tilemeta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
+    let depth_class = resolve_static_depth_class(tilemeta);
     let local_x = tile.x_offset() as f32;
     let local_y = tile.y_offset() as f32;
     let world_x = block_x as f32 * 8.0 + local_x;
     let world_z = block_y as f32 * 8.0 + local_y;
-    let world_y = tile.z as f32 * 0.1 + STATIC_ART_Y_BIAS;
+    let world_y = tile.z as f32 * 0.1 + depth_class_y_bias(depth_class);
     let (kind, corners) = match resolve_hovered_static_geometry(
         settings,
         cc_art_res,
@@ -780,7 +780,6 @@ fn hovered_static_match(
         return None;
     }
 
-    let depth_class = resolve_static_depth_class(tilemeta);
     let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
     let depth_key = static_depth_key(world_x, world_z, priority_z_units, depth_class);
     Some(HoveredStaticMatch {
@@ -806,6 +805,8 @@ fn resolve_hovered_static_geometry(
 ) -> Option<(HoveredObjectKind, [Vec3; 4])> {
     match settings.graphics.art_texture_source {
         crate::configs::settings::ClientTextureSource::Cc => {
+            let world_x = world_x + 0.5;
+            let world_z = world_z + 1.5;
             let cc_texture_id = tilemeta
                 .map(|meta| meta.cc_texture_id as u16)
                 .unwrap_or(graphic);
@@ -832,6 +833,8 @@ fn resolve_hovered_static_geometry(
             ))
         }
         crate::configs::settings::ClientTextureSource::Ec => {
+            let world_x = world_x + 0.5;
+            let world_z = world_z + 1.5;
             if let Some(runtime_slot_id) = resolve_overlay_ec_land_runtime_slot(
                 tilemeta,
                 ec_land_res.map(|package| &*package.0),
@@ -840,13 +843,30 @@ fn resolve_hovered_static_geometry(
                     .and_then(|package| (&*package.0).present_slot(runtime_slot_id))
                     .is_some()
                 {
+                    let bounds = resolve_surface_like_ground_quad_bounds();
                     return Some((
                         HoveredObjectKind::Ground,
                         [
-                            Vec3::new(world_x, world_y, world_z),
-                            Vec3::new(world_x + 1.0, world_y, world_z),
-                            Vec3::new(world_x, world_y, world_z + 1.0),
-                            Vec3::new(world_x + 1.0, world_y, world_z + 1.0),
+                            Vec3::new(
+                                world_x + bounds.local_min_x,
+                                world_y,
+                                world_z + bounds.local_min_z,
+                            ),
+                            Vec3::new(
+                                world_x + bounds.local_max_x,
+                                world_y,
+                                world_z + bounds.local_min_z,
+                            ),
+                            Vec3::new(
+                                world_x + bounds.local_min_x,
+                                world_y,
+                                world_z + bounds.local_max_z,
+                            ),
+                            Vec3::new(
+                                world_x + bounds.local_max_x,
+                                world_y,
+                                world_z + bounds.local_max_z,
+                            ),
                         ],
                     ));
                 }

@@ -23,7 +23,10 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
-            crate::core::texture_cache::art::ArtPageAtlasHandle,
+            crate::core::texture_cache::art::SpriteArtPageAtlasHandle,
+        >::default());
+        app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+            crate::core::texture_cache::art::GroundArtPageAtlasHandle,
         >::default());
 
         app.add_plugins((
@@ -35,7 +38,10 @@ impl Plugin for DrawStaticSpritesPlugin {
                .after(StartupSysSet::LoadStartupUOFiles))
            .add_systems(Update, (
                statics_collect::sys_sync_static_art_source,
-               crate::core::texture_cache::art::sys_stage_art_page_uploads,
+               statics_draw::sys_sync_active_art_page_atlases,
+               statics_draw::sys_apply_pending_art_page_atlas_resizes,
+               crate::core::texture_cache::art::sys_stage_sprite_art_page_uploads,
+               crate::core::texture_cache::art::sys_stage_ground_art_page_uploads,
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
                    .after(SceneRenderLandSysSet::RenderLandChunks),
@@ -56,11 +62,21 @@ impl Plugin for DrawStaticSpritesPlugin {
            ).chain().run_if(in_state(AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
-        render_app.init_resource::<crate::core::texture_cache::art::RenderArtPageUploads>();
-        render_app.add_systems(ExtractSchedule, crate::core::texture_cache::art::sys_extract_art_page_uploads);
+        render_app.init_resource::<crate::core::texture_cache::art::RenderSpriteArtPageUploads>();
+        render_app.init_resource::<crate::core::texture_cache::art::RenderGroundArtPageUploads>();
+        render_app.add_systems(
+            ExtractSchedule,
+            (
+                crate::core::texture_cache::art::sys_extract_sprite_art_page_uploads,
+                crate::core::texture_cache::art::sys_extract_ground_art_page_uploads,
+            ),
+        );
         render_app.add_systems(
             bevy::render::Render,
-            crate::core::texture_cache::art::sys_render_upload_art_pages
+            (
+                crate::core::texture_cache::art::sys_render_upload_sprite_art_pages,
+                crate::core::texture_cache::art::sys_render_upload_ground_art_pages,
+            )
                 .in_set(bevy::render::RenderSystems::Queue),
         );
     }

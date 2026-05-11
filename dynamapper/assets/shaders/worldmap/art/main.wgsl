@@ -18,7 +18,7 @@ struct SpriteInstance {
     tile_x: f32,
     tile_y: f32,
     priority_z_units: f32,
-    _pad1: u32,
+    sort_bias_ordinal: u32,
     _pad2: vec2<u32>,
     color_rgba: vec4<f32>,
 }
@@ -62,12 +62,18 @@ const DEPTH_CLASS_ROOF: u32 = 3u;
 const DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
 const PASS_MODE_OPAQUE: u32 = 0u;
 const PASS_MODE_TRANSPARENT: u32 = 1u;
+const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
+const STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON: f32 = 0.000001;
 
 fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
     return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
 }
 
 fn depth_class_logical_offset(depth_class: u32) -> f32 {
+    if (depth_class == DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
+        return SURFACE_LIKE_DEPTH_CLASS_OFFSET;
+    }
+
     if (depth_class == DEPTH_CLASS_BACKGROUND) {
         return -0.001;
     }
@@ -92,6 +98,10 @@ fn logical_depth_from_projected_priority(inst: SpriteInstance) -> f32 {
     return clip_depth_to_frag_depth(view_transformations::position_world_to_clip(logical_world_pos));
 }
 
+fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
+    return clamp(depth - f32(sort_bias_ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
     let inst = instances[mesh_functions::get_tag(vertex.instance_index)];
@@ -108,7 +118,10 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
-    out.logical_depth = logical_depth_from_projected_priority(inst);
+    out.logical_depth = apply_sort_bias_to_frag_depth(
+        logical_depth_from_projected_priority(inst),
+        inst.sort_bias_ordinal,
+    );
     out.depth_class = inst.depth_class;
     return out;
 }
@@ -135,7 +148,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         if color.a >= sprite_params.alpha_cutoff {
             discard;
         }
-        out.depth = in.position.z;
+        out.depth = in.logical_depth;
     }
 
     var shaded = color * in.color;

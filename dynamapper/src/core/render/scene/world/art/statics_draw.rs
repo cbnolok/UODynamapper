@@ -1,15 +1,24 @@
 use crate::core::render::scene::world::art::statics_collect::{
     GroundTileInstance, RenderStaticInstances, RenderStaticLandInstances, SpriteInstance,
 };
-use crate::core::texture_cache::art::{ArtPageAtlas, ArtPageAtlasHandle};
-use crate::core::uo_files_loader::{CcArtPackageRes, EcArtPackageRes, EcLandPackageRes};
+use crate::configs::settings::{ClientTextureSource, Settings};
+use crate::core::texture_cache::art::{
+    ArtPageAtlas, GroundArtPageAtlas, GroundArtPageAtlasHandle, SpriteArtPageAtlas,
+    SpriteArtPageAtlasHandle,
+};
+use crate::core::uo_files_loader::{
+    CcArtPackageRes, EcArtPackageRes, EcLandPackageRes, TileMetaPackageRes,
+};
 use crate::console_logger::{self, LogAbout, LogSev};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureFormat;
 use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::render::storage::ShaderStorageBuffer;
+use uddconv::bc7::{ImageExtent, VramTextureFormat};
+use uddconv::cc_art::PagePixelFormat;
 
 #[derive(ShaderType, Clone)]
 pub struct SpriteParams {
@@ -74,6 +83,20 @@ pub struct StaticArtDrawDebugState {
     pub last_uploaded_ground_instances: Option<usize>,
 }
 
+#[derive(Resource, Default)]
+pub struct ActiveArtAtlasBindingState {
+    pub configured_source: Option<ClientTextureSource>,
+}
+
+#[derive(Clone, Copy)]
+struct AtlasAllocationSpec {
+    page_width: u32,
+    page_height: u32,
+    initial_layers: u32,
+    max_layers: u32,
+    pixel_format: PagePixelFormat,
+}
+
 impl MaterialExtension for ArtSpriteMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
         "shaders/worldmap/art/main.wgsl".into()
@@ -104,51 +127,150 @@ pub struct StaticsGroundDrawEntity;
 #[derive(Component)]
 pub struct StaticsGroundTransparentDrawEntity;
 
-pub fn sys_setup_art_page_atlas(
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
-    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
-    cc_art_res: Option<Res<CcArtPackageRes>>,
-    ec_art_res: Option<Res<EcArtPackageRes>>,
-    ec_land_res: Option<Res<EcLandPackageRes>>,
-) {
-    // 32 layers still churns too aggressively for visible classic static-art page sets.
-    // Keep this aligned with the working budget discussed in the render investigation.
-    let max_layers = 64;
-    let page_width = cc_art_res
-        .as_ref()
-        .map(|package| package.0.atlas_width())
-        .into_iter()
-        .chain(ec_art_res.as_ref().map(|package| package.0.atlas_width()))
-        .chain(ec_land_res.as_ref().map(|package| package.0.atlas_width()))
-        .max()
-        .unwrap_or(2048)
-        .max(2048);
-    let page_height = cc_art_res
-        .as_ref()
-        .map(|package| package.0.atlas_height())
-        .into_iter()
-        .chain(ec_art_res.as_ref().map(|package| package.0.atlas_height()))
-        .chain(ec_land_res.as_ref().map(|package| package.0.atlas_height()))
-        .max()
-        .unwrap_or(2048)
-        .max(2048);
+fn sprite_instance_transform(instance: &SpriteInstance) -> Transform {
+    Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
+}
 
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+fn ground_instance_transform(instance: &GroundTileInstance) -> Transform {
+    Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
+}
 
-    let mut image = Image::new_fill(
+fn source_available(
+    source: ClientTextureSource,
+    cc_art_res: Option<&Res<CcArtPackageRes>>,
+    ec_art_res: Option<&Res<EcArtPackageRes>>,
+    ec_land_res: Option<&Res<EcLandPackageRes>>,
+    tilemeta_res: Option<&Res<TileMetaPackageRes>>,
+) -> bool {
+    match source {
+        ClientTextureSource::Cc => cc_art_res.is_some(),
+        ClientTextureSource::Ec => {
+            ec_art_res.is_some() && ec_land_res.is_some() && tilemeta_res.is_some()
+        }
+    }
+}
+
+fn resolve_effective_art_source(
+    requested_source: ClientTextureSource,
+    cc_art_res: Option<&Res<CcArtPackageRes>>,
+    ec_art_res: Option<&Res<EcArtPackageRes>>,
+    ec_land_res: Option<&Res<EcLandPackageRes>>,
+    tilemeta_res: Option<&Res<TileMetaPackageRes>>,
+) -> Option<ClientTextureSource> {
+    if source_available(
+        requested_source,
+        cc_art_res,
+        ec_art_res,
+        ec_land_res,
+        tilemeta_res,
+    ) {
+        return Some(requested_source);
+    }
+
+    ClientTextureSource::ALL.into_iter().find(|candidate| {
+        *candidate != requested_source
+            && source_available(*candidate, cc_art_res, ec_art_res, ec_land_res, tilemeta_res)
+    })
+}
+
+fn blank_atlas_spec() -> AtlasAllocationSpec {
+    AtlasAllocationSpec {
+        page_width: 1,
+        page_height: 1,
+        initial_layers: 1,
+        max_layers: 1,
+        pixel_format: PagePixelFormat::Rgba8888,
+    }
+}
+
+fn package_pixel_format<T>(
+    pages: &[T],
+    get_pixel_format: impl Fn(&T) -> PagePixelFormat,
+) -> PagePixelFormat {
+    pages
+        .first()
+        .map(get_pixel_format)
+        .unwrap_or(PagePixelFormat::Rgba8888)
+}
+
+fn sprite_atlas_spec(
+    active_source: Option<ClientTextureSource>,
+    cc_art_res: Option<&Res<CcArtPackageRes>>,
+    ec_art_res: Option<&Res<EcArtPackageRes>>,
+) -> AtlasAllocationSpec {
+    match active_source {
+        Some(ClientTextureSource::Cc) => cc_art_res
+            .map(|package| AtlasAllocationSpec {
+                page_width: package.0.atlas_width().max(1),
+                page_height: package.0.atlas_height().max(1),
+                initial_layers: (package.0.pages().len().max(1) as u32).min(4),
+                max_layers: package.0.pages().len().max(1) as u32,
+                pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
+            })
+            .unwrap_or_else(blank_atlas_spec),
+        Some(ClientTextureSource::Ec) => ec_art_res
+            .map(|package| AtlasAllocationSpec {
+                page_width: package.0.atlas_width().max(1),
+                page_height: package.0.atlas_height().max(1),
+                initial_layers: (package.0.pages().len().max(1) as u32).min(4),
+                max_layers: package.0.pages().len().max(1) as u32,
+                pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
+            })
+            .unwrap_or_else(blank_atlas_spec),
+        None => blank_atlas_spec(),
+    }
+}
+
+fn ground_atlas_spec(
+    active_source: Option<ClientTextureSource>,
+    ec_land_res: Option<&Res<EcLandPackageRes>>,
+) -> AtlasAllocationSpec {
+    if active_source != Some(ClientTextureSource::Ec) {
+        return blank_atlas_spec();
+    }
+
+    ec_land_res
+        .map(|package| AtlasAllocationSpec {
+            page_width: package.0.atlas_width().max(1),
+            page_height: package.0.atlas_height().max(1),
+            initial_layers: (package.0.pages().len().max(1) as u32).min(4),
+            max_layers: package.0.pages().len().max(1) as u32,
+            pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
+        })
+        .unwrap_or_else(blank_atlas_spec)
+}
+
+fn atlas_texture_format(pixel_format: PagePixelFormat) -> TextureFormat {
+    match pixel_format {
+        PagePixelFormat::Rgba8888 => VramTextureFormat::Rgba8UnormSrgb.texture_format(),
+        PagePixelFormat::Bc7 => VramTextureFormat::Bc7RgbaUnormSrgb.texture_format(),
+    }
+}
+
+fn create_art_atlas_image(
+    images: &mut Assets<Image>,
+    page_width: u32,
+    page_height: u32,
+    layers: u32,
+    pixel_format: PagePixelFormat,
+) -> Handle<Image> {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
+
+    let extent = ImageExtent::new(page_width.max(1), page_height.max(1)).unwrap();
+    let byte_len = match pixel_format {
+        PagePixelFormat::Rgba8888 => VramTextureFormat::Rgba8UnormSrgb.expected_byte_len(extent),
+        PagePixelFormat::Bc7 => VramTextureFormat::Bc7RgbaUnormSrgb.expected_byte_len(extent),
+    } * layers as usize;
+    let mut image = Image::new(
         Extent3d {
             width: page_width,
             height: page_height,
-            depth_or_array_layers: max_layers,
+            depth_or_array_layers: layers,
         },
         TextureDimension::D2,
-        &[0, 0, 0, 0],
-        TextureFormat::Rgba8UnormSrgb,
-        bevy::asset::RenderAssetUsages::default(),
+        vec![0; byte_len],
+        atlas_texture_format(pixel_format),
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.usage |= TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
     image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
@@ -156,15 +278,221 @@ pub fn sys_setup_art_page_atlas(
         ..Default::default()
     });
 
-    let atlas_handle = images.add(image);
+    images.add(image)
+}
 
-    commands.insert_resource(ArtPageAtlas::new(
-        atlas_handle.clone(),
-        page_width,
-        page_height,
-        max_layers,
-    ));
-    commands.insert_resource(ArtPageAtlasHandle(atlas_handle.clone()));
+fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> ArtPageAtlas {
+    let handle = create_art_atlas_image(
+        images,
+        spec.page_width,
+        spec.page_height,
+        spec.initial_layers,
+        spec.pixel_format,
+    );
+    ArtPageAtlas::new(
+        handle,
+        spec.page_width,
+        spec.page_height,
+        spec.initial_layers,
+        spec.max_layers,
+        spec.pixel_format,
+    )
+}
+
+fn apply_sprite_art_atlas_resize(
+    images: &mut Assets<Image>,
+    materials: &mut Assets<ArtSpriteMaterial>,
+    render_assets: &ArtSpriteRenderAssets,
+    atlas: &mut ArtPageAtlas,
+    atlas_handle: &mut Handle<Image>,
+    active_source: Option<ClientTextureSource>,
+    cc_art_res: Option<&Res<CcArtPackageRes>>,
+    ec_art_res: Option<&Res<EcArtPackageRes>>,
+) {
+    let Some(new_layers) = atlas.take_resize_request() else {
+        return;
+    };
+    if new_layers <= atlas.active_layers {
+        return;
+    }
+
+    let resident_pages = atlas.resident_page_layers();
+    let new_handle = create_art_atlas_image(
+        images,
+        atlas.page_width,
+        atlas.page_height,
+        new_layers,
+        atlas.pixel_format,
+    );
+    atlas.apply_resize(new_handle.clone(), new_layers);
+
+    match active_source {
+        Some(ClientTextureSource::Cc) => {
+            if let Some(package) = cc_art_res {
+                for (page_index, layer) in resident_pages {
+                    if let Some(page) = package.0.pages().get(page_index as usize) {
+                        atlas.queue_page_upload(
+                            page_index,
+                            layer,
+                            page.used_width,
+                            page.used_height,
+                            page.pixel_format,
+                            || package.0.read_page_bytes(page_index),
+                        );
+                    }
+                }
+            }
+        }
+        Some(ClientTextureSource::Ec) => {
+            if let Some(package) = ec_art_res {
+                for (page_index, layer) in resident_pages {
+                    if let Some(page) = package.0.pages().get(page_index as usize) {
+                        atlas.queue_page_upload(
+                            page_index,
+                            layer,
+                            page.used_width,
+                            page.used_height,
+                            page.pixel_format,
+                            || package.0.read_page_bytes(page_index),
+                        );
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+
+    *atlas_handle = new_handle.clone();
+
+    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+        material.extension.atlas = new_handle.clone();
+    }
+    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+        material.extension.atlas = new_handle;
+    }
+}
+
+fn apply_ground_art_atlas_resize(
+    images: &mut Assets<Image>,
+    materials: &mut Assets<ArtGroundMaterial>,
+    render_assets: &ArtGroundRenderAssets,
+    atlas: &mut ArtPageAtlas,
+    atlas_handle: &mut Handle<Image>,
+    ec_land_res: Option<&Res<EcLandPackageRes>>,
+) {
+    let Some(new_layers) = atlas.take_resize_request() else {
+        return;
+    };
+    if new_layers <= atlas.active_layers {
+        return;
+    }
+
+    let resident_pages = atlas.resident_page_layers();
+    let new_handle = create_art_atlas_image(
+        images,
+        atlas.page_width,
+        atlas.page_height,
+        new_layers,
+        atlas.pixel_format,
+    );
+    atlas.apply_resize(new_handle.clone(), new_layers);
+
+    if let Some(package) = ec_land_res {
+        for (page_index, layer) in resident_pages {
+            if let Some(page) = package.0.pages().get(page_index as usize) {
+                atlas.queue_page_upload(
+                    page_index,
+                    layer,
+                    page.used_width,
+                    page.used_height,
+                    page.pixel_format,
+                    || package.0.read_page_bytes(page_index),
+                );
+            }
+        }
+    }
+
+    *atlas_handle = new_handle.clone();
+
+    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+        material.extension.atlas = new_handle.clone();
+    }
+    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+        material.extension.atlas = new_handle;
+    }
+}
+
+fn rebind_active_art_atlases(
+    images: &mut Assets<Image>,
+    materials: &mut Assets<ArtSpriteMaterial>,
+    ground_materials: &mut Assets<ArtGroundMaterial>,
+    render_assets: &ArtSpriteRenderAssets,
+    ground_render_assets: &ArtGroundRenderAssets,
+    sprite_atlas: &mut SpriteArtPageAtlas,
+    sprite_atlas_handle: &mut SpriteArtPageAtlasHandle,
+    ground_atlas: &mut GroundArtPageAtlas,
+    ground_atlas_handle: &mut GroundArtPageAtlasHandle,
+    active_source: Option<ClientTextureSource>,
+    cc_art_res: Option<&Res<CcArtPackageRes>>,
+    ec_art_res: Option<&Res<EcArtPackageRes>>,
+    ec_land_res: Option<&Res<EcLandPackageRes>>,
+) {
+    let sprite_spec = sprite_atlas_spec(active_source, cc_art_res, ec_art_res);
+    let ground_spec = ground_atlas_spec(active_source, ec_land_res);
+
+    let next_sprite_atlas = build_art_atlas(images, sprite_spec);
+    let next_sprite_handle = next_sprite_atlas.gpu_handle.clone();
+    sprite_atlas.0 = next_sprite_atlas;
+    sprite_atlas_handle.0 = next_sprite_handle.clone();
+
+    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+        material.extension.atlas = next_sprite_handle.clone();
+    }
+    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+        material.extension.atlas = next_sprite_handle;
+    }
+
+    let next_ground_atlas = build_art_atlas(images, ground_spec);
+    let next_ground_handle = next_ground_atlas.gpu_handle.clone();
+    ground_atlas.0 = next_ground_atlas;
+    ground_atlas_handle.0 = next_ground_handle.clone();
+
+    if let Some(material) = ground_materials.get_mut(&ground_render_assets.opaque_material) {
+        material.extension.atlas = next_ground_handle.clone();
+    }
+    if let Some(material) = ground_materials.get_mut(&ground_render_assets.transparent_material) {
+        material.extension.atlas = next_ground_handle;
+    }
+}
+
+pub fn sys_setup_art_page_atlas(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    settings: Res<Settings>,
+    cc_art_res: Option<Res<CcArtPackageRes>>,
+    ec_art_res: Option<Res<EcArtPackageRes>>,
+    ec_land_res: Option<Res<EcLandPackageRes>>,
+    tilemeta_res: Option<Res<TileMetaPackageRes>>,
+) {
+    let active_source = resolve_effective_art_source(
+        settings.graphics.art_texture_source,
+        cc_art_res.as_ref(),
+        ec_art_res.as_ref(),
+        ec_land_res.as_ref(),
+        tilemeta_res.as_ref(),
+    );
+
+    let sprite_spec = sprite_atlas_spec(active_source, cc_art_res.as_ref(), ec_art_res.as_ref());
+    let ground_spec = ground_atlas_spec(active_source, ec_land_res.as_ref());
+
+    let sprite_atlas = build_art_atlas(&mut images, sprite_spec);
+    let sprite_atlas_handle = sprite_atlas.gpu_handle.clone();
+    let ground_atlas = build_art_atlas(&mut images, ground_spec);
+    let ground_atlas_handle = ground_atlas.gpu_handle.clone();
 
     let initial_buffer = ShaderStorageBuffer::from(vec![SpriteInstance {
         world_x: 0.0,
@@ -180,14 +508,14 @@ pub fn sys_setup_art_page_atlas(
         tile_x: 0.0,
         tile_y: 0.0,
         priority_z_units: 0.0,
-        _pad1: 0,
+        sort_bias_ordinal: 0,
         _pad2: [0, 0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
     let buffer_handle = storage_buffers.add(initial_buffer);
-    let sprite_atlas_handle = atlas_handle.clone();
-    let ground_atlas_handle = atlas_handle.clone();
+    let opaque_sprite_atlas_handle = sprite_atlas_handle.clone();
+    let transparent_sprite_atlas_handle = sprite_atlas_handle.clone();
 
     let opaque_material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
@@ -197,7 +525,7 @@ pub fn sys_setup_art_page_atlas(
             ..default()
         },
         extension: ArtSpriteMaterialExtension {
-            atlas: sprite_atlas_handle,
+            atlas: opaque_sprite_atlas_handle,
             instances: buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -219,7 +547,7 @@ pub fn sys_setup_art_page_atlas(
             ..default()
         },
         extension: ArtSpriteMaterialExtension {
-            atlas: atlas_handle.clone(),
+            atlas: transparent_sprite_atlas_handle,
             instances: buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -242,14 +570,18 @@ pub fn sys_setup_art_page_atlas(
         base_world_y: 0.0,
         uv_min: [0.0, 0.0],
         uv_max: [0.0, 0.0],
+        local_min: [0.0, 0.0],
+        local_max: [1.0, 1.0],
         tile_x: 0.0,
         tile_y: 0.0,
         priority_z_units: 0.0,
-        _pad1: 0,
+        sort_bias_ordinal: 0,
         _pad2: [0, 0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
+    let opaque_ground_atlas_handle = ground_atlas_handle.clone();
+    let transparent_ground_atlas_handle = ground_atlas_handle.clone();
 
     let ground_material_handle = ground_materials.add(ArtGroundMaterial {
         base: StandardMaterial {
@@ -259,7 +591,7 @@ pub fn sys_setup_art_page_atlas(
             ..default()
         },
         extension: ArtGroundMaterialExtension {
-            atlas: ground_atlas_handle,
+            atlas: opaque_ground_atlas_handle,
             instances: ground_buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -281,7 +613,7 @@ pub fn sys_setup_art_page_atlas(
             ..default()
         },
         extension: ArtGroundMaterialExtension {
-            atlas: atlas_handle.clone(),
+            atlas: transparent_ground_atlas_handle,
             instances: ground_buffer_handle.clone(),
             params: SpriteParams {
                 render_mode: 0,
@@ -341,6 +673,87 @@ pub fn sys_setup_art_page_atlas(
         opaque_material: ground_material_handle,
         transparent_material: transparent_ground_material_handle,
     });
+    commands.insert_resource(SpriteArtPageAtlas(sprite_atlas));
+    commands.insert_resource(SpriteArtPageAtlasHandle(sprite_atlas_handle.clone()));
+    commands.insert_resource(GroundArtPageAtlas(ground_atlas));
+    commands.insert_resource(GroundArtPageAtlasHandle(ground_atlas_handle.clone()));
+    commands.insert_resource(ActiveArtAtlasBindingState {
+        configured_source: active_source,
+    });
+}
+
+pub fn sys_sync_active_art_page_atlases(
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    render_assets: Res<ArtSpriteRenderAssets>,
+    ground_render_assets: Res<ArtGroundRenderAssets>,
+    mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
+    mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
+    mut ground_atlas: ResMut<GroundArtPageAtlas>,
+    mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
+    source_state: Res<crate::core::render::scene::world::art::statics_collect::StaticArtSourceState>,
+    mut binding_state: ResMut<ActiveArtAtlasBindingState>,
+    cc_art_res: Option<Res<CcArtPackageRes>>,
+    ec_art_res: Option<Res<EcArtPackageRes>>,
+    ec_land_res: Option<Res<EcLandPackageRes>>,
+) {
+    if binding_state.configured_source == source_state.active_source {
+        return;
+    }
+
+    rebind_active_art_atlases(
+        &mut images,
+        &mut materials,
+        &mut ground_materials,
+        &render_assets,
+        &ground_render_assets,
+        &mut sprite_atlas,
+        &mut sprite_atlas_handle,
+        &mut ground_atlas,
+        &mut ground_atlas_handle,
+        source_state.active_source,
+        cc_art_res.as_ref(),
+        ec_art_res.as_ref(),
+        ec_land_res.as_ref(),
+    );
+
+    binding_state.configured_source = source_state.active_source;
+}
+
+pub fn sys_apply_pending_art_page_atlas_resizes(
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    render_assets: Res<ArtSpriteRenderAssets>,
+    ground_render_assets: Res<ArtGroundRenderAssets>,
+    mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
+    mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
+    mut ground_atlas: ResMut<GroundArtPageAtlas>,
+    mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
+    source_state: Res<crate::core::render::scene::world::art::statics_collect::StaticArtSourceState>,
+    cc_art_res: Option<Res<CcArtPackageRes>>,
+    ec_art_res: Option<Res<EcArtPackageRes>>,
+    ec_land_res: Option<Res<EcLandPackageRes>>,
+) {
+    apply_sprite_art_atlas_resize(
+        &mut images,
+        &mut materials,
+        &render_assets,
+        &mut sprite_atlas,
+        &mut sprite_atlas_handle.0,
+        source_state.active_source,
+        cc_art_res.as_ref(),
+        ec_art_res.as_ref(),
+    );
+    apply_ground_art_atlas_resize(
+        &mut images,
+        &mut ground_materials,
+        &ground_render_assets,
+        &mut ground_atlas,
+        &mut ground_atlas_handle.0,
+        ec_land_res.as_ref(),
+    );
 }
 
 pub fn sys_sync_static_sprite_entities(
@@ -348,20 +761,24 @@ pub fn sys_sync_static_sprite_entities(
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    existing_q: Query<(Entity, &MeshTag), With<StaticsDrawEntity>>,
+    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsDrawEntity>>,
 ) {
     let desired_count = instances.0.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
 
     for entity in existing_entities.by_ref().skip(desired_count) {
         let _ = commands.entity(entity).despawn();
     }
 
-    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
         let desired_tag = MeshTag(slot_index as u32);
         if *mesh_tag != desired_tag {
             let _ = commands.entity(entity).insert(desired_tag);
+        }
+        let desired_transform = sprite_instance_transform(&instances.0[slot_index]);
+        if *transform != desired_transform {
+            *transform = desired_transform;
         }
     }
 
@@ -370,7 +787,7 @@ pub fn sys_sync_static_sprite_entities(
             Mesh3d(render_assets.mesh.clone()),
             MeshMaterial3d(render_assets.opaque_material.clone()),
             MeshTag(slot_index as u32),
-            Transform::IDENTITY,
+            sprite_instance_transform(&instances.0[slot_index]),
             NoFrustumCulling,
             StaticsDrawEntity,
         ));
@@ -395,20 +812,24 @@ pub fn sys_sync_static_sprite_transparent_entities(
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    existing_q: Query<(Entity, &MeshTag), With<StaticsTransparentDrawEntity>>,
+    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsTransparentDrawEntity>>,
 ) {
     let desired_count = instances.0.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
 
     for entity in existing_entities.by_ref().skip(desired_count) {
         let _ = commands.entity(entity).despawn();
     }
 
-    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
         let desired_tag = MeshTag(slot_index as u32);
         if *mesh_tag != desired_tag {
             let _ = commands.entity(entity).insert(desired_tag);
+        }
+        let desired_transform = sprite_instance_transform(&instances.0[slot_index]);
+        if *transform != desired_transform {
+            *transform = desired_transform;
         }
     }
 
@@ -417,7 +838,7 @@ pub fn sys_sync_static_sprite_transparent_entities(
             Mesh3d(render_assets.mesh.clone()),
             MeshMaterial3d(render_assets.transparent_material.clone()),
             MeshTag(slot_index as u32),
-            Transform::IDENTITY,
+            sprite_instance_transform(&instances.0[slot_index]),
             NoFrustumCulling,
             StaticsTransparentDrawEntity,
         ));
@@ -433,20 +854,24 @@ pub fn sys_sync_static_ground_entities(
     instances: Res<RenderStaticLandInstances>,
     render_assets: Res<ArtGroundRenderAssets>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    existing_q: Query<(Entity, &MeshTag), With<StaticsGroundDrawEntity>>,
+    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsGroundDrawEntity>>,
 ) {
     let desired_count = instances.0.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
 
     for entity in existing_entities.by_ref().skip(desired_count) {
         let _ = commands.entity(entity).despawn();
     }
 
-    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
         let desired_tag = MeshTag(slot_index as u32);
         if *mesh_tag != desired_tag {
             let _ = commands.entity(entity).insert(desired_tag);
+        }
+        let desired_transform = ground_instance_transform(&instances.0[slot_index]);
+        if *transform != desired_transform {
+            *transform = desired_transform;
         }
     }
 
@@ -455,7 +880,7 @@ pub fn sys_sync_static_ground_entities(
             Mesh3d(render_assets.mesh.clone()),
             MeshMaterial3d(render_assets.opaque_material.clone()),
             MeshTag(slot_index as u32),
-            Transform::IDENTITY,
+            ground_instance_transform(&instances.0[slot_index]),
             NoFrustumCulling,
             StaticsGroundDrawEntity,
         ));
@@ -480,20 +905,24 @@ pub fn sys_sync_static_ground_transparent_entities(
     instances: Res<RenderStaticLandInstances>,
     render_assets: Res<ArtGroundRenderAssets>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
-    existing_q: Query<(Entity, &MeshTag), With<StaticsGroundTransparentDrawEntity>>,
+    mut existing_q: Query<(Entity, &MeshTag, &mut Transform), With<StaticsGroundTransparentDrawEntity>>,
 ) {
     let desired_count = instances.0.len();
     let existing_count = existing_q.iter().count();
-    let mut existing_entities = existing_q.iter().map(|(entity, _)| entity);
+    let mut existing_entities = existing_q.iter_mut().map(|(entity, _, _)| entity);
 
     for entity in existing_entities.by_ref().skip(desired_count) {
         let _ = commands.entity(entity).despawn();
     }
 
-    for (slot_index, (entity, mesh_tag)) in existing_q.iter().take(desired_count).enumerate() {
+    for (slot_index, (entity, mesh_tag, mut transform)) in existing_q.iter_mut().take(desired_count).enumerate() {
         let desired_tag = MeshTag(slot_index as u32);
         if *mesh_tag != desired_tag {
             let _ = commands.entity(entity).insert(desired_tag);
+        }
+        let desired_transform = ground_instance_transform(&instances.0[slot_index]);
+        if *transform != desired_transform {
+            *transform = desired_transform;
         }
     }
 
@@ -502,7 +931,7 @@ pub fn sys_sync_static_ground_transparent_entities(
             Mesh3d(render_assets.mesh.clone()),
             MeshMaterial3d(render_assets.transparent_material.clone()),
             MeshTag(slot_index as u32),
-            Transform::IDENTITY,
+            ground_instance_transform(&instances.0[slot_index]),
             NoFrustumCulling,
             StaticsGroundTransparentDrawEntity,
         ));

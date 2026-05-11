@@ -6,7 +6,7 @@ use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{
     CcArtPackageRes, EcArtPackageRes, EcLandPackageRes, TileMetaPackageRes,
 };
-use crate::core::texture_cache::art::ArtPageAtlas;
+use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::world::land::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
 use crate::core::render::scene::SceneStateData;
@@ -25,7 +25,9 @@ const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_
 const EC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / EC_TILE_PIXEL_WIDTH;
 const EC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * EC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
-const GROUND_ART_Y_BIAS: f32 = 0.001;
+const GROUND_ART_Y_BIAS: f32 = 0.0;
+const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
+const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -33,6 +35,14 @@ pub(crate) struct StaticBillboardBounds {
     pub local_max_x: f32,
     pub local_min_y: f32,
     pub local_max_y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GroundQuadBounds {
+    pub local_min_x: f32,
+    pub local_max_x: f32,
+    pub local_min_z: f32,
+    pub local_max_z: f32,
 }
 
 fn static_world_xz_per_pixel(source: ClientTextureSource) -> f32 {
@@ -71,6 +81,22 @@ pub(crate) fn resolve_static_billboard_bounds(
     }
 }
 
+pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
+    GroundQuadBounds {
+        local_min_x: 0.0,
+        local_max_x: 1.0,
+        local_min_z: 0.0,
+        local_max_z: 1.0,
+    }
+}
+
+fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+    (
+        world_x + EC_STATIC_TILE_TRANSLATION_X,
+        world_z + EC_STATIC_TILE_TRANSLATION_Z,
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticVisualKind {
     CcRegularArt { art_id: u16 },
@@ -105,6 +131,8 @@ const TILE_FLAG_BRIDGE: u64 = 0x400;
 const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
 const TILE_FLAG_ROOF: u64 = 0x1000_0000;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
+const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
+const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
 
 pub(crate) fn resolve_static_depth_class(
     tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
@@ -132,7 +160,7 @@ pub(crate) fn resolve_static_depth_class(
     StaticDepthClass::Regular
 }
 
-fn depth_class_y_bias(depth_class: StaticDepthClass) -> f32 {
+pub(crate) fn depth_class_y_bias(depth_class: StaticDepthClass) -> f32 {
     match depth_class {
         StaticDepthClass::SurfaceLikeFloor => GROUND_ART_Y_BIAS,
         StaticDepthClass::Regular
@@ -175,10 +203,11 @@ pub(crate) fn resolve_priority_z_units(
 
 fn depth_class_logical_offset(depth_class: StaticDepthClass) -> f32 {
     match depth_class {
+        StaticDepthClass::SurfaceLikeFloor => SURFACE_LIKE_DEPTH_CLASS_OFFSET,
         StaticDepthClass::Background => -0.001,
         StaticDepthClass::Roof => 0.002,
         StaticDepthClass::Foliage => 2.0,
-        StaticDepthClass::Regular | StaticDepthClass::SurfaceLikeFloor => 0.0,
+        StaticDepthClass::Regular => 0.0,
     }
 }
 
@@ -198,9 +227,66 @@ pub(crate) fn static_depth_key(
     priority_z_units: f32,
     depth_class: StaticDepthClass,
 ) -> f32 {
+    static_depth_key_with_tie_break(tile_x, tile_y, priority_z_units, depth_class, 0)
+}
+
+fn static_depth_key_with_tie_break(
+    tile_x: f32,
+    tile_y: f32,
+    priority_z_units: f32,
+    depth_class: StaticDepthClass,
+    tie_break_ordinal: u32,
+) -> f32 {
     (tile_x + tile_y)
         + (127.0 + priority_z_units) * 0.01
         + depth_class_logical_offset(depth_class)
+        + tie_break_ordinal as f32 * STATIC_DEPTH_TIE_BREAK_STEP
+}
+
+fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
+    let mut last_base_key: Option<f32> = None;
+    let mut tie_break_ordinal = 0u32;
+
+    for instance in instances.iter_mut() {
+        let base_key = static_depth_key(
+            instance.tile_x,
+            instance.tile_y,
+            instance.priority_z_units,
+            decode_depth_class(instance.depth_class),
+        );
+
+        if last_base_key.is_some_and(|last| last == base_key) {
+            tie_break_ordinal = tie_break_ordinal.saturating_add(1);
+        } else {
+            last_base_key = Some(base_key);
+            tie_break_ordinal = 0;
+        }
+
+        instance.sort_bias_ordinal = tie_break_ordinal;
+    }
+}
+
+fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
+    let mut last_base_key: Option<f32> = None;
+    let mut tie_break_ordinal = 0u32;
+
+    for instance in instances.iter_mut() {
+        let base_key = static_depth_key(
+            instance.tile_x,
+            instance.tile_y,
+            instance.priority_z_units,
+            decode_depth_class(instance.depth_class),
+        );
+
+        if last_base_key.is_some_and(|last| last == base_key) {
+            tie_break_ordinal = tie_break_ordinal.saturating_add(1);
+        } else {
+            last_base_key = Some(base_key);
+            tie_break_ordinal = 0;
+        }
+
+        instance.sort_bias_ordinal = tie_break_ordinal;
+    }
 }
 
 fn resolve_surface_like_ec_land_slot_id(
@@ -310,7 +396,7 @@ pub struct SpriteInstance {
     pub tile_x: f32,
     pub tile_y: f32,
     pub priority_z_units: f32,
-    pub _pad1: u32,
+    pub sort_bias_ordinal: u32,
     pub _pad2: [u32; 2],
     pub color_rgba: [f32; 4], // for dot mode
 }
@@ -326,10 +412,12 @@ pub struct GroundTileInstance {
     pub base_world_y: f32,
     pub uv_min: [f32; 2],
     pub uv_max: [f32; 2],
+    pub local_min: [f32; 2],
+    pub local_max: [f32; 2],
     pub tile_x: f32,
     pub tile_y: f32,
     pub priority_z_units: f32,
-    pub _pad1: u32,
+    pub sort_bias_ordinal: u32,
     pub _pad2: [u32; 2],
     pub color_rgba: [f32; 4],
 }
@@ -407,7 +495,6 @@ fn resolve_effective_art_source(
 }
 
 pub fn sys_sync_static_art_source(
-    mut art_atlas: ResMut<ArtPageAtlas>,
     settings: Res<Settings>,
     cc_art_res: Option<Res<CcArtPackageRes>>,
     ec_art_res: Option<Res<EcArtPackageRes>>,
@@ -448,7 +535,6 @@ pub fn sys_sync_static_art_source(
         return;
     }
 
-    art_atlas.clear();
     source_state.active_source = effective_source;
 
     match effective_source {
@@ -486,7 +572,8 @@ pub fn sys_collect_visible_statics(
     ec_art_res: Option<Res<EcArtPackageRes>>,
     ec_land_res: Option<Res<EcLandPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
-    mut art_atlas: ResMut<ArtPageAtlas>,
+    mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
+    mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
     zoom: Res<RenderZoom>,
@@ -600,7 +687,7 @@ pub fn sys_collect_visible_statics(
                                 tile_x: world_x,
                                 tile_y: world_z,
                                 priority_z_units,
-                                _pad1: 0,
+                                sort_bias_ordinal: 0,
                                 _pad2: [0, 0],
                                 color_rgba: [color[2] as f32 / 255.0, color[1] as f32 / 255.0, color[0] as f32 / 255.0, 1.0],
                             });
@@ -639,16 +726,14 @@ pub fn sys_collect_visible_statics(
                                 let offset_y_pixels = tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
 
                                 if let Some(slot) = cc_art.present_slot(art_id as u32) {
-                                    unique_requested_pages.insert(
-                                        ArtPageAtlas::cache_key_for_page(art_source, slot.page_index),
-                                    );
+                                    unique_requested_pages.insert(slot.page_index as u64);
                                 }
 
                                 (
                                     ClientTextureSource::Cc,
                                     offset_x_pixels,
                                     offset_y_pixels,
-                                    art_atlas.resolve_cc(cc_art, art_id),
+                                    sprite_atlas.resolve_cc(cc_art, art_id),
                                 )
                             }
                             StaticVisualKind::EcLandArt { .. } => {
@@ -660,16 +745,14 @@ pub fn sys_collect_visible_statics(
                                 };
 
                                 if let Some(slot) = ec_land.present_slot(runtime_slot_id) {
-                                    unique_requested_pages.insert(
-                                        ArtPageAtlas::cache_key_for_ec_land_page(slot.page_index),
-                                    );
+                                    unique_requested_pages.insert((1u64 << 63) | slot.page_index as u64);
                                 }
 
                                 (
                                     ClientTextureSource::Ec,
                                     0,
                                     0,
-                                    art_atlas.resolve_ec_land(ec_land, runtime_slot_id),
+                                    ground_atlas.resolve_ec_land(ec_land, runtime_slot_id),
                                 )
                             }
                             StaticVisualKind::EcRegularArt { art_id } => {
@@ -680,37 +763,41 @@ pub fn sys_collect_visible_statics(
                                 let offset_y_pixels = tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
 
                                 if let Some(slot) = ec_art.present_slot(art_id) {
-                                    unique_requested_pages.insert(
-                                        ArtPageAtlas::cache_key_for_page(art_source, slot.page_index),
-                                    );
+                                    unique_requested_pages.insert(slot.page_index as u64);
                                 }
 
                                 (
                                     ClientTextureSource::Ec,
                                     offset_x_pixels,
                                     offset_y_pixels,
-                                    art_atlas.resolve_ec(ec_art, art_id),
+                                    sprite_atlas.resolve_ec(ec_art, art_id),
                                 )
                             }
                         };
+
+                        let (anchored_world_x, anchored_world_z) =
+                            apply_static_world_anchor_translation(world_x, world_z);
 
                         if let Some(resolved) = resolved_sprite {
                             atlas_hits += 1;
                             if matches!(visual_kind, StaticVisualKind::EcLandArt { .. }) {
                                 ground_land_tiles += 1;
+                                let bounds = resolve_surface_like_ground_quad_bounds();
                                 land_instances.0.push(GroundTileInstance {
-                                    world_x,
-                                    world_z,
+                                    world_x: anchored_world_x,
+                                    world_z: anchored_world_z,
                                     world_y,
                                     layer: resolved.layer,
                                     depth_class: encoded_depth_class,
                                     base_world_y,
                                     uv_min: [resolved.uv_min.x, resolved.uv_min.y],
                                     uv_max: [resolved.uv_max.x, resolved.uv_max.y],
-                                    tile_x: world_x,
-                                    tile_y: world_z,
+                                    local_min: [bounds.local_min_x, bounds.local_min_z],
+                                    local_max: [bounds.local_max_x, bounds.local_max_z],
+                                    tile_x: anchored_world_x,
+                                    tile_y: anchored_world_z,
                                     priority_z_units,
-                                    _pad1: 0,
+                                    sort_bias_ordinal: 0,
                                     _pad2: [0, 0],
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
@@ -724,8 +811,8 @@ pub fn sys_collect_visible_statics(
                                 );
 
                                 instances.0.push(SpriteInstance {
-                                    world_x,
-                                    world_z,
+                                    world_x: anchored_world_x,
+                                    world_z: anchored_world_z,
                                     world_y,
                                     layer: resolved.layer,
                                     depth_class: encoded_depth_class,
@@ -734,10 +821,10 @@ pub fn sys_collect_visible_statics(
                                     uv_max: [resolved.uv_max.x, resolved.uv_max.y],
                                     local_min: [bounds.local_min_x, bounds.local_min_y],
                                     local_max: [bounds.local_max_x, bounds.local_max_y],
-                                    tile_x: world_x,
-                                    tile_y: world_z,
+                                    tile_x: anchored_world_x,
+                                    tile_y: anchored_world_z,
                                     priority_z_units,
-                                    _pad1: 0,
+                                    sort_bias_ordinal: 0,
                                     _pad2: [0, 0],
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
@@ -768,6 +855,7 @@ pub fn sys_collect_visible_statics(
         );
         depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
     });
+    assign_sprite_depth_tie_breakers(&mut instances.0);
 
     land_instances.0.sort_by(|a, b| {
         let depth_a = static_depth_key(
@@ -784,6 +872,7 @@ pub fn sys_collect_visible_statics(
         );
         depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
     });
+    assign_ground_depth_tie_breakers(&mut land_instances.0);
 
     let stats = StaticArtCollectStats {
         map_id,
@@ -793,9 +882,9 @@ pub fn sys_collect_visible_statics(
         source_tiles,
         ground_land_tiles,
         unique_requested_pages: unique_requested_pages.len(),
-        resident_pages: art_atlas.resident_page_count(),
-        pending_pages: art_atlas.pending_page_count(),
-        atlas_capacity_pages: art_atlas.max_layers as usize,
+        resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
+        pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
+        atlas_capacity_pages: sprite_atlas.active_layers as usize + ground_atlas.active_layers as usize,
         atlas_hits,
         atlas_misses,
         emitted_instances: instances.0.len() + land_instances.0.len(),
@@ -866,6 +955,16 @@ mod tests {
 
         approx_eq(bounds.local_min_x, ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS);
         approx_eq(bounds.local_min_y, -(32.0 * EC_WORLD_Y_PER_PIXEL));
+    }
+
+    #[test]
+    fn surface_like_ground_quad_bounds_keep_full_tile_coverage() {
+        let bounds = resolve_surface_like_ground_quad_bounds();
+
+        approx_eq(bounds.local_min_x, 0.0);
+        approx_eq(bounds.local_max_x, 1.0);
+        approx_eq(bounds.local_min_z, 0.0);
+        approx_eq(bounds.local_max_z, 1.0);
     }
 
     #[test]
@@ -1056,13 +1155,64 @@ mod tests {
     }
 
     #[test]
+    fn static_depth_key_places_surface_like_floor_below_background() {
+        let surface_like = static_depth_key(100.0, 200.0, 7.0, StaticDepthClass::SurfaceLikeFloor);
+        let background = static_depth_key(100.0, 200.0, 7.0, StaticDepthClass::Background);
+
+        assert!(surface_like < background);
+    }
+
+    #[test]
+    fn tie_breakers_increase_for_equal_depth_sprite_instances() {
+        let base_instance = SpriteInstance {
+            world_x: 0.0,
+            world_z: 0.0,
+            world_y: 0.0,
+            layer: 0,
+            depth_class: StaticDepthClass::Regular.encoded(),
+            base_world_y: 0.0,
+            uv_min: [0.0, 0.0],
+            uv_max: [0.0, 0.0],
+            local_min: [0.0, 0.0],
+            local_max: [0.0, 0.0],
+            tile_x: 10.0,
+            tile_y: 20.0,
+            priority_z_units: 15.0,
+            sort_bias_ordinal: 0,
+            _pad2: [0, 0],
+            color_rgba: [1.0, 1.0, 1.0, 1.0],
+        };
+        let mut instances = vec![
+            base_instance,
+            SpriteInstance {
+                tile_x: 10.0,
+                tile_y: 20.0,
+                priority_z_units: 15.0,
+                ..base_instance
+            },
+            SpriteInstance {
+                tile_x: 11.0,
+                tile_y: 20.0,
+                priority_z_units: 15.0,
+                ..base_instance
+            },
+        ];
+
+        assign_sprite_depth_tie_breakers(&mut instances);
+
+        assert_eq!(instances[0].sort_bias_ordinal, 0);
+        assert_eq!(instances[1].sort_bias_ordinal, 1);
+        assert_eq!(instances[2].sort_bias_ordinal, 0);
+    }
+
+    #[test]
     fn sprite_instance_stride_stays_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<SpriteInstance>(), 96);
     }
 
     #[test]
     fn ground_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 80);
+        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 96);
     }
 
 }
