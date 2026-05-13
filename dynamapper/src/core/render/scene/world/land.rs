@@ -190,6 +190,8 @@ fn sys_sync_land_upload_budget(
         return;
     }
 
+    log_system_add_one_shot::<DrawLandChunkMeshPlugin>("Update", "None", fname!());
+
     *upload_budget = LandUploadBudget::from_settings(&settings);
 }
 
@@ -209,6 +211,8 @@ fn sys_apply_land_shader_simplification_override(
     if !force_changed && !(any_override && uniform_state.is_changed()) {
         return;
     }
+
+    log_system_add_one_shot::<DrawLandChunkMeshPlugin>("Update", "None", fname!());
 
     let Some(shared_mat) = shared_mat else {
         return;

@@ -19,7 +19,9 @@ impl Plugin for OverlaysPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.add_plugins((
-            PerformanceOverlayPlugin,
+            PerformanceOverlayPlugin {
+                registered_by: "OverlaysPlugin",
+            },
             PlayerPositionOverlayPlugin {
                 registered_by: "OverlaysPlugin",
             },

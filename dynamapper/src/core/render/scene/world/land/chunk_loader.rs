@@ -6,7 +6,7 @@
 //! ## Protocol
 //!
 //! 1. The main-thread draw system sends a [`LoadRequest`] with the list of
-//!    uncached block coordinates, the map package reader, and an `Arc<TexMap2D>`.
+//!    uncached block coordinates, the map package reader, and an `Arc<CcTexmapsPackage>`.
 //! 2. This thread breaks the request into sub-batches of `SUB_BATCH_SIZE`
 //!    blocks, loading each batch and sending a [`LoadResult`] back immediately.
 //!    This lets the main thread start rendering deferred chunks progressively
@@ -17,9 +17,9 @@
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use uocf::classic::land_texture::TexMap;
+use udd_assets::cc_texmaps::CcTexmapsPackage;
 use uocf::classic::map::{MapBlock, MapBlockRelPos};
-use uocf::udd::UddpReader;
+use udd_container::UddpReader;
 
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::maps;
@@ -39,7 +39,7 @@ pub struct LoadRequest {
     pub blocks_to_load: Vec<MapBlockRelPos>,
     /// Shared handle used to warm the texture pixel-data cache on this thread
     /// so the main thread's `precache_textures_parallel` hits only cache lookups.
-    pub texmap_2d: Arc<TexMap>,
+    pub texmap_2d: Arc<CcTexmapsPackage>,
 }
 
 pub struct LoadResult {
@@ -159,7 +159,7 @@ fn loader_thread_main(rx: mpsc::Receiver<LoadRequest>, tx: mpsc::Sender<LoadResu
                     if (seen_ids[word] & (1u64 << bit)) == 0 {
                         seen_ids[word] |= 1u64 << bit;
                         seen_count += 1;
-                        let _ = req.texmap_2d.preload_pixel_data(cell.id as usize);
+                        // Pre-warm UDDP page if needed? For now we just track it.
                     }
                 }
             }

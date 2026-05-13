@@ -15,7 +15,7 @@ use crate::{
     console_logger::{self, LogAbout, LogSev},
     core::{
         app_states::*,
-        bevy_log_filter::custom_bevy_log_config,
+        bevy_log_filter::init_bevy_logging,
         diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin},
         render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
@@ -217,6 +217,8 @@ pub fn run_bevy_app() -> ExitCode {
 
     let vsync_enabled = settings_data.graphics.vsync;
 
+    init_bevy_logging();
+
     let mut app = App::new();
     app.insert_resource(custom_winit_settings(
         settings_data.graphics.reduce_unfocused_fps,
@@ -224,12 +226,11 @@ pub fn run_bevy_app() -> ExitCode {
     .add_plugins(
         DefaultPlugins
             .build()
-            //.disable::<LogPlugin>() // This removes every Bevy logs, instead of just disabling default to avoid double-logging or formatting issues
+            .disable::<bevy::log::LogPlugin>()
             //.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
             //.disable::<bevy::core_pipeline::experimental::mip_generation::MipGenerationPlugin>()
             //.disable::<bevy::core_pipeline::oit::OrderIndependentTransparencyPlugin>()
             //.disable::<bevy::core_pipeline::upscaling::UpscalingPlugin>()
-            .set(custom_bevy_log_config())
             .set(custom_window_plugin_settings(window_size, vsync_enabled))
             .set(custom_threadpool_settings())
             .set(custom_render_plugin_settings())

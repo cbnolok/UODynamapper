@@ -25,6 +25,19 @@ pub struct SceneStateData {
 #[derive(Resource, Default)]
 pub struct LandChunkCount(pub u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VisibleLandChunkTarget {
+    pub map_id: u32,
+    pub gx: u32,
+    pub gy: u32,
+    pub scale: u32,
+}
+
+#[derive(Resource, Default, Clone, Debug, PartialEq, Eq)]
+pub struct VisibleLandChunkTargets {
+    pub targets: Vec<VisibleLandChunkTarget>,
+}
+
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct RecomputeVisibleChunksEvent;
 
@@ -57,6 +70,7 @@ impl Plugin for ScenePlugin {
             map_id: 0xFFFF, // placeholder
         })
         .init_resource::<LandChunkCount>()
+        .init_resource::<VisibleLandChunkTargets>()
         .add_message::<RecomputeVisibleChunksEvent>()
         .configure_sets(
             Update,
@@ -86,6 +100,7 @@ impl Plugin for ScenePlugin {
 }
 
 pub fn sys_setup_scene(mut writer: MessageWriter<RecomputeVisibleChunksEvent>) {
+    log_system_add_startup::<ScenePlugin>(StartupSysSet::SetupSceneStage2, fname!());
     /*
         // Always clear out anything previously spawned!
         for (entity, _) in existing_chunks_q.iter() {
@@ -238,6 +253,8 @@ struct ChunkRenderLocals {
     pending_despawns: Vec<Entity>,
     /// Scale currently guaranteed to cover the screen.
     committed_scale: Option<u32>,
+    /// Required chunk coordinates for the committed scale.
+    committed_required_chunks: Vec<(u32, u32)>,
     /// Target scale being introduced in parallel with the committed scale.
     transition_target_scale: Option<u32>,
     /// Required chunk coordinates for the target scale while a handoff is active.
@@ -322,6 +339,7 @@ fn sys_update_worldmap_chunks_to_render(
     mut runtime_diagnostics: ResMut<crate::core::diagnostics::WorldmapRuntimeDiagnostics>,
     mut system_diagnostics: ResMut<crate::core::diagnostics::WorldmapSystemDiagnostics>,
     mut land_chunk_count: ResMut<LandChunkCount>,
+    mut visible_chunk_targets: ResMut<VisibleLandChunkTargets>,
     mut chunk_scale_res: ResMut<ChunkScale>,
     windows_q: Query<&Window>,
     mut player_q: Query<(&mut Player, &Transform)>,
@@ -461,6 +479,7 @@ fn sys_update_worldmap_chunks_to_render(
             locals.transition_target_scale = None;
             locals.transition_required_chunks.clear();
             locals.committed_scale = Some(desired_scale);
+            locals.committed_required_chunks = required_desired_chunks.clone();
 
             let mut sorted_spawns = required_desired_chunks.clone();
             sort_visible_chunks(&mut sorted_spawns, &required_desired_chunks, current_camera_chunk);
@@ -490,6 +509,7 @@ fn sys_update_worldmap_chunks_to_render(
                 new_map_plane_metadata.height,
                 committed_scale,
             );
+            locals.committed_required_chunks = required_committed_chunks.clone();
 
             if scale_changed {
                 console_logger::one(
@@ -697,10 +717,44 @@ fn sys_update_worldmap_chunks_to_render(
 
             locals.pending_spawns.retain(|spawn| spawn.scale != committed_scale);
             locals.committed_scale = Some(target_scale);
+            locals.committed_required_chunks = locals.transition_required_chunks.clone();
             locals.transition_target_scale = None;
             locals.transition_required_chunks.clear();
         }
     }
+
+    let mut next_visible_targets = Vec::with_capacity(
+        locals.committed_required_chunks.len() + locals.transition_required_chunks.len(),
+    );
+    if let Some(committed_scale) = locals.committed_scale {
+        next_visible_targets.extend(
+            locals
+                .committed_required_chunks
+                .iter()
+                .copied()
+                .map(|(gx, gy)| VisibleLandChunkTarget {
+                    map_id: scene_state_data_res.map_id,
+                    gx,
+                    gy,
+                    scale: committed_scale,
+                }),
+        );
+    }
+    if let Some(target_scale) = locals.transition_target_scale {
+        next_visible_targets.extend(
+            locals
+                .transition_required_chunks
+                .iter()
+                .copied()
+                .map(|(gx, gy)| VisibleLandChunkTarget {
+                    map_id: scene_state_data_res.map_id,
+                    gx,
+                    gy,
+                    scale: target_scale,
+                }),
+        );
+    }
+    visible_chunk_targets.targets = next_visible_targets;
 
     // Drain up to MAX_SPAWNS_PER_FRAME from the front (closest to camera first).
     let new_map_id = scene_state_data_res.map_id;

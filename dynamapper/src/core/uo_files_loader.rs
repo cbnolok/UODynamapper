@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use uddconv::tilemeta::TileMetaPackage;
-use uocf::classic::{land_texture, map::MapSizeCells};
+use udd_assets::tilemeta::TileMetaPackage;
+use uocf::classic::map::MapSizeCells;
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -33,19 +33,19 @@ pub struct TileMetaPackageRes(pub Arc<TileMetaPackage>);
 /// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
 /// and passed to texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
-pub struct TexMap2DRes(pub Arc<land_texture::TexMap>);
+pub struct TexMap2DRes(pub Arc<udd_assets::cc_texmaps::CcTexmapsPackage>);
 
 /// Optional prepacked atlas package for static and land art.
 #[derive(Resource)]
-pub struct CcArtPackageRes(pub Arc<uddconv::cc_art::CcArtPackage>);
+pub struct CcArtPackageRes(pub Arc<udd_assets::cc_art::CcArtPackage>);
 
 /// Optional prepacked atlas package for EC static art.
 #[derive(Resource)]
-pub struct EcArtPackageRes(pub Arc<uddconv::ec_art::EcArtPackage>);
+pub struct EcArtPackageRes(pub Arc<udd_assets::ec_art::EcArtPackage>);
 
 /// Optional prepacked atlas package for EC land art.
 #[derive(Resource)]
-pub struct EcLandPackageRes(pub Arc<uddconv::ec_land::EcLandPackage>);
+pub struct EcLandPackageRes(pub Arc<udd_assets::ec_land::EcLandPackage>);
 
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
@@ -54,11 +54,10 @@ pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
 /// Enhanced terrain definitions.
 #[derive(Resource)]
 pub struct TerrainDefinitionRes(
-    pub Arc<HashMap<u32, uddconv::cc_ec_land_transcode::TerrainDefEntry>>,
+    pub Arc<HashMap<u32, udd_assets::cc_ec_land_transcode::TerrainDefEntry>>,
 );
 
 pub struct UoFilesSettings {
-    pub base_folder: PathBuf,
     pub udd_folder: PathBuf,
 }
 
@@ -98,7 +97,6 @@ fn log_source_choice(
 
 fn resolve_optional_uddp_path(
     uddp_root: &Path,
-    raw_root: &Path,
     file_name: &str,
 ) -> Option<PathBuf> {
     let preferred = uddp_root.join(file_name);
@@ -106,24 +104,16 @@ fn resolve_optional_uddp_path(
         return Some(preferred);
     }
 
-    if uddp_root != raw_root {
-        let fallback = raw_root.join(file_name);
-        if fallback.is_file() {
-            return Some(fallback);
-        }
-    }
-
     None
 }
 
 fn resolve_optional_uddp_paths(
     uddp_root: &Path,
-    raw_root: &Path,
     file_names: &[&str],
 ) -> Option<PathBuf> {
     file_names
         .iter()
-        .find_map(|file_name| resolve_optional_uddp_path(uddp_root, raw_root, file_name))
+        .find_map(|file_name| resolve_optional_uddp_path(uddp_root, file_name))
 }
 
 pub struct UOFilesPlugin {
@@ -140,7 +130,7 @@ impl Plugin for UOFilesPlugin {
     }
 }
 
-fn log_ec_land_coverage(lg: &impl Fn(&str), package: &uddconv::ec_land::EcLandPackage) {
+fn log_ec_land_coverage(lg: &impl Fn(&str), package: &udd_assets::ec_land::EcLandPackage) {
     let populated_slot_count = package
         .slots()
         .iter()
@@ -164,19 +154,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             text,
         )
     };
-    let uo_path: PathBuf = settings.uo_files.folder.clone().into();
-    let udd_path: PathBuf = settings
-        .uo_files
-        .udd_path
-        .clone()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| uo_path.clone());
+    let udd_path = PathBuf::from(&settings.uo_files.udd_path);
     let lossy = settings.graphics.lossy_texture_compression;
 
     lg("Start loading UO Data.");
     lg(&format!(
-        "Resolved source roots. Raw client root: '{}'. UDDP root: '{}'.",
-        uo_path.display(),
+        "Resolved source root. UDDP root: '{}'.",
         udd_path.display()
     ));
 
@@ -193,7 +176,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         }
 
         let map_file_name = format!("map{map_plane_index}.uddp");
-        let map_path = resolve_optional_uddp_path(&udd_path, &uo_path, &map_file_name);
+        let map_path = resolve_optional_uddp_path(&udd_path, &map_file_name);
         if let Some(map_path) = map_path {
             log_source_choice(
                 &lg,
@@ -213,7 +196,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
 
             let statics_file_name = format!("statics{map_plane_index}.uddp");
-            let statics_path = resolve_optional_uddp_path(&udd_path, &uo_path, &statics_file_name);
+            let statics_path = resolve_optional_uddp_path(&udd_path, &statics_file_name);
             if let Some(statics_path) = statics_path {
                 log_source_choice(
                     &lg,
@@ -232,20 +215,20 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 statics_stores[map_plane_index as usize] = Some(Mutex::new(store));
             } else {
                 lg(&format!(
-                    "No statics source selected for plane {map_plane_index}: {statics_file_name} not found in udd_path or raw client folder."
+                    "No statics source selected for plane {map_plane_index}: {statics_file_name} not found in udd_path."
                 ));
             }
 
             map_planes[map_plane_index as usize] = Some(map_plane);
         } else {
             lg(&format!(
-                "No map source selected for plane {map_plane_index}: {map_file_name} not found in udd_path or raw client folder."
+                "No map source selected for plane {map_plane_index}: {map_file_name} not found in udd_path."
             ));
         }
     }
 
-    let tilemeta_path = resolve_optional_uddp_paths(&udd_path, &uo_path, &["tilemeta.uddp"])
-        .unwrap_or_else(|| panic!("tilemeta.uddp is required in udd_path or raw client folder"));
+    let tilemeta_path = resolve_optional_uddp_paths(&udd_path, &["tilemeta.uddp"])
+        .unwrap_or_else(|| panic!("tilemeta.uddp is required in udd_path"));
     log_source_choice(
         &lg,
         "tile metadata",
@@ -257,17 +240,18 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             .unwrap_or_else(|_| panic!("Error loading {}", tilemeta_path.display())),
     );
 
-    let texmaps_path = uo_path.join("texmaps.mul");
-    let texidx_path = uo_path.join("texidx.mul");
+    let texmaps_package_path = resolve_optional_uddp_path(&udd_path, "cc_texmaps.uddp")
+        .unwrap_or_else(|| panic!("cc_texmaps.uddp is required in udd_path"));
     log_source_choice(
         &lg,
-        "terrain texmaps",
-        SourceContainerKind::Mul,
-        &[texmaps_path.clone(), texidx_path.clone()],
+        "terrain texmaps package",
+        SourceContainerKind::Uddp,
+        std::slice::from_ref(&texmaps_package_path),
     );
-    let texmap_2d = land_texture::TexMap::load(texmaps_path, texidx_path).expect("Load texmap");
+    let texmap_2d = udd_assets::cc_texmaps::CcTexmapsPackage::load(&texmaps_package_path)
+        .unwrap_or_else(|_| panic!("Error loading {}", texmaps_package_path.display()));
 
-    let cc_art_path = resolve_optional_uddp_path(&udd_path, &uo_path, "cc_art.uddp");
+    let cc_art_path = resolve_optional_uddp_path(&udd_path, "cc_art.uddp");
     let cc_art_package = if let Some(cc_art_path) = cc_art_path {
         log_source_choice(
             &lg,
@@ -276,15 +260,15 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             std::slice::from_ref(&cc_art_path),
         );
         Some(
-            uddconv::cc_art::CcArtPackage::load(&cc_art_path)
+            udd_assets::cc_art::CcArtPackage::load(&cc_art_path)
                 .unwrap_or_else(|_| panic!("Error loading {}", cc_art_path.display())),
         )
     } else {
-        lg("No classic art package source selected: cc_art.uddp not found in udd_path or raw client folder.");
+        lg("No classic art package source selected: cc_art.uddp not found in udd_path.");
         None
     };
 
-    let ec_art_path = resolve_optional_uddp_path(&udd_path, &uo_path, "ec_art.uddp");
+    let ec_art_path = resolve_optional_uddp_path(&udd_path, "ec_art.uddp");
     let ec_art_package = if let Some(ec_art_path) = ec_art_path {
         log_source_choice(
             &lg,
@@ -293,15 +277,15 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             std::slice::from_ref(&ec_art_path),
         );
         Some(
-            uddconv::ec_art::EcArtPackage::load(&ec_art_path)
+            udd_assets::ec_art::EcArtPackage::load(&ec_art_path)
                 .unwrap_or_else(|_| panic!("Error loading {}", ec_art_path.display())),
         )
     } else {
-        lg("No enhanced art package source selected: ec_art.uddp not found in udd_path or raw client folder.");
+        lg("No enhanced art package source selected: ec_art.uddp not found in udd_path.");
         None
     };
 
-    let ec_land_path = resolve_optional_uddp_path(&udd_path, &uo_path, "ec_land.uddp");
+    let ec_land_path = resolve_optional_uddp_path(&udd_path, "ec_land.uddp");
     let mut ec_land_package = if let Some(ec_land_path) = ec_land_path {
         log_source_choice(
             &lg,
@@ -309,12 +293,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             SourceContainerKind::Uddp,
             std::slice::from_ref(&ec_land_path),
         );
-        let package = uddconv::ec_land::EcLandPackage::load(&ec_land_path)
+        let package = udd_assets::ec_land::EcLandPackage::load(&ec_land_path)
             .unwrap_or_else(|_| panic!("Error loading {}", ec_land_path.display()));
         log_ec_land_coverage(&lg, &package);
         Some(package)
     } else {
-        lg("No enhanced land package source selected: ec_land.uddp not found in udd_path or raw client folder.");
+        lg("No enhanced land package source selected: ec_land.uddp not found in udd_path.");
         None
     };
 
@@ -329,7 +313,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             "Loading TerrainTranscode.kdl from: {}",
             transcode_path.display()
         ));
-        match uddconv::cc_ec_land_transcode::TerrainTranscode::load(&transcode_path) {
+        match udd_assets::cc_ec_land_transcode::TerrainTranscode::load(&transcode_path) {
             Ok(transcode) => {
                 lg("Loaded TerrainTranscode.kdl (loose file)");
                 let transcode_map = transcode.to_map();
@@ -355,7 +339,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     let definition_path = asset_root.join("cc_ec_convtables/TerrainDefinition.kdl");
     if definition_path.exists() {
-        match uddconv::cc_ec_land_transcode::TerrainDefinitionKdl::load(&definition_path) {
+        match udd_assets::cc_ec_land_transcode::TerrainDefinitionKdl::load(&definition_path) {
             Ok(definition) => {
                 lg("Loaded TerrainDefinition.kdl");
                 commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
@@ -372,7 +356,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
 
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
-        base_folder: uo_path,
         udd_folder: udd_path,
     })));
     commands.insert_resource(MapPlanesRes(map_planes));

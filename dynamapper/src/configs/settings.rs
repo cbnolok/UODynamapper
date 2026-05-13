@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::camera::RenderZoom;
+use crate::core::render::scene::player::Player;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::set_plugin_log_toggles;
 use crate::util_lib::uo_coords::*;
@@ -12,7 +13,7 @@ use bevy::{
     window::WindowResolution,
 };
 use serde::{Deserialize, Serialize};
-use uddconv::bc7::{is_bc7_encoder_backend_available, Bc7EncoderBackend};
+use udd_conv::bc7::{is_bc7_encoder_backend_available, Bc7EncoderBackend};
 
 #[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
@@ -50,10 +51,7 @@ pub struct SectApp {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectUoFiles {
-    pub folder: String,
-    #[serde(default)]
-    pub udd_path: Option<String>,
-    pub texmaps_preload_full_file: bool,
+    pub udd_path: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -263,8 +261,6 @@ pub struct SectGraphics {
     pub art_texture_source: ClientTextureSource,
     #[serde(default = "default_client_texture_source")]
     pub land_texture_source: ClientTextureSource,
-    pub texture_filtering: u32,      // 0: Point, 1: Linear
-    pub texture_reconstruction: u32, // 0: None, 1: Bicubic, 2: FSR
     pub sharpening_strength: f32,    // 0.0 to 1.0
 }
 
@@ -300,7 +296,7 @@ impl ClientTextureSource {
 
     pub const fn land_label(self) -> &'static str {
         match self {
-            Self::Cc => "Classic (texmaps.mul)",
+            Self::Cc => "Classic (cc_texmaps.uddp)",
             Self::Ec => "Enhanced (ec_land.uddp)",
         }
     }
@@ -773,6 +769,58 @@ pub fn save_worldmap_rendering_settings(settings: &Settings) {
     }
 }
 
+pub fn save_uo_files_settings(settings: &Settings) {
+    let assets_path = crate::core::constants::valid_asset_dir();
+    let path = assets_path.join(UO_FILES_CONFIG_FILE);
+
+    match toml::to_string_pretty(&settings.uo_files) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&path, toml_str) {
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save uo_files.toml: {}", e),
+                );
+            } else {
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved uo_files.toml");
+            }
+        }
+        Err(e) => {
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize uo_files settings: {}", e),
+            );
+        }
+    }
+}
+
+pub fn save_maps_settings(settings: &Settings) {
+    let assets_path = crate::core::constants::valid_asset_dir();
+    let path = assets_path.join(MAPS_CONFIG_FILE);
+
+    match toml::to_string_pretty(&settings.maps) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&path, toml_str) {
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save maps.toml: {}", e),
+                );
+            } else {
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved maps.toml");
+            }
+        }
+        Err(e) => {
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize maps settings: {}", e),
+            );
+        }
+    }
+}
+
 // ----
 
 pub struct SettingsPlugin {
@@ -801,16 +849,46 @@ impl Plugin for SettingsPlugin {
                     sys_evlisten_switch_wireframe,
                     sys_debounced_save,
                     sys_hotreload_settings,
-                    sys_sync_app_settings_to_resources,
+                    sys_sync_resources_to_settings,
                 ),
             );
     }
 }
 
 /// Syncs runtime resources back to Settings so they can be persisted by sys_debounced_save.
-fn sys_sync_app_settings_to_resources(zoom: Res<RenderZoom>, mut settings: ResMut<Settings>) {
+fn sys_sync_resources_to_settings(
+    zoom: Res<RenderZoom>,
+    mut settings: ResMut<Settings>,
+    windows: Query<&Window>,
+    player_q: Query<&Player>,
+) {
+    // Zoom
     if (settings.app.window.zoom - zoom.0).abs() > 0.001 {
+        console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing zoom: {} -> {}", settings.app.window.zoom, zoom.0));
         settings.app.window.zoom = zoom.0;
+    }
+
+    // Window size
+    if let Some(window) = windows.iter().next() {
+        let res = &window.resolution;
+        if (settings.app.window.width - res.width()).abs() > 1.0 {
+            console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing width: {} -> {}", settings.app.window.width, res.width()));
+            settings.app.window.width = res.width();
+        }
+        if (settings.app.window.height - res.height()).abs() > 1.0 {
+            console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing height: {} -> {}", settings.app.window.height, res.height()));
+            settings.app.window.height = res.height();
+        }
+    }
+
+    // Player position
+    if let Some(player) = player_q.iter().next() {
+        if let Some(pos) = player.current_pos {
+            if settings.core.world.start_p != pos {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "Syncing player position");
+                settings.core.world.start_p = pos;
+            }
+        }
     }
 }
 
@@ -1052,20 +1130,13 @@ fn sys_settings_reloaded(
 fn sys_evlisten_switch_wireframe(
     mut events: MessageReader<ToggleWireframe>,
     mut config: ResMut<WireframeConfig>,
-    //mut commands: Commands,
-    //query: Query<Entity, With<Wireframe>>,
+    mut settings: ResMut<Settings>,
 ) {
     log_system_add_update::<SettingsPlugin>(fname!());
     for _ in events.read() {
         // This disables global wireframe for all meshes immediately
         config.global = !config.global;
-
-        /*
-        // Optionally, remove the Wireframe component from all entities
-        for entity in query.iter() {
-            commands.entity(entity).remove::<Wireframe>();
-        }
-        */
+        settings.app.debug.map_render_wireframe = config.global;
     }
 }
 
@@ -1120,6 +1191,19 @@ fn sys_debounced_save(
         .as_ref()
         .map_or(true, |last| last != &settings.worldmap_rendering);
 
+    if app_changed {
+        console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
+    }
+    if graphics_changed {
+        console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
+    }
+    if kb_changed {
+        console_logger::one(LogSev::Debug, LogAbout::Settings, "Keybindings changed");
+    }
+    if core_changed {
+        console_logger::one(LogSev::Debug, LogAbout::Settings, "Core settings changed");
+    }
+
     if app_changed
         || graphics_changed
         || kb_changed
@@ -1162,13 +1246,12 @@ fn sys_debounced_save(
             }
 
             if uo_files_changed {
-                // save_uo_files_settings is missing, but uo_files are generally read-only in UI.
-                // If we had a saver, we'd call it here. For now just update the local to stop the timer.
+                save_uo_files_settings(&settings);
                 *last_saved_uo_files = Some(settings.uo_files.clone());
             }
 
             if maps_changed {
-                // save_maps_settings is missing.
+                save_maps_settings(&settings);
                 *last_saved_maps = Some(settings.maps.clone());
             }
 

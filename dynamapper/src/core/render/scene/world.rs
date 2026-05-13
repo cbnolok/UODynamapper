@@ -43,6 +43,7 @@ fn sys_populate_world_geo_data(
     map_planes_res: Option<Res<MapPlanesRes>>,
     mut world_geo_data_res: ResMut<WorldGeoData>,
 ) {
+    log_system_add_startup::<WorldPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let Some(map_planes_res) = map_planes_res else {
         return;
     };

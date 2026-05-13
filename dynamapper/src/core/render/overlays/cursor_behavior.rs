@@ -797,7 +797,7 @@ fn resolve_hovered_static_geometry(
     cc_art_res: Option<&CcArtPackageRes>,
     ec_art_res: Option<&EcArtPackageRes>,
     ec_land_res: Option<&EcLandPackageRes>,
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     graphic: u16,
     world_x: f32,
     world_y: f32,
@@ -956,8 +956,8 @@ fn screen_polygon_contains(
 }
 
 fn resolve_overlay_ec_land_runtime_slot(
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
-    ec_land: Option<&uddconv::ec_land::EcLandPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
@@ -981,14 +981,14 @@ fn resolve_overlay_ec_land_runtime_slot(
         .filter(|record| record.selected_texture_id == meta.ec_texture_id)
     {
         if record.canonical_slot_id != 0
-            && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+            && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
             unique_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
-            && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+            && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
             unique_slots.insert(record.alias_slot_id);

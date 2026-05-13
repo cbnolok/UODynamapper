@@ -1,0 +1,15 @@
+[package]
+name = "udd-assets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+udd-container = { path = "../udd-container" }
+uocf = { path = "../uocf" }
+bytemuck = { version = "1.21", features = ["derive"] }
+color-eyre = "0.6"
+log = "0.4"
+byteorder = "1.5"
+knuffel = "3"
+wgpu-types = "27"
+dds = "0.2"

@@ -24,11 +24,11 @@ pub fn image_from_uddp_page(
     width: u32,
     height: u32,
     data: Vec<u8>,
-    format: uddconv::cc_art::PagePixelFormat,
+    format: udd_assets::cc_art::PagePixelFormat,
 ) -> Image {
     let texture_format = match format {
-        uddconv::cc_art::PagePixelFormat::Rgba8888 => TextureFormat::Rgba8UnormSrgb,
-        uddconv::cc_art::PagePixelFormat::Bc7 => TextureFormat::Bc7RgbaUnormSrgb,
+        udd_assets::cc_art::PagePixelFormat::Rgba8888 => TextureFormat::Rgba8UnormSrgb,
+        udd_assets::cc_art::PagePixelFormat::Bc7 => TextureFormat::Bc7RgbaUnormSrgb,
     };
 
     let mut img = Image::new(

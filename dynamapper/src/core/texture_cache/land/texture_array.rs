@@ -15,8 +15,8 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
-use uddconv::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
-use uocf::classic::land_texture::{LandTextureSize, TexMap};
+use udd_conv::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
+use uocf::classic::land_texture::LandTextureSize;
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
 
@@ -106,16 +106,14 @@ impl TerrainTextureCompression {
 }
 
 pub fn build_texture_residency_plan(
-    texmap_2d_res: &TexMap,
+    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
 ) -> TextureResidencyPlan<LandTextureSize> {
     let mut plan = TextureResidencyPlan::new();
 
     for texture_id in 0..texmap_2d_res.len() {
-        let Some(element) = texmap_2d_res.element(texture_id) else {
-            continue;
-        };
-
-        plan.push(*element.size(), texture_id as u16);
+        if let Some(size) = texmap_2d_res.get_texture_size(texture_id as u32) {
+            plan.push(size, texture_id as u16);
+        }
     }
 
     plan
@@ -230,22 +228,24 @@ pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 
 /// Try to get actual texture for provided texture_id.
 /// If invalid, return UNUSED texture.
-pub fn get_texmap_size_only(texture_id: u16, texmap_2d_res: &TexMap) -> LandTextureSize {
-    if let Some(element) = texmap_2d_res.element(texture_id as usize) {
-        return *element.size();
+pub fn get_texmap_size_only(
+    texture_id: u16,
+    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
+) -> LandTextureSize {
+    if let Some(size) = texmap_2d_res.get_texture_size(texture_id as u32) {
+        return size;
     }
 
-    let err_size = *texmap_2d_res
-        .element(DEFAULT_ERROR_TEXTURE_ID as usize)
-        .unwrap()
-        .size();
+    let err_size = texmap_2d_res
+        .get_texture_size(DEFAULT_ERROR_TEXTURE_ID as u32)
+        .unwrap();
     err_size
 }
 
 pub fn get_texmap_raw_data(
     texture_id: u16,
-    texmap_2d_res: &TexMap,
-    now: std::time::Instant,
+    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
+    _now: std::time::Instant,
 ) -> (LandTextureSize, std::sync::Arc<[u8]>) {
     fn local_log_warn(msg: &str) {
         console_logger::one(LogSev::Warn, LogAbout::RenderWorldLand, msg);
@@ -253,9 +253,9 @@ pub fn get_texmap_raw_data(
 
     let tex_size_and_rgba = {
         texmap_2d_res
-            .get_pixel_data(texture_id as usize, now)
+            .get_pixel_data_arc(texture_id as u32)
             .map(|data| {
-                let size = *texmap_2d_res.element(texture_id as usize).unwrap().size();
+                let size = texmap_2d_res.get_texture_size(texture_id as u32).unwrap();
                 (size, data)
             })
     };
@@ -273,11 +273,10 @@ pub fn get_texmap_raw_data(
 
     // Fallback error texture
     let err_data = texmap_2d_res
-        .get_pixel_data(DEFAULT_ERROR_TEXTURE_ID as usize, now)
+        .get_pixel_data_arc(DEFAULT_ERROR_TEXTURE_ID as u32)
         .expect("No UNUSED land texture?");
-    let err_size = *texmap_2d_res
-        .element(DEFAULT_ERROR_TEXTURE_ID as usize)
-        .unwrap()
-        .size();
+    let err_size = texmap_2d_res
+        .get_texture_size(DEFAULT_ERROR_TEXTURE_ID as u32)
+        .unwrap();
     (err_size, err_data)
 }

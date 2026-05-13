@@ -13,9 +13,10 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # Flamegraph build: release optimizations with debug symbols and frame pointers.
 # - No LTO & No Strip: essential for stack walking
 # - force-frame-pointers: essential for profilers
-RUSTFLAGS=" \
+export RUSTFLAGS=" \
 -C force-frame-pointers=yes \
-${RUSTFLAGS:-}" \
+${RUSTFLAGS:-}"
+
 cargo flamegraph --profile profiling --no-default-features --features profiling \
     --bin dynamapper --package dynamapper \
     "$@"

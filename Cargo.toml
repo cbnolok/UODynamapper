@@ -2,23 +2,25 @@
 resolver = "2"
 members = [
     "dynamapper",
-    "uocf",
-    "uddconv",
-    "uddconv_ktx2",
-    "tools/uddconv_cli",
-    "tools/uocf_cli",
-    "tools/uddconv_gui",
-    "tools/uddp_inspector",
-    "tools/uop_inspector",
-    "tools/uop_populator_gui"
-]
+    "lib/uocf",
+    "lib/udd-conv",
+    "lib/udd-conv-ktx2",
+    "lib/udd-container",
+    "lib/udd-assets",
+    "tools/udd-conv-cli",
+    "tools/uocf-cli",
+    "tools/udd-conv-gui",
+    "tools/uddp-inspector-gui",
+    "tools/uop-inspector-gui",
+    "tools/uop-dict-populator-gui"
+, "scratch_jxl"]
 
 
 # --------- Release
 
 [profile.release]
 opt-level = 3
-#opt-level = 2       # Optimize for speed with reasonable size increase (opt-level = 3 gives fastest possible code "z" smallest possible code)
+#opt-level = 2      # Optimize for speed with reasonable size increase (opt-level = 3 gives fastest possible code "z" smallest possible code)
 codegen-units = 1   # Great impact on binary size (when combined with lto), and often improves performance as well
 lto = "thin"        # Enable Link-Time Optimization (binary reduction size, often increases performance)
 #lto = "fat"        # Slightly better than thin lto but at least twice slower (saves 1 mb more)
@@ -28,10 +30,10 @@ panic = "abort"     # Abort on panic instead of unwinding (saves executable size
 #overflow-checks = false
 incremental = false
 debug = false
-strip = true        # Strip debug symbols
+strip = true        # Strip debug info and symbols
 
-[profile.release.package.uocf]
-opt-level = 3
+#[profile.release.package.uocf]
+#opt-level = 3
 
 # Target the "loggers" and infrastructure: no reasonable difference, < 1 mb.
 #[profile.release.package.tracing]
@@ -53,16 +55,32 @@ opt-level = 3
 [profile.profiling]
 inherits = "release"
 debug = true
+debug-assertions = false
 lto = false
-strip = false
+strip = "debuginfo" # leaves symbols
 panic = "abort"
 #overflow-checks = false
 
+# for those we don't tipically need debug info for profiling
+#[profile.profiling.package.uocf]
+#debug = false
+#strip = true
+#[profile.profiling.package.udd-conv]
+#[profile.profiling.package.udd-conv-cli]
+#[profile.profiling.package.udd-conv-gui]
+#[profile.profiling.package.uddp-inspector-gui]
+#[profile.profiling.package.udd-conv-ktx2]
+#[profile.profiling.package.uocf-cli]
+#[profile.profiling.package.uop-inspector-gui]
+#[profile.profiling.package.uop-dict-populator-gui]
+
+
+
 # --------- Debug
 
-# NOTE: In a Cargo workspace, [profile.dev.package."*"] overrides the top-level [profile.dev] 
-# for ALL packages (including workspace members). 
-# To have different settings for your own code (like keeping debug info), 
+# NOTE: In a Cargo workspace, [profile.dev.package."*"] overrides the top-level [profile.dev]
+# for ALL packages (including workspace members).
+# To have different settings for your own code (like keeping debug info),
 # you must explicitly override them again in their own [profile.dev.package.NAME] sections.
 
 [profile.dev]
@@ -104,48 +122,50 @@ debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uddconv]
+[profile.dev.package.udd-conv]
 opt-level = 3
 codegen-units = 1
 debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uddconv_cli]
+[profile.dev.package.udd-conv-cli]
 opt-level = 1
 debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uddconv_gui]
+[profile.dev.package.udd-conv-gui]
 opt-level = 1
 debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uddp_inspector]
+[profile.dev.package.uddp-inspector-gui]
 opt-level = 1
 debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uddconv_ktx2]
+[profile.dev.package.udd-conv-ktx2]
 opt-level = 3
 codegen-units = 1
 debug = true
 strip = false
 
-[profile.dev.package.uocf_cli]
+[profile.dev.package.uocf-cli]
 opt-level = 1
 debug = true
 debug-assertions = true
 strip = false
-[profile.dev.package.uop_inspector]
+
+[profile.dev.package.uop-inspector-gui]
 opt-level = 1
 debug = true
 debug-assertions = true
 strip = false
-[profile.dev.package.uop_populator_gui]
+
+[profile.dev.package.uop-dict-populator-gui]
 opt-level = 1
 debug = true
 debug-assertions = true

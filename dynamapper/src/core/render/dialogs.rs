@@ -12,6 +12,7 @@ use keybindings_help::KeybindingsHelpPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
 use terrain_shader::TerrainUiPlugin;
+use crate::prelude::*;
 
 pub struct DialogsPlugin {
     pub registered_by: &'static str,
@@ -59,6 +60,7 @@ fn sys_sync_egui_context_scale_factor(
     };
 
     if (egui_ctx_settings.scale_factor - target_scale).abs() > 0.001 {
+        log_system_add_one_shot::<DialogsPlugin>("Update", "None", fname!());
         egui_ctx_settings.scale_factor = target_scale;
     }
 }

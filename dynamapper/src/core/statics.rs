@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::Arc;
 use uocf::classic::statics::{PackedStaticTile, StaticTile};
-use uocf::udd::UddpReader;
+use udd_container::UddpReader;
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: u8 = 32;

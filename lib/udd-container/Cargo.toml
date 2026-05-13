@@ -1,0 +1,14 @@
+[package]
+name = "udd-container"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+zstd = "0.13"
+jpegxl-rs = { version = "0.10", features = ["vendored"] }
+byteorder = "1.5"
+thiserror = "2.0"
+log = "0.4"
+rayon = "1.10"
+memmap2 = "0.9"

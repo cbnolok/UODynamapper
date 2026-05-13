@@ -19,8 +19,7 @@ $Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Pat
 # - force-frame-pointers: essential for profilers
 $Env:RUSTFLAGS = "-C force-frame-pointers=yes $Env:RUSTFLAGS"
 
-cargo build --profile profiling --locked --no-default-features --features profiling `
-    --bin dynamapper --package dynamapper `
+cargo build --profile profiling --locked --workspace --no-default-features --features profiling `
     $args
 
 if ($LASTEXITCODE -ne 0) {

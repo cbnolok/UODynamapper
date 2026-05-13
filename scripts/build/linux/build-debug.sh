@@ -20,6 +20,6 @@ else
     echo "Warning: wild linker not found, falling back to default."
 fi
 
-cargo build --bin dynamapper --package dynamapper "$@"
+cargo build --workspace "$@"
 
 echo "Build complete."

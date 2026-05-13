@@ -8,17 +8,13 @@ For EC-specific content, remember that the UOP source set is mixed and semantic:
 - `Texture.uop` and `LegacyTexture.uop` are shared texture pools.
 - `tileart.uop` carries static-art ownership, per-entry clip windows, shader/type hints, and EC item/static metadata.
 - `TerrainDefinition.uop` carries land/material ownership, aliases, selected textures, and runtime slot relationships.
-- `string_dictionary.uop` and `string_Wdictionary.uop` are string resource packages and are not visual art sources.
-
-That means `ec_art.uddp`, `ec_land.uddp`, and the planned `ec_textures_layers.uddp` are semantic outputs, not simple id-range slices of the same raw pool.
+- `string_dictionary.uop` is a string resource package and are not visual art sources.
 
 ---
 
 ## 1. `tilemeta.uddp`
 
 This package merges Classic Client (CC) physical tile properties and Enhanced Client (EC) rendering definitions into a zero-copy, tightly packed binary.
-
-`tilemeta.uddp` is the preferred package name.
 
 The current wire format stores CC and EC texture-window fields side by side, but CC and EC behavior flags are still collapsed into one unified bitmask. Future work may split those fields so classic behavior and EC behavior can be preserved independently.
 The long-term schema direction is to keep CC and EC ownership/behavior separate in the wire format instead of relying on runtime inference.

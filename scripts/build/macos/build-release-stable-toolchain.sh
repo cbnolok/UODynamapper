@@ -22,15 +22,14 @@ export RUSTFLAGS=" \
 ${RUSTFLAGS:-}"
 
 build_args=(
-    build --release --locked --no-default-features
-    --bin dynamapper --package dynamapper
+    build --release --locked --workspace --no-default-features
 )
 
 if [[ -n "${CARGO_FEATURES:-}" ]]; then
     build_args+=(--features "$CARGO_FEATURES")
 fi
 
-build_args+=("$@")
-cargo "${build_args[@]}"
+echo "Building workspace..."
+cargo "${build_args[@]}" "$@"
 
 echo "Build complete."

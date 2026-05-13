@@ -34,10 +34,6 @@ pub struct PreferencesDialogState {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: ClientTextureSource,
-    /// Texture filtering (0: Point, 1: Linear).
-    pub texture_filtering: u32,
-    /// Texture reconstruction (0: None, 1: Bicubic, 2: FSR).
-    pub texture_reconstruction: u32,
     pub perspective_camera: bool,
     pub enable_statics: bool,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -70,8 +66,6 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
             land_texture_source: ClientTextureSource::default(),
-            texture_filtering: 0,
-            texture_reconstruction: 0,
             perspective_camera: false,
             enable_statics: true,
             apply_timer: {
@@ -133,8 +127,6 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
-        state.texture_filtering = settings.graphics.texture_filtering;
-        state.texture_reconstruction = settings.graphics.texture_reconstruction;
         state.perspective_camera = settings.app.window.perspective_camera;
         state.enable_statics = settings.worldmap_rendering.enable_statics;
 
@@ -148,6 +140,7 @@ fn sys_preferences_toggle(
     _trigger: On<ActionTogglePreferences>,
     mut state: ResMut<PreferencesDialogState>,
 ) {
+    log_system_add_one_shot::<PreferencesDialogPlugin>("Observer", "ActionTogglePreferences", fname!());
     state.open = !state.open;
 }
 
@@ -155,6 +148,7 @@ fn sys_preferences_close(
     _trigger: On<ActionCloseActiveDialog>,
     mut state: ResMut<PreferencesDialogState>,
 ) {
+    log_system_add_one_shot::<PreferencesDialogPlugin>("Observer", "ActionCloseActiveDialog", fname!());
     state.open = false;
 }
 
@@ -281,13 +275,15 @@ pub fn sys_render_preferences_dialog(
                     ui.separator();
 
                     // ---- Frame limiter toggle ----
-                    let prev_enabled = state.frame_limit_enabled;
-                    ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter");
+                    if ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter").changed() {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
 
                     // ---- FPS combobox ----
                     ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
                         let current_fps = FPS_PRESETS[state.fps_preset_idx];
-                        egui::ComboBox::from_label("Target FPS")
+                        let res = egui::ComboBox::from_label("Target FPS")
                             .selected_text(format!("{} fps", current_fps))
                             .show_ui(ui, |ui| {
                                 for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
@@ -295,9 +291,13 @@ pub fn sys_render_preferences_dialog(
                                     ui.selectable_value(&mut state.fps_preset_idx, idx, label);
                                 }
                             });
+                        if res.response.changed() {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
                     });
 
-                    // Apply frame limiter changes
+                    // Apply frame limiter changes immediately to framepace resource
                     let fps_changed = state.fps_preset_idx != {
                         match framepace.limiter {
                             Limiter::Manual(d) => {
@@ -311,7 +311,12 @@ pub fn sys_render_preferences_dialog(
                         }
                     };
 
-                    if prev_enabled != state.frame_limit_enabled || fps_changed {
+                    let limiter_enabled = match framepace.limiter {
+                        Limiter::Off => false,
+                        _ => true,
+                    };
+
+                    if state.frame_limit_enabled != limiter_enabled || fps_changed {
                         framepace.limiter = if state.frame_limit_enabled {
                             Limiter::from_framerate(FPS_PRESETS[state.fps_preset_idx] as f64)
                         } else {
@@ -385,35 +390,6 @@ pub fn sys_render_preferences_dialog(
                     ui.heading("Texture");
                     ui.separator();
 
-                    // ---- Texture Filtering ----
-                    let filter_labels = ["Point (Nearest)", "Linear (Bilinear)"];
-                    let mut filter_idx = state.texture_filtering as usize;
-                    egui::ComboBox::from_label("Filtering")
-                        .selected_text(*filter_labels.get(filter_idx).unwrap_or(&"Unknown"))
-                        .show_ui(ui, |ui| {
-                            for (idx, label) in filter_labels.iter().enumerate() {
-                                ui.selectable_value(&mut filter_idx, idx, *label);
-                            }
-                        });
-                    if filter_idx as u32 != state.texture_filtering {
-                        state.texture_filtering = filter_idx as u32;
-                        settings.graphics.texture_filtering = state.texture_filtering;
-                    }
-
-                    // ---- Texture Reconstruction ----
-                    let recon_labels = ["None", "Bicubic", "FSR"];
-                    let mut recon_idx = state.texture_reconstruction as usize;
-                    egui::ComboBox::from_label("Reconstruction")
-                        .selected_text(*recon_labels.get(recon_idx).unwrap_or(&"Unknown"))
-                        .show_ui(ui, |ui| {
-                            for (idx, label) in recon_labels.iter().enumerate() {
-                                ui.selectable_value(&mut recon_idx, idx, *label);
-                            }
-                        });
-                    if recon_idx as u32 != state.texture_reconstruction {
-                        state.texture_reconstruction = recon_idx as u32;
-                        settings.graphics.texture_reconstruction = state.texture_reconstruction;
-                    }
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -580,6 +556,7 @@ pub fn sys_apply_performance_settings(
     mut framepace: ResMut<FramepaceSettings>,
 ) {
     if settings.is_changed() {
+        log_system_add_one_shot::<PreferencesDialogPlugin>("Update", "None", fname!());
         let target_fps = settings.app.performance.target_fps;
         let enabled = settings.app.performance.frame_limit_enabled;
 

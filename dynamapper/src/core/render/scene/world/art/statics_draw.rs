@@ -18,8 +18,11 @@ use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::render::storage::ShaderStorageBuffer;
 use std::collections::HashMap;
-use uddconv::bc7::{ImageExtent, VramTextureFormat};
-use uddconv::cc_art::PagePixelFormat;
+use udd_conv::bc7::{ImageExtent, VramTextureFormat};
+use crate::core::system_sets::StartupSysSet;
+use crate::prelude::*;
+use super::DrawStaticSpritesPlugin;
+use udd_assets::cc_art::PagePixelFormat;
 
 #[derive(ShaderType, Clone)]
 pub struct SpriteParams {
@@ -526,6 +529,7 @@ pub fn sys_setup_art_page_atlas(
     ec_land_res: Option<Res<EcLandPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
 ) {
+    log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
         settings.graphics.art_texture_source,
         cc_art_res.as_ref(),
@@ -749,6 +753,8 @@ pub fn sys_sync_active_art_page_atlases(
     if binding_state.configured_source == source_state.active_source {
         return;
     }
+
+    log_system_add_one_shot::<DrawStaticSpritesPlugin>("Update", "None", fname!());
 
     rebind_active_art_atlases(
         &mut images,

@@ -46,27 +46,12 @@ if (![string]::IsNullOrWhiteSpace($Env:CARGO_FEATURES)) {
     $featureArgs = @("--features", $Env:CARGO_FEATURES)
 }
 
-# Build main application
-Write-Host "Building dynamapper..."
-cargo +nightly build --release --locked --no-default-features `
-    --bin dynamapper --package dynamapper `
+# Build workspace
+Write-Host "Building workspace..."
+cargo +nightly build --release --locked --workspace --no-default-features `
     -Z build-std=std,panic_abort `
     -Z build-std-features=optimize_for_size `
     @featureArgs `
-    @targetArgs `
-    $args
-
-# Build utilities
-Write-Host "Building utilities (uddp_inspector, uddconv_cli, uddconv_gui, uocf_cli, uop_inspector, uop_populator_gui)..."
-cargo +nightly build --release --locked `
-    --package uddp_inspector `
-    --package uddconv_cli `
-    --package uddconv_gui `
-    --package uocf_cli `
-    --package uop_inspector `
-    --package uop_populator_gui `
-    -Z build-std=std,panic_abort `
-    -Z build-std-features=optimize_for_size `
     @targetArgs `
     $args
 

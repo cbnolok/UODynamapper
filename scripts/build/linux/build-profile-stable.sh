@@ -15,7 +15,7 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # - Debug symbols: included for profiling
 # - No strip: keep symbols
 export RUSTFLAGS=" \
--Cforce-frame-pointers=yes \
+-C force-frame-pointers=yes \
 -Clink-arg=-fuse-ld=mold \
 -Clink-arg=-Wl,--gc-sections \
 -Clink-arg=-Wl,--no-allow-shlib-undefined \
@@ -23,8 +23,7 @@ ${RUSTFLAGS:-}"
 # -Clink-arg=-Wl,--icf=safe # Identical Code Folding (ICF) is not yet stable on Github runners Linux targets (old "mold" versions?)
 
 build_args=(
-    build --release --locked --no-default-features
-    --bin dynamapper --package dynamapper
+    build --profile profiling --locked --workspace --no-default-features --features profiling
 )
 
 if [[ -n "${CARGO_FEATURES:-}" ]]; then

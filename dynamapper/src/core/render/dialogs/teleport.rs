@@ -41,6 +41,7 @@ fn sys_teleport_toggle(
     _trigger: On<ActionToggleTeleportDialog>,
     mut state: ResMut<TeleportDialogState>,
 ) {
+    log_system_add_one_shot::<TeleportPlugin>("Observer", "ActionToggleTeleportDialog", fname!());
     state.open = !state.open;
 }
 
@@ -48,6 +49,7 @@ fn sys_teleport_close(
     _trigger: On<ActionCloseActiveDialog>,
     mut state: ResMut<TeleportDialogState>,
 ) {
+    log_system_add_one_shot::<TeleportPlugin>("Observer", "ActionCloseActiveDialog", fname!());
     state.open = false;
 }
 

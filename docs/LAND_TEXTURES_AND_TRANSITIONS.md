@@ -90,7 +90,7 @@ Packages:
 - `LegacyTexture.uop` is part of the same source bundle and supplies the EC-side legacy-style image references.
 - `tileart.uop` is the authoritative EC static-art source for ownership, clipping windows, and item-side metadata.
 - `TerrainDefinition.uop` is the authoritative EC land source for material semantics, selected textures, alias chains, and canonical slot relationships.
-- `string_dictionary.uop` and `string_Wdictionary.uop` are required support packages for resolving virtual paths, but they are not visual sources themselves.
+- `string_dictionary.uop` is a required support package for resolving virtual paths, but itself is not a visual source.
 - EC art and EC land are both semantic outputs from the same shared texture pools, so the same raw texture id can legitimately appear in both packages when ownership differs.
 
 That aligns with the current UODynamapper investigation: `ec_land.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
@@ -128,7 +128,7 @@ Additional EC source guidance:
 - `Texture.uop` and `LegacyTexture.uop` are shared texture pools and should be treated as the common decode backend.
 - `tileart.uop` contributes entry-local EC art semantics: shader type, tile type, ownership, sampling windows, and item-specific behavior hints.
 - `TerrainDefinition.uop` contributes EC land semantics: land source texture ids, aliases, selected textures, runtime slots, and provenance.
-- `string_dictionary.uop` and `string_Wdictionary.uop` are auxiliary package resources, not art classification inputs.
+- `string_dictionary.uop` is an auxiliary package resource, not art classification input.
 
 ### 6.3 Shader And Flag Interpretation Rules
 

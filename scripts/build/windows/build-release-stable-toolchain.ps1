@@ -16,8 +16,13 @@ $Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Pat
 # Windows uses LLD linker via config.toml
 $Env:RUSTFLAGS = "-C link-arg=-Wl,--gc-sections -C link-arg=-Wl,--no-allow-shlib-undefined -C link-arg=-Wl,--icf=all -C link-arg=-Wl,--strip-all $Env:RUSTFLAGS"
 
-cargo build --release --locked --no-default-features `
-    --bin dynamapper --package dynamapper `
+$featureArgs = @()
+if (![string]::IsNullOrWhiteSpace($Env:CARGO_FEATURES)) {
+    $featureArgs = @("--features", $Env:CARGO_FEATURES)
+}
+
+cargo build --release --locked --workspace --no-default-features `
+    @featureArgs `
     $args
 
 if ($LASTEXITCODE -ne 0) {

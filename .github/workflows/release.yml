@@ -23,11 +23,11 @@ env:
   # ISPC is available on all desktop GNU/MSVC/macOS targets in this matrix except:
   # - Windows GNU / MinGW
   # - Linux musl static builds (x86_64 and aarch64)
-  RELEASE_FEATURES_LINUX_DESKTOP: "uddconv/ispc,linux_x11,linux_wayland"
+  RELEASE_FEATURES_LINUX_DESKTOP: "udd-conv/ispc,linux_x11,linux_wayland"
   RELEASE_FEATURES_LINUX_DESKTOP_FALLBACK: "linux_x11,linux_wayland"
   RELEASE_FEATURES_LINUX_X11_FALLBACK: "linux_x11"
-  RELEASE_FEATURES_UDDCONV_ISPC: "uddconv/ispc"
-  RELEASE_FEATURES_UDDCONV_ISPC_SOURCE: "uddconv/ispc_source"
+  RELEASE_FEATURES_UDDCONV_ISPC: "udd-conv/ispc"
+  RELEASE_FEATURES_UDDCONV_ISPC_SOURCE: "udd-conv/ispc_source"
   RELEASE_FEATURES_NONE: ""
   SCCACHE_GHA_ENABLED: "false"
   SCCACHE_NO_DAEMON: "1"
@@ -49,7 +49,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libjxl-dev \
             pkg-config clang mold
           sudo ln -sf $(which mold) /usr/bin/ld.mold
 
@@ -78,11 +78,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-x86_64/utils
-          cp target/release/dynamapper artifact/dynamapper-linux-x86_64/
-          cp target/release/uddp_inspector target/release/uddconv_cli target/release/uddconv_gui target/release/uoptool target/release/cc_uop_mul_converter target/release/texture_scanner target/release/uop_dict_populator target/release/uop_inspector target/release/uop_populator_gui artifact/dynamapper-linux-x86_64/utils/
-          cp -r assets artifact/dynamapper-linux-x86_64/
-          cp README.md artifact/dynamapper-linux-x86_64/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -107,7 +104,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libjxl-dev \
             pkg-config clang mold
 
       - name: Install Rust nightly
@@ -135,11 +132,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-arm64/utils
-          cp target/aarch64-unknown-linux-gnu/release/dynamapper artifact/dynamapper-linux-arm64/
-          cp target/aarch64-unknown-linux-gnu/release/uddp_inspector target/aarch64-unknown-linux-gnu/release/uddconv_cli target/aarch64-unknown-linux-gnu/release/uddconv_gui target/aarch64-unknown-linux-gnu/release/uoptool target/aarch64-unknown-linux-gnu/release/cc_uop_mul_converter target/aarch64-unknown-linux-gnu/release/texture_scanner target/aarch64-unknown-linux-gnu/release/uop_dict_populator target/aarch64-unknown-linux-gnu/release/uop_inspector target/aarch64-unknown-linux-gnu/release/uop_populator_gui artifact/dynamapper-linux-arm64/utils/
-          cp -r assets artifact/dynamapper-linux-arm64/
-          cp README.md artifact/dynamapper-linux-arm64/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-linux-arm64 aarch64-unknown-linux-gnu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -172,7 +166,7 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf \
-                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add x86_64-unknown-linux-musl
@@ -187,11 +181,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-x86_64-musl/utils
-          cp target/x86_64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-x86_64-musl/
-          cp target/x86_64-unknown-linux-musl/release/uddp_inspector target/x86_64-unknown-linux-musl/release/uddconv_cli target/x86_64-unknown-linux-musl/release/uddconv_gui target/x86_64-unknown-linux-musl/release/uoptool target/x86_64-unknown-linux-musl/release/cc_uop_mul_converter target/x86_64-unknown-linux-musl/release/texture_scanner target/x86_64-unknown-linux-musl/release/uop_dict_populator target/x86_64-unknown-linux-musl/release/uop_inspector target/x86_64-unknown-linux-musl/release/uop_populator_gui artifact/dynamapper-linux-x86_64-musl/utils/
-          cp -r assets artifact/dynamapper-linux-x86_64-musl/
-          cp README.md artifact/dynamapper-linux-x86_64-musl/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -224,7 +215,7 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf \
-                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add aarch64-unknown-linux-musl
@@ -239,11 +230,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-linux-arm64-musl/utils
-          cp target/aarch64-unknown-linux-musl/release/dynamapper artifact/dynamapper-linux-arm64-musl/
-          cp target/aarch64-unknown-linux-musl/release/uddp_inspector target/aarch64-unknown-linux-musl/release/uddconv_cli target/aarch64-unknown-linux-musl/release/uddconv_gui target/aarch64-unknown-linux-musl/release/uoptool target/aarch64-unknown-linux-musl/release/cc_uop_mul_converter target/aarch64-unknown-linux-musl/release/texture_scanner target/aarch64-unknown-linux-musl/release/uop_dict_populator target/aarch64-unknown-linux-musl/release/uop_inspector target/aarch64-unknown-linux-musl/release/uop_populator_gui artifact/dynamapper-linux-arm64-musl/utils/
-          cp -r assets artifact/dynamapper-linux-arm64-musl/
-          cp README.md artifact/dynamapper-linux-arm64-musl/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -281,13 +269,9 @@ jobs:
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
 
       - name: Package binary and assets
-        shell: powershell
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64/utils" | Out-Null
-          Copy-Item -Path "target/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64/"
-          Copy-Item -Path "target/release/uddp_inspector.exe", "target/release/uddconv_cli.exe", "target/release/uddconv_gui.exe", "target/release/uoptool.exe", "target/release/cc_uop_mul_converter.exe", "target/release/texture_scanner.exe", "target/release/uop_dict_populator.exe", "target/release/uop_inspector.exe", "target/release/uop_populator_gui.exe" -Destination "artifact/dynamapper-windows-x86_64/utils/"
-          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64/" }
+          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -345,13 +329,9 @@ jobs:
           pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target x86_64-pc-windows-gnu
 
       - name: Package binary and assets
-        shell: powershell
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-x86_64-clang/utils" | Out-Null
-          Copy-Item -Path "target/x86_64-pc-windows-gnu/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-x86_64-clang/"
-          Copy-Item -Path "target/x86_64-pc-windows-gnu/release/uddp_inspector.exe", "target/x86_64-pc-windows-gnu/release/uddconv_cli.exe", "target/x86_64-pc-windows-gnu/release/uddconv_gui.exe", "target/x86_64-pc-windows-gnu/release/uoptool.exe", "target/x86_64-pc-windows-gnu/release/cc_uop_mul_converter.exe", "target/x86_64-pc-windows-gnu/release/texture_scanner.exe", "target/x86_64-pc-windows-gnu/release/uop_dict_populator.exe", "target/x86_64-pc-windows-gnu/release/uop_inspector.exe", "target/x86_64-pc-windows-gnu/release/uop_populator_gui.exe" -Destination "artifact/dynamapper-windows-x86_64-clang/utils/"
-          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-x86_64-clang/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-x86_64-clang/" }
+          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-x86_64-clang -TargetTriple x86_64-pc-windows-gnu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -391,13 +371,9 @@ jobs:
         run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
-        shell: powershell
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact/dynamapper-windows-arm64/utils" | Out-Null
-          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/dynamapper.exe" -Destination "artifact/dynamapper-windows-arm64/"
-          Copy-Item -Path "target/aarch64-pc-windows-msvc/release/uddp_inspector.exe", "target/aarch64-pc-windows-msvc/release/uddconv_cli.exe", "target/aarch64-pc-windows-msvc/release/uddconv_gui.exe", "target/aarch64-pc-windows-msvc/release/uoptool.exe", "target/aarch64-pc-windows-msvc/release/cc_uop_mul_converter.exe", "target/aarch64-pc-windows-msvc/release/texture_scanner.exe", "target/aarch64-pc-windows-msvc/release/uop_dict_populator.exe", "target/aarch64-pc-windows-msvc/release/uop_inspector.exe", "target/aarch64-pc-windows-msvc/release/uop_populator_gui.exe" -Destination "artifact/dynamapper-windows-arm64/utils/"
-          Copy-Item -Path "assets" -Destination "artifact/dynamapper-windows-arm64/" -Recurse
-          if (Test-Path "README.md") { Copy-Item -Path "README.md" -Destination "artifact/dynamapper-windows-arm64/" }
+          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-arm64 -TargetTriple aarch64-pc-windows-msvc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -439,11 +415,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-macos-x86_64/utils
-          cp target/x86_64-apple-darwin/release/dynamapper artifact/dynamapper-macos-x86_64/
-          cp target/x86_64-apple-darwin/release/uddp_inspector target/x86_64-apple-darwin/release/uddconv_cli target/x86_64-apple-darwin/release/uddconv_gui target/x86_64-apple-darwin/release/uoptool target/x86_64-apple-darwin/release/cc_uop_mul_converter target/x86_64-apple-darwin/release/texture_scanner target/x86_64-apple-darwin/release/uop_dict_populator target/x86_64-apple-darwin/release/uop_inspector target/x86_64-apple-darwin/release/uop_populator_gui artifact/dynamapper-macos-x86_64/utils/
-          cp -r assets artifact/dynamapper-macos-x86_64/
-          cp README.md artifact/dynamapper-macos-x86_64/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-macos-x86_64 x86_64-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -485,11 +458,8 @@ jobs:
 
       - name: Package binary and assets
         run: |
-          mkdir -p artifact/dynamapper-macos-arm64/utils
-          cp target/aarch64-apple-darwin/release/dynamapper artifact/dynamapper-macos-arm64/
-          cp target/aarch64-apple-darwin/release/uddp_inspector target/aarch64-apple-darwin/release/uddconv_cli target/aarch64-apple-darwin/release/uddconv_gui target/aarch64-apple-darwin/release/uoptool target/aarch64-apple-darwin/release/cc_uop_mul_converter target/aarch64-apple-darwin/release/texture_scanner target/aarch64-apple-darwin/release/uop_dict_populator target/aarch64-apple-darwin/release/uop_inspector target/aarch64-apple-darwin/release/uop_populator_gui artifact/dynamapper-macos-arm64/utils/
-          cp -r assets artifact/dynamapper-macos-arm64/
-          cp README.md artifact/dynamapper-macos-arm64/ 2>/dev/null || true
+          chmod +x scripts/build/linux/package.sh
+          ./scripts/build/linux/package.sh dynamapper-macos-arm64 aarch64-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

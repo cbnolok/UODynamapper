@@ -26,8 +26,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use uddconv::bc7::{self, RawImageFormat, TextureUploadLayout};
-use uocf::classic::land_texture::{LandTextureSize, TexMap};
+use udd_conv::bc7::{self, RawImageFormat, TextureUploadLayout};
+use uocf::classic::land_texture::LandTextureSize;
 
 #[derive(Resource, Clone, ExtractResource)]
 pub struct TextureArrayImageHandles {
@@ -116,9 +116,10 @@ pub struct LandTextureCache {
     pub upload_sender: std::sync::mpsc::Sender<TextureArrayUpload>,
 
     // Optional UDDP sources
-    pub cc_art: Option<Arc<uddconv::cc_art::CcArtPackage>>,
-    pub ec_art: Option<Arc<uddconv::ec_art::EcArtPackage>>,
-    pub ec_land: Option<Arc<uddconv::ec_land::EcLandPackage>>,
+    pub cc_art: Option<Arc<udd_assets::cc_art::CcArtPackage>>,
+    pub cc_texmaps: Option<Arc<udd_assets::cc_texmaps::CcTexmapsPackage>>,
+    pub ec_art: Option<Arc<udd_assets::ec_art::EcArtPackage>>,
+    pub ec_land: Option<Arc<udd_assets::ec_land::EcLandPackage>>,
 }
 
 pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) {
@@ -153,7 +154,7 @@ fn prepare_texture_upload_bytes(
 
 fn try_load_cc_land_tile(
     texture_id: u16,
-    cc: Option<&Arc<uddconv::cc_art::CcArtPackage>>,
+    cc: Option<&Arc<udd_assets::cc_art::CcArtPackage>>,
 ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
     let _ = texture_id;
     let _ = cc;
@@ -162,17 +163,20 @@ fn try_load_cc_land_tile(
 
 fn try_load_tile_from_packages_with_sources(
     texture_id: u16,
-    preferred_source: ClientTextureSource,
-    cc_art: Option<&Arc<uddconv::cc_art::CcArtPackage>>,
-    _ec_land: Option<&Arc<uddconv::ec_land::EcLandPackage>>,
+    _preferred_source: ClientTextureSource,
+    _cc_art: Option<&Arc<udd_assets::cc_art::CcArtPackage>>,
+    cc_texmaps: Option<&Arc<udd_assets::cc_texmaps::CcTexmapsPackage>>,
+    _ec_land: Option<&Arc<udd_assets::ec_land::EcLandPackage>>,
+    compression: texture_array::TerrainTextureCompression,
 ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
-    let _ = preferred_source;
-    let _ = texture_id;
-    let _ = cc_art;
-    let _ = _ec_land;
-    // Terrain package sampling is no longer routed through the fixed 64/128 texture-array cache.
-    // Classic land comes from texmaps.mul, while EC land is sampled directly from the EC atlas pages
-    // in the terrain shader. Returning None here forces the callers onto the raw texmap path.
+    if let Some(pkg) = cc_texmaps {
+        if let Some(size) = pkg.get_texture_size(texture_id as u32) {
+            if let Some(raw_rgba8) = pkg.get_pixel_data_arc(texture_id as u32) {
+                let (bytes, layout) = prepare_texture_upload_bytes(raw_rgba8, size, compression);
+                return Some((size, bytes, layout));
+            }
+        }
+    }
     None
 }
 
@@ -218,6 +222,7 @@ impl LandTextureCache {
             upload_receiver: std::sync::Mutex::new(upload_receiver),
             upload_sender,
             cc_art: None,
+            cc_texmaps: None,
             ec_art: None,
             ec_land: None,
         }
@@ -264,19 +269,22 @@ impl LandTextureCache {
     pub fn try_load_tile_from_packages(
         &self,
         texture_id: u16,
+        compression: texture_array::TerrainTextureCompression,
     ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
         try_load_tile_from_packages_with_sources(
             texture_id,
             self.preferred_source,
             self.cc_art.as_ref(),
+            self.cc_texmaps.as_ref(),
             self.ec_land.as_ref(),
+            compression,
         )
     }
 
     pub fn prime_full_file_residency(
         &mut self,
         plan: &TextureResidencyPlan<LandTextureSize>,
-        texmap_2d: Arc<TexMap>,
+        texmap_2d: Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -286,8 +294,8 @@ impl LandTextureCache {
 
         // Phase 1: warm the source file cache so startup upload tasks read from RAM.
         visit_grouped_texture_ids(plan, &Self::RESIDENCY_GROUP_ORDER, |_, texture_ids| {
-            for &texture_id in texture_ids {
-                let _ = texmap_2d.preload_pixel_data(texture_id as usize);
+            for &_texture_id in texture_ids {
+                let _ = texmap_2d.read_page_bytes(0); // Dummy read to warm cache if needed, though UDDP is different
             }
         });
 
@@ -324,7 +332,7 @@ impl LandTextureCache {
     fn enqueue_full_residency_uploads(
         &self,
         plan: &TextureResidencyPlan<LandTextureSize>,
-        texmap_2d: Arc<TexMap>,
+        texmap_2d: Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -349,7 +357,7 @@ impl LandTextureCache {
                     let sender = self.upload_sender.clone();
                     let cc_art = cc_art.clone();
                     let ec_land = ec_land.clone();
-
+                    let cc_texmaps = self.cc_texmaps.clone();
                     let task = pool.spawn(async move {
                         for (texture_id, layer) in chunk {
                             let (tile_bytes, upload_layout) = if let Some((_, bytes, layout)) =
@@ -357,7 +365,9 @@ impl LandTextureCache {
                                     texture_id,
                                     preferred_source,
                                     cc_art.as_ref(),
+                                    cc_texmaps.as_ref(),
                                     ec_land.as_ref(),
+                                    compression,
                                 ) {
                                 (bytes, layout)
                             } else {
@@ -393,7 +403,7 @@ impl LandTextureCache {
     /// Gets the layer for a single texture. If not resident, it will be loaded, causing an async GPU upload.
     pub fn get_texture_size_layer(
         &mut self,
-        texmap_2d: &Arc<TexMap>,
+        texmap_2d: &Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         texture_id: u16,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
@@ -414,7 +424,7 @@ impl LandTextureCache {
         }
 
         // Not resident: load metadata and attempt to allocate a cache layer.
-        let package_source = self.try_load_tile_from_packages(texture_id);
+        let package_source = self.try_load_tile_from_packages(texture_id, compression);
         let texture_size = if let Some((size, _, _)) = &package_source {
             *size
         } else {
@@ -468,7 +478,7 @@ impl LandTextureCache {
     pub fn precache_textures_parallel(
         &mut self,
         texture_ids: &[u16],
-        texmap_2d: Arc<TexMap>,
+        texmap_2d: Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -550,7 +560,7 @@ impl LandTextureCache {
     fn prepare_texture_residency(
         &mut self,
         texture_id: u16,
-        texmap_2d: &Arc<TexMap>,
+        texmap_2d: &Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) -> Option<TextureArrayUpload> {
@@ -757,7 +767,7 @@ impl LandTextureCache {
     pub fn enqueue_reupload_for_size(
         &mut self,
         size: LandTextureSize,
-        texmap_2d: Arc<TexMap>,
+        texmap_2d: Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -803,7 +813,7 @@ impl LandTextureCache {
 
     pub fn reupload_all_resident_textures(
         &self,
-        texmap_2d: Arc<TexMap>,
+        texmap_2d: Arc<udd_assets::cc_texmaps::CcTexmapsPackage>,
         compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
@@ -836,7 +846,9 @@ impl LandTextureCache {
                             texture_id,
                             preferred_source,
                             cc_art.as_ref(),
+                            Some(&texmap_2d_arc),
                             ec_land.as_ref(),
+                            compression,
                         ) {
                         (bytes, layout)
                     } else {

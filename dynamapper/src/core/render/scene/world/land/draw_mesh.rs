@@ -12,11 +12,13 @@ use bevy::{
     render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType},
     shader::ShaderRef,
 };
+use crate::prelude::*;
+use super::DrawLandChunkMeshPlugin;
 use bytemuck::Zeroable;
 use std::sync::Arc;
 use std::time::Instant;
 use uocf::classic::{
-    land_texture::{LandTextureSize, TexMap},
+    land_texture::LandTextureSize,
     map::{MapBlock, MapBlockRelPos},
 };
 
@@ -242,6 +244,8 @@ pub fn sys_update_existing_chunk_mesh_lod(
     if *current_lod == next_lod {
         return;
     }
+
+    log_system_add_one_shot::<DrawLandChunkMeshPlugin>("Update", "SceneRenderLandSysSet::RenderLandChunks", fname!());
 
     console_logger::one(
         LogSev::Debug,
@@ -1084,7 +1088,7 @@ fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_ch
 }
 
 fn log_ec_land_diagnostics(
-    ec: &uddconv::ec_land::EcLandPackage,
+    ec: &udd_assets::ec_land::EcLandPackage,
     map_planes_r: &MapPlanesRes,
     current_map_id: u32,
     blocks_to_draw: &[MapBlockRelPos],
@@ -1096,16 +1100,16 @@ fn log_ec_land_diagnostics(
     let present_slot_count = ec.slots().iter().filter(|slot| slot.is_present()).count();
 
     let resolve_record_slot =
-        |record: &uddconv::ec_land::EcLandTerrainProvenanceRecord| -> Option<u32> {
+        |record: &udd_assets::ec_land::EcLandTerrainProvenanceRecord| -> Option<u32> {
             if record.canonical_slot_id != 0
-                && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
                 && ec.present_slot(record.canonical_slot_id).is_some()
             {
                 return Some(record.canonical_slot_id);
             }
 
             if record.alias_slot_id != 0
-                && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+                && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
                 && ec.present_slot(record.alias_slot_id).is_some()
             {
                 return Some(record.alias_slot_id);
@@ -1123,7 +1127,7 @@ fn log_ec_land_diagnostics(
         }
 
         // Now we identify WHERE it came from for the log
-        if ec.transcode().contains_key(&terrain_id) {
+        if ec.transcode.contains_key(&terrain_id) {
             return ("transcode", terrain_id, resolved);
         }
 

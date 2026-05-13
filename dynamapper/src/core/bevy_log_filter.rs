@@ -1,7 +1,15 @@
 use crate::console_logger::{self, LogAbout, LogSev};
-use bevy::prelude::*;
+use std::sync::Once;
+use tracing::subscriber::set_global_default;
 use tracing::{Level, Subscriber};
-use tracing_subscriber::{registry::LookupSpan, Layer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{
+    filter::{LevelFilter, Targets},
+    layer::SubscriberExt,
+    Layer,
+};
+
+static INIT_BEVY_LOGGING: Once = Once::new();
 
 fn strip_meta_prefix<'a>(value: &'a str) -> &'a str {
     let mut out = value;
@@ -57,25 +65,41 @@ fn is_backend_message(target: &str, module_path: &str) -> bool {
         || module_lc.starts_with("naga")
 }
 
-/// Replaces Bevy's default fmt layer with a compact one that uses HH:MM:SS
-/// timestamps instead of the verbose ISO-8601 default.
-/// This is wired into LogPlugin::fmt_layer (not custom_layer), which means it
-/// fully replaces the default formatter rather than being added on top of it.
-/*
-fn bevy_logging_fmt_layer(_app: &mut App) -> Option<bevy::log::BoxedFmtLayer> {
-    Some(Box::new(
-        fmt::layer()
-            //.with_span_events(FmtSpan::NONE)
-            .with_ansi(true)
-            .with_level(true)
-            .with_target(true)
-            // Compact HH:MM:SS format — avoids the verbose 2026-03-18T09:50:34.068944Z default.
-            .with_timer(fmt::time::ChronoLocal::new("%H:%M:%S".into()))
-            .compact(),
-    ))
+fn bevy_log_targets() -> Targets {
+    Targets::new()
+        .with_default(LevelFilter::INFO)
+        .with_target("bevy", LevelFilter::INFO)
+        .with_target("bevy_ecs", LevelFilter::ERROR)
+        .with_target("bevy_render", LevelFilter::ERROR)
+        .with_target("bevy_framepace", LevelFilter::WARN)
+        .with_target("wgpu", LevelFilter::ERROR)
+        .with_target("wgpu_hal", LevelFilter::ERROR)
+        .with_target("naga", LevelFilter::WARN)
+        .with_target("ash", LevelFilter::ERROR)
+        .with_target("calloop", LevelFilter::ERROR)
 }
-*/
 
+pub fn init_bevy_logging() {
+    INIT_BEVY_LOGGING.call_once(|| {
+        let _ = LogTracer::init();
+
+        // Use static target-prefix filters rather than EnvFilter so filtered-out
+        // Bevy/backend events do not pay regex matching costs at runtime.
+        let subscriber = tracing_subscriber::registry()
+            .with(bevy_log_targets())
+            .with(
+                tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink),
+            )
+            .with(InterceptLogLayer);
+
+        if let Err(err) = set_global_default(subscriber) {
+            eprintln!("failed to initialize tracing subscriber: {err}");
+        }
+    });
+}
+
+// --- OLD LOG INTERCEPTOR IMPLEMENTATION (Commented out after move to Targets-based implementation) ---
+/*
 pub fn custom_bevy_log_config() -> bevy::log::LogPlugin {
     bevy::log::LogPlugin {
         // Suppress benign calloop warnings on Linux (e.g. "Received an event for non-existence source")
@@ -93,6 +117,12 @@ pub fn custom_bevy_log_config() -> bevy::log::LogPlugin {
         ..Default::default()
     }
 }
+
+pub fn bevy_logging_custom_layer(_app: &mut bevy::prelude::App) -> Option<bevy::log::BoxedLayer> {
+    // (Old implementation used to be nested here, but was moved to top-level structs for the Targets-based init)
+    Some(InterceptLogLayer.boxed())
+}
+*/
 
 fn classify_log_target(target: &str, module_path: &str, msg: &str) -> LogAbout {
     if target.starts_with("uocf") || module_path.starts_with("uocf") {
@@ -122,102 +152,98 @@ fn normalize_debug_string(s: String) -> String {
     }
 }
 
-pub fn bevy_logging_custom_layer(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
-    struct EventFields {
-        message: String,
-        module_path: String,
-    }
+struct EventFields {
+    message: String,
+    module_path: String,
+}
 
-    struct MsgVisitor {
-        fields: EventFields,
-    }
+struct MsgVisitor {
+    fields: EventFields,
+}
 
-    impl tracing::field::Visit for MsgVisitor {
-        fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
-            match f.name() {
-                "message" => self.fields.message = v.to_string(),
-                "module_path" | "log.module_path" => self.fields.module_path = v.to_string(),
-                _ => {}
-            }
-        }
-
-        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
-            let value = normalize_debug_string(format!("{v:?}"));
-            match f.name() {
-                "message" => self.fields.message = value,
-                "module_path" | "log.module_path" => self.fields.module_path = value,
-                _ => {}
-            }
+impl tracing::field::Visit for MsgVisitor {
+    fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
+        match f.name() {
+            "message" => self.fields.message = v.to_string(),
+            "module_path" | "log.module_path" => self.fields.module_path = v.to_string(),
+            _ => {}
         }
     }
 
-    struct InterceptLogLayer;
+    fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+        let value = normalize_debug_string(format!("{v:?}"));
+        match f.name() {
+            "message" => self.fields.message = value,
+            "module_path" | "log.module_path" => self.fields.module_path = value,
+            _ => {}
+        }
+    }
+}
 
-    impl<S> Layer<S> for InterceptLogLayer
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-    {
-        fn on_event(
-            &self,
-            event: &tracing::Event<'_>,
-            _ctx: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            let target = event.metadata().target();
-            let sev = match *event.metadata().level() {
-                Level::ERROR => LogSev::Error,
-                Level::WARN => LogSev::Warn,
-                Level::DEBUG => LogSev::Debug,
-                Level::TRACE => LogSev::DebugVerbose,
-                _ => LogSev::Info,
-            };
+struct InterceptLogLayer;
 
-            let mut vis = MsgVisitor {
-                fields: EventFields {
-                    message: String::new(),
-                    module_path: String::new(),
-                },
-            };
-            event.record(&mut vis);
+impl<S> Layer<S> for InterceptLogLayer
+where
+    S: Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let target = event.metadata().target();
+        let sev = match *event.metadata().level() {
+            Level::ERROR => LogSev::Error,
+            Level::WARN => LogSev::Warn,
+            Level::DEBUG => LogSev::Debug,
+            Level::TRACE => LogSev::DebugVerbose,
+            _ => LogSev::Info,
+        };
 
-            let location = tracing_location_label(target, &vis.fields.module_path);
+        let mut vis = MsgVisitor {
+            fields: EventFields {
+                message: String::new(),
+                module_path: String::new(),
+            },
+        };
+        event.record(&mut vis);
 
-            let about: LogAbout = classify_log_target(target, &vis.fields.module_path, &vis.fields.message);
-            let backend_chatter = is_backend_message(target, &vis.fields.module_path);
-            if about == LogAbout::General {
-                let msg: String = if vis.fields.message.is_empty() {
-                    "<no message field>".to_string()
-                } else {
-                    vis.fields.message
-                };
-                let msg = normalize_output_message(LogAbout::General, &msg);
-                console_logger::one_with_location_override(
-                    Some(&location),
-                    LogSev::DebugVerbose,
-                    LogAbout::General,
-                    &msg,
-                );
-                return;
-            }
+        let location = tracing_location_label(target, &vis.fields.module_path);
 
-            let msg = if vis.fields.message.is_empty() {
+        let about: LogAbout = classify_log_target(target, &vis.fields.module_path, &vis.fields.message);
+        let backend_chatter = is_backend_message(target, &vis.fields.module_path);
+        if about == LogAbout::General {
+            let msg: String = if vis.fields.message.is_empty() {
                 "<no message field>".to_string()
             } else {
                 vis.fields.message
             };
-            let msg = normalize_output_message(about.clone(), &msg);
-            let sev = if backend_chatter {
-                LogSev::DebugVerbose
-            } else {
-                sev
-            };
+            let msg = normalize_output_message(LogAbout::General, &msg);
             console_logger::one_with_location_override(
                 Some(&location),
-                sev,
-                about,
+                LogSev::DebugVerbose,
+                LogAbout::General,
                 &msg,
             );
+            return;
         }
-    }
 
-    Some(InterceptLogLayer.boxed())
+        let msg = if vis.fields.message.is_empty() {
+            "<no message field>".to_string()
+        } else {
+            vis.fields.message
+        };
+        let msg = normalize_output_message(about.clone(), &msg);
+        let sev = if backend_chatter {
+            LogSev::DebugVerbose
+        } else {
+            sev
+        };
+        console_logger::one_with_location_override(
+            Some(&location),
+            sev,
+            about,
+            &msg,
+        );
+    }
 }

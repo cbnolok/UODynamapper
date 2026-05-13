@@ -11,8 +11,10 @@ manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-uddconv = { path = "../uddconv" }
-uocf = { path = "../uocf" }
+udd-assets = { path = "../lib/udd-assets" }
+udd-conv = { path = "../lib/udd-conv" }
+udd-container = { path = "../lib/udd-container" }
+uocf = { path = "../lib/uocf" }
 bevy_framepace = { version = "0.21", default-features = false }
 bevy_egui = { version = "0.39" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
@@ -22,8 +24,6 @@ chrono = { version = "0.4", default-features = false, features = [
 ] }
 color-eyre = { version = "0.6", features = ["track-caller"] }
 config = { version = "0.15", default-features = false }
-#getset = "0.1"
-guillotiere = "0.6"
 #lru = "0.16"
 indexmap = "2.14.0"
 image = { version = "0.25", default-features = false, features = [
@@ -63,13 +63,20 @@ toml = { version = "1.1", default-features = false, features = [
   "parse",
   "serde",
 ] }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", features = [
+  "max_level_debug",
+  "release_max_level_info",
+] }
+tracing-log = { version = "0.2", default-features = false, features = [
+  "log-tracer",
+  "std",
+] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
   "std",
-  "ansi",
-  "chrono",
-  "fmt",
-  "thread_local",
+  #  "ansi",
+  #  "chrono",
+  #  "fmt",
+  #  "thread_local",
   "tracing-log",
 ] }
 
@@ -86,11 +93,11 @@ features = [
   "bevy_camera",        # Provides camera and visibility types, as well as culling primitives.
   "bevy_color",         # Provides shared color types and operations
   "bevy_core_pipeline", # Provides cameras and other basic render pipeline features
-  "bevy_gizmos",       # Adds support for gizmos
-  "bevy_image",       # Load and access image data. Usually added by an image format
-  "bevy_input_focus", # Enable input focus subsystem
-  "bevy_log",         # Enable integration with tracing and log
-  "bevy_pbr",         # Adds PBR rendering
+  "bevy_gizmos",        # Adds support for gizmos
+  "bevy_image",         # Load and access image data. Usually added by an image format
+  "bevy_input_focus",   # Enable input focus subsystem
+  "bevy_log",           # Enable integration with tracing and log
+  "bevy_pbr",           # Adds PBR rendering
   #"bevy_picking",     # Provides picking functionality
   "bevy_render", # Provides rendering functionality
   "bevy_scene",  # Provides scene functionality

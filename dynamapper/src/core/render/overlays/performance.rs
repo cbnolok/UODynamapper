@@ -219,7 +219,10 @@ fn format_transfer_bytes(bytes: u64) -> String {
 use bevy::time::common_conditions::on_real_timer;
 use std::time::Duration;
 
-pub struct PerformanceOverlayPlugin;
+pub struct PerformanceOverlayPlugin {
+    pub registered_by: &'static str,
+}
+impl_tracked_plugin!(PerformanceOverlayPlugin);
 
 impl Plugin for PerformanceOverlayPlugin {
     fn build(&self, app: &mut App) {
@@ -254,6 +257,7 @@ pub fn setup_overlay_performance(
     asset_server: Res<AssetServer>,
     settings: Res<Settings>,
 ) {
+    log_system_add_startup::<PerformanceOverlayPlugin>(StartupSysSet::SetupSceneStage2, fname!());
     let font: Handle<Font> = asset_server.load("fonts/fira/FiraMono-Medium.ttf");
     commands
         .spawn((

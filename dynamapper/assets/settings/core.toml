@@ -21,7 +21,7 @@ emit_tree_plugin_build = true
 # Custom filters for specific modules or severities
 [[logging.filters]]
 sev = "Debug"
-suppress = false
+suppress = true
 
 [[logging.filters]]
 sev = "DebugVerbose"
@@ -40,4 +40,3 @@ suppress = true
 [[logging.filters]]
 about = "Performance"
 suppress = false
-

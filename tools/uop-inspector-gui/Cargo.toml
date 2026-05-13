@@ -1,0 +1,23 @@
+[package]
+name = "uop-inspector-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.31.1", features = ["persistence", "glow"] }
+egui = "0.31.1"
+egui_extras = { version = "0.31.1", features = ["all_loaders"] }
+uocf = { path = "../../lib/uocf" }
+rfd = { version = "0.15", features = ["xdg-portal"] }
+image = { version = "0.25", features = ["png", "jpeg", "dds", "tga", "bmp"] }
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+byteorder = "1.5"
+rayon = "1.12"
+walkdir = "2.5"
+hex = "0.4"
+itertools = "0.14"
+color-eyre = "0.6"
+dds = "0.2"

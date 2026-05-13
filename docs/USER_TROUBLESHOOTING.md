@@ -13,23 +13,9 @@ Welcome to UODynamapper! This guide is designed to help you resolve common issue
   ```bash
   su -c "echo 256 > /proc/sys/fs/inotify/max_user_instances"
   ```
-
-### Symptom: Screen is Black or Crashes on Startup
-- **Cause**: Your Graphics Card might not support the modern rendering engine (Vulkan, DX12, or Metal).
-- **Fix**: 
-  - Ensure your GPU drivers are up-to-date.
-  - Check if your hardware supports at least **DirectX 11/12** or **Vulkan 1.2**.
-
 ---
 
-## 2. Graphics & Performance
-
-### Symptom: Menu text is too small or too big
-- **Fix**: The client uses your system's scaling Factor. You can override this in the `ui.toml` settings by adjusting the `global_scale` value.
-
----
-
-## 3. Reporting a Bug (no feature requests for now)
+## 2. Reporting a Bug (no feature requests for now)
 If your issue isn't listed here, please provide the following when reporting a bug:
 1. Your Operating System (Windows/Linux/OSX).
 2. Your GPU model (e.g., NVIDIA RTX 3060).

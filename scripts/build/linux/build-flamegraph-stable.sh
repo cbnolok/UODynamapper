@@ -14,7 +14,7 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # - No LTO & No Strip: essential for stack walking
 # - force-frame-pointers: essential for profilers
 RUSTFLAGS=" \
--Cforce-frame-pointers=yes \
+-C force-frame-pointers=yes \
 -Clink-arg=-fuse-ld=mold \
 -Clink-arg=-Wl,--gc-sections \
 -Clink-arg=-Wl,--no-allow-shlib-undefined \

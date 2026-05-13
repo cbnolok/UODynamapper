@@ -41,8 +41,7 @@ ${RUSTFLAGS:-}"
 # -Clink-arg=-Wl,--icf=safe # Identical Code Folding (ICF) is not yet stable on Github runners Linux targets (old "mold" versions?)
 
 build_args=(
-    +nightly build --release --locked --no-default-features
-    --bin dynamapper --package dynamapper
+    +nightly build --release --locked --workspace --no-default-features
     -Z build-std=std,panic_abort
     -Z build-std-features=optimize_for_size
 )
@@ -51,21 +50,7 @@ if [[ -n "${CARGO_FEATURES:-}" ]]; then
     build_args+=(--features "$CARGO_FEATURES")
 fi
 
-# Build main application
-echo "Building dynamapper..."
+echo "Building workspace..."
 cargo "${build_args[@]}" "$@"
-
-# Build utilities
-echo "Building utilities (uddp_inspector, uddconv_cli, uddconv_gui, uocf_cli, uop_inspector, uop_populator_gui)..."
-cargo +nightly build --release --locked \
-    --package uddp_inspector \
-    --package uddconv_cli \
-    --package uddconv_gui \
-    --package uocf_cli \
-    --package uop_inspector \
-    --package uop_populator_gui \
-    -Z build-std=std,panic_abort \
-    -Z build-std-features=optimize_for_size \
-    "$@"
 
 echo "Build complete."

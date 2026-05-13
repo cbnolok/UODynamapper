@@ -15,11 +15,11 @@ export RUSTC_WRAPPER="$SCRIPT_DIR/../common/rustc_wrapper.sh"
 # - Debug symbols: included for profiling
 # - No strip: keep symbols
 # - force-frame-pointers: essential for profilers
-RUSTFLAGS=" \
+export RUSTFLAGS=" \
 -C force-frame-pointers=yes \
-${RUSTFLAGS:-}" \
-cargo build --profile profiling --locked --no-default-features --features profiling \
-    --bin dynamapper --package dynamapper \
+${RUSTFLAGS:-}"
+
+cargo build --profile profiling --locked --workspace --no-default-features --features profiling \
     "$@"
 
 echo "Profile build complete."

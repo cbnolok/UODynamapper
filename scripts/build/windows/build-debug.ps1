@@ -12,7 +12,7 @@ Write-Host "Running Windows debug build..."
 # Set RUSTC_WRAPPER to the wrapper script (absolute path)
 $Env:RUSTC_WRAPPER = (Resolve-Path "$scriptDir\..\common\rustc_wrapper.bat").Path
 
-cargo build --bin dynamapper --package dynamapper $args
+cargo build --workspace $args
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Build failed with exit code $LASTEXITCODE"

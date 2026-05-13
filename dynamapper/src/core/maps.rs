@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uocf::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapSizeBlocks, MapSizeCells};
-use uocf::udd::UddpReader;
+use udd_container::UddpReader;
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: usize = 32;

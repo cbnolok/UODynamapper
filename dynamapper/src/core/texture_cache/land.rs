@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use color_eyre::eyre;
 use std::time::{Duration, Instant};
-use uddconv::{
+use udd_assets::{
     bc7::{self, ImageExtent},
     ec_land::EcLandPackage,
 };
@@ -97,8 +97,8 @@ fn decode_ec_land_page_rgba(package: &EcLandPackage, page_index: u32) -> eyre::R
     let used_width = page.used_width;
     let used_height = page.used_height;
     let used_rgba = match page.pixel_format {
-        uddconv::cc_art::PagePixelFormat::Rgba8888 => page_bytes,
-        uddconv::cc_art::PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(
+        udd_assets::cc_art::PagePixelFormat::Rgba8888 => page_bytes,
+        udd_assets::cc_art::PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(
             &page_bytes,
             ImageExtent::new(used_width, used_height).map_err(|error| {
                 eyre::eyre!("invalid ec_land used extent {used_width}x{used_height}: {error}")
@@ -314,7 +314,7 @@ fn sys_pin_active_textures(
 fn sys_evict_idle_land_cache(
     mut cache_r: ResMut<cache::LandTextureCache>,
     mut map_planes_r: ResMut<crate::core::uo_files_loader::MapPlanesRes>,
-    texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    _texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     scene_state_r: Res<crate::core::render::scene::SceneStateData>,
     mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
@@ -334,6 +334,7 @@ fn sys_evict_idle_land_cache(
             );
         }
 
+        /*
         // 2. Evict idle pixel data from the raw TexMap2D cache (CPU RAM)
         let evicted_pixel_buffers = texmap_2d_r.0.evict_idle_textures(Duration::from_secs(60));
         if evicted_pixel_buffers > 0 {
@@ -346,6 +347,7 @@ fn sys_evict_idle_land_cache(
                 ),
             );
         }
+        */
     }
 
     // 3. Evict idle map blocks from the active map plane (CPU RAM)
@@ -506,8 +508,7 @@ pub fn sys_setup_terrain_cache(
 
     let compression =
         texture_array::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
-    let residency_strategy =
-        TextureResidencyStrategy::from_preload_enabled(settings.uo_files.texmaps_preload_full_file);
+    let residency_strategy = TextureResidencyStrategy::LruCache;
     let residency_plan = residency_strategy
         .preloads_full_collection()
         .then(|| texture_array::build_texture_residency_plan(&texmap_2d_r.0));

@@ -1,0 +1,31 @@
+[package]
+name = "udd-conv-cli"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+color-eyre = "0.6.5"
+csv = "1.4"
+env_logger = "0.11.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
+indicatif = "0.18.4"
+rayon = "1.12.0"
+udd-assets = { path = "../../lib/udd-assets" }
+udd-container = { path = "../../lib/udd-container" }
+udd-conv = { path = "../../lib/udd-conv" }
+udd-conv-ktx2 = { path = "../../lib/udd-conv-ktx2" }
+uocf = { path = "../../lib/uocf" }
+
+[features]
+default = []
+ispc = ["udd-conv/ispc"]
+
+[[bin]]
+name = "udd-pack"
+path = "src/bin/uddpack.rs"
+
+[[bin]]
+name = "udd-tool"
+path = "src/bin/uddtool.rs"

@@ -1,16 +1,6 @@
 # UO data files configuration.
-# This file will be populated with additional UO file paths and settings
-# as development progresses (e.g. art files, animation data, sound packs).
+# This file contains the path to the UDDP assets folder.
+# Standard UO files (.mul, .uop) are no longer supported directly.
 
-#folder = "E:\\opt\\Ultima Online\\_clients\\ML"
-folder = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Mondain's Legacy/"
-
-# Optional folder for generated runtime packages such as cc_art.uddp, ec_art.uddp, and ec_land.uddp.
-# When set, UODynamapper checks this folder first for UDDP assets before falling back to the raw client folder.
-# Source priority is: uddp > mul > uop
-#udd_path = "/mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/scripts/uddconv"
+# Path to generated runtime packages such as cc_art.uddp, ec_art.uddp, and ec_land.uddp.
 udd_path = "/home/claudio/test/uddp/"
-
-# If true, preload all land texmaps into fixed GPU array layers at startup.
-# If false, use the existing LRU-backed terrain texture cache.
-texmaps_preload_full_file = true

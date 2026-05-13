@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use crate::prelude::*;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::configs::settings::ClientTextureSource;
 use crate::configs::settings::Settings;
@@ -134,7 +135,7 @@ const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
 
 pub(crate) fn resolve_static_depth_class(
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> StaticDepthClass {
     let Some(meta) = tilemeta else {
         return StaticDepthClass::Regular;
@@ -169,7 +170,7 @@ pub(crate) fn depth_class_y_bias(depth_class: StaticDepthClass) -> f32 {
     }
 }
 
-fn effective_priority_height(tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>) -> i8 {
+fn effective_priority_height(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> i8 {
     let Some(meta) = tilemeta else {
         return 0;
     };
@@ -190,7 +191,7 @@ fn effective_priority_height(tilemeta: Option<&uddconv::tilemeta::TileMetaItemTi
 
 pub(crate) fn resolve_priority_z_units(
     tile_z: i8,
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     depth_class: StaticDepthClass,
 ) -> f32 {
     if depth_class == StaticDepthClass::SurfaceLikeFloor {
@@ -289,8 +290,8 @@ fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
 }
 
 fn resolve_surface_like_ec_land_slot_id(
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
-    ec_land: Option<&uddconv::ec_land::EcLandPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
@@ -314,14 +315,14 @@ fn resolve_surface_like_ec_land_slot_id(
         .filter(|record| record.selected_texture_id == meta.ec_texture_id)
     {
         if record.canonical_slot_id != 0
-            && record.canonical_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+            && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
             unique_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
-            && record.alias_slot_id != uddconv::ec_land::MISSING_SLOT_ID
+            && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
             unique_slots.insert(record.alias_slot_id);
@@ -338,9 +339,9 @@ fn resolve_surface_like_ec_land_slot_id(
 fn resolve_static_visual_kind(
     art_source: ClientTextureSource,
     tile_graphic: u16,
-    tilemeta: Option<&uddconv::tilemeta::TileMetaItemTile>,
-    ec_art: Option<&uddconv::ec_art::EcArtPackage>,
-    ec_land: Option<&uddconv::ec_land::EcLandPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    ec_art: Option<&udd_assets::ec_art::EcArtPackage>,
+    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
 ) -> StaticVisualKind {
     match art_source {
         ClientTextureSource::Cc => {
@@ -554,6 +555,8 @@ pub fn sys_sync_static_art_source(
     if source_state.active_source == effective_source {
         return;
     }
+
+    crate::util_lib::tracked_plugin::log_system_add_one_shot::<super::DrawStaticSpritesPlugin>("Update", "None", fname!());
 
     source_state.active_source = effective_source;
 
@@ -974,8 +977,8 @@ mod tests {
         assert!((left - right).abs() < 1.0e-6, "left={left} right={right}");
     }
 
-    fn item_tile_with_flags(flags: u64, visual_kind: uddconv::tilemeta::TileMetaItemVisualKind) -> uddconv::tilemeta::TileMetaItemTile {
-        let mut tile = uddconv::tilemeta::TileMetaItemTile::zeroed();
+    fn item_tile_with_flags(flags: u64, visual_kind: udd_assets::tilemeta::TileMetaItemVisualKind) -> udd_assets::tilemeta::TileMetaItemTile {
+        let mut tile = udd_assets::tilemeta::TileMetaItemTile::zeroed();
         tile.flags = flags;
         tile.set_visual_kind(visual_kind);
         tile
@@ -1045,7 +1048,7 @@ mod tests {
 
     #[test]
     fn depth_class_promotes_surface_like_floor_tiles() {
-        let tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        let tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
         assert_eq!(
             resolve_static_depth_class(Some(&tile)),
@@ -1057,7 +1060,7 @@ mod tests {
     fn depth_class_gives_roof_priority_over_surface_like_hint() {
         let tile = item_tile_with_flags(
             TILE_FLAG_ROOF,
-            uddconv::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
         );
 
         assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
@@ -1067,7 +1070,7 @@ mod tests {
     fn depth_class_gives_background_priority_over_roof_and_foliage() {
         let tile = item_tile_with_flags(
             TILE_FLAG_BACKGROUND | TILE_FLAG_ROOF | TILE_FLAG_FOLIAGE,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
 
         assert_eq!(
@@ -1080,7 +1083,7 @@ mod tests {
     fn depth_class_gives_roof_priority_over_foliage() {
         let tile = item_tile_with_flags(
             TILE_FLAG_ROOF | TILE_FLAG_FOLIAGE,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
 
         assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
@@ -1090,11 +1093,11 @@ mod tests {
     fn depth_class_separates_background_and_foliage_tiles() {
         let background = item_tile_with_flags(
             TILE_FLAG_BACKGROUND,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
         let foliage = item_tile_with_flags(
             TILE_FLAG_FOLIAGE,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
 
         assert_eq!(
@@ -1146,7 +1149,7 @@ mod tests {
 
     #[test]
     fn effective_priority_height_defaults_zero_height_regulars_to_ten() {
-        let tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
 
         assert_eq!(effective_priority_height(Some(&tile)), 10);
     }
@@ -1155,7 +1158,7 @@ mod tests {
     fn effective_priority_height_keeps_background_zero_height_at_zero() {
         let tile = item_tile_with_flags(
             TILE_FLAG_BACKGROUND,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
 
         assert_eq!(effective_priority_height(Some(&tile)), 0);
@@ -1165,7 +1168,7 @@ mod tests {
     fn effective_priority_height_halves_bridge_height() {
         let mut tile = item_tile_with_flags(
             TILE_FLAG_BRIDGE,
-            uddconv::tilemeta::TileMetaItemVisualKind::RegularArt,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
         tile.height = 12;
 
@@ -1185,7 +1188,7 @@ mod tests {
 
     #[test]
     fn regular_priority_z_units_include_effective_height() {
-        let mut tile = item_tile_with_flags(0, uddconv::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let mut tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         tile.height = 12;
 
         let priority_z_units = resolve_priority_z_units(

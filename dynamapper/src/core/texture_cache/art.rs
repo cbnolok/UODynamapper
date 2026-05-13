@@ -14,8 +14,8 @@ use crate::{
     },
     prelude::*,
 };
-use uddconv::{
-    bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat},
+use udd_conv::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
+use udd_assets::{
     cc_art::{CcArtPackage, PagePixelFormat},
     ec_art::EcArtPackage,
     ec_land::EcLandPackage,
@@ -43,6 +43,7 @@ pub struct LoadedArtTexture {
     pub rgba8: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct ResolvedArtSprite {
     pub layer: u32,
     pub uv_min: Vec2,

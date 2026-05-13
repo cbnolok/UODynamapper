@@ -106,6 +106,7 @@ fn sys_setup_cam(
     render_zoom: Res<RenderZoom>,
     settings: Res<Settings>,
 ) {
+    log_system_add_startup::<CameraPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let main_window = windows.single().unwrap();
     let window_width = main_window.resolution.width();
     let window_height = main_window.resolution.height() / ORTHO_WIDTH_SCALE_FACTOR;
@@ -252,6 +253,7 @@ fn sys_apply_world_camera_graphics_settings(
     ui_camera: Res<UiCameraResource>,
     settings: Res<Settings>,
 ) {
+    log_system_add_one_shot::<CameraPlugin>("Update", "MovementSysSet::UpdateCamera", fname!());
     if let Some(camera_entity) = camera_q.iter().next() {
         apply_world_camera_graphics_settings(
             &mut commands,
