@@ -123,8 +123,12 @@ pub fn sys_update_scene_on_window_resize(
     }
 
     if saw_resize {
-        settings.app.window.width = last_size.0;
-        settings.app.window.height = last_size.1;
+        if (settings.app.window.width - last_size.0).abs() > 0.001 {
+            settings.app.window.width = last_size.0;
+        }
+        if (settings.app.window.height - last_size.1).abs() > 0.001 {
+            settings.app.window.height = last_size.1;
+        }
         writer.write(RecomputeVisibleChunksEvent {});
     }
 }
@@ -319,7 +323,10 @@ fn chunk_is_covered_by_ready_target(
     while target_gx < committed_end_gx {
         let mut target_gy = committed_gy;
         while target_gy < committed_end_gy {
-            if ready_target_chunks.binary_search(&(target_gx, target_gy)).is_err() {
+            if ready_target_chunks
+                .binary_search(&(target_gx, target_gy))
+                .is_err()
+            {
                 return false;
             }
             target_gy += target_scale;
@@ -445,8 +452,10 @@ fn sys_update_worldmap_chunks_to_render(
                 &format!(
                     "Visible chunk target: {} (scale={}, zoom={}, viewport size: x={}, y={})",
                     required_desired_chunks.len(),
-                    desired_scale, zoom,
-                    viewport_size.0, viewport_size.1
+                    desired_scale,
+                    zoom,
+                    viewport_size.0,
+                    viewport_size.1
                 ),
             );
             locals.last_logged_visible_target_map_id = Some(new_map_id);
@@ -482,7 +491,11 @@ fn sys_update_worldmap_chunks_to_render(
             locals.committed_required_chunks = required_desired_chunks.clone();
 
             let mut sorted_spawns = required_desired_chunks.clone();
-            sort_visible_chunks(&mut sorted_spawns, &required_desired_chunks, current_camera_chunk);
+            sort_visible_chunks(
+                &mut sorted_spawns,
+                &required_desired_chunks,
+                current_camera_chunk,
+            );
             locals
                 .pending_spawns
                 .extend(sorted_spawns.into_iter().map(|(gx, gy)| PendingChunkSpawn {
@@ -560,9 +573,13 @@ fn sys_update_worldmap_chunks_to_render(
                 None
             };
 
-            let mut currently_spawned_committed = Vec::with_capacity(required_committed_chunks.len());
-            let mut currently_spawned_target =
-                Vec::with_capacity(required_target_chunks.as_ref().map_or(0, |chunks| chunks.len()));
+            let mut currently_spawned_committed =
+                Vec::with_capacity(required_committed_chunks.len());
+            let mut currently_spawned_target = Vec::with_capacity(
+                required_target_chunks
+                    .as_ref()
+                    .map_or(0, |chunks| chunks.len()),
+            );
 
             for (entity, tcm, _) in existing_chunks_q.iter() {
                 if tcm.parent_map_id != new_map_id {
@@ -616,15 +633,15 @@ fn sys_update_worldmap_chunks_to_render(
                     &required_committed_chunks,
                     current_camera_chunk,
                 );
-                locals.pending_spawns.extend(
-                    sorted_committed_spawns
-                        .into_iter()
-                        .map(|(gx, gy)| PendingChunkSpawn {
+                locals
+                    .pending_spawns
+                    .extend(sorted_committed_spawns.into_iter().map(|(gx, gy)| {
+                        PendingChunkSpawn {
                             gx,
                             gy,
                             scale: committed_scale,
-                        }),
-                );
+                        }
+                    }));
             }
 
             if let Some(target_scale) = active_target_scale {
@@ -639,15 +656,17 @@ fn sys_update_worldmap_chunks_to_render(
                     &locals.transition_required_chunks,
                     current_camera_chunk,
                 );
-                locals.pending_spawns.extend(
-                    sorted_target_spawns
-                        .into_iter()
-                        .map(|(gx, gy)| PendingChunkSpawn {
-                            gx,
-                            gy,
-                            scale: target_scale,
-                        }),
-                );
+                locals
+                    .pending_spawns
+                    .extend(
+                        sorted_target_spawns
+                            .into_iter()
+                            .map(|(gx, gy)| PendingChunkSpawn {
+                                gx,
+                                gy,
+                                scale: target_scale,
+                            }),
+                    );
             }
 
             scene_state_data_res.map_id = new_map_id;
@@ -661,7 +680,10 @@ fn sys_update_worldmap_chunks_to_render(
     {
         let mut ready_target_chunks = Vec::with_capacity(locals.transition_required_chunks.len());
         for (_, tcm, has_mesh) in existing_chunks_q.iter() {
-            if tcm.parent_map_id == scene_state_data_res.map_id && tcm.scale == target_scale && has_mesh {
+            if tcm.parent_map_id == scene_state_data_res.map_id
+                && tcm.scale == target_scale
+                && has_mesh
+            {
                 ready_target_chunks.push((tcm.gx, tcm.gy));
             }
         }
@@ -710,12 +732,15 @@ fn sys_update_worldmap_chunks_to_render(
             );
 
             for (entity, tcm, _) in existing_chunks_q.iter() {
-                if tcm.parent_map_id == scene_state_data_res.map_id && tcm.scale == committed_scale {
+                if tcm.parent_map_id == scene_state_data_res.map_id && tcm.scale == committed_scale
+                {
                     queue_entity_for_despawn(&mut locals.pending_despawns, entity);
                 }
             }
 
-            locals.pending_spawns.retain(|spawn| spawn.scale != committed_scale);
+            locals
+                .pending_spawns
+                .retain(|spawn| spawn.scale != committed_scale);
             locals.committed_scale = Some(target_scale);
             locals.committed_required_chunks = locals.transition_required_chunks.clone();
             locals.transition_target_scale = None;
@@ -727,32 +752,24 @@ fn sys_update_worldmap_chunks_to_render(
         locals.committed_required_chunks.len() + locals.transition_required_chunks.len(),
     );
     if let Some(committed_scale) = locals.committed_scale {
-        next_visible_targets.extend(
-            locals
-                .committed_required_chunks
-                .iter()
-                .copied()
-                .map(|(gx, gy)| VisibleLandChunkTarget {
-                    map_id: scene_state_data_res.map_id,
-                    gx,
-                    gy,
-                    scale: committed_scale,
-                }),
-        );
+        next_visible_targets.extend(locals.committed_required_chunks.iter().copied().map(
+            |(gx, gy)| VisibleLandChunkTarget {
+                map_id: scene_state_data_res.map_id,
+                gx,
+                gy,
+                scale: committed_scale,
+            },
+        ));
     }
     if let Some(target_scale) = locals.transition_target_scale {
-        next_visible_targets.extend(
-            locals
-                .transition_required_chunks
-                .iter()
-                .copied()
-                .map(|(gx, gy)| VisibleLandChunkTarget {
-                    map_id: scene_state_data_res.map_id,
-                    gx,
-                    gy,
-                    scale: target_scale,
-                }),
-        );
+        next_visible_targets.extend(locals.transition_required_chunks.iter().copied().map(
+            |(gx, gy)| VisibleLandChunkTarget {
+                map_id: scene_state_data_res.map_id,
+                gx,
+                gy,
+                scale: target_scale,
+            },
+        ));
     }
     visible_chunk_targets.targets = next_visible_targets;
 
@@ -788,7 +805,10 @@ fn sys_update_worldmap_chunks_to_render(
 
     // Retire obsolete chunks after new ones have had a chance to appear.
     let despawn_batch_size = locals.pending_despawns.len().min(MAX_DESPAWNS_PER_FRAME);
-    for entity in locals.pending_despawns[..despawn_batch_size].iter().copied() {
+    for entity in locals.pending_despawns[..despawn_batch_size]
+        .iter()
+        .copied()
+    {
         if let Ok((_, tcm, _)) = existing_chunks_q.get(entity) {
             log_chunk_despawn(tcm.gx, tcm.gy, tcm.parent_map_id);
         }

@@ -35,9 +35,19 @@ struct Rg16u {
 }
 
 impl Rg16u {
-    fn pack(tile_id: u16, height_i8: i8, tex_size_bits: u16) -> Self {
+    /// Packs tile ID, height, texture source mode, and is_wet flag into Rg16u format.
+    ///
+    /// This local definition mirrors `tile_atlas::Rg16u::pack` in the dynamapper crate.
+    /// G channel high-byte layout:
+    ///   bits 0-3: tex_size_bits (mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing)
+    ///   bit  7:   is_wet (IsWet tiledata flag → animated water distortion in shader)
+    ///
+    /// During build-time map conversion (this tool) we always pass is_wet=false;
+    /// the runtime draw_mesh.rs fills the wet bit from TileMetaPackageRes.
+    fn pack(tile_id: u16, height_i8: i8, tex_size_bits: u16, is_wet: bool) -> Self {
         let height_biased = (height_i8 as i16 + 128).clamp(0, 255) as u8;
-        let g = (height_biased as u16) | ((tex_size_bits & 0xFF) << 8);
+        let wet_bit: u16 = if is_wet { 0x80 } else { 0 };
+        let g = (height_biased as u16) | (((tex_size_bits & 0x0F) | wet_bit) << 8);
         Self { r: tile_id, g }
     }
 }
@@ -45,6 +55,12 @@ impl Rg16u {
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: usize = 32;
 const PACKAGE_CHUNK_TEXEL_COUNT: usize = PACKAGE_CHUNK_TILE_DIM * PACKAGE_CHUNK_TILE_DIM;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CcMapSourcePreference {
+    Mul,
+    Uop,
+}
 
 pub struct CcMapBuildSummary {
     pub map_id: u32,
@@ -57,10 +73,33 @@ pub fn convert_map_mul_to_uddp_from_sources(
     source_dirs: &[PathBuf],
     output_path: &Path,
     map_id: u32,
+    preference: CcMapSourcePreference,
 ) -> eyre::Result<CcMapBuildSummary> {
-    let map_file_name = format!("map{}.mul", map_id);
-    let map_path = find_first_existing_file(source_dirs, &[&map_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", map_file_name))?;
+    let mul_name = format!("map{}.mul", map_id);
+    let uop_name = format!("map{}LegacyMUL.uop", map_id);
+
+    let (map_path, is_uop) = match preference {
+        CcMapSourcePreference::Mul => {
+            if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
+                (path, false)
+            } else if let Some(path) = find_first_existing_file(source_dirs, &[&uop_name]) {
+                println!("Warning: map{}.mul not found, falling back to uop", map_id);
+                (path, true)
+            } else {
+                eyre::bail!("Missing map data for map{} (tried .mul and .uop)", map_id);
+            }
+        }
+        CcMapSourcePreference::Uop => {
+            if let Some(path) = find_first_existing_file(source_dirs, &[&uop_name]) {
+                (path, true)
+            } else if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
+                println!("Warning: {} not found, falling back to .mul", uop_name);
+                (path, false)
+            } else {
+                eyre::bail!("Missing map data for map{} (tried .uop and .mul)", map_id);
+            }
+        }
+    };
 
     println!(
         "Converting {} to {}",
@@ -68,7 +107,12 @@ pub fn convert_map_mul_to_uddp_from_sources(
         output_path.display()
     );
 
-    let mut plane = MapPlane::init(map_path, map_id)?;
+    let mut plane = if is_uop {
+        MapPlane::init_uop(map_path, map_id)?
+    } else {
+        MapPlane::init(map_path, map_id)?
+    };
+
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;
     let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
@@ -117,7 +161,7 @@ pub fn convert_map_mul_to_uddp_from_sources(
                     let local_y = cell_index >> 3;
                     let texel_index = (block_base_y + local_y) * PACKAGE_CHUNK_TILE_DIM
                         + (block_base_x + local_x);
-                    texels[texel_index] = Rg16u::pack(cell.id, cell.z, 0);
+                    texels[texel_index] = Rg16u::pack(cell.id, cell.z, 0, false);
                 }
             }
 

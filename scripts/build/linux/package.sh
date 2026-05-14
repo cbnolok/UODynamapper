@@ -33,7 +33,7 @@ CLI_UTILS=(
     "udd-tool"
     "uop-tool"
     "cc-uop-mul-converter"
-    "uop-dict-populator"
+    "uop-dict-populator-cli"
 )
 
 for util in "${CLI_UTILS[@]}"; do

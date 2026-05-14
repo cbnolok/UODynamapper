@@ -33,19 +33,19 @@ pub struct TileMetaPackageRes(pub Arc<TileMetaPackage>);
 /// Arc: cloned into the chunk-loader OS thread (via LoadRequest.texmap_2d)
 /// and passed to texture cache systems that warm pixel data off-thread.
 #[derive(Resource)]
-pub struct TexMap2DRes(pub Arc<udd_assets::cc_texmaps::CcTexmapsPackage>);
+pub struct TexMap2DRes(pub Arc<udd_assets::tex_land_cc::TexLandCcPackage>);
 
 /// Optional prepacked atlas package for static and land art.
 #[derive(Resource)]
-pub struct CcArtPackageRes(pub Arc<udd_assets::cc_art::CcArtPackage>);
+pub struct TexArtCcPackageRes(pub Arc<udd_assets::tex_art_cc::TexArtCcPackage>);
 
 /// Optional prepacked atlas package for EC static art.
 #[derive(Resource)]
-pub struct EcArtPackageRes(pub Arc<udd_assets::ec_art::EcArtPackage>);
+pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 
 /// Optional prepacked atlas package for EC land art.
 #[derive(Resource)]
-pub struct EcLandPackageRes(pub Arc<udd_assets::ec_land::EcLandPackage>);
+pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
@@ -54,7 +54,7 @@ pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
 /// Enhanced terrain definitions.
 #[derive(Resource)]
 pub struct TerrainDefinitionRes(
-    pub Arc<HashMap<u32, udd_assets::cc_ec_land_transcode::TerrainDefEntry>>,
+    pub Arc<HashMap<u32, udd_assets::cc_tex_land_ec_transcode::TerrainDefEntry>>,
 );
 
 pub struct UoFilesSettings {
@@ -130,7 +130,7 @@ impl Plugin for UOFilesPlugin {
     }
 }
 
-fn log_ec_land_coverage(lg: &impl Fn(&str), package: &udd_assets::ec_land::EcLandPackage) {
+fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_ec::TexLandEcPackage) {
     let populated_slot_count = package
         .slots()
         .iter()
@@ -150,6 +150,13 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     let lg = |text: &str| {
         console_logger::one(
             console_logger::LogSev::Info,
+            console_logger::LogAbout::UoFiles,
+            text,
+        )
+    };
+    let lg_err = |text: &str| {
+        console_logger::one(
+            console_logger::LogSev::Error,
             console_logger::LogAbout::UoFiles,
             text,
         )
@@ -214,14 +221,14 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 });
                 statics_stores[map_plane_index as usize] = Some(Mutex::new(store));
             } else {
-                lg(&format!(
+                lg_err(&format!(
                     "No statics source selected for plane {map_plane_index}: {statics_file_name} not found in udd_path."
                 ));
             }
 
             map_planes[map_plane_index as usize] = Some(map_plane);
         } else {
-            lg(&format!(
+            lg_err(&format!(
                 "No map source selected for plane {map_plane_index}: {map_file_name} not found in udd_path."
             ));
         }
@@ -240,65 +247,65 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             .unwrap_or_else(|_| panic!("Error loading {}", tilemeta_path.display())),
     );
 
-    let texmaps_package_path = resolve_optional_uddp_path(&udd_path, "cc_texmaps.uddp")
-        .unwrap_or_else(|| panic!("cc_texmaps.uddp is required in udd_path"));
+    let texmaps_package_path = resolve_optional_uddp_path(&udd_path, "tex_land_cc.uddp")
+        .unwrap_or_else(|| panic!("tex_land_cc.uddp is required in udd_path"));
     log_source_choice(
         &lg,
         "terrain texmaps package",
         SourceContainerKind::Uddp,
         std::slice::from_ref(&texmaps_package_path),
     );
-    let texmap_2d = udd_assets::cc_texmaps::CcTexmapsPackage::load(&texmaps_package_path)
+    let texmap_2d = udd_assets::tex_land_cc::TexLandCcPackage::load(&texmaps_package_path)
         .unwrap_or_else(|_| panic!("Error loading {}", texmaps_package_path.display()));
 
-    let cc_art_path = resolve_optional_uddp_path(&udd_path, "cc_art.uddp");
-    let cc_art_package = if let Some(cc_art_path) = cc_art_path {
+    let tex_art_cc_path = resolve_optional_uddp_path(&udd_path, "tex_art_cc.uddp");
+    let tex_art_cc_package = if let Some(tex_art_cc_path) = tex_art_cc_path {
         log_source_choice(
             &lg,
             "classic art package",
             SourceContainerKind::Uddp,
-            std::slice::from_ref(&cc_art_path),
+            std::slice::from_ref(&tex_art_cc_path),
         );
         Some(
-            udd_assets::cc_art::CcArtPackage::load(&cc_art_path)
-                .unwrap_or_else(|_| panic!("Error loading {}", cc_art_path.display())),
+            udd_assets::tex_art_cc::TexArtCcPackage::load(&tex_art_cc_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", tex_art_cc_path.display())),
         )
     } else {
-        lg("No classic art package source selected: cc_art.uddp not found in udd_path.");
+        lg_err("No classic art package source selected: tex_art_cc.uddp not found in udd_path.");
         None
     };
 
-    let ec_art_path = resolve_optional_uddp_path(&udd_path, "ec_art.uddp");
-    let ec_art_package = if let Some(ec_art_path) = ec_art_path {
+    let tex_art_ec_path = resolve_optional_uddp_path(&udd_path, "tex_art_ec.uddp");
+    let tex_art_ec_package = if let Some(tex_art_ec_path) = tex_art_ec_path {
         log_source_choice(
             &lg,
             "enhanced art package",
             SourceContainerKind::Uddp,
-            std::slice::from_ref(&ec_art_path),
+            std::slice::from_ref(&tex_art_ec_path),
         );
         Some(
-            udd_assets::ec_art::EcArtPackage::load(&ec_art_path)
-                .unwrap_or_else(|_| panic!("Error loading {}", ec_art_path.display())),
+            udd_assets::tex_art_ec::TexArtEcPackage::load(&tex_art_ec_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", tex_art_ec_path.display())),
         )
     } else {
-        lg("No enhanced art package source selected: ec_art.uddp not found in udd_path.");
+        lg_err("No enhanced art package source selected: tex_art_ec.uddp not found in udd_path.");
         None
     };
 
-    let ec_land_path = resolve_optional_uddp_path(&udd_path, "ec_land.uddp");
-    let mut ec_land_package = if let Some(ec_land_path) = ec_land_path {
+    let tex_land_ec_path = resolve_optional_uddp_path(&udd_path, "tex_land_ec.uddp");
+    let mut tex_land_ec_package = if let Some(tex_land_ec_path) = tex_land_ec_path {
         log_source_choice(
             &lg,
             "enhanced land package",
             SourceContainerKind::Uddp,
-            std::slice::from_ref(&ec_land_path),
+            std::slice::from_ref(&tex_land_ec_path),
         );
-        let package = udd_assets::ec_land::EcLandPackage::load(&ec_land_path)
-            .unwrap_or_else(|_| panic!("Error loading {}", ec_land_path.display()));
-        log_ec_land_coverage(&lg, &package);
+        let package = udd_assets::tex_land_ec::TexLandEcPackage::load(&tex_land_ec_path)
+            .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display()));
+        log_tex_land_ec_coverage(&lg, &package);
         Some(package)
     } else {
-        lg("No enhanced land package source selected: ec_land.uddp not found in udd_path.");
+        lg_err("No enhanced land package source selected: tex_land_ec.uddp not found in udd_path.");
         None
     };
 
@@ -313,15 +320,15 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             "Loading TerrainTranscode.kdl from: {}",
             transcode_path.display()
         ));
-        match udd_assets::cc_ec_land_transcode::TerrainTranscode::load(&transcode_path) {
+        match udd_assets::cc_tex_land_ec_transcode::TerrainTranscode::load(&transcode_path) {
             Ok(transcode) => {
                 lg("Loaded TerrainTranscode.kdl (loose file)");
                 let transcode_map = transcode.to_map();
 
                 // Apply override to EC land package if present
-                if let Some(ec_land) = ec_land_package.as_mut() {
+                if let Some(tex_land_ec) = tex_land_ec_package.as_mut() {
                     lg("Applying loose TerrainTranscode.kdl as override to EC land package.");
-                    ec_land.set_transcode(transcode_map.clone());
+                    tex_land_ec.set_transcode(transcode_map.clone());
                 }
 
                 commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode_map)));
@@ -339,7 +346,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     let definition_path = asset_root.join("cc_ec_convtables/TerrainDefinition.kdl");
     if definition_path.exists() {
-        match udd_assets::cc_ec_land_transcode::TerrainDefinitionKdl::load(&definition_path) {
+        match udd_assets::cc_tex_land_ec_transcode::TerrainDefinitionKdl::load(&definition_path) {
             Ok(definition) => {
                 lg("Loaded TerrainDefinition.kdl");
                 commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
@@ -361,14 +368,14 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     commands.insert_resource(MapPlanesRes(map_planes));
     commands.insert_resource(TileMetaPackageRes(tilemeta_package.clone()));
     commands.insert_resource(TexMap2DRes(Arc::new(texmap_2d)));
-    if let Some(cc_art_package) = cc_art_package {
-        commands.insert_resource(CcArtPackageRes(Arc::new(cc_art_package)));
+    if let Some(tex_art_cc_package) = tex_art_cc_package {
+        commands.insert_resource(TexArtCcPackageRes(Arc::new(tex_art_cc_package)));
     }
-    if let Some(ec_art_package) = ec_art_package {
-        commands.insert_resource(EcArtPackageRes(Arc::new(ec_art_package)));
+    if let Some(tex_art_ec_package) = tex_art_ec_package {
+        commands.insert_resource(TexArtEcPackageRes(Arc::new(tex_art_ec_package)));
     }
-    if let Some(ec_land_package) = ec_land_package {
-        commands.insert_resource(EcLandPackageRes(Arc::new(ec_land_package)));
+    if let Some(tex_land_ec_package) = tex_land_ec_package {
+        commands.insert_resource(TexLandEcPackageRes(Arc::new(tex_land_ec_package)));
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
 }

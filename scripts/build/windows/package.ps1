@@ -32,7 +32,7 @@ $cliUtils = @(
     "udd-tool",
     "uop-tool",
     "cc-uop-mul-converter",
-    "uop-dict-populator"
+    "uop-dict-populator-cli"
 )
 
 foreach ($util in $cliUtils) {

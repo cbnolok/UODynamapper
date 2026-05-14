@@ -140,7 +140,11 @@ fn sys_preferences_toggle(
     _trigger: On<ActionTogglePreferences>,
     mut state: ResMut<PreferencesDialogState>,
 ) {
-    log_system_add_one_shot::<PreferencesDialogPlugin>("Observer", "ActionTogglePreferences", fname!());
+    log_system_add_one_shot::<PreferencesDialogPlugin>(
+        "Observer",
+        "ActionTogglePreferences",
+        fname!(),
+    );
     state.open = !state.open;
 }
 
@@ -148,7 +152,11 @@ fn sys_preferences_close(
     _trigger: On<ActionCloseActiveDialog>,
     mut state: ResMut<PreferencesDialogState>,
 ) {
-    log_system_add_one_shot::<PreferencesDialogPlugin>("Observer", "ActionCloseActiveDialog", fname!());
+    log_system_add_one_shot::<PreferencesDialogPlugin>(
+        "Observer",
+        "ActionCloseActiveDialog",
+        fname!(),
+    );
     state.open = false;
 }
 
@@ -168,8 +176,7 @@ pub fn sys_render_preferences_dialog(
         // ---- Sync UI state to Settings resource ----
         // This is debounced via state.apply_timer to avoid "scattering" during slider manipulation.
 
-        if (settings.as_ref().app.input.movement_speed_multiplier
-            - state.movement_speed_multiplier)
+        if (settings.as_ref().app.input.movement_speed_multiplier - state.movement_speed_multiplier)
             .abs()
             > 0.001
         {
@@ -203,8 +210,7 @@ pub fn sys_render_preferences_dialog(
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
         }
-        if (settings.as_ref().app.window.player_position_scale - state.player_position_scale)
-            .abs()
+        if (settings.as_ref().app.window.player_position_scale - state.player_position_scale).abs()
             > 0.001
         {
             settings.app.window.player_position_scale = state.player_position_scale;
@@ -216,14 +222,12 @@ pub fn sys_render_preferences_dialog(
         {
             settings.app.window.performance_overlay_scale = state.performance_overlay_scale;
         }
-        if (settings.as_ref().app.window.cursor_position_scale - state.cursor_position_scale)
-            .abs()
+        if (settings.as_ref().app.window.cursor_position_scale - state.cursor_position_scale).abs()
             > 0.001
         {
             settings.app.window.cursor_position_scale = state.cursor_position_scale;
         }
-        if (settings.as_ref().app.window.sysmessages_scale - state.sysmessages_scale).abs()
-            > 0.001
+        if (settings.as_ref().app.window.sysmessages_scale - state.sysmessages_scale).abs() > 0.001
         {
             settings.app.window.sysmessages_scale = state.sysmessages_scale;
         }
@@ -275,7 +279,10 @@ pub fn sys_render_preferences_dialog(
                     ui.separator();
 
                     // ---- Frame limiter toggle ----
-                    if ui.checkbox(&mut state.frame_limit_enabled, "Enable frame limiter").changed() {
+                    if ui
+                        .checkbox(&mut state.frame_limit_enabled, "Enable frame limiter")
+                        .changed()
+                    {
                         state.apply_timer.reset();
                         state.apply_timer.unpause();
                     }
@@ -389,7 +396,6 @@ pub fn sys_render_preferences_dialog(
                     ui.add_space(4.0);
                     ui.heading("Texture");
                     ui.separator();
-
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
@@ -512,7 +518,8 @@ pub fn sys_render_preferences_dialog(
                     });
                     ui.horizontal(|ui| {
                         ui.label("System Messages:");
-                        let res = ui.add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0));
+                        let res =
+                            ui.add(egui::Slider::new(&mut state.sysmessages_scale, 0.5..=3.0));
                         if res.drag_stopped() || (res.changed() && !res.dragged()) {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
@@ -556,7 +563,7 @@ pub fn sys_apply_performance_settings(
     mut framepace: ResMut<FramepaceSettings>,
 ) {
     if settings.is_changed() {
-        log_system_add_one_shot::<PreferencesDialogPlugin>("Update", "None", fname!());
+        log_system_add_update::<PreferencesDialogPlugin>(fname!());
         let target_fps = settings.app.performance.target_fps;
         let enabled = settings.app.performance.frame_limit_enabled;
 

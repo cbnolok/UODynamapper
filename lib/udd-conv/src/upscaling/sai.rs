@@ -56,9 +56,9 @@ pub fn apply_sai(
             let c_o = get_pixel(x + 1, y + 2);
 
             let (p0, p1, p2, p3) = match filter {
-                UpscaleFilter::TwoSai => apply_2xsai_logic(c_a, c_b, c_c, c_d, c_e, c_f, c_g, c_h, c_i, c_j, c_k, c_l, c_m, c_n, c_o),
-                UpscaleFilter::SuperSai => apply_super2xsai_logic(c_a, c_b, c_c, c_d, c_e, c_f, c_g, c_h, c_i, c_j, c_k, c_l),
-                UpscaleFilter::SuperEagle => apply_supereagle_logic(c_a, c_b, c_c, c_d),
+                UpscaleFilter::TwoSai2x => apply_2xsai_logic(c_a, c_b, c_c, c_d, c_e, c_f, c_g, c_h, c_i, c_j, c_k, c_l, c_m, c_n, c_o),
+                UpscaleFilter::SuperSai2x => apply_super2xsai_logic(c_a, c_b, c_c, c_d, c_e, c_f, c_g, c_h, c_i, c_j, c_k, c_l),
+                UpscaleFilter::SuperEagle2x => apply_supereagle_logic(c_a, c_b, c_c, c_d),
                 _ => (c_a, c_a, c_a, c_a),
             };
 

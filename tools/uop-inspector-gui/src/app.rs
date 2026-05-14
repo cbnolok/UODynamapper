@@ -15,7 +15,7 @@ use std::path::PathBuf;
 pub enum ViewMode {
     Home,
     UopExplorer,
-    CcArt,
+    TexArtCc,
     CcTileData,
     Animations,
     Multis,
@@ -43,7 +43,7 @@ pub struct UopInspectorApp {
 
     pub selected_uop_idx: Option<usize>,
     pub selected_file_hash: Option<u64>,
-    pub selected_cc_art_id: Option<u32>,
+    pub selected_tex_art_cc_id: Option<u32>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -94,7 +94,7 @@ impl UopInspectorApp {
             client_data: None,
             selected_uop_idx: None,
             selected_file_hash: None,
-            selected_cc_art_id: None,
+            selected_tex_art_cc_id: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -467,7 +467,7 @@ impl UopInspectorApp {
         None
     }
 
-    fn get_cc_art_texture_from_source(
+    fn get_tex_art_cc_texture_from_source(
         &mut self,
         ctx: &egui::Context,
         art_id: u32,
@@ -543,12 +543,12 @@ impl UopInspectorApp {
         None
     }
 
-    pub fn get_cc_art_texture(
+    pub fn get_tex_art_cc_texture(
         &mut self,
         ctx: &egui::Context,
         art_id: u32,
     ) -> Option<egui::TextureHandle> {
-        self.get_cc_art_texture_from_source(ctx, art_id, self.selected_legacy_source)
+        self.get_tex_art_cc_texture_from_source(ctx, art_id, self.selected_legacy_source)
     }
 }
 

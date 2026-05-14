@@ -2,16 +2,16 @@ use udd_container::{
     AddFileRequest, DataType, LookupMode, UddpBuilder, UddpReader,
 };
 
-use udd_conv::ec_land::*;
+use udd_conv::tex_land_ec::*;
 use udd_conv::upscale::UpscaleConfig;
 use udd_assets::{
-    ec_land::{
-        EcLandTerrainProvenanceRecord,
+    tex_land_ec::{
+        TexLandEcTerrainProvenanceRecord,
         UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
         UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     },
-    cc_art::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
-    EcLandPackage,
+    tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
+    TexLandEcPackage,
 };
 use udd_container::CompressionFlag;
 
@@ -27,7 +27,7 @@ pub fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Dec
 
 #[test]
 fn sparse_slots_keep_absent_records() {
-    let options = EcLandAtlasOptions {
+    let options = TexLandEcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -52,7 +52,7 @@ fn sparse_slots_keep_absent_records() {
 
 #[test]
 fn packer_spills_to_multiple_pages() {
-    let options = EcLandAtlasOptions {
+    let options = TexLandEcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -77,7 +77,7 @@ fn packer_spills_to_multiple_pages() {
 
 #[test]
 fn runtime_reader_can_unpack_page_and_slot_metadata() {
-    let options = EcLandAtlasOptions {
+    let options = TexLandEcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -90,7 +90,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
-    let terrain_provenance = vec![EcLandTerrainProvenanceRecord {
+    let terrain_provenance = vec![TexLandEcTerrainProvenanceRecord {
         material_id: 12,
         material_name_id: 34,
         alias_count_index: 0,
@@ -156,7 +156,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .unwrap();
 
     let package =
-        EcLandPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
+        TexLandEcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
     assert_eq!(package.pages().len(), 1);
     assert!(package.present_slot(0).unwrap().is_land());
@@ -170,7 +170,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
 
 #[test]
 fn land_alias_slots_reuse_canonical_page_location() {
-    let options = EcLandAtlasOptions {
+    let options = TexLandEcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -204,7 +204,7 @@ fn land_alias_slots_reuse_canonical_page_location() {
 
 #[test]
 fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
-    let options = EcLandAtlasOptions {
+    let options = TexLandEcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -226,7 +226,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
     let terrain_provenance = vec![
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 54,
             material_name_id: 0,
             alias_count_index: 0,
@@ -235,7 +235,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_540,
             canonical_slot_id: 26,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 171,
             material_name_id: 0,
             alias_count_index: 0,
@@ -244,7 +244,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_131,
             canonical_slot_id: 581,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 4,
             material_name_id: 0,
             alias_count_index: 0,
@@ -253,7 +253,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 4,
             material_name_id: 0,
             alias_count_index: 1,
@@ -262,7 +262,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_040,
             canonical_slot_id: 196,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 172,
             material_name_id: 0,
             alias_count_index: 0,
@@ -271,7 +271,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_000,
             canonical_slot_id: 0,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 172,
             material_name_id: 0,
             alias_count_index: 1,
@@ -280,7 +280,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_131,
             canonical_slot_id: 581,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 197,
             material_name_id: 0,
             alias_count_index: 0,
@@ -289,7 +289,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 197,
             material_name_id: 0,
             alias_count_index: 1,
@@ -298,7 +298,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_040,
             canonical_slot_id: 196,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 198,
             material_name_id: 0,
             alias_count_index: 0,
@@ -307,7 +307,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 198,
             material_name_id: 0,
             alias_count_index: 1,
@@ -316,7 +316,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 16_110,
             canonical_slot_id: 16_110,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 199,
             material_name_id: 0,
             alias_count_index: 0,
@@ -325,7 +325,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
         },
-        EcLandTerrainProvenanceRecord {
+        TexLandEcTerrainProvenanceRecord {
             material_id: 199,
             material_name_id: 0,
             alias_count_index: 1,
@@ -395,7 +395,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
     }
 
     let mut package =
-        EcLandPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
+        TexLandEcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
 
     // Mock the runtime transcode table injection that the dynamapper does:

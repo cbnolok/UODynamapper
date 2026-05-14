@@ -1,8 +1,8 @@
 input_uddp_dir = "packages"
 output_uddp_dir = "packages"
 link_uddp_dirs = true
-bc7_cc_art = false
-bc7_ec_art = false
-bc7_ec_land = false
+bc7_tex_art_cc = false
+bc7_tex_art_ec = false
+bc7_tex_land_ec = false
 radar_format = "Bc7"
 radar_zstd = 3

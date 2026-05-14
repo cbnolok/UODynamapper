@@ -2,14 +2,14 @@ use udd_container::{
     AddFileRequest, DataType, LookupMode, UddpBuilder, UddpReader,
 };
 
-use udd_conv::cc_art::*;
+use udd_conv::tex_art_cc::*;
 use udd_conv::upscale::UpscaleFilter;
 use udd_assets::{
-    cc_art::{
+    tex_art_cc::{
         MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat,
         PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH,
     },
-    CcArtPackage,
+    TexArtCcPackage,
 };
 use udd_container::CompressionFlag;
 
@@ -25,7 +25,7 @@ fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Decoded
 
 #[test]
 fn sparse_slots_keep_absent_records() {
-    let options = CcArtAtlasOptions {
+    let options = TexArtCcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -48,7 +48,7 @@ fn sparse_slots_keep_absent_records() {
 
 #[test]
 fn packer_spills_to_multiple_pages() {
-    let options = CcArtAtlasOptions {
+    let options = TexArtCcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -71,7 +71,7 @@ fn packer_spills_to_multiple_pages() {
 
 #[test]
 fn later_ids_do_not_backfill_an_earlier_page() {
-    let options = CcArtAtlasOptions {
+    let options = TexArtCcAtlasOptions {
         atlas_width: 10,
         atlas_height: 6,
         gutter: 0,
@@ -95,7 +95,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
 
 #[test]
 fn runtime_reader_can_unpack_page_and_slot_metadata() {
-    let options = CcArtAtlasOptions {
+    let options = TexArtCcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -150,7 +150,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .unwrap();
 
     let package =
-        CcArtPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
+        TexArtCcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
     assert_eq!(package.pages().len(), 1);
     assert!(package.present_slot(0).unwrap().is_land());

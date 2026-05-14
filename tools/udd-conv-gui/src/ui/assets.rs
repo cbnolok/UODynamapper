@@ -1,7 +1,7 @@
 use crate::app::UddConvApp;
 use crate::models::TextureOptimization;
-use udd_conv::upscale::UpscaleFilter;
 use eframe::egui;
+use udd_conv::upscale::UpscaleFilter;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
@@ -39,37 +39,37 @@ impl UddConvApp {
                     ui,
                     "Pack CC Art",
                     "Classic items and land textures (art.mul)",
-                    Some(&mut self.settings.opt_cc_art),
-                    Some(&mut self.settings.upscale_cc_art),
+                    Some(&mut self.settings.opt_tex_art_cc),
+                    Some(&mut self.settings.upscale_tex_art_cc),
                 ) {
-                    self.convert_cc_art();
+                    self.convert_tex_art_cc();
                 }
                 if draw_asset_row(
                     ui,
                     "Pack CC Texmaps",
                     "Classic high-res terrain textures (texmaps.mul)",
-                    Some(&mut self.settings.opt_cc_texmaps),
-                    Some(&mut self.settings.upscale_cc_texmaps),
+                    Some(&mut self.settings.opt_tex_land_cc),
+                    Some(&mut self.settings.upscale_tex_land_cc),
                 ) {
-                    self.convert_cc_texmaps();
+                    self.convert_tex_land_cc();
                 }
                 if draw_asset_row(
                     ui,
                     "Pack EC Art",
                     "Enhanced Client static items (worldart)",
-                    Some(&mut self.settings.opt_ec_art),
-                    Some(&mut self.settings.upscale_ec_art),
+                    Some(&mut self.settings.opt_tex_art_ec),
+                    Some(&mut self.settings.upscale_tex_art_ec),
                 ) {
-                    self.convert_ec_art();
+                    self.convert_tex_art_ec();
                 }
                 if draw_asset_row(
                     ui,
                     "Pack EC Land",
                     "Enhanced Client high-res terrain textures",
-                    Some(&mut self.settings.opt_ec_land),
-                    Some(&mut self.settings.upscale_ec_land),
+                    Some(&mut self.settings.opt_tex_land_ec),
+                    Some(&mut self.settings.upscale_tex_land_ec),
                 ) {
-                    self.convert_ec_land();
+                    self.convert_tex_land_ec();
                 }
 
                 if draw_asset_row(
@@ -101,7 +101,10 @@ fn draw_asset_row(
             ui.vertical(|ui| {
                 ui.add_space(5.0);
                 if ui
-                    .add_sized(btn_size, egui::Button::new(egui::RichText::new(title).strong()))
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new(title).strong()),
+                    )
                     .clicked()
                 {
                     clicked = true;
@@ -124,16 +127,31 @@ fn draw_asset_row(
                             .selected_text(current_fmt)
                             .width(220.0)
                             .show_ui(ui, |ui| {
-                                if ui.selectable_label(current_fmt == "Raw+zstd (default)", "Raw+zstd (default)").clicked() {
+                                if ui
+                                    .selectable_label(
+                                        current_fmt == "Raw+zstd (default)",
+                                        "Raw+zstd (default)",
+                                    )
+                                    .clicked()
+                                {
                                     *opt_val = TextureOptimization::None;
                                 }
                                 if ui.selectable_label(current_fmt == "BC7", "BC7").clicked() {
                                     *opt_val = TextureOptimization::Bc7;
                                 }
-                                if ui.selectable_label(current_fmt == "Supercompressed BC7+zstd", "Supercompressed BC7+zstd").clicked() {
+                                if ui
+                                    .selectable_label(
+                                        current_fmt == "Supercompressed BC7+zstd",
+                                        "Supercompressed BC7+zstd",
+                                    )
+                                    .clicked()
+                                {
                                     *opt_val = TextureOptimization::Bc7Zstd;
                                 }
-                                if ui.selectable_label(current_fmt == "Jpeg XL", "Jpeg XL").clicked() {
+                                if ui
+                                    .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
+                                    .clicked()
+                                {
                                     *opt_val = TextureOptimization::JpegXl;
                                 }
                             });
@@ -143,37 +161,59 @@ fn draw_asset_row(
                         ui.add_space(5.0);
                         let current_up = format!("{:?}", up_val);
                         egui::ComboBox::from_id_salt(format!("{}_upscale", title))
-                            .selected_text(if matches!(up_val, UpscaleFilter::None) { "No Upscaling" } else { &current_up })
+                            .selected_text(if matches!(up_val, UpscaleFilter::None) {
+                                "No Upscaling"
+                            } else {
+                                &current_up
+                            })
                             .width(220.0)
                             .show_ui(ui, |ui| {
                                 let filters = [
                                     UpscaleFilter::None,
-                                    UpscaleFilter::Nearest,
-                                    UpscaleFilter::Bilinear,
-                                    UpscaleFilter::CatmullRom,
-                                    UpscaleFilter::Lanczos3,
+                                    UpscaleFilter::Nearest2x,
+                                    UpscaleFilter::Nearest3x,
+                                    UpscaleFilter::Nearest4x,
+                                    UpscaleFilter::Bilinear2x,
+                                    UpscaleFilter::Bilinear3x,
+                                    UpscaleFilter::Bilinear4x,
+                                    UpscaleFilter::CatmullRom2x,
+                                    UpscaleFilter::CatmullRom3x,
+                                    UpscaleFilter::CatmullRom4x,
+                                    UpscaleFilter::Lanczos3_2x,
+                                    UpscaleFilter::Lanczos3_3x,
+                                    UpscaleFilter::Lanczos3_4x,
                                     UpscaleFilter::Lq2x,
                                     UpscaleFilter::Lq3x,
                                     UpscaleFilter::Lq4x,
-                                    UpscaleFilter::SuperSai,
-                                    UpscaleFilter::FsrEasu,
-                                    UpscaleFilter::FsrEasuRcas,
+                                    UpscaleFilter::SuperSai2x,
+                                    UpscaleFilter::FsrEasu2x,
+                                    UpscaleFilter::FsrEasu3x,
+                                    UpscaleFilter::FsrEasu4x,
+                                    UpscaleFilter::FsrEasuRcas2x,
+                                    UpscaleFilter::FsrEasuRcas3x,
+                                    UpscaleFilter::FsrEasuRcas4x,
                                     UpscaleFilter::Depixelize2x,
                                     UpscaleFilter::Depixelize3x,
                                     UpscaleFilter::Depixelize4x,
-                                    UpscaleFilter::Nedi,
-                                    UpscaleFilter::TwoSai,
-                                    UpscaleFilter::SuperEagle,
+                                    UpscaleFilter::Nedi2x,
+                                    UpscaleFilter::TwoSai2x,
+                                    UpscaleFilter::SuperEagle2x,
                                     UpscaleFilter::Hq2x,
                                     UpscaleFilter::Hq3x,
                                     UpscaleFilter::Hq4x,
-                                    UpscaleFilter::Epx,
+                                    UpscaleFilter::Epx2x,
                                     UpscaleFilter::Epx3x,
                                     UpscaleFilter::Epx4x,
-                                    UpscaleFilter::Xbr,
+                                    UpscaleFilter::Xbr2x,
+                                    UpscaleFilter::Xbr3x,
+                                    UpscaleFilter::Xbr4x,
                                 ];
                                 for f in filters {
-                                    let label = if matches!(f, UpscaleFilter::None) { "No Upscaling".to_string() } else { format!("{:?}", f) };
+                                    let label = if matches!(f, UpscaleFilter::None) {
+                                        "No Upscaling".to_string()
+                                    } else {
+                                        format!("{:?}", f)
+                                    };
                                     if ui.selectable_label(*up_val == f, label).clicked() {
                                         *up_val = f;
                                     }
@@ -181,7 +221,7 @@ fn draw_asset_row(
                             });
                     }
                 });
-                
+
                 ui.add_space(20.0);
             }
 

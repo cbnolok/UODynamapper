@@ -16,13 +16,19 @@ pub struct Rg16u {
 }
 
 impl Rg16u {
-    /// Packs tile ID, height (Z), and texture size bit into the Rg16u format.
+    /// Packs tile ID, height (Z), texture size, and is_wet flag into the Rg16u format.
+    ///
+    /// G channel high-byte layout (mirrored in atlas.wgsl):
+    ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing)
+    ///   bit  7:   `is_wet` (tile has the IsWet tiledata flag → animated water effect)
+    ///
     /// This packing must be manually unrolled in the WGSL shader logic.
-    pub fn pack(tile_id: u16, height_i8: i8, tex_size_bits: u16) -> Self {
+    pub fn pack(tile_id: u16, height_i8: i8, tex_size_bits: u16, is_wet: bool) -> Self {
         // g: low 8 bits: height_i8 + 128
-        // g: high 8 bits: tex_size_bits (0 or 1)
+        // g: high 8 bits: lower nibble = tex_size_bits (0-3), bit 7 = is_wet
         let height_biased = (height_i8 as i16 + 128).clamp(0, 255) as u8;
-        let g = (height_biased as u16) | ((tex_size_bits & 0xFF) << 8);
+        let wet_bit: u16 = if is_wet { 0x80 } else { 0 };
+        let g = (height_biased as u16) | (((tex_size_bits & 0x0F) | wet_bit) << 8);
         Self { r: tile_id, g }
     }
 }

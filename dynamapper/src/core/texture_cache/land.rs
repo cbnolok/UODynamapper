@@ -13,7 +13,7 @@ use color_eyre::eyre;
 use std::time::{Duration, Instant};
 use udd_assets::{
     bc7::{self, ImageExtent},
-    ec_land::EcLandPackage,
+    tex_land_ec::TexLandEcPackage,
 };
 use uocf::classic::land_texture::LandTextureSize;
 use uocf::classic::map::MapBlockRelPos;
@@ -41,12 +41,12 @@ const LAND_TEXTURE_GROUP_LAYERS: [TextureResidencyGroupLayers<LandTextureSize>; 
     },
 ];
 
-struct EcLandShaderImages {
+struct TexLandEcShaderImages {
     page_atlas: Handle<Image>,
     lookup: Handle<Image>,
 }
 
-fn create_blank_ec_land_shader_images(images: &mut Assets<Image>) -> EcLandShaderImages {
+fn create_blank_tex_land_ec_shader_images(images: &mut Assets<Image>) -> TexLandEcShaderImages {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         TextureViewDimension,
@@ -82,29 +82,29 @@ fn create_blank_ec_land_shader_images(images: &mut Assets<Image>) -> EcLandShade
     );
     lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
 
-    EcLandShaderImages {
+    TexLandEcShaderImages {
         page_atlas: images.add(atlas),
         lookup: images.add(lookup),
     }
 }
 
-fn decode_ec_land_page_rgba(package: &EcLandPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
     let page = package
         .pages()
         .get(page_index as usize)
-        .ok_or_else(|| eyre::eyre!("missing ec_land page metadata for {page_index}"))?;
+        .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
     let page_bytes = package.read_page_bytes(page_index)?;
     let used_width = page.used_width;
     let used_height = page.used_height;
     let used_rgba = match page.pixel_format {
-        udd_assets::cc_art::PagePixelFormat::Rgba8888 => page_bytes,
-        udd_assets::cc_art::PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(
+        udd_assets::tex_art_cc::PagePixelFormat::Rgba8888 => page_bytes,
+        udd_assets::tex_art_cc::PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(
             &page_bytes,
             ImageExtent::new(used_width, used_height).map_err(|error| {
-                eyre::eyre!("invalid ec_land used extent {used_width}x{used_height}: {error}")
+                eyre::eyre!("invalid tex_land_ec used extent {used_width}x{used_height}: {error}")
             })?,
         )
-        .map_err(|error| eyre::eyre!("decode ec_land page {page_index} BC7: {error}"))?,
+        .map_err(|error| eyre::eyre!("decode tex_land_ec page {page_index} BC7: {error}"))?,
     };
 
     let atlas_width = package.atlas_width();
@@ -122,17 +122,17 @@ fn decode_ec_land_page_rgba(package: &EcLandPackage, page_index: u32) -> eyre::R
     Ok(atlas_rgba)
 }
 
-fn create_ec_land_shader_images(
+fn create_tex_land_ec_shader_images(
     images: &mut Assets<Image>,
-    package: Option<&EcLandPackage>,
-) -> eyre::Result<EcLandShaderImages> {
+    package: Option<&TexLandEcPackage>,
+) -> eyre::Result<TexLandEcShaderImages> {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         TextureViewDimension,
     };
 
     let Some(package) = package else {
-        return Ok(create_blank_ec_land_shader_images(images));
+        return Ok(create_blank_tex_land_ec_shader_images(images));
     };
 
     let page_count = package.pages().len().max(1) as u32;
@@ -141,7 +141,7 @@ fn create_ec_land_shader_images(
     let mut atlas_bytes =
         Vec::with_capacity((atlas_width * atlas_height * 4 * page_count) as usize);
     for page_index in 0..page_count {
-        atlas_bytes.extend_from_slice(&decode_ec_land_page_rgba(package, page_index)?);
+        atlas_bytes.extend_from_slice(&decode_tex_land_ec_page_rgba(package, page_index)?);
     }
 
     let mut atlas = Image::new(
@@ -205,7 +205,7 @@ fn create_ec_land_shader_images(
     );
     lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
 
-    Ok(EcLandShaderImages {
+    Ok(TexLandEcShaderImages {
         page_atlas: images.add(atlas),
         lookup: images.add(lookup),
     })
@@ -440,7 +440,7 @@ fn sys_apply_land_texture_source_changes(
 
     let missing_requested_package = match desired_source {
         crate::configs::settings::ClientTextureSource::Cc => false,
-        crate::configs::settings::ClientTextureSource::Ec => cache_r.ec_land.is_none(),
+        crate::configs::settings::ClientTextureSource::Ec => cache_r.tex_land_ec.is_none(),
     };
 
     if missing_requested_package {
@@ -475,7 +475,7 @@ fn sys_apply_land_texture_source_changes(
 
     // ── TEMPORARY EC package diagnostic ─────────────────────────────────────
     if desired_source == crate::configs::settings::ClientTextureSource::Ec {
-        if let Some(ec) = &cache_r.ec_land {
+        if let Some(ec) = &cache_r.tex_land_ec {
             let total_slots = ec.slots().len();
             let present_slots = ec.slots().iter().filter(|s| s.is_present()).count();
             let prov_count = ec.terrain_provenance().len();
@@ -500,9 +500,9 @@ pub fn sys_setup_terrain_cache(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::configs::settings::Settings>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
-    cc_art_r: Option<Res<crate::core::uo_files_loader::CcArtPackageRes>>,
-    ec_art_r: Option<Res<crate::core::uo_files_loader::EcArtPackageRes>>,
-    ec_land_r: Option<Res<crate::core::uo_files_loader::EcLandPackageRes>>,
+    tex_art_cc_r: Option<Res<crate::core::uo_files_loader::TexArtCcPackageRes>>,
+    tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
+    tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -512,7 +512,7 @@ pub fn sys_setup_terrain_cache(
     let residency_plan = residency_strategy
         .preloads_full_collection()
         .then(|| texture_array::build_texture_residency_plan(&texmap_2d_r.0));
-    let ec_land_package = ec_land_r.as_ref().map(|res| res.0.clone());
+    let tex_land_ec_package = tex_land_ec_r.as_ref().map(|res| res.0.clone());
     // Shared layer budgeting keeps the terrain module responsible only for defining its
     // groups; the generic residency layer decides whether startup uses LRU-sized arrays
     // or exact-fit preloaded arrays.
@@ -555,9 +555,9 @@ pub fn sys_setup_terrain_cache(
         settings.graphics.land_texture_source,
     );
 
-    land_texture_cache.cc_art = cc_art_r.map(|r| r.0.clone());
-    land_texture_cache.ec_art = ec_art_r.map(|r| r.0.clone());
-    land_texture_cache.ec_land = ec_land_package.clone();
+    land_texture_cache.tex_art_cc = tex_art_cc_r.map(|r| r.0.clone());
+    land_texture_cache.tex_art_ec = tex_art_ec_r.map(|r| r.0.clone());
+    land_texture_cache.tex_land_ec = tex_land_ec_package.clone();
 
     if let Some(plan) = residency_plan.as_ref() {
         land_texture_cache.prime_full_file_residency(
@@ -585,7 +585,7 @@ pub fn sys_setup_terrain_cache(
     };
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
-    let ec_shader_images = create_ec_land_shader_images(&mut images, ec_land_package.as_deref())
+    let ec_shader_images = create_tex_land_ec_shader_images(&mut images, tex_land_ec_package.as_deref())
         .expect("Failed to build EC land atlas shader images");
 
     cmd.insert_resource(cache::TextureArrayImageHandles {
@@ -646,8 +646,8 @@ pub fn sys_setup_terrain_cache(
             extension: LandMaterialExtension {
                 texarray_small: handle_small,
                 texarray_big: handle_big,
-                ec_land_page_atlas: ec_shader_images.page_atlas,
-                ec_land_lookup: ec_shader_images.lookup,
+                tex_land_ec_page_atlas: ec_shader_images.page_atlas,
+                tex_land_ec_lookup: ec_shader_images.lookup,
                 tile_meta_atlas: atlas_image_handle,
                 atlas_params: params,
                 scene_uniform: SceneUniform {

@@ -1,4 +1,4 @@
-//! Build-time and runtime support for `cc_texmaps.uddp`.
+//! Build-time and runtime support for `tex_land_cc.uddp`.
 //!
 //! Package layout:
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
@@ -6,7 +6,7 @@
 //!   the pixel format used for each page.
 //! - `metadata/slots.bin`: sparse slot table with one record per `texmap_id`.
 //!
-//! This is modeled after `cc_art.uddp` but for the 128x128/64x64 terrain textures
+//! This is modeled after `tex_art_cc.uddp` but for the 128x128/64x64 terrain textures
 //! found in `texmaps.mul`.
 
 use std::io::{Cursor, Read};
@@ -26,9 +26,9 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
-use udd_assets::cc_art::PagePixelFormat;
-use udd_assets::cc_texmaps::{
-    page_entry_path, CcTexmapsPageRecord, CcTexmapsSlotRecord, MISSING_PAGE_INDEX,
+use udd_assets::tex_art_cc::PagePixelFormat;
+use udd_assets::tex_land_cc::{
+    page_entry_path, TexLandCcPageRecord, TexLandCcSlotRecord, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH,
 };
 use udd_container::xxh64_virtual_path;
@@ -39,13 +39,13 @@ use crate::upscale::UpscaleFilter;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
-const CC_TEXMAPS_METADATA_VERSION: u32 = 1;
+const TEX_LAND_CC_METADATA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-pub struct CcTexmapsAtlasOptions {
+pub struct TexLandCcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
@@ -54,7 +54,7 @@ pub struct CcTexmapsAtlasOptions {
     pub pixel_format: PagePixelFormat,
 }
 
-impl Default for CcTexmapsAtlasOptions {
+impl Default for TexLandCcAtlasOptions {
     fn default() -> Self {
         Self {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -68,7 +68,7 @@ impl Default for CcTexmapsAtlasOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcTexmapsBuildSummary {
+pub struct TexLandCcBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
     pub page_count: u32,
@@ -96,16 +96,16 @@ pub struct PlacedTile {
 
 #[derive(Debug, Clone)]
 pub struct BuiltPage {
-    pub record: CcTexmapsPageRecord,
+    pub record: TexLandCcPageRecord,
     pub pixels: Vec<u8>,
     pub placed_tiles: Vec<PlacedTile>,
 }
 
-pub fn convert_texmaps_mul_to_cc_texmaps_uddp(
+pub fn convert_texmaps_mul_to_tex_land_cc_uddp(
     client_dir: &Path,
     out_file: &Path,
-    options: &CcTexmapsAtlasOptions,
-) -> eyre::Result<CcTexmapsBuildSummary> {
+    options: &TexLandCcAtlasOptions,
+) -> eyre::Result<TexLandCcBuildSummary> {
     let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
         .ok_or_else(|| eyre::eyre!("missing texmaps.mul in {}", client_dir.display()))?;
     let texidx_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texidx.mul"])
@@ -226,7 +226,7 @@ pub fn convert_texmaps_mul_to_cc_texmaps_uddp(
 
     build_and_write_package(&mut package, out_file)?;
 
-    Ok(CcTexmapsBuildSummary {
+    Ok(TexLandCcBuildSummary {
         slot_count,
         populated_slot_count,
         page_count: pages.len() as u32,
@@ -237,7 +237,7 @@ pub fn convert_texmaps_mul_to_cc_texmaps_uddp(
 
 fn decode_present_tiles(
     texmap_source: &TexMap,
-    options: &CcTexmapsAtlasOptions,
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<Vec<DecodedTexmapTile>> {
     let mut decoded_tiles = Vec::new();
     let max_id = texmap_source.len();
@@ -279,11 +279,11 @@ fn decode_present_tiles(
 fn pack_tiles_into_pages(
     tiles: Vec<DecodedTexmapTile>,
     slot_count: u32,
-    options: &CcTexmapsAtlasOptions,
-) -> eyre::Result<(Vec<BuiltPage>, Vec<CcTexmapsSlotRecord>)> {
+    options: &TexLandCcAtlasOptions,
+) -> eyre::Result<(Vec<BuiltPage>, Vec<TexLandCcSlotRecord>)> {
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
-        .map(CcTexmapsSlotRecord::absent)
+        .map(TexLandCcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
     let mut page_index = 0u32;
@@ -300,7 +300,7 @@ fn pack_tiles_into_pages(
 
         for placed in &page.placed_tiles {
             let slot = &mut slot_records[placed.id as usize];
-            *slot = CcTexmapsSlotRecord {
+            *slot = TexLandCcSlotRecord {
                 id: placed.id,
                 page_index,
                 page_tile_index: placed.page_tile_index,
@@ -321,7 +321,7 @@ fn pack_tiles_into_pages(
 
 fn max_fitting_page_prefix_len(
     tiles: &[DecodedTexmapTile],
-    options: &CcTexmapsAtlasOptions,
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<usize> {
     let mut low = 1usize;
     let mut high = tiles.len();
@@ -342,7 +342,7 @@ fn max_fitting_page_prefix_len(
 
 fn page_prefix_fits(
     tiles: &[DecodedTexmapTile],
-    options: &CcTexmapsAtlasOptions,
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<bool> {
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
@@ -366,7 +366,7 @@ fn page_prefix_fits(
 fn build_page(
     page_index: u32,
     tiles: Vec<DecodedTexmapTile>,
-    options: &CcTexmapsAtlasOptions,
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedTexmapTile>)> {
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
@@ -415,7 +415,7 @@ fn build_page(
 
     Ok((
         BuiltPage {
-            record: CcTexmapsPageRecord {
+            record: TexLandCcPageRecord {
                 page_index,
                 tile_count: placed_tiles.len() as u32,
                 used_width,
@@ -464,12 +464,12 @@ fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: u32)
 
 fn serialize_page_manifest(
     pages: &[BuiltPage],
-    options: &CcTexmapsAtlasOptions,
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let pixel_format = options.pixel_format;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_TEXMAPS_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_LAND_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -485,12 +485,12 @@ fn serialize_page_manifest(
 }
 
 fn serialize_slot_manifest(
-    slots: &[CcTexmapsSlotRecord],
-    options: &CcTexmapsAtlasOptions,
+    slots: &[TexLandCcSlotRecord],
+    options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_TEXMAPS_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_LAND_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;

@@ -15,7 +15,8 @@ const USE_VOLUMETRIC_NOISE: u32 = 1u; // 0=flat fog, 1=domain-warped billow modu
 // ============================================================================
 
 // Per-tile metadata read from the paged atlas texture.
-// R16 channel = texture layer index; G16 = packed [height_biased:low8 | tex_size:high8].
+// R16 channel = texture layer index; G16 = packed [height_biased:low8 | tex_size_and_flags:high8].
+// G high-byte bit layout: bits 0-3 = tex_size (0-3), bit 7 = is_wet flag.
 struct TileUniform {
   tile_height:   f32,
   texture_size:  u32, // 0=cc-small array, 1=cc-big array, 2=ec page atlas, 3=missing ec tile
@@ -23,6 +24,9 @@ struct TileUniform {
   texture_hue:   u32,
   texture_origin: vec2<u32>,
   texture_extent: vec2<u32>,
+  // 1 when the tile has the IsWet tiledata flag set (animated water effect).
+  is_wet: u32,
+  _pad_tu: u32,
 };
 
 // Parameters for the LRU paged tile metadata atlas.
@@ -64,6 +68,13 @@ struct LandEffectsUniform {
   sharpening_amount:       f32,
   blur_strength:           f32,
   blur_radius:             f32,
+
+  // Animated water (vec4 slot 2)
+  // 1 = apply sin/cos UV distortion to IsWet tiles; 0 = disable.
+  enable_water_animation: u32,
+  _pad_eff0: u32,
+  _pad_eff1: u32,
+  _pad_eff2: u32,
 };
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).
@@ -147,8 +158,8 @@ struct LandLightingUniforms {
 @group(3) @binding(101) var tex_small: texture_2d_array<f32>;
 @group(3) @binding(102) var tex_big:   texture_2d_array<f32>;
 @group(3) @binding(103) var tile_meta_atlas: texture_2d_array<u32>;
-@group(3) @binding(109) var ec_land_page_atlas: texture_2d_array<f32>;
-@group(3) @binding(110) var ec_land_lookup: texture_2d<u32>;
+@group(3) @binding(109) var tex_land_ec_page_atlas: texture_2d_array<f32>;
+@group(3) @binding(110) var tex_land_ec_lookup: texture_2d<u32>;
 @group(3) @binding(104) var<uniform> ATLAS:        AtlasParams;
 @group(3) @binding(105) var<uniform> scene:        SceneUniform;
 @group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;

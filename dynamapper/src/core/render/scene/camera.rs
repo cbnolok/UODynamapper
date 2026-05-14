@@ -253,7 +253,7 @@ fn sys_apply_world_camera_graphics_settings(
     ui_camera: Res<UiCameraResource>,
     settings: Res<Settings>,
 ) {
-    log_system_add_one_shot::<CameraPlugin>("Update", "MovementSysSet::UpdateCamera", fname!());
+    log_system_add_update::<CameraPlugin>(fname!());
     if let Some(camera_entity) = camera_q.iter().next() {
         apply_world_camera_graphics_settings(
             &mut commands,

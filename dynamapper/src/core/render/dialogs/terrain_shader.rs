@@ -134,6 +134,7 @@ pub fn terrain_ui_system(
                 // Fog and Tonemap apply in ANY shading mode (keep available always)
                 changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
                 changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+                changed |= toggle_u32(ui, "Animated Water", &mut u.effects.enable_water_animation);
 
                 // Color grading & fragment-only features only when in fragment modes
                 let is_classic = u.effects.shading_mode == 0;

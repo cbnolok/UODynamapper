@@ -4,12 +4,12 @@ use udd_container::{
     AddFileRequest, DataType, LookupMode, UddpBuilder, UddpReader,
 };
 
-use udd_conv::ec_art::*;
+use udd_conv::tex_art_ec::*;
 use udd_conv::upscale::UpscaleFilter;
 use udd_assets::{
-    ec_art::{EcArtCropAdjustment, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH},
-    cc_art::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
-    EcArtPackage,
+    tex_art_ec::{TexArtEcCropAdjustment, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH},
+    tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
+    TexArtEcPackage,
 };
 use udd_container::CompressionFlag;
 
@@ -25,7 +25,7 @@ fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Decoded
 
 #[test]
 fn sparse_slots_keep_absent_records() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -49,7 +49,7 @@ fn sparse_slots_keep_absent_records() {
 
 #[test]
 fn packer_spills_to_multiple_pages() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -73,7 +73,7 @@ fn packer_spills_to_multiple_pages() {
 
 #[test]
 fn later_ids_do_not_backfill_an_earlier_page() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 10,
         atlas_height: 6,
         gutter: 0,
@@ -98,7 +98,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
 
 #[test]
 fn full_width_static_tile_fits_when_page_is_4096_wide() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 4096,
         atlas_height: 2048,
         gutter: 1,
@@ -121,7 +121,7 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
 
 #[test]
 fn runtime_reader_can_unpack_page_and_slot_metadata() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
@@ -177,7 +177,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         .unwrap();
 
     let package =
-        EcArtPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
+        TexArtEcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
     assert_eq!(package.pages().len(), 1);
     assert!(package.present_slot(0).unwrap().is_static());
@@ -187,7 +187,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
 
 #[test]
 fn alias_slots_reuse_canonical_page_location() {
-    let options = EcArtAtlasOptions {
+    let options = TexArtEcAtlasOptions {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
@@ -234,7 +234,7 @@ fn transparent_border_crop_trims_to_opaque_bounds() {
     assert_eq!(width, 2);
     assert_eq!(height, 2);
     assert_eq!(cropped.len(), 2 * 2 * 4);
-    assert_eq!(adjustment, EcArtCropAdjustment { left: 1, top: 1 });
+    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 1, top: 1 });
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn clip_rect_is_applied_before_alpha_trim() {
     assert_eq!(width, 2);
     assert_eq!(height, 2);
     assert_eq!(cropped.len(), 2 * 2 * 4);
-    assert_eq!(adjustment, EcArtCropAdjustment { left: 2, top: 2 });
+    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 2, top: 2 });
 }
 
 #[test]
@@ -295,7 +295,7 @@ fn requested_clip_rect_is_applied_without_alpha_trim() {
 
     assert_eq!(width, 2);
     assert_eq!(height, 2);
-    assert_eq!(adjustment, EcArtCropAdjustment { left: 2, top: 1 });
+    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 2, top: 1 });
     assert_eq!(cropped.len(), 2 * 2 * 4);
     assert_eq!(&cropped[0..4], &[2, 1, 99, 255]);
     assert_eq!(&cropped[4..8], &[3, 1, 99, 255]);
@@ -322,15 +322,15 @@ fn normalized_source_clip_rect_ignores_empty_rects() {
 fn crop_adjustment_lookup_copies_canonical_adjustment_to_aliases() {
     let lookup = build_crop_adjustment_lookup(
         16,
-        &HashMap::from([(7, EcArtCropAdjustment { left: 3, top: 4 })]),
+        &HashMap::from([(7, TexArtEcCropAdjustment { left: 3, top: 4 })]),
         &[SlotAlias {
             art_id: 9,
             canonical_art_id: 7,
         }],
     );
 
-    assert_eq!(lookup[7], Some(EcArtCropAdjustment { left: 3, top: 4 }));
-    assert_eq!(lookup[9], Some(EcArtCropAdjustment { left: 3, top: 4 }));
+    assert_eq!(lookup[7], Some(TexArtEcCropAdjustment { left: 3, top: 4 }));
+    assert_eq!(lookup[9], Some(TexArtEcCropAdjustment { left: 3, top: 4 }));
     assert_eq!(lookup[6], None);
 }
 

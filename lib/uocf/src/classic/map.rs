@@ -30,8 +30,12 @@
 crate::eyre_imports!();
 use bytemuck::{cast_slice, Pod, Zeroable};
 use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
+use memmap2::Mmap;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::uop_container::package::LoadMode;
 
 /// Represents a single cell (or tile) in the map.
 #[repr(C, align(4))]
@@ -212,21 +216,25 @@ impl MapBlock {
     }
 }
 
-use memmap2::Mmap;
-use std::sync::Arc;
+
 
 /// Represents a map plane, which is a 2D grid of blocks.
 pub struct MapPlane {
     pub index: u32,
     pub size_blocks: MapSizeBlocks,
     map_file_path: PathBuf,
-    pub map_mmap: Arc<Mmap>,
     cached_block_indices: Vec<u32>,
     cached_blocks_arena: Vec<CachedBlock>,
     cached_blocks_free_list: Vec<u32>,
     cached_blocks_bitmask: Vec<u64>,
     read_buffer: Vec<u8>,
     pub blocks_loaded_version: u64,
+    pub source: MapSource,
+}
+
+pub enum MapSource {
+    Mul(Arc<Mmap>),
+    Uop(Arc<crate::uop_container::package::UopPackage>),
 }
 
 pub struct CachedBlock {
@@ -253,8 +261,6 @@ impl MapPlane {
         if arena_idx != u32::MAX {
             let cached: &mut CachedBlock = &mut self.cached_blocks_arena[arena_idx as usize];
             cached.last_accessed = std::time::Instant::now();
-            //let block_ptr = &cached.block as *const MapBlock;
-            //Some(unsafe { &*block_ptr })
             Some(&cached.block)
         } else {
             None
@@ -553,7 +559,87 @@ impl MapPlane {
             index: map_index,
             size_blocks: map_size_blocks,
             map_file_path: map_file_mul_path.clone(),
-            map_mmap,
+            cached_block_indices,
+            cached_blocks_arena: Vec::new(),
+            cached_blocks_free_list: Vec::new(),
+            cached_blocks_bitmask: vec![
+                0;
+                (((map_size_blocks.width * map_size_blocks.height) + 63) / 64)
+                    as usize
+            ],
+            read_buffer: Vec::new(),
+            blocks_loaded_version: 0,
+            source: MapSource::Mul(map_mmap),
+        };
+        Ok(map_plane)
+    }
+
+    pub fn init_uop(map_file_uop_path: PathBuf, map_index: u32) -> eyre::Result<MapPlane> {
+        Self::init_uop_with_size(map_file_uop_path, map_index, None)
+    }
+
+    pub fn init_uop_with_size(
+        map_file_uop_path: PathBuf,
+        map_index: u32,
+        map_size_tiles_override: Option<MapSizeCells>,
+    ) -> eyre::Result<MapPlane> {
+        let map_file_uop_path = map_file_uop_path
+            .canonicalize()
+            .wrap_err_with(|| format!("Check map{map_index}.uop path"))?;
+
+        let package = crate::uop_container::package::UopPackage::load_with_mode(&map_file_uop_path, LoadMode::Eager)?;
+
+        let map_size_tiles = match map_size_tiles_override {
+            Some(size) => {
+                if size.width % MapBlock::CELLS_PER_ROW != 0
+                    || size.height % MapBlock::CELLS_PER_COLUMN != 0
+                {
+                    Err(eyre!("Invalid manual map size"))
+                } else {
+                    Ok(size)
+                }
+            }
+            None => match map_index {
+                0..=1 => {
+                    // In UOP format, maps 0 and 1 are always the larger (post-ML) size.
+                    Ok(MapSizeCells {
+                        width: 7168,
+                        height: 4096,
+                    })
+                }
+                2 => Ok(MapSizeCells {
+                    width: 2304,
+                    height: 1600,
+                }),
+                3 => Ok(MapSizeCells {
+                    width: 2560,
+                    height: 2048,
+                }),
+                4 => Ok(MapSizeCells {
+                    width: 1448,
+                    height: 1448,
+                }),
+                5 => Ok(MapSizeCells {
+                    width: 1280,
+                    height: 4096,
+                }),
+                _ => Err(eyre!("Invalid map number")),
+            },
+        }?;
+
+        let map_size_blocks = MapSizeBlocks {
+            width: map_size_tiles.width / MapBlock::CELLS_PER_ROW,
+            height: map_size_tiles.height / MapBlock::CELLS_PER_COLUMN,
+        };
+
+        let cached_block_indices =
+            vec![u32::MAX; (map_size_blocks.width * map_size_blocks.height) as usize];
+
+        let map_plane = MapPlane {
+            index: map_index,
+            size_blocks: map_size_blocks,
+            map_file_path: map_file_uop_path.clone(),
+            source: MapSource::Uop(Arc::new(package)),
             cached_block_indices,
             cached_blocks_arena: Vec::new(),
             cached_blocks_free_list: Vec::new(),
@@ -605,6 +691,19 @@ impl MapPlane {
             return Ok(());
         }
 
+        match &self.source {
+            MapSource::Mul(mmap) => {
+                let mmap = mmap.clone();
+                self.load_blocks_mul(&mmap, blocks_to_load)
+            }
+            MapSource::Uop(package) => {
+                let package = package.clone();
+                self.load_blocks_uop(&package, blocks_to_load)
+            }
+        }
+    }
+
+    fn load_blocks_mul(&mut self, mmap: &Mmap, blocks_to_load: &[MapBlockRelPos]) -> eyre::Result<()> {
         // Sort the blocks to load by their coordinates.
         // This makes it more likely that sequential blocks are next to each other in the vector.
         let mut blocks_to_load = blocks_to_load.to_vec();
@@ -654,12 +753,12 @@ impl MapPlane {
 
             let offset = start_idx as usize * MapBlock::PACKED_SIZE;
             let end = offset + num_blocks * MapBlock::PACKED_SIZE;
-            
-            if end > self.map_mmap.len() {
-                 eyre::bail!("Map index out of range for map plane {}", self.index);
+
+            if end > mmap.len() {
+                eyre::bail!("Map index out of range for map plane {}", self.index);
             }
 
-            let raw_blocks: &[RawMapBlock] = cast_slice(&self.map_mmap[offset..end]);
+            let raw_blocks: &[RawMapBlock] = cast_slice(&mmap[offset..end]);
             for (i, raw_block) in raw_blocks.iter().enumerate() {
                 let block_pos = indexed_blocks[range_start + i].pos;
                 if block_pos.x >= self.size_blocks.width || block_pos.y >= self.size_blocks.height {
@@ -698,6 +797,77 @@ impl MapPlane {
             }
         }
 
+        Ok(())
+    }
+
+    fn load_blocks_uop(
+        &mut self,
+        package: &crate::uop_container::package::UopPackage,
+        blocks_to_load: &[MapBlockRelPos],
+    ) -> eyre::Result<()> {
+        let mut blocks_to_load = blocks_to_load.to_vec();
+        blocks_to_load.sort_unstable();
+        blocks_to_load.dedup();
+
+        for pos in blocks_to_load {
+            if pos.x >= self.size_blocks.width || pos.y >= self.size_blocks.height {
+                continue;
+            }
+            let idx = (pos.x * self.size_blocks.height) + pos.y;
+
+            // In UOP maps, each entry contains 4096 blocks (64x64 blocks = 512x512 tiles).
+            let chunk_idx = idx / 4096;
+            let block_offset_in_chunk = (idx % 4096) as usize;
+
+            let arena_idx = self.cached_block_indices[idx as usize];
+            if arena_idx == u32::MAX {
+                // Find the chunk in the UOP package.
+                let chunk_name = format!("build/map{}legacymul/{:08}.dat", self.index, chunk_idx);
+                let file_entry = package
+                    .get_file_by_name(&chunk_name)
+                    .ok_or_else(|| eyre::eyre!("Missing UOP chunk: {}", chunk_name))?;
+
+                let data = file_entry
+                    .data()
+                    .ok_or_else(|| eyre::eyre!("UOP chunk data not loaded: {}", chunk_name))?;
+
+                let start = block_offset_in_chunk * MapBlock::PACKED_SIZE;
+                let end = start + MapBlock::PACKED_SIZE;
+
+                if end > data.len() {
+                    eyre::bail!("Block offset out of range in UOP chunk {}", chunk_name);
+                }
+
+                let raw_block: &RawMapBlock = &cast_slice(&data[start..end])[0];
+
+                let mut new_block = MapBlock::default();
+                MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                new_block.internal_coords = pos;
+
+                let new_arena_idx = if let Some(free_idx) = self.cached_blocks_free_list.pop() {
+                    self.cached_blocks_arena[free_idx as usize] = CachedBlock {
+                        block: new_block,
+                        last_accessed: std::time::Instant::now(),
+                    };
+                    free_idx
+                } else {
+                    let next_idx = self.cached_blocks_arena.len() as u32;
+                    self.cached_blocks_arena.push(CachedBlock {
+                        block: new_block,
+                        last_accessed: std::time::Instant::now(),
+                    });
+                    next_idx
+                };
+                self.cached_block_indices[idx as usize] = new_arena_idx;
+
+                let word_idx = (idx / 64) as usize;
+                let bit_idx = (idx % 64) as usize;
+                if word_idx < self.cached_blocks_bitmask.len() {
+                    self.cached_blocks_bitmask[word_idx] |= 1 << bit_idx;
+                }
+                self.blocks_loaded_version += 1;
+            }
+        }
         Ok(())
     }
 }

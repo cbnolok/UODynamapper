@@ -1,5 +1,7 @@
 #![allow(unused_parens, unused)]
 
+use super::DrawLandChunkMeshPlugin;
+use crate::prelude::*;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::NoAutoAabb;
 use bevy::{
@@ -12,8 +14,6 @@ use bevy::{
     render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType},
     shader::ShaderRef,
 };
-use crate::prelude::*;
-use super::DrawLandChunkMeshPlugin;
 use bytemuck::Zeroable;
 use std::sync::Arc;
 use std::time::Instant;
@@ -46,7 +46,7 @@ use crate::{
             camera::PlayerCamera, player::Player, world::WorldGeoData, SceneStateData,
         },
         texture_cache::land::cache::*,
-        uo_files_loader::{MapPlanesRes, TexMap2DRes},
+        uo_files_loader::{MapPlanesRes, TexMap2DRes, TileMetaPackageRes},
     },
     prelude::*,
     util_lib::array::*,
@@ -245,7 +245,7 @@ pub fn sys_update_existing_chunk_mesh_lod(
         return;
     }
 
-    log_system_add_one_shot::<DrawLandChunkMeshPlugin>("Update", "SceneRenderLandSysSet::RenderLandChunks", fname!());
+    log_system_add_update::<DrawLandChunkMeshPlugin>(fname!());
 
     console_logger::one(
         LogSev::Debug,
@@ -315,6 +315,9 @@ pub struct LandFramePacing<'w> {
     pub upload_budget: Res<'w, LandUploadBudget>,
     pub settings: Res<'w, crate::configs::settings::Settings>,
     pub time: Res<'w, Time<Real>>,
+    /// Optional tile metadata (tilemeta.uddp); used to determine the IsWet flag per tile.
+    /// Optional because the package may not have been converted/loaded yet.
+    pub tilemeta: Option<Res<'w, TileMetaPackageRes>>,
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
@@ -747,12 +750,12 @@ pub fn sys_draw_spawned_land_chunks(
         &frame_pacing.settings.graphics,
     );
     {
-        let use_ec_land_atlas = frame_pacing.settings.graphics.land_texture_source
+        let use_tex_land_ec_atlas = frame_pacing.settings.graphics.land_texture_source
             == crate::configs::settings::ClientTextureSource::Ec
-            && cache_r.ec_land.is_some();
+            && cache_r.tex_land_ec.is_some();
 
         let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
-        if !use_ec_land_atlas {
+        if !use_tex_land_ec_atlas {
             cache_r.precache_textures_parallel(
                 ids.as_slice(),
                 texmap_2d_r.0.clone(),
@@ -763,9 +766,9 @@ pub fn sys_draw_spawned_land_chunks(
 
         // Pre-populate lookup cache sequentially so background threads don't need mutable cache access.
         for &id in &*ids {
-            let resolved_ec_slot = if use_ec_land_atlas {
+            let resolved_ec_slot = if use_tex_land_ec_atlas {
                 cache_r
-                    .ec_land
+                    .tex_land_ec
                     .as_ref()
                     .and_then(|package| package.resolve_runtime_slot_id(id as u32))
             } else {
@@ -774,7 +777,7 @@ pub fn sys_draw_spawned_land_chunks(
 
             if let Some(_slot_id) = resolved_ec_slot {
                 texture_lookup_cache[id as usize] = ((id as u32) << 2) | 2;
-            } else if use_ec_land_atlas {
+            } else if use_tex_land_ec_atlas {
                 texture_lookup_cache[id as usize] = 3;
             } else {
                 let (size, layer) =
@@ -788,10 +791,10 @@ pub fn sys_draw_spawned_land_chunks(
         }
 
         // ── EC land diagnostics (one-shot per launch) ────────────────────────
-        if use_ec_land_atlas && !locals.ec_diagnostics_logged {
+        if use_tex_land_ec_atlas && !locals.ec_diagnostics_logged {
             locals.ec_diagnostics_logged = true;
-            if let Some(ec) = cache_r.ec_land.as_ref() {
-                log_ec_land_diagnostics(
+            if let Some(ec) = cache_r.tex_land_ec.as_ref() {
+                log_tex_land_ec_diagnostics(
                     ec,
                     &map_planes_r,
                     current_map_id,
@@ -804,6 +807,33 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     let build_time_start = Instant::now();
+
+    // ---- Build wet-bits lookup for the parallel tile pack loop ----
+    // One bool per land tile ID: true when the tile has the IsWet tiledata flag.
+    // We use a flat Vec<u8> (0 or 1) for cache-friendly reads inside the closure.
+    // The data comes from TileMetaPackageRes (tilemeta.uddp), which is always optional
+    // because the package may not have been converted yet.
+    //
+    // Bit mask constant matching tiledata.mul / map_cc_flags_to_tilemeta().
+    const TILEMETA_FLAG_WET: u64 = 0x80;
+    let wet_bits: Vec<u8> = frame_pacing
+        .tilemeta
+        .as_ref()
+        .map(|meta| {
+            let land_tiles = meta.0.land_tiles();
+            (0..LandTextureCache::MAX_TILE_ID)
+                .map(|id| {
+                    land_tiles.get(id).map_or(0u8, |t| {
+                        if t.flags & TILEMETA_FLAG_WET != 0 {
+                            1
+                        } else {
+                            0
+                        }
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| vec![0u8; LandTextureCache::MAX_TILE_ID]);
 
     // Borrow the plane immutably for the enqueue loop
     let plane_ref = map_planes_r
@@ -830,8 +860,10 @@ pub fn sys_draw_spawned_land_chunks(
         let _span = crate::tracy_span!("worldmap::chunk_draw_build_chunk_payloads");
         pool.scope(|s| {
             for (target_idx, chunk_data) in ready_targets.iter().enumerate() {
-                // Because texture_lookup_cache is populated and read-only, we can share pointers safely
+                // Because texture_lookup_cache and wet_bits are populated and read-only, we
+                // can share raw pointers to their data safely across async tasks.
                 let lookup_ptr = texture_lookup_cache.as_ptr() as usize;
+                let wet_ptr = wet_bits.as_ptr() as usize;
 
                 s.spawn(async move {
                     let gx = chunk_data.chunk_origin_chunk_units_x as i32;
@@ -845,10 +877,17 @@ pub fn sys_draw_spawned_land_chunks(
                         ((chunk_block_span + 2) * (chunk_block_span + 2)) as usize,
                     );
 
-                    // Re-hydrate the raw pointer back to a slice safely (reads only)
+                    // Re-hydrate the raw pointers back to slices safely (reads only)
                     let lookup_slice = unsafe {
                         std::slice::from_raw_parts(
                             lookup_ptr as *const u32,
+                            LandTextureCache::MAX_TILE_ID,
+                        )
+                    };
+                    // wet_bits: one u8 per land tile ID (0 = dry, 1 = IsWet)
+                    let wet_slice = unsafe {
+                        std::slice::from_raw_parts(
+                            wet_ptr as *const u8,
                             LandTextureCache::MAX_TILE_ID,
                         )
                     };
@@ -888,8 +927,11 @@ pub fn sys_draw_spawned_land_chunks(
                                 if mode < 2 && payload == 0 {
                                     has_fallback = true;
                                 }
+                                // Look up whether this land tile has the IsWet flag.
+                                let is_wet =
+                                    wet_slice.get(cell.id as usize).copied().unwrap_or(0) != 0;
                                 texels_local[texel_count] =
-                                    Rg16u::pack(payload as u16, cell.z, mode as u16);
+                                    Rg16u::pack(payload as u16, cell.z, mode as u16, is_wet);
                                 texel_count += 1;
                             }
 
@@ -1087,8 +1129,8 @@ fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_ch
     });
 }
 
-fn log_ec_land_diagnostics(
-    ec: &udd_assets::ec_land::EcLandPackage,
+fn log_tex_land_ec_diagnostics(
+    ec: &udd_assets::tex_land_ec::TexLandEcPackage,
     map_planes_r: &MapPlanesRes,
     current_map_id: u32,
     blocks_to_draw: &[MapBlockRelPos],
@@ -1100,16 +1142,16 @@ fn log_ec_land_diagnostics(
     let present_slot_count = ec.slots().iter().filter(|slot| slot.is_present()).count();
 
     let resolve_record_slot =
-        |record: &udd_assets::ec_land::EcLandTerrainProvenanceRecord| -> Option<u32> {
+        |record: &udd_assets::tex_land_ec::TexLandEcTerrainProvenanceRecord| -> Option<u32> {
             if record.canonical_slot_id != 0
-                && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+                && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
                 && ec.present_slot(record.canonical_slot_id).is_some()
             {
                 return Some(record.canonical_slot_id);
             }
 
             if record.alias_slot_id != 0
-                && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+                && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
                 && ec.present_slot(record.alias_slot_id).is_some()
             {
                 return Some(record.alias_slot_id);
@@ -1215,7 +1257,7 @@ fn log_ec_land_diagnostics(
 
                         let mode = packed & 0x3;
                         let payload = packed >> 2;
-                        let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16);
+                        let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16, false);
                         let (source, normalized_id, resolved_slot) = resolve_source(cell.id as u32);
                         let authoritative_slot = match mode {
                             2 => Some(payload),

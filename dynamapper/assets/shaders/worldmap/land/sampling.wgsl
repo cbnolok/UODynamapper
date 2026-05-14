@@ -9,17 +9,64 @@
 //  Also provides an optional 9-tap blur (blurred_albedo) and unsharp-mask
 //  sharpening (apply_sharpening), plus gradient-stable variants for the blur.
 // ============================================================================
+//
+// EC land texture world-space tiling
+// ===================================
+// The Enhanced Client (EC) stores terrain textures as large, tileable images
+// (often 64×64 up to 512×512 pixels).  They are NOT designed to fit inside a
+// single tile; instead, the EC renders them using world-space UV coordinates:
+//
+//   uv = world_position.xz / stretch
+//
+// where "stretch" is the number of world tiles covered by one texture
+// repetition.  We derive stretch from the texture's pixel width:
+//
+//   stretch = texture_extent.x / CC_TILE_PX
+//
+// CC_TILE_PX = 44.0  — the classic-client isometric tile width in pixels,
+// which is also the world-unit denominator used by the EC renderer.
+// A 44-px texture repeats once per tile (stretch = 1).  A 176-px texture
+// repeats once every 4 tiles (stretch = 4), and so on.
+//
+// The sampler is configured with AddressMode::Repeat so the fract()-wrapped
+// UV tiles seamlessly across the terrain grid.
+// ============================================================================
 
 
-#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, ec_land_page_atlas, tex_small_sampler, effects}
+#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, tex_land_ec_page_atlas, tex_small_sampler, effects}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance}
 #import "shaders/worldmap/land/fsr_easu.wgsl"::{sample_tile_fsr_easu}
+
+// Width in pixels of one Classic Client isometric tile — the world-unit
+// denominator shared by both CC and EC coordinate systems.
+const CC_TILE_PX: f32 = 44.0;
+
+// ============================================================================
+// EC-specific world-space UV helper
+// ============================================================================
+
+// Compute the world-space tiling UV for an EC texture.
+// The stretch (tiles per repetition) is derived from the texture's pixel width:
+//   stretch = texture_extent.x / CC_TILE_PX
+// We then wrap with fract() so the texture tiles indefinitely.
+// world_xz: the fragment's world-space X and Z coordinates (in tile units).
+fn ec_world_uv(world_xz: vec2<f32>, tile: TileUniform) -> vec2<f32> {
+  // How many world tiles one texture repetition covers.
+  // A 44-px EC texture maps exactly to 1 tile; a 176-px one to 4 tiles, etc.
+  let tile_w = max(f32(tile.texture_extent.x), 1.0);
+  let stretch = tile_w / CC_TILE_PX;
+  // World-space UV — wraps to [0,1) so the texture tiles infinitely.
+  return fract(world_xz / stretch);
+}
 
 // ============================================================================
 // Basic albedo sampling
 // ============================================================================
 
 // Single-tap albedo: linear (textureSample) or nearest (textureLoad).
+// For CC tiles, uv is the [0,1) coordinate within the tile.
+// For EC tiles, uv must already be the world-space tiling UV (see ec_world_uv);
+// pass world_xz = in.world_position.xz from the fragment shader.
 fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
@@ -29,16 +76,19 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   }
 
   if (tile.texture_size == 2u) {
+    // EC atlas path: uv is already the world-space tiling UV in [0,1).
+    // Map the tiling UV → atlas pixel coordinates within this texture's slot.
     let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
-    let atlas_dims = vec2<f32>(textureDimensions(ec_land_page_atlas));
+    let atlas_dims = vec2<f32>(textureDimensions(tex_land_ec_page_atlas));
     if (use_linear) {
+      // Sub-pixel bias keeps samples inside the texture's atlas region.
       let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
-      return textureSample(ec_land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
+      return textureSample(tex_land_ec_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
     } else {
       let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
       let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
-      return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+      return textureLoad(tex_land_ec_page_atlas, atlas_iuv, layer, 0).rgb;
     }
   }
 
@@ -62,15 +112,18 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 }
 
 // Integer-coordinate nearest tap — used by FSR and blur.
+// For EC tiles, iuv should be derived from the world-space tiling UV
+// (see ec_world_uv) scaled to the texture's pixel dimensions.
 fn sample_tile_albedo_at(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   if (tile.texture_size == 3u) {
     return vec3<f32>(0.0);
   }
   if (tile.texture_size == 2u) {
+    // iuv here is already a [0..extent) pixel coordinate within the texture slot.
     let local_iuv = clamp(iuv, vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
     let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
-    return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+    return textureLoad(tex_land_ec_page_atlas, atlas_iuv, layer, 0).rgb;
   }
   if (tile.texture_size == 1u) {
     let dims = vec2<i32>(textureDimensions(tex_big));
@@ -95,16 +148,16 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
   if (tile.texture_size == 2u) {
     let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
     if (use_linear) {
-      let atlas_dims = vec2<f32>(textureDimensions(ec_land_page_atlas));
+      let atlas_dims = vec2<f32>(textureDimensions(tex_land_ec_page_atlas));
       let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
       let atlas_ddx = ddx_uv * (tile_dims / atlas_dims);
       let atlas_ddy = ddy_uv * (tile_dims / atlas_dims);
-      return textureSampleGrad(ec_land_page_atlas, tex_small_sampler, atlas_uv, layer, atlas_ddx, atlas_ddy).rgb;
+      return textureSampleGrad(tex_land_ec_page_atlas, tex_small_sampler, atlas_uv, layer, atlas_ddx, atlas_ddy).rgb;
     } else {
       let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
       let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
-      return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+      return textureLoad(tex_land_ec_page_atlas, atlas_iuv, layer, 0).rgb;
     }
   }
 

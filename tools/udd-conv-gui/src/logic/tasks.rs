@@ -1,13 +1,12 @@
 use color_eyre::eyre;
 use udd_conv::{
-    cc_art::{CcArtAtlasOptions, convert_art_mul_to_cc_art_uddp_from_sources, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
-    ec_art::{EcArtAtlasOptions, convert_ec_art_uop_to_ec_art_uddp_from_sources},
-    ec_land::{EcLandAtlasOptions, convert_ec_land_uop_to_ec_land_uddp_from_sources},
-    upscale::UpscaleFilter,
+    tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
+    tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources},
+    tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources},
     cc_map::convert_map_mul_to_uddp_from_sources,
     cc_statics::convert_statics_mul_to_uddp_from_sources,
-    cc_texmaps::{CcTexmapsAtlasOptions, convert_texmaps_mul_to_cc_texmaps_uddp},
+    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
     CompressionFlag,
@@ -58,29 +57,29 @@ impl UddConvApp {
         });
     }
 
-    pub fn convert_cc_art(&self) {
+    pub fn convert_tex_art_cc(&self) {
         let settings = self.settings.clone();
-        let output = self.get_output_path("cc_art.uddp");
+        let output = self.get_output_path("tex_art_cc.uddp");
         self.spawn_task("CC Art Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
-            let compression = match settings.opt_cc_art {
+            let compression = match settings.opt_tex_art_cc {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
                 TextureOptimization::Bc7 => CompressionFlag::None,
                 TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_art_mul_to_cc_art_uddp_from_sources(
+            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources(
                 &sources, &output,
-                &CcArtAtlasOptions {
+                &TexArtCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
-                    upscale: settings.upscale_cc_art,
-                    pixel_format: match settings.opt_cc_art {
+                    upscale: settings.upscale_tex_art_cc,
+                    pixel_format: match settings.opt_tex_art_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
@@ -90,29 +89,29 @@ impl UddConvApp {
         });
     }
 
-    pub fn convert_cc_texmaps(&self) {
+    pub fn convert_tex_land_cc(&self) {
         let settings = self.settings.clone();
-        let output = self.get_output_path("cc_texmaps.uddp");
+        let output = self.get_output_path("tex_land_cc.uddp");
         self.spawn_task("CC Texmaps Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
-            let compression = match settings.opt_cc_texmaps {
+            let compression = match settings.opt_tex_land_cc {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
                 TextureOptimization::Bc7 => CompressionFlag::None,
                 TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_texmaps_mul_to_cc_texmaps_uddp(
+            let summary = convert_texmaps_mul_to_tex_land_cc_uddp(
                 &sources[0], &output,
-                &CcTexmapsAtlasOptions {
+                &TexLandCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
-                    upscale: settings.upscale_cc_texmaps,
-                    pixel_format: match settings.opt_cc_texmaps {
+                    upscale: settings.upscale_tex_land_cc,
+                    pixel_format: match settings.opt_tex_land_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
@@ -122,30 +121,30 @@ impl UddConvApp {
         });
     }
 
-    pub fn convert_ec_art(&self) {
+    pub fn convert_tex_art_ec(&self) {
         let settings = self.settings.clone();
-        let output = self.get_output_path("ec_art.uddp");
+        let output = self.get_output_path("tex_art_ec.uddp");
         self.spawn_task("EC Art Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
-            let compression = match settings.opt_ec_art {
+            let compression = match settings.opt_tex_art_ec {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
                 TextureOptimization::Bc7 => CompressionFlag::None,
                 TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_ec_art_uop_to_ec_art_uddp_from_sources(
+            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources(
                 &sources, &output,
-                &EcArtAtlasOptions {
+                &TexArtEcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     crop_transparent_bounds: false,
                     compression,
-                    upscale: settings.upscale_ec_art,
-                    pixel_format: match settings.opt_ec_art {
+                    upscale: settings.upscale_tex_art_ec,
+                    pixel_format: match settings.opt_tex_art_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
@@ -155,31 +154,31 @@ impl UddConvApp {
         });
     }
 
-    pub fn convert_ec_land(&self) {
+    pub fn convert_tex_land_ec(&self) {
         let settings = self.settings.clone();
-        let output = self.get_output_path("ec_land.uddp");
+        let output = self.get_output_path("tex_land_ec.uddp");
         self.spawn_task("EC Land Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
-            let compression = match settings.opt_ec_land {
+            let compression = match settings.opt_tex_land_ec {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
                 TextureOptimization::Bc7 => CompressionFlag::None,
                 TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_ec_land_uop_to_ec_land_uddp_from_sources(
+            let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
                 &sources, &output,
-                &EcLandAtlasOptions {
+                &TexLandEcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
-                    upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_ec_land },
-                    upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_ec_land },
-                    upscale_256: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_ec_land },
-                    pixel_format: match settings.opt_ec_land {
+                    upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
+                    upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
+                    upscale_256: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
+                    pixel_format: match settings.opt_tex_land_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
@@ -195,7 +194,7 @@ impl UddConvApp {
         self.spawn_task("Tilemeta Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
-            build_tilemeta_uddp_from_sources(&sources, &output, &TileMetaBuildOptions { adjust_ec_art_sampling: false, use_ec_radarcol: false })?;
+            build_tilemeta_uddp_from_sources(&sources, &output, &TileMetaBuildOptions { adjust_tex_art_ec_sampling: false, use_ec_radarcol: false })?;
             Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
         });
     }
@@ -205,7 +204,12 @@ impl UddConvApp {
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
         self.spawn_task(format!("Map {} Packing", map_id), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-            let summary = convert_map_mul_to_uddp_from_sources(&sources, &output, map_id)?;
+            let summary = convert_map_mul_to_uddp_from_sources(
+                &sources, 
+                &output, 
+                map_id,
+                settings.map_preferences[map_id as usize],
+            )?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
     }
@@ -267,7 +271,12 @@ impl UddConvApp {
 
             // 1. Map
             let map_output = settings.output_uddp_dir.join(format!("map{}.uddp", map_id));
-            convert_map_mul_to_uddp_from_sources(&sources, &map_output, map_id)?;
+            convert_map_mul_to_uddp_from_sources(
+                &sources, 
+                &map_output, 
+                map_id,
+                settings.map_preferences[map_id as usize],
+            )?;
 
             // 2. Statics
             let statics_output = settings

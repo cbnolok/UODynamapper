@@ -93,7 +93,7 @@ Packages:
 - `string_dictionary.uop` is a required support package for resolving virtual paths, but itself is not a visual source.
 - EC art and EC land are both semantic outputs from the same shared texture pools, so the same raw texture id can legitimately appear in both packages when ownership differs.
 
-That aligns with the current UODynamapper investigation: `ec_land.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
+That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
 
 ## 6. Classification Matrix For This Repo
 
@@ -224,10 +224,10 @@ The owner record must win.
 
 ### 6.7 Packaging Rule
 
-For future `ec_land` and `ec_art` packaging, use this policy:
+For future `tex_land_ec` and `tex_art_ec` packaging, use this policy:
 
-- `ec_land`: package terrain-owned references only
-- `ec_art`: package tileart/item-owned references only
+- `tex_land_ec`: package terrain-owned references only
+- `tex_art_ec`: package tileart/item-owned references only
 - if a texture id is referenced by both, duplication is acceptable, but semantic ownership must stay distinct
 
 Long-term, a shared EC texture pool with separate semantic lookup tables would be cleaner than pretending all ids are exclusive to one domain.

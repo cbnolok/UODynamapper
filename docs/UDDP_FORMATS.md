@@ -5,6 +5,7 @@ This document describes the structure of custom binary `.uddp` formats used by U
 The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
 
 For EC-specific content, remember that the UOP source set is mixed and semantic:
+
 - `Texture.uop` and `LegacyTexture.uop` are shared texture pools.
 - `tileart.uop` carries static-art ownership, per-entry clip windows, shader/type hints, and EC item/static metadata.
 - `TerrainDefinition.uop` carries land/material ownership, aliases, selected textures, and runtime slot relationships.
@@ -20,10 +21,12 @@ The current wire format stores CC and EC texture-window fields side by side, but
 The long-term schema direction is to keep CC and EC ownership/behavior separate in the wire format instead of relying on runtime inference.
 
 **Virtual Files:**
+
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
 
 ### 1.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
+
 Represents terrain data.
 
 | Offset | Type | Name | Description |
@@ -37,6 +40,7 @@ Represents terrain data.
 | 0x14 | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 
 ### 1.2 `TileMetaItemTile` Struct (80 Bytes, 8-Byte Aligned)
+
 Represents static map items and artwork.
 
 | Offset | Type | Name | Description |
@@ -56,8 +60,8 @@ Represents static map items and artwork.
 | 0x18 | `[u8; 4]` | `radar_color` | RGBA minimap colors. |
 | 0x1C | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
-| 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `ec_art`. |
-| 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `ec_art`. |
+| 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
+| 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
 | 0x38 | `i16` | `ec_offset_x` | X draw offset for EC. |
 | 0x3A | `i16` | `ec_offset_y` | Y draw offset for EC. |
 | 0x3C | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
@@ -73,26 +77,29 @@ When the schema is eventually widened, the CC texture coordinates, EC texture co
 
 ---
 
-## 2. `cc_art.uddp`, `ec_art.uddp`, `ec_land.uddp`, and related EC texture packages
+## 2. `tex_art_cc.uddp`, `tex_art_ec.uddp`, `tex_land_ec.uddp`, and related EC texture packages
 
 These are GPU texture atlases packed into fixed-size pages to avoid texture array limits.
-`cc_art` packages Classic Art sprites, `ec_art` packages Enhanced Client Art sprites from the shared EC texture pass, and `ec_land` packages Enhanced Client Terrain Textures from the same pass.
+`tex_art_cc` packages Classic Art sprites, `tex_art_ec` packages Enhanced Client Art sprites from the shared EC texture pass, and `tex_land_ec` packages Enhanced Client Terrain Textures from the same pass.
 
 The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
 Do not use lossy BC7 compression for art tiles.
 
 Current EC packing semantics:
-- `ec_art.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
-- `ec_land.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
+
+- `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
+- `tex_land_ec.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
 - `ec_textures_layers.uddp` is the planned destination for extra shared layers, masks, and noise-like resources that are referenced semantically but do not belong to the primary land/art splits.
 - If a source texture is claimed by both art and land semantics, duplication across outputs is valid and should be decided by ownership, not by avoiding repeated ids.
 
 **Virtual Files:**
+
 - `metadata/pages.bin`: Binary array of `PageRecord` structs representing page dimensions and occupancy.
 - `metadata/slots.bin`: Binary array of `SlotRecord` structs indexed by `art_id` containing the UV mapping.
 - `pages/{page_id}.rgba8888`: Raw RGBA8888 pixel payloads (compressed by Zstd via UDDP).
 
 For the historical cropped EC art layout, cropping was performed per art entry, not per decoded source texture. The correct order was:
+
 1. apply the tileart `start_x/start_y/end_x/end_y` clip rect for that art entry
 2. alpha-trim inside that clipped rectangle
 
@@ -102,6 +109,7 @@ It also explains why `tileart.uop` must be treated as the source of entry-local 
 ### 2.1 Metadata Structures
 
 **Page Record (16 Bytes)**
+
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
 | 0x00 | `u32` | `page_index` | The index of the atlas page. |
@@ -110,6 +118,7 @@ It also explains why `tileart.uop` must be treated as the source of entry-local 
 | 0x0C | `u32` | `used_height`| Maximum Y extent used in the page. |
 
 **Slot Record (20 Bytes)**
+
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
 | 0x00 | `u32` | `art_id` | The graphic ID of the tile. |
@@ -120,3 +129,15 @@ It also explains why `tileart.uop` must be treated as the source of entry-local 
 | 0x0E | `u16` | `y` | Y coordinate in the atlas page. |
 | 0x10 | `u16` | `width` | Width of the tile. |
 | 0x12 | `u16` | `height` | Height of the tile. |
+
+### 2.2 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
+
+The `tex_land_ec.uddp` pipeline commonly utilizes **BC7** block compression. The original EC `Texture.uop` generally contains textures encoded in **DXT1 (BC1)** (4 bits per pixel), with some relying on **DXT5 (BC3)** (8 bits per pixel) for alpha transparency.
+
+Storing the converted textures as BC7 within the UDDP package creates a file that is typically larger than the raw source UOP file. This quality/space trade-off is made for three critical reasons:
+
+1. **Alpha Transparency**: DXT1 only supports 1-bit alpha. Standardizing on BC1 would destroy the smooth translucency of textures that originally used DXT5 (like water or foliage). BC7 supports high-quality, full 8-bit alpha.
+2. **Upscaling Fidelity**: When using FSR or xBRZ upscaling options, the smooth details generated by the upscaler are far better preserved by BC7 than by re-compressing them back into the highly artifacted DXT1 format.
+3. **Texture Array Uniformity**: Modern GPU renderers use `Texture2DArray` to pack multiple pages into a single draw-call pipeline. All layers in a texture array must share the exact same format. BC7 provides the best "highest common denominator" for mixing opaque and translucent terrain tiles.
+
+To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses a **Supercompression** pass (applying `ZstdNoDict` compression on top of the BC7 payload). Even though BC7 is a fixed-rate GPU format, Zstd is highly effective at compressing the repeating, identical BC7 16-byte blocks that are generated for transparent or flat-color "empty space" regions within the atlas pages.

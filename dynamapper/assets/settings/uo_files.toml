@@ -2,5 +2,5 @@
 # This file contains the path to the UDDP assets folder.
 # Standard UO files (.mul, .uop) are no longer supported directly.
 
-# Path to generated runtime packages such as cc_art.uddp, ec_art.uddp, and ec_land.uddp.
+# Path to generated runtime packages such as tex_art_cc.uddp, tex_art_ec.uddp, and tex_land_ec.uddp.
 udd_path = "/home/claudio/test/uddp/"

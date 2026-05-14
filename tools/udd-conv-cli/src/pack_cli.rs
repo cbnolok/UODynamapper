@@ -3,33 +3,33 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre;
 use udd_conv::{
-    cc_art::{
-        CcArtAtlasOptions, DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
+    tex_art_cc::{
+        TexArtCcAtlasOptions, DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_DEFAULT_ATLAS_PAGE_WIDTH,
-        convert_art_mul_to_cc_art_uddp_from_sources,
+        convert_art_mul_to_tex_art_cc_uddp_from_sources,
     },
-    ec_art::{
+    tex_art_ec::{
         DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT,
-        DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH, EcArtAtlasOptions,
-        convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources,
-        load_ec_art_sources,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH, TexArtEcAtlasOptions,
+        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources,
+        load_tex_art_ec_sources,
     },
-    ec_land::{
+    tex_land_ec::{
         DEFAULT_ATLAS_GUTTER as EC_LAND_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
-        DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH, EcLandAtlasOptions,
-        convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH, TexLandEcAtlasOptions,
+        convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources,
     },
     source_paths::{gather_source_dirs, resolve_output_path},
     tilemeta::{
         build_tilemeta_uddp_from_sources, TileMetaBuildOptions,
     },
-    cc_map::convert_map_mul_to_uddp_from_sources,
+    cc_map::{convert_map_mul_to_uddp_from_sources, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources,
-    cc_texmaps::{
-        convert_texmaps_mul_to_cc_texmaps_uddp, CcTexmapsAtlasOptions,
+    tex_land_cc::{
+        convert_texmaps_mul_to_tex_land_cc_uddp, TexLandCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_TEXMAPS_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH,
@@ -81,69 +81,97 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
 pub enum CliUpscaleFilter {
     #[default]
     None,
-    Nearest,
-    Bilinear,
-    CatmullRom,
-    Lanczos3,
+    Nearest2x,
+    Nearest3x,
+    Nearest4x,
+    Bilinear2x,
+    Bilinear3x,
+    Bilinear4x,
+    CatmullRom2x,
+    CatmullRom3x,
+    CatmullRom4x,
+    Lanczos3_2x,
+    Lanczos3_3x,
+    Lanczos3_4x,
     Lq2x,
     Lq3x,
     Lq4x,
-    SuperSai,
-    FsrEasu,
-    FsrEasuRcas,
+    SuperSai2x,
+    FsrEasu2x,
+    FsrEasu3x,
+    FsrEasu4x,
+    FsrEasuRcas2x,
+    FsrEasuRcas3x,
+    FsrEasuRcas4x,
     Depixelize2x,
     Depixelize3x,
     Depixelize4x,
-    Nedi,
-    TwoSai,
-    SuperEagle,
+    Nedi2x,
+    TwoSai2x,
+    SuperEagle2x,
     Hq2x,
     Hq3x,
     Hq4x,
-    Epx,
+    Epx2x,
     Epx3x,
     Epx4x,
-    Xbr,
+    Xbr2x,
+    Xbr3x,
+    Xbr4x,
 }
 
 impl From<CliUpscaleFilter> for UpscaleFilter {
     fn from(val: CliUpscaleFilter) -> Self {
         match val {
             CliUpscaleFilter::None => UpscaleFilter::None,
-            CliUpscaleFilter::Nearest => UpscaleFilter::Nearest,
-            CliUpscaleFilter::Bilinear => UpscaleFilter::Bilinear,
-            CliUpscaleFilter::CatmullRom => UpscaleFilter::CatmullRom,
-            CliUpscaleFilter::Lanczos3 => UpscaleFilter::Lanczos3,
+            CliUpscaleFilter::Nearest2x => UpscaleFilter::Nearest2x,
+            CliUpscaleFilter::Nearest3x => UpscaleFilter::Nearest3x,
+            CliUpscaleFilter::Nearest4x => UpscaleFilter::Nearest4x,
+            CliUpscaleFilter::Bilinear2x => UpscaleFilter::Bilinear2x,
+            CliUpscaleFilter::Bilinear3x => UpscaleFilter::Bilinear3x,
+            CliUpscaleFilter::Bilinear4x => UpscaleFilter::Bilinear4x,
+            CliUpscaleFilter::CatmullRom2x => UpscaleFilter::CatmullRom2x,
+            CliUpscaleFilter::CatmullRom3x => UpscaleFilter::CatmullRom3x,
+            CliUpscaleFilter::CatmullRom4x => UpscaleFilter::CatmullRom4x,
+            CliUpscaleFilter::Lanczos3_2x => UpscaleFilter::Lanczos3_2x,
+            CliUpscaleFilter::Lanczos3_3x => UpscaleFilter::Lanczos3_3x,
+            CliUpscaleFilter::Lanczos3_4x => UpscaleFilter::Lanczos3_4x,
             CliUpscaleFilter::Lq2x => UpscaleFilter::Lq2x,
             CliUpscaleFilter::Lq3x => UpscaleFilter::Lq3x,
             CliUpscaleFilter::Lq4x => UpscaleFilter::Lq4x,
-            CliUpscaleFilter::SuperSai => UpscaleFilter::SuperSai,
-            CliUpscaleFilter::FsrEasu => UpscaleFilter::FsrEasu,
-            CliUpscaleFilter::FsrEasuRcas => UpscaleFilter::FsrEasuRcas,
+            CliUpscaleFilter::SuperSai2x => UpscaleFilter::SuperSai2x,
+            CliUpscaleFilter::FsrEasu2x => UpscaleFilter::FsrEasu2x,
+            CliUpscaleFilter::FsrEasu3x => UpscaleFilter::FsrEasu3x,
+            CliUpscaleFilter::FsrEasu4x => UpscaleFilter::FsrEasu4x,
+            CliUpscaleFilter::FsrEasuRcas2x => UpscaleFilter::FsrEasuRcas2x,
+            CliUpscaleFilter::FsrEasuRcas3x => UpscaleFilter::FsrEasuRcas3x,
+            CliUpscaleFilter::FsrEasuRcas4x => UpscaleFilter::FsrEasuRcas4x,
             CliUpscaleFilter::Depixelize2x => UpscaleFilter::Depixelize2x,
             CliUpscaleFilter::Depixelize3x => UpscaleFilter::Depixelize3x,
             CliUpscaleFilter::Depixelize4x => UpscaleFilter::Depixelize4x,
-            CliUpscaleFilter::Nedi => UpscaleFilter::Nedi,
-            CliUpscaleFilter::TwoSai => UpscaleFilter::TwoSai,
-            CliUpscaleFilter::SuperEagle => UpscaleFilter::SuperEagle,
+            CliUpscaleFilter::Nedi2x => UpscaleFilter::Nedi2x,
+            CliUpscaleFilter::TwoSai2x => UpscaleFilter::TwoSai2x,
+            CliUpscaleFilter::SuperEagle2x => UpscaleFilter::SuperEagle2x,
             CliUpscaleFilter::Hq2x => UpscaleFilter::Hq2x,
             CliUpscaleFilter::Hq3x => UpscaleFilter::Hq3x,
             CliUpscaleFilter::Hq4x => UpscaleFilter::Hq4x,
-            CliUpscaleFilter::Epx => UpscaleFilter::Epx,
+            CliUpscaleFilter::Epx2x => UpscaleFilter::Epx2x,
             CliUpscaleFilter::Epx3x => UpscaleFilter::Epx3x,
             CliUpscaleFilter::Epx4x => UpscaleFilter::Epx4x,
-            CliUpscaleFilter::Xbr => UpscaleFilter::Xbr,
+            CliUpscaleFilter::Xbr2x => UpscaleFilter::Xbr2x,
+            CliUpscaleFilter::Xbr3x => UpscaleFilter::Xbr3x,
+            CliUpscaleFilter::Xbr4x => UpscaleFilter::Xbr4x,
         }
     }
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Packs classic art.mul/artidx.mul into cc_art.uddp atlas pages.
+    /// Packs classic art.mul/artidx.mul into tex_art_cc.uddp atlas pages.
     PackArt {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "cc_art.uddp")]
+        #[arg(long, default_value = "tex_art_cc.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_PAGE_WIDTH)]
         atlas_width: u32,
@@ -168,11 +196,11 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
     },
-    /// Packs Classic texmaps.mul into cc_texmaps.uddp atlas pages.
+    /// Packs Classic texmaps.mul into tex_land_cc.uddp atlas pages.
     PackTexmaps {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "cc_texmaps.uddp")]
+        #[arg(long, default_value = "tex_land_cc.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH)]
         atlas_width: u32,
@@ -185,13 +213,13 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
     },
-    /// Packs EC art and land in one shared source pass into ec_art.uddp and ec_land.uddp.
+    /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_art.uddp")]
+        #[arg(long, default_value = "tex_art_ec.uddp")]
         art_output: PathBuf,
-        #[arg(long, default_value = "ec_land.uddp")]
+        #[arg(long, default_value = "tex_land_ec.uddp")]
         land_output: PathBuf,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
         art_atlas_width: u32,
@@ -209,11 +237,11 @@ enum Commands {
         land_bc7: bool,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
-        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu)]
+        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
         upscale_64_algo: CliUpscaleFilter,
         #[arg(long, default_value_t = 256)]
         upscale_128_size: u32,
-        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu)]
+        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
         upscale_128_algo: CliUpscaleFilter,
         #[arg(long, default_value_t = 256)]
         upscale_256_size: u32,
@@ -261,6 +289,8 @@ enum Commands {
         map_id: u32,
         #[arg(long)]
         output: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        uop: bool,
     },
     /// Packs Classic staticsX.mul into staticsX.uddp blocks.
     PackStatics {
@@ -305,10 +335,10 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let compression = if bc7 { CompressionFlag::None } else { CompressionFlag::ZstdNoDict };
-            let summary = convert_art_mul_to_cc_art_uddp_from_sources(
+            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources(
                 &paths,
                 &out_file,
-                &CcArtAtlasOptions {
+                &TexArtCcAtlasOptions {
                     atlas_width,
                     atlas_height,
                     gutter,
@@ -338,10 +368,10 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let compression = if bc7 { CompressionFlag::None } else { CompressionFlag::ZstdNoDict };
-            let summary = convert_texmaps_mul_to_cc_texmaps_uddp(
+            let summary = convert_texmaps_mul_to_tex_land_cc_uddp(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
-                &CcTexmapsAtlasOptions {
+                &TexLandCcAtlasOptions {
                     atlas_width,
                     atlas_height,
                     gutter,
@@ -381,12 +411,12 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let art_out_file = resolve_output_path(&paths, &art_output);
             let land_out_file = resolve_output_path(&paths, &land_output);
-            let shared_sources = load_ec_art_sources(&paths)?;
+            let shared_sources = load_tex_art_ec_sources(&paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
-            let art_summary = convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
+            let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
-                &EcArtAtlasOptions {
+                &TexArtEcAtlasOptions {
                     atlas_width: art_atlas_width,
                     atlas_height: art_atlas_height,
                     gutter: art_gutter,
@@ -404,7 +434,7 @@ pub fn run() -> eyre::Result<()> {
                 art_out_file.display()
             );
 
-            let land_summary = convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
+            let land_summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
                 &paths,
                 &shared_sources.terrain_definition_path,
                 shared_sources.texture_uop_path.as_deref(),
@@ -413,7 +443,7 @@ pub fn run() -> eyre::Result<()> {
                 shared_sources.world_textures.as_ref(),
                 shared_sources.legacy_textures.as_ref(),
                 &land_out_file,
-                &EcLandAtlasOptions {
+                &TexLandEcAtlasOptions {
                     atlas_width: land_atlas_width,
                     atlas_height: land_atlas_height,
                     gutter: land_gutter,
@@ -463,7 +493,7 @@ pub fn run() -> eyre::Result<()> {
                 &paths,
                 &out_file,
                 &TileMetaBuildOptions {
-                    adjust_ec_art_sampling: ec_art_cropped,
+                    adjust_tex_art_ec_sampling: ec_art_cropped,
                     use_ec_radarcol,
                 },
             )?;
@@ -473,6 +503,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             map_id,
             output,
+            uop,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("map{}.uddp", map_id));
@@ -481,6 +512,7 @@ pub fn run() -> eyre::Result<()> {
                 &paths,
                 &out_file,
                 map_id,
+                if uop { CcMapSourcePreference::Uop } else { CcMapSourcePreference::Mul },
             )?;
             println!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
@@ -625,7 +657,7 @@ mod tests {
             "--ecdir",
             "/ec",
             "--output",
-            "tiledata.uddp",
+            "tilemeta.uddp",
         ])
         .expect("parse cli args");
 
@@ -638,7 +670,7 @@ mod tests {
             } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert_eq!(output, PathBuf::from("tiledata.uddp"));
+                assert_eq!(output, PathBuf::from("tilemeta.uddp"));
                 assert!(!ec_art_cropped);
                 assert!(!use_ec_radarcol);
             }
@@ -654,9 +686,9 @@ mod tests {
             "--ecdir",
             "/ec",
             "--art-output",
-            "ec_art.uddp",
+            "tex_art_ec.uddp",
             "--land-output",
-            "ec_land.uddp",
+            "tex_land_ec.uddp",
             "--land-bc7",
         ])
         .expect("parse unified ec texture args");
@@ -670,8 +702,8 @@ mod tests {
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert_eq!(art_output, PathBuf::from("ec_art.uddp"));
-                assert_eq!(land_output, PathBuf::from("ec_land.uddp"));
+                assert_eq!(art_output, PathBuf::from("tex_art_ec.uddp"));
+                assert_eq!(land_output, PathBuf::from("tex_land_ec.uddp"));
                 assert!(land_bc7);
             }
             _ => panic!("unexpected command parsed"),

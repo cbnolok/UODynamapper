@@ -16,7 +16,7 @@ use crate::core::render::{
 };
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{
-    CcArtPackageRes, EcArtPackageRes, EcLandPackageRes, MapPlanesRes, TileMetaPackageRes,
+    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, MapPlanesRes, TileMetaPackageRes,
 };
 use crate::ingame_sysmessage_logger;
 use crate::prelude::*;
@@ -83,9 +83,9 @@ pub struct CursorInspectResources<'w> {
     inspect_state: Res<'w, CursorInspectOverlayState>,
     map_planes_r: Res<'w, MapPlanesRes>,
     statics_res: Res<'w, StaticsStoreRes>,
-    cc_art_res: Option<Res<'w, CcArtPackageRes>>,
-    ec_art_res: Option<Res<'w, EcArtPackageRes>>,
-    ec_land_res: Option<Res<'w, EcLandPackageRes>>,
+    tex_art_cc_res: Option<Res<'w, TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<Res<'w, TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<Res<'w, TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<'w, TileMetaPackageRes>>,
 }
 
@@ -414,9 +414,9 @@ pub fn update_cursor_inspect_text(
         &resources.settings,
         &resources.map_planes_r,
         &resources.statics_res,
-        resources.cc_art_res.as_deref(),
-        resources.ec_art_res.as_deref(),
-        resources.ec_land_res.as_deref(),
+        resources.tex_art_cc_res.as_deref(),
+        resources.tex_art_ec_res.as_deref(),
+        resources.tex_land_ec_res.as_deref(),
         resources.tilemeta_res.as_deref(),
     );
 
@@ -483,9 +483,9 @@ fn build_cursor_inspect_label(
     settings: &crate::configs::settings::Settings,
     map_planes_r: &MapPlanesRes,
     statics_res: &StaticsStoreRes,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
 ) -> String {
     let Some((map_id, cursor_x, cursor_y)) =
@@ -499,9 +499,9 @@ fn build_cursor_inspect_label(
         camera,
         settings,
         statics_res,
-        cc_art_res,
-        ec_art_res,
-        ec_land_res,
+        tex_art_cc_res,
+        tex_art_ec_res,
+        tex_land_ec_res,
         tilemeta_res,
         map_id,
         cursor_x,
@@ -511,9 +511,9 @@ fn build_cursor_inspect_label(
     let statics_line = describe_static_tiles(
         settings,
         statics_res,
-        cc_art_res,
-        ec_art_res,
-        ec_land_res,
+        tex_art_cc_res,
+        tex_art_ec_res,
+        tex_land_ec_res,
         tilemeta_res,
         map_id,
         cursor_x,
@@ -554,9 +554,9 @@ fn sys_draw_hovered_static_highlight(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     statics_res: Res<StaticsStoreRes>,
-    cc_art_res: Option<Res<CcArtPackageRes>>,
-    ec_art_res: Option<Res<EcArtPackageRes>>,
-    ec_land_res: Option<Res<EcLandPackageRes>>,
+    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     mut gizmos: Gizmos,
 ) {
@@ -592,9 +592,9 @@ fn sys_draw_hovered_static_highlight(
         camera_tf,
         &settings,
         &statics_res,
-        cc_art_res.as_deref(),
-        ec_art_res.as_deref(),
-        ec_land_res.as_deref(),
+        tex_art_cc_res.as_deref(),
+        tex_art_ec_res.as_deref(),
+        tex_land_ec_res.as_deref(),
         tilemeta_res.as_deref(),
         map_id,
         x,
@@ -627,9 +627,9 @@ fn describe_hovered_object(
     camera: Option<(&Camera, &GlobalTransform)>,
     settings: &crate::configs::settings::Settings,
     statics_res: &StaticsStoreRes,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
     x: u16,
@@ -648,9 +648,9 @@ fn describe_hovered_object(
         camera_tf,
         settings,
         statics_res,
-        cc_art_res,
-        ec_art_res,
-        ec_land_res,
+        tex_art_cc_res,
+        tex_art_ec_res,
+        tex_land_ec_res,
         tilemeta_res,
         map_id,
         x,
@@ -665,9 +665,9 @@ fn describe_hovered_object(
         best_match.global_y,
         describe_static_tile_details(
             settings,
-            cc_art_res,
-            ec_art_res,
-            ec_land_res,
+            tex_art_cc_res,
+            tex_art_ec_res,
+            tex_land_ec_res,
             tilemeta_res,
             best_match.tile,
             Some(best_match.kind),
@@ -681,9 +681,9 @@ fn find_hovered_static_object(
     camera_tf: &GlobalTransform,
     settings: &crate::configs::settings::Settings,
     statics_res: &StaticsStoreRes,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
     x: u16,
@@ -714,9 +714,9 @@ fn find_hovered_static_object(
                     camera,
                     camera_tf,
                     settings,
-                    cc_art_res,
-                    ec_art_res,
-                    ec_land_res,
+                    tex_art_cc_res,
+                    tex_art_ec_res,
+                    tex_land_ec_res,
                     tilemeta_res,
                     block_x as u32,
                     block_y as u32,
@@ -745,9 +745,9 @@ fn hovered_static_match(
     camera: &Camera,
     camera_tf: &GlobalTransform,
     settings: &crate::configs::settings::Settings,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     block_x: u32,
     block_y: u32,
@@ -763,9 +763,9 @@ fn hovered_static_match(
     let world_y = tile.z as f32 * 0.1 + depth_class_y_bias(depth_class);
     let (kind, corners) = match resolve_hovered_static_geometry(
         settings,
-        cc_art_res,
-        ec_art_res,
-        ec_land_res,
+        tex_art_cc_res,
+        tex_art_ec_res,
+        tex_land_ec_res,
         tilemeta,
         graphic,
         world_x,
@@ -794,9 +794,9 @@ fn hovered_static_match(
 
 fn resolve_hovered_static_geometry(
     settings: &crate::configs::settings::Settings,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     graphic: u16,
     world_x: f32,
@@ -811,7 +811,7 @@ fn resolve_hovered_static_geometry(
                 .map(|meta| meta.cc_texture_id as u16)
                 .unwrap_or(graphic);
             let art_id = cc_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
-            let slot = cc_art_res?.0.present_slot(art_id as u32)?;
+            let slot = tex_art_cc_res?.0.present_slot(art_id as u32)?;
             let bounds = resolve_static_billboard_bounds(
                 crate::configs::settings::ClientTextureSource::Cc,
                 tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0),
@@ -835,11 +835,11 @@ fn resolve_hovered_static_geometry(
         crate::configs::settings::ClientTextureSource::Ec => {
             let world_x = world_x + 0.5;
             let world_z = world_z + 1.5;
-            if let Some(runtime_slot_id) = resolve_overlay_ec_land_runtime_slot(
+            if let Some(runtime_slot_id) = resolve_overlay_tex_land_ec_runtime_slot(
                 tilemeta,
-                ec_land_res.map(|package| &*package.0),
+                tex_land_ec_res.map(|package| &*package.0),
             ) {
-                if ec_land_res
+                if tex_land_ec_res
                     .and_then(|package| (&*package.0).present_slot(runtime_slot_id))
                     .is_some()
                 {
@@ -872,7 +872,7 @@ fn resolve_hovered_static_geometry(
                 }
             }
 
-            let slot = ec_art_res?.0.present_slot(graphic as u32)?;
+            let slot = tex_art_ec_res?.0.present_slot(graphic as u32)?;
             let bounds = resolve_static_billboard_bounds(
                 crate::configs::settings::ClientTextureSource::Ec,
                 tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0),
@@ -955,9 +955,9 @@ fn screen_polygon_contains(
     cursor_pos.x >= min_x && cursor_pos.x <= max_x && cursor_pos.y >= min_y && cursor_pos.y <= max_y
 }
 
-fn resolve_overlay_ec_land_runtime_slot(
+fn resolve_overlay_tex_land_ec_runtime_slot(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
@@ -966,7 +966,7 @@ fn resolve_overlay_ec_land_runtime_slot(
         return None;
     }
 
-    let Some(package) = ec_land else {
+    let Some(package) = tex_land_ec else {
         return None;
     };
 
@@ -981,14 +981,14 @@ fn resolve_overlay_ec_land_runtime_slot(
         .filter(|record| record.selected_texture_id == meta.ec_texture_id)
     {
         if record.canonical_slot_id != 0
-            && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+            && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
             unique_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
-            && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+            && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
             unique_slots.insert(record.alias_slot_id);
@@ -1073,9 +1073,9 @@ fn describe_land_tile(
 fn describe_static_tiles(
     settings: &crate::configs::settings::Settings,
     statics_res: &StaticsStoreRes,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
     x: u16,
@@ -1116,9 +1116,9 @@ fn describe_static_tiles(
         .map(|tile| {
             describe_static_tile_details(
                 settings,
-                cc_art_res,
-                ec_art_res,
-                ec_land_res,
+                tex_art_cc_res,
+                tex_art_ec_res,
+                tex_land_ec_res,
                 tilemeta_res,
                 *tile,
                 None,
@@ -1136,9 +1136,9 @@ fn describe_static_tiles(
 
 fn describe_static_tile_details(
     settings: &crate::configs::settings::Settings,
-    cc_art_res: Option<&CcArtPackageRes>,
-    ec_art_res: Option<&EcArtPackageRes>,
-    ec_land_res: Option<&EcLandPackageRes>,
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     tile: uocf::classic::statics::PackedStaticTile,
     hovered_kind: Option<HoveredObjectKind>,
@@ -1154,38 +1154,38 @@ fn describe_static_tile_details(
     let cc_texture_id = meta.map(|item| item.cc_texture_id);
     let ec_texture_id = meta.map(|item| item.ec_texture_id);
     let is_surface_like = meta.map(|item| item.is_surface_like()).unwrap_or(false);
-    let cc_art_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
+    let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
     let cc_slot =
-        cc_art_id.and_then(|art_id| cc_art_res.and_then(|package| package.0.present_slot(art_id)));
-    let ec_art_slot = ec_art_res.and_then(|package| package.0.present_slot(graphic as u32));
-    let ec_land_runtime_slot =
-        resolve_overlay_ec_land_runtime_slot(meta, ec_land_res.map(|res| &*res.0));
-    let ec_land_slot = ec_land_runtime_slot
-        .and_then(|slot_id| ec_land_res.and_then(|package| (&*package.0).present_slot(slot_id)));
+        tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
+    let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
+    let tex_land_ec_runtime_slot =
+        resolve_overlay_tex_land_ec_runtime_slot(meta, tex_land_ec_res.map(|res| &*res.0));
+    let tex_land_ec_slot = tex_land_ec_runtime_slot
+        .and_then(|slot_id| tex_land_ec_res.and_then(|package| (&*package.0).present_slot(slot_id)));
     let live_decision = match settings.graphics.art_texture_source {
         crate::configs::settings::ClientTextureSource::Cc => {
             format!(
                 "cc->art:{} {}",
-                cc_art_id
+                tex_art_cc_id
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "?".to_string()),
                 slot_presence(cc_slot.is_some())
             )
         }
         crate::configs::settings::ClientTextureSource::Ec => {
-            if ec_land_runtime_slot.is_some() {
+            if tex_land_ec_runtime_slot.is_some() {
                 format!(
                     "ec->land:{} {}",
-                    ec_land_runtime_slot
+                    tex_land_ec_runtime_slot
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "unresolved".to_string()),
-                    slot_presence(ec_land_slot.is_some())
+                    slot_presence(tex_land_ec_slot.is_some())
                 )
             } else {
                 format!(
                     "ec->art:{} {}",
                     graphic,
-                    slot_presence(ec_art_slot.is_some())
+                    slot_presence(tex_art_ec_slot.is_some())
                 )
             }
         }
@@ -1197,7 +1197,7 @@ fn describe_static_tile_details(
     };
 
     format!(
-        "id={} z={} hue={} name={} surf={} cc_tex={} ec_tex={} cc_slot={} ec_art_slot={} ec_land_slot={} {}{}",
+        "id={} z={} hue={} name={} surf={} cc_tex={} ec_tex={} cc_slot={} tex_art_ec_slot={} tex_land_ec_slot={} {}{}",
         graphic,
         z,
         hue,
@@ -1205,13 +1205,13 @@ fn describe_static_tile_details(
         is_surface_like,
         optional_u32(cc_texture_id),
         optional_u32(ec_texture_id),
-        cc_art_id
+        tex_art_cc_id
             .map(|id| format!("{}:{}", id, slot_presence(cc_slot.is_some())))
             .unwrap_or_else(|| "?".to_string()),
-        slot_record_summary_u32(graphic as u32, ec_art_slot.map(|slot| slot.page_index)),
-        ec_land_runtime_slot
+        slot_record_summary_u32(graphic as u32, tex_art_ec_slot.map(|slot| slot.page_index)),
+        tex_land_ec_runtime_slot
             .map(|runtime_slot| {
-                format!("runtime:{} {}", runtime_slot, slot_presence(ec_land_slot.is_some()))
+                format!("runtime:{} {}", runtime_slot, slot_presence(tex_land_ec_slot.is_some()))
             })
             .unwrap_or_else(|| "unresolved".to_string()),
         live_decision,

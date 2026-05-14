@@ -30,6 +30,7 @@
 #import "shaders/worldmap/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance, grade_color_vibrant, tonemap_reinhard_with_exposure}
 #import "shaders/worldmap/land/sampling.wgsl"::{
+  ec_world_uv,
   sample_tile_albedo, sample_tile_reconstructed,
   apply_sharpening, blurred_albedo,
 }
@@ -38,6 +39,7 @@
   shade_mode1_enhanced_fragment,
   shade_mode2_kr_fragment,
 }
+#import "shaders/worldmap/water.wgsl"::water_distort_uv
 
 // ============================================================================
 // Vertex shader
@@ -146,6 +148,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     use_volumetric_fog = false; // skip domain-warped FBM fog when zoomed far out
   }
 
+  // Water animation: disable at high zoom where individual tiles are sub-pixel.
+  var enable_water = effects.enable_water_animation;
+  if (zoom > 10.0) {
+    enable_water = 0u;
+  }
+
   let ambient_strength  = global_light.ambient_strength;
   let diffuse_strength  = land_light.diffuse_strength;
   let specular_strength = land_light.specular_strength;
@@ -160,9 +168,35 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   let exposure          = global_light.exposure;
 
-  // Local UV and tile selection
-  let uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
+  // Local UV (fractional position within the current tile, in [0,1))
+  var uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
   let tile = atlas_read_meta(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
+
+  // ---- Animated water ----
+  // Apply sin/cos UV distortion to tiles with the IsWet tiledata flag.
+  // The distortion breathes the sampled UV region slightly larger than 1.0,
+  // creating a gentle wavy appearance (faithful port of ClassicUO's formula).
+  // Skipped at high zoom where individual tiles are sub-pixel (already gated above).
+  if (enable_water == 1u && tile.is_wet == 1u) {
+    uv_in_tile = water_distort_uv(uv_in_tile);
+  }
+
+  // ---- EC world-space UV ----
+  // For Enhanced Client (EC) land textures (texture_size == 2), the texture is
+  // NOT mapped one-to-one per tile.  EC textures tile across multiple world tiles
+  // using world-space coordinates divided by a stretch factor derived from the
+  // texture's pixel width (stretch = texture_extent.x / CC_TILE_PX = 44 px).
+  // Classic Client textures (size 0/1) still use the per-tile uv_in_tile.
+  // Water-distorted uv_in_tile is intentionally preserved for CC/wet tiles;
+  // EC wet tiles use distorted world UVs so the wave effect is consistent.
+  var sample_uv = uv_in_tile;
+  if (tile.texture_size == 2u) {
+    // Compute world-space tiling UV.  We use the (possibly water-distorted)
+    // uv_in_tile offset so water animation stays coherent with EC textures too.
+    let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
+    sample_uv = ec_world_uv(world_xz, tile);
+  }
+
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
 
   // ---- Zoom-adaptive cheap path ----
@@ -194,23 +228,24 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var base_albedo = vec3<f32>(0.0);
   if (use_cheap_path) {
     // Quantize UV to a coarser grid and use direct nearest sample.
+    // For EC tiles sample_uv is already world-space; we quantize in the same space.
     // We still run full lighting/fog/shadows below to keep visual consistency.
     let cells = mix(2.0, 4.0, smoothstep(0.0, 1.0, adaptive));
-    let uv_q = (floor(uv_in_tile * cells) + vec2<f32>(0.5)) / cells;
+    let uv_q = (floor(sample_uv * cells) + vec2<f32>(0.5)) / cells;
     base_albedo = sample_tile_albedo(uv_q, tile);
   } else {
     // force_nearest: skip bicubic/FSR at high zoom to save ~15 tex reads per pixel
     if (force_nearest) {
-      base_albedo = sample_tile_albedo(uv_in_tile, tile);
+      base_albedo = sample_tile_albedo(sample_uv, tile);
     } else {
-      base_albedo = sample_tile_reconstructed(uv_in_tile, tile);
+      base_albedo = sample_tile_reconstructed(sample_uv, tile);
     }
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
-      let blurred = blurred_albedo(uv_in_tile, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
+      let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
     }
     if (!disable_sharpen && effects.sharpening_amount > 0.0) {
-      base_albedo = apply_sharpening(base_albedo, uv_in_tile, tile, effects.sharpening_amount);
+      base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount);
     }
   }
 

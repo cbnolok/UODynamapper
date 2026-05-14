@@ -6,7 +6,7 @@
 //! ## Protocol
 //!
 //! 1. The main-thread draw system sends a [`LoadRequest`] with the list of
-//!    uncached block coordinates, the map package reader, and an `Arc<CcTexmapsPackage>`.
+//!    uncached block coordinates, the map package reader, and an `Arc<TexLandCcPackage>`.
 //! 2. This thread breaks the request into sub-batches of `SUB_BATCH_SIZE`
 //!    blocks, loading each batch and sending a [`LoadResult`] back immediately.
 //!    This lets the main thread start rendering deferred chunks progressively
@@ -17,7 +17,7 @@
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use udd_assets::cc_texmaps::CcTexmapsPackage;
+use udd_assets::tex_land_cc::TexLandCcPackage;
 use uocf::classic::map::{MapBlock, MapBlockRelPos};
 use udd_container::UddpReader;
 
@@ -39,7 +39,7 @@ pub struct LoadRequest {
     pub blocks_to_load: Vec<MapBlockRelPos>,
     /// Shared handle used to warm the texture pixel-data cache on this thread
     /// so the main thread's `precache_textures_parallel` hits only cache lookups.
-    pub texmap_2d: Arc<CcTexmapsPackage>,
+    pub texmap_2d: Arc<TexLandCcPackage>,
 }
 
 pub struct LoadResult {

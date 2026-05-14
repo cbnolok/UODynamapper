@@ -35,5 +35,5 @@ name = "texture-scanner"
 path = "src/bin/texture_scanner.rs"
 
 [[bin]]
-name = "uop-dict-populator"
+name = "uop-dict-populator-cli"
 path = "src/bin/uop_dict_populator.rs"

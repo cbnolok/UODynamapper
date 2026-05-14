@@ -10,15 +10,15 @@ use crate::{
     configs::settings::ClientTextureSource,
     core::{
         system_sets::StartupSysSet,
-        uo_files_loader::{CcArtPackageRes, EcArtPackageRes, TileMetaPackageRes},
+        uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TileMetaPackageRes},
     },
     prelude::*,
 };
 use udd_conv::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
 use udd_assets::{
-    cc_art::{CcArtPackage, PagePixelFormat},
-    ec_art::EcArtPackage,
-    ec_land::EcLandPackage,
+    tex_art_cc::{TexArtCcPackage, PagePixelFormat},
+    tex_art_ec::TexArtEcPackage,
+    tex_land_ec::TexLandEcPackage,
     tilemeta::TileMetaPackage,
 };
 use std::collections::HashMap;
@@ -221,59 +221,59 @@ impl ArtPageAtlas {
         self.requested_resize_to = None;
     }
 
-    pub fn resolve_cc(&mut self, cc_art: &CcArtPackage, graphic: u16) -> Option<ResolvedArtSprite> {
+    pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, graphic: u16) -> Option<ResolvedArtSprite> {
         let art_id = graphic as u32;
-        let slot = cc_art.present_slot(art_id)?;
+        let slot = tex_art_cc.present_slot(art_id)?;
         self.resolve_slot(
             slot.page_index,
             slot.x,
             slot.y,
             slot.width,
             slot.height,
-            cc_art.atlas_width(),
-            cc_art.atlas_height(),
-            cc_art.pages().get(slot.page_index as usize)?.used_width,
-            cc_art.pages().get(slot.page_index as usize)?.used_height,
-            cc_art.pages().get(slot.page_index as usize)?.pixel_format,
-            || cc_art.read_page_bytes(slot.page_index),
+            tex_art_cc.atlas_width(),
+            tex_art_cc.atlas_height(),
+            tex_art_cc.pages().get(slot.page_index as usize)?.used_width,
+            tex_art_cc.pages().get(slot.page_index as usize)?.used_height,
+            tex_art_cc.pages().get(slot.page_index as usize)?.pixel_format,
+            || tex_art_cc.read_page_bytes(slot.page_index),
         )
     }
 
-    pub fn resolve_ec(&mut self, ec_art: &EcArtPackage, art_id: u32) -> Option<ResolvedArtSprite> {
-        let slot = ec_art.present_slot(art_id)?;
+    pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
+        let slot = tex_art_ec.present_slot(art_id)?;
         self.resolve_slot(
             slot.page_index,
             slot.x,
             slot.y,
             slot.width,
             slot.height,
-            ec_art.atlas_width(),
-            ec_art.atlas_height(),
-            ec_art.pages().get(slot.page_index as usize)?.used_width,
-            ec_art.pages().get(slot.page_index as usize)?.used_height,
-            ec_art.pages().get(slot.page_index as usize)?.pixel_format,
-            || ec_art.read_page_bytes(slot.page_index),
+            tex_art_ec.atlas_width(),
+            tex_art_ec.atlas_height(),
+            tex_art_ec.pages().get(slot.page_index as usize)?.used_width,
+            tex_art_ec.pages().get(slot.page_index as usize)?.used_height,
+            tex_art_ec.pages().get(slot.page_index as usize)?.pixel_format,
+            || tex_art_ec.read_page_bytes(slot.page_index),
         )
     }
 
-    pub fn resolve_ec_land(
+    pub fn resolve_tex_land_ec(
         &mut self,
-        ec_land: &EcLandPackage,
+        tex_land_ec: &TexLandEcPackage,
         art_id: u32,
     ) -> Option<ResolvedArtSprite> {
-        let slot = ec_land.present_slot(art_id)?;
+        let slot = tex_land_ec.present_slot(art_id)?;
         self.resolve_slot(
             slot.page_index,
             slot.x,
             slot.y,
             slot.width,
             slot.height,
-            ec_land.atlas_width(),
-            ec_land.atlas_height(),
-            ec_land.pages().get(slot.page_index as usize)?.used_width,
-            ec_land.pages().get(slot.page_index as usize)?.used_height,
-            ec_land.pages().get(slot.page_index as usize)?.pixel_format,
-            || ec_land.read_page_bytes(slot.page_index),
+            tex_land_ec.atlas_width(),
+            tex_land_ec.atlas_height(),
+            tex_land_ec.pages().get(slot.page_index as usize)?.used_width,
+            tex_land_ec.pages().get(slot.page_index as usize)?.used_height,
+            tex_land_ec.pages().get(slot.page_index as usize)?.pixel_format,
+            || tex_land_ec.read_page_bytes(slot.page_index),
         )
     }
 
@@ -498,16 +498,16 @@ impl DerefMut for GroundArtPageAtlas {
 
 #[derive(Resource, Default, Clone)]
 pub struct ArtTextureLoader {
-    cc_art: Option<Arc<CcArtPackage>>,
-    ec_art: Option<Arc<EcArtPackage>>,
+    tex_art_cc: Option<Arc<TexArtCcPackage>>,
+    tex_art_ec: Option<Arc<TexArtEcPackage>>,
     tilemeta: Option<Arc<TileMetaPackage>>,
 }
 
 impl ArtTextureLoader {
     pub fn source_available(&self, source: ClientTextureSource) -> bool {
         match source {
-            ClientTextureSource::Cc => self.cc_art.is_some(),
-            ClientTextureSource::Ec => self.ec_art.is_some() && self.tilemeta.is_some(),
+            ClientTextureSource::Cc => self.tex_art_cc.is_some(),
+            ClientTextureSource::Ec => self.tex_art_ec.is_some() && self.tilemeta.is_some(),
         }
     }
 
@@ -548,7 +548,7 @@ impl ArtTextureLoader {
     }
 
     fn load_cc_texture(&self, art_id: u32) -> eyre::Result<Option<LoadedArtTexture>> {
-        let Some(package) = &self.cc_art else {
+        let Some(package) = &self.tex_art_cc else {
             return Ok(None);
         };
         let Some(slot) = package.present_slot(art_id) else {
@@ -556,11 +556,11 @@ impl ArtTextureLoader {
         };
         let page_data = package
             .read_page_bytes(slot.page_index)
-            .wrap_err_with(|| format!("read cc_art page {}", slot.page_index))?;
+            .wrap_err_with(|| format!("read tex_art_cc page {}", slot.page_index))?;
         let page_meta = package
             .pages()
             .get(slot.page_index as usize)
-            .ok_or_else(|| eyre::eyre!("cc_art missing page metadata for {}", slot.page_index))?;
+            .ok_or_else(|| eyre::eyre!("tex_art_cc missing page metadata for {}", slot.page_index))?;
         let rgba8 = extract_slot_rgba(
             &page_data,
             package.atlas_width(),
@@ -599,7 +599,7 @@ impl ArtTextureLoader {
         let Some(tilemeta) = &self.tilemeta else {
             return Ok(None);
         };
-        let Some(package) = &self.ec_art else {
+        let Some(package) = &self.tex_art_ec else {
             return Ok(None);
         };
         let Some(metadata) = tilemeta.item_tile(art_id) else {
@@ -610,11 +610,11 @@ impl ArtTextureLoader {
         };
         let page_data = package
             .read_page_bytes(slot.page_index)
-            .wrap_err_with(|| format!("read ec_art page {}", slot.page_index))?;
+            .wrap_err_with(|| format!("read tex_art_ec page {}", slot.page_index))?;
         let page_meta = package
             .pages()
             .get(slot.page_index as usize)
-            .ok_or_else(|| eyre::eyre!("ec_art missing page metadata for {}", slot.page_index))?;
+            .ok_or_else(|| eyre::eyre!("tex_art_ec missing page metadata for {}", slot.page_index))?;
         let rgba8 = extract_slot_rgba(
             &page_data,
             package.atlas_width(),
@@ -703,13 +703,13 @@ impl Plugin for ArtTextureLoaderPlugin {
 
 fn sys_setup_art_texture_loader(
     mut commands: Commands,
-    cc_art_r: Option<Res<CcArtPackageRes>>,
-    ec_art_r: Option<Res<EcArtPackageRes>>,
+    tex_art_cc_r: Option<Res<TexArtCcPackageRes>>,
+    tex_art_ec_r: Option<Res<TexArtEcPackageRes>>,
     tilemeta_r: Option<Res<TileMetaPackageRes>>,
 ) {
     commands.insert_resource(ArtTextureLoader {
-        cc_art: cc_art_r.map(|r| r.0.clone()),
-        ec_art: ec_art_r.map(|r| r.0.clone()),
+        tex_art_cc: tex_art_cc_r.map(|r| r.0.clone()),
+        tex_art_ec: tex_art_ec_r.map(|r| r.0.clone()),
         tilemeta: tilemeta_r.map(|r| r.0.clone()),
     });
 }

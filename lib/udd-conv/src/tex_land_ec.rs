@@ -1,4 +1,4 @@
-//! Build-time and runtime support for `ec_land.uddp`.
+//! Build-time and runtime support for `tex_land_ec.uddp`.
 //!
 //! Sources one primary EC terrain texture per terrain tile id, using
 //! `TerrainDefinition.uop` aliases as the slot ids and the layered terrain
@@ -36,9 +36,9 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
-use udd_assets::cc_art::{page_entry_path, PagePixelFormat};
-use udd_assets::ec_land::{
-    EcLandPageRecord, EcLandSlotRecord, EcLandTerrainProvenanceRecord, MISSING_PAGE_INDEX,
+use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
+use udd_assets::tex_land_ec::{
+    TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, MISSING_SLOT_ID, MISSING_TEXTURE_ID, UDDP_PAGE_MANIFEST_ENTRY_VPATH,
     UDDP_SLOT_MANIFEST_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     UDDP_TRANSCODE_ENTRY_VPATH,
@@ -72,8 +72,8 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
-const EC_LAND_METADATA_VERSION: u32 = 2;
-const EC_LAND_TERRAIN_PROVENANCE_VERSION: u32 = 1;
+const TEX_LAND_EC_METADATA_VERSION: u32 = 2;
+const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -81,7 +81,7 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
 use crate::upscale::{UpscaleConfig, UpscaleFilter};
 
-pub struct EcLandAtlasOptions {
+pub struct TexLandEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
@@ -92,7 +92,7 @@ pub struct EcLandAtlasOptions {
     pub pixel_format: PagePixelFormat,
 }
 
-impl Default for EcLandAtlasOptions {
+impl Default for TexLandEcAtlasOptions {
     fn default() -> Self {
         Self {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -108,7 +108,7 @@ impl Default for EcLandAtlasOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EcLandBuildSummary {
+pub struct TexLandEcBuildSummary {
     pub terrain_entry_count: u32,
     pub terrain_alias_ref_count: u32,
     pub unique_alias_slot_count: u32,
@@ -161,7 +161,7 @@ pub struct PlacedTile {
 
 #[derive(Debug, Clone)]
 pub struct BuiltPage {
-    pub record: EcLandPageRecord,
+    pub record: TexLandEcPageRecord,
     pub pixels: Vec<u8>,
     pub placed_tiles: Vec<PlacedTile>,
 }
@@ -170,19 +170,19 @@ pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
 pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
 
-pub fn convert_ec_land_uop_to_ec_land_uddp(
+pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp(
     client_dir: &Path,
     out_file: &Path,
-    options: &EcLandAtlasOptions,
-) -> eyre::Result<EcLandBuildSummary> {
-    convert_ec_land_uop_to_ec_land_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
+    options: &TexLandEcAtlasOptions,
+) -> eyre::Result<TexLandEcBuildSummary> {
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
 }
 
-pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
+pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
     source_dirs: &[PathBuf],
     out_file: &Path,
-    options: &EcLandAtlasOptions,
-) -> eyre::Result<EcLandBuildSummary> {
+    options: &TexLandEcAtlasOptions,
+) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
 
     let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
@@ -230,7 +230,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
     let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
 
-    convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         source_dirs,
         &terrain_definition_path,
         texture_uop_path.as_deref(),
@@ -243,7 +243,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_sources(
     )
 }
 
-pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
+pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     source_dirs: &[PathBuf],
     terrain_definition_path: &Path,
     texture_uop_path: Option<&Path>,
@@ -252,8 +252,8 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     out_file: &Path,
-    options: &EcLandAtlasOptions,
-) -> eyre::Result<EcLandBuildSummary> {
+    options: &TexLandEcAtlasOptions,
+) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
 
     let terrain_entry_count = terrain_definition.entries.len() as u32;
@@ -459,7 +459,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
 
     build_and_write_package(&mut package, out_file)?;
 
-    Ok(EcLandBuildSummary {
+    Ok(TexLandEcBuildSummary {
         terrain_entry_count,
         terrain_alias_ref_count,
         unique_alias_slot_count,
@@ -475,7 +475,7 @@ pub fn convert_ec_land_uop_to_ec_land_uddp_from_loaded_sources(
     })
 }
 
-fn validate_options(options: &EcLandAtlasOptions) -> eyre::Result<()> {
+fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("atlas dimensions must be greater than zero");
     }
@@ -494,7 +494,7 @@ fn build_terrain_provenance_records(
     terrain_definition: &TerrainDefinitionPackage,
     selections: &[TerrainTextureSelection],
     texture_slot_by_texture_id: &HashMap<u32, u32>,
-) -> Vec<EcLandTerrainProvenanceRecord> {
+) -> Vec<TexLandEcTerrainProvenanceRecord> {
     let selected_texture_by_slot = selections
         .iter()
         .map(|selection| (selection.slot_id, selection.texture_id))
@@ -521,7 +521,7 @@ fn build_terrain_provenance_records(
                 .get(&selected_texture_id)
                 .copied()
                 .unwrap_or(MISSING_SLOT_ID);
-            records.push(EcLandTerrainProvenanceRecord {
+            records.push(TexLandEcTerrainProvenanceRecord {
                 material_id: entry.id,
                 material_name_id: entry.name_id,
                 alias_count_index: alias.count_index,
@@ -547,7 +547,7 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     terrain_definition: &TerrainDefinitionPackage,
-    options: &EcLandAtlasOptions,
+    options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
@@ -774,24 +774,24 @@ fn decode_layer_texture_rgba(
 }
 
 pub fn apply_slot_aliases(
-    slots: &mut [EcLandSlotRecord],
+    slots: &mut [TexLandEcSlotRecord],
     aliases: &[SlotAlias],
 ) -> eyre::Result<()> {
     for alias in aliases {
         let canonical = *slots
             .get(alias.canonical_art_id as usize)
-            .context("canonical ec_land slot outside slot table")?;
+            .context("canonical tex_land_ec slot outside slot table")?;
         let slot = slots
             .get_mut(alias.art_id as usize)
-            .context("alias ec_land slot outside slot table")?;
+            .context("alias tex_land_ec slot outside slot table")?;
         if !canonical.is_present() {
             eyre::bail!(
-                "canonical ec_land slot {} missing while applying alias {}",
+                "canonical tex_land_ec slot {} missing while applying alias {}",
                 alias.canonical_art_id,
                 alias.art_id
             );
         }
-        *slot = EcLandSlotRecord {
+        *slot = TexLandEcSlotRecord {
             art_id: alias.art_id,
             ..canonical
         };
@@ -802,13 +802,13 @@ pub fn apply_slot_aliases(
 pub fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
-    options: &EcLandAtlasOptions,
-) -> eyre::Result<(Vec<BuiltPage>, Vec<EcLandSlotRecord>)> {
+    options: &TexLandEcAtlasOptions,
+) -> eyre::Result<(Vec<BuiltPage>, Vec<TexLandEcSlotRecord>)> {
     // Preserve the dense land-id address space in metadata even though the packed
     // payload contains only present tiles. Runtime lookup then becomes a single array read.
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
-        .map(EcLandSlotRecord::absent)
+        .map(TexLandEcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
     let mut page_index = 0u32;
@@ -827,7 +827,7 @@ pub fn pack_tiles_into_pages(
             let slot = slot_records
                 .get_mut(placed.art_id as usize)
                 .context("placed tile art_id outside slot table")?;
-            *slot = EcLandSlotRecord {
+            *slot = TexLandEcSlotRecord {
                 art_id: placed.art_id,
                 page_index,
                 page_tile_index: placed.page_tile_index,
@@ -850,7 +850,7 @@ pub fn pack_tiles_into_pages(
 fn build_page(
     page_index: u32,
     tiles: Vec<DecodedArtTile>,
-    options: &EcLandAtlasOptions,
+    options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // Assemble into a full-size RGBA page first, then store a cropped payload later.
     // This keeps placement logic and manifest coordinates expressed in one atlas space.
@@ -927,7 +927,7 @@ fn build_page(
 
     Ok((
         BuiltPage {
-            record: EcLandPageRecord {
+            record: TexLandEcPageRecord {
                 page_index,
                 tile_count: placed_tiles.len() as u32,
                 used_width,
@@ -993,7 +993,7 @@ pub fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: 
 
 pub fn serialize_page_manifest(
     pages: &[BuiltPage],
-    options: &EcLandAtlasOptions,
+    options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     // The manifest separates two concerns: logical atlas dimensions for consumers,
     // and compact stored bounds for I/O. That split is what lets the package shrink
@@ -1001,7 +1001,7 @@ pub fn serialize_page_manifest(
     let pixel_format = options.pixel_format;
     let mut bytes = Vec::with_capacity(25 + pages.len() * 16);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_LAND_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -1017,12 +1017,12 @@ pub fn serialize_page_manifest(
 }
 
 pub fn serialize_slot_manifest(
-    slots: &[EcLandSlotRecord],
-    options: &EcLandAtlasOptions,
+    slots: &[TexLandEcSlotRecord],
+    options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_LAND_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -1041,14 +1041,14 @@ pub fn serialize_slot_manifest(
 }
 
 pub fn encode_slot_manifest(
-    slots: &[EcLandSlotRecord],
+    slots: &[TexLandEcSlotRecord],
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
 ) -> eyre::Result<Vec<u8>> {
     serialize_slot_manifest(
         slots,
-        &EcLandAtlasOptions {
+        &TexLandEcAtlasOptions {
             atlas_width,
             atlas_height,
             gutter,
@@ -1062,11 +1062,11 @@ pub fn encode_slot_manifest(
 }
 
 pub fn serialize_terrain_provenance_manifest(
-    records: &[EcLandTerrainProvenanceRecord],
+    records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(12 + records.len() * 32);
     bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_LAND_TERRAIN_PROVENANCE_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION)?;
     bytes.write_u32::<LittleEndian>(records.len() as u32)?;
     for record in records {
         bytes.write_u32::<LittleEndian>(record.material_id)?;
@@ -1081,7 +1081,7 @@ pub fn serialize_terrain_provenance_manifest(
 }
 
 pub fn encode_terrain_provenance_manifest(
-    records: &[EcLandTerrainProvenanceRecord],
+    records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
     serialize_terrain_provenance_manifest(records)
 }

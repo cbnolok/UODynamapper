@@ -50,7 +50,7 @@ struct RawStaticTile {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 pub struct PackedStaticTile {
-    pub graphic: u16,  // art_id for cc_art lookup
+    pub graphic: u16,  // art_id for tex_art_cc lookup
     pub xy_packed: u8, // x_offset:3 | y_offset:3 | _reserved:2
     pub z: i8,         // altitude
     pub hue: u16,      // color index (0 = default)

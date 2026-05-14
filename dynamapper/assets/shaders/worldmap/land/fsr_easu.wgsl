@@ -9,7 +9,7 @@
 //  Reference: https://www.shadertoy.com/view/stXSWB
 // ============================================================================
 
-#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, ec_land_page_atlas, tex_small_sampler}
+#import "shaders/worldmap/land/bindings.wgsl"::{TileUniform, tex_small, tex_big, tex_land_ec_page_atlas, tex_small_sampler}
 #import "shaders/worldmap/land/lighting.wgsl"::{luminance}
 
 // ============================================================================
@@ -21,7 +21,7 @@ fn fsr_fetch(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
   if (tile.texture_size == 2u) {
     let local_iuv = clamp(iuv, vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
     let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
-    return textureLoad(ec_land_page_atlas, atlas_iuv, layer, 0).rgb;
+    return textureLoad(tex_land_ec_page_atlas, atlas_iuv, layer, 0).rgb;
   }
   if (tile.texture_size == 1u) {
     let dims = vec2<i32>(textureDimensions(tex_big));

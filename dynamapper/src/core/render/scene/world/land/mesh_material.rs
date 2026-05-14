@@ -17,9 +17,9 @@ pub struct LandMaterialExtension {
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
     pub texarray_big: Handle<Image>,
     #[texture(109, dimension = "2d_array", visibility(vertex, fragment))]
-    pub ec_land_page_atlas: Handle<Image>,
+    pub tex_land_ec_page_atlas: Handle<Image>,
     #[texture(110, sample_type = "u_int", visibility(vertex, fragment))]
-    pub ec_land_lookup: Handle<Image>,
+    pub tex_land_ec_lookup: Handle<Image>,
     #[texture(
         103,
         dimension = "2d_array",
@@ -114,6 +114,17 @@ pub struct LandEffectsUniform {
     pub blur_strength: f32,
     /// Blur radius in screen pixels (small values like 0.5..8.0).
     pub blur_radius: f32,
+
+    // --- Animated water (vec4 slot 2) ---
+    /// 1 = apply sin/cos UV distortion to IsWet tiles; 0 = disable.
+    /// Automatically suppressed at high zoom (> 10) in the shader.
+    pub enable_water_animation: u32,
+    #[serde(default)]
+    pub _pad_eff0: u32,
+    #[serde(default)]
+    pub _pad_eff1: u32,
+    #[serde(default)]
+    pub _pad_eff2: u32,
 }
 
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).
@@ -232,13 +243,8 @@ pub struct LandRenderStylePresetsPerMode {
 }
 #[derive(Deserialize, Serialize)]
 pub struct LandMaterialUniformsPresets {
-    #[serde(default = "default_global_lighting")]
     pub global_lighting: f32,
     pub effects: LandEffectsUniform,
     pub lighting: GlobalLightingUniforms,
     pub land_lighting: LandLightingUniforms,
-}
-
-fn default_global_lighting() -> f32 {
-    1.0
 }

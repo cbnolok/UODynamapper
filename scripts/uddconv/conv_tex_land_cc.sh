@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# This script converts classic UO texmaps.mul into UODynamapper's cc_texmaps.uddp atlas format.
+# This script converts classic UO texmaps.mul into UODynamapper's tex_land_cc.uddp atlas format.
 
 CC_PATH=""
 OUTPUT_DIR="."
@@ -34,9 +34,9 @@ OUTPUT_DIR=$(realpath "$OUTPUT_DIR")
 
 echo "--- Starting UODynamapper CC Texmaps Conversion ---"
 echo "CC Source: $CC_PATH"
-echo "Target: $OUTPUT_DIR/cc_texmaps.uddp"
+echo "Target: $OUTPUT_DIR/tex_land_cc.uddp"
 
 # Run the pack-texmaps command. We use --bc7 by default for optimal VRAM usage.
-cargo run --release --bin uddpack -- pack-texmaps --ccdir "$CC_PATH" --output "$OUTPUT_DIR/cc_texmaps.uddp" --bc7
+cargo run --release --bin uddpack -- pack-texmaps --ccdir "$CC_PATH" --output "$OUTPUT_DIR/tex_land_cc.uddp" --bc7
 
 echo "Conversion complete!"

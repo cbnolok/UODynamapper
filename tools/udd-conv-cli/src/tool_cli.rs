@@ -6,20 +6,20 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use csv::{ReaderBuilder, StringRecord, Trim, WriterBuilder};
-use udd_assets::{CcArtPackage, EcArtPackage, EcLandPackage};
-use udd_assets::cc_art::CcArtSlotRecord;
-use udd_assets::ec_art::EcArtSlotRecord;
-use udd_assets::ec_land::{EcLandSlotRecord, EcLandTerrainProvenanceRecord};
-use udd_conv::cc_art::encode_slot_manifest as encode_cc_slot_manifest;
-use udd_assets::cc_art::SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH;
-use udd_conv::ec_art::encode_slot_manifest as encode_ec_art_slot_manifest;
-use udd_assets::ec_art::SLOT_MANIFEST_ENTRY_PATH as EC_ART_SLOT_MANIFEST_ENTRY_PATH;
-use udd_conv::ec_land::{
-    encode_slot_manifest as encode_ec_land_slot_manifest, encode_terrain_provenance_manifest,
+use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage};
+use udd_assets::tex_art_cc::TexArtCcSlotRecord;
+use udd_assets::tex_art_ec::TexArtEcSlotRecord;
+use udd_assets::tex_land_ec::{TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord};
+use udd_conv::tex_art_cc::encode_slot_manifest as encode_cc_slot_manifest;
+use udd_assets::tex_art_cc::SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH;
+use udd_conv::tex_art_ec::encode_slot_manifest as encode_tex_art_ec_slot_manifest;
+use udd_assets::tex_art_ec::SLOT_MANIFEST_ENTRY_PATH as TEX_ART_EC_SLOT_MANIFEST_ENTRY_PATH;
+use udd_conv::tex_land_ec::{
+    encode_slot_manifest as encode_tex_land_ec_slot_manifest, encode_terrain_provenance_manifest,
 };
-use udd_assets::ec_land::{
+use udd_assets::tex_land_ec::{
     MISSING_SLOT_ID, MISSING_TEXTURE_ID,
-    UDDP_SLOT_MANIFEST_ENTRY_VPATH as EC_LAND_SLOT_MANIFEST_ENTRY_PATH,
+    UDDP_SLOT_MANIFEST_ENTRY_VPATH as TEX_LAND_EC_SLOT_MANIFEST_ENTRY_PATH,
     UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
 };
 use udd_container::FileKey;
@@ -210,7 +210,7 @@ pub fn run() -> eyre::Result<()> {
 }
 
 fn export_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
-    if EcLandPackage::load(file).is_ok() {
+    if TexLandEcPackage::load(file).is_ok() {
         return export_terrain_provenance_csv(file, output);
     }
     export_slots_csv_auto(file, output)
@@ -224,18 +224,18 @@ fn import_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre::Resu
 }
 
 fn export_terrain_provenance_csv(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
-    let package = load_ec_land_package(file)?;
+    let package = load_tex_land_ec_package(file)?;
     let output = output.map(Path::to_path_buf).unwrap_or_else(|| {
         file.with_file_name(format!(
             "{}.terrain_provenance.csv",
             file.file_stem()
                 .and_then(|v| v.to_str())
-                .unwrap_or("ec_land")
+                .unwrap_or("tex_land_ec")
         ))
     });
-    write_ec_land_terrain_provenance_csv(&output, package.terrain_provenance())?;
+    write_tex_land_ec_terrain_provenance_csv(&output, package.terrain_provenance())?;
     println!(
-        "Wrote ec_land terrain provenance CSV with {} rows to '{}'.",
+        "Wrote tex_land_ec terrain provenance CSV with {} rows to '{}'.",
         package.terrain_provenance().len(),
         output.display()
     );
@@ -247,9 +247,9 @@ fn import_terrain_provenance_csv(
     csv: &Path,
     output: Option<&Path>,
 ) -> eyre::Result<()> {
-    let package = load_ec_land_package(file)?;
-    let records = read_ec_land_terrain_provenance_csv(csv)?;
-    validate_ec_land_terrain_provenance(&package, &records)?;
+    let package = load_tex_land_ec_package(file)?;
+    let records = read_tex_land_ec_terrain_provenance_csv(csv)?;
+    validate_tex_land_ec_terrain_provenance(&package, &records)?;
     let manifest = encode_terrain_provenance_manifest(&records)?;
     let output = output
         .map(Path::to_path_buf)
@@ -261,7 +261,7 @@ fn import_terrain_provenance_csv(
         &manifest,
     )?;
     println!(
-        "Imported {} ec_land terrain provenance rows from '{}' into '{}'.",
+        "Imported {} tex_land_ec terrain provenance rows from '{}' into '{}'.",
         records.len(),
         csv.display(),
         output.display()
@@ -270,28 +270,28 @@ fn import_terrain_provenance_csv(
 }
 
 fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
-    if let Ok(package) = CcArtPackage::load(file) {
+    if let Ok(package) = TexArtCcPackage::load(file) {
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &cc_slot_rows(&package))?;
-        println!("Wrote cc_art slot CSV to '{}'.", output.display());
+        println!("Wrote tex_art_cc slot CSV to '{}'.", output.display());
         return Ok(());
     }
-    if let Ok(package) = EcArtPackage::load(file) {
+    if let Ok(package) = TexArtEcPackage::load(file) {
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
-        write_atlas_slot_csv(&output, &ec_art_slot_rows(&package))?;
-        println!("Wrote ec_art slot CSV to '{}'.", output.display());
+        write_atlas_slot_csv(&output, &tex_art_ec_slot_rows(&package))?;
+        println!("Wrote tex_art_ec slot CSV to '{}'.", output.display());
         return Ok(());
     }
-    if let Ok(package) = EcLandPackage::load(file) {
+    if let Ok(package) = TexLandEcPackage::load(file) {
         let output = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
-        write_atlas_slot_csv(&output, &ec_land_slot_rows(&package))?;
-        println!("Wrote ec_land slot CSV to '{}'.", output.display());
+        write_atlas_slot_csv(&output, &tex_land_ec_slot_rows(&package))?;
+        println!("Wrote tex_land_ec slot CSV to '{}'.", output.display());
         return Ok(());
     }
 
@@ -302,10 +302,10 @@ fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()>
 }
 
 fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre::Result<()> {
-    if let Ok(package) = CcArtPackage::load(file) {
+    if let Ok(package) = TexArtCcPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
         validate_atlas_slot_rows(
-            "cc_art",
+            "tex_art_cc",
             &cc_slot_rows(&package),
             &cc_page_bounds(&package),
             &rows,
@@ -313,7 +313,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
-            slots[row.art_id as usize] = CcArtSlotRecord {
+            slots[row.art_id as usize] = TexArtCcSlotRecord {
                 art_id: row.art_id,
                 page_index: row.page_index,
                 page_tile_index: row.page_tile_index,
@@ -340,24 +340,24 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
             &manifest,
         )?;
         println!(
-            "Imported {} cc_art slot rows into '{}'.",
+            "Imported {} tex_art_cc slot rows into '{}'.",
             rows.len(),
             output.display()
         );
         return Ok(());
     }
-    if let Ok(package) = EcArtPackage::load(file) {
+    if let Ok(package) = TexArtEcPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
         validate_atlas_slot_rows(
-            "ec_art",
-            &ec_art_slot_rows(&package),
-            &ec_art_page_bounds(&package),
+            "tex_art_ec",
+            &tex_art_ec_slot_rows(&package),
+            &tex_art_ec_page_bounds(&package),
             &rows,
         )?;
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
-            slots[row.art_id as usize] = EcArtSlotRecord {
+            slots[row.art_id as usize] = TexArtEcSlotRecord {
                 art_id: row.art_id,
                 page_index: row.page_index,
                 page_tile_index: row.page_tile_index,
@@ -368,7 +368,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
             };
         }
-        let manifest = encode_ec_art_slot_manifest(
+        let manifest = encode_tex_art_ec_slot_manifest(
             &slots,
             package.atlas_width(),
             package.atlas_height(),
@@ -380,28 +380,28 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
         package_edit::replace_virtual_path_file(
             file,
             &output,
-            EC_ART_SLOT_MANIFEST_ENTRY_PATH,
+            TEX_ART_EC_SLOT_MANIFEST_ENTRY_PATH,
             &manifest,
         )?;
         println!(
-            "Imported {} ec_art slot rows into '{}'.",
+            "Imported {} tex_art_ec slot rows into '{}'.",
             rows.len(),
             output.display()
         );
         return Ok(());
     }
-    if let Ok(package) = EcLandPackage::load(file) {
+    if let Ok(package) = TexLandEcPackage::load(file) {
         let rows = read_atlas_slot_csv(csv)?;
         validate_atlas_slot_rows(
-            "ec_land",
-            &ec_land_slot_rows(&package),
-            &ec_land_page_bounds(&package),
+            "tex_land_ec",
+            &tex_land_ec_slot_rows(&package),
+            &tex_land_ec_page_bounds(&package),
             &rows,
         )?;
         let mut slots = package.slots().to_vec();
         for row in &rows {
             let existing = slots[row.art_id as usize];
-            slots[row.art_id as usize] = EcLandSlotRecord {
+            slots[row.art_id as usize] = TexLandEcSlotRecord {
                 art_id: row.art_id,
                 page_index: row.page_index,
                 page_tile_index: row.page_tile_index,
@@ -412,7 +412,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
             };
         }
-        let manifest = encode_ec_land_slot_manifest(
+        let manifest = encode_tex_land_ec_slot_manifest(
             &slots,
             package.atlas_width(),
             package.atlas_height(),
@@ -424,11 +424,11 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
         package_edit::replace_virtual_path_file(
             file,
             &output,
-            EC_LAND_SLOT_MANIFEST_ENTRY_PATH,
+            TEX_LAND_EC_SLOT_MANIFEST_ENTRY_PATH,
             &manifest,
         )?;
         println!(
-            "Imported {} ec_land slot rows into '{}'.",
+            "Imported {} tex_land_ec slot rows into '{}'.",
             rows.len(),
             output.display()
         );
@@ -462,7 +462,7 @@ pub fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()>
         DiffKind::Slots => diff_slot_packages(left, right),
         DiffKind::Package => diff_package_payloads(left, right),
         DiffKind::Auto => {
-            if EcLandPackage::load(left).is_ok() && EcLandPackage::load(right).is_ok() {
+            if TexLandEcPackage::load(left).is_ok() && TexLandEcPackage::load(right).is_ok() {
                 diff_terrain_provenance_packages(left, right)
             } else if is_atlas_package(left) && is_atlas_package(right) {
                 diff_slot_packages(left, right)
@@ -474,11 +474,11 @@ pub fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()>
 }
 
 fn diff_terrain_provenance_csv(left: &Path, right: &Path) -> eyre::Result<()> {
-    let left_rows = read_ec_land_terrain_provenance_csv(left)?
+    let left_rows = read_tex_land_ec_terrain_provenance_csv(left)?
         .into_iter()
         .map(terrain_record_key)
         .collect::<BTreeSet<_>>();
-    let right_rows = read_ec_land_terrain_provenance_csv(right)?
+    let right_rows = read_tex_land_ec_terrain_provenance_csv(right)?
         .into_iter()
         .map(terrain_record_key)
         .collect::<BTreeSet<_>>();
@@ -500,8 +500,8 @@ fn diff_slot_csv(left: &Path, right: &Path) -> eyre::Result<()> {
 }
 
 fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<()> {
-    let left_package = load_ec_land_package(left)?;
-    let right_package = load_ec_land_package(right)?;
+    let left_package = load_tex_land_ec_package(left)?;
+    let right_package = load_tex_land_ec_package(right)?;
     let left_rows = left_package
         .terrain_provenance()
         .iter()
@@ -535,7 +535,7 @@ fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<(
 
 fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
     if let (Ok(left_package), Ok(right_package)) =
-        (CcArtPackage::load(left), CcArtPackage::load(right))
+        (TexArtCcPackage::load(left), TexArtCcPackage::load(right))
     {
         let left_rows = cc_slot_rows(&left_package)
             .into_iter()
@@ -545,35 +545,35 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("cc_art slot rows", &left_rows, &right_rows);
+        print_set_diff("tex_art_cc slot rows", &left_rows, &right_rows);
         return Ok(());
     }
     if let (Ok(left_package), Ok(right_package)) =
-        (EcArtPackage::load(left), EcArtPackage::load(right))
+        (TexArtEcPackage::load(left), TexArtEcPackage::load(right))
     {
-        let left_rows = ec_art_slot_rows(&left_package)
+        let left_rows = tex_art_ec_slot_rows(&left_package)
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        let right_rows = ec_art_slot_rows(&right_package)
+        let right_rows = tex_art_ec_slot_rows(&right_package)
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("ec_art slot rows", &left_rows, &right_rows);
+        print_set_diff("tex_art_ec slot rows", &left_rows, &right_rows);
         return Ok(());
     }
     if let (Ok(left_package), Ok(right_package)) =
-        (EcLandPackage::load(left), EcLandPackage::load(right))
+        (TexLandEcPackage::load(left), TexLandEcPackage::load(right))
     {
-        let left_rows = ec_land_slot_rows(&left_package)
+        let left_rows = tex_land_ec_slot_rows(&left_package)
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        let right_rows = ec_land_slot_rows(&right_package)
+        let right_rows = tex_land_ec_slot_rows(&right_package)
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("ec_land slot rows", &left_rows, &right_rows);
+        print_set_diff("tex_land_ec slot rows", &left_rows, &right_rows);
         return Ok(());
     }
 
@@ -612,14 +612,14 @@ fn detect_csv_kind(path: &Path) -> eyre::Result<CsvKind> {
 }
 
 fn is_atlas_package(path: &Path) -> bool {
-    CcArtPackage::load(path).is_ok()
-        || EcArtPackage::load(path).is_ok()
-        || EcLandPackage::load(path).is_ok()
+    TexArtCcPackage::load(path).is_ok()
+        || TexArtEcPackage::load(path).is_ok()
+        || TexLandEcPackage::load(path).is_ok()
 }
 
-fn load_ec_land_package(file: &Path) -> eyre::Result<EcLandPackage> {
-    EcLandPackage::load(file)
-        .wrap_err_with(|| format!("{} is not a supported ec_land package", file.display()))
+fn load_tex_land_ec_package(file: &Path) -> eyre::Result<TexLandEcPackage> {
+    TexLandEcPackage::load(file)
+        .wrap_err_with(|| format!("{} is not a supported tex_land_ec package", file.display()))
 }
 
 fn default_slots_output(file: &Path) -> PathBuf {
@@ -641,7 +641,7 @@ fn derived_output_path(file: &Path, suffix: &str) -> PathBuf {
     }
 }
 
-fn cc_slot_rows(package: &CcArtPackage) -> Vec<AtlasSlotCsvRow> {
+fn cc_slot_rows(package: &TexArtCcPackage) -> Vec<AtlasSlotCsvRow> {
     package
         .slots()
         .iter()
@@ -664,7 +664,7 @@ fn cc_slot_rows(package: &CcArtPackage) -> Vec<AtlasSlotCsvRow> {
         .collect()
 }
 
-fn ec_art_slot_rows(package: &EcArtPackage) -> Vec<AtlasSlotCsvRow> {
+fn tex_art_ec_slot_rows(package: &TexArtEcPackage) -> Vec<AtlasSlotCsvRow> {
     package
         .slots()
         .iter()
@@ -687,7 +687,7 @@ fn ec_art_slot_rows(package: &EcArtPackage) -> Vec<AtlasSlotCsvRow> {
         .collect()
 }
 
-fn ec_land_slot_rows(package: &EcLandPackage) -> Vec<AtlasSlotCsvRow> {
+fn tex_land_ec_slot_rows(package: &TexLandEcPackage) -> Vec<AtlasSlotCsvRow> {
     package
         .slots()
         .iter()
@@ -706,7 +706,7 @@ fn ec_land_slot_rows(package: &EcLandPackage) -> Vec<AtlasSlotCsvRow> {
         .collect()
 }
 
-fn cc_page_bounds(package: &CcArtPackage) -> HashMap<u32, AtlasPageBounds> {
+fn cc_page_bounds(package: &TexArtCcPackage) -> HashMap<u32, AtlasPageBounds> {
     package
         .pages()
         .iter()
@@ -723,7 +723,7 @@ fn cc_page_bounds(package: &CcArtPackage) -> HashMap<u32, AtlasPageBounds> {
         .collect()
 }
 
-fn ec_art_page_bounds(package: &EcArtPackage) -> HashMap<u32, AtlasPageBounds> {
+fn tex_art_ec_page_bounds(package: &TexArtEcPackage) -> HashMap<u32, AtlasPageBounds> {
     package
         .pages()
         .iter()
@@ -740,7 +740,7 @@ fn ec_art_page_bounds(package: &EcArtPackage) -> HashMap<u32, AtlasPageBounds> {
         .collect()
 }
 
-fn ec_land_page_bounds(package: &EcLandPackage) -> HashMap<u32, AtlasPageBounds> {
+fn tex_land_ec_page_bounds(package: &TexLandEcPackage) -> HashMap<u32, AtlasPageBounds> {
     package
         .pages()
         .iter()
@@ -929,9 +929,9 @@ fn validate_atlas_slot_rows(
     Ok(())
 }
 
-fn write_ec_land_terrain_provenance_csv(
+fn write_tex_land_ec_terrain_provenance_csv(
     path: &Path,
-    records: &[EcLandTerrainProvenanceRecord],
+    records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).wrap_err_with(|| format!("create {}", parent.display()))?;
@@ -965,9 +965,9 @@ fn write_ec_land_terrain_provenance_csv(
     Ok(())
 }
 
-fn read_ec_land_terrain_provenance_csv(
+fn read_tex_land_ec_terrain_provenance_csv(
     path: &Path,
-) -> eyre::Result<Vec<EcLandTerrainProvenanceRecord>> {
+) -> eyre::Result<Vec<TexLandEcTerrainProvenanceRecord>> {
     let mut reader = ReaderBuilder::new()
         .trim(Trim::All)
         .from_path(path)
@@ -986,7 +986,7 @@ fn read_ec_land_terrain_provenance_csv(
     for (row_index, row) in reader.records().enumerate() {
         let row = row?;
         let line_number = row_index + 2;
-        records.push(EcLandTerrainProvenanceRecord {
+        records.push(TexLandEcTerrainProvenanceRecord {
             material_id: parse_u32_field(&row, material_id, "material_id", line_number)?,
             material_name_id: parse_i32_field(
                 &row,
@@ -1033,14 +1033,14 @@ fn read_ec_land_terrain_provenance_csv(
     Ok(records)
 }
 
-fn validate_ec_land_terrain_provenance(
-    package: &EcLandPackage,
-    records: &[EcLandTerrainProvenanceRecord],
+fn validate_tex_land_ec_terrain_provenance(
+    package: &TexLandEcPackage,
+    records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<()> {
     let current_records = package.terrain_provenance();
     if records.len() != current_records.len() {
         eyre::bail!(
-            "ec_land terrain provenance row count changed from {} to {}. Adding or removing provenance rows is not allowed.",
+            "tex_land_ec terrain provenance row count changed from {} to {}. Adding or removing provenance rows is not allowed.",
             current_records.len(),
             records.len()
         );
@@ -1069,7 +1069,7 @@ fn validate_ec_land_terrain_provenance(
         .collect::<HashSet<_>>();
     if current_keys != imported_keys {
         eyre::bail!(
-            "ec_land terrain provenance CSV must keep the exact set of material/alias rows"
+            "tex_land_ec terrain provenance CSV must keep the exact set of material/alias rows"
         );
     }
 
@@ -1090,14 +1090,14 @@ fn validate_ec_land_terrain_provenance(
     for record in records {
         if record.alias_slot_id >= slot_count {
             eyre::bail!(
-                "alias_slot_id {} is outside ec_land slot table size {}",
+                "alias_slot_id {} is outside tex_land_ec slot table size {}",
                 record.alias_slot_id,
                 slot_count
             );
         }
         if record.canonical_slot_id != MISSING_SLOT_ID && record.canonical_slot_id >= slot_count {
             eyre::bail!(
-                "canonical_slot_id {} is outside ec_land slot table size {}",
+                "canonical_slot_id {} is outside tex_land_ec slot table size {}",
                 record.canonical_slot_id,
                 slot_count
             );
@@ -1108,7 +1108,7 @@ fn validate_ec_land_terrain_provenance(
             record.alias_count_index,
         )) {
             eyre::bail!(
-                "duplicate ec_land provenance row for material_id={}, alias_slot_id={}, alias_count_index={}",
+                "duplicate tex_land_ec provenance row for material_id={}, alias_slot_id={}, alias_count_index={}",
                 record.material_id,
                 record.alias_slot_id,
                 record.alias_count_index
@@ -1201,7 +1201,7 @@ fn fingerprint_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn terrain_record_key(record: EcLandTerrainProvenanceRecord) -> String {
+fn terrain_record_key(record: TexLandEcTerrainProvenanceRecord) -> String {
     format!(
         "material_id={}|material_name_id={}|alias_count_index={}|alias_slot_id={}|alias_tile_flags={}|selected_texture_id={}|canonical_slot_id={}",
         record.material_id,

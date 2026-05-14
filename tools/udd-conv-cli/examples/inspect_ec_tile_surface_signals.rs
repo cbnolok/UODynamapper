@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
-    ec_art::EcArtPackage,
-    ec_land::{EcLandPackage, MISSING_SLOT_ID},
+    tex_art_ec::TexArtEcPackage,
+    tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
     tilemeta::{TileMetaItemTile, TileMetaPackage},
 };
 use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -20,9 +20,9 @@ struct Args {
     #[arg(long)]
     tilemeta: Option<PathBuf>,
     #[arg(long = "ec-art")]
-    ec_art: Option<PathBuf>,
+    tex_art_ec: Option<PathBuf>,
     #[arg(long = "ec-land")]
-    ec_land: Option<PathBuf>,
+    tex_land_ec: Option<PathBuf>,
     #[arg(required = true)]
     art_ids: Vec<u16>,
 }
@@ -46,18 +46,18 @@ fn main() -> eyre::Result<()> {
         .map(TileMetaPackage::load)
         .transpose()
         .wrap_err("load tilemeta package")?;
-    let ec_art = args
-        .ec_art
+    let tex_art_ec = args
+        .tex_art_ec
         .as_ref()
-        .map(EcArtPackage::load)
+        .map(TexArtEcPackage::load)
         .transpose()
-        .wrap_err("load ec_art package")?;
-    let ec_land = args
-        .ec_land
+        .wrap_err("load tex_art_ec package")?;
+    let tex_land_ec = args
+        .tex_land_ec
         .as_ref()
-        .map(EcLandPackage::load)
+        .map(TexLandEcPackage::load)
         .transpose()
-        .wrap_err("load ec_land package")?;
+        .wrap_err("load tex_land_ec package")?;
 
     for art_id in args.art_ids {
         println!("art_id={art_id}");
@@ -107,12 +107,12 @@ fn main() -> eyre::Result<()> {
             print_tilemeta(tilemeta.item_tile(art_id as u32));
         }
 
-        if ec_art.is_some() || ec_land.is_some() {
+        if tex_art_ec.is_some() || tex_land_ec.is_some() {
             print_package_routing(
                 art_id as u32,
                 tilemeta.as_ref().and_then(|package| package.item_tile(art_id as u32)),
-                ec_art.as_ref(),
-                ec_land.as_ref(),
+                tex_art_ec.as_ref(),
+                tex_land_ec.as_ref(),
             );
         }
 
@@ -239,38 +239,38 @@ fn print_tilemeta(item: Option<&TileMetaItemTile>) {
 fn print_package_routing(
     art_id: u32,
     tilemeta: Option<&TileMetaItemTile>,
-    ec_art: Option<&EcArtPackage>,
-    ec_land: Option<&EcLandPackage>,
+    tex_art_ec: Option<&TexArtEcPackage>,
+    tex_land_ec: Option<&TexLandEcPackage>,
 ) {
-    let ec_art_slot = ec_art.and_then(|package| package.present_slot(art_id));
+    let tex_art_ec_slot = tex_art_ec.and_then(|package| package.present_slot(art_id));
     println!(
-        "  ec_art.present_slot(art_id)={}",
-        slot_summary(ec_art_slot.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
+        "  tex_art_ec.present_slot(art_id)={}",
+        slot_summary(tex_art_ec_slot.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
     );
 
-    let ec_land_direct = ec_land.and_then(|package| package.present_slot(art_id));
+    let tex_land_ec_direct = tex_land_ec.and_then(|package| package.present_slot(art_id));
     println!(
-        "  ec_land.present_slot(art_id)={}",
-        slot_summary(ec_land_direct.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
+        "  tex_land_ec.present_slot(art_id)={}",
+        slot_summary(tex_land_ec_direct.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
     );
 
-    let ec_land_runtime_slot = resolve_surface_like_ec_land_slot_id(tilemeta, ec_land);
-    println!("  ec_land.runtime_slot={:?}", ec_land_runtime_slot);
+    let tex_land_ec_runtime_slot = resolve_surface_like_tex_land_ec_slot_id(tilemeta, tex_land_ec);
+    println!("  tex_land_ec.runtime_slot={:?}", tex_land_ec_runtime_slot);
 
-    let ec_land_runtime_record = ec_land_runtime_slot.and_then(|slot_id| {
-        ec_land.and_then(|package| package.present_slot(slot_id))
+    let tex_land_ec_runtime_record = tex_land_ec_runtime_slot.and_then(|slot_id| {
+        tex_land_ec.and_then(|package| package.present_slot(slot_id))
     });
     println!(
-        "  ec_land.present_slot(runtime_slot)={}",
-        slot_summary(ec_land_runtime_record.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
+        "  tex_land_ec.present_slot(runtime_slot)={}",
+        slot_summary(tex_land_ec_runtime_record.map(|slot| (slot.page_index, slot.x, slot.y, slot.width, slot.height)))
     );
 
     let renderer_decision = if tilemeta.is_some_and(|item| item.is_surface_like()) {
-        match ec_land_runtime_slot {
-            Some(runtime_slot_id) => format!("EcLandArt(runtime_slot_id={runtime_slot_id})"),
-            None => "EcLandArt(unresolved)".to_string(),
+        match tex_land_ec_runtime_slot {
+            Some(runtime_slot_id) => format!("TexLandEcArt(runtime_slot_id={runtime_slot_id})"),
+            None => "TexLandEcArt(unresolved)".to_string(),
         }
-    } else if ec_art_slot.is_some() {
+    } else if tex_art_ec_slot.is_some() {
         format!("EcRegularArt(art_id={art_id})")
     } else {
         format!("EcRegularArt(missing art_id={art_id})")
@@ -287,9 +287,9 @@ fn slot_summary(slot: Option<(u32, u16, u16, u16, u16)>) -> String {
     }
 }
 
-fn resolve_surface_like_ec_land_slot_id(
+fn resolve_surface_like_tex_land_ec_slot_id(
     tilemeta: Option<&TileMetaItemTile>,
-    ec_land: Option<&EcLandPackage>,
+    tex_land_ec: Option<&TexLandEcPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
@@ -298,7 +298,7 @@ fn resolve_surface_like_ec_land_slot_id(
         return None;
     }
 
-    let Some(package) = ec_land else {
+    let Some(package) = tex_land_ec else {
         return None;
     };
 

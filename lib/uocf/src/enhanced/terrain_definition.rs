@@ -8,8 +8,8 @@
 //!
 //! This package is therefore authoritative for both:
 //! - the land tile ids owned by terrain materials
-//! - the world/legacy texture ids that must be excluded from `ec_art`
-//! - the primary terrain texture currently packed into `ec_land`
+//! - the world/legacy texture ids that must be excluded from `tex_art_ec`
+//! - the primary terrain texture currently packed into `tex_land_ec`
 
 crate::eyre_imports!();
 use crate::enhanced::{string_dictionary::UoStringDictionary, textures::TextureItem};

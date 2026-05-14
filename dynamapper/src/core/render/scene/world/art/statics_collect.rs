@@ -1,18 +1,20 @@
-use bevy::prelude::*;
-use crate::prelude::*;
-use crate::console_logger::{self, LogAbout, LogSev};
 use crate::configs::settings::ClientTextureSource;
 use crate::configs::settings::Settings;
-use crate::core::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{
-    CcArtPackageRes, EcArtPackageRes, EcLandPackageRes, TileMetaPackageRes,
-};
-use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
-use crate::core::render::scene::world::land::{CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM};
-use crate::core::render::scene::SceneStateData;
+use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::camera::RenderZoom;
-use bytemuck::{Pod, Zeroable};
+use crate::core::render::scene::world::land::{
+    CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
+};
+use crate::core::render::scene::SceneStateData;
+use crate::core::statics::StaticsStoreRes;
+use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
+use crate::core::uo_files_loader::{
+    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
+};
+use crate::prelude::*;
+use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
+use bytemuck::{Pod, Zeroable};
 use std::collections::{BTreeSet, HashSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
@@ -101,7 +103,7 @@ fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f3
 enum StaticVisualKind {
     CcRegularArt { art_id: u16 },
     EcRegularArt { art_id: u32 },
-    EcLandArt { art_id: u32 },
+    TexLandEcArt { art_id: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +132,9 @@ const TILE_FLAG_SURFACE: u64 = 0x200;
 const TILE_FLAG_BRIDGE: u64 = 0x400;
 const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
 const TILE_FLAG_ROOF: u64 = 0x1000_0000;
+/// IsWet flag — tile has tidal/water properties (matches tiledata.mul bit 0x80).
+/// When set, the art shader applies the animated sin/cos UV distortion.
+const TILE_FLAG_WET: u64 = 0x80;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
@@ -289,9 +294,9 @@ fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
     }
 }
 
-fn resolve_surface_like_ec_land_slot_id(
+fn resolve_surface_like_tex_land_ec_slot_id(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
@@ -300,7 +305,7 @@ fn resolve_surface_like_ec_land_slot_id(
         return None;
     }
 
-    let Some(package) = ec_land else {
+    let Some(package) = tex_land_ec else {
         return None;
     };
 
@@ -315,14 +320,14 @@ fn resolve_surface_like_ec_land_slot_id(
         .filter(|record| record.selected_texture_id == meta.ec_texture_id)
     {
         if record.canonical_slot_id != 0
-            && record.canonical_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+            && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
             unique_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
-            && record.alias_slot_id != udd_assets::ec_land::MISSING_SLOT_ID
+            && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
             unique_slots.insert(record.alias_slot_id);
@@ -340,8 +345,8 @@ fn resolve_static_visual_kind(
     art_source: ClientTextureSource,
     tile_graphic: u16,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    ec_art: Option<&udd_assets::ec_art::EcArtPackage>,
-    ec_land: Option<&udd_assets::ec_land::EcLandPackage>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> StaticVisualKind {
     match art_source {
         ClientTextureSource::Cc => {
@@ -354,22 +359,22 @@ fn resolve_static_visual_kind(
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
-            ec_art.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
-            resolve_surface_like_ec_land_slot_id(tilemeta, ec_land).is_some(),
+            tex_art_ec.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
+            resolve_surface_like_tex_land_ec_slot_id(tilemeta, tex_land_ec).is_some(),
         ),
     }
 }
 
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
-    has_ec_art_slot: bool,
+    has_tex_art_ec_slot: bool,
     has_surface_like_land_slot: bool,
 ) -> StaticVisualKind {
     if has_surface_like_land_slot {
-        StaticVisualKind::EcLandArt {
+        StaticVisualKind::TexLandEcArt {
             art_id: tile_graphic as u32,
         }
-    } else if has_ec_art_slot {
+    } else if has_tex_art_ec_slot {
         StaticVisualKind::EcRegularArt {
             art_id: tile_graphic as u32,
         }
@@ -383,21 +388,24 @@ fn resolve_ec_static_visual_kind(
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, ShaderType)]
 pub struct SpriteInstance {
-    pub world_x: f32,       // tile_x + x_offset
-    pub world_z: f32,       // tile_y + y_offset
-    pub world_y: f32,       // z * height_scale (isometric altitude)
-    pub layer: u32,         // atlas page layer
-    pub depth_class: u32,   // encoded StaticDepthClass for future logical-depth policy
-    pub base_world_y: f32,  // raw tile-base height for logical depth
-    pub uv_min: [f32; 2],   // normalized UV
-    pub uv_max: [f32; 2],   // normalized UV
+    pub world_x: f32,        // tile_x + x_offset
+    pub world_z: f32,        // tile_y + y_offset
+    pub world_y: f32,        // z * height_scale (isometric altitude)
+    pub layer: u32,          // atlas page layer
+    pub depth_class: u32,    // encoded StaticDepthClass for future logical-depth policy
+    pub base_world_y: f32,   // raw tile-base height for logical depth
+    pub uv_min: [f32; 2],    // normalized UV
+    pub uv_max: [f32; 2],    // normalized UV
     pub local_min: [f32; 2], // local quad bounds from tile origin
     pub local_max: [f32; 2], // local quad bounds from tile origin
     pub tile_x: f32,
     pub tile_y: f32,
     pub priority_z_units: f32,
     pub sort_bias_ordinal: u32,
-    pub _pad2: [u32; 2],
+    /// Tiledata flags packed for the GPU.
+    /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in sprite shader).
+    pub is_wet_flags: u32,
+    pub _pad_inst: u32,
     pub color_rgba: [f32; 4], // for dot mode
 }
 
@@ -418,7 +426,10 @@ pub struct GroundTileInstance {
     pub tile_y: f32,
     pub priority_z_units: f32,
     pub sort_bias_ordinal: u32,
-    pub _pad2: [u32; 2],
+    /// Tiledata flags packed for the GPU.
+    /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in ground shader).
+    pub is_wet_flags: u32,
+    pub _pad_inst: u32,
     pub color_rgba: [f32; 4],
 }
 
@@ -479,31 +490,31 @@ pub struct StaticArtSourceState {
 
 fn source_available(
     source: ClientTextureSource,
-    cc_art_res: Option<&Res<CcArtPackageRes>>,
-    ec_art_res: Option<&Res<EcArtPackageRes>>,
-    ec_land_res: Option<&Res<EcLandPackageRes>>,
+    tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<&Res<TileMetaPackageRes>>,
 ) -> bool {
     match source {
-        ClientTextureSource::Cc => cc_art_res.is_some(),
+        ClientTextureSource::Cc => tex_art_cc_res.is_some(),
         ClientTextureSource::Ec => {
-            ec_art_res.is_some() && ec_land_res.is_some() && tilemeta_res.is_some()
+            tex_art_ec_res.is_some() && tex_land_ec_res.is_some() && tilemeta_res.is_some()
         }
     }
 }
 
 fn resolve_effective_art_source(
     requested_source: ClientTextureSource,
-    cc_art_res: Option<&Res<CcArtPackageRes>>,
-    ec_art_res: Option<&Res<EcArtPackageRes>>,
-    ec_land_res: Option<&Res<EcLandPackageRes>>,
+    tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<&Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<&Res<TileMetaPackageRes>>,
 ) -> Option<ClientTextureSource> {
     if source_available(
         requested_source,
-        cc_art_res,
-        ec_art_res,
-        ec_land_res,
+        tex_art_cc_res,
+        tex_art_ec_res,
+        tex_land_ec_res,
         tilemeta_res,
     ) {
         return Some(requested_source);
@@ -511,24 +522,30 @@ fn resolve_effective_art_source(
 
     ClientTextureSource::ALL.into_iter().find(|candidate| {
         *candidate != requested_source
-            && source_available(*candidate, cc_art_res, ec_art_res, ec_land_res, tilemeta_res)
+            && source_available(
+                *candidate,
+                tex_art_cc_res,
+                tex_art_ec_res,
+                tex_land_ec_res,
+                tilemeta_res,
+            )
     })
 }
 
 pub fn sys_sync_static_art_source(
     settings: Res<Settings>,
-    cc_art_res: Option<Res<CcArtPackageRes>>,
-    ec_art_res: Option<Res<EcArtPackageRes>>,
-    ec_land_res: Option<Res<EcLandPackageRes>>,
+    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     mut source_state: ResMut<StaticArtSourceState>,
 ) {
     let requested_source = settings.graphics.art_texture_source;
     let effective_source = resolve_effective_art_source(
         requested_source,
-        cc_art_res.as_ref(),
-        ec_art_res.as_ref(),
-        ec_land_res.as_ref(),
+        tex_art_cc_res.as_ref(),
+        tex_art_ec_res.as_ref(),
+        tex_land_ec_res.as_ref(),
         tilemeta_res.as_ref(),
     );
 
@@ -556,7 +573,7 @@ pub fn sys_sync_static_art_source(
         return;
     }
 
-    crate::util_lib::tracked_plugin::log_system_add_one_shot::<super::DrawStaticSpritesPlugin>("Update", "None", fname!());
+    log_system_add_update::<super::DrawStaticSpritesPlugin>(fname!());
 
     source_state.active_source = effective_source;
 
@@ -591,9 +608,9 @@ pub fn sys_sync_static_art_source(
 
 pub fn sys_collect_visible_statics(
     statics_res: Res<StaticsStoreRes>,
-    cc_art_res: Option<Res<CcArtPackageRes>>,
-    ec_art_res: Option<Res<EcArtPackageRes>>,
-    ec_land_res: Option<Res<EcLandPackageRes>>,
+    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
+    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
+    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
@@ -627,9 +644,9 @@ pub fn sys_collect_visible_statics(
     let requested_art_source = settings.graphics.art_texture_source;
     let art_source = resolve_effective_art_source(
         requested_art_source,
-        cc_art_res.as_ref(),
-        ec_art_res.as_ref(),
-        ec_land_res.as_ref(),
+        tex_art_cc_res.as_ref(),
+        tex_art_ec_res.as_ref(),
+        tex_land_ec_res.as_ref(),
         tilemeta_res.as_ref(),
     )
     .or(source_state.active_source);
@@ -694,13 +711,16 @@ pub fn sys_collect_visible_statics(
                     let world_z = (gy * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.y_offset() as f32;
                     let depth_class = resolve_static_depth_class(tilemeta);
 
+                    // Compute the is_wet GPU flag from tiledata flags.
+                    // Bit 0 of is_wet_flags = 1 when the tile has the IsWet tiledata property.
+                    // The art shader uses this flag to apply the animated water UV distortion.
+                    let is_wet_flags: u32 =
+                        tilemeta.map_or(0, |m| if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 });
+
                     if is_dot_mode {
                         let base_world_y = (tile.z as f32) * height_scale;
-                        let priority_z_units = resolve_priority_z_units(
-                            tile.z,
-                            tilemeta,
-                            depth_class,
-                        );
+                        let priority_z_units =
+                            resolve_priority_z_units(tile.z, tilemeta, depth_class);
                         let bias = depth_class_y_bias(depth_class);
                         let encoded_depth_class = depth_class.encoded();
                         let world_y = base_world_y + bias;
@@ -722,8 +742,14 @@ pub fn sys_collect_visible_statics(
                                 tile_y: world_z,
                                 priority_z_units,
                                 sort_bias_ordinal: 0,
-                                _pad2: [0, 0],
-                                color_rgba: [color[2] as f32 / 255.0, color[1] as f32 / 255.0, color[0] as f32 / 255.0, 1.0],
+                                is_wet_flags,
+                                _pad_inst: 0,
+                                color_rgba: [
+                                    color[2] as f32 / 255.0,
+                                    color[1] as f32 / 255.0,
+                                    color[0] as f32 / 255.0,
+                                    1.0,
+                                ],
                             });
                         }
                     } else {
@@ -734,87 +760,99 @@ pub fn sys_collect_visible_statics(
                             art_source,
                             tile.graphic,
                             tilemeta,
-                            ec_art_res.as_ref().map(|package| &*package.0),
-                            ec_land_res.as_ref().map(|package| &*package.0),
+                            tex_art_ec_res.as_ref().map(|package| &*package.0),
+                            tex_land_ec_res.as_ref().map(|package| &*package.0),
                         );
 
-                        let bias = if matches!(visual_kind, StaticVisualKind::EcLandArt { .. }) {
+                        let bias = if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
                             GROUND_ART_Y_BIAS
                         } else {
                             depth_class_y_bias(depth_class)
                         };
                         let encoded_depth_class = depth_class.encoded();
                         let base_world_y = (tile.z as f32) * height_scale;
-                        let priority_z_units = resolve_priority_z_units(
-                            tile.z,
-                            tilemeta,
-                            depth_class,
-                        );
+                        let priority_z_units =
+                            resolve_priority_z_units(tile.z, tilemeta, depth_class);
                         let world_y = base_world_y + bias;
-                        let (billboard_source, offset_x_pixels, offset_y_pixels, resolved_sprite) = match visual_kind {
-                            StaticVisualKind::CcRegularArt { art_id } => {
-                                let Some(cc_art) = cc_art_res.as_ref().map(|x| &x.0) else {
-                                    continue;
-                                };
-                                let offset_x_pixels = tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
-                                let offset_y_pixels = tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
+                        let (billboard_source, offset_x_pixels, offset_y_pixels, resolved_sprite) =
+                            match visual_kind {
+                                StaticVisualKind::CcRegularArt { art_id } => {
+                                    let Some(tex_art_cc) = tex_art_cc_res.as_ref().map(|x| &x.0)
+                                    else {
+                                        continue;
+                                    };
+                                    let offset_x_pixels =
+                                        tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
+                                    let offset_y_pixels =
+                                        tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
 
-                                if let Some(slot) = cc_art.present_slot(art_id as u32) {
-                                    unique_requested_pages.insert(slot.page_index as u64);
+                                    if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
+                                        unique_requested_pages.insert(slot.page_index as u64);
+                                    }
+
+                                    (
+                                        ClientTextureSource::Cc,
+                                        offset_x_pixels,
+                                        offset_y_pixels,
+                                        sprite_atlas.resolve_cc(tex_art_cc, art_id),
+                                    )
                                 }
+                                StaticVisualKind::TexLandEcArt { .. } => {
+                                    let Some(tex_land_ec) = tex_land_ec_res.as_ref().map(|x| &x.0)
+                                    else {
+                                        continue;
+                                    };
+                                    let Some(runtime_slot_id) =
+                                        resolve_surface_like_tex_land_ec_slot_id(
+                                            tilemeta,
+                                            Some(tex_land_ec),
+                                        )
+                                    else {
+                                        continue;
+                                    };
 
-                                (
-                                    ClientTextureSource::Cc,
-                                    offset_x_pixels,
-                                    offset_y_pixels,
-                                    sprite_atlas.resolve_cc(cc_art, art_id),
-                                )
-                            }
-                            StaticVisualKind::EcLandArt { .. } => {
-                                let Some(ec_land) = ec_land_res.as_ref().map(|x| &x.0) else {
-                                    continue;
-                                };
-                                let Some(runtime_slot_id) = resolve_surface_like_ec_land_slot_id(tilemeta, Some(ec_land)) else {
-                                    continue;
-                                };
+                                    if let Some(slot) = tex_land_ec.present_slot(runtime_slot_id) {
+                                        unique_requested_pages
+                                            .insert((1u64 << 63) | slot.page_index as u64);
+                                    }
 
-                                if let Some(slot) = ec_land.present_slot(runtime_slot_id) {
-                                    unique_requested_pages.insert((1u64 << 63) | slot.page_index as u64);
+                                    (
+                                        ClientTextureSource::Ec,
+                                        0,
+                                        0,
+                                        ground_atlas
+                                            .resolve_tex_land_ec(tex_land_ec, runtime_slot_id),
+                                    )
                                 }
+                                StaticVisualKind::EcRegularArt { art_id } => {
+                                    let Some(tex_art_ec) = tex_art_ec_res.as_ref().map(|x| &x.0)
+                                    else {
+                                        continue;
+                                    };
+                                    let offset_x_pixels =
+                                        tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
+                                    let offset_y_pixels =
+                                        tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
 
-                                (
-                                    ClientTextureSource::Ec,
-                                    0,
-                                    0,
-                                    ground_atlas.resolve_ec_land(ec_land, runtime_slot_id),
-                                )
-                            }
-                            StaticVisualKind::EcRegularArt { art_id } => {
-                                let Some(ec_art) = ec_art_res.as_ref().map(|x| &x.0) else {
-                                    continue;
-                                };
-                                let offset_x_pixels = tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
-                                let offset_y_pixels = tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
+                                    if let Some(slot) = tex_art_ec.present_slot(art_id) {
+                                        unique_requested_pages.insert(slot.page_index as u64);
+                                    }
 
-                                if let Some(slot) = ec_art.present_slot(art_id) {
-                                    unique_requested_pages.insert(slot.page_index as u64);
+                                    (
+                                        ClientTextureSource::Ec,
+                                        offset_x_pixels,
+                                        offset_y_pixels,
+                                        sprite_atlas.resolve_ec(tex_art_ec, art_id),
+                                    )
                                 }
-
-                                (
-                                    ClientTextureSource::Ec,
-                                    offset_x_pixels,
-                                    offset_y_pixels,
-                                    sprite_atlas.resolve_ec(ec_art, art_id),
-                                )
-                            }
-                        };
+                            };
 
                         let (anchored_world_x, anchored_world_z) =
                             apply_static_world_anchor_translation(world_x, world_z);
 
                         if let Some(resolved) = resolved_sprite {
                             atlas_hits += 1;
-                            if matches!(visual_kind, StaticVisualKind::EcLandArt { .. }) {
+                            if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
                                 ground_land_tiles += 1;
                                 let bounds = resolve_surface_like_ground_quad_bounds();
                                 chunk_ground_instances.push(GroundTileInstance {
@@ -832,7 +870,8 @@ pub fn sys_collect_visible_statics(
                                     tile_y: anchored_world_z,
                                     priority_z_units,
                                     sort_bias_ordinal: 0,
-                                    _pad2: [0, 0],
+                                    is_wet_flags,
+                                    _pad_inst: 0,
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             } else {
@@ -859,7 +898,8 @@ pub fn sys_collect_visible_statics(
                                     tile_y: anchored_world_z,
                                     priority_z_units,
                                     sort_bias_ordinal: 0,
-                                    _pad2: [0, 0],
+                                    is_wet_flags,
+                                    _pad_inst: 0,
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             }
@@ -884,7 +924,9 @@ pub fn sys_collect_visible_statics(
                 b.priority_z_units,
                 decode_depth_class(b.depth_class),
             );
-            depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+            depth_a
+                .partial_cmp(&depth_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         assign_sprite_depth_tie_breakers(&mut chunk_sprite_instances);
 
@@ -901,7 +943,9 @@ pub fn sys_collect_visible_statics(
                 b.priority_z_units,
                 decode_depth_class(b.depth_class),
             );
-            depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+            depth_a
+                .partial_cmp(&depth_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         assign_ground_depth_tie_breakers(&mut chunk_ground_instances);
 
@@ -938,7 +982,8 @@ pub fn sys_collect_visible_statics(
         unique_requested_pages: unique_requested_pages.len(),
         resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
         pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
-        atlas_capacity_pages: sprite_atlas.active_layers as usize + ground_atlas.active_layers as usize,
+        atlas_capacity_pages: sprite_atlas.active_layers as usize
+            + ground_atlas.active_layers as usize,
         atlas_hits,
         atlas_misses,
         emitted_instances: instances.0.len() + land_instances.0.len(),
@@ -977,7 +1022,10 @@ mod tests {
         assert!((left - right).abs() < 1.0e-6, "left={left} right={right}");
     }
 
-    fn item_tile_with_flags(flags: u64, visual_kind: udd_assets::tilemeta::TileMetaItemVisualKind) -> udd_assets::tilemeta::TileMetaItemTile {
+    fn item_tile_with_flags(
+        flags: u64,
+        visual_kind: udd_assets::tilemeta::TileMetaItemVisualKind,
+    ) -> udd_assets::tilemeta::TileMetaItemTile {
         let mut tile = udd_assets::tilemeta::TileMetaItemTile::zeroed();
         tile.flags = flags;
         tile.set_visual_kind(visual_kind);
@@ -999,8 +1047,14 @@ mod tests {
         let cc_bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 0, 0, 44, 44);
         let ec_bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 0, 0, 64, 64);
 
-        approx_eq(ec_bounds.local_max_x - ec_bounds.local_min_x, cc_bounds.local_max_x - cc_bounds.local_min_x);
-        approx_eq(ec_bounds.local_max_y - ec_bounds.local_min_y, cc_bounds.local_max_y - cc_bounds.local_min_y);
+        approx_eq(
+            ec_bounds.local_max_x - ec_bounds.local_min_x,
+            cc_bounds.local_max_x - cc_bounds.local_min_x,
+        );
+        approx_eq(
+            ec_bounds.local_max_y - ec_bounds.local_min_y,
+            cc_bounds.local_max_y - cc_bounds.local_min_y,
+        );
     }
 
     #[test]
@@ -1025,20 +1079,14 @@ mod tests {
     fn surface_like_ec_tiles_prefer_land_path_over_direct_art_slot() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, true);
 
-        assert_eq!(
-            visual_kind,
-            StaticVisualKind::EcLandArt { art_id: 196 },
-        );
+        assert_eq!(visual_kind, StaticVisualKind::TexLandEcArt { art_id: 196 },);
     }
 
     #[test]
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, false);
 
-        assert_eq!(
-            visual_kind,
-            StaticVisualKind::EcRegularArt { art_id: 196 },
-        );
+        assert_eq!(visual_kind, StaticVisualKind::EcRegularArt { art_id: 196 },);
     }
 
     #[test]
@@ -1048,7 +1096,8 @@ mod tests {
 
     #[test]
     fn depth_class_promotes_surface_like_floor_tiles() {
-        let tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        let tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
         assert_eq!(
             resolve_static_depth_class(Some(&tile)),
@@ -1063,7 +1112,10 @@ mod tests {
             udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
         );
 
-        assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
+        assert_eq!(
+            resolve_static_depth_class(Some(&tile)),
+            StaticDepthClass::Roof
+        );
     }
 
     #[test]
@@ -1086,7 +1138,10 @@ mod tests {
             udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
         );
 
-        assert_eq!(resolve_static_depth_class(Some(&tile)), StaticDepthClass::Roof);
+        assert_eq!(
+            resolve_static_depth_class(Some(&tile)),
+            StaticDepthClass::Roof
+        );
     }
 
     #[test]
@@ -1149,7 +1204,8 @@ mod tests {
 
     #[test]
     fn effective_priority_height_defaults_zero_height_regulars_to_ten() {
-        let tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
 
         assert_eq!(effective_priority_height(Some(&tile)), 10);
     }
@@ -1177,25 +1233,19 @@ mod tests {
 
     #[test]
     fn surface_like_priority_z_units_stay_on_base_z() {
-        let priority_z_units = resolve_priority_z_units(
-            7,
-            None,
-            StaticDepthClass::SurfaceLikeFloor,
-        );
+        let priority_z_units =
+            resolve_priority_z_units(7, None, StaticDepthClass::SurfaceLikeFloor);
 
         assert_eq!(priority_z_units, 7.0);
     }
 
     #[test]
     fn regular_priority_z_units_include_effective_height() {
-        let mut tile = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let mut tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         tile.height = 12;
 
-        let priority_z_units = resolve_priority_z_units(
-            7,
-            Some(&tile),
-            StaticDepthClass::Regular,
-        );
+        let priority_z_units = resolve_priority_z_units(7, Some(&tile), StaticDepthClass::Regular);
 
         assert_eq!(priority_z_units, 19.0);
     }
@@ -1233,7 +1283,8 @@ mod tests {
             tile_y: 20.0,
             priority_z_units: 15.0,
             sort_bias_ordinal: 0,
-            _pad2: [0, 0],
+            is_wet_flags: 0,
+            _pad_inst: 0,
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };
         let mut instances = vec![
@@ -1268,5 +1319,4 @@ mod tests {
     fn ground_instance_stride_stays_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<GroundTileInstance>(), 96);
     }
-
 }

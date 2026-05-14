@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
-    ec_land::EcLandPackage,
+    tex_land_ec::TexLandEcPackage,
     tilemeta::TileMetaPackage,
 };
 use uocf::enhanced::terrain_definition::{
@@ -19,7 +19,7 @@ struct Args {
     #[arg(long)]
     tilemeta: Option<PathBuf>,
     #[arg(long = "ec-land")]
-    ec_land: Option<PathBuf>,
+    tex_land_ec: Option<PathBuf>,
     #[arg(required = true)]
     art_ids: Vec<u16>,
 }
@@ -45,12 +45,12 @@ fn main() -> eyre::Result<()> {
         .map(TileMetaPackage::load)
         .transpose()
         .wrap_err("load tilemeta package")?;
-    let ec_land = args
-        .ec_land
+    let tex_land_ec = args
+        .tex_land_ec
         .as_ref()
-        .map(EcLandPackage::load)
+        .map(TexLandEcPackage::load)
         .transpose()
-        .wrap_err("load ec_land package")?;
+        .wrap_err("load tex_land_ec package")?;
 
     for art_id in args.art_ids {
         println!("art_id={art_id}");
@@ -84,7 +84,7 @@ fn main() -> eyre::Result<()> {
                     );
                 }
 
-                inspect_terrain_candidates(texture.texture_id, &terrain_definition, ec_land.as_ref());
+                inspect_terrain_candidates(texture.texture_id, &terrain_definition, tex_land_ec.as_ref());
             }
             None => println!("  ec_texture=missing"),
         }
@@ -107,7 +107,7 @@ fn find_string_dictionary_path(ecdir: &Path) -> eyre::Result<PathBuf> {
 fn inspect_terrain_candidates(
     texture_id: u32,
     terrain_definition: &TerrainDefinitionPackage,
-    ec_land: Option<&EcLandPackage>,
+    tex_land_ec: Option<&TexLandEcPackage>,
 ) {
     let mut material_matches = Vec::new();
     let mut primary_runtime_slots = BTreeSet::new();
@@ -130,9 +130,9 @@ fn inspect_terrain_candidates(
 
         let primary_match = entry.primary_texture_id() == Some(texture_id);
         let runtime_slot_ids = entry.runtime_slot_ids();
-        if let Some(ec_land) = ec_land {
+        if let Some(tex_land_ec) = tex_land_ec {
             for runtime_slot_id in &runtime_slot_ids {
-                if let Some(slot_id) = resolve_runtime_slot_for_material(ec_land, entry, *runtime_slot_id) {
+                if let Some(slot_id) = resolve_runtime_slot_for_material(tex_land_ec, entry, *runtime_slot_id) {
                     any_runtime_slots.insert(slot_id);
                     if primary_match {
                         primary_runtime_slots.insert(slot_id);
@@ -182,12 +182,12 @@ fn inspect_terrain_candidates(
         println!("    primary_texture_id={:?}", entry.primary_texture_id());
         println!("    primary_match={primary_match}");
         println!("    runtime_slot_ids={runtime_slot_ids:?}");
-        if let Some(ec_land) = ec_land {
+        if let Some(tex_land_ec) = tex_land_ec {
             let resolved_slots = runtime_slot_ids
                 .iter()
-                .filter_map(|runtime_slot_id| resolve_runtime_slot_for_material(ec_land, entry, *runtime_slot_id))
+                .filter_map(|runtime_slot_id| resolve_runtime_slot_for_material(tex_land_ec, entry, *runtime_slot_id))
                 .collect::<Vec<_>>();
-            println!("    resolved_ec_land_slots={resolved_slots:?}");
+            println!("    resolved_tex_land_ec_slots={resolved_slots:?}");
         }
         for (index, layer) in matching_layers {
             print_matching_layer(index, layer);
@@ -196,22 +196,22 @@ fn inspect_terrain_candidates(
 }
 
 fn resolve_runtime_slot_for_material(
-    ec_land: &EcLandPackage,
+    tex_land_ec: &TexLandEcPackage,
     entry: &TerrainDefinitionEntry,
     runtime_slot_id: u32,
 ) -> Option<u32> {
-    if ec_land.present_slot(runtime_slot_id).is_some() {
+    if tex_land_ec.present_slot(runtime_slot_id).is_some() {
         return Some(runtime_slot_id);
     }
 
-    ec_land
+    tex_land_ec
         .terrain_provenance()
         .iter()
         .filter(|record| record.material_id == entry.id && record.alias_slot_id == runtime_slot_id)
         .find_map(|record| {
-            if record.canonical_slot_id != 0 && ec_land.present_slot(record.canonical_slot_id).is_some() {
+            if record.canonical_slot_id != 0 && tex_land_ec.present_slot(record.canonical_slot_id).is_some() {
                 Some(record.canonical_slot_id)
-            } else if record.alias_slot_id != 0 && ec_land.present_slot(record.alias_slot_id).is_some() {
+            } else if record.alias_slot_id != 0 && tex_land_ec.present_slot(record.alias_slot_id).is_some() {
                 Some(record.alias_slot_id)
             } else {
                 None

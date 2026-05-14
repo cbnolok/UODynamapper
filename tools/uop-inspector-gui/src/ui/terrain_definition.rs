@@ -34,18 +34,18 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         }
                     }
 
-                    let is_selected = app.selected_cc_art_id == Some(entry.id);
+                    let is_selected = app.selected_tex_art_cc_id == Some(entry.id);
                     let label = format!("[{}] {}", entry.id, name);
                     
                     if ui.selectable_label(is_selected, label).clicked() {
-                        app.selected_cc_art_id = Some(entry.id);
+                        app.selected_tex_art_cc_id = Some(entry.id);
                     }
                 }
             });
         });
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        if let Some(selected_id) = app.selected_cc_art_id {
+        if let Some(selected_id) = app.selected_tex_art_cc_id {
             if let Some(entry) = pkg.entries.iter().find(|e| e.id == selected_id) {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading(format!("Terrain Definition: {} ({})", entry.name.as_deref().unwrap_or("Unknown"), entry.id));

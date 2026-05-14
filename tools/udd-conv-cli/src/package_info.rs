@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_assets::{CcArtPackage, EcArtPackage, EcLandPackage, TileMetaPackage};
+use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_container::{
     reconstruct_stored_size, unpack_codec, unpack_type, Codec, LookupMode, UDDP_MAGIC, UDPI_MAGIC,
     UddpReader,
@@ -57,14 +57,14 @@ fn page_pixel_format_name(byte_len: usize, width: u32, height: u32) -> &'static 
 }
 
 fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
-    if let Ok(package) = CcArtPackage::from_uddp_package(package.clone()) {
+    if let Ok(package) = TexArtCcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
         let first_page_format = package
             .pages()
             .first()
             .and_then(|page| package.read_page_bytes(page.page_index).ok().map(|data| (page, data.len())));
 
-        println!("Recognized package: cc_art");
+        println!("Recognized package: tex_art_cc");
         println!("Known logical files: metadata=2, textures={}", package.pages().len());
         println!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
@@ -85,9 +85,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
         return Ok(true);
     }
 
-    if let Ok(package) = EcArtPackage::from_uddp_package(package.clone()) {
+    if let Ok(package) = TexArtEcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
-        println!("Recognized package: ec_art");
+        println!("Recognized package: tex_art_ec");
         println!("Known logical files: metadata=2, textures={}", package.pages().len());
         println!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
@@ -101,9 +101,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
         return Ok(true);
     }
 
-    if let Ok(package) = EcLandPackage::from_uddp_package(package.clone()) {
+    if let Ok(package) = TexLandEcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
-        println!("Recognized package: ec_land");
+        println!("Recognized package: tex_land_ec");
         println!("Known logical files: metadata=3, textures={}", package.pages().len());
         println!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",

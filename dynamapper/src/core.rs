@@ -236,7 +236,7 @@ pub fn run_bevy_app() -> ExitCode {
             .set(custom_render_plugin_settings())
             .set(ImagePlugin::default_nearest())
             .set(AssetPlugin {
-                //watch_for_changes_override: true,
+                watch_for_changes_override: Some(settings_data.app.debug.hot_reload_enabled),
                 file_path: assets_folder.to_str().unwrap().to_string(),
                 ..default()
             }),

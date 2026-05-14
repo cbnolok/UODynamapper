@@ -20,8 +20,8 @@ use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 
-use crate::ec_art::compute_ec_art_crop_adjustments_from_sources;
-use udd_assets::ec_art::EcArtCropAdjustment;
+use crate::tex_art_ec::compute_tex_art_ec_crop_adjustments_from_sources;
+use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use uocf::classic::tiledata::TileData;
@@ -39,7 +39,7 @@ use udd_container::{
 pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
     /// start coordinates so they remain aligned with the shared EC texture pass.
-    pub adjust_ec_art_sampling: bool,
+    pub adjust_tex_art_ec_sampling: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
@@ -158,9 +158,9 @@ fn build_tilemeta_tables_from_sources(
     info!("Converting Tile Metadata tables from MUL/UOP sources");
 
     let cc_tiledata = TileData::load(tiledata_path.clone())?;
-    let ec_art = ArtDefinition::load(&tileart_path, &stringdict_path)?;
-    let ec_art_crop_adjustments = if options.adjust_ec_art_sampling {
-        compute_ec_art_crop_adjustments_from_sources(source_dirs)?
+    let tex_art_ec = ArtDefinition::load(&tileart_path, &stringdict_path)?;
+    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
+        compute_tex_art_ec_crop_adjustments_from_sources(source_dirs)?
     } else {
         Vec::new()
     };
@@ -216,7 +216,7 @@ fn build_tilemeta_tables_from_sources(
             radar_color: get_radar_color(
                 tile.tile_id as u32,
                 false,
-                ec_art
+                tex_art_ec
                     .definitions
                     .get(&(tile.tile_id as u16))
                     .map(|d| &d.radar_color),
@@ -256,7 +256,7 @@ fn build_tilemeta_tables_from_sources(
             cc_offset_y: 0,
         };
 
-        if let Some(ec_data) = ec_art.definitions.get(&(tile.tile_id as u16)) {
+        if let Some(ec_data) = tex_art_ec.definitions.get(&(tile.tile_id as u16)) {
             tile_meta_item.flags |= ec_data.flags.bits();
             tile_meta_item.set_visual_kind(classify_item_visual_kind(
                 tile.tile_id as u32,
@@ -270,7 +270,7 @@ fn build_tilemeta_tables_from_sources(
             // Unify EC Texture
             if let Some(ec_tex) = &ec_data.ec_texture {
                 tile_meta_item.ec_texture_id = ec_tex.texture_id;
-                let crop_adjustment = ec_art_crop_adjustments
+                let crop_adjustment = tex_art_ec_crop_adjustments
                     .get(tile.tile_id as usize)
                     .and_then(|adjustment| *adjustment);
                 let (ec_start_x, ec_start_y) = adjusted_ec_sampling_start(
@@ -329,7 +329,7 @@ pub fn adjusted_ec_sampling_start(
     texture_id: u32,
     start_x: i32,
     start_y: i32,
-    adjustment: Option<EcArtCropAdjustment>,
+    adjustment: Option<TexArtEcCropAdjustment>,
 ) -> eyre::Result<(i16, i16)> {
     let adjusted_x = start_x - adjustment.map_or(0, |adjustment| i32::from(adjustment.left));
     let adjusted_y = start_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.top));

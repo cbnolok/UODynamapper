@@ -4,6 +4,7 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
 use crate::common::read_path_entry;
+use crate::tex_art_cc::PagePixelFormat;
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
@@ -14,35 +15,18 @@ pub const SLOT_FLAG_STATIC: u16 = 1 << 2;
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
-const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
-const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
-const CC_ART_METADATA_VERSION: u32 = 2;
+const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
+const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
+const TEX_ART_EC_METADATA_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PagePixelFormat {
-    Rgba8888 = 0,
-    Bc7 = 1,
-}
-
-impl PagePixelFormat {
-    pub(crate) fn from_repr(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Rgba8888),
-            1 => Some(Self::Bc7),
-            _ => None,
-        }
-    }
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Rgba8888 => "rgba8888",
-            Self::Bc7 => "bc7",
-        }
-    }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TexArtEcCropAdjustment {
+    pub left: i16,
+    pub top: i16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtPageRecord {
+pub struct TexArtEcPageRecord {
     pub page_index: u32,
     pub tile_count: u32,
     pub used_width: u32,
@@ -51,7 +35,7 @@ pub struct CcArtPageRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtSlotRecord {
+pub struct TexArtEcSlotRecord {
     pub art_id: u32,
     pub page_index: u32,
     pub page_tile_index: u16,
@@ -62,7 +46,7 @@ pub struct CcArtSlotRecord {
     pub height: u16,
 }
 
-impl CcArtSlotRecord {
+impl TexArtEcSlotRecord {
     pub fn absent(art_id: u32) -> Self {
         Self {
             art_id,
@@ -89,16 +73,16 @@ impl CcArtSlotRecord {
     }
 }
 
-pub struct CcArtPackage {
+pub struct TexArtEcPackage {
     package: UddpReader,
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
-    pages: Vec<CcArtPageRecord>,
-    slots: Vec<CcArtSlotRecord>,
+    pages: Vec<TexArtEcPageRecord>,
+    slots: Vec<TexArtEcSlotRecord>,
 }
 
-impl CcArtPackage {
+impl TexArtEcPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
@@ -113,15 +97,15 @@ impl CcArtPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/pages.bin")?;
+            .context("tex_art_ec.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
-            .context("cc_art.uddp missing metadata/slots.bin")?;
+            .context("tex_art_ec.uddp missing metadata/slots.bin")?;
 
         let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
-            eyre::bail!("cc_art metadata headers disagree on atlas dimensions or gutter");
+            eyre::bail!("tex_art_ec metadata headers disagree on atlas dimensions or gutter");
         }
 
         Ok(Self {
@@ -150,12 +134,20 @@ impl CcArtPackage {
         self.gutter
     }
 
-    pub fn pages(&self) -> &[CcArtPageRecord] {
+    pub fn pages(&self) -> &[TexArtEcPageRecord] {
         &self.pages
     }
 
-    pub fn slots(&self) -> &[CcArtSlotRecord] {
+    pub fn slots(&self) -> &[TexArtEcSlotRecord] {
         &self.slots
+    }
+
+    pub fn slot_record(&self, art_id: u32) -> Option<&TexArtEcSlotRecord> {
+        self.slots.get(art_id as usize)
+    }
+
+    pub fn present_slot(&self, art_id: u32) -> Option<&TexArtEcSlotRecord> {
+        self.slot_record(art_id).filter(|slot| slot.is_present())
     }
 
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
@@ -164,24 +156,18 @@ impl CcArtPackage {
             .get(page_index as usize)
             .map(|p| p.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
-        read_path_entry(&self.package, &page_entry_path(page_index, fmt))
+        read_path_entry(&self.package, &crate::tex_art_cc::page_entry_path(page_index, fmt))
             .wrap_err_with(|| format!("unpack atlas page {page_index}"))
-    }
-
-    pub fn present_slot(&self, art_id: u32) -> Option<&CcArtSlotRecord> {
-        self.slots
-            .get(art_id as usize)
-            .filter(|slot| slot.is_present())
     }
 }
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPageRecord>)> {
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtEcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_ART_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_ART_EC_METADATA_VERSION { eyre::bail!("invalid version"); }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
@@ -193,7 +179,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPa
         let tile_count = cursor.read_u32::<LittleEndian>()?;
         let used_width = cursor.read_u32::<LittleEndian>()?;
         let used_height = cursor.read_u32::<LittleEndian>()?;
-        pages.push(CcArtPageRecord {
+        pages.push(TexArtEcPageRecord {
             page_index,
             tile_count,
             used_width,
@@ -204,20 +190,20 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtPa
     Ok((w, h, g, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtSlotRecord>)> {
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtEcSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_ART_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_ART_EC_METADATA_VERSION { eyre::bail!("invalid version"); }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
-        slots.push(CcArtSlotRecord {
+        slots.push(TexArtEcSlotRecord {
             art_id: cursor.read_u32::<LittleEndian>()?,
             page_index: cursor.read_u32::<LittleEndian>()?,
             page_tile_index: cursor.read_u16::<LittleEndian>()?,
@@ -229,8 +215,4 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcArtSl
         });
     }
     Ok((w, h, g, slots))
-}
-
-pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
-    format!("pages/{page_index:05}.{}", fmt.extension())
 }

@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_virtual_entries_accepts_ec_land_manifests() {
+    fn parse_virtual_entries_accepts_tex_land_ec_manifests() {
         let manifest = build_slot_manifest(b"ELSL", 1);
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 

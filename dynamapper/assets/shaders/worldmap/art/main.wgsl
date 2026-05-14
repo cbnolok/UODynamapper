@@ -1,7 +1,9 @@
 #import bevy_pbr::{
     forward_io::Vertex,
     view_transformations,
+    mesh_view_bindings::globals,
 }
+#import "shaders/worldmap/water.wgsl"::water_distort_uv
 
 struct SpriteInstance {
     world_x: f32,
@@ -18,7 +20,9 @@ struct SpriteInstance {
     tile_y: f32,
     priority_z_units: f32,
     sort_bias_ordinal: u32,
-    _pad2: vec2<u32>,
+    // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
+    is_wet_flags: u32,
+    _pad_inst: u32,
     color_rgba: vec4<f32>,
 }
 
@@ -29,7 +33,7 @@ struct SpriteParams {
     _pad: u32,
     map_width_tiles: f32,
     map_height_tiles: f32,
-    _pad2: vec2<u32>,
+    _pad_sp: vec2<u32>,
 }
 
 struct ArtVertexOutput {
@@ -39,6 +43,7 @@ struct ArtVertexOutput {
     @location(2) color: vec4<f32>,
     @location(3) logical_depth: f32,
     @location(4) @interpolate(flat) depth_class: u32,
+    @location(5) @interpolate(flat) is_wet: u32,
 }
 
 struct ArtFragmentOutput {
@@ -122,6 +127,8 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         inst.sort_bias_ordinal,
     );
     out.depth_class = inst.depth_class;
+    // Pass the wet flag as a flat (non-interpolated) attribute to the fragment shader.
+    out.is_wet = inst.is_wet_flags & 1u;
     return out;
 }
 
@@ -137,7 +144,13 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
 
     let layer = u32(in.uv_b.x);
-    let color = textureSample(art_atlas, art_atlas_sampler, in.uv, i32(layer));
+    // Apply animated water UV distortion if this sprite tile is marked IsWet.
+    // The sin/cos breathing effect mirrors ClassicUO's reference implementation.
+    var uv = in.uv;
+    if (in.is_wet == 1u) {
+        uv = water_distort_uv(uv);
+    }
+    let color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
             discard;

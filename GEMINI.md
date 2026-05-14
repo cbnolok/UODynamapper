@@ -12,19 +12,19 @@ This document provides essential information for AI agents to effectively assist
 
 **Workspace Members**:
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
-- `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
-- `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
-- `uddconv_ktx2/` - KTX2 texture handling
-- `tools/uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
-- `tools/uocf_cli/` - Generic UO tooling CLI crate with multiple binaries:
+- `lib/uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
+- `lib/udd-conv/` - UODynamapper-specific converted asset packaging and runtime readers
+- `lib/udd-conv-ktx2/` - KTX2 texture handling
+- `tools/udd-conv-cli/` - CLI for building and inspecting UODynamapper-specific converted packages
+- `tools/uocf-cli/` - Generic UO tooling CLI crate with multiple binaries:
   - `uoptool`: Utility for hashing, brute-force cracking, and rebuilding `.uop` files.
   - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
   - `texture_scanner`: Utility for identifying and isolating land/terrain candidates from UO texture pools.
-  - `uop_dict_populator`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
-- `tools/uddp_inspector/` - GUI for inspecting .uddp package contents
-- `tools/uddconv_gui/` - GUI frontend for asset conversion
-- `tools/uop_inspector/` - GUI for inspecting .uop files
-- `tools/uop_populator_gui/` - GUI for populating UOP hash dictionaries
+  - `uop-dict-populator-cli`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
+- `tools/uddp-inspector-gui/` - GUI for inspecting .uddp package contents
+- `tools/udd-conv-gui/` - GUI frontend for asset conversion
+- `tools/uop-inspector-gui/` - GUI for inspecting .uop files
+- `tools/uop-dict-populator-gui/` - GUI for populating UOP hash dictionaries
 
 ---
 

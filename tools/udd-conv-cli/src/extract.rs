@@ -6,9 +6,9 @@ use image::{ColorType, ImageFormat};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use udd_assets::bc7::{decode_bc7_to_rgba8888, ImageExtent};
-use udd_assets::{CcArtPackage, EcArtPackage, EcLandPackage, TileMetaPackage};
-use udd_assets::ec_land::{MISSING_SLOT_ID, MISSING_TEXTURE_ID};
-use udd_assets::cc_art::PagePixelFormat;
+use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
+use udd_assets::tex_land_ec::{MISSING_SLOT_ID, MISSING_TEXTURE_ID};
+use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_container::{
     reconstruct_stored_size, unpack_codec, Codec, FileKey, LookupMode, UddpReader,
 };
@@ -22,16 +22,16 @@ pub fn extract_package(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
 
     let package = UddpReader::load(file).wrap_err_with(|| format!("load {}", file.display()))?;
 
-    if extract_cc_art(&package, &out_dir)? {
-        println!("Extracted cc_art package to '{}'", out_dir.display());
+    if extract_tex_art_cc(&package, &out_dir)? {
+        println!("Extracted tex_art_cc package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_ec_art(&package, &out_dir)? {
-        println!("Extracted ec_art package to '{}'", out_dir.display());
+    if extract_tex_art_ec(&package, &out_dir)? {
+        println!("Extracted tex_art_ec package to '{}'", out_dir.display());
         return Ok(());
     }
-    if extract_ec_land(&package, &out_dir)? {
-        println!("Extracted ec_land package to '{}'", out_dir.display());
+    if extract_tex_land_ec(&package, &out_dir)? {
+        println!("Extracted tex_land_ec package to '{}'", out_dir.display());
         return Ok(());
     }
     if extract_tilemeta(&package, &out_dir)? {
@@ -49,14 +49,14 @@ fn default_output_dir(file: &Path) -> PathBuf {
     file.with_file_name(format!("{stem}.extract"))
 }
 
-fn extract_cc_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = CcArtPackage::from_uddp_package(package.clone()) else {
+fn extract_tex_art_cc(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = TexArtCcPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
     extract_atlas_pages(
         out_dir,
-        "cc_art",
+        "tex_art_cc",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
@@ -91,14 +91,14 @@ fn extract_cc_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_ec_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = EcArtPackage::from_uddp_package(package.clone()) else {
+fn extract_tex_art_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = TexArtEcPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
     extract_atlas_pages(
         out_dir,
-        "ec_art",
+        "tex_art_ec",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
@@ -133,14 +133,14 @@ fn extract_ec_art(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
     Ok(true)
 }
 
-fn extract_ec_land(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
-    let Ok(package) = EcLandPackage::from_uddp_package(package.clone()) else {
+fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
+    let Ok(package) = TexLandEcPackage::from_uddp_package(package.clone()) else {
         return Ok(false);
     };
 
     extract_atlas_pages(
         out_dir,
-        "ec_land",
+        "tex_land_ec",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
@@ -156,7 +156,7 @@ fn extract_ec_land(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> {
 
     let metadata_dir = out_dir.join("metadata");
     let summary = format!(
-        "package=ec_land\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\n",
+        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\n",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),

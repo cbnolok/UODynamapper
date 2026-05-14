@@ -12,13 +12,13 @@ use udd_conv::bc7::Bc7TextureData;
 
 const VK_FORMAT_BC7_UNORM_BLOCK: u32 = 145;
 
-pub fn write_bc7_ktx2(
+pub fn write_ktx2_bc7_zstd(
     bc7_data: Bc7TextureData,
     output_path: &Path,
     zstd_level: i32,
 ) -> eyre::Result<()> {
     let extent = bc7_data.extent();
-    println!("Packing into KTX2 + Zstd (level {})...", zstd_level);
+    println!("Packing into KTX2 (BC7 + Zstd level {})...", zstd_level);
     let dfd = vk2dfd::vk2dfd(VK_FORMAT_BC7_UNORM_BLOCK)
         .map_err(|error| eyre::eyre!("vk2dfd error: {:?}", error))?;
     let info = Ktx2CreateInfo {
@@ -38,10 +38,11 @@ pub fn write_bc7_ktx2(
         },
     };
 
-    let mut texture = Texture::new(info)
-        .map_err(|error| eyre::eyre!("libktx error: {:?}", error))?;
+    let mut texture =
+        Texture::new(info).map_err(|error| eyre::eyre!("libktx error: {:?}", error))?;
 
-    let offset = texture.get_image_offset(0, 0, 0)
+    let offset = texture
+        .get_image_offset(0, 0, 0)
         .map_err(|error| eyre::eyre!("libktx offset error: {:?}", error))?;
 
     let blocks = bc7_data.into_blocks();
@@ -69,11 +70,12 @@ pub fn write_bc7_ktx2(
 
     let stream = Arc::new(Mutex::new(
         RustKtxStream::new(Box::new(output_file))
-            .map_err(|error| eyre::eyre!("libktx stream error: {:?}", error))?
+            .map_err(|error| eyre::eyre!("libktx stream error: {:?}", error))?,
     ));
     let mut sink = StreamSink::new(stream);
 
-    texture.write_to(&mut sink)
+    texture
+        .write_to(&mut sink)
         .map_err(|error| eyre::eyre!("libktx write error: {:?}", error))?;
 
     Ok(())
@@ -86,12 +88,8 @@ pub fn build_facet_radar_ktx2(
     map_id: u32,
     zstd_level: i32,
 ) -> eyre::Result<()> {
-    let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7(
-        source_dirs,
-        tilemeta_path,
-        map_id,
-    )?;
-    write_bc7_ktx2(bc7_data, output_path, zstd_level)?;
+    let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7(source_dirs, tilemeta_path, map_id)?;
+    write_ktx2_bc7_zstd(bc7_data, output_path, zstd_level)?;
     println!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
     Ok(())
 }

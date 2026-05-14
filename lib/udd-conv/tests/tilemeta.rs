@@ -13,7 +13,7 @@ use udd_assets::{
         TileMetaItemTile, TileMetaLandTile, TileMetaItemVisualKind,
         TILEMETA_LAND_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
     },
-    ec_art::EcArtCropAdjustment,
+    tex_art_ec::TexArtEcCropAdjustment,
     TileMetaPackage,
 };
 use udd_conv::tilemeta::*;
@@ -133,7 +133,7 @@ fn tilemeta_crop_adjustment_shifts_ec_sampling_start_only() {
         42,
         12,
         18,
-        Some(EcArtCropAdjustment { left: 5, top: 7 }),
+        Some(TexArtEcCropAdjustment { left: 5, top: 7 }),
     )
     .expect("adjust EC sampling start");
 

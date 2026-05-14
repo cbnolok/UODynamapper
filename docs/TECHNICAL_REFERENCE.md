@@ -74,7 +74,7 @@ The resolution process is split into two phases to minimize runtime CPU overhead
 1. **Translation**: CC Tile ID is optionally translated to EC Material ID via `TerrainTranscode.kdl`.
 2. **Provenance**: Map `EC Material ID ➔ Slot ID` using the baked provenance table.
 3. **Slot**: Resolve `Slot ID ➔ Atlas Coordinates`.
-4. **GPU**: Upload coordinates to the `ec_land_lookup` texture.
+4. **GPU**: Upload coordinates to the `tex_land_ec_lookup` texture.
 
 **Fallback**: If a CC Tile ID is unmapped in KDL, the engine directly checks the provenance array for legacy aliases named after the CC ID.
 

@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use udd_conv::cc_map::CcMapSourcePreference;
 use udd_conv::cc_radar::RadarFormat;
-use udd_conv::upscale::{UpscaleConfig, UpscaleFilter};
+use udd_conv::upscale::UpscaleFilter;
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureOptimization {
@@ -18,16 +19,17 @@ pub struct AppSettings {
     pub input_uddp_dir: PathBuf,
     pub output_uddp_dir: PathBuf,
     pub link_uddp_dirs: bool,
-    pub opt_cc_art: TextureOptimization,
-    pub opt_cc_texmaps: TextureOptimization,
-    pub opt_ec_art: TextureOptimization,
-    pub opt_ec_land: TextureOptimization,
-    pub upscale_cc_art: UpscaleFilter,
-    pub upscale_cc_texmaps: UpscaleFilter,
-    pub upscale_ec_art: UpscaleFilter,
-    pub upscale_ec_land: UpscaleFilter,
+    pub opt_tex_art_cc: TextureOptimization,
+    pub opt_tex_land_cc: TextureOptimization,
+    pub opt_tex_art_ec: TextureOptimization,
+    pub opt_tex_land_ec: TextureOptimization,
+    pub upscale_tex_art_cc: UpscaleFilter,
+    pub upscale_tex_land_cc: UpscaleFilter,
+    pub upscale_tex_art_ec: UpscaleFilter,
+    pub upscale_tex_land_ec: UpscaleFilter,
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
+    pub map_preferences: [CcMapSourcePreference; 6],
 }
 
 impl Default for AppSettings {
@@ -38,16 +40,17 @@ impl Default for AppSettings {
             input_uddp_dir: PathBuf::from("packages"),
             output_uddp_dir: PathBuf::from("packages"),
             link_uddp_dirs: true,
-            opt_cc_art: TextureOptimization::None,
-            opt_cc_texmaps: TextureOptimization::None,
-            opt_ec_art: TextureOptimization::None,
-            opt_ec_land: TextureOptimization::None,
-            upscale_cc_art: UpscaleFilter::None,
-            upscale_cc_texmaps: UpscaleFilter::None,
-            upscale_ec_art: UpscaleFilter::None,
-            upscale_ec_land: UpscaleFilter::FsrEasu,
+            opt_tex_art_cc: TextureOptimization::None,
+            opt_tex_land_cc: TextureOptimization::None,
+            opt_tex_art_ec: TextureOptimization::None,
+            opt_tex_land_ec: TextureOptimization::None,
+            upscale_tex_art_cc: UpscaleFilter::None,
+            upscale_tex_land_cc: UpscaleFilter::None,
+            upscale_tex_art_ec: UpscaleFilter::None,
+            upscale_tex_land_ec: UpscaleFilter::FsrEasu2x,
             radar_format: RadarFormat::Bc7,
             radar_zstd: 3,
+            map_preferences: [CcMapSourcePreference::Mul; 6],
         }
     }
 }

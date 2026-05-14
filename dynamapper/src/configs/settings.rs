@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+
 
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::camera::RenderZoom;
@@ -289,15 +289,15 @@ impl ClientTextureSource {
 
     pub const fn art_label(self) -> &'static str {
         match self {
-            Self::Cc => "Classic (cc_art.uddp)",
-            Self::Ec => "Enhanced (ec_art.uddp)",
+            Self::Cc => "Classic (tex_art_cc.uddp)",
+            Self::Ec => "Enhanced (tex_art_ec.uddp)",
         }
     }
 
     pub const fn land_label(self) -> &'static str {
         match self {
-            Self::Cc => "Classic (cc_texmaps.uddp)",
-            Self::Ec => "Enhanced (ec_land.uddp)",
+            Self::Cc => "Classic (tex_land_cc.uddp)",
+            Self::Ec => "Enhanced (tex_land_ec.uddp)",
         }
     }
 }
@@ -442,39 +442,6 @@ impl TextureCompressionLogState {
 pub struct SettingsSaveTimer(pub Timer);
 
 /// Tracks file modification times for hot-reload detection.
-/// Checked at 1-second intervals so we never run read_dir or stat on every frame.
-#[derive(Resource)]
-pub struct SettingsFileWatcher {
-    /// Polling timer — checked once per second to avoid expensive stat calls every frame.
-    pub poll_timer: Timer,
-    /// Last-known mtime for each watched file.
-    pub core_mtime: Option<SystemTime>,
-    pub graphics_mtime: Option<SystemTime>,
-    pub user_mtime: Option<SystemTime>,
-    pub kb_mtime: Option<SystemTime>,
-    pub worldmap_rendering_mtime: Option<SystemTime>,
-}
-
-impl Default for SettingsFileWatcher {
-    fn default() -> Self {
-        let assets_path = crate::core::constants::valid_asset_dir();
-        // Snapshot the initial mtimes so we don't trigger a reload immediately on startup.
-        let mtime_of = |name: &str| -> Option<SystemTime> {
-            std::fs::metadata(assets_path.join(name))
-                .ok()
-                .and_then(|m| m.modified().ok())
-        };
-        Self {
-            poll_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
-            core_mtime: mtime_of(CORE_CONFIG_FILE),
-            graphics_mtime: mtime_of(GRAPHICS_CONFIG_FILE),
-            user_mtime: mtime_of(USER_CONFIG_FILE),
-            kb_mtime: mtime_of(KEYBINDINGS_CONFIG_FILE),
-            worldmap_rendering_mtime: mtime_of(WORLDMAP_RENDERING_CONFIG_FILE),
-        }
-    }
-}
-
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectLogging {
     pub min_severity: LogSev,
@@ -842,13 +809,11 @@ impl Plugin for SettingsPlugin {
                 t.pause();
                 t
             }))
-            .init_resource::<SettingsFileWatcher>()
             .add_systems(
                 FixedUpdate,
                 (
                     sys_evlisten_switch_wireframe,
                     sys_debounced_save,
-                    sys_hotreload_settings,
                     sys_sync_resources_to_settings,
                 ),
             );
@@ -864,7 +829,6 @@ fn sys_sync_resources_to_settings(
 ) {
     // Zoom
     if (settings.app.window.zoom - zoom.0).abs() > 0.001 {
-        console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing zoom: {} -> {}", settings.app.window.zoom, zoom.0));
         settings.app.window.zoom = zoom.0;
     }
 
@@ -872,11 +836,9 @@ fn sys_sync_resources_to_settings(
     if let Some(window) = windows.iter().next() {
         let res = &window.resolution;
         if (settings.app.window.width - res.width()).abs() > 1.0 {
-            console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing width: {} -> {}", settings.app.window.width, res.width()));
             settings.app.window.width = res.width();
         }
         if (settings.app.window.height - res.height()).abs() > 1.0 {
-            console_logger::one(LogSev::Debug, LogAbout::Settings, &format!("Syncing height: {} -> {}", settings.app.window.height, res.height()));
             settings.app.window.height = res.height();
         }
     }
@@ -885,7 +847,6 @@ fn sys_sync_resources_to_settings(
     if let Some(player) = player_q.iter().next() {
         if let Some(pos) = player.current_pos {
             if settings.core.world.start_p != pos {
-                console_logger::one(LogSev::Debug, LogAbout::Settings, "Syncing player position");
                 settings.core.world.start_p = pos;
             }
         }
@@ -934,108 +895,6 @@ fn sys_log_texture_compression_status(
     console_logger::one(LogSev::Info, LogAbout::Settings, &message);
 
     *last_logged_state = Some(current_state);
-}
-
-/// Hot-reload system: polls file modification times every second, and updates the
-/// Settings resource in-place if any watched file has changed on disk.
-/// This is intentionally a mtime poll rather than Bevy's AssetLoader because
-/// settings are spread across three files with custom multi-file merging logic.
-fn sys_hotreload_settings(
-    time: Res<Time>,
-    mut watcher: ResMut<SettingsFileWatcher>,
-    mut settings: ResMut<Settings>,
-) {
-    // Respect Settings toggle: if hot-reload is globally disabled, skip checking.
-    if !settings.app.debug.hot_reload_enabled {
-        return;
-    }
-    // Only check once per second — stat syscalls are cheap but redundant every frame.
-    watcher.poll_timer.tick(time.delta());
-    if !watcher.poll_timer.just_finished() {
-        return;
-    }
-
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let mtime_of = |name: &str| -> Option<SystemTime> {
-        std::fs::metadata(assets_path.join(name))
-            .ok()
-            .and_then(|m| m.modified().ok())
-    };
-
-    let new_core = mtime_of(CORE_CONFIG_FILE);
-    let new_graphics = mtime_of(GRAPHICS_CONFIG_FILE);
-    let new_user = mtime_of(USER_CONFIG_FILE);
-    let new_kb = mtime_of(KEYBINDINGS_CONFIG_FILE);
-    let new_worldmap_rendering = mtime_of(WORLDMAP_RENDERING_CONFIG_FILE);
-
-    let core_changed = new_core != watcher.core_mtime;
-    let graphics_changed = new_graphics != watcher.graphics_mtime;
-    let user_changed = new_user != watcher.user_mtime;
-    let kb_changed = new_kb != watcher.kb_mtime;
-    let worldmap_rendering_changed = new_worldmap_rendering != watcher.worldmap_rendering_mtime;
-
-    if !(core_changed
-        || graphics_changed
-        || user_changed
-        || kb_changed
-        || worldmap_rendering_changed)
-    {
-        return;
-    }
-
-    // At least one file changed. Re-read the full settings bundle.
-    let new_data = load_from_files();
-
-    if core_changed {
-        settings.core = new_data.core.clone();
-        settings.logging = new_data.logging.clone();
-        watcher.core_mtime = new_core;
-        // Update plugin log toggles on settings hot-reload
-        set_plugin_log_toggles(
-            settings.logging.emit_flat_plugin_build,
-            settings.logging.emit_tree_plugin_build,
-        );
-        console_logger::one(LogSev::Info, LogAbout::General, "Hot-reloaded: core.toml");
-    }
-    if graphics_changed {
-        settings.graphics = new_data.graphics.clone();
-        watcher.graphics_mtime = new_graphics;
-        settings
-            .graphics
-            .log_unavailable_texture_compression_backend_warning();
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            "Hot-reloaded: graphics.toml",
-        );
-    }
-    if user_changed {
-        settings.app = new_data.app.clone();
-        watcher.user_mtime = new_user;
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            "Hot-reloaded: preferences.toml",
-        );
-    }
-    if kb_changed {
-        settings.keybindings = new_data.keybindings.clone();
-        watcher.kb_mtime = new_kb;
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            "Hot-reloaded: keybindings.toml",
-        );
-    }
-    if worldmap_rendering_changed {
-        settings.worldmap_rendering = new_data.worldmap_rendering.clone();
-        watcher.worldmap_rendering_mtime = new_worldmap_rendering;
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            "Hot-reloaded: core_worldmap_rendering.toml",
-        );
-    }
 }
 
 fn sys_apply(
@@ -1191,19 +1050,6 @@ fn sys_debounced_save(
         .as_ref()
         .map_or(true, |last| last != &settings.worldmap_rendering);
 
-    if app_changed {
-        console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
-    }
-    if graphics_changed {
-        console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
-    }
-    if kb_changed {
-        console_logger::one(LogSev::Debug, LogAbout::Settings, "Keybindings changed");
-    }
-    if core_changed {
-        console_logger::one(LogSev::Debug, LogAbout::Settings, "Core settings changed");
-    }
-
     if app_changed
         || graphics_changed
         || kb_changed
@@ -1213,12 +1059,25 @@ fn sys_debounced_save(
         || maps_changed
         || worldmap_rendering_changed
     {
-        // Start the timer if it's not already running.
-        // We don't call reset() here because app_changed will remain true
-        // until the timer finishes and saves, which would cause an infinite reset loop.
+        // Debounce: reset the timer every time a change is detected.
+        // This ensures we only save after the user has stopped moving/changing things
+        // for the duration of the timer (1.0s).
         if save_timer.0.is_paused() {
+            if app_changed {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
+            }
+            if graphics_changed {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
+            }
+            if kb_changed {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "Keybindings changed");
+            }
+            if core_changed {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "Core settings changed");
+            }
             save_timer.0.unpause();
         }
+        save_timer.0.reset();
     }
 
     if !save_timer.0.is_paused() {

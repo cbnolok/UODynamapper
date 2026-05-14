@@ -2,7 +2,7 @@ use eframe::egui;
 use crate::app::{UopInspectorApp, ArtSource, ViewMode};
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
-    egui::SidePanel::left("cc_art_list")
+    egui::SidePanel::left("tex_art_cc_list")
         .resizable(true)
         .default_width(300.0)
         .show(ctx, |ui| {
@@ -54,9 +54,9 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 continue;
                             }
 
-                            if ui.selectable_label(app.selected_cc_art_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
-                                app.selected_cc_art_id = Some(id);
-                                app.view_mode = ViewMode::CcArt;
+                            if ui.selectable_label(app.selected_tex_art_cc_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
+                                app.selected_tex_art_cc_id = Some(id);
+                                app.view_mode = ViewMode::TexArtCc;
                             }
                         }
                     });
@@ -72,9 +72,9 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 continue;
                             }
 
-                            if ui.selectable_label(app.selected_cc_art_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
-                                app.selected_cc_art_id = Some(id);
-                                app.view_mode = ViewMode::CcArt;
+                            if ui.selectable_label(app.selected_tex_art_cc_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
+                                app.selected_tex_art_cc_id = Some(id);
+                                app.view_mode = ViewMode::TexArtCc;
                             }
                         }
                     });
@@ -85,11 +85,11 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::CentralPanel::default().show(ctx, |ui| {
         if app.view_mode == ViewMode::CcTileData {
             ui_cc_tiledata(app, ctx, ui);
-        } else if let Some(id) = app.selected_cc_art_id {
+        } else if let Some(id) = app.selected_tex_art_cc_id {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.heading(format!("Art ID: {}", id));
-                    if let Some(handle) = app.get_cc_art_texture(ctx, id) {
+                    if let Some(handle) = app.get_tex_art_cc_texture(ctx, id) {
                         ui.label(format!("Dimensions: {}x{}", handle.size()[0], handle.size()[1]));
                         ui.image(&handle);
                     } else {

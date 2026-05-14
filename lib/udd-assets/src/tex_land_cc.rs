@@ -14,12 +14,12 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
-const CC_TEXMAPS_METADATA_VERSION: u32 = 1;
+const TEX_LAND_CC_METADATA_VERSION: u32 = 1;
 
-use crate::cc_art::PagePixelFormat;
+use crate::tex_art_cc::PagePixelFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcTexmapsPageRecord {
+pub struct TexLandCcPageRecord {
     pub page_index: u32,
     pub tile_count: u32,
     pub used_width: u32,
@@ -28,7 +28,7 @@ pub struct CcTexmapsPageRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcTexmapsSlotRecord {
+pub struct TexLandCcSlotRecord {
     pub id: u32,
     pub page_index: u32,
     pub page_tile_index: u16,
@@ -39,7 +39,7 @@ pub struct CcTexmapsSlotRecord {
     pub height: u16,
 }
 
-impl CcTexmapsSlotRecord {
+impl TexLandCcSlotRecord {
     pub fn absent(id: u32) -> Self {
         Self {
             id,
@@ -58,16 +58,16 @@ impl CcTexmapsSlotRecord {
     }
 }
 
-pub struct CcTexmapsPackage {
+pub struct TexLandCcPackage {
     package: UddpReader,
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
-    pages: Vec<CcTexmapsPageRecord>,
-    slots: Vec<CcTexmapsSlotRecord>,
+    pages: Vec<TexLandCcPageRecord>,
+    slots: Vec<TexLandCcSlotRecord>,
 }
 
-impl CcTexmapsPackage {
+impl TexLandCcPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
@@ -76,15 +76,15 @@ impl CcTexmapsPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
-            .context("cc_texmaps.uddp missing metadata/pages.bin")?;
+            .context("tex_land_cc.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
-            .context("cc_texmaps.uddp missing metadata/slots.bin")?;
+            .context("tex_land_cc.uddp missing metadata/slots.bin")?;
 
         let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
-            eyre::bail!("cc_texmaps metadata headers disagree on atlas dimensions or gutter");
+            eyre::bail!("tex_land_cc metadata headers disagree on atlas dimensions or gutter");
         }
 
         Ok(Self {
@@ -113,11 +113,11 @@ impl CcTexmapsPackage {
         self.gutter
     }
 
-    pub fn pages(&self) -> &[CcTexmapsPageRecord] {
+    pub fn pages(&self) -> &[TexLandCcPageRecord] {
         &self.pages
     }
 
-    pub fn slots(&self) -> &[CcTexmapsSlotRecord] {
+    pub fn slots(&self) -> &[TexLandCcSlotRecord] {
         &self.slots
     }
 
@@ -144,7 +144,7 @@ impl CcTexmapsPackage {
             .wrap_err_with(|| format!("unpack atlas page {page_index}"))
     }
 
-    pub fn present_slot(&self, id: u32) -> Option<&CcTexmapsSlotRecord> {
+    pub fn present_slot(&self, id: u32) -> Option<&TexLandCcSlotRecord> {
         self.slots
             .get(id as usize)
             .filter(|slot| slot.is_present())
@@ -177,13 +177,13 @@ impl CcTexmapsPackage {
     }
 }
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcTexmapsPageRecord>)> {
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLandCcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_TEXMAPS_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_LAND_CC_METADATA_VERSION { eyre::bail!("invalid version"); }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
@@ -191,7 +191,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcTexma
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut pages = Vec::with_capacity(count);
     for _ in 0..count {
-        pages.push(CcTexmapsPageRecord {
+        pages.push(TexLandCcPageRecord {
             page_index: cursor.read_u32::<LittleEndian>()?,
             tile_count: cursor.read_u32::<LittleEndian>()?,
             used_width: cursor.read_u32::<LittleEndian>()?,
@@ -202,20 +202,20 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcTexma
     Ok((w, h, g, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<CcTexmapsSlotRecord>)> {
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLandCcSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != CC_TEXMAPS_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_LAND_CC_METADATA_VERSION { eyre::bail!("invalid version"); }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
-        slots.push(CcTexmapsSlotRecord {
+        slots.push(TexLandCcSlotRecord {
             id: cursor.read_u32::<LittleEndian>()?,
             page_index: cursor.read_u32::<LittleEndian>()?,
             page_tile_index: cursor.read_u16::<LittleEndian>()?,

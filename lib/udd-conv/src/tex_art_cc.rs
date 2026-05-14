@@ -1,4 +1,4 @@
-//! Build-time and runtime support for `cc_art.uddp`.
+//! Build-time and runtime support for `tex_art_cc.uddp`.
 //!
 //! Package layout:
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
@@ -42,15 +42,15 @@ use uocf::classic::art::ArtMap;
 
 use crate::upscale::UpscaleFilter;
 
-use udd_assets::cc_art::{
-    page_entry_path, CcArtPageRecord, CcArtSlotRecord, PagePixelFormat, MISSING_PAGE_INDEX,
+use udd_assets::tex_art_cc::{
+    page_entry_path, TexArtCcPageRecord, TexArtCcSlotRecord, PagePixelFormat, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_LAND, SLOT_FLAG_PRESENT,
     SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH,
 };
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CcArtBuildSummary {
+pub struct TexArtCcBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
     pub page_count: u32,
@@ -62,7 +62,7 @@ pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-pub struct CcArtAtlasOptions {
+pub struct TexArtCcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
@@ -71,7 +71,7 @@ pub struct CcArtAtlasOptions {
     pub pixel_format: PagePixelFormat,
 }
 
-impl Default for CcArtAtlasOptions {
+impl Default for TexArtCcAtlasOptions {
     fn default() -> Self {
         Self {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -122,7 +122,7 @@ pub struct PlacedTile {
 
 #[derive(Debug, Clone)]
 pub struct BuiltPage {
-    pub record: CcArtPageRecord,
+    pub record: TexArtCcPageRecord,
     /// Raw RGBA8888 pixels as produced by the guillotiere packer.
     /// Encoded to the final format (RGBA or BC7) at pack time.
     pub pixels: Vec<u8>,
@@ -132,21 +132,21 @@ pub struct BuiltPage {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 /// Bump version when the binary layout of either manifest changes.
-const CC_ART_METADATA_VERSION: u32 = 2;
+const TEX_ART_CC_METADATA_VERSION: u32 = 2;
 
-pub fn convert_art_mul_to_cc_art_uddp(
+pub fn convert_art_mul_to_tex_art_cc_uddp(
     client_dir: &Path,
     out_file: &Path,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<CcArtBuildSummary> {
-    convert_art_mul_to_cc_art_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
+    options: &TexArtCcAtlasOptions,
+) -> eyre::Result<TexArtCcBuildSummary> {
+    convert_art_mul_to_tex_art_cc_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
 }
 
-pub fn convert_art_mul_to_cc_art_uddp_from_sources(
+pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources(
     source_dirs: &[PathBuf],
     out_file: &Path,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<CcArtBuildSummary> {
+    options: &TexArtCcAtlasOptions,
+) -> eyre::Result<TexArtCcBuildSummary> {
     validate_options(options)?;
 
     let client_dir = find_first_dir_matching(source_dirs, &[&["artlegacymul.uop"], &["artLegacyMUL.uop"], &["artidx.mul", "art.mul"]])
@@ -292,7 +292,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
 
     build_and_write_package(&mut package, out_file)?;
 
-    Ok(CcArtBuildSummary {
+    Ok(TexArtCcBuildSummary {
         slot_count,
         populated_slot_count,
         page_count: pages.len() as u32,
@@ -301,7 +301,7 @@ pub fn convert_art_mul_to_cc_art_uddp_from_sources(
     })
 }
 
-fn validate_options(options: &CcArtAtlasOptions) -> eyre::Result<()> {
+fn validate_options(options: &TexArtCcAtlasOptions) -> eyre::Result<()> {
     if options.compression == CompressionFlag::None {
         // Technically this was prohibited for CC Art before, but now we allow it if selected.
         // Actually, let's keep the warning/bail if we really want to prevent it.
@@ -318,7 +318,7 @@ fn validate_options(options: &CcArtAtlasOptions) -> eyre::Result<()> {
 
 fn decode_present_tiles(
     art_map: &ArtMap,
-    options: &CcArtAtlasOptions,
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<DecodedArtTile>> {
     // Decode every occupied art slot up front so the packer can sort by area and
     // feed the atlas allocator largest-first. Classic clients are messy in practice:
@@ -449,13 +449,13 @@ fn format_skip_summary(skipped_count: u32, samples: &[String]) -> String {
 pub fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
-    options: &CcArtAtlasOptions,
-) -> eyre::Result<(Vec<BuiltPage>, Vec<CcArtSlotRecord>)> {
+    options: &TexArtCcAtlasOptions,
+) -> eyre::Result<(Vec<BuiltPage>, Vec<TexArtCcSlotRecord>)> {
     // Build full sparse metadata up front. Empty slots are kept explicitly so the
     // runtime can answer `art_id -> atlas location` without a side lookup table.
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
-        .map(CcArtSlotRecord::absent)
+        .map(TexArtCcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
     remaining.sort_by_key(|tile| tile.art_id);
@@ -480,7 +480,7 @@ pub fn pack_tiles_into_pages(
             let slot = slot_records
                 .get_mut(placed.art_id as usize)
                 .context("placed tile art_id outside slot table")?;
-            *slot = CcArtSlotRecord {
+            *slot = TexArtCcSlotRecord {
                 art_id: placed.art_id,
                 page_index,
                 page_tile_index: placed.page_tile_index,
@@ -502,7 +502,7 @@ pub fn pack_tiles_into_pages(
 
 fn take_page_tile_prefix(
     tiles: Vec<DecodedArtTile>,
-    options: &CcArtAtlasOptions,
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<(Vec<DecodedArtTile>, Vec<DecodedArtTile>)> {
     let prefix_len = max_fitting_page_prefix_len(&tiles, options)?;
 
@@ -521,7 +521,7 @@ fn take_page_tile_prefix(
 
 fn max_fitting_page_prefix_len(
     tiles: &[DecodedArtTile],
-    options: &CcArtAtlasOptions,
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<usize> {
     let mut low = 1usize;
     let mut high = tiles.len();
@@ -540,7 +540,7 @@ fn max_fitting_page_prefix_len(
     Ok(best)
 }
 
-fn page_prefix_fits(tiles: &[DecodedArtTile], options: &CcArtAtlasOptions) -> eyre::Result<bool> {
+fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtCcAtlasOptions) -> eyre::Result<bool> {
     let mut to_pack = tiles.to_vec();
     sort_tiles_within_page(&mut to_pack);
 
@@ -589,7 +589,7 @@ fn sort_tiles_within_page(tiles: &mut [DecodedArtTile]) {
 fn build_page(
     page_index: u32,
     mut tiles: Vec<DecodedArtTile>,
-    options: &CcArtAtlasOptions,
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // Pages are always assembled as full-size RGBA images in memory even when the
     // stored package payload is later cropped or BC7-encoded. That keeps placement,
@@ -658,7 +658,7 @@ fn build_page(
 
     Ok((
         BuiltPage {
-            record: CcArtPageRecord {
+            record: TexArtCcPageRecord {
                 page_index,
                 tile_count: placed_tiles.len() as u32,
                 used_width,
@@ -728,7 +728,7 @@ pub fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: 
 
 pub fn serialize_page_manifest(
     pages: &[BuiltPage],
-    options: &CcArtAtlasOptions,
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     // The page manifest carries both the logical atlas dimensions and the per-page
     // used rectangle. Readers reconstruct a full page view from those two facts:
@@ -736,7 +736,7 @@ pub fn serialize_page_manifest(
     let pixel_format = options.pixel_format;
     let mut bytes = Vec::with_capacity(25 + pages.len() * 17);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_ART_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -753,12 +753,12 @@ pub fn serialize_page_manifest(
 }
 
 pub fn serialize_slot_manifest(
-    slots: &[CcArtSlotRecord],
-    options: &CcArtAtlasOptions,
+    slots: &[TexArtCcSlotRecord],
+    options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(CC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_ART_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -777,14 +777,14 @@ pub fn serialize_slot_manifest(
 }
 
 pub fn encode_slot_manifest(
-    slots: &[CcArtSlotRecord],
+    slots: &[TexArtCcSlotRecord],
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
 ) -> eyre::Result<Vec<u8>> {
     serialize_slot_manifest(
         slots,
-        &CcArtAtlasOptions {
+        &TexArtCcAtlasOptions {
             atlas_width,
             atlas_height,
             gutter,

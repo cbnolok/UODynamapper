@@ -75,8 +75,8 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
                     ui.separator();
                     ui.label("Preview on last selected CC Art:");
-                    if let Some(art_id) = app.selected_cc_art_id {
-                        if let Some(handle) = app.get_cc_art_texture(ctx, art_id) {
+                    if let Some(art_id) = app.selected_tex_art_cc_id {
+                        if let Some(handle) = app.get_tex_art_cc_texture(ctx, art_id) {
                             ui.image(&handle);
                         }
                     } else {

@@ -5,6 +5,7 @@ pub mod terrain_shader;
 
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
+use crate::prelude::*;
 use crate::util_lib::tracked_plugin::*;
 use bevy::prelude::*;
 use bevy_egui::{EguiContextSettings, EguiContexts};
@@ -12,7 +13,6 @@ use keybindings_help::KeybindingsHelpPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
 use terrain_shader::TerrainUiPlugin;
-use crate::prelude::*;
 
 pub struct DialogsPlugin {
     pub registered_by: &'static str,
@@ -60,7 +60,7 @@ fn sys_sync_egui_context_scale_factor(
     };
 
     if (egui_ctx_settings.scale_factor - target_scale).abs() > 0.001 {
-        log_system_add_one_shot::<DialogsPlugin>("Update", "None", fname!());
+        log_system_add_update::<DialogsPlugin>(fname!());
         egui_ctx_settings.scale_factor = target_scale;
     }
 }

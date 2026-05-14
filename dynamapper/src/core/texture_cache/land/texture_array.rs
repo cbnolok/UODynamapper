@@ -106,7 +106,7 @@ impl TerrainTextureCompression {
 }
 
 pub fn build_texture_residency_plan(
-    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
+    texmap_2d_res: &udd_assets::tex_land_cc::TexLandCcPackage,
 ) -> TextureResidencyPlan<LandTextureSize> {
     let mut plan = TextureResidencyPlan::new();
 
@@ -230,7 +230,7 @@ pub const DEFAULT_ERROR_TEXTURE_ID: u16 = 0x4C; // Sea floor
 /// If invalid, return UNUSED texture.
 pub fn get_texmap_size_only(
     texture_id: u16,
-    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
+    texmap_2d_res: &udd_assets::tex_land_cc::TexLandCcPackage,
 ) -> LandTextureSize {
     if let Some(size) = texmap_2d_res.get_texture_size(texture_id as u32) {
         return size;
@@ -244,7 +244,7 @@ pub fn get_texmap_size_only(
 
 pub fn get_texmap_raw_data(
     texture_id: u16,
-    texmap_2d_res: &udd_assets::cc_texmaps::CcTexmapsPackage,
+    texmap_2d_res: &udd_assets::tex_land_cc::TexLandCcPackage,
     _now: std::time::Instant,
 ) -> (LandTextureSize, std::sync::Arc<[u8]>) {
     fn local_log_warn(msg: &str) {

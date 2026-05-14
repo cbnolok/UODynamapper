@@ -57,15 +57,15 @@ cargo run --release --bin uddpack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output 
 echo
 
 # Convert assets
-cargo run --release --bin uddpack -- pack-art "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/cc_art.uddp"
+cargo run --release --bin uddpack -- pack-art "${SOURCE_ARGS[@]}" --output "$OUTPUT_DIR/tex_art_cc.uddp"
 echo
-cargo run --release --bin uddpack -- pack-ec-textures "${SOURCE_ARGS[@]}" --art-output "$OUTPUT_DIR/ec_art.uddp" --land-output "$OUTPUT_DIR/ec_land.uddp"
+cargo run --release --bin uddpack -- pack-ec-textures "${SOURCE_ARGS[@]}" --art-output "$OUTPUT_DIR/tex_art_ec.uddp" --land-output "$OUTPUT_DIR/tex_land_ec.uddp"
 
 echo
 echo "Generated packages:"
-echo "  - $OUTPUT_DIR/cc_art.uddp"
-echo "  - $OUTPUT_DIR/ec_art.uddp"
-echo "  - $OUTPUT_DIR/ec_land.uddp"
+echo "  - $OUTPUT_DIR/tex_art_cc.uddp"
+echo "  - $OUTPUT_DIR/tex_art_ec.uddp"
+echo "  - $OUTPUT_DIR/tex_land_ec.uddp"
 echo "  - $OUTPUT_DIR/tilemeta.uddp"
 
 echo "Conversion complete!"

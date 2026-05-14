@@ -1,4 +1,4 @@
-//! Build-time and runtime support for `ec_art.uddp`.
+//! Build-time and runtime support for `tex_art_ec.uddp`.
 //!
 //! Sources EC item/static visuals from tileart-owned references, resolving the
 //! selected Enhanced and Classic texture payloads from `Texture.uop` and
@@ -34,9 +34,9 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
-use udd_assets::cc_art::{page_entry_path, PagePixelFormat};
-use udd_assets::ec_art::{
-    EcArtCropAdjustment, EcArtPageRecord, EcArtSlotRecord, MISSING_PAGE_INDEX,
+use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
+use udd_assets::tex_art_ec::{
+    TexArtEcCropAdjustment, TexArtEcPageRecord, TexArtEcSlotRecord, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_LAND, SLOT_FLAG_PRESENT,
     SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH,
 };
@@ -54,13 +54,13 @@ use crate::upscale::UpscaleFilter;
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
-const EC_ART_METADATA_VERSION: u32 = 2;
+const TEX_ART_EC_METADATA_VERSION: u32 = 2;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
 
-pub struct EcArtAtlasOptions {
+pub struct TexArtEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
@@ -73,7 +73,7 @@ pub struct EcArtAtlasOptions {
     pub pixel_format: PagePixelFormat,
 }
 
-impl Default for EcArtAtlasOptions {
+impl Default for TexArtEcAtlasOptions {
     fn default() -> Self {
         Self {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -88,7 +88,7 @@ impl Default for EcArtAtlasOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EcArtBuildSummary {
+pub struct TexArtEcBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
     pub page_count: u32,
@@ -144,7 +144,7 @@ struct DecodedArtDecodeGroup {
     width: u16,
     height: u16,
     rgba: Vec<u8>,
-    crop_adjustment: EcArtCropAdjustment,
+    crop_adjustment: TexArtEcCropAdjustment,
     alias_art_ids: Vec<u32>,
 }
 
@@ -181,7 +181,7 @@ pub struct SlotAlias {
     pub canonical_art_id: u32,
 }
 
-pub struct EcArtLoadedSources {
+pub struct TexArtEcLoadedSources {
     pub tileart_path: PathBuf,
     pub terrain_definition_path: PathBuf,
     pub stringdict_path: PathBuf,
@@ -194,7 +194,7 @@ pub struct EcArtLoadedSources {
     pub legacy_textures: Option<Textures>,
 }
 
-impl EcArtLoadedSources {
+impl TexArtEcLoadedSources {
     pub fn terrain_definition(&self) -> &TerrainDefinitionPackage {
         &self.terrain_definition
     }
@@ -213,7 +213,7 @@ pub struct PlacedTile {
 
 #[derive(Debug, Clone)]
 pub struct BuiltPage {
-    pub record: EcArtPageRecord,
+    pub record: TexArtEcPageRecord,
     /// Raw RGBA8888 pixels produced by the guillotiere packer.
     pub pixels: Vec<u8>,
     pub placed_tiles: Vec<PlacedTile>,
@@ -223,29 +223,29 @@ fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     find_first_existing_file(source_dirs, &["string_dictionary.uop"])
 }
 
-pub fn convert_ec_art_uop_to_ec_art_uddp(
+pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp(
     client_dir: &Path,
     out_file: &Path,
-    options: &EcArtAtlasOptions,
-) -> eyre::Result<EcArtBuildSummary> {
-    convert_ec_art_uop_to_ec_art_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
+    options: &TexArtEcAtlasOptions,
+) -> eyre::Result<TexArtEcBuildSummary> {
+    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources(&[client_dir.to_path_buf()], out_file, options)
 }
 
-pub fn convert_ec_art_uop_to_ec_art_uddp_from_sources(
+pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources(
     source_dirs: &[PathBuf],
     out_file: &Path,
-    options: &EcArtAtlasOptions,
-) -> eyre::Result<EcArtBuildSummary> {
-    let sources = load_ec_art_sources(source_dirs)?;
+    options: &TexArtEcAtlasOptions,
+) -> eyre::Result<TexArtEcBuildSummary> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
 
-    convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(&sources, out_file, options)
+    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(&sources, out_file, options)
 }
 
-pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
-    sources: &EcArtLoadedSources,
+pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
+    sources: &TexArtEcLoadedSources,
     out_file: &Path,
-    options: &EcArtAtlasOptions,
-) -> eyre::Result<EcArtBuildSummary> {
+    options: &TexArtEcAtlasOptions,
+) -> eyre::Result<TexArtEcBuildSummary> {
     validate_options(options)?;
 
     info!(
@@ -393,7 +393,7 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
 
     build_and_write_package(&mut package, out_file)?;
 
-    Ok(EcArtBuildSummary {
+    Ok(TexArtEcBuildSummary {
         slot_count,
         populated_slot_count,
         page_count: pages.len() as u32,
@@ -401,16 +401,16 @@ pub fn convert_ec_art_uop_to_ec_art_uddp_from_loaded_sources(
         atlas_height: options.atlas_height,
         cropped_slot_count: crop_adjustments
             .values()
-            .filter(|adjustment| **adjustment != EcArtCropAdjustment::default())
+            .filter(|adjustment| **adjustment != TexArtEcCropAdjustment::default())
             .count() as u32,
     })
 }
 
-pub fn compute_ec_art_crop_adjustments_from_sources(
+pub fn compute_tex_art_ec_crop_adjustments_from_sources(
     source_dirs: &[PathBuf],
-) -> eyre::Result<Vec<Option<EcArtCropAdjustment>>> {
-    let sources = load_ec_art_sources(source_dirs)?;
-    let mut options = EcArtAtlasOptions::default();
+) -> eyre::Result<Vec<Option<TexArtEcCropAdjustment>>> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let mut options = TexArtEcAtlasOptions::default();
     options.crop_transparent_bounds = true;
 
     let (_decoded_tiles, aliases, canonical_adjustments) = decode_present_tiles(
@@ -428,7 +428,7 @@ pub fn compute_ec_art_crop_adjustments_from_sources(
     ))
 }
 
-pub fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedSources> {
+pub fn load_tex_art_ec_sources(source_dirs: &[PathBuf]) -> eyre::Result<TexArtEcLoadedSources> {
     let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
         .ok_or_else(|| eyre::eyre!("missing required file: tileart.uop"))?;
     let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
@@ -469,7 +469,7 @@ pub fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedS
         .into_iter()
         .collect();
 
-    Ok(EcArtLoadedSources {
+    Ok(TexArtEcLoadedSources {
         tileart_path,
         terrain_definition_path,
         stringdict_path,
@@ -483,7 +483,7 @@ pub fn load_ec_art_sources(source_dirs: &[PathBuf]) -> eyre::Result<EcArtLoadedS
     })
 }
 
-fn validate_options(options: &EcArtAtlasOptions) -> eyre::Result<()> {
+fn validate_options(options: &TexArtEcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("atlas dimensions must be greater than zero");
     }
@@ -498,11 +498,11 @@ fn decode_present_tiles(
     terrain_source_texture_ids: &HashSet<u32>,
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
-    options: &EcArtAtlasOptions,
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
-    HashMap<u32, EcArtCropAdjustment>,
+    HashMap<u32, TexArtEcCropAdjustment>,
 )> {
     // Art ownership comes from tileart definitions. Resolve each item/static's
     // selected EC or CC texture payload, but keep the slot table keyed by art id.
@@ -573,7 +573,7 @@ fn decode_present_tiles(
                 continue;
             }
 
-            // Tileart ownership is authoritative for ec_art packing.
+            // Tileart ownership is authoritative for tex_art_ec packing.
             // A source texture id may legitimately appear in both terrain and tileart
             // metadata, and shared ids should survive in both packages.
             let canonical_key = CanonicalTileKey {
@@ -786,7 +786,7 @@ pub fn crop_rgba_tile_to_bounds(
     height: u16,
     rgba: Vec<u8>,
     clip_rect: Option<SourceClipRect>,
-) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
     let expected_len = width as usize * height as usize * 4;
     if rgba.len() != expected_len {
         eyre::bail!(
@@ -839,7 +839,7 @@ pub fn crop_rgba_tile_to_bounds(
                 clip.bottom as usize,
             );
         }
-        return Ok((width, height, rgba, EcArtCropAdjustment::default()));
+        return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
     }
 
     if min_x == clip_left
@@ -858,7 +858,7 @@ pub fn crop_rgba_tile_to_bounds(
                 clip.bottom as usize,
             );
         }
-        return Ok((width, height, rgba, EcArtCropAdjustment::default()));
+        return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
     }
 
     crop_rgba_subrect(width, height, rgba, min_x, min_y, max_x + 1, max_y + 1)
@@ -869,7 +869,7 @@ pub fn apply_requested_clip_rect(
     height: u16,
     rgba: Vec<u8>,
     clip_rect: Option<SourceClipRect>,
-) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
     if let Some(clip) = clip_rect {
         crop_rgba_subrect(
             width,
@@ -881,7 +881,7 @@ pub fn apply_requested_clip_rect(
             clip.bottom as usize,
         )
     } else {
-        Ok((width, height, rgba, EcArtCropAdjustment::default()))
+        Ok((width, height, rgba, TexArtEcCropAdjustment::default()))
     }
 }
 
@@ -893,7 +893,7 @@ fn crop_rgba_subrect(
     top: usize,
     right: usize,
     bottom: usize,
-) -> eyre::Result<(u16, u16, Vec<u8>, EcArtCropAdjustment)> {
+) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
     let cropped_width = (right - left) as u16;
     let cropped_height = (bottom - top) as u16;
     let mut cropped = vec![0u8; cropped_width as usize * cropped_height as usize * 4];
@@ -910,7 +910,7 @@ fn crop_rgba_subrect(
         cropped_width,
         cropped_height,
         cropped,
-        EcArtCropAdjustment {
+        TexArtEcCropAdjustment {
             left: left as i16,
             top: top as i16,
         },
@@ -919,9 +919,9 @@ fn crop_rgba_subrect(
 
 pub fn build_crop_adjustment_lookup(
     slot_count: u32,
-    canonical_adjustments: &HashMap<u32, EcArtCropAdjustment>,
+    canonical_adjustments: &HashMap<u32, TexArtEcCropAdjustment>,
     aliases: &[SlotAlias],
-) -> Vec<Option<EcArtCropAdjustment>> {
+) -> Vec<Option<TexArtEcCropAdjustment>> {
     let mut adjustments = vec![None; slot_count as usize];
     for (&art_id, &adjustment) in canonical_adjustments {
         if let Some(slot) = adjustments.get_mut(art_id as usize) {
@@ -940,24 +940,24 @@ pub fn build_crop_adjustment_lookup(
 }
 
 pub fn apply_slot_aliases(
-    slots: &mut [EcArtSlotRecord],
+    slots: &mut [TexArtEcSlotRecord],
     aliases: &[SlotAlias],
 ) -> eyre::Result<()> {
     for alias in aliases {
         let canonical = *slots
             .get(alias.canonical_art_id as usize)
-            .context("canonical ec_art slot outside slot table")?;
+            .context("canonical tex_art_ec slot outside slot table")?;
         let slot = slots
             .get_mut(alias.art_id as usize)
-            .context("alias ec_art slot outside slot table")?;
+            .context("alias tex_art_ec slot outside slot table")?;
         if !canonical.is_present() {
             eyre::bail!(
-                "canonical ec_art slot {} missing while applying alias {}",
+                "canonical tex_art_ec slot {} missing while applying alias {}",
                 alias.canonical_art_id,
                 alias.art_id
             );
         }
-        *slot = EcArtSlotRecord {
+        *slot = TexArtEcSlotRecord {
             art_id: alias.art_id,
             ..canonical
         };
@@ -968,13 +968,13 @@ pub fn apply_slot_aliases(
 pub fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
-    options: &EcArtAtlasOptions,
-) -> eyre::Result<(Vec<BuiltPage>, Vec<EcArtSlotRecord>)> {
+    options: &TexArtEcAtlasOptions,
+) -> eyre::Result<(Vec<BuiltPage>, Vec<TexArtEcSlotRecord>)> {
     // Like the CC path, keep a sparse slot table for the full art id range. That
     // makes runtime lookup deterministic even when many ids are absent.
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
-        .map(EcArtSlotRecord::absent)
+        .map(TexArtEcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
     remaining.sort_by_key(|tile| tile.art_id);
@@ -999,7 +999,7 @@ pub fn pack_tiles_into_pages(
             let slot = slot_records
                 .get_mut(placed.art_id as usize)
                 .context("placed tile art_id outside slot table")?;
-            *slot = EcArtSlotRecord {
+            *slot = TexArtEcSlotRecord {
                 art_id: placed.art_id,
                 page_index,
                 page_tile_index: placed.page_tile_index,
@@ -1021,7 +1021,7 @@ pub fn pack_tiles_into_pages(
 
 fn take_page_tile_prefix(
     tiles: Vec<DecodedArtTile>,
-    options: &EcArtAtlasOptions,
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<(Vec<DecodedArtTile>, Vec<DecodedArtTile>)> {
     let prefix_len = max_fitting_page_prefix_len(&tiles, options)?;
 
@@ -1040,7 +1040,7 @@ fn take_page_tile_prefix(
 
 fn max_fitting_page_prefix_len(
     tiles: &[DecodedArtTile],
-    options: &EcArtAtlasOptions,
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<usize> {
     let mut low = 1usize;
     let mut high = tiles.len();
@@ -1059,7 +1059,7 @@ fn max_fitting_page_prefix_len(
     Ok(best)
 }
 
-fn page_prefix_fits(tiles: &[DecodedArtTile], options: &EcArtAtlasOptions) -> eyre::Result<bool> {
+fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) -> eyre::Result<bool> {
     let mut to_pack = tiles.to_vec();
     sort_tiles_within_page(&mut to_pack);
 
@@ -1117,7 +1117,7 @@ fn sort_tiles_within_page(tiles: &mut [DecodedArtTile]) {
 fn build_page(
     page_index: u32,
     mut tiles: Vec<DecodedArtTile>,
-    options: &EcArtAtlasOptions,
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // The working page is always a full-size RGBA canvas. Cropping happens only
     // at storage time so slot coordinates remain expressed in atlas-page space.
@@ -1195,7 +1195,7 @@ fn build_page(
 
     Ok((
         BuiltPage {
-            record: EcArtPageRecord {
+            record: TexArtEcPageRecord {
                 page_index,
                 tile_count: placed_tiles.len() as u32,
                 used_width,
@@ -1261,7 +1261,7 @@ pub fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: 
 
 pub fn serialize_page_manifest(
     pages: &[BuiltPage],
-    options: &EcArtAtlasOptions,
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     // Manifest records tell the reader how to reinterpret cropped payloads as
     // logical atlas pages. `used_width/used_height` describe the stored bytes,
@@ -1269,7 +1269,7 @@ pub fn serialize_page_manifest(
     let pixel_format = options.pixel_format;
     let mut bytes = Vec::with_capacity(25 + pages.len() * 16);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -1285,12 +1285,12 @@ pub fn serialize_page_manifest(
 }
 
 pub fn serialize_slot_manifest(
-    slots: &[EcArtSlotRecord],
-    options: &EcArtAtlasOptions,
+    slots: &[TexArtEcSlotRecord],
+    options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
-    bytes.write_u32::<LittleEndian>(EC_ART_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
@@ -1309,14 +1309,14 @@ pub fn serialize_slot_manifest(
 }
 
 pub fn encode_slot_manifest(
-    slots: &[EcArtSlotRecord],
+    slots: &[TexArtEcSlotRecord],
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
 ) -> eyre::Result<Vec<u8>> {
     serialize_slot_manifest(
         slots,
-        &EcArtAtlasOptions {
+        &TexArtEcAtlasOptions {
             atlas_width,
             atlas_height,
             gutter,

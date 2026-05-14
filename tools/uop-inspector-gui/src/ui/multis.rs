@@ -98,7 +98,7 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                             
                                             // Try to render the actual sprite if available
                                             let art_id = part.item_id as u32 + 0x4000;
-                                            if let Some(handle) = app.get_cc_art_texture(ctx, art_id) {
+                                            if let Some(handle) = app.get_tex_art_cc_texture(ctx, art_id) {
                                                 painter.image(handle.id(), part_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
                                             } else {
                                                 painter.rect_filled(part_rect.shrink(1.0), 2.0, egui::Color32::BLUE);

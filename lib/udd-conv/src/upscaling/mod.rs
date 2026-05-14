@@ -25,32 +25,46 @@ use image::{ImageBuffer, Rgba};
 pub enum UpscaleFilter {
     #[default]
     None,
-    Nearest,
-    Bilinear,
-    CatmullRom,
-    Lanczos3,
-    SuperSai,
-    FsrEasu,
-    FsrEasuRcas,
+    Nearest2x,
+    Nearest3x,
+    Nearest4x,
+    Bilinear2x,
+    Bilinear3x,
+    Bilinear4x,
+    CatmullRom2x,
+    CatmullRom3x,
+    CatmullRom4x,
+    Lanczos3_2x,
+    Lanczos3_3x,
+    Lanczos3_4x,
+    SuperSai2x,
+    FsrEasu2x,
+    FsrEasu3x,
+    FsrEasu4x,
+    FsrEasuRcas2x,
+    FsrEasuRcas3x,
+    FsrEasuRcas4x,
     /// Kopf-Lischinski Depixelization variants.
     Depixelize2x,
     Depixelize3x,
     Depixelize4x,
     
     // New algorithms
-    Nedi,
-    TwoSai,
-    SuperEagle,
+    Nedi2x,
+    TwoSai2x,
+    SuperEagle2x,
     Lq2x,
     Lq3x,
     Lq4x,
     Hq2x,
     Hq3x,
     Hq4x,
-    Epx,
+    Epx2x,
     Epx3x,
     Epx4x,
-    Xbr,
+    Xbr2x,
+    Xbr3x,
+    Xbr4x,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -64,25 +78,31 @@ impl UpscaleFilter {
     pub fn scale_factor(self) -> u32 {
         match self {
             Self::None => 1,
+            Self::Nearest2x | Self::Bilinear2x | Self::CatmullRom2x | Self::Lanczos3_2x => 2,
+            Self::Nearest3x | Self::Bilinear3x | Self::CatmullRom3x | Self::Lanczos3_3x => 3,
+            Self::Nearest4x | Self::Bilinear4x | Self::CatmullRom4x | Self::Lanczos3_4x => 4,
             Self::Lq2x => 2,
             Self::Lq3x => 3,
             Self::Lq4x => 4,
-            Self::SuperSai => 2,
-            Self::TwoSai => 2,
-            Self::SuperEagle => 2,
-            Self::FsrEasu | Self::FsrEasuRcas => 2,
+            Self::SuperSai2x => 2,
+            Self::TwoSai2x => 2,
+            Self::SuperEagle2x => 2,
+            Self::FsrEasu2x | Self::FsrEasuRcas2x => 2,
+            Self::FsrEasu3x | Self::FsrEasuRcas3x => 3,
+            Self::FsrEasu4x | Self::FsrEasuRcas4x => 4,
             Self::Depixelize2x => 2,
             Self::Depixelize3x => 3,
             Self::Depixelize4x => 4,
             Self::Hq2x => 2,
             Self::Hq3x => 3,
             Self::Hq4x => 4,
-            Self::Epx => 2,
+            Self::Epx2x => 2,
             Self::Epx3x => 3,
             Self::Epx4x => 4,
-            Self::Xbr => 2,
-            Self::Nedi => 2,
-            _ => 1,
+            Self::Xbr2x => 2,
+            Self::Xbr3x => 3,
+            Self::Xbr4x => 4,
+            Self::Nedi2x => 2,
         }
     }
 
@@ -117,32 +137,32 @@ impl UpscaleFilter {
 
         match self {
             Self::None => rgba.to_vec(),
-            Self::Nearest => {
+            Self::Nearest2x | Self::Nearest3x | Self::Nearest4x => {
                 let img = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba).unwrap();
                 let upscaled =
                     imageops::resize(&img, target_width, target_height, FilterType::Nearest);
                 upscaled.into_raw()
             }
-            Self::Bilinear => {
+            Self::Bilinear2x | Self::Bilinear3x | Self::Bilinear4x => {
                 let img = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba).unwrap();
                 let upscaled =
                     imageops::resize(&img, target_width, target_height, FilterType::Triangle);
                 upscaled.into_raw()
             }
-            Self::CatmullRom => {
+            Self::CatmullRom2x | Self::CatmullRom3x | Self::CatmullRom4x => {
                 let img = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba).unwrap();
                 let upscaled =
                     imageops::resize(&img, target_width, target_height, FilterType::CatmullRom);
                 upscaled.into_raw()
             }
-            Self::Lanczos3 => {
+            Self::Lanczos3_2x | Self::Lanczos3_3x | Self::Lanczos3_4x => {
                 let img = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba).unwrap();
                 let upscaled =
                     imageops::resize(&img, target_width, target_height, FilterType::Lanczos3);
                 upscaled.into_raw()
             }
-            Self::FsrEasu => fsr::apply_easu(width, height, rgba, target_width, target_height).2,
-            Self::FsrEasuRcas => {
+            Self::FsrEasu2x | Self::FsrEasu3x | Self::FsrEasu4x => fsr::apply_easu(width, height, rgba, target_width, target_height).2,
+            Self::FsrEasuRcas2x | Self::FsrEasuRcas3x | Self::FsrEasuRcas4x => {
                 let (_, _, easu_rgba) = fsr::apply_easu(width, height, rgba, target_width, target_height);
                 fsr::apply_rcas(target_width, target_height, &easu_rgba, 0.0)
             }
@@ -158,19 +178,19 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 hqx::apply_hqx(width, height, rgba, scale).2
             }
-            Self::TwoSai | Self::SuperSai | Self::SuperEagle => {
+            Self::TwoSai2x | Self::SuperSai2x | Self::SuperEagle2x => {
                 let scale = (target_width / width).max(1);
                 sai::apply_sai(width, height, rgba, scale, *self).2
             }
-            Self::Epx | Self::Epx3x | Self::Epx4x => {
+            Self::Epx2x | Self::Epx3x | Self::Epx4x => {
                 let scale = (target_width / width).max(1);
                 epx::apply_epx(width, height, rgba, scale).2
             }
-            Self::Xbr => {
+            Self::Xbr2x | Self::Xbr3x | Self::Xbr4x => {
                 let scale = (target_width / width).max(1);
                 xbr::apply_xbr(width, height, rgba, scale).2
             }
-            Self::Nedi => nedi::apply_nedi(width, height, rgba).2,
+            Self::Nedi2x => nedi::apply_nedi(width, height, rgba).2,
         }
     }
 }

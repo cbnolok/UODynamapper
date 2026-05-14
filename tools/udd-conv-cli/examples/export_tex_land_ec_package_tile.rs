@@ -5,15 +5,15 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use image::RgbaImage;
 use udd_assets::{
     bc7::{decode_bc7_to_rgba8888, ImageExtent},
-    cc_art::PagePixelFormat,
-    EcLandPackage,
+    tex_art_cc::PagePixelFormat,
+    TexLandEcPackage,
 };
 
-fn decode_page_rgba(package: &EcLandPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+fn decode_page_rgba(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
     let page = package
         .pages()
         .get(page_index as usize)
-        .ok_or_else(|| eyre::eyre!("missing ec_land page metadata for {page_index}"))?;
+        .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
     let page_bytes = package.read_page_bytes(page_index)?;
     let used_rgba = match page.pixel_format {
         PagePixelFormat::Rgba8888 => page_bytes,
@@ -47,7 +47,7 @@ fn main() -> eyre::Result<()> {
     let package_path = PathBuf::from(
         args.next().ok_or_else(|| {
             eyre::eyre!(
-                "usage: export_ec_land_package_tile <ec_land.uddp> <art_id> <output.png>"
+                "usage: export_tex_land_ec_package_tile <tex_land_ec.uddp> <art_id> <output.png>"
             )
         })?,
     );
@@ -62,12 +62,12 @@ fn main() -> eyre::Result<()> {
             .ok_or_else(|| eyre::eyre!("missing output path"))?,
     );
 
-    let package = EcLandPackage::load(&package_path)
+    let package = TexLandEcPackage::load(&package_path)
         .wrap_err_with(|| format!("load {}", package_path.display()))?;
     let slot = package
         .present_slot(art_id)
         .copied()
-        .with_context(|| format!("art_id {art_id} is not a present ec_land slot"))?;
+        .with_context(|| format!("art_id {art_id} is not a present tex_land_ec slot"))?;
 
     let page_rgba = decode_page_rgba(&package, slot.page_index)?;
     let atlas = RgbaImage::from_raw(package.atlas_width(), package.atlas_height(), page_rgba)
@@ -84,7 +84,7 @@ fn main() -> eyre::Result<()> {
         .wrap_err_with(|| format!("save {}", output.display()))?;
 
     println!(
-        "exported ec_land art_id {} from page {} pos=({}, {}) size={}x{} -> {}",
+        "exported tex_land_ec art_id {} from page {} pos=({}, {}) size={}x{} -> {}",
         art_id,
         slot.page_index,
         slot.x,

@@ -71,6 +71,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -117,6 +118,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -163,6 +165,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [classic.night.lighting]
 enable_fog = 0
@@ -209,6 +212,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -260,6 +264,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -305,6 +310,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -350,6 +356,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -395,6 +402,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
+enable_water_animation = 1
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -446,6 +454,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
+enable_water_animation = 1
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -491,6 +500,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
+enable_water_animation = 1
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -536,6 +546,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
+enable_water_animation = 1
 
 [kr.night.lighting]
 enable_fog = 1
@@ -581,6 +592,7 @@ reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
+enable_water_animation = 1
 
 [kr.cave.lighting]
 enable_fog = 1

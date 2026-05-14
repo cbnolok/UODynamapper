@@ -31,7 +31,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Home, "Home");
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
             if app.client_data.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::CcArt, "CC Art");
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::CcTileData, "CC TileData");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
@@ -127,7 +127,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         crate::app::ViewMode::UopExplorer => {
             uop_browser::ui_uop_browser(app, ctx);
         }
-        crate::app::ViewMode::CcArt | crate::app::ViewMode::CcTileData => {
+        crate::app::ViewMode::TexArtCc | crate::app::ViewMode::CcTileData => {
             art_viewer::ui_art_viewer(app, ctx);
         }
         crate::app::ViewMode::Animations => {

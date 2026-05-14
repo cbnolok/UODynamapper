@@ -3,7 +3,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_assets::ec_land::{EcLandPackage, EcLandTerrainProvenanceRecord};
+use udd_assets::tex_land_ec::{TexLandEcPackage, TexLandEcTerrainProvenanceRecord};
 use uocf::enhanced::facet_decoder::read_facet_block;
 use uocf::uop_container::package::UopPackage;
 
@@ -15,7 +15,7 @@ fn main() -> eyre::Result<()> {
     let mut args = env::args_os().skip(1);
     let package_path = PathBuf::from(args.next().ok_or_else(|| {
         eyre::eyre!(
-            "usage: analyze_ec_land_runtime_coverage <ec_land.uddp> <ecdir> [map_index] [top_n]"
+            "usage: analyze_tex_land_ec_runtime_coverage <tex_land_ec.uddp> <ecdir> [map_index] [top_n]"
         )
     })?);
     let ecdir = PathBuf::from(
@@ -25,7 +25,7 @@ fn main() -> eyre::Result<()> {
     let map_index = parse_optional_u32(args.next(), 0, "map_index")?;
     let top_n = parse_optional_usize(args.next(), DEFAULT_TOP_N, "top_n")?;
 
-    let package = EcLandPackage::load(&package_path)
+    let package = TexLandEcPackage::load(&package_path)
         .wrap_err_with(|| format!("load {}", package_path.display()))?;
     let facet_path = facet_uop_path(&ecdir, map_index);
     let facet_package =
@@ -98,7 +98,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn process_decoded_blocks<'a>(
-    package: &EcLandPackage,
+    package: &TexLandEcPackage,
     blocks: impl Iterator<Item = &'a [uocf::classic::map::MapCell; 64]>,
     total_cells: &mut u64,
     resolved_cells: &mut u64,
@@ -124,7 +124,7 @@ fn process_decoded_blocks<'a>(
     Ok(())
 }
 
-fn print_unresolved_detail(package: &EcLandPackage, terrain_id: u32, count: u64) {
+fn print_unresolved_detail(package: &TexLandEcPackage, terrain_id: u32, count: u64) {
     let material_rows = package
         .terrain_provenance()
         .iter()
@@ -152,7 +152,7 @@ fn print_unresolved_detail(package: &EcLandPackage, terrain_id: u32, count: u64)
     }
 }
 
-fn print_provenance(kind: &str, record: &EcLandTerrainProvenanceRecord) {
+fn print_provenance(kind: &str, record: &TexLandEcTerrainProvenanceRecord) {
     println!(
         "    {} material_id={} alias_index={} alias_slot={} selected_texture={} canonical_slot={} tile_flags={}",
         kind,
