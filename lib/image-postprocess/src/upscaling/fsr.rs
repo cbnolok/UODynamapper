@@ -347,6 +347,14 @@ pub fn apply_rcas(
             let f_l = f[1] + 0.5 * (f[0] + f[2]);
             let h_l = h[1] + 0.5 * (h[0] + h[2]);
 
+            // Noise detection
+            let nz = 0.25 * b_l + 0.25 * d_l + 0.25 * f_l + 0.25 * h_l - e_l;
+            let luma_max = b_l.max(d_l).max(f_l).max(h_l);
+            let luma_min = b_l.min(d_l).min(f_l).min(h_l);
+            let range = (luma_max - luma_min).max(1e-6);
+            let nz = (nz.abs() / range).clamp(0.0, 1.0);
+            let nz = -0.5 * nz + 1.0;
+
             // Min and max of ring
             let mn4 = [
                 b[0].min(d[0]).min(f[0]).min(h[0]),
@@ -373,7 +381,7 @@ pub fn apply_rcas(
             
             // final_lobe = clamp(max(lobeR, lobeG, lobeB), -limit, 0.0) * sharp_val
             let mut final_lobe = lobe[0].max(lobe[1]).max(lobe[2]).min(0.0).max(-FSR_RCAS_LIMIT);
-            final_lobe *= sharp_val;
+            final_lobe *= sharp_val * nz;
             
             // Resolve
             let rcp_l = 1.0 / (4.0 * final_lobe + 1.0);

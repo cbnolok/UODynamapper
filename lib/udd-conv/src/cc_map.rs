@@ -10,9 +10,27 @@
 //! - `Rg16u.r`: Initialized with the Classic `tile_id`.
 //! - `Rg16u.g`: Initialized with `[height_biased:low 8 | mode:high 8]`.
 //!
-//! At runtime, the loader only needs to replace the `r` field with the actual
+//! //! At runtime, the loader only needs to replace the `r` field with the actual
 //! GPU texture layer and update the `mode` bits, without re-parsing the
 //! variable-length or misaligned original formats.
+//!
+//! ### Binary Specification (Map Chunk)
+//!
+//! Each file entry in the `mapX.uddp` package (Data Type: `Map`) contains a raw
+//! byte array representing a 32x32 grid of tiles (1024 tiles total).
+//!
+//! **Structure**: `[Rg16u; 1024]`
+//! **Total Size**: 4,096 bytes (uncompressed).
+//!
+//! **Rg16u Memory Layout**:
+//! | Offset | Size | Name | Content |
+//! | :--- | :--- | :--- | :--- |
+//! | 0 | 2 | `r` | **Graphic ID** (Classic Client 16-bit land ID). |
+//! | 2 | 1 | `g_low` | **Height Biased** (i8 height + 128 offset). |
+//! | 3 | 1 | `g_high` | **Flags** (Bit 7: IsWet, Bits 0-3: Texture Size Mode). |
+//!
+//! Note: The `r` field is overwritten by the engine at runtime with the physical
+//! texture array layer after the page is resolved.
 
 use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -20,6 +38,7 @@ use std::path::{Path, PathBuf};
 
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
+use log::{info, warn};
 use uocf::classic::map::MapPlane;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
@@ -76,24 +95,33 @@ pub fn convert_map_mul_to_uddp_from_sources(
     preference: CcMapSourcePreference,
 ) -> eyre::Result<CcMapBuildSummary> {
     let mul_name = format!("map{}.mul", map_id);
-    let uop_name = format!("map{}LegacyMUL.uop", map_id);
+    let uop_names = [
+        format!("map{}LegacyMUL.uop", map_id),
+        format!("map{}.uop", map_id),
+        format!("map{}xLegacyMUL.uop", map_id),
+        format!("map{}x.uop", map_id),
+    ];
 
     let (map_path, is_uop) = match preference {
         CcMapSourcePreference::Mul => {
             if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
                 (path, false)
-            } else if let Some(path) = find_first_existing_file(source_dirs, &[&uop_name]) {
-                println!("Warning: map{}.mul not found, falling back to uop", map_id);
+            } else if let Some(path) =
+                find_first_existing_file(source_dirs, &uop_names.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+            {
+                warn!("map{}.mul not found, falling back to uop", map_id);
                 (path, true)
             } else {
                 eyre::bail!("Missing map data for map{} (tried .mul and .uop)", map_id);
             }
         }
         CcMapSourcePreference::Uop => {
-            if let Some(path) = find_first_existing_file(source_dirs, &[&uop_name]) {
+            if let Some(path) =
+                find_first_existing_file(source_dirs, &uop_names.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+            {
                 (path, true)
             } else if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
-                println!("Warning: {} not found, falling back to .mul", uop_name);
+                warn!("No .uop found, falling back to .mul");
                 (path, false)
             } else {
                 eyre::bail!("Missing map data for map{} (tried .uop and .mul)", map_id);
@@ -101,9 +129,10 @@ pub fn convert_map_mul_to_uddp_from_sources(
         }
     };
 
-    println!(
-        "Converting {} to {}",
-        map_path.display(),
+    info!(
+        "Converting map {} ({}) to {}",
+        map_id,
+        if is_uop { "UOP" } else { "MUL" },
         output_path.display()
     );
 

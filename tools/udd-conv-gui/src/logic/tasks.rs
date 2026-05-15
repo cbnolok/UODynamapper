@@ -110,7 +110,8 @@ impl UddConvApp {
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
-                    upscale: settings.upscale_tex_land_cc,
+                    upscale_64: settings.upscale_tex_land_cc_64,
+                    upscale_128: settings.upscale_tex_land_cc_128,
                     pixel_format: match settings.opt_tex_land_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -175,9 +176,10 @@ impl UddConvApp {
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
-                    upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
-                    upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
-                    upscale_256: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: settings.upscale_tex_land_ec },
+                    upscale_64: settings.upscale_tex_land_ec_64,
+                    upscale_128: settings.upscale_tex_land_ec_128,
+                    upscale_256: settings.upscale_tex_land_ec_256,
+                    upscale_512: settings.upscale_tex_land_ec_512,
                     pixel_format: match settings.opt_tex_land_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,

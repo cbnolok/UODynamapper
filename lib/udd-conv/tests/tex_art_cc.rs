@@ -31,6 +31,7 @@ fn sparse_slots_keep_absent_records() {
         gutter: 1,
         compression: CompressionFlag::None,
         upscale: UpscaleFilter::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -54,6 +55,7 @@ fn packer_spills_to_multiple_pages() {
         gutter: 1,
         compression: CompressionFlag::None,
         upscale: UpscaleFilter::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -77,6 +79,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         gutter: 0,
         compression: CompressionFlag::None,
         upscale: UpscaleFilter::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 6, 6),
@@ -101,6 +104,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         gutter: 1,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();

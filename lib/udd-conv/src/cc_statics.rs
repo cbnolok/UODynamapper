@@ -10,6 +10,7 @@
 
 use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
 use std::path::{Path, PathBuf};
 
 use crate::package_progress::build_and_write_package;
@@ -42,7 +43,7 @@ pub fn convert_statics_mul_to_uddp_from_sources(
     let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
         .ok_or_else(|| eyre::eyre!("missing {}", mul_file_name))?;
 
-    println!(
+    info!(
         "Converting statics for map {} to {}",
         map_id,
         output_path.display()
@@ -57,7 +58,7 @@ pub fn convert_statics_mul_to_uddp_from_sources(
     let total_chunks = width_chunks * height_chunks;
 
     let reader = StaticsReader::new(&idx_path, &mul_path, width_blocks * 8, height_blocks * 8)?;
-    println!("Loading statics into memory...");
+    info!("Loading statics into memory...");
     let store = reader.load_all()?;
 
     let mut builder = UddpBuilder::new(LookupMode::DenseId);

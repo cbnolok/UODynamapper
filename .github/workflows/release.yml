@@ -29,7 +29,7 @@ env:
   RELEASE_FEATURES_UDDCONV_ISPC: "udd-conv/ispc"
   RELEASE_FEATURES_UDDCONV_ISPC_SOURCE: "udd-conv/ispc_source"
   RELEASE_FEATURES_NONE: ""
-  SCCACHE_GHA_ENABLED: "false"
+  SCCACHE_GHA_ENABLED: "true"
   SCCACHE_NO_DAEMON: "1"
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
     name: Build (Linux x86_64)
     runs-on: ubuntu-22.04
     env:
-      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_GHA_ENABLED: "true"
       SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
@@ -61,6 +61,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -72,14 +75,10 @@ jobs:
           CC: "clang"
           CXX: "clang++"
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
-        run: |
-          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh
+        run: just build-release-nightly
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-linux-x86_64
+        run: just package dynamapper-linux-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -92,7 +91,7 @@ jobs:
     name: Build (Linux aarch64)
     runs-on: ubuntu-24.04-arm
     env:
-      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_GHA_ENABLED: "true"
       SCCACHE_DIR: /tmp/sccache
     steps:
       - name: Checkout repository
@@ -115,6 +114,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -126,14 +128,10 @@ jobs:
           CC: "clang"
           CXX: "clang++"
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
-        run: |
-          chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-          ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-gnu
+        run: just build-release-nightly --target aarch64-unknown-linux-gnu
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-linux-arm64 aarch64-unknown-linux-gnu
+        run: just package dynamapper-linux-arm64 aarch64-unknown-linux-gnu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -165,7 +163,7 @@ jobs:
             sh -eu -c '
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
-                curl ca-certificates pkgconf \
+                curl ca-certificates pkgconf just \
                 alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
@@ -174,15 +172,12 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-              ./scripts/build/linux/build-release-nightly-toolchain.sh --target x86_64-unknown-linux-musl
+              just build-release-nightly --target x86_64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
+        run: just package dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -214,7 +209,7 @@ jobs:
             sh -eu -c '
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
-                curl ca-certificates pkgconf \
+                curl ca-certificates pkgconf just \
                 alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
@@ -223,15 +218,12 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              chmod +x scripts/build/linux/build-release-nightly-toolchain.sh
-              ./scripts/build/linux/build-release-nightly-toolchain.sh --target aarch64-unknown-linux-musl
+              just build-release-nightly --target aarch64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
+        run: just package dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -257,6 +249,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -266,12 +261,10 @@ jobs:
       - name: Build release binary
         env:
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
-        run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
+        run: just build-release-nightly
 
       - name: Package binary and assets
-        shell: pwsh
-        run: |
-          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-x86_64
+        run: just package dynamapper-windows-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -309,6 +302,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -316,7 +312,6 @@ jobs:
           key: "windows-x86_64-clang-nightly-sccache"
 
       - name: Build release binary
-        shell: pwsh
         env:
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_NONE }}
           CC: "clang"
@@ -326,12 +321,10 @@ jobs:
         run: |
           $mingwBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
           $env:PATH = "$mingwBin;$env:PATH"
-          pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target x86_64-pc-windows-gnu
+          just build-release-nightly --target x86_64-pc-windows-gnu
 
       - name: Package binary and assets
-        shell: pwsh
-        run: |
-          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-x86_64-clang -TargetTriple x86_64-pc-windows-gnu
+        run: just package dynamapper-windows-x86_64-clang x86_64-pc-windows-gnu
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -358,6 +351,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -365,15 +361,12 @@ jobs:
           key: "windows-arm64-nightly-sccache"
 
       - name: Build release binary
-        shell: pwsh
         env:
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
-        run: pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1 -Target aarch64-pc-windows-msvc
+        run: just build-release-nightly --target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
-        shell: pwsh
-        run: |
-          pwsh ./scripts/build/windows/package.ps1 -ArtifactName dynamapper-windows-arm64 -TargetTriple aarch64-pc-windows-msvc
+        run: just package dynamapper-windows-arm64 aarch64-pc-windows-msvc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -400,6 +393,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -409,14 +405,10 @@ jobs:
       - name: Build release binary
         env:
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
-        run: |
-          chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
-          ./scripts/build/macos/build-release-nightly-toolchain.sh --target x86_64-apple-darwin
+        run: just build-release-nightly --target x86_64-apple-darwin
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-macos-x86_64 x86_64-apple-darwin
+        run: just package dynamapper-macos-x86_64 x86_64-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -443,6 +435,9 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -452,14 +447,10 @@ jobs:
       - name: Build release binary
         env:
           CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
-        run: |
-          chmod +x scripts/build/macos/build-release-nightly-toolchain.sh
-          ./scripts/build/macos/build-release-nightly-toolchain.sh --target aarch64-apple-darwin
+        run: just build-release-nightly --target aarch64-apple-darwin
 
       - name: Package binary and assets
-        run: |
-          chmod +x scripts/build/linux/package.sh
-          ./scripts/build/linux/package.sh dynamapper-macos-arm64 aarch64-apple-darwin
+        run: just package dynamapper-macos-arm64 aarch64-apple-darwin
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

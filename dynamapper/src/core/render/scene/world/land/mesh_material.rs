@@ -9,17 +9,30 @@ use serde::{self, Deserialize, Serialize};
 // ------------- Land material/shader data -------------
 pub type LandCustomMeshMaterial = ExtendedMaterial<StandardMaterial, LandMaterialExtension>;
 
+/// The primary Bevy Material extension for terrain rendering.
+/// This struct defines the BindGroup layout for the land shader, mapping Rust fields
+/// to WGSL @binding indices.
 #[derive(AsBindGroup, Asset, TypePath, Clone)]
 pub struct LandMaterialExtension {
+    /// 2D Array containing all 64x64 Classic Client land textures.
     #[texture(101, dimension = "2d_array", visibility(vertex, fragment))]
     #[sampler(100, visibility(vertex, fragment))]
     pub texarray_small: Handle<Image>,
+
+    /// 2D Array containing all 128x128 Classic Client land textures.
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
     pub texarray_big: Handle<Image>,
+
+    /// 2D Array containing Enhanced Client (EC) land texture pages.
     #[texture(109, dimension = "2d_array", visibility(vertex, fragment))]
     pub tex_land_ec_page_atlas: Handle<Image>,
+
+    /// Lookup texture for mapping EC Material IDs to physical atlas coordinates.
     #[texture(110, sample_type = "u_int", visibility(vertex, fragment))]
     pub tex_land_ec_lookup: Handle<Image>,
+
+    /// The paged metadata atlas. Each texel (4 bytes) represents one world tile.
+    /// Format: Rg16Uint (R=GraphicID/Layer, G=Packed Height/Flags).
     #[texture(
         103,
         dimension = "2d_array",
@@ -27,14 +40,25 @@ pub struct LandMaterialExtension {
         visibility(vertex, fragment)
     )]
     pub tile_meta_atlas: Handle<Image>,
+
+    /// Configuration for the metadata atlas paging system. 
+    /// Maps logical 2048x2048 world pages to physical GPU array layers.
     #[uniform(104, visibility(vertex, fragment))]
     pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,
+
+    /// Global camera and lighting direction state.
     #[uniform(105, visibility(vertex, fragment))]
     pub scene_uniform: SceneUniform,
+
+    /// Feature toggles and intensity parameters (blur, filtering, water animation).
     #[uniform(106, visibility(vertex, fragment))]
     pub effects_uniform: LandEffectsUniform,
+
+    /// Shared lighting parameters (fog, grading, tonemap) used across all shaders.
     #[uniform(107, visibility(vertex, fragment))]
     pub global_lighting_uniform: GlobalLightingUniforms,
+
+    /// Terrain-specific lighting (bent normals, rim, specular, fill).
     #[uniform(108, visibility(vertex, fragment))]
     pub land_lighting_uniform: LandLightingUniforms,
 }

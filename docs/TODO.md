@@ -196,6 +196,17 @@ Acceptance:
 - [ ] No main-thread stalls during normal camera motion.
 - [ ] Upload bursts remain bounded under stress camera sweeps.
 
+## M2.x VRAM Optimizations (Indexed Metadata)
+
+- [ ] Implement Indexed Metadata Atlas for terrain to reduce VRAM from 4 bytes/tile to 2 bytes/tile (or 1 byte/tile).
+- [ ] Implement a metadata palette/dictionary per page (2048x2048) in a `StorageBuffer`.
+- [ ] Update `atlas.wgsl` to perform the indexed lookup indirection.
+- [ ] Update `cc_map.rs` to generate the palette during conversion.
+
+Acceptance:
+- [ ] 50-75% reduction in terrain metadata VRAM.
+- [ ] Zero loss in height or ID precision.
+
 ## M3. Land Clipmap and Continuous LOD
 
 - [ ] Keep the current threshold-based terrain scale/mesh path explicitly documented as transitional.

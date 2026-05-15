@@ -59,6 +59,9 @@ pub enum UpscaleFilter {
     Hq2x,
     Hq3x,
     Hq4x,
+    Hq2xTrue,
+    Hq3xTrue,
+    Hq4xTrue,
     Epx2x,
     Epx3x,
     Epx4x,
@@ -93,9 +96,9 @@ impl UpscaleFilter {
             Self::Depixelize2x => 2,
             Self::Depixelize3x => 3,
             Self::Depixelize4x => 4,
-            Self::Hq2x => 2,
-            Self::Hq3x => 3,
-            Self::Hq4x => 4,
+            Self::Hq2x | Self::Hq2xTrue => 2,
+            Self::Hq3x | Self::Hq3xTrue => 3,
+            Self::Hq4x | Self::Hq4xTrue => 4,
             Self::Epx2x => 2,
             Self::Epx3x => 3,
             Self::Epx4x => 4,
@@ -177,6 +180,25 @@ impl UpscaleFilter {
             Self::Hq2x | Self::Hq3x | Self::Hq4x => {
                 let scale = (target_width / width).max(1);
                 hqx::apply_hqx(width, height, rgba, scale).2
+            }
+            Self::Hq2xTrue | Self::Hq3xTrue | Self::Hq4xTrue => {
+                let scale = (target_width / width).max(1);
+                let input_pixels_cnt = (width * height) as usize;
+                let output_pixels_cnt = (target_width * target_height) as usize;
+                let mut output_pixels32: Vec<u32> = vec![0; output_pixels_cnt];
+                let input_pixels32: &[u32] = unsafe { std::slice::from_raw_parts(rgba.as_ptr() as *const u32, input_pixels_cnt) };
+
+                if scale == 2 {
+                    ::hqx::hq2x(input_pixels32, &mut output_pixels32, width as usize, height as usize);
+                } else if scale == 3 {
+                    ::hqx::hq3x(input_pixels32, &mut output_pixels32, width as usize, height as usize);
+                } else if scale == 4 {
+                    ::hqx::hq4x(input_pixels32, &mut output_pixels32, width as usize, height as usize);
+                }
+                
+                let byte_length = output_pixels32.len() * 4;
+                let byte_slice: &[u8] = unsafe { std::slice::from_raw_parts(output_pixels32.as_ptr() as *const u8, byte_length) };
+                byte_slice.to_vec()
             }
             Self::TwoSai2x | Self::SuperSai2x | Self::SuperEagle2x => {
                 let scale = (target_width / width).max(1);

@@ -1,52 +1,32 @@
 #!/bin/bash
 # scripts/build/common/rustc_wrapper.sh
-# Intercepts rustc calls to apply specific flags only to dependencies.
+#
+# --- PURPOSE ---
+# This script acts as a wrapper for 'rustc' (the Rust compiler). It is invoked by Cargo 
+# because it is pointed to by the RUSTC_WRAPPER environment variable.
+#
+# --- WHY IS THIS NEEDED? ---
+# 1. Environment Constraints: RUSTC_WRAPPER requires a single executable or script.
+#    Since we often want to toggle between different tools (like sccache) or apply
+#    custom logic per-crate, we use this script as a stable entry point.
+# 2. Interception Logic: This script allows us to inspect the compiler arguments 
+#    (like --crate-name) and modify them on the fly. For example, we can apply 
+#    different optimization levels to dependencies vs. workspace crates.
+# 3. Justfile Integration: The 'justfile' handles the high-level orchestration 
+#    and OS detection, then points RUSTC_WRAPPER here when it wants this custom 
+#    interception logic active.
+#
+# --- CURRENT STATE ---
+# Currently, this script is a pass-through that executes the compiler directly.
+# Future interception logic (e.g. for specific workspace crates) should be added below.
 
 RUSTC=$1
 shift
 
-# Pass through version/query flags directly without interception
+# Pass through version/query flags directly without interception to keep cargo probes clean
 if [[ "$*" == *"-vV"* ]] || [[ "$*" == *"--version"* ]] || [[ "$#" -eq 0 ]]; then
     exec "$RUSTC" "$@"
 fi
 
-CRATE_NAME=""
-for i in "$@"; do
-    if [[ $last_arg == "--crate-name" ]]; then
-        CRATE_NAME=$i
-    fi
-    last_arg=$i
-done
-
-MY_CRATES=("dynamapper" "uocf")
-IS_MY_CRATE=false
-for my_crate in "${MY_CRATES[@]}"; do
-    if [[ "$CRATE_NAME" == "$my_crate" ]]; then
-        IS_MY_CRATE=true
-        break
-    fi
-done
-
-# Helper function to run rustc with optional sccache
-run_rustc() {
-    local extra_args=("$@")
-    if command -v sccache >/dev/null 2>&1; then
-        # Try sccache, fall back to direct rustc on failure
-        if sccache "$RUSTC" "${extra_args[@]}"; then
-            return 0
-        else
-            # sccache failed (or compilation error), fall back to direct rustc
-            # to be safe and ensure output is correctly handled.
-            exec "$RUSTC" "${extra_args[@]}"
-        fi
-    else
-        exec "$RUSTC" "${extra_args[@]}"
-    fi
-}
-
-if [ "$IS_MY_CRATE" = true ]; then
-    # Compile your code with whatever is in Cargo.toml (standard abort)
-    run_rustc "$@"
-else
-    run_rustc "$@"
-fi
+# Execute the actual compiler
+exec "$RUSTC" "$@"

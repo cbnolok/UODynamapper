@@ -84,6 +84,18 @@ pub fn terrain_ui_system(
                 "Classic aims for original fidelity. Enhanced is subtle. KR is vibrant/painterly.",
             );
             ui.add_space(6.0);
+ 
+            // ------------------------- Effects -------------------------
+            ui.collapsing("Effects", |ui| {
+                if toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation) {
+                    u.dirty = true;
+                }
+                if toggle_u32(ui, "Fog", &mut u.lighting.enable_fog) {
+                    u.dirty = true;
+                }
+            });
+ 
+            ui.separator();
 
             // --------------------- Mode & Normals ---------------------
             ui.horizontal(|ui| {
@@ -131,10 +143,8 @@ pub fn terrain_ui_system(
             ui.collapsing("Toggles", |ui| {
                 let mut changed = false;
 
-                // Fog and Tonemap apply in ANY shading mode (keep available always)
-                changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+                // Tonemap apply in ANY shading mode (keep available always)
                 changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                changed |= toggle_u32(ui, "Animated Water", &mut u.effects.enable_water_animation);
 
                 // Color grading & fragment-only features only when in fragment modes
                 let is_classic = u.effects.shading_mode == 0;

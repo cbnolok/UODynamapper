@@ -119,34 +119,44 @@ fn main() -> eyre::Result<()> {
 
             // Extract maps
             for i in 0..=5 {
-                total_count += 1;
-                let map_name = format!("map{}", i);
-                if let Err(e) = LegacyMulFileConverter::from_uop(
-                    &uop_dir.join(format!("{}LegacyMUL.uop", map_name)),
-                    &uop_dir.join(format!("{}.mul", map_name)),
-                    None,
-                    FileType::MapLegacyMul,
-                    i,
-                    None,
-                ) {
-                    eprintln!("Error extracting {}LegacyMUL.uop: {}", map_name, e);
-                } else {
-                    success_count += 1;
-                }
+                let map_variants = [
+                    format!("map{}", i),
+                    format!("map{}x", i),
+                ];
 
-                total_count += 1;
-                let map_x_name = format!("map{}x", i);
-                if let Err(e) = LegacyMulFileConverter::from_uop(
-                    &uop_dir.join(format!("{}LegacyMUL.uop", map_x_name)),
-                    &uop_dir.join(format!("{}.mul", map_x_name)),
-                    None,
-                    FileType::MapLegacyMul,
-                    i,
-                    None,
-                ) {
-                    eprintln!("Error extracting {}LegacyMUL.uop: {}", map_x_name, e);
-                } else {
-                    success_count += 1;
+                for map_name in map_variants {
+                    total_count += 1;
+                    let uop_names = [
+                        format!("{}LegacyMUL.uop", map_name),
+                        format!("{}.uop", map_name),
+                    ];
+
+                    let mut found_path = None;
+                    for uop_name in &uop_names {
+                        let p = uop_dir.join(uop_name);
+                        if p.exists() {
+                            found_path = Some(p);
+                            break;
+                        }
+                    }
+
+                    if let Some(p) = found_path {
+                        if let Err(e) = LegacyMulFileConverter::from_uop(
+                            &p,
+                            &uop_dir.join(format!("{}.mul", map_name)),
+                            None,
+                            FileType::MapLegacyMul,
+                            i,
+                            None,
+                        ) {
+                            eprintln!("Error extracting {}: {}", p.display(), e);
+                        } else {
+                            success_count += 1;
+                        }
+                    } else {
+                        // If it's a primary map (no 'x'), we might want to warn if both are missing.
+                        // But since we are iterating 0..5, some maps might just not exist in all clients.
+                    }
                 }
             }
         }

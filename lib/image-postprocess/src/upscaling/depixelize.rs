@@ -3,6 +3,7 @@
 //! Reference: https://johanneskopf.de/publications/pixelart/
 //! Reference: https://github.com/vvanirudh/Pixel-Art
 
+#![allow(unused_parens)]
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,9 +38,13 @@ impl SimilarityGraph {
         };
 
         let is_similar = |c1: [u8; 4], c2: [u8; 4]| -> bool {
-            if c1[3] == 0 && c2[3] == 0 { return true; }
-            if c1[3] != c2[3] { return false; }
-            
+            if c1[3] == 0 && c2[3] == 0 {
+                return true;
+            }
+            if c1[3] != c2[3] {
+                return false;
+            }
+
             // YUV-like distance
             let r1 = c1[0] as i32;
             let g1 = c1[1] as i32;
@@ -47,13 +52,13 @@ impl SimilarityGraph {
             let r2 = c2[0] as i32;
             let g2 = c2[1] as i32;
             let b2 = c2[2] as i32;
-            
+
             let dr = r1 - r2;
             let dg = g1 - g2;
             let db = b1 - b2;
-            
+
             // Euclidean distance squared in RGB space
-            (dr*dr + dg*dg + db*db) < 30 * 30 // Threshold
+            (dr * dr + dg * dg + db * db) < 30 * 30 // Threshold
         };
 
         let pos_to_idx = |x: i32, y: i32| (y as usize * width as usize + x as usize);
@@ -91,8 +96,10 @@ impl SimilarityGraph {
                 let d2 = (i10.min(i01), i10.max(i01)); // (1,0) - (0,1)
 
                 if edges.contains(&d1) && edges.contains(&d2) {
-                    let score_d1 = calculate_curve_score(x, y, x + 1, y + 1, width, height, rgba, is_similar);
-                    let score_d2 = calculate_curve_score(x + 1, y, x, y + 1, width, height, rgba, is_similar);
+                    let score_d1 =
+                        calculate_curve_score(x, y, x + 1, y + 1, width, height, rgba, is_similar);
+                    let score_d2 =
+                        calculate_curve_score(x + 1, y, x, y + 1, width, height, rgba, is_similar);
 
                     if score_d1 >= score_d2 {
                         edges.remove(&d2);
@@ -103,14 +110,29 @@ impl SimilarityGraph {
             }
         }
 
-        SimilarityGraph { width, height, edges }
+        SimilarityGraph {
+            width,
+            height,
+            edges,
+        }
     }
 }
 
-fn calculate_curve_score<F>(x1: i32, y1: i32, x2: i32, y2: i32, width: u32, height: u32, rgba: &[u8], is_similar: F) -> i32 
-where F: Fn([u8; 4], [u8; 4]) -> bool {
+fn calculate_curve_score<F>(
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    is_similar: F,
+) -> i32
+where
+    F: Fn([u8; 4], [u8; 4]) -> bool,
+{
     let mut score = 0;
-    
+
     let get_color = |x: i32, y: i32| -> Option<[u8; 4]> {
         if x < 0 || x >= width as i32 || y < 0 || y >= height as i32 {
             return None;
@@ -128,22 +150,32 @@ where F: Fn([u8; 4], [u8; 4]) -> bool {
     // Check 8 directions around endpoints
     for ddx in -1..=1 {
         for ddy in -1..=1 {
-            if ddx == 0 && ddy == 0 { continue; }
+            if ddx == 0 && ddy == 0 {
+                continue;
+            }
             if let Some(nc) = get_color(x1 + ddx, y1 + ddy) {
-                if is_similar(nc, c1) { score += 1; }
+                if is_similar(nc, c1) {
+                    score += 1;
+                }
             }
             if let Some(nc) = get_color(x2 + ddx, y2 + ddy) {
-                if is_similar(nc, c2) { score += 1; }
+                if is_similar(nc, c2) {
+                    score += 1;
+                }
             }
         }
     }
 
     // Directional consistency
     if let Some(nc) = get_color(x1 - dx, y1 - dy) {
-        if is_similar(nc, c1) { score += 2; }
+        if is_similar(nc, c1) {
+            score += 2;
+        }
     }
     if let Some(nc) = get_color(x2 + dx, y2 + dy) {
-        if is_similar(nc, c2) { score += 2; }
+        if is_similar(nc, c2) {
+            score += 2;
+        }
     }
 
     score
@@ -151,7 +183,7 @@ where F: Fn([u8; 4], [u8; 4]) -> bool {
 
 pub fn apply_depixelize(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, Vec<u8>) {
     let graph = SimilarityGraph::new(width, height, rgba);
-    
+
     let target_width = width * scale;
     let target_height = height * scale;
     let mut out_rgba = vec![0u8; (target_width * target_height * 4) as usize];
@@ -160,15 +192,15 @@ pub fn apply_depixelize(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u3
         for tx in 0..target_width {
             let sx = (tx / scale) as i32;
             let sy = (ty / scale) as i32;
-            
+
             let fx = (tx % scale) as f32 / scale as f32;
             let fy = (ty % scale) as f32 / scale as f32;
 
             let best_s = resolve_best_pixel(&graph, sx, sy, fx, fy);
-            
+
             let s_idx = (best_s.y as usize * width as usize + best_s.x as usize) * 4;
             let out_idx = (ty as usize * target_width as usize + tx as usize) * 4;
-            
+
             out_rgba[out_idx..out_idx + 4].copy_from_slice(&rgba[s_idx..s_idx + 4]);
         }
     }
@@ -177,8 +209,12 @@ pub fn apply_depixelize(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u3
 }
 
 fn is_connected(graph: &SimilarityGraph, p1: PixelPos, p2: PixelPos) -> bool {
-    if p1.x < 0 || p1.x >= graph.width as i32 || p1.y < 0 || p1.y >= graph.height as i32 { return false; }
-    if p2.x < 0 || p2.x >= graph.width as i32 || p2.y < 0 || p2.y >= graph.height as i32 { return false; }
+    if p1.x < 0 || p1.x >= graph.width as i32 || p1.y < 0 || p1.y >= graph.height as i32 {
+        return false;
+    }
+    if p2.x < 0 || p2.x >= graph.width as i32 || p2.y < 0 || p2.y >= graph.height as i32 {
+        return false;
+    }
     let i1 = (p1.y * graph.width as i32 + p1.x) as usize;
     let i2 = (p2.y * graph.width as i32 + p2.x) as usize;
     graph.edges.contains(&(i1.min(i2), i1.max(i2)))
@@ -211,13 +247,15 @@ fn resolve_best_pixel(graph: &SimilarityGraph, sx: i32, sy: i32, fx: f32, fy: f3
         let ly = if qy == 1 { fy - 0.5 } else { 0.5 - fy };
         // The boundary is lx + ly = 0.5
         if lx + ly > 0.5 {
-            // We are in the "other" triangle. 
+            // We are in the "other" triangle.
             // Decide between p10 and p01.
-            if lx > ly { return p10; }
-            else { return p01; }
+            if lx > ly {
+                return p10;
+            } else {
+                return p01;
+            }
         }
     }
 
     p00
 }
-

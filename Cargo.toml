@@ -7,13 +7,14 @@ members = [
     "lib/udd-conv-ktx2",
     "lib/udd-container",
     "lib/udd-assets",
+    "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",
     "tools/uop-inspector-gui",
-    "tools/uop-dict-populator-gui"
-, "scratch_jxl"]
+    "tools/uop-dict-populator-gui",
+]
 
 
 # --------- Release

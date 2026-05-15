@@ -11,7 +11,7 @@ pub mod tex_land_ec;
 pub mod package_progress;
 pub mod source_paths;
 pub mod tilemeta;
-pub mod upscaling;
+pub use image_postprocess::upscaling;
 pub mod world_lights;
 pub use upscaling as upscale;
 

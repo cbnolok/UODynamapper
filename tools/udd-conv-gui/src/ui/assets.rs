@@ -41,6 +41,7 @@ impl UddConvApp {
                     "Classic items and land textures (art.mul)",
                     Some(&mut self.settings.opt_tex_art_cc),
                     Some(&mut self.settings.upscale_tex_art_cc),
+                    vec![],
                 ) {
                     self.convert_tex_art_cc();
                 }
@@ -49,7 +50,11 @@ impl UddConvApp {
                     "Pack CC Texmaps",
                     "Classic high-res terrain textures (texmaps.mul)",
                     Some(&mut self.settings.opt_tex_land_cc),
-                    Some(&mut self.settings.upscale_tex_land_cc),
+                    None,
+                    vec![
+                        ("64x64", &mut self.settings.upscale_tex_land_cc_64),
+                        ("128x128", &mut self.settings.upscale_tex_land_cc_128),
+                    ],
                 ) {
                     self.convert_tex_land_cc();
                 }
@@ -59,6 +64,7 @@ impl UddConvApp {
                     "Enhanced Client static items (worldart)",
                     Some(&mut self.settings.opt_tex_art_ec),
                     Some(&mut self.settings.upscale_tex_art_ec),
+                    vec![],
                 ) {
                     self.convert_tex_art_ec();
                 }
@@ -67,7 +73,13 @@ impl UddConvApp {
                     "Pack EC Land",
                     "Enhanced Client high-res terrain textures",
                     Some(&mut self.settings.opt_tex_land_ec),
-                    Some(&mut self.settings.upscale_tex_land_ec),
+                    None,
+                    vec![
+                        ("64x64", &mut self.settings.upscale_tex_land_ec_64),
+                        ("128x128", &mut self.settings.upscale_tex_land_ec_128),
+                        ("256x256", &mut self.settings.upscale_tex_land_ec_256),
+                        ("512x512", &mut self.settings.upscale_tex_land_ec_512),
+                    ],
                 ) {
                     self.convert_tex_land_ec();
                 }
@@ -78,6 +90,7 @@ impl UddConvApp {
                     "Unified metadata and radar color data",
                     None,
                     None,
+                    vec![],
                 ) {
                     self.convert_tilemeta();
                 }
@@ -91,7 +104,8 @@ fn draw_asset_row(
     title: &str,
     desc: &str,
     opt: Option<&mut TextureOptimization>,
-    upscale: Option<&mut UpscaleFilter>,
+    upscale_single: Option<&mut UpscaleFilter>,
+    mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig)>,
 ) -> bool {
     let mut clicked = false;
     let btn_size = egui::vec2(150.0, 40.0);
@@ -113,7 +127,7 @@ fn draw_asset_row(
 
             ui.add_space(20.0);
 
-            if opt.is_some() || upscale.is_some() {
+            if opt.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
                 ui.vertical(|ui| {
                     if let Some(opt_val) = opt {
                         let current_fmt = match opt_val {
@@ -157,68 +171,26 @@ fn draw_asset_row(
                             });
                     }
 
-                    if let Some(up_val) = upscale {
+                    if let Some(up_val) = upscale_single {
                         ui.add_space(5.0);
-                        let current_up = format!("{:?}", up_val);
-                        egui::ComboBox::from_id_salt(format!("{}_upscale", title))
-                            .selected_text(if matches!(up_val, UpscaleFilter::None) {
-                                "No Upscaling"
-                            } else {
-                                &current_up
-                            })
-                            .width(220.0)
-                            .show_ui(ui, |ui| {
-                                let filters = [
-                                    UpscaleFilter::None,
-                                    UpscaleFilter::Nearest2x,
-                                    UpscaleFilter::Nearest3x,
-                                    UpscaleFilter::Nearest4x,
-                                    UpscaleFilter::Bilinear2x,
-                                    UpscaleFilter::Bilinear3x,
-                                    UpscaleFilter::Bilinear4x,
-                                    UpscaleFilter::CatmullRom2x,
-                                    UpscaleFilter::CatmullRom3x,
-                                    UpscaleFilter::CatmullRom4x,
-                                    UpscaleFilter::Lanczos3_2x,
-                                    UpscaleFilter::Lanczos3_3x,
-                                    UpscaleFilter::Lanczos3_4x,
-                                    UpscaleFilter::Lq2x,
-                                    UpscaleFilter::Lq3x,
-                                    UpscaleFilter::Lq4x,
-                                    UpscaleFilter::SuperSai2x,
-                                    UpscaleFilter::FsrEasu2x,
-                                    UpscaleFilter::FsrEasu3x,
-                                    UpscaleFilter::FsrEasu4x,
-                                    UpscaleFilter::FsrEasuRcas2x,
-                                    UpscaleFilter::FsrEasuRcas3x,
-                                    UpscaleFilter::FsrEasuRcas4x,
-                                    UpscaleFilter::Depixelize2x,
-                                    UpscaleFilter::Depixelize3x,
-                                    UpscaleFilter::Depixelize4x,
-                                    UpscaleFilter::Nedi2x,
-                                    UpscaleFilter::TwoSai2x,
-                                    UpscaleFilter::SuperEagle2x,
-                                    UpscaleFilter::Hq2x,
-                                    UpscaleFilter::Hq3x,
-                                    UpscaleFilter::Hq4x,
-                                    UpscaleFilter::Epx2x,
-                                    UpscaleFilter::Epx3x,
-                                    UpscaleFilter::Epx4x,
-                                    UpscaleFilter::Xbr2x,
-                                    UpscaleFilter::Xbr3x,
-                                    UpscaleFilter::Xbr4x,
-                                ];
-                                for f in filters {
-                                    let label = if matches!(f, UpscaleFilter::None) {
-                                        "No Upscaling".to_string()
-                                    } else {
-                                        format!("{:?}", f)
-                                    };
-                                    if ui.selectable_label(*up_val == f, label).clicked() {
-                                        *up_val = f;
-                                    }
-                                }
-                            });
+                        draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
+                    }
+
+                    if !upscale_configs.is_empty() {
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            for (label, config) in upscale_configs.iter_mut() {
+                                ui.vertical(|ui| {
+                                    ui.label(egui::RichText::new(*label).strong());
+                                    ui.horizontal(|ui| {
+                                        draw_upscale_filter(ui, format!("{}_upscale_{}", title, label), &mut config.filter);
+                                        ui.label("Size:");
+                                        ui.add(egui::DragValue::new(&mut config.target_size).speed(1.0).range(0..=2048));
+                                    });
+                                });
+                                ui.add_space(10.0);
+                            }
+                        });
                     }
                 });
 
@@ -235,4 +207,70 @@ fn draw_asset_row(
     });
 
     clicked
+}
+
+fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter) {
+    let current_up = format!("{:?}", up_val);
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(if matches!(up_val, UpscaleFilter::None) {
+            "No Upscaling"
+        } else {
+            &current_up
+        })
+        .width(180.0)
+        .show_ui(ui, |ui| {
+            let filters = [
+                UpscaleFilter::None,
+                UpscaleFilter::Nearest2x,
+                UpscaleFilter::Nearest3x,
+                UpscaleFilter::Nearest4x,
+                UpscaleFilter::Bilinear2x,
+                UpscaleFilter::Bilinear3x,
+                UpscaleFilter::Bilinear4x,
+                UpscaleFilter::CatmullRom2x,
+                UpscaleFilter::CatmullRom3x,
+                UpscaleFilter::CatmullRom4x,
+                UpscaleFilter::Lanczos3_2x,
+                UpscaleFilter::Lanczos3_3x,
+                UpscaleFilter::Lanczos3_4x,
+                UpscaleFilter::Lq2x,
+                UpscaleFilter::Lq3x,
+                UpscaleFilter::Lq4x,
+                UpscaleFilter::SuperSai2x,
+                UpscaleFilter::FsrEasu2x,
+                UpscaleFilter::FsrEasu3x,
+                UpscaleFilter::FsrEasu4x,
+                UpscaleFilter::FsrEasuRcas2x,
+                UpscaleFilter::FsrEasuRcas3x,
+                UpscaleFilter::FsrEasuRcas4x,
+                UpscaleFilter::Depixelize2x,
+                UpscaleFilter::Depixelize3x,
+                UpscaleFilter::Depixelize4x,
+                UpscaleFilter::Nedi2x,
+                UpscaleFilter::TwoSai2x,
+                UpscaleFilter::SuperEagle2x,
+                UpscaleFilter::Hq2x,
+                UpscaleFilter::Hq3x,
+                UpscaleFilter::Hq4x,
+                UpscaleFilter::Hq2xTrue,
+                UpscaleFilter::Hq3xTrue,
+                UpscaleFilter::Hq4xTrue,
+                UpscaleFilter::Epx2x,
+                UpscaleFilter::Epx3x,
+                UpscaleFilter::Epx4x,
+                UpscaleFilter::Xbr2x,
+                UpscaleFilter::Xbr3x,
+                UpscaleFilter::Xbr4x,
+            ];
+            for f in filters {
+                let label = if matches!(f, UpscaleFilter::None) {
+                    "No Upscaling".to_string()
+                } else {
+                    format!("{:?}", f)
+                };
+                if ui.selectable_label(*up_val == f, label).clicked() {
+                    *up_val = f;
+                }
+            }
+        });
 }

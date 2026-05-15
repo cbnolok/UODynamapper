@@ -12,15 +12,24 @@ use std::path::Path;
 pub const UO_BLOCK_DIM: u32 = 8;
 
 /// Represents a single static item entry optimized for SIMD/GPU alignment (8 bytes).
-/// The original disk format is 7 bytes; this struct includes 1 byte of padding.
+///
+/// ### Architecture Note:
+/// Although the original Classic Client stores statics in 8x8 blocks, UODynamapper 
+/// packs statics into 32x32 "chunks" within `.uddp` packages. 
+///
+/// In this 32x32 context:
+/// - X/Y offsets require 5 bits each (0-31) to address the full chunk.
+/// - The original 7-byte disk format is expanded to 8 bytes here for alignment.
+/// - Halving this to 4 bytes (32-bit packing) is currently unfeasible without 
+///   loss, as Graphic(16) + Hue(16) + X(5) + Y(5) + Z(8) = 50 bits.
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
 pub struct StaticTile {
     /// The graphic ID (or tile ID) of the static item.
     pub graphic: u16,
-    /// The X-coordinate offset within its 8x8 map block (0-7).
+    /// The X-coordinate offset within the 32x32 map chunk (0-31).
     pub x_offset: u8,
-    /// The Y-coordinate offset within its 8x8 map block (0-7).
+    /// The Y-coordinate offset within the 32x32 map chunk (0-31).
     pub y_offset: u8,
     /// The Z-coordinate (altitude) of the item.
     pub z: i8,

@@ -35,6 +35,8 @@ fn sparse_slots_keep_absent_records() {
         upscale_64: UpscaleConfig::default(),
         upscale_128: UpscaleConfig::default(),
         upscale_256: UpscaleConfig::default(),
+        upscale_512: UpscaleConfig::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -60,6 +62,8 @@ fn packer_spills_to_multiple_pages() {
         upscale_64: UpscaleConfig::default(),
         upscale_128: UpscaleConfig::default(),
         upscale_256: UpscaleConfig::default(),
+        upscale_512: UpscaleConfig::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -85,6 +89,8 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale_64: UpscaleConfig::default(),
         upscale_128: UpscaleConfig::default(),
         upscale_256: UpscaleConfig::default(),
+        upscale_512: UpscaleConfig::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
@@ -178,6 +184,8 @@ fn land_alias_slots_reuse_canonical_page_location() {
         upscale_64: UpscaleConfig::default(),
         upscale_128: UpscaleConfig::default(),
         upscale_256: UpscaleConfig::default(),
+        upscale_512: UpscaleConfig::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Land, 4, 4)];
 
@@ -212,6 +220,8 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         upscale_64: UpscaleConfig::default(),
         upscale_128: UpscaleConfig::default(),
         upscale_256: UpscaleConfig::default(),
+        upscale_512: UpscaleConfig::default(),
+        pixel_format: PagePixelFormat::Rgba8888,
     };
     let tiles = vec![
         rgba_tile(2, ArtTileKind::Land, 4, 4),

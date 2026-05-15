@@ -148,11 +148,11 @@ fn build_tilemeta_tables_from_sources(
         .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop"))?;
     let radarcol_path = find_first_existing_file(source_dirs, &["radarcol.mul"]);
 
-    println!("Using tiledata.mul: {}", tiledata_path.display());
-    println!("Using tileart.uop: {}", tileart_path.display());
-    println!("Using string dictionary: {}", stringdict_path.display());
+    info!("Using tiledata.mul: {}", tiledata_path.display());
+    info!("Using tileart.uop: {}", tileart_path.display());
+    info!("Using string dictionary: {}", stringdict_path.display());
     if let Some(ref p) = radarcol_path {
-        println!("Using radarcol.mul: {}", p.display());
+        info!("Using radarcol.mul: {}", p.display());
     }
 
     info!("Converting Tile Metadata tables from MUL/UOP sources");

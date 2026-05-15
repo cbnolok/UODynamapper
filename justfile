@@ -1,42 +1,187 @@
 # UODynamapper justfile
+#
+# This file serves as the unified entry point for building, testing, and packaging UODynamapper
+# across Linux, macOS, and Windows. It replaces dozens of platform-specific shell/PowerShell scripts.
+#
+# --- Architecture Summary ---
+# 1. Task Runner: 'just' handles OS detection, environment variable exports, and task orchestration.
+# 2. Environment: All recipes export RUSTFLAGS and RUSTC_WRAPPER to ensure consistent behavior.
+# 3. Wrapper Scripts (scripts/build/common/): These small scripts are necessary because
+#    RUSTC_WRAPPER requires an executable/script to wrap rustc. They serve as a pass-through
+#    when sccache is disabled, allowing for potential future interception logic (e.g. for specific crates).
+# 4. Toolchains: We support both Stable and Nightly toolchains. Nightly is used for aggressive
+#    optimizations like 'build-std' which recompiles the standard library for the target.
+# 5. Linkers: On Linux, we automatically detect and use 'mold' or 'wild' for significantly
+#    faster link times.
 
-# --- General ---
+set shell := ["bash", "-c"]
+set windows-shell := ["powershell.exe", "-c"]
 
-# List available recipes
+# --- Platform & Environment Detection ---
+os := os()
+is_windows := if os == "windows" { "true" } else { "false" }
+is_linux := if os == "linux" { "true" } else { "false" }
+is_macos := if os == "macos" { "true" } else { "false" }
+is_ci := env_var_or_default("GITHUB_ACTIONS", "false")
+
+# --- Features ---
+# Enable sccache explicitly. If "true", it will bypass the wrapper and use sccache directly.
+sccache := "false"
+
+# --- Tool Detection ---
+has_sccache := `command -v sccache || echo ""`
+has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
+has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
+
+# --- Build Configuration ---
+
+# RUSTC_WRAPPER logic
+wrapper_path := if is_windows == "true" {
+    "scripts/build/common/rustc_wrapper.bat"
+} else {
+    "scripts/build/common/rustc_wrapper.sh"
+}
+
+# Determine if sccache should be used
+sccache_requested := if sccache == "true" { "true" } else { is_ci }
+sccache_available := if has_sccache != "" { "true" } else { "false" }
+sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }
+
+export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrapper_path }
+
+# Default RUSTFLAGS based on platform
+linux_linker_base := if has_mold != "" {
+    "-Clink-arg=-fuse-ld=mold"
+} else if has_wild != "" {
+    "-Clink-arg=-fuse-ld=wild"
+} else {
+    ""
+}
+
+linux_flags := linux_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+
+# Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
+linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
+
+export RUSTFLAGS := if is_linux == "true" { linux_flags } else { "" }
+
+# --- Recipes ---
+
+# List all available tasks
 default:
     @just --list
 
-# --- Linux / macOS ---
+# Build the workspace in debug mode
+# Purpose: Fast compilation for local development. Includes debug symbols.
+build-debug *args:
+    @echo "Running {{os}} debug build..."
+    cargo build --workspace {{args}}
 
-# Build in debug mode
-build-debug:
-    @./scripts/build/linux/build-debug.sh
+# Build the workspace in release mode (stable toolchain)
+# Purpose: Production build using the stable toolchain. Includes LTO and basic stripping.
+# Linker: Uses mold/wild on Linux for speed, default on other platforms.
+build-release-stable *args:
+    @echo "Running {{os}} stable release build..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -Clink-arg=-Wl,--icf=all -Clink-arg=-Wl,--strip-all"; \
+    cargo build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{args}}
 
-# Build in release mode (nightly toolchain)
-build-release:
-    @./scripts/build/linux/build-release-nightly-toolchain.sh
+# Build the workspace in release mode (nightly toolchain, most optimized)
+# Purpose: Highly optimized production build using nightly features.
+# Optimizations: build-std (recompiles std with optimizations), panic_abort, symbol stripping.
+build-release-nightly *args:
+    @echo "Running {{os}} nightly release build..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -Clink-arg=-Wl,--strip-all -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Zshare-generics=y -Zlocation-detail=none"; \
+    cargo +nightly build --release --locked --workspace --no-default-features --features "{{linux_features}}" \
+        -Z build-std=std,panic_abort \
+        -Z build-std-features=optimize_for_size \
+        {{args}}
 
-# Build in profiling mode
-build-profile:
-    @./scripts/build/linux/build-profile-stable.sh
+# Alias for nightly release build (preferred for production)
+build-release *args:
+    @just build-release-nightly {{args}}
 
-# Package the build
-package name="dynamapper-linux-x86_64" target="":
-    @./scripts/build/linux/package.sh {{name}} {{target}}
+# Build the workspace in profiling mode (stable toolchain)
+# Purpose: Release-level optimizations but with frame pointers and symbols kept for profilers.
+build-profile-stable *args:
+    @echo "Running {{os}} stable profile build..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -C force-frame-pointers=yes"; \
+    cargo build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{args}}
 
-# --- Windows ---
+# Build the workspace in profiling mode (nightly toolchain)
+# Purpose: Most accurate profiling with optimized standard library symbols.
+build-profile-nightly *args:
+    @echo "Running {{os}} nightly profile build..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -C force-frame-pointers=yes -Zshare-generics=y"; \
+    cargo +nightly build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" \
+        -Z build-std=std,panic_abort \
+        {{args}}
 
-# Build in debug mode (Windows)
-build-debug-win:
-    @pwsh ./scripts/build/windows/build-debug.ps1
+# Alias for stable profile build
+build-profile *args:
+    @just build-profile-stable {{args}}
 
-# Build in release mode (Windows)
-build-release-win:
-    @pwsh ./scripts/build/windows/build-release-nightly-toolchain.ps1
+# Run flamegraph profiling (requires cargo-flamegraph)
+# Purpose: Generates a SVG flamegraph for performance analysis.
+build-flamegraph *args:
+    @echo "Running {{os}} flamegraph build..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -C force-frame-pointers=yes -Clink-arg=-Wl,--icf=safe"; \
+    cargo flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" \
+        --bin dynamapper --package dynamapper {{args}}
 
-# Package the build (Windows)
-package-win name="dynamapper-windows-x86_64" target="":
-    @pwsh ./scripts/build/windows/package.ps1 -ArtifactName {{name}} -TargetTriple {{target}}
+# Run bloat analysis (requires cargo-bloat and nightly)
+# Purpose: Identifies which crates/functions contribute most to binary size.
+bloat *args:
+    @echo "Running {{os}} bloat analysis..."
+    export RUSTFLAGS="{{RUSTFLAGS}} -Clink-arg=-Wl,--icf=safe -Cforce-unwind-tables=no -Csymbol-mangling-version=v0 -Zshare-generics=y -Zlocation-detail=none"; \
+    cargo +nightly bloat --release --no-default-features --features "{{linux_features}}" \
+        --config 'profile.release.strip=false' \
+        -Z build-std=std,panic_abort \
+        -Z build-std-features="optimize_for_size" \
+        {{args}}
+
+# Package the build artifacts (Linux/macOS)
+[unix]
+package name="dynamapper-pkg" target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RELEASE_DIR="target/release"
+    if [ -n "{{target}}" ]; then
+        RELEASE_DIR="target/{{target}}/release"
+    fi
+    DEST_DIR="artifact/{{name}}"
+    mkdir -p "$DEST_DIR/tools/cli" "$DEST_DIR/tools/gui" "$DEST_DIR/tools/dev-tools"
+    echo "Packaging {{name}} from $RELEASE_DIR..."
+    [ -f "$RELEASE_DIR/dynamapper" ] && cp "$RELEASE_DIR/dynamapper" "$DEST_DIR/"
+    CLI_UTILS=("udd-pack" "udd-tool" "uop-tool" "cc-uop-mul-converter" "uop-dict-populator-cli")
+    for util in "${CLI_UTILS[@]}"; do
+        [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/cli/"
+    done
+    GUI_UTILS=("udd-conv-gui" "uddp-inspector-gui" "uop-inspector-gui" "uop-dict-populator-gui")
+    for util in "${GUI_UTILS[@]}"; do
+        [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/gui/"
+    done
+    [ -f "$RELEASE_DIR/texture-scanner" ] && cp "$RELEASE_DIR/texture-scanner" "$DEST_DIR/tools/dev-tools/"
+    cp -r assets "$DEST_DIR/"
+    [ -f "README.md" ] && cp "README.md" "$DEST_DIR/"
+    echo "Packaging complete: $DEST_DIR"
+
+# Package the build artifacts (Windows)
+[windows]
+package name="dynamapper-pkg" target="":
+    @powershell -NoProfile -Command " \
+    $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }; \
+    $destDir = 'artifact/{{name}}'; \
+    New-Item -ItemType Directory -Force -Path \"$destDir/tools/cli\", \"$destDir/tools/gui\", \"$destDir/tools/dev-tools\" | Out-Null; \
+    Write-Host \"Packaging {{name}} from $releaseDir...\"; \
+    if (Test-Path \"$releaseDir/dynamapper.exe\") { Copy-Item \"$releaseDir/dynamapper.exe\" \"$destDir/\" }; \
+    $cliUtils = @('udd-pack.exe', 'udd-tool.exe', 'uop-tool.exe', 'cc-uop-mul-converter.exe', 'uop-dict-populator-cli.exe'); \
+    foreach ($util in $cliUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/cli/\" } }; \
+    $guiUtils = @('udd-conv-gui.exe', 'uddp-inspector-gui.exe', 'uop-inspector-gui.exe', 'uop-dict-populator-gui.exe'); \
+    foreach ($util in $guiUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/gui/\" } }; \
+    if (Test-Path \"$releaseDir/texture-scanner.exe\") { Copy-Item \"$releaseDir/texture-scanner.exe\" \"$destDir/tools/dev-tools/\" }; \
+    Copy-Item -Recurse assets \"$destDir/\"; \
+    if (Test-Path 'README.md') { Copy-Item 'README.md' \"$destDir/\" }; \
+    Write-Host \"Packaging complete: $destDir\""
 
 # --- Maintenance ---
 
@@ -57,6 +202,6 @@ fmt:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Lint the Bevy project using bevy_cli (requires: cargo install bevy_cli)
+# Lint the Bevy project using bevy_cli
 bevy-lint:
     bevy lint

@@ -89,6 +89,7 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_64: UpscaleConfig,
     pub upscale_128: UpscaleConfig,
     pub upscale_256: UpscaleConfig,
+    pub upscale_512: UpscaleConfig,
     pub pixel_format: PagePixelFormat,
 }
 
@@ -102,6 +103,7 @@ impl Default for TexLandEcAtlasOptions {
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
+            upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
         }
     }
@@ -598,6 +600,7 @@ fn decode_present_tiles(
                 (64, 64) => Some(&options.upscale_64),
                 (128, 128) => Some(&options.upscale_128),
                 (256, 256) => Some(&options.upscale_256),
+                (512, 512) => Some(&options.upscale_512),
                 _ => None,
             };
 
@@ -1056,6 +1059,7 @@ pub fn encode_slot_manifest(
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
+            upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Bc7,
         },
     )

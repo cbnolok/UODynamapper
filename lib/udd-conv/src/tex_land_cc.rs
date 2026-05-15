@@ -35,7 +35,7 @@ use udd_container::xxh64_virtual_path;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::land_texture::TexMap;
 
-use crate::upscale::UpscaleFilter;
+use crate::upscale::{UpscaleFilter, UpscaleConfig};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
@@ -50,7 +50,8 @@ pub struct TexLandCcAtlasOptions {
     pub atlas_height: u32,
     pub gutter: u16,
     pub compression: CompressionFlag,
-    pub upscale: UpscaleFilter,
+    pub upscale_64: UpscaleConfig,
+    pub upscale_128: UpscaleConfig,
     pub pixel_format: PagePixelFormat,
 }
 
@@ -61,7 +62,8 @@ impl Default for TexLandCcAtlasOptions {
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
             compression: CompressionFlag::None,
-            upscale: UpscaleFilter::default(),
+            upscale_64: UpscaleConfig::default(),
+            upscale_128: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
         }
     }
@@ -254,7 +256,15 @@ fn decode_present_tiles(
             let element = texmap_source.element(id).unwrap();
             let (orig_w, orig_h) = element.size().dimensions();
 
-            let (w, h, rgba) = options.upscale.apply(orig_w, orig_h, &rgba_arc);
+            let (w, h, rgba) = if orig_w == 64 && orig_h == 64 {
+                let target = if options.upscale_64.target_size == 0 { orig_w as u32 * options.upscale_64.filter.scale_factor() } else { options.upscale_64.target_size };
+                (target, target, options.upscale_64.filter.apply_to_size(orig_w as u32, orig_h as u32, &rgba_arc, target, target))
+            } else if orig_w == 128 && orig_h == 128 {
+                let target = if options.upscale_128.target_size == 0 { orig_w as u32 * options.upscale_128.filter.scale_factor() } else { options.upscale_128.target_size };
+                (target, target, options.upscale_128.filter.apply_to_size(orig_w as u32, orig_h as u32, &rgba_arc, target, target))
+            } else {
+                (orig_w as u32, orig_h as u32, rgba_arc.to_vec())
+            };
             decoded_tiles.push(DecodedTexmapTile {
                 id: id as u32,
                 width: w as u16,

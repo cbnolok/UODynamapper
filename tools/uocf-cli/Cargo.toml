@@ -31,9 +31,9 @@ name = "cc-uop-mul-converter"
 path = "src/bin/cc_uop_mul_converter.rs"
 
 [[bin]]
-name = "texture-scanner"
-path = "src/bin/texture_scanner.rs"
-
-[[bin]]
 name = "uop-dict-populator-cli"
 path = "src/bin/uop_dict_populator.rs"
+
+[[bin]]
+name = "texture-scanner"
+path = "src/bin/dev-tools/texture_scanner.rs"

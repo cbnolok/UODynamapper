@@ -48,10 +48,10 @@ fn apply_lq2x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
             let c = get_pixel(x, y + 1);
             let d = get_pixel(x + 1, y + 1);
 
-            let mut p0 = a;
-            let mut p1;
-            let mut p2;
-            let mut p3;
+            let p0 = a;
+            let p1;
+            let p2;
+            let p3;
 
             if a != d && b != c {
                 p1 = interpolate(a, b);
@@ -88,7 +88,7 @@ fn apply_lq2x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
 fn apply_lq3x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
     // Simple 3x expansion with bilinear-like edges
     let target_width = width * 3;
-    let target_height = height * 3;
+    let _target_height = height * 3;
 
     let get_pixel = |x: i32, y: i32| -> [u8; 4] {
         let px = x.clamp(0, width as i32 - 1) as usize;
@@ -157,13 +157,6 @@ fn apply_lq4x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
     let (w2, h2, r2) = apply_lq(width, height, rgba, 2);
     let (_, _, r4) = apply_lq(w2, h2, &r2, 2);
     out_rgba.copy_from_slice(&r4);
-}
-
-fn get_p(x: i32, y: i32, w: u32, h: u32, rgba: &[u8]) -> [u8; 4] {
-    let px = x.clamp(0, w as i32 - 1) as usize;
-    let py = y.clamp(0, h as i32 - 1) as usize;
-    let idx = (py * w as usize + px) * 4;
-    [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
 }
 
 fn interpolate(c1: [u8; 4], c2: [u8; 4]) -> [u8; 4] {

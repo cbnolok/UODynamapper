@@ -14,9 +14,11 @@ const USE_VOLUMETRIC_NOISE: u32 = 1u; // 0=flat fog, 1=domain-warped billow modu
 // Struct definitions
 // ============================================================================
 
-// Per-tile metadata read from the paged atlas texture.
-// R16 channel = texture layer index; G16 = packed [height_biased:low8 | tex_size_and_flags:high8].
-// G high-byte bit layout: bits 0-3 = tex_size (0-3), bit 7 = is_wet flag.
+// Virtual metadata record extracted from the tile_meta_atlas.
+//
+// NOTE: This is NOT a real @group(3) uniform buffer. It is a convenience struct
+// used by the shader to hold data decoded from the Rg16Uint atlas texels.
+// The atlas_read_meta() function in atlas.wgsl populates this struct in real-time.
 struct TileUniform {
   tile_height:   f32,
   texture_size:  u32, // 0=cc-small array, 1=cc-big array, 2=ec page atlas, 3=missing ec tile

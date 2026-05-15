@@ -1,0 +1,11 @@
+[package]
+name = "image-postprocess"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1.0", features = ["derive"] }
+xbrz-rs = "0.1.0"
+hqx = { git = "https://github.com/CryZe/wasmboy-rs" }
+bytemuck = { version = "1.25.0", default-features = false, features = ["derive"] }

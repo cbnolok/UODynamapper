@@ -247,6 +247,10 @@ enum Commands {
         upscale_256_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale_256_algo: CliUpscaleFilter,
+        #[arg(long, default_value_t = 512)]
+        upscale_512_size: u32,
+        #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
+        upscale_512_algo: CliUpscaleFilter,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None, help = "Legacy global upscale filter for art.")]
         upscale: CliUpscaleFilter,
     },
@@ -376,7 +380,8 @@ pub fn run() -> eyre::Result<()> {
                     atlas_height,
                     gutter,
                     compression,
-                    upscale: upscale.into(),
+                    upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
+                    upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
                     pixel_format: if bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
                 },
             )?;
@@ -406,6 +411,8 @@ pub fn run() -> eyre::Result<()> {
             upscale_128_algo,
             upscale_256_size,
             upscale_256_algo,
+            upscale_512_size,
+            upscale_512_algo,
             upscale,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -459,6 +466,10 @@ pub fn run() -> eyre::Result<()> {
                     upscale_256: udd_conv::upscale::UpscaleConfig {
                         target_size: upscale_256_size,
                         filter: upscale_256_algo.into(),
+                    },
+                    upscale_512: udd_conv::upscale::UpscaleConfig {
+                        target_size: upscale_512_size,
+                        filter: upscale_512_algo.into(),
                     },
                     pixel_format: if land_bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
                 },

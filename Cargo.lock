@@ -4194,6 +4194,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hqx"
+version = "0.1.0"
+source = "git+https://github.com/CryZe/wasmboy-rs#d7cbae67906796928c8e451b186f3c653924beb8"
+dependencies = [
+ "lazy_static",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4354,6 +4362,17 @@ dependencies = [
  "tiff",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-postprocess"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "hqx",
+ "image",
+ "serde",
+ "xbrz-rs",
 ]
 
 [[package]]
@@ -6788,13 +6807,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scratch_jxl"
-version = "0.1.0"
-dependencies = [
- "jpegxl-rs",
-]
-
-[[package]]
 name = "sctk-adwaita"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7803,6 +7815,7 @@ dependencies = [
  "ddsfile",
  "guillotiere",
  "image",
+ "image-postprocess",
  "indicatif 0.18.4",
  "intel_tex_2",
  "knuffel",
@@ -7813,7 +7826,6 @@ dependencies = [
  "udd-container",
  "uocf",
  "wgpu-types 27.0.1",
- "xbrz-rs",
  "zstd",
 ]
 
