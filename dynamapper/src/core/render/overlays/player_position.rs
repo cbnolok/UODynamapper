@@ -1,4 +1,3 @@
-use crate::core::render::scene::camera::PlayerCamera;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::{core::render::scene::player::Player, prelude::*};
 use bevy::prelude::*;
@@ -97,19 +96,16 @@ pub fn update_player_position_text(
     >,
     mut last_scale: Local<f32>,
     mut last_player_pos: Local<Option<Vec3>>,
-    mut last_camera_translation: Local<Option<Vec3>>,
     mut last_window_size: Local<Option<(f32, f32)>>,
     mut last_render_zoom: Local<f32>,
     windows: Query<&Window>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     render_zoom: Res<RenderZoom>,
 ) {
-    let current_scale = settings.app.window.player_position_scale;
-    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+    let show_overlay = settings.app.performance.show_overlay;
 
-    // Real-time visibility toggle from settings
+    // 1. Real-time visibility toggle from settings
     if let Ok(mut node) = node_query.single_mut() {
-        let target_display = if settings.app.performance.show_overlay {
+        let target_display = if show_overlay {
             Display::Flex
         } else {
             Display::None
@@ -119,8 +115,16 @@ pub fn update_player_position_text(
         }
     }
 
-    if let (Some(transform), Some((mut text, mut text_font, mut line_height))) =
-        (player_query.single().ok(), text_query.single_mut().ok())
+    // 2. Early exit if not showing
+    if !show_overlay {
+        return;
+    }
+
+    let current_scale = settings.app.window.player_position_scale;
+    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+
+    if let (Some(transform), Ok((mut text, mut text_font, mut line_height))) =
+        (player_query.iter().next(), text_query.single_mut())
     {
         let pos = transform.translation;
 
@@ -128,73 +132,61 @@ pub fn update_player_position_text(
             .single()
             .ok()
             .map(|window| (window.width(), window.height()));
-        let camera_translation = camera_q
-            .single()
-            .ok()
-            .map(|(_, camera_tf)| camera_tf.translation());
 
         let needs_rebuild = *last_player_pos != Some(pos)
             || *last_window_size != window_size
-            || *last_camera_translation != camera_translation
             || (render_zoom.0 - *last_render_zoom).abs() > f32::EPSILON;
 
         if needs_rebuild {
+            use std::fmt::Write;
+            let mut buffer = String::with_capacity(256);
+
             let pos_uo = pos.to_uo_vec3();
-            let mut viewport_tiles = "-- x --".to_string();
-            if let (Some((window_w, window_h)), Ok((cam, cam_tf))) =
-                (window_size, camera_q.single())
-            {
-                let sample_points = [
-                    Vec2::new(0.0, 0.0),
-                    Vec2::new(window_w, 0.0),
-                    Vec2::new(window_w, window_h),
-                    Vec2::new(0.0, window_h),
-                    Vec2::new(window_w * 0.5, 0.0),
-                    Vec2::new(window_w, window_h * 0.5),
-                    Vec2::new(window_w * 0.5, window_h),
-                    Vec2::new(0.0, window_h * 0.5),
-                ];
+            let zoom = render_zoom.0;
 
-                let mut min_x = f32::INFINITY;
-                let mut max_x = f32::NEG_INFINITY;
-                let mut min_z = f32::INFINITY;
-                let mut max_z = f32::NEG_INFINITY;
-                let mut any_hit = false;
+            let mut tiles_w = 0;
+            let mut tiles_h = 0;
+            let mut has_viewport = false;
 
-                for &screen_pt in &sample_points {
-                    if let Ok(ray) = cam.viewport_to_world(cam_tf, screen_pt) {
-                        let dir_y = ray.direction.y;
-                        if dir_y.abs() > 1e-6 {
-                            let t = -ray.origin.y / dir_y;
-                            let hit = ray.origin + *ray.direction * t;
-                            min_x = min_x.min(hit.x);
-                            max_x = max_x.max(hit.x);
-                            min_z = min_z.min(hit.z);
-                            max_z = max_z.max(hit.z);
-                            any_hit = true;
-                        }
-                    }
-                }
+            if let Some((window_w, window_h)) = window_size {
+                // Optimization: Use direct isometric math instead of 8 raycasts.
+                // Logic mirrored from scene.rs :: compute_visible_chunks.
+                use crate::core::render::scene::camera::{ORTHO_SIZE_FACTOR, ORTHO_WIDTH_SCALE_FACTOR};
+                let inv_sqrt2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+                let three_over_sqrt6: f32 = 3.0 / 6.0_f32.sqrt();
 
-                if any_hit {
-                    let tiles_w = ((max_x - min_x).abs().ceil()) as i32;
-                    let tiles_h = ((max_z - min_z).abs().ceil()) as i32;
-                    viewport_tiles = format!("{} x {}", tiles_w, tiles_h);
-                }
+                let ortho_width = window_w / ORTHO_SIZE_FACTOR;
+                let ortho_height = (window_h / ORTHO_WIDTH_SCALE_FACTOR) / ORTHO_SIZE_FACTOR;
+
+                let hw = ortho_width * zoom / 2.0;
+                let hh = ortho_height * zoom / 2.0;
+
+                // Span calculation: how many world units are visible across the screen.
+                // In iso view, the span is a combination of horizontal (u) and vertical (v) frustum extents.
+                tiles_w = (2.0 * hw * inv_sqrt2).ceil() as i32;
+                tiles_h = (2.0 * hh * three_over_sqrt6).ceil() as i32;
+                has_viewport = true;
             }
 
-            let next_text = format!(
-                "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: {} tiles",
-                pos_uo.x, pos_uo.y, pos_uo.z, render_zoom.0, viewport_tiles
+            let _ = write!(
+                &mut buffer,
+                "Player position: [{}, {}, {}]\nRender zoom: {:.2}\nViewport: ",
+                pos_uo.x, pos_uo.y, pos_uo.z, zoom
             );
-            if text.0 != next_text {
-                text.0 = next_text;
+
+            if has_viewport {
+                let _ = write!(&mut buffer, "{} x {} tiles", tiles_w, tiles_h);
+            } else {
+                let _ = write!(&mut buffer, "-- x -- tiles");
+            }
+
+            if text.0 != buffer {
+                text.0 = buffer;
             }
 
             *last_player_pos = Some(pos);
             *last_window_size = window_size;
-            *last_camera_translation = camera_translation;
-            *last_render_zoom = render_zoom.0;
+            *last_render_zoom = zoom;
         }
 
         if scale_changed {

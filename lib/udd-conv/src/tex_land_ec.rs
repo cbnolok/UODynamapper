@@ -34,6 +34,7 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::{AtlasPackingMode, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -72,7 +73,7 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_LAND_EC_METADATA_VERSION: u32 = 2;
+const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
 const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
@@ -91,6 +92,7 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_256: UpscaleConfig,
     pub upscale_512: UpscaleConfig,
     pub pixel_format: PagePixelFormat,
+    pub packing_mode: AtlasPackingMode,
 }
 
 impl Default for TexLandEcAtlasOptions {
@@ -105,7 +107,15 @@ impl Default for TexLandEcAtlasOptions {
             upscale_256: UpscaleConfig::default(),
             upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::MaximumPacking,
         }
+    }
+}
+
+fn packing_mode_repr(mode: AtlasPackingMode) -> u8 {
+    match mode {
+        AtlasPackingMode::MaximumPacking => 0,
+        AtlasPackingMode::Bc7Oriented => 1,
     }
 }
 
@@ -852,7 +862,7 @@ pub fn pack_tiles_into_pages(
 
 fn build_page(
     page_index: u32,
-    tiles: Vec<DecodedArtTile>,
+    mut tiles: Vec<DecodedArtTile>,
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<(BuiltPage, Vec<DecodedArtTile>)> {
     // Assemble into a full-size RGBA page first, then store a cropped payload later.
@@ -866,25 +876,28 @@ fn build_page(
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
-    let gutter = i32::from(options.gutter);
+
+    sort_tiles_within_page(&mut tiles, options);
 
     for tile in tiles {
         // Some EC land textures already span the full atlas width or height.
         // In that case a symmetric gutter would make them mathematically impossible
         // to place, so drop the gutter only on the overflowing axis.
-        let gutter_x = if tile.width as u32 + (options.gutter as u32 * 2) > options.atlas_width {
-            0
-        } else {
-            gutter
-        };
-        let gutter_y = if tile.height as u32 + (options.gutter as u32 * 2) > options.atlas_height {
-            0
-        } else {
-            gutter
-        };
-        let alloc_width = tile.width as i32 + gutter_x * 2;
-        let alloc_height = tile.height as i32 + gutter_y * 2;
-        if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
+        let width_axis = resolve_packing_axis(
+            tile.width as u32,
+            options.atlas_width,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let height_axis = resolve_packing_axis(
+            tile.height as u32,
+            options.atlas_height,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let (Some(width_axis), Some(height_axis)) = (width_axis, height_axis) else {
             eyre::bail!(
                 "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
                 tile.art_id,
@@ -894,11 +907,14 @@ fn build_page(
                 options.atlas_height,
                 options.gutter
             );
-        }
+        };
 
-        if let Some(allocation) = allocator.allocate(size2(alloc_width, alloc_height)) {
-            let inner_x = allocation.rectangle.min.x + gutter_x;
-            let inner_y = allocation.rectangle.min.y + gutter_y;
+        if let Some(allocation) = allocator.allocate(size2(
+            width_axis.alloc_extent as i32,
+            height_axis.alloc_extent as i32,
+        )) {
+            let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
+            let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
             blit_rgba_tile(
                 &mut pixels,
                 options.atlas_width,
@@ -912,8 +928,8 @@ fn build_page(
             // Store the occupied rectangle in texel space. The package writer crops
             // to exactly this rectangle, which is why wide but short land strips can
             // compress so well compared with saving whole 2048x2048 pages verbatim.
-            used_width = used_width.max(inner_x as u32 + tile.width as u32);
-            used_height = used_height.max(inner_y as u32 + tile.height as u32);
+            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
+            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
             placed_tiles.push(PlacedTile {
                 art_id: tile.art_id,
                 kind: tile.kind,
@@ -942,6 +958,40 @@ fn build_page(
         },
         leftovers,
     ))
+}
+
+fn sort_tiles_within_page(tiles: &mut [DecodedArtTile], options: &TexLandEcAtlasOptions) {
+    if options.packing_mode != AtlasPackingMode::Bc7Oriented {
+        return;
+    }
+
+    tiles.sort_by(|left, right| {
+        let left_area = sort_area(left, options);
+        let right_area = sort_area(right, options);
+        right_area
+            .cmp(&left_area)
+            .then_with(|| left.art_id.cmp(&right.art_id))
+    });
+}
+
+fn sort_area(tile: &DecodedArtTile, options: &TexLandEcAtlasOptions) -> u32 {
+    let width_axis = resolve_packing_axis(
+        tile.width as u32,
+        options.atlas_width,
+        options.gutter,
+        options.packing_mode,
+        true,
+    )
+    .unwrap_or_else(|| unreachable!("validated before placement"));
+    let height_axis = resolve_packing_axis(
+        tile.height as u32,
+        options.atlas_height,
+        options.gutter,
+        options.packing_mode,
+        true,
+    )
+    .unwrap_or_else(|| unreachable!("validated before placement"));
+    width_axis.alloc_extent * height_axis.alloc_extent
 }
 
 fn blit_rgba_tile(
@@ -1002,13 +1052,14 @@ pub fn serialize_page_manifest(
     // and compact stored bounds for I/O. That split is what lets the package shrink
     // aggressively without changing any slot coordinates.
     let pixel_format = options.pixel_format;
-    let mut bytes = Vec::with_capacity(25 + pages.len() * 16);
+    let mut bytes = Vec::with_capacity(26 + pages.len() * 16);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
     bytes.push(pixel_format as u8);
+    bytes.push(packing_mode_repr(options.packing_mode));
     bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
     for page in pages {
         bytes.write_u32::<LittleEndian>(page.record.page_index)?;
@@ -1023,12 +1074,13 @@ pub fn serialize_slot_manifest(
     slots: &[TexLandEcSlotRecord],
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
+    bytes.push(packing_mode_repr(options.packing_mode));
     bytes.write_u32::<LittleEndian>(slots.len() as u32)?;
     for slot in slots {
         bytes.write_u32::<LittleEndian>(slot.art_id)?;
@@ -1061,6 +1113,7 @@ pub fn encode_slot_manifest(
             upscale_256: UpscaleConfig::default(),
             upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Bc7,
+            packing_mode: AtlasPackingMode::MaximumPacking,
         },
     )
 }
@@ -1088,4 +1141,44 @@ pub fn encode_terrain_provenance_manifest(
     records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
     serialize_terrain_provenance_manifest(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tile(art_id: u32, width: u16, height: u16) -> DecodedArtTile {
+        DecodedArtTile {
+            art_id,
+            kind: ArtTileKind::Static,
+            width,
+            height,
+            rgba: vec![255; width as usize * height as usize * 4],
+        }
+    }
+
+    #[test]
+    fn bc7_oriented_land_page_is_block_aligned() {
+        let options = TexLandEcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 1,
+            compression: CompressionFlag::None,
+            upscale_64: UpscaleConfig::default(),
+            upscale_128: UpscaleConfig::default(),
+            upscale_256: UpscaleConfig::default(),
+            upscale_512: UpscaleConfig::default(),
+            pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::Bc7Oriented,
+        };
+
+        let (page, leftovers) = build_page(0, vec![tile(11, 3, 3)], &options).unwrap();
+        assert!(leftovers.is_empty());
+        assert_eq!(page.placed_tiles.len(), 1);
+        let placed = &page.placed_tiles[0];
+        assert_eq!(placed.x % 4, 0);
+        assert_eq!(placed.y % 4, 0);
+        assert_eq!(page.record.used_width % 4, 0);
+        assert_eq!(page.record.used_height % 4, 0);
+    }
 }

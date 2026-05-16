@@ -16,7 +16,7 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
-const TEX_ART_CC_METADATA_VERSION: u32 = 2;
+const TEX_ART_CC_METADATA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -39,6 +39,24 @@ impl PagePixelFormat {
             Self::Bc7 => "bc7",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AtlasPackingMode {
+    MaximumPacking = 0,
+    Bc7Oriented = 1,
+}
+
+impl AtlasPackingMode {
+    pub(crate) fn from_repr(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::MaximumPacking),
+            1 => Some(Self::Bc7Oriented),
+            _ => None,
+        }
+    }
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +112,7 @@ pub struct TexArtCcPackage {
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
+    packing_mode: AtlasPackingMode,
     pages: Vec<TexArtCcPageRecord>,
     slots: Vec<TexArtCcSlotRecord>,
     page_cache: AtlasPageCache,
@@ -136,11 +155,16 @@ impl TexArtCcPackage {
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
             .context("tex_art_cc.uddp missing metadata/slots.bin")?;
 
-        let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
-        let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
+        let (page_width, page_height, page_gutter, page_packing_mode, pages) =
+            parse_page_manifest(&page_manifest)?;
+        let (slot_width, slot_height, slot_gutter, slot_packing_mode, slots) =
+            parse_slot_manifest(&slot_manifest)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
             eyre::bail!("tex_art_cc metadata headers disagree on atlas dimensions or gutter");
+        }
+        if page_packing_mode != slot_packing_mode {
+            eyre::bail!("tex_art_cc metadata headers disagree on atlas packing mode");
         }
 
         Ok(Self {
@@ -148,6 +172,7 @@ impl TexArtCcPackage {
             atlas_width: page_width,
             atlas_height: page_height,
             gutter: page_gutter,
+            packing_mode: page_packing_mode,
             pages,
             slots,
             page_cache: AtlasPageCache::new(options),
@@ -168,6 +193,10 @@ impl TexArtCcPackage {
 
     pub fn gutter(&self) -> u16 {
         self.gutter
+    }
+
+    pub fn packing_mode(&self) -> AtlasPackingMode {
+        self.packing_mode
     }
 
     pub fn pages(&self) -> &[TexArtCcPageRecord] {
@@ -204,7 +233,14 @@ impl TexArtCcPackage {
             .get(page_index as usize)
             .ok_or_else(|| eyre::eyre!("missing atlas page metadata for {page_index}"))?;
         let page_bytes = self.read_page_bytes(page_index)?;
-        decode_atlas_page_rgba(&page_bytes, page.pixel_format, page.used_width, page.used_height)
+        decode_atlas_page_rgba(
+            &page_bytes,
+            page.pixel_format,
+            self.atlas_width,
+            self.atlas_height,
+            page.used_width,
+            page.used_height,
+        )
     }
 
     pub fn present_slot(&self, art_id: u32) -> Option<&TexArtCcSlotRecord> {
@@ -214,17 +250,20 @@ impl TexArtCcPackage {
     }
 }
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtCcPageRecord>)> {
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexArtCcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_ART_CC_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_ART_CC_METADATA_VERSION {
+        eyre::bail!("invalid version");
+    }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
     let pixel_format = PagePixelFormat::from_repr(cursor.read_u8()?).unwrap();
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut pages = Vec::with_capacity(count);
     for _ in 0..count {
@@ -240,19 +279,22 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtC
             pixel_format,
         });
     }
-    Ok((w, h, g, pages))
+    Ok((w, h, g, packing_mode, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtCcSlotRecord>)> {
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexArtCcSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_ART_CC_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_ART_CC_METADATA_VERSION {
+        eyre::bail!("invalid version");
+    }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
@@ -267,7 +309,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexArtC
             height: cursor.read_u16::<LittleEndian>()?,
         });
     }
-    Ok((w, h, g, slots))
+    Ok((w, h, g, packing_mode, slots))
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {

@@ -245,7 +245,7 @@ pub fn sys_render_preferences_dialog(
         settings.as_ref().keybindings.user_settings
     );
 
-    let response = egui::Window::new(title)
+    let _response = egui::Window::new(title)
         .default_pos([200.0, 80.0])
         .fixed_size([320.0, 420.0])
         .collapsible(false)
@@ -541,8 +541,11 @@ pub fn sys_render_preferences_dialog(
             // (Removed immediate sync block, now handled by debounced timer at the top of the system)
         });
 
-    state.open = window_open;
-    let _ = response;
+    // PERFORMANCE: Only update state.open if it actually changed to avoid triggering
+    // Bevy's change detection on every frame, which can be expensive.
+    if state.open != window_open {
+        state.open = window_open;
+    }
 }
 
 pub fn sys_apply_performance_settings(

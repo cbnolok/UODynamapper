@@ -26,7 +26,7 @@ This project is organized as a Cargo workspace with several specialized componen
 - **[udd-conv-cli](tools/udd-conv-cli/)**: CLI tooling for packing, inspecting, editing, diffing, and extracting UODynamapper `.uddp` packages.
 - **[uocf-cli](tools/uocf-cli/)**: General-purpose UO tooling, providing:
   - `uoptool`: Utility for hashing, brute-force cracking, replacing files inside, and rebuilding modern `.uop` package files.
-  - `cc-uop-mul-converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats for Classic Client.
+  - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats for Classic Client.
   - `texture_scanner`: Identification and isolation of land/terrain candidates from UO texture pools.
   - `uop-dict-populator-cli`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
 - **[uddp-inspector-gui](tools/uddp-inspector-gui/)**: GUI for inspecting `.uddp` package contents, atlas layers, and metadata slots.

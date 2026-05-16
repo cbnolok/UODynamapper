@@ -102,6 +102,12 @@ pub struct StaticArtDrawDebugState {
 }
 
 #[derive(Resource, Default)]
+pub struct StaticArtUploadCache {
+    pub sprite_instances: Vec<SpriteInstance>,
+    pub ground_instances: Vec<GroundTileInstance>,
+}
+
+#[derive(Resource, Default)]
 pub struct ActiveArtAtlasBindingState {
     pub configured_source: Option<ClientTextureSource>,
 }
@@ -405,6 +411,8 @@ fn apply_sprite_art_atlas_resize(
                         atlas.queue_page_upload(
                             page_index,
                             layer,
+                            atlas.page_width,
+                            atlas.page_height,
                             page.used_width,
                             page.used_height,
                             page.pixel_format,
@@ -421,6 +429,8 @@ fn apply_sprite_art_atlas_resize(
                         atlas.queue_page_upload(
                             page_index,
                             layer,
+                            atlas.page_width,
+                            atlas.page_height,
                             page.used_width,
                             page.used_height,
                             page.pixel_format,
@@ -474,6 +484,8 @@ fn apply_ground_art_atlas_resize(
                 atlas.queue_page_upload(
                     page_index,
                     layer,
+                    atlas.page_width,
+                    atlas.page_height,
                     page.used_width,
                     page.used_height,
                     page.pixel_format,
@@ -1100,6 +1112,7 @@ pub fn sys_update_sprite_instance_buffer(
     zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     scene_state: Res<crate::core::render::scene::SceneStateData>,
     world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
+    mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
     if instances.0.is_empty() {
@@ -1133,20 +1146,24 @@ pub fn sys_update_sprite_instance_buffer(
         transparent_material.extension.params.map_height_tiles = map_height_tiles;
     }
 
-    // Update buffer with new instances
-    let _ = storage_buffers.insert(
-        &opaque_buffer_handle,
-        ShaderStorageBuffer::from(instances.0.clone()),
-    );
+    let upload_changed = upload_cache.sprite_instances != instances.0;
+    if upload_changed {
+        let _ = storage_buffers.insert(
+            &opaque_buffer_handle,
+            ShaderStorageBuffer::from(instances.0.clone()),
+        );
+        upload_cache.sprite_instances.clone_from(&instances.0);
+    }
 
-    if debug_state.last_uploaded_instances != Some(instances.0.len()) {
+    if upload_changed || debug_state.last_uploaded_instances != Some(instances.0.len()) {
         console_logger::one(
             LogSev::Debug,
             LogAbout::RenderWorldArt,
             &format!(
-                "static art upload: instances={} render_mode={}",
+                "static art upload: instances={} render_mode={} changed={}",
                 instances.0.len(),
                 render_mode,
+                upload_changed,
             ),
         );
         debug_state.last_uploaded_instances = Some(instances.0.len());
@@ -1160,6 +1177,7 @@ pub fn sys_update_ground_instance_buffer(
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
     scene_state: Res<crate::core::render::scene::SceneStateData>,
     world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
+    mut upload_cache: ResMut<StaticArtUploadCache>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
 ) {
     if instances.0.is_empty() {
@@ -1190,16 +1208,24 @@ pub fn sys_update_ground_instance_buffer(
         transparent_material.extension.params.map_height_tiles = map_height_tiles;
     }
 
-    let _ = storage_buffers.insert(
-        &opaque_buffer_handle,
-        ShaderStorageBuffer::from(instances.0.clone()),
-    );
+    let upload_changed = upload_cache.ground_instances != instances.0;
+    if upload_changed {
+        let _ = storage_buffers.insert(
+            &opaque_buffer_handle,
+            ShaderStorageBuffer::from(instances.0.clone()),
+        );
+        upload_cache.ground_instances.clone_from(&instances.0);
+    }
 
-    if debug_state.last_uploaded_ground_instances != Some(instances.0.len()) {
+    if upload_changed || debug_state.last_uploaded_ground_instances != Some(instances.0.len()) {
         console_logger::one(
             LogSev::Warn,
             LogAbout::RenderWorldArt,
-            &format!("static ground upload: instances={}", instances.0.len()),
+            &format!(
+                "static ground upload: instances={} changed={}",
+                instances.0.len(),
+                upload_changed,
+            ),
         );
         debug_state.last_uploaded_ground_instances = Some(instances.0.len());
     }

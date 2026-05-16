@@ -17,6 +17,7 @@ pub mod xbr;
 pub mod epx;
 pub mod nedi;
 pub mod lq;
+pub mod mmpx;
 
 use image::imageops::{self, FilterType};
 use image::{ImageBuffer, Rgba};
@@ -68,6 +69,8 @@ pub enum UpscaleFilter {
     Xbr2x,
     Xbr3x,
     Xbr4x,
+    Mmpx2x,
+    Mmpx4x,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -106,6 +109,8 @@ impl UpscaleFilter {
             Self::Xbr3x => 3,
             Self::Xbr4x => 4,
             Self::Nedi2x => 2,
+            Self::Mmpx2x => 2,
+            Self::Mmpx4x => 4,
         }
     }
 
@@ -213,6 +218,10 @@ impl UpscaleFilter {
                 xbr::apply_xbr(width, height, rgba, scale).2
             }
             Self::Nedi2x => nedi::apply_nedi(width, height, rgba).2,
+            Self::Mmpx2x | Self::Mmpx4x => {
+                let scale = (target_width / width).max(1);
+                mmpx::apply_mmpx(width, height, rgba, scale).2
+            }
         }
     }
 }

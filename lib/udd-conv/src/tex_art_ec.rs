@@ -32,6 +32,7 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::{AtlasPackingMode, merge_unplaced_tiles, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -54,7 +55,7 @@ use crate::upscale::UpscaleFilter;
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_EC_METADATA_VERSION: u32 = 2;
+const TEX_ART_EC_METADATA_VERSION: u32 = 3;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -71,6 +72,7 @@ pub struct TexArtEcAtlasOptions {
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
     pub pixel_format: PagePixelFormat,
+    pub packing_mode: AtlasPackingMode,
 }
 
 impl Default for TexArtEcAtlasOptions {
@@ -83,7 +85,15 @@ impl Default for TexArtEcAtlasOptions {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::MaximumPacking,
         }
+    }
+}
+
+fn packing_mode_repr(mode: AtlasPackingMode) -> u8 {
+    match mode {
+        AtlasPackingMode::MaximumPacking => 0,
+        AtlasPackingMode::Bc7Oriented => 1,
     }
 }
 
@@ -537,7 +547,7 @@ fn decode_present_tiles(
             .get(&art_id)
             .context("missing tileart definition during art decode")?;
 
-        if art_data.tile_type != TileType::Static {
+        if !should_include_art_tile(art_data.tile_type) {
             continue;
         }
         let resolved = if let Some(texture) = art_data.ec_texture.as_ref() {
@@ -683,6 +693,13 @@ fn decode_present_tiles(
     Ok((decoded_tiles, aliases, crop_adjustments))
 }
 
+fn should_include_art_tile(tile_type: TileType) -> bool {
+    // Tileart ownership is authoritative for tex_art_ec packing. Surface-like
+    // entries still belong to tileart even when higher-level metadata classifies
+    // them as solid for runtime routing. Only liquid shader entries are excluded.
+    tile_type != TileType::Liquid
+}
+
 pub fn requested_source_window(texture: &ArtTexture) -> Option<SourceClipRect> {
     Some(SourceClipRect {
         left: texture.start_x.max(0) as u16,
@@ -711,27 +728,17 @@ fn is_flat_material_sheet_static(art_data: &ArtData) -> bool {
 
 fn should_skip_terrain_material_static(
     art_data: &ArtData,
-    texture: &ArtTexture,
-    file: &TextureFile,
-    terrain_source_texture_ids: &HashSet<u32>,
+    _texture: &ArtTexture,
+    _file: &TextureFile,
+    _terrain_source_texture_ids: &HashSet<u32>,
 ) -> eyre::Result<bool> {
     if is_flat_material_sheet_static(art_data) {
         return Ok(true);
     }
 
-    if !terrain_source_texture_ids.contains(&texture.texture_id) {
-        return Ok(false);
-    }
-
-    if texture.offset_x != 0 || texture.offset_y != 0 {
-        return Ok(false);
-    }
-
-    let image = file.decode_to_rgba()?;
-    let source_width = image.width() as u16;
-    let source_height = image.height() as u16;
-
-    Ok(normalized_source_clip_rect(source_width, source_height, texture).is_none())
+    // Tileart ownership is authoritative for tex_art_ec. Sharing a source texture
+    // id with terrain materials is not enough reason to drop a static art entry.
+    Ok(false)
 }
 
 pub fn register_rendered_tile_alias(
@@ -983,10 +990,6 @@ pub fn pack_tiles_into_pages(
     while !remaining.is_empty() {
         let (page_tiles, leftovers) = take_page_tile_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_tiles, options)?;
-        debug_assert!(
-            unplaced.is_empty(),
-            "selected page tile prefix must fit entirely"
-        );
         if page.placed_tiles.is_empty() {
             eyre::bail!(
                 "could not fit any art tile into atlas page {}x{}",
@@ -1012,7 +1015,7 @@ pub fn pack_tiles_into_pages(
         }
 
         pages.push(page);
-        remaining = leftovers;
+        remaining = merge_unplaced_tiles(leftovers, unplaced, |tile| tile.art_id);
         page_index += 1;
     }
 
@@ -1061,7 +1064,7 @@ fn max_fitting_page_prefix_len(
 
 fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) -> eyre::Result<bool> {
     let mut to_pack = tiles.to_vec();
-    sort_tiles_within_page(&mut to_pack);
+    sort_tiles_within_page(&mut to_pack, options);
 
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
@@ -1069,19 +1072,21 @@ fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) ->
     ));
 
     for tile in &to_pack {
-        let gutter_x = if tile.width as u32 + (options.gutter as u32 * 2) > options.atlas_width {
-            0
-        } else {
-            i32::from(options.gutter)
-        };
-        let gutter_y = if tile.height as u32 + (options.gutter as u32 * 2) > options.atlas_height {
-            0
-        } else {
-            i32::from(options.gutter)
-        };
-        let alloc_width = tile.width as i32 + gutter_x * 2;
-        let alloc_height = tile.height as i32 + gutter_y * 2;
-        if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
+        let width_axis = resolve_packing_axis(
+            tile.width as u32,
+            options.atlas_width,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let height_axis = resolve_packing_axis(
+            tile.height as u32,
+            options.atlas_height,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let (Some(width_axis), Some(height_axis)) = (width_axis, height_axis) else {
             eyre::bail!(
                 "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
                 tile.art_id,
@@ -1091,10 +1096,10 @@ fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) ->
                 options.atlas_height,
                 options.gutter
             );
-        }
+        };
 
         if allocator
-            .allocate(size2(alloc_width, alloc_height))
+            .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
             .is_none()
         {
             return Ok(false);
@@ -1104,14 +1109,39 @@ fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) ->
     Ok(true)
 }
 
-fn sort_tiles_within_page(tiles: &mut [DecodedArtTile]) {
+fn sort_tiles_within_page(tiles: &mut [DecodedArtTile], options: &TexArtEcAtlasOptions) {
     tiles.sort_by(|left, right| {
-        let left_area = left.width as u32 * left.height as u32;
-        let right_area = right.width as u32 * right.height as u32;
+        let left_area = sort_area(left, options);
+        let right_area = sort_area(right, options);
         right_area
             .cmp(&left_area)
             .then_with(|| left.art_id.cmp(&right.art_id))
     });
+}
+
+fn sort_area(tile: &DecodedArtTile, options: &TexArtEcAtlasOptions) -> u32 {
+    match options.packing_mode {
+        AtlasPackingMode::MaximumPacking => tile.width as u32 * tile.height as u32,
+        AtlasPackingMode::Bc7Oriented => {
+            let width_axis = resolve_packing_axis(
+                tile.width as u32,
+                options.atlas_width,
+                options.gutter,
+                options.packing_mode,
+                true,
+            )
+            .unwrap_or_else(|| unreachable!("validated before placement"));
+            let height_axis = resolve_packing_axis(
+                tile.height as u32,
+                options.atlas_height,
+                options.gutter,
+                options.packing_mode,
+                true,
+            )
+            .unwrap_or_else(|| unreachable!("validated before placement"));
+            width_axis.alloc_extent * height_axis.alloc_extent
+        }
+    }
 }
 
 fn build_page(
@@ -1130,26 +1160,28 @@ fn build_page(
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
-    let gutter = i32::from(options.gutter);
+    let _gutter = i32::from(options.gutter);
 
-    sort_tiles_within_page(&mut tiles);
+    sort_tiles_within_page(&mut tiles, options);
 
     for tile in tiles {
         // A few EC statics legitimately span the full atlas width. Keep the gutter
         // where it fits, but drop it on a saturated axis so those tiles can still be packed.
-        let gutter_x = if tile.width as u32 + (options.gutter as u32 * 2) > options.atlas_width {
-            0
-        } else {
-            gutter
-        };
-        let gutter_y = if tile.height as u32 + (options.gutter as u32 * 2) > options.atlas_height {
-            0
-        } else {
-            gutter
-        };
-        let alloc_width = tile.width as i32 + gutter_x * 2;
-        let alloc_height = tile.height as i32 + gutter_y * 2;
-        if alloc_width > options.atlas_width as i32 || alloc_height > options.atlas_height as i32 {
+        let width_axis = resolve_packing_axis(
+            tile.width as u32,
+            options.atlas_width,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let height_axis = resolve_packing_axis(
+            tile.height as u32,
+            options.atlas_height,
+            options.gutter,
+            options.packing_mode,
+            true,
+        );
+        let (Some(width_axis), Some(height_axis)) = (width_axis, height_axis) else {
             eyre::bail!(
                 "art tile {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
                 tile.art_id,
@@ -1159,11 +1191,14 @@ fn build_page(
                 options.atlas_height,
                 options.gutter
             );
-        }
+        };
 
-        if let Some(allocation) = allocator.allocate(size2(alloc_width, alloc_height)) {
-            let inner_x = allocation.rectangle.min.x + gutter_x;
-            let inner_y = allocation.rectangle.min.y + gutter_y;
+        if let Some(allocation) = allocator.allocate(size2(
+            width_axis.alloc_extent as i32,
+            height_axis.alloc_extent as i32,
+        )) {
+            let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
+            let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
             blit_rgba_tile(
                 &mut pixels,
                 options.atlas_width,
@@ -1177,8 +1212,8 @@ fn build_page(
             // Record the furthest texel that carries real image data. The package
             // stores only `used_width x used_height`, while the manifest preserves
             // the original atlas dimensions needed to interpret these coordinates.
-            used_width = used_width.max(inner_x as u32 + tile.width as u32);
-            used_height = used_height.max(inner_y as u32 + tile.height as u32);
+            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
+            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
             placed_tiles.push(PlacedTile {
                 art_id: tile.art_id,
                 kind: tile.kind,
@@ -1267,13 +1302,14 @@ pub fn serialize_page_manifest(
     // logical atlas pages. `used_width/used_height` describe the stored bytes,
     // while `atlas_width/atlas_height` keep the public coordinate system stable.
     let pixel_format = options.pixel_format;
-    let mut bytes = Vec::with_capacity(25 + pages.len() * 16);
+    let mut bytes = Vec::with_capacity(26 + pages.len() * 16);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
     bytes.push(pixel_format as u8);
+    bytes.push(packing_mode_repr(options.packing_mode));
     bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
     for page in pages {
         bytes.write_u32::<LittleEndian>(page.record.page_index)?;
@@ -1288,12 +1324,13 @@ pub fn serialize_slot_manifest(
     slots: &[TexArtEcSlotRecord],
     options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(24 + slots.len() * 20);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 20);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
+    bytes.push(packing_mode_repr(options.packing_mode));
     bytes.write_u32::<LittleEndian>(slots.len() as u32)?;
     for slot in slots {
         bytes.write_u32::<LittleEndian>(slot.art_id)?;
@@ -1324,6 +1361,66 @@ pub fn encode_slot_manifest(
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::MaximumPacking,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tile(art_id: u32, width: u16, height: u16) -> DecodedArtTile {
+        DecodedArtTile {
+            art_id,
+            kind: ArtTileKind::Static,
+            width,
+            height,
+            rgba: vec![255; width as usize * height as usize * 4],
+        }
+    }
+
+    #[test]
+    fn requeue_path_preserves_all_unplaced_tiles() {
+        let merged = merge_unplaced_tiles(
+            vec![tile(10, 1, 1), tile(30, 1, 1)],
+            vec![tile(20, 1, 1), tile(15, 1, 1)],
+            |tile| tile.art_id,
+        );
+
+        let ids = merged.into_iter().map(|tile| tile.art_id).collect::<Vec<_>>();
+        assert_eq!(ids, vec![10, 15, 20, 30]);
+    }
+
+    #[test]
+    fn bc7_oriented_art_page_is_block_aligned() {
+        let options = TexArtEcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 1,
+            crop_transparent_bounds: false,
+            compression: CompressionFlag::None,
+            upscale: UpscaleFilter::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::Bc7Oriented,
+        };
+
+        let (page, leftovers) = build_page(0, vec![tile(7, 3, 3)], &options).unwrap();
+        assert!(leftovers.is_empty());
+        assert_eq!(page.placed_tiles.len(), 1);
+        let placed = &page.placed_tiles[0];
+        assert_eq!(placed.x % 4, 0);
+        assert_eq!(placed.y % 4, 0);
+        assert_eq!(page.record.used_width % 4, 0);
+        assert_eq!(page.record.used_height % 4, 0);
+        assert_eq!(placed.width, 3);
+        assert_eq!(placed.height, 3);
+    }
+
+    #[test]
+    fn art_decode_includes_solid_tileart_entries() {
+        assert!(should_include_art_tile(TileType::Static));
+        assert!(should_include_art_tile(TileType::Solid));
+        assert!(!should_include_art_tile(TileType::Liquid));
+    }
 }

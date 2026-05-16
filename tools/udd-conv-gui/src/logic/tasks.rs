@@ -1,9 +1,10 @@
 use color_eyre::eyre;
 use udd_conv::{
+    AtlasPackingMode,
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources},
-    tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources},
+    tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources},
     cc_map::convert_map_mul_to_uddp_from_sources,
     cc_statics::convert_statics_mul_to_uddp_from_sources,
     tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp},
@@ -18,7 +19,32 @@ use udd_conv_cli::{
     tool_cli::{diff_paths, DiffKind},
 };
 use crate::app::UddConvApp;
-use crate::models::{LogMessage, LogLevel, TextureOptimization};
+use crate::models::{AtlasPackingModeSetting, LogLevel, LogMessage, TextureOptimization};
+
+fn atlas_packing_mode(setting: AtlasPackingModeSetting) -> AtlasPackingMode {
+    match setting {
+        AtlasPackingModeSetting::MaximumPacking => AtlasPackingMode::MaximumPacking,
+        AtlasPackingModeSetting::Bc7Oriented => AtlasPackingMode::Bc7Oriented,
+    }
+}
+
+fn gather_single_source_dir(
+    dir: Option<&std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    dir.into_iter().cloned().collect()
+}
+
+fn gather_cc_source_dirs(
+    cc_dir: Option<&std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    gather_single_source_dir(cc_dir)
+}
+
+fn gather_ec_source_dirs(
+    ec_dir: Option<&std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    gather_single_source_dir(ec_dir)
+}
 
 impl UddConvApp {
     pub fn spawn_task<F>(&self, name: String, task: F)
@@ -61,7 +87,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_cc.uddp");
         self.spawn_task("CC Art Packing".to_string(), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
             let compression = match settings.opt_tex_art_cc {
@@ -83,6 +109,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
+                    packing_mode: atlas_packing_mode(settings.packing_tex_art_cc),
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -93,7 +120,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_cc.uddp");
         self.spawn_task("CC Texmaps Packing".to_string(), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
             let compression = match settings.opt_tex_land_cc {
@@ -116,6 +143,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
+                    packing_mode: atlas_packing_mode(settings.packing_tex_land_cc),
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -126,7 +154,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_ec.uddp");
         self.spawn_task("EC Art Packing".to_string(), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
             let compression = match settings.opt_tex_art_ec {
@@ -149,6 +177,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
+                    packing_mode: atlas_packing_mode(settings.packing_tex_art_ec),
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -159,7 +188,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_ec.uddp");
         self.spawn_task("EC Land Packing".to_string(), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
 
             let compression = match settings.opt_tex_land_ec {
@@ -184,6 +213,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
+                    packing_mode: atlas_packing_mode(settings.packing_tex_land_ec),
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -194,9 +224,31 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tilemeta.uddp");
         self.spawn_task("Tilemeta Packing".to_string(), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
-            if sources.is_empty() { eyre::bail!("No source dirs"); }
-            build_tilemeta_uddp_from_sources(&sources, &output, &TileMetaBuildOptions { adjust_tex_art_ec_sampling: false, use_ec_radarcol: false })?;
+            match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
+                (Some(cc_dir), Some(ec_dir)) => {
+                    build_tilemeta_uddp_from_split_sources(
+                        cc_dir,
+                        ec_dir,
+                        &output,
+                        &TileMetaBuildOptions {
+                            adjust_tex_art_ec_sampling: false,
+                            use_ec_radarcol: false,
+                        },
+                    )?;
+                }
+                _ => {
+                    let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+                    if sources.is_empty() { eyre::bail!("No source dirs"); }
+                    build_tilemeta_uddp_from_sources(
+                        &sources,
+                        &output,
+                        &TileMetaBuildOptions {
+                            adjust_tex_art_ec_sampling: false,
+                            use_ec_radarcol: false,
+                        },
+                    )?;
+                }
+            }
             Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
         });
     }
@@ -205,10 +257,11 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("map{}.uddp", map_id));
         self.spawn_task(format!("Map {} Packing", map_id), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
             let summary = convert_map_mul_to_uddp_from_sources(
-                &sources, 
-                &output, 
+                &sources,
+                &output,
                 map_id,
                 settings.map_preferences[map_id as usize],
             )?;
@@ -220,7 +273,8 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path(&format!("statics{}.uddp", map_id));
         self.spawn_task(format!("Statics {} Packing", map_id), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
             let summary = convert_statics_mul_to_uddp_from_sources(&sources, &output, map_id)?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
@@ -235,7 +289,8 @@ impl UddConvApp {
             settings.radar_format.extension()
         ));
         self.spawn_task(format!("RadarMap {} Generation", map_id), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
             if !tilemeta_path.exists() {
                 eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
             }
@@ -269,13 +324,14 @@ impl UddConvApp {
         let tilemeta_path = self.get_input_uddp_path("tilemeta.uddp");
 
         self.spawn_task(format!("Full Map {} Batch", map_id), move || {
-            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
 
             // 1. Map
             let map_output = settings.output_uddp_dir.join(format!("map{}.uddp", map_id));
             convert_map_mul_to_uddp_from_sources(
-                &sources, 
-                &map_output, 
+                &sources,
+                &map_output,
                 map_id,
                 settings.map_preferences[map_id as usize],
             )?;

@@ -12,7 +12,7 @@ This document provides essential information for AI agents to effectively assist
 
 **Workspace Members**:
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
-- `lib/uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
+- `lib/uocf/` - Ultima Online Client Files 
 - `lib/udd-conv/` - UODynamapper-specific converted asset packaging and runtime readers
 - `lib/udd-conv-ktx2/` - KTX2 texture handling
 - `tools/udd-conv-cli/` - CLI for building and inspecting UODynamapper-specific converted packages

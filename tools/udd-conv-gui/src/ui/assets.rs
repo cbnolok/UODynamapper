@@ -1,14 +1,16 @@
 use crate::app::UddConvApp;
-use crate::models::TextureOptimization;
+use crate::models::{AtlasPackingModeSetting, TextureOptimization};
 use eframe::egui;
 use udd_conv::upscale::UpscaleFilter;
 
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+
             ui.heading("Asset Packing");
             ui.label("Convert basic client assets into UODynamapper optimized packages.");
-            ui.add_space(20.0);
+            ui.add_space(12.0);
 
             ui.group(|ui| {
                 ui.label(egui::RichText::new("Compression guidelines:").strong().color(egui::Color32::from_rgb(100, 200, 255)));
@@ -30,66 +32,102 @@ impl UddConvApp {
                         ui.end_row();
                     });
             });
-            ui.add_space(20.0);
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.label(
+                    egui::RichText::new("Source selection and packing mode").strong().color(egui::Color32::from_rgb(255, 210, 120)),
+                );
+                ui.add_space(4.0);
+                ui.label("Classic actions read only the CC client directory. Enhanced actions read only the EC client directory. Tile Metadata intentionally combines CC tiledata with EC tileart and string dictionary data.");
+                ui.add_space(4.0);
+                ui.label("Packing mode changes how atlas pages are laid out before encoding. Maximum packing uses all available space. BC7-oriented keeps placements BC7-friendly and block-aligned so the compressed output is easier to encode efficiently.");
+            });
+            ui.add_space(10.0);
 
             let is_busy = *self.is_converting.lock().unwrap();
 
             ui.add_enabled_ui(!is_busy, |ui| {
-                ui.spacing_mut().item_spacing.y = 15.0;
+                let column_gap = 12.0;
+                let card_width = ((ui.available_width() - column_gap).max(360.0)) * 0.5;
 
-                if draw_asset_card(
-                    ui,
-                    "Classic Art",
-                    "Classic items and land textures (art.mul)",
-                    Some(&mut self.settings.opt_tex_art_cc),
-                    Some(&mut self.settings.upscale_tex_art_cc),
-                    vec![],
-                ) {
-                    self.convert_tex_art_cc();
-                }
-                if draw_asset_card(
-                    ui,
-                    "Classic Texmaps",
-                    "Classic high-res terrain textures (texmaps.mul)",
-                    Some(&mut self.settings.opt_tex_land_cc),
-                    None,
-                    vec![
-                        ("64x64", &mut self.settings.upscale_tex_land_cc_64),
-                        ("128x128", &mut self.settings.upscale_tex_land_cc_128),
-                    ],
-                ) {
-                    self.convert_tex_land_cc();
-                }
-                if draw_asset_card(
-                    ui,
-                    "Enhanced Art",
-                    "Enhanced Client static items (worldart)",
-                    Some(&mut self.settings.opt_tex_art_ec),
-                    Some(&mut self.settings.upscale_tex_art_ec),
-                    vec![],
-                ) {
-                    self.convert_tex_art_ec();
-                }
-                if draw_asset_card(
-                    ui,
-                    "Enhanced Land",
-                    "Enhanced Client high-res terrain textures",
-                    Some(&mut self.settings.opt_tex_land_ec),
-                    None,
-                    vec![
-                        ("64x64", &mut self.settings.upscale_tex_land_ec_64),
-                        ("128x128", &mut self.settings.upscale_tex_land_ec_128),
-                        ("256x256", &mut self.settings.upscale_tex_land_ec_256),
-                        ("512x512", &mut self.settings.upscale_tex_land_ec_512),
-                    ],
-                ) {
-                    self.convert_tex_land_ec();
-                }
+                ui.columns(2, |cols| {
+                    cols[0].set_min_width(card_width);
+                    cols[1].set_min_width(card_width);
+                    cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+
+                    if draw_asset_card(
+                        &mut cols[0],
+                        "Classic Art",
+                        "Classic items and land textures (art.mul)",
+                        Some(&mut self.settings.opt_tex_art_cc),
+                        Some(&mut self.settings.packing_tex_art_cc),
+                        Some(&mut self.settings.upscale_tex_art_cc),
+                        vec![],
+                    ) {
+                        self.convert_tex_art_cc();
+                    }
+                    if draw_asset_card(
+                        &mut cols[1],
+                        "Classic Texmaps",
+                        "Classic high-res terrain textures (texmaps.mul)",
+                        Some(&mut self.settings.opt_tex_land_cc),
+                        Some(&mut self.settings.packing_tex_land_cc),
+                        None,
+                        vec![
+                            ("64x64", &mut self.settings.upscale_tex_land_cc_64),
+                            ("128x128", &mut self.settings.upscale_tex_land_cc_128),
+                        ],
+                    ) {
+                        self.convert_tex_land_cc();
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                ui.columns(2, |cols| {
+                    cols[0].set_min_width(card_width);
+                    cols[1].set_min_width(card_width);
+                    cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+
+                    if draw_asset_card(
+                        &mut cols[0],
+                        "Enhanced Art",
+                        "Enhanced Client static items (worldart)",
+                        Some(&mut self.settings.opt_tex_art_ec),
+                        Some(&mut self.settings.packing_tex_art_ec),
+                        Some(&mut self.settings.upscale_tex_art_ec),
+                        vec![],
+                    ) {
+                        self.convert_tex_art_ec();
+                    }
+                    if draw_asset_card(
+                        &mut cols[1],
+                        "Enhanced Land",
+                        "Enhanced Client high-res terrain textures",
+                        Some(&mut self.settings.opt_tex_land_ec),
+                        Some(&mut self.settings.packing_tex_land_ec),
+                        None,
+                        vec![
+                            ("64x64", &mut self.settings.upscale_tex_land_ec_64),
+                            ("128x128", &mut self.settings.upscale_tex_land_ec_128),
+                            ("256x256", &mut self.settings.upscale_tex_land_ec_256),
+                            ("512x512", &mut self.settings.upscale_tex_land_ec_512),
+                        ],
+                    ) {
+                        self.convert_tex_land_ec();
+                    }
+                });
+
+                ui.add_space(8.0);
 
                 if draw_asset_card(
                     ui,
                     "Tile Metadata",
                     "Unified metadata and radar color data",
+                    None,
                     None,
                     None,
                     vec![],
@@ -106,6 +144,7 @@ fn draw_asset_card(
     title: &str,
     desc: &str,
     opt: Option<&mut TextureOptimization>,
+    packing_mode: Option<&mut AtlasPackingModeSetting>,
     upscale_single: Option<&mut UpscaleFilter>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig)>,
 ) -> bool {
@@ -114,10 +153,11 @@ fn draw_asset_card(
     egui::Frame::group(ui.style())
         .fill(ui.visuals().widgets.noninteractive.bg_fill)
         .corner_radius(8.0)
-        .inner_margin(15.0)
+        .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                // Header: Title and Pack Button
+                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
@@ -126,13 +166,13 @@ fn draw_asset_card(
                                 .size(18.0)
                                 .color(egui::Color32::WHITE),
                         );
-                        ui.label(egui::RichText::new(desc).small().weak());
+                        ui.label(egui::RichText::new(desc).size(12.5).weak());
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_sized(
-                                [140.0, 36.0],
+                                [112.0, 28.0],
                                 egui::Button::new(egui::RichText::new("PACK ASSET").strong()),
                             )
                             .clicked()
@@ -143,14 +183,16 @@ fn draw_asset_card(
                 });
 
                 if opt.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
-                    ui.add_space(10.0);
+                    ui.add_space(4.0);
                     ui.separator();
-                    ui.add_space(10.0);
+                    ui.add_space(4.0);
 
                     ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
+
                         if let Some(opt_val) = opt {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Output Format:").weak());
+                                ui.label(egui::RichText::new("Output Format:").size(12.5).weak());
                                 let current_fmt = match opt_val {
                                     TextureOptimization::None => "Raw+zstd (default)",
                                     TextureOptimization::Bc7 => "BC7",
@@ -160,7 +202,7 @@ fn draw_asset_card(
 
                                 egui::ComboBox::from_id_salt(format!("{}_fmt", title))
                                     .selected_text(current_fmt)
-                                    .width(200.0)
+                                    .width(176.0)
                                     .show_ui(ui, |ui| {
                                         if ui
                                             .selectable_label(
@@ -197,23 +239,59 @@ fn draw_asset_card(
                             ui.add_space(25.0);
                         }
 
+                        if let Some(mode_val) = packing_mode {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Packing Mode:").size(12.5).weak());
+                                let current_mode = match mode_val {
+                                    AtlasPackingModeSetting::MaximumPacking => "Maximum packing",
+                                    AtlasPackingModeSetting::Bc7Oriented => "BC7-oriented",
+                                };
+
+                                egui::ComboBox::from_id_salt(format!("{}_packing", title))
+                                    .selected_text(current_mode)
+                                    .width(176.0)
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(
+                                                current_mode == "Maximum packing",
+                                                "Maximum packing",
+                                            )
+                                            .clicked()
+                                        {
+                                            *mode_val = AtlasPackingModeSetting::MaximumPacking;
+                                        }
+                                        if ui
+                                            .selectable_label(
+                                                current_mode == "BC7-oriented",
+                                                "BC7-oriented",
+                                            )
+                                            .clicked()
+                                        {
+                                            *mode_val = AtlasPackingModeSetting::Bc7Oriented;
+                                        }
+                                    });
+                            });
+                            ui.add_space(25.0);
+                        }
+
                         if let Some(up_val) = upscale_single {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Upscale Filter:").weak());
+                                ui.label(egui::RichText::new("Upscale Filter:").size(12.5).weak());
                                 draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
                             });
                         }
                     });
 
                     if !upscale_configs.is_empty() {
-                        ui.add_space(10.0);
+                        ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
                             for (label, config) in upscale_configs.iter_mut() {
                                 ui.vertical(|ui| {
                                     ui.label(
                                         egui::RichText::new(format!("Upscale {}", label))
-                                            .weak()
-                                            .small(),
+                                            .size(12.0)
+                                            .weak(),
                                     );
                                     draw_upscale_filter(
                                         ui,
@@ -240,7 +318,7 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
         } else {
             &current_up
         })
-        .width(180.0)
+        .width(144.0)
         .show_ui(ui, |ui| {
             let filters = [
                 UpscaleFilter::None,
@@ -281,6 +359,8 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
                 UpscaleFilter::Epx2x,
                 UpscaleFilter::Epx3x,
                 UpscaleFilter::Epx4x,
+                UpscaleFilter::Mmpx2x,
+                UpscaleFilter::Mmpx4x,
                 UpscaleFilter::Xbr2x,
                 UpscaleFilter::Xbr3x,
                 UpscaleFilter::Xbr4x,

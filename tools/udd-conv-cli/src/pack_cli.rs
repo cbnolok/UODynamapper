@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
 use udd_conv::{
+    AtlasPackingMode,
     tex_art_cc::{
         TexArtCcAtlasOptions, DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_DEFAULT_ATLAS_PAGE_HEIGHT,
@@ -120,6 +121,22 @@ pub enum CliUpscaleFilter {
     Xbr4x,
 }
 
+#[derive(ValueEnum, Clone, Copy, Debug, Default)]
+pub enum CliAtlasPackingMode {
+    #[default]
+    MaximumPacking,
+    Bc7Oriented,
+}
+
+impl From<CliAtlasPackingMode> for AtlasPackingMode {
+    fn from(value: CliAtlasPackingMode) -> Self {
+        match value {
+            CliAtlasPackingMode::MaximumPacking => AtlasPackingMode::MaximumPacking,
+            CliAtlasPackingMode::Bc7Oriented => AtlasPackingMode::Bc7Oriented,
+        }
+    }
+}
+
 impl From<CliUpscaleFilter> for UpscaleFilter {
     fn from(val: CliUpscaleFilter) -> Self {
         match val {
@@ -181,6 +198,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, default_value_t = false, help = "Use BC7 compression (VRAM optimization).")]
         bc7: bool,
+        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
+        packing_mode: CliAtlasPackingMode,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
@@ -210,6 +229,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, default_value_t = false, help = "Use BC7 compression (VRAM optimization).")]
         bc7: bool,
+        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
+        packing_mode: CliAtlasPackingMode,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
     },
@@ -235,6 +256,10 @@ enum Commands {
         land_gutter: u16,
         #[arg(long, default_value_t = false, help = "Use BC7 compression for land (VRAM optimization).")]
         land_bc7: bool,
+        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
+        art_packing_mode: CliAtlasPackingMode,
+        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Land atlas placement policy.")]
+        land_packing_mode: CliAtlasPackingMode,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
@@ -328,6 +353,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             bc7,
+            packing_mode,
             upscale_64_size: _, // Land upscaling not currently applied to CC Art
             upscale_64_algo: _,
             upscale_128_size: _,
@@ -349,6 +375,7 @@ pub fn run() -> eyre::Result<()> {
                     compression,
                     upscale: upscale.into(),
                     pixel_format: if bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    packing_mode: packing_mode.into(),
                 },
             )?;
             println!(
@@ -367,6 +394,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             bc7,
+            packing_mode,
             upscale,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -383,6 +411,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
                     upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
                     pixel_format: if bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    packing_mode: packing_mode.into(),
                 },
             )?;
             println!(
@@ -405,6 +434,8 @@ pub fn run() -> eyre::Result<()> {
             land_atlas_height,
             land_gutter,
             land_bc7,
+            art_packing_mode,
+            land_packing_mode,
             upscale_64_size,
             upscale_64_algo,
             upscale_128_size,
@@ -431,6 +462,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: CompressionFlag::ZstdNoDict, // EC Art always uses Zstd here
                     upscale: upscale_filter,
                     pixel_format: PagePixelFormat::Rgba8888,
+                    packing_mode: art_packing_mode.into(),
                 },
             )?;
             println!(
@@ -472,6 +504,7 @@ pub fn run() -> eyre::Result<()> {
                         filter: upscale_512_algo.into(),
                     },
                     pixel_format: if land_bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    packing_mode: land_packing_mode.into(),
                 },
             )?;
             println!(

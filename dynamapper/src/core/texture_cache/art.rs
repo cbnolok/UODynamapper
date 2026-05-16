@@ -68,6 +68,7 @@ pub struct ArtPageAtlas {
     layer_to_page: Vec<Option<u32>>,
     layer_access_tick: Vec<u64>,
     current_tick: u64,
+    mapping_revision: u64,
     pub pending_uploads: Vec<ArtPageUpload>,
     pub extract_staging: Vec<ArtPageUpload>,
     pub page_width: u32,
@@ -93,6 +94,7 @@ impl ArtPageAtlas {
             layer_to_page: vec![None; active_layers as usize],
             layer_access_tick: vec![0; active_layers as usize],
             current_tick: 0,
+            mapping_revision: 0,
             pending_uploads: Vec::new(),
             extract_staging: Vec::new(),
             page_width,
@@ -109,6 +111,7 @@ impl ArtPageAtlas {
         self.layer_to_page.fill(None);
         self.layer_access_tick.fill(0);
         self.current_tick = 0;
+        self.mapping_revision = self.mapping_revision.saturating_add(1);
         self.pending_uploads.clear();
         self.extract_staging.clear();
         self.requested_resize_to = None;
@@ -145,6 +148,8 @@ impl ArtPageAtlas {
         &mut self,
         page_index: u32,
         layer: u32,
+        atlas_width: u32,
+        atlas_height: u32,
         used_width: u32,
         used_height: u32,
         pixel_format: PagePixelFormat,
@@ -167,17 +172,23 @@ impl ArtPageAtlas {
         if let Ok(page_data) = read_page_bytes() {
             if let Some((bytes, upload_layout)) = prepare_page_upload_bytes(
                 &page_data,
+                atlas_width,
+                atlas_height,
                 used_width,
                 used_height,
                 pixel_format,
             ) {
+                let (upload_width, upload_height) = match pixel_format {
+                    PagePixelFormat::Rgba8888 => (used_width, used_height),
+                    PagePixelFormat::Bc7 => (atlas_width, atlas_height),
+                };
                 self.pending_uploads.push(ArtPageUpload {
                     page_index,
                     layer,
                     bytes,
                     upload_layout,
-                    upload_width: used_width,
-                    upload_height: used_height,
+                    upload_width,
+                    upload_height,
                 });
             }
         }
@@ -218,7 +229,12 @@ impl ArtPageAtlas {
         self.pending_uploads.clear();
         self.extract_staging.clear();
         self.current_tick = 0;
+        self.mapping_revision = self.mapping_revision.saturating_add(1);
         self.requested_resize_to = None;
+    }
+
+    pub fn mapping_revision(&self) -> u64 {
+        self.mapping_revision
     }
 
     pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, graphic: u16) -> Option<ResolvedArtSprite> {
@@ -331,6 +347,7 @@ impl ArtPageAtlas {
                 let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
                 if let Some(evicted_page) = self.layer_to_page[lru_layer as usize] {
                     self.page_to_layer.remove(&evicted_page);
+                    self.mapping_revision = self.mapping_revision.saturating_add(1);
                 }
                 lru_layer
             };
@@ -338,6 +355,8 @@ impl ArtPageAtlas {
             self.queue_page_upload(
                 page_index,
                 layer,
+                atlas_width,
+                atlas_height,
                 used_width,
                 used_height,
                 pixel_format,
@@ -378,11 +397,16 @@ fn page_pixel_vram_format(pixel_format: PagePixelFormat) -> VramTextureFormat {
 
 fn prepare_page_upload_bytes(
     page_data: &[u8],
+    atlas_width: u32,
+    atlas_height: u32,
     used_width: u32,
     used_height: u32,
     pixel_format: PagePixelFormat,
 ) -> Option<(Vec<u8>, TextureUploadLayout)> {
-    let extent = ImageExtent::new(used_width.max(1), used_height.max(1)).ok()?;
+    let extent = match pixel_format {
+        PagePixelFormat::Rgba8888 => ImageExtent::new(used_width.max(1), used_height.max(1)).ok()?,
+        PagePixelFormat::Bc7 => ImageExtent::new(atlas_width.max(1), atlas_height.max(1)).ok()?,
+    };
     let format = page_pixel_vram_format(pixel_format);
     if page_data.len() != format.expected_byte_len(extent) {
         return None;
@@ -645,10 +669,10 @@ impl ArtTextureLoader {
 
 fn extract_slot_rgba(
     page_data: &[u8],
-    _atlas_width: u32,
-    _atlas_height: u32,
+    atlas_width: u32,
+    atlas_height: u32,
     used_width: u32,
-    used_height: u32,
+    _used_height: u32,
     pixel_format: PagePixelFormat,
     x: u16,
     y: u16,
@@ -670,8 +694,8 @@ fn extract_slot_rgba(
         )
         .to_vec()),
         PagePixelFormat::Bc7 => {
-            let page_extent = ImageExtent::new(used_width, used_height).map_err(|error| {
-                eyre::eyre!("invalid stored page extent {used_width}x{used_height}: {error}")
+            let page_extent = ImageExtent::new(atlas_width, atlas_height).map_err(|error| {
+                eyre::eyre!("invalid atlas page extent {atlas_width}x{atlas_height}: {error}")
             })?;
             let slot_extent = ImageExtent::new(width as u32, height as u32).map_err(|error| {
                 eyre::eyre!("invalid slot extent {}x{}: {error}", width, height)

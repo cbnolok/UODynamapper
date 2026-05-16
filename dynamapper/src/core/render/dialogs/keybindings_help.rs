@@ -42,6 +42,12 @@ pub fn sys_render_keybindings_help(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
 ) {
+    // PERFORMANCE: Early return if the dialog is not open to avoid unnecessary egui
+    // context acquisition, string formatting, and window building.
+    if !state.open {
+        return;
+    }
+
     // Try to get the egui context - if it fails, skip rendering this frame
     let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
@@ -156,5 +162,9 @@ pub fn sys_render_keybindings_help(
             ui.label("Note: Keybindings can be modified in 'assets/keybindings.toml'.");
         });
 
-    state.open = window_open;
+    // PERFORMANCE: Only update state.open if it actually changed to avoid triggering
+    // Bevy's change detection on every frame, which can be expensive.
+    if state.open != window_open {
+        state.open = window_open;
+    }
 }

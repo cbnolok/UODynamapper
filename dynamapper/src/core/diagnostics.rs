@@ -72,7 +72,7 @@ pub struct RunningSystemTimer {
 }
 
 impl RunningSystemTimer {
-    fn record(&mut self, elapsed: Duration) {
+    pub fn record(&mut self, elapsed: Duration) {
         let elapsed_us = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
         self.last_us = elapsed_us;
         self.max_us = self.max_us.max(elapsed_us);
@@ -81,13 +81,24 @@ impl RunningSystemTimer {
         let sample_count = self.samples as f64;
         self.avg_us += (elapsed_us as f64 - self.avg_us) / sample_count;
     }
+}
 
-    fn format_summary(&self) -> String {
-        format!(
-            "last {:.2} ms | avg {:.2} ms | max {:.2} ms",
-            self.last_us as f64 / 1000.0,
-            self.avg_us / 1000.0,
-            self.max_us as f64 / 1000.0,
+impl std::fmt::Display for RunningSystemTimer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let last_ms = self.last_us / 1000;
+        let last_rem = (self.last_us % 1000) / 10;
+
+        let avg_us_total = (self.avg_us * 100.0) as u64;
+        let avg_ms = avg_us_total / 100000;
+        let avg_rem = (avg_us_total % 100000) / 1000;
+
+        let max_ms = self.max_us / 1000;
+        let max_rem = (self.max_us % 1000) / 10;
+
+        write!(
+            f,
+            "last {}.{:02} ms | avg {}.{:02} ms | max {}.{:02} ms",
+            last_ms, last_rem, avg_ms, avg_rem, max_ms, max_rem
         )
     }
 }
@@ -364,37 +375,41 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldMapDiagnostics) 
     app.insert_resource(cross_app_diagnostics.clone());
     if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
         render_app.insert_resource(cross_app_diagnostics.clone());
-        render_app.init_resource::<RenderScheduleTimerState>();
-        render_app.add_systems(
-            bevy::render::Render,
-            (
-                sys_mark_render_extract_commands_start
-                    .before(bevy::render::RenderSystems::ExtractCommands),
-                sys_mark_render_extract_commands_end
-                    .after(bevy::render::RenderSystems::ExtractCommands)
-                    .before(bevy::render::RenderSystems::PrepareAssets),
-                sys_mark_render_queue_start.before(bevy::render::RenderSystems::Queue),
-                sys_mark_render_queue_end
-                    .after(bevy::render::RenderSystems::Queue)
-                    .before(bevy::render::RenderSystems::PhaseSort),
-                sys_mark_render_phase_sort_start.before(bevy::render::RenderSystems::PhaseSort),
-                sys_mark_render_phase_sort_end
-                    .after(bevy::render::RenderSystems::PhaseSort)
-                    .before(bevy::render::RenderSystems::Prepare),
-                sys_mark_render_prepare_start.before(bevy::render::RenderSystems::Prepare),
-                sys_mark_render_prepare_end
-                    .after(bevy::render::RenderSystems::Prepare)
-                    .before(bevy::render::RenderSystems::Render),
-                sys_mark_render_execute_start.before(bevy::render::RenderSystems::Render),
-                sys_mark_render_execute_end
-                    .after(bevy::render::RenderSystems::Render)
-                    .before(bevy::render::RenderSystems::Cleanup),
-                sys_mark_render_cleanup_start.before(bevy::render::RenderSystems::Cleanup),
-                sys_mark_render_cleanup_end
-                    .after(bevy::render::RenderSystems::Cleanup)
-                    .before(bevy::render::RenderSystems::PostCleanup),
-            ),
-        );
+
+        if config.log_system_timers {
+            // It measures how long the CPU spent preparing data for the GPU.
+            render_app.init_resource::<RenderScheduleTimerState>();
+            render_app.add_systems(
+                bevy::render::Render,
+                (
+                    sys_mark_render_extract_commands_start
+                        .before(bevy::render::RenderSystems::ExtractCommands),
+                    sys_mark_render_extract_commands_end
+                        .after(bevy::render::RenderSystems::ExtractCommands)
+                        .before(bevy::render::RenderSystems::PrepareAssets),
+                    sys_mark_render_queue_start.before(bevy::render::RenderSystems::Queue),
+                    sys_mark_render_queue_end
+                        .after(bevy::render::RenderSystems::Queue)
+                        .before(bevy::render::RenderSystems::PhaseSort),
+                    sys_mark_render_phase_sort_start.before(bevy::render::RenderSystems::PhaseSort),
+                    sys_mark_render_phase_sort_end
+                        .after(bevy::render::RenderSystems::PhaseSort)
+                        .before(bevy::render::RenderSystems::Prepare),
+                    sys_mark_render_prepare_start.before(bevy::render::RenderSystems::Prepare),
+                    sys_mark_render_prepare_end
+                        .after(bevy::render::RenderSystems::Prepare)
+                        .before(bevy::render::RenderSystems::Render),
+                    sys_mark_render_execute_start.before(bevy::render::RenderSystems::Render),
+                    sys_mark_render_execute_end
+                        .after(bevy::render::RenderSystems::Render)
+                        .before(bevy::render::RenderSystems::Cleanup),
+                    sys_mark_render_cleanup_start.before(bevy::render::RenderSystems::Cleanup),
+                    sys_mark_render_cleanup_end
+                        .after(bevy::render::RenderSystems::Cleanup)
+                        .before(bevy::render::RenderSystems::PostCleanup),
+                ),
+            );
+        }
     }
 
     {
@@ -402,13 +417,18 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldMapDiagnostics) 
             .lock()
             .expect("plugin registry poisoned");
         registry.record("FrameTimeDiagnosticsPlugin", "Core");
-        if config.enable_render_diagnostics {
+        if config.dump_to_console {
             registry.record("RenderDiagnosticsPlugin", "Core");
+        }
+        if config.enable_render_diagnostics || config.log_render_breakdown {
+            registry.record("BevyRenderDiagnosticsPlugin", "Core");
         }
     }
     app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),));
 
-    if config.enable_render_diagnostics {
+    if config.enable_render_diagnostics || config.log_render_breakdown {
+        // Actual GPU time spent in specific passes (e.g., how many milliseconds the GPU took to draw the terrain).
+        // Hardware counts like Vertex/Fragment shader invocations and clipper primitives.
         app.add_plugins((
             // `SystemInformationDiagnosticsPlugin` is intentionally NOT used here:
             // it fails to initialize with dynamic_linking enabled (emits a 'not supported'
@@ -422,12 +442,14 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldMapDiagnostics) 
     }
 
     app.init_resource::<WorldmapSystemDiagnostics>()
-        .init_resource::<WorldmapRuntimeDiagnostics>()
-        .init_resource::<DiagnosticDumpState>()
-        .add_systems(
+        .init_resource::<WorldmapRuntimeDiagnostics>();
+
+    if config.dump_to_console {
+        app.init_resource::<DiagnosticDumpState>().add_systems(
             Update,
             sys_dump_configurable_diagnostics.run_if(in_state(AppState::InGame)),
         );
+    }
 }
 
 /// Plugin that logs the active GPU preprocessing mode during app build.
@@ -528,7 +550,7 @@ fn format_opt_u32(value: Option<u32>) -> String {
 }
 
 fn sys_dump_configurable_diagnostics(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     settings: Res<Settings>,
     diagnostics: Res<DiagnosticsStore>,
     runtime: Res<WorldmapRuntimeDiagnostics>,
@@ -566,11 +588,14 @@ fn sys_dump_configurable_diagnostics(
     let upload_snapshot = land_upload_telemetry.snapshot();
     let cross_app_snapshot = cross_app_timers.snapshot();
 
-    let mut lines = Vec::with_capacity(4);
-    lines.push(format!(
+    let mut output = String::with_capacity(1024);
+    use std::fmt::Write;
+
+    let _ = writeln!(
+        &mut output,
         "Worldmap diag | fps {fps} | frame {}",
         format_ms(frame_time),
-    ));
+    );
 
     if config.log_render_breakdown {
         let main_opaque_gpu =
@@ -584,14 +609,15 @@ fn sys_dump_configurable_diagnostics(
         let upscaling_frag =
             find_diag_value(&diagnostics, "render/upscaling/fragment_shader_invocations");
 
-        lines.push(format!(
+        let _ = writeln!(
+            &mut output,
             "Render | total gpu {} | main3d {} | upscale {} | frag main3d {} | frag upscale {}",
             format_ms(total_gpu),
             format_ms(main_opaque_gpu),
             format_ms(upscaling_gpu),
             format_count(main_frag),
             format_count(upscaling_frag),
-        ));
+        );
     }
 
     if config.log_world_state {
@@ -604,7 +630,8 @@ fn sys_dump_configurable_diagnostics(
         } else {
             String::new()
         };
-        lines.push(format!(
+        let _ = writeln!(
+            &mut output,
             "World | map {} | live {} | target {} | desired {} | committed {} | transition {} | pending spawns {} | pending despawns {}{}",
             runtime.map_id,
             runtime.live_chunks,
@@ -615,7 +642,7 @@ fn sys_dump_configurable_diagnostics(
             runtime.pending_spawns,
             runtime.pending_despawns,
             upload_backlog,
-        ));
+        );
     }
 
     if config.log_system_timers {
@@ -623,51 +650,55 @@ fn sys_dump_configurable_diagnostics(
             (system_timers.chunk_sync.last_us + system_timers.chunk_draw.last_us) as f64 / 1000.0;
         let frame_gap_ms = frame_time.map(|value| (value - tracked_main_last_ms).max(0.0));
 
-        lines.push(format!(
+        let _ = writeln!(
+            &mut output,
             "CPU | {}: {} | {}: {}",
             WorldmapTimedSystem::ChunkSync.label(),
-            system_timers.chunk_sync.format_summary(),
+            system_timers.chunk_sync,
             WorldmapTimedSystem::ChunkDraw.label(),
-            system_timers.chunk_draw.format_summary(),
-        ));
-        lines.push(format!(
+            system_timers.chunk_draw,
+        );
+        let _ = writeln!(
+            &mut output,
             "Aux | {}: {} | {}: {} | {}: {} | {}: {} | {}: {}",
             WorldmapCrossAppTimedSystem::AtlasStage.label(),
-            cross_app_snapshot.atlas_stage.format_summary(),
+            cross_app_snapshot.atlas_stage,
             WorldmapCrossAppTimedSystem::AtlasExtract.label(),
-            cross_app_snapshot.atlas_extract.format_summary(),
+            cross_app_snapshot.atlas_extract,
             WorldmapCrossAppTimedSystem::AtlasUpload.label(),
-            cross_app_snapshot.atlas_upload.format_summary(),
+            cross_app_snapshot.atlas_upload,
             WorldmapCrossAppTimedSystem::TextureArrayExtract.label(),
-            cross_app_snapshot.texture_array_extract.format_summary(),
+            cross_app_snapshot.texture_array_extract,
             WorldmapCrossAppTimedSystem::TextureArrayUpload.label(),
-            cross_app_snapshot.texture_array_upload.format_summary(),
-        ));
-        lines.push(format!(
+            cross_app_snapshot.texture_array_upload,
+        );
+        let _ = writeln!(
+            &mut output,
             "RenderCPU | {}: {} | {}: {} | {}: {} | {}: {} | {}: {} | {}: {}",
             WorldmapCrossAppTimedSystem::RenderExtractCommands.label(),
-            cross_app_snapshot.render_extract_commands.format_summary(),
+            cross_app_snapshot.render_extract_commands,
             WorldmapCrossAppTimedSystem::RenderQueue.label(),
-            cross_app_snapshot.render_queue.format_summary(),
+            cross_app_snapshot.render_queue,
             WorldmapCrossAppTimedSystem::RenderPhaseSort.label(),
-            cross_app_snapshot.render_phase_sort.format_summary(),
+            cross_app_snapshot.render_phase_sort,
             WorldmapCrossAppTimedSystem::RenderPrepare.label(),
-            cross_app_snapshot.render_prepare.format_summary(),
+            cross_app_snapshot.render_prepare,
             WorldmapCrossAppTimedSystem::RenderExecute.label(),
-            cross_app_snapshot.render_execute.format_summary(),
+            cross_app_snapshot.render_execute,
             WorldmapCrossAppTimedSystem::RenderCleanup.label(),
-            cross_app_snapshot.render_cleanup.format_summary(),
-        ));
-        lines.push(format!(
+            cross_app_snapshot.render_cleanup,
+        );
+        let _ = writeln!(
+            &mut output,
             "Frame gap | main-world tracked {:.2} ms | residual {}",
             tracked_main_last_ms,
             format_ms(frame_gap_ms),
-        ));
+        );
     }
 
     console_logger::one(
         LogSev::Diagnostics,
         LogAbout::Performance,
-        &lines.join("\n"),
+        output.trim_end(),
     );
 }

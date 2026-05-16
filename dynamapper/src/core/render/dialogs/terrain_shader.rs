@@ -63,6 +63,11 @@ pub fn terrain_ui_system(
     mut ui_state: ResMut<TerrainShaderUiState>,
     mut was_open: Local<bool>,
 ) {
+    // Early return if not open. We allow one extra pass if was_open was true 
+    // to ensure the "Detect close transition" logic at the end of this function runs.
+    if !ui_state.open && !*was_open {
+        return;
+    }
     // Try to get the egui context - if it fails, skip rendering this frame
     let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;

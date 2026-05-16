@@ -15,7 +15,7 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use bytemuck::{Pod, Zeroable};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = 1.41421356237;
@@ -30,6 +30,7 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 const GROUND_ART_Y_BIAS: f32 = 0.0;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
+const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -386,7 +387,7 @@ fn resolve_ec_static_visual_kind(
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable, ShaderType)]
 pub struct SpriteInstance {
     pub world_x: f32,        // tile_x + x_offset
     pub world_z: f32,        // tile_y + y_offset
@@ -410,7 +411,7 @@ pub struct SpriteInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable, ShaderType)]
 pub struct GroundTileInstance {
     pub world_x: f32,
     pub world_z: f32,
@@ -458,6 +459,101 @@ pub struct StaticChunkBatch {
 pub struct RenderStaticChunkBatches {
     pub sprite: Vec<StaticChunkBatch>,
     pub ground: Vec<StaticChunkBatch>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticChunkCacheConfig {
+    map_id: u32,
+    dot_mode: bool,
+    art_source: Option<ClientTextureSource>,
+    sprite_atlas_mapping_revision: u64,
+    ground_atlas_mapping_revision: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CachedStaticChunkStats {
+    visited_blocks: usize,
+    source_tiles: usize,
+    ground_land_tiles: usize,
+    atlas_hits: usize,
+    atlas_misses: usize,
+    requested_pages: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CachedStaticChunk {
+    sprite_instances: Vec<SpriteInstance>,
+    ground_instances: Vec<GroundTileInstance>,
+    stats: CachedStaticChunkStats,
+    last_visible_tick: u64,
+}
+
+#[derive(Resource, Default)]
+pub struct StaticChunkRenderCache {
+    config: Option<StaticChunkCacheConfig>,
+    current_tick: u64,
+    chunks: HashMap<StaticChunkBatchKey, CachedStaticChunk>,
+    last_visible_chunk_keys: Vec<StaticChunkBatchKey>,
+}
+
+impl StaticChunkRenderCache {
+    fn begin_frame(&mut self) -> u64 {
+        self.current_tick = self.current_tick.saturating_add(1);
+        self.current_tick
+    }
+
+    fn sync_config(&mut self, config: StaticChunkCacheConfig) -> bool {
+        let changed = self.config != Some(config);
+        if changed {
+            self.config = Some(config);
+            self.chunks.clear();
+            self.last_visible_chunk_keys.clear();
+        }
+        changed
+    }
+
+    fn prune_stale(&mut self, visible_tick: u64) {
+        self.chunks.retain(|_, chunk| {
+            visible_tick.saturating_sub(chunk.last_visible_tick)
+                <= STATIC_CHUNK_CACHE_HYSTERESIS_TICKS
+        });
+    }
+}
+
+fn log_static_collect_stats(
+    debug_state: &mut StaticArtCollectDebugState,
+    stats: StaticArtCollectStats,
+) {
+    if debug_state.last != Some(stats) {
+        console_logger::one(
+            LogSev::DebugVerbose,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={}",
+                stats.map_id,
+                stats.dot_mode,
+                stats.visible_chunks,
+                stats.visited_blocks,
+                stats.source_tiles,
+                stats.ground_land_tiles,
+            ),
+        );
+        console_logger::one(
+            LogSev::DebugVerbose,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art collect (2/2):unique_pages={} resident_pages={} pending_pages={} capacity={} atlas_hits={} atlas_misses={} emitted={}",
+                stats.unique_requested_pages,
+                stats.resident_pages,
+                stats.pending_pages,
+                stats.atlas_capacity_pages,
+                stats.atlas_hits,
+                stats.atlas_misses,
+                stats.emitted_instances,
+            ),
+        );
+        debug_state.last = Some(stats);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -617,30 +713,23 @@ pub fn sys_collect_visible_statics(
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
     zoom: Res<RenderZoom>,
-    mut instances: ResMut<RenderStaticInstances>,
-    mut land_instances: ResMut<RenderStaticLandInstances>,
-    mut chunk_batches: ResMut<RenderStaticChunkBatches>,
+    mut outputs: (
+        ResMut<RenderStaticInstances>,
+        ResMut<RenderStaticLandInstances>,
+        ResMut<RenderStaticChunkBatches>,
+        ResMut<StaticChunkRenderCache>,
+    ),
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
     // TODO: Need a way to get the currently visible chunks from the terrain system.
     // We can iterate over existing land chunk entities to find which blocks to draw.
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
 ) {
-    instances.0.clear();
-    land_instances.0.clear();
-    chunk_batches.sprite.clear();
-    chunk_batches.ground.clear();
-
     if !settings.worldmap_rendering.enable_statics {
         return;
     }
 
     let map_id = scene_state.map_id;
-    let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
-        return;
-    };
-    let mut statics_store = statics_store.lock();
-
     let requested_art_source = settings.graphics.art_texture_source;
     let art_source = resolve_effective_art_source(
         requested_art_source,
@@ -652,107 +741,185 @@ pub fn sys_collect_visible_statics(
     .or(source_state.active_source);
 
     let is_dot_mode = zoom.0 >= 20.0;
-    let mut visible_chunks = 0usize;
     let mut visited_blocks = 0usize;
     let mut source_tiles = 0usize;
     let mut ground_land_tiles = 0usize;
     let mut atlas_hits = 0usize;
     let mut atlas_misses = 0usize;
     let mut unique_requested_pages = HashSet::new();
+    let cache_config = StaticChunkCacheConfig {
+        map_id,
+        dot_mode: is_dot_mode,
+        art_source,
+        sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
+        ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
+    };
+    let visible_tick = outputs.3.begin_frame();
+    let config_changed = outputs.3.sync_config(cache_config);
 
     // Height conversion factor from UO units to our world Y units.
     // Usually z is roughly 1 unit = 0.1 world units (or similar).
     // The land shader does: world.y = z * 0.1
     let height_scale = 0.1;
 
-    for tcm in chunks_q.iter() {
-        if tcm.parent_map_id != map_id {
-            continue;
+    let mut visible_chunk_keys = chunks_q
+        .iter()
+        .filter(|chunk| chunk.parent_map_id == map_id)
+        .map(|chunk| StaticChunkBatchKey {
+            map_id,
+            gx: chunk.gx,
+            gy: chunk.gy,
+            scale: chunk.scale,
+        })
+        .collect::<Vec<_>>();
+    visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
+    let visible_chunks = visible_chunk_keys.len();
+
+    let visible_set_unchanged = !config_changed && outputs.3.last_visible_chunk_keys == visible_chunk_keys;
+    let all_visible_chunks_complete = visible_chunk_keys.iter().all(|chunk_key| {
+        outputs
+            .3
+            .chunks
+            .get(chunk_key)
+            .is_some_and(|chunk| chunk.stats.atlas_misses == 0)
+    });
+
+    if visible_set_unchanged && all_visible_chunks_complete {
+        let mut visited_blocks = 0usize;
+        let mut source_tiles = 0usize;
+        let mut ground_land_tiles = 0usize;
+        let mut atlas_hits = 0usize;
+        let mut atlas_misses = 0usize;
+        let mut unique_requested_pages = HashSet::new();
+
+        for chunk_key in &visible_chunk_keys {
+            let Some(chunk) = outputs.3.chunks.get_mut(chunk_key) else {
+                continue;
+            };
+            chunk.last_visible_tick = visible_tick;
+            visited_blocks += chunk.stats.visited_blocks;
+            source_tiles += chunk.stats.source_tiles;
+            ground_land_tiles += chunk.stats.ground_land_tiles;
+            atlas_hits += chunk.stats.atlas_hits;
+            atlas_misses += chunk.stats.atlas_misses;
+            unique_requested_pages.extend(chunk.stats.requested_pages.iter().copied());
         }
 
-        visible_chunks += 1;
+        log_static_collect_stats(
+            &mut debug_state,
+            StaticArtCollectStats {
+                map_id,
+                dot_mode: is_dot_mode,
+                visible_chunks,
+                visited_blocks,
+                source_tiles,
+                ground_land_tiles,
+                unique_requested_pages: unique_requested_pages.len(),
+                resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
+                pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
+                atlas_capacity_pages: sprite_atlas.active_layers as usize
+                    + ground_atlas.active_layers as usize,
+                atlas_hits,
+                atlas_misses,
+                emitted_instances: outputs.0.0.len() + outputs.1.0.len(),
+            },
+        );
+        return;
+    }
 
-        let chunk_key = StaticChunkBatchKey {
-            map_id,
-            gx: tcm.gx,
-            gy: tcm.gy,
-            scale: tcm.scale,
+    outputs.0.0.clear();
+    outputs.1.0.clear();
+    outputs.2.sprite.clear();
+    outputs.2.ground.clear();
+
+    let Some(statics_store) = statics_res.0.get(map_id as usize).and_then(|x| x.as_ref()) else {
+        return;
+    };
+    let mut statics_store = statics_store.lock();
+
+    for chunk_key in visible_chunk_keys.iter().copied() {
+        let reuse_cached_chunk = if let Some(chunk) = outputs.3.chunks.get_mut(&chunk_key) {
+            chunk.last_visible_tick = visible_tick;
+            chunk.stats.atlas_misses == 0
+        } else {
+            false
         };
-        let mut chunk_sprite_instances = Vec::new();
-        let mut chunk_ground_instances = Vec::new();
 
-        let chunk_scale = tcm.scale;
+        if !reuse_cached_chunk {
+            let mut chunk_sprite_instances = Vec::new();
+            let mut chunk_ground_instances = Vec::new();
+            let mut chunk_requested_pages = HashSet::new();
+            let mut chunk_stats = CachedStaticChunkStats::default();
 
-        let start_gx = tcm.gx * CHUNK_STORAGE_BLOCKS_DIM;
-        let start_gy = tcm.gy * CHUNK_STORAGE_BLOCKS_DIM;
-        let end_gx = start_gx + chunk_scale * CHUNK_STORAGE_BLOCKS_DIM;
-        let end_gy = start_gy + chunk_scale * CHUNK_STORAGE_BLOCKS_DIM;
+            let start_gx = chunk_key.gx * CHUNK_STORAGE_BLOCKS_DIM;
+            let start_gy = chunk_key.gy * CHUNK_STORAGE_BLOCKS_DIM;
+            let end_gx = start_gx + chunk_key.scale * CHUNK_STORAGE_BLOCKS_DIM;
+            let end_gy = start_gy + chunk_key.scale * CHUNK_STORAGE_BLOCKS_DIM;
 
-        for gy in start_gy..end_gy {
-            for gx in start_gx..end_gx {
-                visited_blocks += 1;
-                let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
-                    continue;
-                };
-
-                source_tiles += tiles.len();
-
-                for tile in tiles {
-                    // Very simple culling for dot mode: only render tall or wide things to save instances
-                    if is_dot_mode && tile.z < 10 {
+            for gy in start_gy..end_gy {
+                for gx in start_gx..end_gx {
+                    chunk_stats.visited_blocks += 1;
+                    let Ok(tiles) = statics_store.block_tiles(gx, gy) else {
                         continue;
-                    }
+                    };
 
-                    let tilemeta = tilemeta_res
-                        .as_ref()
-                        .and_then(|meta| meta.0.item_tile(tile.graphic as u32));
+                    chunk_stats.source_tiles += tiles.len();
 
-                    let world_x = (gx * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.x_offset() as f32;
-                    let world_z = (gy * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.y_offset() as f32;
-                    let depth_class = resolve_static_depth_class(tilemeta);
-
-                    // Compute the is_wet GPU flag from tiledata flags.
-                    // Bit 0 of is_wet_flags = 1 when the tile has the IsWet tiledata property.
-                    // The art shader uses this flag to apply the animated water UV distortion.
-                    let is_wet_flags: u32 =
-                        tilemeta.map_or(0, |m| if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 });
-
-                    if is_dot_mode {
-                        let base_world_y = (tile.z as f32) * height_scale;
-                        let priority_z_units =
-                            resolve_priority_z_units(tile.z, tilemeta, depth_class);
-                        let bias = depth_class_y_bias(depth_class);
-                        let encoded_depth_class = depth_class.encoded();
-                        let world_y = base_world_y + bias;
-
-                        if let Some(meta) = tilemeta {
-                            let color = meta.radar_color;
-                            chunk_sprite_instances.push(SpriteInstance {
-                                world_x,
-                                world_z,
-                                world_y,
-                                layer: 0,
-                                depth_class: encoded_depth_class,
-                                base_world_y,
-                                uv_min: [0.0, 0.0],
-                                uv_max: [0.0, 0.0],
-                                local_min: [0.0, 0.0],
-                                local_max: [1.0, 1.0],
-                                tile_x: world_x,
-                                tile_y: world_z,
-                                priority_z_units,
-                                sort_bias_ordinal: 0,
-                                is_wet_flags,
-                                _pad_inst: 0,
-                                color_rgba: [
-                                    color[2] as f32 / 255.0,
-                                    color[1] as f32 / 255.0,
-                                    color[0] as f32 / 255.0,
-                                    1.0,
-                                ],
-                            });
+                    for tile in tiles {
+                        if is_dot_mode && tile.z < 10 {
+                            continue;
                         }
-                    } else {
+
+                        let tilemeta = tilemeta_res
+                            .as_ref()
+                            .and_then(|meta| meta.0.item_tile(tile.graphic as u32));
+
+                        let world_x =
+                            (gx * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.x_offset() as f32;
+                        let world_z =
+                            (gy * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.y_offset() as f32;
+                        let depth_class = resolve_static_depth_class(tilemeta);
+                        let is_wet_flags =
+                            tilemeta.map_or(0, |m| if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 });
+
+                        if is_dot_mode {
+                            let base_world_y = (tile.z as f32) * height_scale;
+                            let priority_z_units =
+                                resolve_priority_z_units(tile.z, tilemeta, depth_class);
+                            let bias = depth_class_y_bias(depth_class);
+                            let encoded_depth_class = depth_class.encoded();
+                            let world_y = base_world_y + bias;
+
+                            if let Some(meta) = tilemeta {
+                                let color = meta.radar_color;
+                                chunk_sprite_instances.push(SpriteInstance {
+                                    world_x,
+                                    world_z,
+                                    world_y,
+                                    layer: 0,
+                                    depth_class: encoded_depth_class,
+                                    base_world_y,
+                                    uv_min: [0.0, 0.0],
+                                    uv_max: [0.0, 0.0],
+                                    local_min: [0.0, 0.0],
+                                    local_max: [1.0, 1.0],
+                                    tile_x: world_x,
+                                    tile_y: world_z,
+                                    priority_z_units,
+                                    sort_bias_ordinal: 0,
+                                    is_wet_flags,
+                                    _pad_inst: 0,
+                                    color_rgba: [
+                                        color[2] as f32 / 255.0,
+                                        color[1] as f32 / 255.0,
+                                        color[0] as f32 / 255.0,
+                                        1.0,
+                                    ],
+                                });
+                            }
+                            continue;
+                        }
+
                         let Some(art_source) = art_source else {
                             continue;
                         };
@@ -771,8 +938,7 @@ pub fn sys_collect_visible_statics(
                         };
                         let encoded_depth_class = depth_class.encoded();
                         let base_world_y = (tile.z as f32) * height_scale;
-                        let priority_z_units =
-                            resolve_priority_z_units(tile.z, tilemeta, depth_class);
+                        let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
                         let world_y = base_world_y + bias;
                         let (billboard_source, offset_x_pixels, offset_y_pixels, resolved_sprite) =
                             match visual_kind {
@@ -787,7 +953,7 @@ pub fn sys_collect_visible_statics(
                                         tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
 
                                     if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
-                                        unique_requested_pages.insert(slot.page_index as u64);
+                                        chunk_requested_pages.insert(slot.page_index as u64);
                                     }
 
                                     (
@@ -802,26 +968,22 @@ pub fn sys_collect_visible_statics(
                                     else {
                                         continue;
                                     };
-                                    let Some(runtime_slot_id) =
-                                        resolve_surface_like_tex_land_ec_slot_id(
-                                            tilemeta,
-                                            Some(tex_land_ec),
-                                        )
-                                    else {
+                                    let Some(runtime_slot_id) = resolve_surface_like_tex_land_ec_slot_id(
+                                        tilemeta,
+                                        Some(tex_land_ec),
+                                    ) else {
                                         continue;
                                     };
 
                                     if let Some(slot) = tex_land_ec.present_slot(runtime_slot_id) {
-                                        unique_requested_pages
-                                            .insert((1u64 << 63) | slot.page_index as u64);
+                                        chunk_requested_pages.insert((1u64 << 63) | slot.page_index as u64);
                                     }
 
                                     (
                                         ClientTextureSource::Ec,
                                         0,
                                         0,
-                                        ground_atlas
-                                            .resolve_tex_land_ec(tex_land_ec, runtime_slot_id),
+                                        ground_atlas.resolve_tex_land_ec(tex_land_ec, runtime_slot_id),
                                     )
                                 }
                                 StaticVisualKind::EcRegularArt { art_id } => {
@@ -835,7 +997,7 @@ pub fn sys_collect_visible_statics(
                                         tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
 
                                     if let Some(slot) = tex_art_ec.present_slot(art_id) {
-                                        unique_requested_pages.insert(slot.page_index as u64);
+                                        chunk_requested_pages.insert(slot.page_index as u64);
                                     }
 
                                     (
@@ -851,9 +1013,9 @@ pub fn sys_collect_visible_statics(
                             apply_static_world_anchor_translation(world_x, world_z);
 
                         if let Some(resolved) = resolved_sprite {
-                            atlas_hits += 1;
+                            chunk_stats.atlas_hits += 1;
                             if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
-                                ground_land_tiles += 1;
+                                chunk_stats.ground_land_tiles += 1;
                                 let bounds = resolve_surface_like_ground_quad_bounds();
                                 chunk_ground_instances.push(GroundTileInstance {
                                     world_x: anchored_world_x,
@@ -904,67 +1066,92 @@ pub fn sys_collect_visible_statics(
                                 });
                             }
                         } else {
-                            atlas_misses += 1;
+                            chunk_stats.atlas_misses += 1;
                         }
                     }
                 }
             }
+
+            chunk_sprite_instances.sort_by(|a, b| {
+                let depth_a = static_depth_key(
+                    a.tile_x,
+                    a.tile_y,
+                    a.priority_z_units,
+                    decode_depth_class(a.depth_class),
+                );
+                let depth_b = static_depth_key(
+                    b.tile_x,
+                    b.tile_y,
+                    b.priority_z_units,
+                    decode_depth_class(b.depth_class),
+                );
+                depth_a
+                    .partial_cmp(&depth_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            assign_sprite_depth_tie_breakers(&mut chunk_sprite_instances);
+
+            chunk_ground_instances.sort_by(|a, b| {
+                let depth_a = static_depth_key(
+                    a.tile_x,
+                    a.tile_y,
+                    a.priority_z_units,
+                    decode_depth_class(a.depth_class),
+                );
+                let depth_b = static_depth_key(
+                    b.tile_x,
+                    b.tile_y,
+                    b.priority_z_units,
+                    decode_depth_class(b.depth_class),
+                );
+                depth_a
+                    .partial_cmp(&depth_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            assign_ground_depth_tie_breakers(&mut chunk_ground_instances);
+
+            let mut requested_pages = chunk_requested_pages.into_iter().collect::<Vec<_>>();
+            requested_pages.sort_unstable();
+            chunk_stats.requested_pages = requested_pages;
+
+            outputs.3.chunks.insert(
+                chunk_key,
+                CachedStaticChunk {
+                    sprite_instances: chunk_sprite_instances,
+                    ground_instances: chunk_ground_instances,
+                    stats: chunk_stats,
+                    last_visible_tick: visible_tick,
+                },
+            );
         }
 
-        chunk_sprite_instances.sort_by(|a, b| {
-            let depth_a = static_depth_key(
-                a.tile_x,
-                a.tile_y,
-                a.priority_z_units,
-                decode_depth_class(a.depth_class),
-            );
-            let depth_b = static_depth_key(
-                b.tile_x,
-                b.tile_y,
-                b.priority_z_units,
-                decode_depth_class(b.depth_class),
-            );
-            depth_a
-                .partial_cmp(&depth_b)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        assign_sprite_depth_tie_breakers(&mut chunk_sprite_instances);
+        let Some(chunk) = outputs.3.chunks.get(&chunk_key) else {
+            continue;
+        };
 
-        chunk_ground_instances.sort_by(|a, b| {
-            let depth_a = static_depth_key(
-                a.tile_x,
-                a.tile_y,
-                a.priority_z_units,
-                decode_depth_class(a.depth_class),
-            );
-            let depth_b = static_depth_key(
-                b.tile_x,
-                b.tile_y,
-                b.priority_z_units,
-                decode_depth_class(b.depth_class),
-            );
-            depth_a
-                .partial_cmp(&depth_b)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        assign_ground_depth_tie_breakers(&mut chunk_ground_instances);
+        visited_blocks += chunk.stats.visited_blocks;
+        source_tiles += chunk.stats.source_tiles;
+        ground_land_tiles += chunk.stats.ground_land_tiles;
+        atlas_hits += chunk.stats.atlas_hits;
+        atlas_misses += chunk.stats.atlas_misses;
+        unique_requested_pages.extend(chunk.stats.requested_pages.iter().copied());
 
-        if !chunk_sprite_instances.is_empty() {
-            let start = instances.0.len() as u32;
-            let count = chunk_sprite_instances.len() as u32;
-            instances.0.extend(chunk_sprite_instances);
-            chunk_batches.sprite.push(StaticChunkBatch {
+        if !chunk.sprite_instances.is_empty() {
+            let start = outputs.0.0.len() as u32;
+            let count = chunk.sprite_instances.len() as u32;
+            outputs.0.0.extend_from_slice(&chunk.sprite_instances);
+            outputs.2.sprite.push(StaticChunkBatch {
                 key: chunk_key,
                 start,
                 count,
             });
         }
 
-        if !chunk_ground_instances.is_empty() {
-            let start = land_instances.0.len() as u32;
-            let count = chunk_ground_instances.len() as u32;
-            land_instances.0.extend(chunk_ground_instances);
-            chunk_batches.ground.push(StaticChunkBatch {
+        if !chunk.ground_instances.is_empty() {
+            let start = outputs.1.0.len() as u32;
+            let count = chunk.ground_instances.len() as u32;
+            outputs.1.0.extend_from_slice(&chunk.ground_instances);
+            outputs.2.ground.push(StaticChunkBatch {
                 key: chunk_key,
                 start,
                 count,
@@ -972,53 +1159,28 @@ pub fn sys_collect_visible_statics(
         }
     }
 
-    let stats = StaticArtCollectStats {
-        map_id,
-        dot_mode: is_dot_mode,
-        visible_chunks,
-        visited_blocks,
-        source_tiles,
-        ground_land_tiles,
-        unique_requested_pages: unique_requested_pages.len(),
-        resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
-        pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
-        atlas_capacity_pages: sprite_atlas.active_layers as usize
-            + ground_atlas.active_layers as usize,
-        atlas_hits,
-        atlas_misses,
-        emitted_instances: instances.0.len() + land_instances.0.len(),
-    };
+    outputs.3.prune_stale(visible_tick);
+    outputs.3.last_visible_chunk_keys = visible_chunk_keys;
 
-    if debug_state.last != Some(stats) {
-        console_logger::one(
-            LogSev::DebugVerbose,
-            LogAbout::RenderWorldArt,
-            &format!(
-                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={}",
-                stats.map_id,
-                stats.dot_mode,
-                stats.visible_chunks,
-                stats.visited_blocks,
-                stats.source_tiles,
-                stats.ground_land_tiles,
-            ),
-        );
-        console_logger::one(
-            LogSev::DebugVerbose,
-            LogAbout::RenderWorldArt,
-            &format!(
-                "static art collect (2/2):unique_pages={} resident_pages={} pending_pages={} capacity={} atlas_hits={} atlas_misses={} emitted={}",
-                stats.unique_requested_pages,
-                stats.resident_pages,
-                stats.pending_pages,
-                stats.atlas_capacity_pages,
-                stats.atlas_hits,
-                stats.atlas_misses,
-                stats.emitted_instances,
-            ),
-        );
-        debug_state.last = Some(stats);
-    }
+    log_static_collect_stats(
+        &mut debug_state,
+        StaticArtCollectStats {
+            map_id,
+            dot_mode: is_dot_mode,
+            visible_chunks,
+            visited_blocks,
+            source_tiles,
+            ground_land_tiles,
+            unique_requested_pages: unique_requested_pages.len(),
+            resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
+            pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
+            atlas_capacity_pages: sprite_atlas.active_layers as usize
+                + ground_atlas.active_layers as usize,
+            atlas_hits,
+            atlas_misses,
+            emitted_instances: outputs.0.0.len() + outputs.1.0.len(),
+        },
+    );
 }
 
 #[cfg(test)]
@@ -1325,5 +1487,57 @@ mod tests {
     #[test]
     fn ground_instance_stride_stays_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<GroundTileInstance>(), 96);
+    }
+
+    #[test]
+    fn static_chunk_cache_invalidates_when_config_changes() {
+        let mut cache = StaticChunkRenderCache::default();
+        cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 0,
+            ground_atlas_mapping_revision: 0,
+        });
+        cache.chunks.insert(
+            StaticChunkBatchKey {
+                map_id: 1,
+                gx: 0,
+                gy: 0,
+                scale: 1,
+            },
+            CachedStaticChunk::default(),
+        );
+
+        cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 1,
+            ground_atlas_mapping_revision: 0,
+        });
+
+        assert!(cache.chunks.is_empty());
+    }
+
+    #[test]
+    fn static_chunk_cache_prunes_after_hysteresis_window() {
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(
+            StaticChunkBatchKey {
+                map_id: 1,
+                gx: 0,
+                gy: 0,
+                scale: 1,
+            },
+            CachedStaticChunk {
+                last_visible_tick: 1,
+                ..Default::default()
+            },
+        );
+
+        cache.prune_stale(1 + STATIC_CHUNK_CACHE_HYSTERESIS_TICKS + 1);
+
+        assert!(cache.chunks.is_empty());
     }
 }

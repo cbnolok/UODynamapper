@@ -1,10 +1,49 @@
-cc_dir = "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Classic"
+cc_dir = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Classic_7_0_20_0"
 ec_dir = "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced/"
-input_uddp_dir = "/home/claudio/test/uddp_gui"
-output_uddp_dir = "/home/claudio/test/uddp_gui"
+input_uddp_dir = "/home/claudio/test/uddp"
+output_uddp_dir = "/home/claudio/test/uddp"
 link_uddp_dirs = true
-opt_tex_art_cc = "None"
-opt_tex_art_ec = "JpegXl"
-opt_tex_land_ec = "None"
+opt_tex_art_cc = "Bc7Zstd"
+opt_tex_land_cc = "Bc7Zstd"
+opt_tex_art_ec = "Bc7Zstd"
+opt_tex_land_ec = "Bc7Zstd"
+packing_tex_art_cc = "Bc7Oriented"
+packing_tex_land_cc = "Bc7Oriented"
+packing_tex_art_ec = "MaximumPacking"
+packing_tex_land_ec = "Bc7Oriented"
+upscale_tex_art_cc = "None"
+upscale_tex_art_ec = "None"
 radar_format = "Bc7"
 radar_zstd = 3
+map_preferences = [
+    "Mul",
+    "Mul",
+    "Mul",
+    "Mul",
+    "Mul",
+    "Mul",
+]
+
+[upscale_tex_land_cc_64]
+target_size = 0
+filter = "None"
+
+[upscale_tex_land_cc_128]
+target_size = 0
+filter = "None"
+
+[upscale_tex_land_ec_64]
+target_size = 256
+filter = "FsrEasu2x"
+
+[upscale_tex_land_ec_128]
+target_size = 256
+filter = "FsrEasu2x"
+
+[upscale_tex_land_ec_256]
+target_size = 256
+filter = "FsrEasu2x"
+
+[upscale_tex_land_ec_512]
+target_size = 512
+filter = "None"

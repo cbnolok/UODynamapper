@@ -12,6 +12,13 @@ pub enum TextureOptimization {
     JpegXl,
 }
 
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum AtlasPackingModeSetting {
+    #[default]
+    MaximumPacking,
+    Bc7Oriented,
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
@@ -23,6 +30,10 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
+    pub packing_tex_art_cc: AtlasPackingModeSetting,
+    pub packing_tex_land_cc: AtlasPackingModeSetting,
+    pub packing_tex_art_ec: AtlasPackingModeSetting,
+    pub packing_tex_land_ec: AtlasPackingModeSetting,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig,
@@ -48,6 +59,10 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
+            packing_tex_art_cc: AtlasPackingModeSetting::MaximumPacking,
+            packing_tex_land_cc: AtlasPackingModeSetting::MaximumPacking,
+            packing_tex_art_ec: AtlasPackingModeSetting::MaximumPacking,
+            packing_tex_land_ec: AtlasPackingModeSetting::MaximumPacking,
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
             upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig::default(),

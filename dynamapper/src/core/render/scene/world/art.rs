@@ -20,9 +20,11 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::RenderStaticInstances>();
         app.init_resource::<statics_collect::RenderStaticLandInstances>();
         app.init_resource::<statics_collect::RenderStaticChunkBatches>();
+        app.init_resource::<statics_collect::StaticChunkRenderCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
+        app.init_resource::<statics_draw::StaticArtUploadCache>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             crate::core::texture_cache::art::SpriteArtPageAtlasHandle,
         >::default());

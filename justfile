@@ -132,7 +132,7 @@ build-profile-nightly *args:
 
 # Alias for stable profile build
 build-profile *args:
-    @just build-profile-nightly {{args}}
+    @just build-profile-stable {{args}}
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
@@ -216,12 +216,11 @@ run-dynamapper-release *args:
     {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin dynamapper {{args}}
 
-# Run the main application in profiling mode (nightly)
+# Run the main application in profiling mode (stable, better symbol resolution by perf)
 run-dynamapper-profile *args:
     @echo "Running dynamapper in profiling mode (nightly Rust toolchain)..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} run --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_profile_stable}} run --profile profiling --no-default-features --features "profiling,{{linux_features}}" \
         --bin dynamapper {{args}}
 
 # Alias for run-tool-debug

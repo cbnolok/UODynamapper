@@ -48,6 +48,7 @@ pub struct InspectorApp {
     pub preview_mode: PreviewModeKind,
     pub image_window_open: bool,
     pub image_window_mode: PreviewModeKind,
+    pub texture_zoom: f32,
     pub focus_filter: bool,
     pub scroll_to_selected: bool,
 }
@@ -73,6 +74,7 @@ impl InspectorApp {
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
+            texture_zoom: 1.0,
             focus_filter: false,
             scroll_to_selected: false,
         }
@@ -87,6 +89,7 @@ impl InspectorApp {
         self.atlas_text = None;
         self.preview_mode = PreviewModeKind::Entry;
         self.image_window_mode = PreviewModeKind::Entry;
+        self.texture_zoom = 1.0;
     }
 
     pub fn set_preview_image(

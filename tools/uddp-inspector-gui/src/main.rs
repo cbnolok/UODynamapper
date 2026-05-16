@@ -175,8 +175,8 @@ impl InspectorApp {
     }
 
     fn ui_texture_viewer_window(&mut self, ctx: &egui::Context) {
-        let viewer_data = if let Some((texture, _size, label)) = self.image_for_window() {
-            Some((texture.clone(), label.to_string()))
+        let viewer_data = if let Some((texture, size, label)) = self.image_for_window() {
+            Some((texture.clone(), size, label.to_string()))
         } else {
             None
         };
@@ -191,17 +191,59 @@ impl InspectorApp {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     close_requested = true;
                 }
+
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let Some((texture, label)) = &viewer_data else {
+                    let Some((texture, size, label)) = &viewer_data else {
                         ui.label("No image available for the current selection.");
                         return;
                     };
 
-                    ui.label(label.as_str());
-                    ui.separator();
-                    egui::ScrollArea::both().show(ui, |ui| {
-                        ui.image(texture);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(label.as_str()).strong());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Reset").clicked() {
+                                self.texture_zoom = 1.0;
+                            }
+                            if ui.button("Fit").clicked() {
+                                let available = ui.available_size();
+                                let zoom_x = available.x / size[0] as f32;
+                                let zoom_y = (available.y - 10.0) / size[1] as f32;
+                                self.texture_zoom = zoom_x.min(zoom_y).clamp(0.1, 1.0);
+                            }
+                            ui.add(
+                                egui::Slider::new(&mut self.texture_zoom, 0.1..=50.0)
+                                    .logarithmic(true)
+                                    .text("Zoom"),
+                            );
+                            if ui.button("➕").clicked() {
+                                self.texture_zoom = (self.texture_zoom * 1.2).min(50.0);
+                            }
+                            if ui.button("➖").clicked() {
+                                self.texture_zoom = (self.texture_zoom / 1.2).max(0.1);
+                            }
+                            ui.label(format!("{:.1}x", self.texture_zoom));
+                        });
                     });
+                    ui.separator();
+
+                    // Handle mouse wheel zoom if hovering over the central panel and holding Command/Ctrl
+                    let zoom_delta = ui.input(|i| i.smooth_scroll_delta.y);
+                    if zoom_delta != 0.0 && ui.input(|i| i.modifiers.command) {
+                        self.texture_zoom =
+                            (self.texture_zoom * (zoom_delta * 0.005).exp()).clamp(0.1, 50.0);
+                    }
+
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let zoom = self.texture_zoom;
+                            let new_size = egui::vec2(size[0] as f32 * zoom, size[1] as f32 * zoom);
+                            ui.add(
+                                egui::Image::new(texture)
+                                    .maintain_aspect_ratio(true)
+                                    .fit_to_exact_size(new_size),
+                            );
+                        });
                 });
             },
         );

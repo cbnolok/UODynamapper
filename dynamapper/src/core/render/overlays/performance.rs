@@ -198,22 +198,6 @@ fn query_process_vram_mib_native(pid: sysinfo::Pid) -> Option<f32> {
     None
 }
 
-fn format_transfer_bytes(bytes: u64) -> String {
-    const BYTES_PER_KIB: f64 = 1024.0;
-    const BYTES_PER_MIB_F64: f64 = 1024.0 * 1024.0;
-
-    let bytes_f = bytes as f64;
-    if bytes == 0 {
-        "0 B".to_string()
-    } else if bytes_f >= BYTES_PER_MIB_F64 {
-        format!("{:.2} MiB", bytes_f / BYTES_PER_MIB_F64)
-    } else if bytes_f >= BYTES_PER_KIB {
-        format!("{:.1} KiB", bytes_f / BYTES_PER_KIB)
-    } else {
-        format!("{} B", bytes)
-    }
-}
-
 // ----
 
 use bevy::time::common_conditions::on_real_timer;
@@ -378,12 +362,11 @@ pub fn update_performance_text(
     mut last_scale: Local<f32>,
     mut last_text_cached: Local<String>,
 ) {
-    let current_scale = settings.app.window.performance_overlay_scale;
-    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+    let show_overlay = settings.app.performance.show_overlay;
 
-    // Real-time visibility toggle from settings
+    // 1. Real-time visibility toggle from settings
     if let Ok(mut node) = node_query.single_mut() {
-        let target_display = if settings.app.performance.show_overlay {
+        let target_display = if show_overlay {
             Display::Flex
         } else {
             Display::None
@@ -393,12 +376,21 @@ pub fn update_performance_text(
         }
     }
 
+    // 2. Early exit if not showing
+    if !show_overlay {
+        return;
+    }
+
+    let current_scale = settings.app.window.performance_overlay_scale;
+    let scale_changed = (*last_scale - current_scale).abs() > 0.001;
+
     if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
-        let fps = diagnostics
+        use std::fmt::Write;
+        let mut buffer = String::with_capacity(1024);
+
+        let fps_val = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|diag| diag.smoothed())
-            .map(|val| format!("{:.0}", val))
-            .unwrap_or_else(|| "--".to_string());
+            .and_then(|diag| diag.smoothed());
 
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
@@ -407,35 +399,13 @@ pub fn update_performance_text(
             tex_consts::TerrainTextureCompression::from_graphics_settings(&settings.graphics)
                 .label();
 
-        // Read render pipeline statistics from RenderDiagnosticsPlugin.
-        // Paths are dynamic strings: "render/{span_name}/{stat}".
-        // The span names are logged at startup via LogDiagnosticsPlugin.
-        // On Vulkan, these are populated via GPU pipeline query objects.
-        let vert_invoc = find_render_stat(&diagnostics, "vertex_shader_invocations");
-        let frag_invoc = find_render_stat(&diagnostics, "fragment_shader_invocations");
-        let clipper_in = find_render_stat(&diagnostics, "clipper_invocations");
-        let clipper_out = find_render_stat(&diagnostics, "clipper_primitives_out");
-        let gpu_elapsed = find_render_stat(&diagnostics, "elapsed_gpu");
+        // Single-pass render diagnostic scanning
+        let stats = BatchRenderStats::scan(&diagnostics);
 
-        let render_stats = format!(
-            "GPU elapsed: {} | Clipper in/out: {}/{}\nVert/Frag calls: {}/{}",
-            gpu_elapsed, clipper_in, clipper_out, vert_invoc, frag_invoc,
-        );
-
-        let upload_stats = format!(
-            "Land uploads: dirty {} -> queued {} ({}) | submitted {} ({}) | backlog {} ({})",
-            upload_snapshot.dirty_block_updates,
-            upload_snapshot.queued_ops,
-            format_transfer_bytes(upload_snapshot.queued_bytes),
-            upload_snapshot.submitted_ops,
-            format_transfer_bytes(upload_snapshot.submitted_bytes),
-            upload_snapshot.pending_ops,
-            format_transfer_bytes(upload_snapshot.pending_bytes),
-        );
-
-        let next_text = format!(
-            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n{}\n{}",
-            fps,
+        let _ = write!(
+            &mut buffer,
+            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n",
+            fps_val.map_or("--".to_string(), |v| format!("{:.0}", v)),
             metrics.cpu_usage_total,
             metrics.cpu_usage_one_core,
             metrics.core_count,
@@ -446,13 +416,37 @@ pub fn update_performance_text(
             metrics.process_vram_tracked_mib,
             chunk_count,
             entity_count,
-            upload_stats,
-            render_stats,
         );
 
-        if *last_text_cached != next_text {
-            text.0 = next_text.clone();
-            *last_text_cached = next_text;
+        let _ = writeln!(
+            &mut buffer,
+            "Land uploads: dirty {} -> queued {} ({}) | submitted {} ({}) | backlog {} ({})",
+            upload_snapshot.dirty_block_updates,
+            upload_snapshot.queued_ops,
+            ByteSizeFormatter(upload_snapshot.queued_bytes),
+            upload_snapshot.submitted_ops,
+            ByteSizeFormatter(upload_snapshot.submitted_bytes),
+            upload_snapshot.pending_ops,
+            ByteSizeFormatter(upload_snapshot.pending_bytes),
+        );
+
+        if stats.found {
+            let _ = write!(
+                &mut buffer,
+                "GPU elapsed: {:.2}ms | Clipper in/out: {}/{} | Vert/Frag calls: {}/{}",
+                stats.gpu_elapsed,
+                CountFormatter(stats.clipper_in),
+                CountFormatter(stats.clipper_out),
+                CountFormatter(stats.vert_invoc),
+                CountFormatter(stats.frag_invoc),
+            );
+        } else {
+            let _ = write!(&mut buffer, "GPU stats: --");
+        }
+
+        if *last_text_cached != buffer {
+            text.0 = buffer.clone();
+            *last_text_cached = buffer;
         }
 
         if scale_changed {
@@ -463,36 +457,75 @@ pub fn update_performance_text(
     }
 }
 
-/// Sums all render diagnostics whose path ends with `stat_suffix` across all render spans.
-/// Returns a formatted string with the total, or "--" if no data is available.
-/// This is needed because Bevy 0.18 uses dynamic path strings for render diagnostics
-/// (e.g. "render/main_opaque_pass/fragment_shader_invocations") with no public constants.
-fn find_render_stat(diagnostics: &DiagnosticsStore, stat_suffix: &str) -> String {
-    let mut total: f64 = 0.0;
-    let mut found = false;
-    for diag in diagnostics.iter() {
-        let path = diag.path().as_str();
-        if path.starts_with("render/") && path.ends_with(stat_suffix) {
-            if let Some(val) = diag.value() {
-                total += val;
-                found = true;
-            }
+struct ByteSizeFormatter(u64);
+impl std::fmt::Display for ByteSizeFormatter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const BYTES_PER_KIB: f64 = 1024.0;
+        const BYTES_PER_MIB_F64: f64 = 1024.0 * 1024.0;
+
+        let bytes_f = self.0 as f64;
+        if self.0 == 0 {
+            write!(f, "0 B")
+        } else if bytes_f >= BYTES_PER_MIB_F64 {
+            write!(f, "{:.2} MiB", bytes_f / BYTES_PER_MIB_F64)
+        } else if bytes_f >= BYTES_PER_KIB {
+            write!(f, "{:.1} KiB", bytes_f / BYTES_PER_KIB)
+        } else {
+            write!(f, "{} B", self.0)
         }
     }
-    if found {
-        if stat_suffix.contains("elapsed") {
-            format!("{total:.2}ms")
+}
+
+struct CountFormatter(f64);
+impl std::fmt::Display for CountFormatter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= 1_000_000.0 {
+            write!(f, "{:.1}M", self.0 / 1_000_000.0)
+        } else if self.0 >= 1_000.0 {
+            write!(f, "{:.1}K", self.0 / 1_000.0)
         } else {
-            // Large numbers: format with K/M suffix for readability
-            if total >= 1_000_000.0 {
-                format!("{:.1}M", total / 1_000_000.0)
-            } else if total >= 1_000.0 {
-                format!("{:.1}K", total / 1_000.0)
-            } else {
-                format!("{total:.0}")
+            write!(f, "{:.0}", self.0)
+        }
+    }
+}
+
+#[derive(Default)]
+struct BatchRenderStats {
+    gpu_elapsed: f64,
+    clipper_in: f64,
+    clipper_out: f64,
+    vert_invoc: f64,
+    frag_invoc: f64,
+    found: bool,
+}
+
+impl BatchRenderStats {
+    fn scan(diagnostics: &DiagnosticsStore) -> Self {
+        let mut stats = Self::default();
+        for diag in diagnostics.iter() {
+            let path = diag.path().as_str();
+            if !path.starts_with("render/") {
+                continue;
+            }
+            if let Some(val) = diag.value() {
+                if path.ends_with("elapsed_gpu") {
+                    stats.gpu_elapsed += val;
+                    stats.found = true;
+                } else if path.ends_with("clipper_invocations") {
+                    stats.clipper_in += val;
+                    stats.found = true;
+                } else if path.ends_with("clipper_primitives_out") {
+                    stats.clipper_out += val;
+                    stats.found = true;
+                } else if path.ends_with("vertex_shader_invocations") {
+                    stats.vert_invoc += val;
+                    stats.found = true;
+                } else if path.ends_with("fragment_shader_invocations") {
+                    stats.frag_invoc += val;
+                    stats.found = true;
+                }
             }
         }
-    } else {
-        "--".to_string()
+        stats
     }
 }

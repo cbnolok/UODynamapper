@@ -5,12 +5,12 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
 use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
-use crate::tex_art_cc::PagePixelFormat;
+use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
-const TEX_LAND_EC_METADATA_VERSION: u32 = 2;
+const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
 const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
@@ -90,6 +90,7 @@ pub struct TexLandEcPackage {
     atlas_width: u32,
     atlas_height: u32,
     gutter: u16,
+    packing_mode: AtlasPackingMode,
     pages: Vec<TexLandEcPageRecord>,
     slots: Vec<TexLandEcSlotRecord>,
     terrain_provenance: Vec<TexLandEcTerrainProvenanceRecord>,
@@ -137,12 +138,17 @@ impl TexLandEcPackage {
             read_path_entry(&package, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH)
                 .context("tex_land_ec.uddp missing metadata/terrain_provenance.bin")?;
 
-        let (page_width, page_height, page_gutter, pages) = parse_page_manifest(&page_manifest)?;
-        let (slot_width, slot_height, slot_gutter, slots) = parse_slot_manifest(&slot_manifest)?;
+        let (page_width, page_height, page_gutter, page_packing_mode, pages) =
+            parse_page_manifest(&page_manifest)?;
+        let (slot_width, slot_height, slot_gutter, slot_packing_mode, slots) =
+            parse_slot_manifest(&slot_manifest)?;
         let terrain_provenance = parse_terrain_provenance_manifest(&terrain_provenance_manifest)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
             eyre::bail!("tex_land_ec metadata headers disagree on atlas dimensions or gutter");
+        }
+        if page_packing_mode != slot_packing_mode {
+            eyre::bail!("tex_land_ec metadata headers disagree on atlas packing mode");
         }
 
         let transcode = read_transcode_from_package(&package).unwrap_or_default();
@@ -151,6 +157,7 @@ impl TexLandEcPackage {
             atlas_width: page_width,
             atlas_height: page_height,
             gutter: page_gutter,
+            packing_mode: page_packing_mode,
             pages,
             slots,
             terrain_provenance,
@@ -177,6 +184,10 @@ impl TexLandEcPackage {
 
     pub fn gutter(&self) -> u16 {
         self.gutter
+    }
+
+    pub fn packing_mode(&self) -> AtlasPackingMode {
+        self.packing_mode
     }
 
     pub fn pages(&self) -> &[TexLandEcPageRecord] {
@@ -295,21 +306,31 @@ impl TexLandEcPackage {
             .get(page_index as usize)
             .ok_or_else(|| eyre::eyre!("missing atlas page metadata for {page_index}"))?;
         let page_bytes = self.read_page_bytes(page_index)?;
-        decode_atlas_page_rgba(&page_bytes, page.pixel_format, page.used_width, page.used_height)
+        decode_atlas_page_rgba(
+            &page_bytes,
+            page.pixel_format,
+            self.atlas_width,
+            self.atlas_height,
+            page.used_width,
+            page.used_height,
+        )
     }
 }
 
-fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLandEcPageRecord>)> {
+fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexLandEcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_EC_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_LAND_EC_METADATA_VERSION {
+        eyre::bail!("invalid version");
+    }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
     let pixel_format = PagePixelFormat::from_repr(cursor.read_u8()?).unwrap();
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut pages = Vec::with_capacity(count);
     for _ in 0..count {
@@ -325,19 +346,22 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLand
             pixel_format,
         });
     }
-    Ok((w, h, g, pages))
+    Ok((w, h, g, packing_mode, pages))
 }
 
-fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLandEcSlotRecord>)> {
+fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexLandEcSlotRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_EC_METADATA_VERSION { eyre::bail!("invalid version"); }
+    if version != TEX_LAND_EC_METADATA_VERSION {
+        eyre::bail!("invalid version");
+    }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
+    let packing_mode = AtlasPackingMode::from_repr(cursor.read_u8()?).unwrap();
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
     for _ in 0..count {
@@ -352,7 +376,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<TexLand
             height: cursor.read_u16::<LittleEndian>()?,
         });
     }
-    Ok((w, h, g, slots))
+    Ok((w, h, g, packing_mode, slots))
 }
 
 fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEcTerrainProvenanceRecord>> {

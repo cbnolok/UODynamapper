@@ -95,6 +95,26 @@ pub fn build_tilemeta_uddp_from_sources(
 ) -> eyre::Result<()> {
     let built = build_tilemeta_tables_from_sources(source_dirs, options, "unifying tiledata")?;
 
+    write_tilemeta_uddp(out_file, built)
+}
+
+pub fn build_tilemeta_uddp_from_split_sources(
+    cc_source_dir: &Path,
+    ec_source_dir: &Path,
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+) -> eyre::Result<()> {
+    let built = build_tilemeta_tables_from_split_sources(
+        cc_source_dir,
+        ec_source_dir,
+        options,
+        "unifying tiledata",
+    )?;
+
+    write_tilemeta_uddp(out_file, built)
+}
+
+fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Result<()> {
     let land_bytes = bytemuck::cast_slice(&built.land_tiles);
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
 
@@ -148,6 +168,54 @@ fn build_tilemeta_tables_from_sources(
         .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop"))?;
     let radarcol_path = find_first_existing_file(source_dirs, &["radarcol.mul"]);
 
+    build_tilemeta_tables_from_resolved_paths(
+        tiledata_path,
+        tileart_path,
+        stringdict_path,
+        radarcol_path,
+        source_dirs,
+        options,
+        progress_label,
+    )
+}
+
+fn build_tilemeta_tables_from_split_sources(
+    cc_source_dir: &Path,
+    ec_source_dir: &Path,
+    options: &TileMetaBuildOptions,
+    progress_label: &str,
+) -> eyre::Result<BuiltTileMetaTables> {
+    let cc_source_dirs = [cc_source_dir.to_path_buf()];
+    let ec_source_dirs = [ec_source_dir.to_path_buf()];
+    let tiledata_path = find_first_existing_file(&cc_source_dirs, &["tiledata.mul"])
+        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
+    let tileart_path = find_first_existing_file(&ec_source_dirs, &["tileart.uop"])
+        .ok_or_else(|| eyre::eyre!("missing tileart.uop"))?;
+    let stringdict_path = find_string_dictionary_path(&ec_source_dirs)
+        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop"))?;
+    let radarcol_path = find_first_existing_file(&cc_source_dirs, &["radarcol.mul"]);
+
+    build_tilemeta_tables_from_resolved_paths(
+        tiledata_path,
+        tileart_path,
+        stringdict_path,
+        radarcol_path,
+        &ec_source_dirs,
+        options,
+        progress_label,
+    )
+}
+
+fn build_tilemeta_tables_from_resolved_paths(
+    tiledata_path: PathBuf,
+    tileart_path: PathBuf,
+    stringdict_path: PathBuf,
+    radarcol_path: Option<PathBuf>,
+    ec_source_dirs: &[PathBuf],
+    options: &TileMetaBuildOptions,
+    progress_label: &str,
+) -> eyre::Result<BuiltTileMetaTables> {
+
     info!("Using tiledata.mul: {}", tiledata_path.display());
     info!("Using tileart.uop: {}", tileart_path.display());
     info!("Using string dictionary: {}", stringdict_path.display());
@@ -160,7 +228,7 @@ fn build_tilemeta_tables_from_sources(
     let cc_tiledata = TileData::load(tiledata_path.clone())?;
     let tex_art_ec = ArtDefinition::load(&tileart_path, &stringdict_path)?;
     let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
-        compute_tex_art_ec_crop_adjustments_from_sources(source_dirs)?
+        compute_tex_art_ec_crop_adjustments_from_sources(ec_source_dirs)?
     } else {
         Vec::new()
     };

@@ -60,59 +60,71 @@ impl eframe::App for UddConvApp {
                 ui.separator();
                 ui.add_space(15.0);
 
-                // Active tab content
-                egui::ScrollArea::vertical()
-                    .id_salt("main_scroll")
-                    .show(ui, |ui| {
-                        match self.current_tab {
-                            Tab::Sources => self.ui_sources(ui),
-                            Tab::Assets => self.ui_assets(ui),
-                            Tab::World => self.ui_world(ui),
-                            Tab::Tools => self.ui_tools(ui),
-                        }
-                    });
+                let available_height = ui.available_height();
+                let log_panel_height = 200.0;
+                let content_height = (available_height - log_panel_height - 10.0).max(160.0);
 
-                // Bottom section: Logs
-                ui.add_space(20.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), content_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("main_scroll")
+                            .show(ui, |ui| match self.current_tab {
+                                Tab::Sources => self.ui_sources(ui),
+                                Tab::Assets => self.ui_assets(ui),
+                                Tab::World => self.ui_world(ui),
+                                Tab::Tools => self.ui_tools(ui),
+                            });
+                    },
+                );
+
+                ui.add_space(8.0);
                 ui.separator();
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.heading("Logs");
-                    if ui.button("Clear").clicked() {
-                        if let Ok(mut logs) = self.logs.lock() {
-                            logs.clear();
-                        }
-                    }
-                    if *self.is_converting.lock().unwrap() {
-                        ui.spinner();
-                        ui.label("Processing...");
-                    }
-                });
+                ui.add_space(8.0);
 
-                ui.add_space(5.0);
-                let text_edit_id = ui.make_persistent_id("log_view");
-                egui::ScrollArea::vertical()
-                    .id_salt(text_edit_id)
-                    .auto_shrink([false, false])
-                    .max_height(250.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), log_panel_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("Logs");
+                            if ui.button("Clear").clicked() {
+                                if let Ok(mut logs) = self.logs.lock() {
+                                    logs.clear();
+                                }
+                            }
+                            if *self.is_converting.lock().unwrap() {
+                                ui.spinner();
+                                ui.label("Processing...");
+                            }
+                        });
 
-                        let Ok(logs) = self.logs.lock() else {
-                            return;
-                        };
+                        ui.add_space(5.0);
+                        let text_edit_id = ui.make_persistent_id("log_view");
+                        egui::ScrollArea::vertical()
+                            .id_salt(text_edit_id)
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
 
-                        for log in logs.iter() {
-                            let color = match log.level {
-                                LogLevel::Info => egui::Color32::from_gray(200),
-                                LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
-                                // LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
-                                LogLevel::Error => egui::Color32::from_rgb(255, 100, 100),
-                            };
-                            ui.colored_label(color, &log.text);
-                        }
-                    });
+                                let Ok(logs) = self.logs.lock() else {
+                                    return;
+                                };
+
+                                for log in logs.iter() {
+                                    let color = match log.level {
+                                        LogLevel::Info => egui::Color32::from_gray(200),
+                                        LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
+                                        // LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
+                                        LogLevel::Error => egui::Color32::from_rgb(255, 100, 100),
+                                    };
+                                    ui.colored_label(color, &log.text);
+                                }
+                            });
+                    },
+                );
             });
         });
 
