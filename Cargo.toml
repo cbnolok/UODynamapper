@@ -58,7 +58,8 @@ inherits = "release"
 debug = true
 debug-assertions = false
 lto = false
-strip = "debuginfo" # leaves symbols
+strip = "debuginfo" # leaves mangled symbols
+#strip = false
 panic = "abort"
 #overflow-checks = false
 

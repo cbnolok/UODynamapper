@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::read_path_entry;
+use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
 use crate::tex_art_cc::PagePixelFormat;
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -80,22 +80,41 @@ pub struct TexArtEcPackage {
     gutter: u16,
     pages: Vec<TexArtEcPageRecord>,
     slots: Vec<TexArtEcSlotRecord>,
+    page_cache: AtlasPageCache,
 }
 
 impl TexArtEcPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        Self::load_with_options(path, AtlasCacheOptions::disabled())
+    }
+
+    pub fn load_with_options(path: impl AsRef<Path>, options: AtlasCacheOptions) -> eyre::Result<Self> {
         let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
-        Self::from_uddp_package(package)
+        Self::from_uddp_package_with_options(package, options)
     }
 
     pub fn load_in_memory(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        Self::load_in_memory_with_options(path, AtlasCacheOptions::disabled())
+    }
+
+    pub fn load_in_memory_with_options(
+        path: impl AsRef<Path>,
+        options: AtlasCacheOptions,
+    ) -> eyre::Result<Self> {
         let package = UddpReader::load_in_memory(path.as_ref())
             .wrap_err_with(|| format!("load_in_memory {}", path.as_ref().display()))?;
-        Self::from_uddp_package(package)
+        Self::from_uddp_package_with_options(package, options)
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        Self::from_uddp_package_with_options(package, AtlasCacheOptions::disabled())
+    }
+
+    pub fn from_uddp_package_with_options(
+        package: UddpReader,
+        options: AtlasCacheOptions,
+    ) -> eyre::Result<Self> {
         let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
             .context("tex_art_ec.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
@@ -115,6 +134,7 @@ impl TexArtEcPackage {
             gutter: page_gutter,
             pages,
             slots,
+            page_cache: AtlasPageCache::new(options),
         })
     }
 
@@ -142,6 +162,14 @@ impl TexArtEcPackage {
         &self.slots
     }
 
+    pub fn atlas_cache_enabled(&self) -> bool {
+        self.page_cache.is_enabled()
+    }
+
+    pub fn clear_atlas_cache(&self) {
+        self.page_cache.clear();
+    }
+
     pub fn slot_record(&self, art_id: u32) -> Option<&TexArtEcSlotRecord> {
         self.slots.get(art_id as usize)
     }
@@ -156,8 +184,19 @@ impl TexArtEcPackage {
             .get(page_index as usize)
             .map(|p| p.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
-        read_path_entry(&self.package, &crate::tex_art_cc::page_entry_path(page_index, fmt))
-            .wrap_err_with(|| format!("unpack atlas page {page_index}"))
+        self.page_cache.read_page_bytes(page_index, || {
+            read_path_entry(&self.package, &crate::tex_art_cc::page_entry_path(page_index, fmt))
+                .wrap_err_with(|| format!("unpack atlas page {page_index}"))
+        })
+    }
+
+    pub fn read_page_rgba(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
+        let page = self
+            .pages
+            .get(page_index as usize)
+            .ok_or_else(|| eyre::eyre!("missing atlas page metadata for {page_index}"))?;
+        let page_bytes = self.read_page_bytes(page_index)?;
+        decode_atlas_page_rgba(&page_bytes, page.pixel_format, page.used_width, page.used_height)
     }
 }
 

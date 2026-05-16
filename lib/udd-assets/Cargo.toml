@@ -8,7 +8,6 @@ udd-container = { path = "../udd-container" }
 uocf = { path = "../uocf" }
 bytemuck = { version = "1.21", features = ["derive"] }
 color-eyre = "0.6"
-log = "0.4"
 byteorder = "1.5"
 knuffel = "3"
 wgpu-types = "27"

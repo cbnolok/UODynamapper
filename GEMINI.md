@@ -18,7 +18,7 @@ This document provides essential information for AI agents to effectively assist
 - `tools/udd-conv-cli/` - CLI for building and inspecting UODynamapper-specific converted packages
 - `tools/uocf-cli/` - Generic UO tooling CLI crate with multiple binaries:
   - `uoptool`: Utility for hashing, brute-force cracking, and rebuilding `.uop` files.
-  - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
+  - `cc-uop-mul-converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats.
   - `texture_scanner`: Utility for identifying and isolating land/terrain candidates from UO texture pools.
   - `uop-dict-populator-cli`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
 - `tools/uddp-inspector-gui/` - GUI for inspecting .uddp package contents

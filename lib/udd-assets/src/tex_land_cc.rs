@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::read_path_entry;
+use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
@@ -65,16 +65,28 @@ pub struct TexLandCcPackage {
     gutter: u16,
     pages: Vec<TexLandCcPageRecord>,
     slots: Vec<TexLandCcSlotRecord>,
+    page_cache: AtlasPageCache,
 }
 
 impl TexLandCcPackage {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        Self::load_with_options(path, AtlasCacheOptions::disabled())
+    }
+
+    pub fn load_with_options(path: impl AsRef<Path>, options: AtlasCacheOptions) -> eyre::Result<Self> {
         let package = UddpReader::load(path.as_ref())
             .wrap_err_with(|| format!("load {}", path.as_ref().display()))?;
-        Self::from_uddp_package(package)
+        Self::from_uddp_package_with_options(package, options)
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        Self::from_uddp_package_with_options(package, AtlasCacheOptions::disabled())
+    }
+
+    pub fn from_uddp_package_with_options(
+        package: UddpReader,
+        options: AtlasCacheOptions,
+    ) -> eyre::Result<Self> {
         let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
             .context("tex_land_cc.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
@@ -94,6 +106,7 @@ impl TexLandCcPackage {
             gutter: page_gutter,
             pages,
             slots,
+            page_cache: AtlasPageCache::new(options),
         })
     }
 
@@ -121,6 +134,14 @@ impl TexLandCcPackage {
         &self.slots
     }
 
+    pub fn atlas_cache_enabled(&self) -> bool {
+        self.page_cache.is_enabled()
+    }
+
+    pub fn clear_atlas_cache(&self) {
+        self.page_cache.clear();
+    }
+
     pub fn len(&self) -> usize {
         self.slots.len()
     }
@@ -140,8 +161,19 @@ impl TexLandCcPackage {
             .get(page_index as usize)
             .map(|p| p.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
-        read_path_entry(&self.package, &page_entry_path(page_index, fmt))
-            .wrap_err_with(|| format!("unpack atlas page {page_index}"))
+        self.page_cache.read_page_bytes(page_index, || {
+            read_path_entry(&self.package, &page_entry_path(page_index, fmt))
+                .wrap_err_with(|| format!("unpack atlas page {page_index}"))
+        })
+    }
+
+    pub fn read_page_rgba(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
+        let page = self
+            .pages
+            .get(page_index as usize)
+            .ok_or_else(|| eyre::eyre!("missing atlas page metadata for {page_index}"))?;
+        let page_bytes = self.read_page_bytes(page_index)?;
+        decode_atlas_page_rgba(&page_bytes, page.pixel_format, page.used_width, page.used_height)
     }
 
     pub fn present_slot(&self, id: u32) -> Option<&TexLandCcSlotRecord> {
@@ -152,24 +184,28 @@ impl TexLandCcPackage {
 
     pub fn get_pixel_data(&self, id: u32) -> Option<Vec<u8>> {
         let slot = self.present_slot(id)?;
-        let page_bytes = self.read_page_bytes(slot.page_index).ok()?;
-        
+        let page_bytes = self.page_cache.read_page_bytes_arc(slot.page_index, || {
+            let fmt = self
+                .pages
+                .get(slot.page_index as usize)
+                .map(|p| p.pixel_format)
+                .unwrap_or(PagePixelFormat::Rgba8888);
+            read_path_entry(&self.package, &page_entry_path(slot.page_index, fmt))
+                .wrap_err_with(|| format!("unpack atlas page {}", slot.page_index))
+        }).ok()?;
+
         let page_record = &self.pages[slot.page_index as usize];
-        
-        if page_record.pixel_format == PagePixelFormat::Rgba8888 {
-            let mut pixels = vec![0u8; slot.width as usize * slot.height as usize * 4];
-            let src_stride = page_record.used_width as usize * 4;
-            let dst_stride = slot.width as usize * 4;
-            
-            for row in 0..slot.height as usize {
-                let src_start = (slot.y as usize + row) * src_stride + slot.x as usize * 4;
-                let dst_start = row * dst_stride;
-                pixels[dst_start..dst_start + dst_stride].copy_from_slice(&page_bytes[src_start..src_start + dst_stride]);
-            }
-            Some(pixels)
-        } else {
-            None // BC7 decoding not implemented for individual tile extraction yet
-        }
+        extract_atlas_subrect_rgba(
+            &page_bytes,
+            page_record.pixel_format,
+            page_record.used_width,
+            page_record.used_height,
+            slot.x,
+            slot.y,
+            slot.width,
+            slot.height,
+        )
+        .ok()
     }
 
     pub fn get_pixel_data_arc(&self, id: u32) -> Option<std::sync::Arc<[u8]>> {

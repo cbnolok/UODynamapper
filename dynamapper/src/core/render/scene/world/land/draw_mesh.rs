@@ -750,12 +750,13 @@ pub fn sys_draw_spawned_land_chunks(
         &frame_pacing.settings.graphics,
     );
     {
-        let use_tex_land_ec_atlas = frame_pacing.settings.graphics.land_texture_source
-            == crate::configs::settings::ClientTextureSource::Ec
-            && cache_r.tex_land_ec.is_some();
+        let use_land_page_atlas = match frame_pacing.settings.graphics.land_texture_source {
+            crate::configs::settings::ClientTextureSource::Cc => cache_r.tex_land_cc.is_some(),
+            crate::configs::settings::ClientTextureSource::Ec => cache_r.tex_land_ec.is_some(),
+        };
 
         let _span = crate::tracy_span!("worldmap::chunk_draw_precache_textures");
-        if !use_tex_land_ec_atlas {
+        if !use_land_page_atlas {
             cache_r.precache_textures_parallel(
                 ids.as_slice(),
                 texmap_2d_r.0.clone(),
@@ -766,18 +767,29 @@ pub fn sys_draw_spawned_land_chunks(
 
         // Pre-populate lookup cache sequentially so background threads don't need mutable cache access.
         for &id in &*ids {
-            let resolved_ec_slot = if use_tex_land_ec_atlas {
-                cache_r
-                    .tex_land_ec
-                    .as_ref()
-                    .and_then(|package| package.resolve_runtime_slot_id(id as u32))
+            let resolved_page_slot = if use_land_page_atlas {
+                match frame_pacing.settings.graphics.land_texture_source {
+                    crate::configs::settings::ClientTextureSource::Cc => cache_r
+                        .tex_land_cc
+                        .as_ref()
+                        .and_then(|package| package.present_slot(id as u32).map(|_| id as u32)),
+                    crate::configs::settings::ClientTextureSource::Ec => cache_r
+                        .tex_land_ec
+                        .as_ref()
+                        .and_then(|package| package.resolve_runtime_slot_id(id as u32))
+                        .map(|_| id as u32),
+                }
             } else {
                 None
             };
 
-            if let Some(_slot_id) = resolved_ec_slot {
-                texture_lookup_cache[id as usize] = ((id as u32) << 2) | 2;
-            } else if use_tex_land_ec_atlas {
+            if let Some(payload_id) = resolved_page_slot {
+                let atlas_mode = match frame_pacing.settings.graphics.land_texture_source {
+                    crate::configs::settings::ClientTextureSource::Cc => 4u32,
+                    crate::configs::settings::ClientTextureSource::Ec => 2u32,
+                };
+                texture_lookup_cache[id as usize] = (payload_id << 4) | atlas_mode;
+            } else if use_land_page_atlas {
                 texture_lookup_cache[id as usize] = 3;
             } else {
                 let (size, layer) =
@@ -786,12 +798,16 @@ pub fn sys_draw_spawned_land_chunks(
                     LandTextureSize::Small => 0u32,
                     LandTextureSize::Big => 1u32,
                 };
-                texture_lookup_cache[id as usize] = (layer << 2) | mode;
+                texture_lookup_cache[id as usize] = (layer << 4) | mode;
             }
         }
 
         // ── EC land diagnostics (one-shot per launch) ────────────────────────
-        if use_tex_land_ec_atlas && !locals.ec_diagnostics_logged {
+        if frame_pacing.settings.graphics.land_texture_source
+            == crate::configs::settings::ClientTextureSource::Ec
+            && use_land_page_atlas
+            && !locals.ec_diagnostics_logged
+        {
             locals.ec_diagnostics_logged = true;
             if let Some(ec) = cache_r.tex_land_ec.as_ref() {
                 log_tex_land_ec_diagnostics(
@@ -922,8 +938,8 @@ pub fn sys_draw_spawned_land_chunks(
                                     cell.id
                                 );
 
-                                let mode = packed & 0x3;
-                                let payload = packed >> 2;
+                                let mode = packed & 0xF;
+                                let payload = packed >> 4;
                                 if mode < 2 && payload == 0 {
                                     has_fallback = true;
                                 }
@@ -1255,12 +1271,12 @@ fn log_tex_land_ec_diagnostics(
                             continue;
                         }
 
-                        let mode = packed & 0x3;
-                        let payload = packed >> 2;
+                        let mode = packed & 0xF;
+                        let payload = packed >> 4;
                         let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16, false);
                         let (source, normalized_id, resolved_slot) = resolve_source(cell.id as u32);
                         let authoritative_slot = match mode {
-                            2 => Some(payload),
+                            2 | 4 => Some(payload),
                             3 => None,
                             _ => resolved_slot,
                         };

@@ -13,20 +13,22 @@ impl UddConvApp {
             ui.group(|ui| {
                 ui.label(egui::RichText::new("Compression guidelines:").strong().color(egui::Color32::from_rgb(100, 200, 255)));
                 ui.add_space(5.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                    ui.label("Lossy but reduces disk size and VRAM usage. Sampled directly by the GPU in its compressed state.");
-                });
-                ui.add_space(2.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("Supercompressed BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                    ui.label("BC7 data compressed with zstd. Extremely small disk footprint, but requires on-the-fly decompression when loading.");
-                });
-                ui.add_space(2.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("Jpeg XL:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                    ui.label("Lossless and reduces disk size, but offers no VRAM savings.");
-                });
+                egui::Grid::new("guidelines_grid")
+                    .num_columns(2)
+                    .spacing([15.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
+                        ui.label("Lossy but reduces disk size and VRAM usage. Sampled directly by the GPU in its compressed state.");
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Supercompressed BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
+                        ui.label("BC7 data compressed with zstd. Extremely small disk footprint, but requires on-the-fly decompression when loading.");
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Jpeg XL:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
+                        ui.label("Lossless and reduces disk size, but offers no VRAM savings.");
+                        ui.end_row();
+                    });
             });
             ui.add_space(20.0);
 
@@ -35,9 +37,9 @@ impl UddConvApp {
             ui.add_enabled_ui(!is_busy, |ui| {
                 ui.spacing_mut().item_spacing.y = 15.0;
 
-                if draw_asset_row(
+                if draw_asset_card(
                     ui,
-                    "Pack CC Art",
+                    "Classic Art",
                     "Classic items and land textures (art.mul)",
                     Some(&mut self.settings.opt_tex_art_cc),
                     Some(&mut self.settings.upscale_tex_art_cc),
@@ -45,9 +47,9 @@ impl UddConvApp {
                 ) {
                     self.convert_tex_art_cc();
                 }
-                if draw_asset_row(
+                if draw_asset_card(
                     ui,
-                    "Pack CC Texmaps",
+                    "Classic Texmaps",
                     "Classic high-res terrain textures (texmaps.mul)",
                     Some(&mut self.settings.opt_tex_land_cc),
                     None,
@@ -58,9 +60,9 @@ impl UddConvApp {
                 ) {
                     self.convert_tex_land_cc();
                 }
-                if draw_asset_row(
+                if draw_asset_card(
                     ui,
-                    "Pack EC Art",
+                    "Enhanced Art",
                     "Enhanced Client static items (worldart)",
                     Some(&mut self.settings.opt_tex_art_ec),
                     Some(&mut self.settings.upscale_tex_art_ec),
@@ -68,9 +70,9 @@ impl UddConvApp {
                 ) {
                     self.convert_tex_art_ec();
                 }
-                if draw_asset_row(
+                if draw_asset_card(
                     ui,
-                    "Pack EC Land",
+                    "Enhanced Land",
                     "Enhanced Client high-res terrain textures",
                     Some(&mut self.settings.opt_tex_land_ec),
                     None,
@@ -84,9 +86,9 @@ impl UddConvApp {
                     self.convert_tex_land_ec();
                 }
 
-                if draw_asset_row(
+                if draw_asset_card(
                     ui,
-                    "Pack Tilemeta",
+                    "Tile Metadata",
                     "Unified metadata and radar color data",
                     None,
                     None,
@@ -99,7 +101,7 @@ impl UddConvApp {
     }
 }
 
-fn draw_asset_row(
+fn draw_asset_card(
     ui: &mut egui::Ui,
     title: &str,
     desc: &str,
@@ -108,103 +110,124 @@ fn draw_asset_row(
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig)>,
 ) -> bool {
     let mut clicked = false;
-    let btn_size = egui::vec2(150.0, 40.0);
 
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().widgets.noninteractive.bg_fill)
+        .corner_radius(8.0)
+        .inner_margin(15.0)
+        .show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.add_space(5.0);
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new(title).strong()),
-                    )
-                    .clicked()
-                {
-                    clicked = true;
-                }
-            });
+                // Header: Title and Pack Button
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(title)
+                                .strong()
+                                .size(18.0)
+                                .color(egui::Color32::WHITE),
+                        );
+                        ui.label(egui::RichText::new(desc).small().weak());
+                    });
 
-            ui.add_space(20.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_sized(
+                                [140.0, 36.0],
+                                egui::Button::new(egui::RichText::new("PACK ASSET").strong()),
+                            )
+                            .clicked()
+                        {
+                            clicked = true;
+                        }
+                    });
+                });
 
-            if opt.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
-                ui.vertical(|ui| {
-                    if let Some(opt_val) = opt {
-                        let current_fmt = match opt_val {
-                            TextureOptimization::None => "Raw+zstd (default)",
-                            TextureOptimization::Bc7 => "BC7",
-                            TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
-                            TextureOptimization::JpegXl => "Jpeg XL",
-                        };
+                if opt.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
 
-                        egui::ComboBox::from_id_salt(format!("{}_fmt", title))
-                            .selected_text(current_fmt)
-                            .width(220.0)
-                            .show_ui(ui, |ui| {
-                                if ui
-                                    .selectable_label(
-                                        current_fmt == "Raw+zstd (default)",
-                                        "Raw+zstd (default)",
-                                    )
-                                    .clicked()
-                                {
-                                    *opt_val = TextureOptimization::None;
-                                }
-                                if ui.selectable_label(current_fmt == "BC7", "BC7").clicked() {
-                                    *opt_val = TextureOptimization::Bc7;
-                                }
-                                if ui
-                                    .selectable_label(
-                                        current_fmt == "Supercompressed BC7+zstd",
-                                        "Supercompressed BC7+zstd",
-                                    )
-                                    .clicked()
-                                {
-                                    *opt_val = TextureOptimization::Bc7Zstd;
-                                }
-                                if ui
-                                    .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
-                                    .clicked()
-                                {
-                                    *opt_val = TextureOptimization::JpegXl;
-                                }
+                    ui.horizontal_wrapped(|ui| {
+                        if let Some(opt_val) = opt {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Output Format:").weak());
+                                let current_fmt = match opt_val {
+                                    TextureOptimization::None => "Raw+zstd (default)",
+                                    TextureOptimization::Bc7 => "BC7",
+                                    TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
+                                    TextureOptimization::JpegXl => "Jpeg XL",
+                                };
+
+                                egui::ComboBox::from_id_salt(format!("{}_fmt", title))
+                                    .selected_text(current_fmt)
+                                    .width(200.0)
+                                    .show_ui(ui, |ui| {
+                                        if ui
+                                            .selectable_label(
+                                                current_fmt == "Raw+zstd (default)",
+                                                "Raw+zstd (default)",
+                                            )
+                                            .clicked()
+                                        {
+                                            *opt_val = TextureOptimization::None;
+                                        }
+                                        if ui
+                                            .selectable_label(current_fmt == "BC7", "BC7")
+                                            .clicked()
+                                        {
+                                            *opt_val = TextureOptimization::Bc7;
+                                        }
+                                        if ui
+                                            .selectable_label(
+                                                current_fmt == "Supercompressed BC7+zstd",
+                                                "Supercompressed BC7+zstd",
+                                            )
+                                            .clicked()
+                                        {
+                                            *opt_val = TextureOptimization::Bc7Zstd;
+                                        }
+                                        if ui
+                                            .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
+                                            .clicked()
+                                        {
+                                            *opt_val = TextureOptimization::JpegXl;
+                                        }
+                                    });
                             });
-                    }
+                            ui.add_space(25.0);
+                        }
 
-                    if let Some(up_val) = upscale_single {
-                        ui.add_space(5.0);
-                        draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
-                    }
+                        if let Some(up_val) = upscale_single {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Upscale Filter:").weak());
+                                draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
+                            });
+                        }
+                    });
 
                     if !upscale_configs.is_empty() {
-                        ui.add_space(5.0);
-                        ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        ui.horizontal_wrapped(|ui| {
                             for (label, config) in upscale_configs.iter_mut() {
                                 ui.vertical(|ui| {
-                                    ui.label(egui::RichText::new(*label).strong());
-                                    ui.horizontal(|ui| {
-                                        draw_upscale_filter(ui, format!("{}_upscale_{}", title, label), &mut config.filter);
-                                        ui.label("Size:");
-                                        ui.add(egui::DragValue::new(&mut config.target_size).speed(1.0).range(0..=2048));
-                                    });
+                                    ui.label(
+                                        egui::RichText::new(format!("Upscale {}", label))
+                                            .weak()
+                                            .small(),
+                                    );
+                                    draw_upscale_filter(
+                                        ui,
+                                        format!("{}_upscale_{}", title, label),
+                                        &mut config.filter,
+                                    );
                                 });
-                                ui.add_space(10.0);
+                                ui.add_space(15.0);
                             }
                         });
                     }
-                });
-
-                ui.add_space(20.0);
-            }
-
-            ui.vertical(|ui| {
-                ui.add_space(2.0);
-                ui.label(egui::RichText::new(title).strong().size(18.0));
-                ui.add_space(2.0);
-                ui.label(desc);
+                }
             });
         });
-    });
 
     clicked
 }

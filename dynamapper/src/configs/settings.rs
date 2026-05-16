@@ -202,9 +202,6 @@ pub struct SectMapSize {
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
-    /// Whether settings hot-reload from disk is enabled. Disabled by default until
-    /// all systems correctly respond to runtime changes.
-    pub hot_reload_enabled: bool,
 }
 
 fn default_emit_true() -> bool {

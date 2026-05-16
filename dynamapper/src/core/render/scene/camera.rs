@@ -1,4 +1,5 @@
 use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
+use crate::core::render::fog_post_process::FogPostProcessUniform;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
@@ -172,6 +173,9 @@ fn sys_setup_cam(
             Transform::from_translation(player_start_pos + offset)
                 .looking_at(player_start_pos, Vec3::Y),
             GlobalTransform::default(),
+            // Attach the fog post-process uniform. The FogPostProcessPlugin's sync
+            // system will fill in the correct values from UniformState every frame.
+            FogPostProcessUniform::default(),
         ))
         .id();
 

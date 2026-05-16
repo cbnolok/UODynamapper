@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use udd_assets::AtlasCacheOptions;
 use udd_assets::tilemeta::TileMetaPackage;
+use udd_container::{UddpReader, UddpReaderOptions};
 use uocf::classic::map::MapSizeCells;
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
@@ -246,6 +248,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         TileMetaPackage::load(&tilemeta_path)
             .unwrap_or_else(|_| panic!("Error loading {}", tilemeta_path.display())),
     );
+    let land_atlas_reader_options = UddpReaderOptions::enable_decoded_entry_cache();
 
     let texmaps_package_path = resolve_optional_uddp_path(&udd_path, "tex_land_cc.uddp")
         .unwrap_or_else(|| panic!("tex_land_cc.uddp is required in udd_path"));
@@ -255,8 +258,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         SourceContainerKind::Uddp,
         std::slice::from_ref(&texmaps_package_path),
     );
-    let texmap_2d = udd_assets::tex_land_cc::TexLandCcPackage::load(&texmaps_package_path)
-        .unwrap_or_else(|_| panic!("Error loading {}", texmaps_package_path.display()));
+    let texmap_2d = udd_assets::tex_land_cc::TexLandCcPackage::from_uddp_package_with_options(
+        UddpReader::load_with_options(&texmaps_package_path, land_atlas_reader_options)
+            .unwrap_or_else(|_| panic!("Error loading {}", texmaps_package_path.display())),
+        AtlasCacheOptions::enabled(),
+    )
+    .unwrap_or_else(|_| panic!("Error loading {}", texmaps_package_path.display()));
 
     let tex_art_cc_path = resolve_optional_uddp_path(&udd_path, "tex_art_cc.uddp");
     let tex_art_cc_package = if let Some(tex_art_cc_path) = tex_art_cc_path {
@@ -267,7 +274,11 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             std::slice::from_ref(&tex_art_cc_path),
         );
         Some(
-            udd_assets::tex_art_cc::TexArtCcPackage::load(&tex_art_cc_path)
+            udd_assets::tex_art_cc::TexArtCcPackage::from_uddp_package_with_options(
+                UddpReader::load_with_options(&tex_art_cc_path, UddpReaderOptions::disabled())
+                    .unwrap_or_else(|_| panic!("Error loading {}", tex_art_cc_path.display())),
+                AtlasCacheOptions::disabled(),
+            )
                 .unwrap_or_else(|_| panic!("Error loading {}", tex_art_cc_path.display())),
         )
     } else {
@@ -284,7 +295,11 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             std::slice::from_ref(&tex_art_ec_path),
         );
         Some(
-            udd_assets::tex_art_ec::TexArtEcPackage::load(&tex_art_ec_path)
+            udd_assets::tex_art_ec::TexArtEcPackage::from_uddp_package_with_options(
+                UddpReader::load_with_options(&tex_art_ec_path, UddpReaderOptions::disabled())
+                    .unwrap_or_else(|_| panic!("Error loading {}", tex_art_ec_path.display())),
+                AtlasCacheOptions::disabled(),
+            )
                 .unwrap_or_else(|_| panic!("Error loading {}", tex_art_ec_path.display())),
         )
     } else {
@@ -300,8 +315,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             SourceContainerKind::Uddp,
             std::slice::from_ref(&tex_land_ec_path),
         );
-        let package = udd_assets::tex_land_ec::TexLandEcPackage::load(&tex_land_ec_path)
-            .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display()));
+        let package = udd_assets::tex_land_ec::TexLandEcPackage::from_uddp_package_with_options(
+            UddpReader::load_with_options(&tex_land_ec_path, land_atlas_reader_options)
+                .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display())),
+            AtlasCacheOptions::enabled(),
+        )
+        .unwrap_or_else(|_| panic!("Error loading {}", tex_land_ec_path.display()));
         log_tex_land_ec_coverage(&lg, &package);
         Some(package)
     } else {

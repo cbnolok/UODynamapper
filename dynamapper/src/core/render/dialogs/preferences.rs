@@ -24,7 +24,6 @@ pub struct PreferencesDialogState {
     pub show_overlay: bool,
     pub free_camera: bool,
     pub ui_scale: f32,
-    pub hot_reload_enabled: bool,
     pub player_position_scale: f32,
     pub sysmessages_scale: f32,
     pub performance_overlay_scale: f32,
@@ -57,7 +56,6 @@ impl Default for PreferencesDialogState {
             show_overlay: true,
             free_camera: false,
             ui_scale: 1.0,
-            hot_reload_enabled: false,
             player_position_scale: 1.0,
             sysmessages_scale: 1.0,
             performance_overlay_scale: 1.0,
@@ -118,7 +116,6 @@ fn sys_sync_settings_to_state(
             .unwrap_or(0);
         state.free_camera = settings.app.window.free_camera;
         state.ui_scale = settings.app.window.ui_scale;
-        state.hot_reload_enabled = settings.app.debug.hot_reload_enabled;
         state.player_position_scale = settings.app.window.player_position_scale;
         state.sysmessages_scale = settings.app.window.sysmessages_scale;
         state.performance_overlay_scale = settings.app.window.performance_overlay_scale;
@@ -397,16 +394,6 @@ pub fn sys_render_preferences_dialog(
                     ui.heading("Texture");
                     ui.separator();
 
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Hot-reload settings:");
-                        if ui
-                            .checkbox(&mut state.hot_reload_enabled, "Enable")
-                            .changed()
-                        {
-                            settings.app.debug.hot_reload_enabled = state.hot_reload_enabled;
-                        }
-                    });
 
                     ui.add_space(8.0);
                     ui.heading("World & Input");

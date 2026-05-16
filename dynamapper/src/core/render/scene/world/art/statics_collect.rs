@@ -991,16 +991,23 @@ pub fn sys_collect_visible_statics(
 
     if debug_state.last != Some(stats) {
         console_logger::one(
-            LogSev::Info,
+            LogSev::DebugVerbose,
             LogAbout::RenderWorldArt,
             &format!(
-                "static art collect: map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={} unique_pages={} resident_pages={} pending_pages={} capacity={} atlas_hits={} atlas_misses={} emitted={}",
+                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={}",
                 stats.map_id,
                 stats.dot_mode,
                 stats.visible_chunks,
                 stats.visited_blocks,
                 stats.source_tiles,
                 stats.ground_land_tiles,
+            ),
+        );
+        console_logger::one(
+            LogSev::DebugVerbose,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art collect (2/2):unique_pages={} resident_pages={} pending_pages={} capacity={} atlas_hits={} atlas_misses={} emitted={}",
                 stats.unique_requested_pages,
                 stats.resident_pages,
                 stats.pending_pages,

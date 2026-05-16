@@ -23,13 +23,13 @@ pub struct LandMaterialExtension {
     #[texture(102, dimension = "2d_array", visibility(vertex, fragment))]
     pub texarray_big: Handle<Image>,
 
-    /// 2D Array containing Enhanced Client (EC) land texture pages.
+    /// 2D Array containing the currently selected land atlas pages.
     #[texture(109, dimension = "2d_array", visibility(vertex, fragment))]
-    pub tex_land_ec_page_atlas: Handle<Image>,
+    pub land_page_atlas: Handle<Image>,
 
-    /// Lookup texture for mapping EC Material IDs to physical atlas coordinates.
+    /// Lookup texture for mapping land texture ids to physical atlas coordinates.
     #[texture(110, sample_type = "u_int", visibility(vertex, fragment))]
-    pub tex_land_ec_lookup: Handle<Image>,
+    pub land_page_lookup: Handle<Image>,
 
     /// The paged metadata atlas. Each texel (4 bytes) represents one world tile.
     /// Format: Rg16Uint (R=GraphicID/Layer, G=Packed Height/Flags).
@@ -41,7 +41,7 @@ pub struct LandMaterialExtension {
     )]
     pub tile_meta_atlas: Handle<Image>,
 
-    /// Configuration for the metadata atlas paging system. 
+    /// Configuration for the metadata atlas paging system.
     /// Maps logical 2048x2048 world pages to physical GPU array layers.
     #[uniform(104, visibility(vertex, fragment))]
     pub atlas_params: crate::core::render::scene::world::land::tile_atlas::AtlasParams,
@@ -103,7 +103,7 @@ impl MaterialExtension for LandMaterialExtension {
 // UVec4 (from glam crate, used by Bevy) is a struct holding four unsigned 32-bit integers (u32 values), used as a “vector of four elements”:
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, ShaderType, bytemuck::Pod, bytemuck::Zeroable, Default)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct SceneUniform {
     pub camera_position: Vec3,

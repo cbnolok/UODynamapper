@@ -60,6 +60,7 @@ impl Plugin for DrawStaticSpritesPlugin {
                statics_draw::sys_update_ground_instance_buffer
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
+               statics_draw::sys_update_art_materials,
            ).chain().run_if(in_state(AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };

@@ -137,6 +137,59 @@ pub fn expected_bc7_byte_len(extent: ImageExtent) -> usize {
     extent.blocks_wide() as usize * extent.blocks_high() as usize * 16
 }
 
+pub fn extract_bc7_subrect(
+    src_blocks: &[u8],
+    src_extent: ImageExtent,
+    src_x: u32,
+    src_y: u32,
+    dst_extent: ImageExtent,
+) -> Vec<u8> {
+    assert!(src_x % 4 == 0);
+    assert!(src_y % 4 == 0);
+    assert!(dst_extent.width() % 4 == 0);
+    assert!(dst_extent.height() % 4 == 0);
+
+    let src_blocks_wide = src_extent.blocks_wide();
+    let dst_blocks_wide = dst_extent.blocks_wide();
+    let dst_blocks_high = dst_extent.blocks_high();
+
+    let start_block_x = src_x / 4;
+    let start_block_y = src_y / 4;
+
+    let mut dst_blocks = vec![0u8; expected_bc7_byte_len(dst_extent)];
+
+    for by in 0..dst_blocks_high {
+        let src_row_y = start_block_y + by;
+        let src_offset = (src_row_y * src_blocks_wide + start_block_x) as usize * 16;
+        let dst_offset = (by * dst_blocks_wide) as usize * 16;
+        let row_len = dst_blocks_wide as usize * 16;
+
+        dst_blocks[dst_offset..dst_offset + row_len]
+            .copy_from_slice(&src_blocks[src_offset..src_offset + row_len]);
+    }
+
+    dst_blocks
+}
+
+pub fn extract_rgba8_subrect(
+    src_pixels: &[u8],
+    src_width: u32,
+    src_x: u32,
+    src_y: u32,
+    dst_width: u32,
+    dst_height: u32,
+) -> Vec<u8> {
+    let mut dst_pixels = vec![0u8; (dst_width * dst_height * 4) as usize];
+    for y in 0..dst_height {
+        let src_offset = ((src_y + y) * src_width + src_x) as usize * 4;
+        let dst_offset = (y * dst_width) as usize * 4;
+        let row_len = dst_width as usize * 4;
+        dst_pixels[dst_offset..dst_offset + row_len]
+            .copy_from_slice(&src_pixels[src_offset..src_offset + row_len]);
+    }
+    dst_pixels
+}
+
 pub fn decode_bc7_to_rgba8888(blocks: &[u8], extent: ImageExtent) -> Result<Vec<u8>, TextureError> {
     use dds::{ColorFormat, DecodeOptions, Format, ImageViewMut, Size};
     use std::io::Cursor;

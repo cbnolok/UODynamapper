@@ -9,15 +9,11 @@ egui = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["image"] }
 rfd = "0.14"
 color-eyre = "0.6.5"
-log = "0.4"
-env_logger = "0.11"
 udd-conv = { path = "../../lib/udd-conv" }
 udd-conv-ktx2 = { path = "../../lib/udd-conv-ktx2" }
-uocf = { path = "../../lib/uocf" }
 udd-conv-cli = { path = "../udd-conv-cli" }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", default-features = false, features = ["std"] }
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }
 ktx2 = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "dds"] }

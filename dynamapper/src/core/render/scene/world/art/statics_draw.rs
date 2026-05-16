@@ -1,5 +1,6 @@
 use super::DrawStaticSpritesPlugin;
 use crate::configs::settings::{ClientTextureSource, Settings};
+use crate::configs::shader_presets::UniformState;
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
 use crate::core::render::scene::world::art::statics_collect::{
@@ -51,6 +52,12 @@ pub struct ArtSpriteMaterialExtension {
     pub instances: Handle<ShaderStorageBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
+    #[uniform(105, visibility(vertex, fragment))]
+    pub scene_uniform: world::land::mesh_material::SceneUniform,
+    #[uniform(106, visibility(vertex, fragment))]
+    pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
+    #[uniform(107, visibility(vertex, fragment))]
+    pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -62,6 +69,12 @@ pub struct ArtGroundMaterialExtension {
     pub instances: Handle<ShaderStorageBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
+    #[uniform(105, visibility(vertex, fragment))]
+    pub scene_uniform: world::land::mesh_material::SceneUniform,
+    #[uniform(106, visibility(vertex, fragment))]
+    pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
+    #[uniform(107, visibility(vertex, fragment))]
+    pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
 }
 
 #[derive(Resource, Clone)]
@@ -600,6 +613,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
+            scene_uniform: world::land::mesh_material::SceneUniform::default(),
+            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
         },
     });
 
@@ -622,6 +638,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
+            scene_uniform: world::land::mesh_material::SceneUniform::default(),
+            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
         },
     });
 
@@ -667,6 +686,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
+            scene_uniform: world::land::mesh_material::SceneUniform::default(),
+            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
         },
     });
 
@@ -689,6 +711,9 @@ pub fn sys_setup_art_page_atlas(
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
             },
+            scene_uniform: world::land::mesh_material::SceneUniform::default(),
+            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
         },
     });
 
@@ -870,7 +895,7 @@ pub fn sys_sync_static_sprite_entities(
 
     if debug_state.last_entity_count != Some(desired_count) {
         console_logger::one(
-            LogSev::Warn,
+            LogSev::Debug,
             LogAbout::RenderWorldArt,
             &format!(
                 "static art draw entities: existing={} desired={}",
@@ -1116,7 +1141,7 @@ pub fn sys_update_sprite_instance_buffer(
 
     if debug_state.last_uploaded_instances != Some(instances.0.len()) {
         console_logger::one(
-            LogSev::Warn,
+            LogSev::Debug,
             LogAbout::RenderWorldArt,
             &format!(
                 "static art upload: instances={} render_mode={}",
@@ -1178,4 +1203,111 @@ pub fn sys_update_ground_instance_buffer(
         );
         debug_state.last_uploaded_ground_instances = Some(instances.0.len());
     }
+}
+
+pub fn sys_update_art_materials(
+    mut materials: ResMut<Assets<ArtSpriteMaterial>>,
+    mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    sprite_assets: Option<Res<ArtSpriteRenderAssets>>,
+    ground_assets: Option<Res<ArtGroundRenderAssets>>,
+    render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
+    player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
+    uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    mut last_global_lighting: Local<f32>,
+    mut last_render_zoom: Local<f32>,
+) {
+    let current_global_lighting = uniform_state.global_lighting;
+    let current_render_zoom = render_zoom.0;
+
+    let lighting_meaningfully_changed =
+        (current_global_lighting - *last_global_lighting).abs() > 0.01;
+    let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
+    let uniforms_dirty = uniform_state.dirty;
+
+    if !lighting_meaningfully_changed && !zoom_changed && !uniforms_dirty {
+        return;
+    }
+
+    let camera_pos = player_q
+        .iter()
+        .next()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
+
+    if let Some(assets) = sprite_assets {
+        if let Some(mat) = materials.get_mut(&assets.opaque_material) {
+            update_art_material_uniforms(
+                mat,
+                &uniform_state,
+                current_global_lighting,
+                current_render_zoom,
+                camera_pos,
+            );
+        }
+        if let Some(mat) = materials.get_mut(&assets.transparent_material) {
+            update_art_material_uniforms(
+                mat,
+                &uniform_state,
+                current_global_lighting,
+                current_render_zoom,
+                camera_pos,
+            );
+        }
+    }
+
+    if let Some(assets) = ground_assets {
+        if let Some(mat) = ground_materials.get_mut(&assets.opaque_material) {
+            update_art_material_uniforms_ground(
+                mat,
+                &uniform_state,
+                current_global_lighting,
+                current_render_zoom,
+                camera_pos,
+            );
+        }
+        if let Some(mat) = ground_materials.get_mut(&assets.transparent_material) {
+            update_art_material_uniforms_ground(
+                mat,
+                &uniform_state,
+                current_global_lighting,
+                current_render_zoom,
+                camera_pos,
+            );
+        }
+    }
+
+    if lighting_meaningfully_changed {
+        *last_global_lighting = current_global_lighting;
+    }
+    if zoom_changed {
+        *last_render_zoom = current_render_zoom;
+    }
+}
+
+fn update_art_material_uniforms(
+    mat: &mut ArtSpriteMaterial,
+    uniform_state: &UniformState,
+    global_lighting: f32,
+    render_zoom: f32,
+    camera_pos: Vec3,
+) {
+    mat.extension.scene_uniform.global_lighting = global_lighting;
+    mat.extension.scene_uniform.render_zoom = render_zoom;
+    mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.effects_uniform = uniform_state.effects;
+    mat.extension.global_lighting_uniform = uniform_state.lighting;
+}
+
+fn update_art_material_uniforms_ground(
+    mat: &mut ArtGroundMaterial,
+    uniform_state: &UniformState,
+    global_lighting: f32,
+    render_zoom: f32,
+    camera_pos: Vec3,
+) {
+    mat.extension.scene_uniform.global_lighting = global_lighting;
+    mat.extension.scene_uniform.render_zoom = render_zoom;
+    mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.effects_uniform = uniform_state.effects;
+    mat.extension.global_lighting_uniform = uniform_state.lighting;
 }

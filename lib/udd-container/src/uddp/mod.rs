@@ -51,7 +51,7 @@ use self::support::{Cursor, write_u8, write_u16, write_u32, write_u64};
 
 pub use self::builder::{BuildProgress, BuildProgressPhase, UddpBuilder};
 pub use self::patch::{UddpiApplier, UddpiBuilder};
-pub use self::reader::UddpReader;
+pub use self::reader::{UddpReader, UddpReaderOptions};
 pub use self::support::{
     BuildError,
     FormatError,

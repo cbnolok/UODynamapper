@@ -18,12 +18,13 @@
 }
 
 // ---- Land shader modules (quoted asset-path imports for on-demand loading) ----
-#import "shaders/worldmap/land/bindings.wgsl"::{
-  TileUniform,
-  AtlasParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms, LandLightingUniforms,
+#import "shaders/worldmap/common_bindings.wgsl"::{
+  SceneUniform, LandEffectsUniform, GlobalLightingUniforms, USE_VOLUMETRIC_NOISE
+}
+#import "shaders/worldmap/land/land_bindings.wgsl"::{
+  TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
-  ATLAS, scene, effects, global_light, land_light,
-  USE_VOLUMETRIC_NOISE,
+  ATLAS, scene, effects, global_light, land_light
 }
 #import "shaders/worldmap/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
 #import "shaders/worldmap/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
@@ -39,7 +40,7 @@
   shade_mode1_enhanced_fragment,
   shade_mode2_kr_fragment,
 }
-#import "shaders/worldmap/water.wgsl"::water_distort_uv
+#import "shaders/worldmap/surface_effects.wgsl"::apply_water_animation
 
 // ============================================================================
 // Vertex shader
@@ -178,7 +179,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // creating a gentle wavy appearance (faithful port of ClassicUO's formula).
   // Skipped at high zoom where individual tiles are sub-pixel (already gated above).
   if (enable_water == 1u && tile.is_wet == 1u) {
-    uv_in_tile = water_distort_uv(uv_in_tile);
+    uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
   }
 
   // ---- EC world-space UV ----
@@ -287,125 +288,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   // Apply global scene lighting scaler (UI: "Global Lighting / Scene Luminosity")
   hdr_rgb *= max(scene.global_lighting, 0.0);
-
-  // ============================================================================
-  // Fog
-  // ============================================================================
-  // IMPORTANT: UI-controlled inputs are remapped to internal ranges:
-  //  - fog_params.x -> distance_density (UI 0..0.2) mapped to fog_end distance
-  //  - fog_params.y -> height_density   (UI 0..0.2) mapped to vertical falloff
-  //  - fog_params.z -> noise_scale      (UI 0..2)   mapped to world noise scale
-  //  - fog_params.w -> noise_strength   (UI 0..1)   cloud contrast/detail/coverage
-  if (enable_fog == 1u) {
-    // Night-aware fog: blend fog_color toward a darker fog tint (e.g. deep blue night fog).
-    // At blend=0 (day presets): no change. At blend=1: fully replaces with night tint.
-    let night_blend = clamp(global_light.fog_night_color.a, 0.0, 1.0);
-    let effective_fog_color = mix(global_light.fog_color.rgb, global_light.fog_night_color.rgb, night_blend);
-
-    // Read raw UI uniforms (defensive clamps)
-    let dist_density_ui   = clamp(global_light.fog_params.x, 0.0, 1.0);
-    let height_density_ui = clamp(global_light.fog_params.y, 0.0, 1.0);
-    let noise_scale_ui    = clamp(global_light.fog_params.z, 0.0, 2.0);
-    let noise_strength_ui = clamp(global_light.fog_params.w, 0.0, 1.0);
-
-    // Fog height bias: -1 valley, 0 neutral, +1 high-alt haze
-    let hBias = clamp(global_light.gloom_params.w, -1.0, 1.0);
-    let high_w = max(hBias, 0.0);
-    let low_w  = max(-hBias, 0.0);
-
-    // Distance mapping: translate UI density -> fog_end (meters).
-    // Small UI values -> very far (clear). Larger UI -> closer fog end.
-    let fog_end = mix(6000.0, 40.0, smoothstep(0.0, 0.2, dist_density_ui));
-    let fog_start = max(0.0, fog_end * 0.06);
-    let d = length(in.world_position.xyz - scene.camera_position);
-    // Softer ramp for distance-based fog
-    let dist_factor = smoothstep(fog_start, fog_end, d);
-
-    // Height mapping: UI -> falloff scale in meters (0.2 UI -> short falloff)
-    let height_falloff = mix(800.0, 6.0, smoothstep(0.0, 0.2, height_density_ui));
-    let y = in.world_position.y;
-    var height_term_high = 0.0;
-    var height_term_low  = 0.0;
-    if (height_density_ui > 1e-6) {
-      height_term_high = 1.0 - exp(-max(y, 0.0) / height_falloff);
-      height_term_low  = 1.0 - exp(-max(-y, 0.0) / height_falloff);
-    }
-    let height_factor = clamp(high_w * height_term_high + low_w * height_term_low, 0.0, 1.0);
-
-    // Combine distance & height (union) -> base_fog [0..1]
-    let base_fog = clamp(dist_factor + height_factor - dist_factor * height_factor, 0.0, 1.0);
-
-    // ---- Noise / clouds ----
-    // Map user noise_scale_ui [0..2] to world-scale: smaller -> finer clouds.
-    let noise_scale_world = mix(0.004, 0.25, clamp(noise_scale_ui / 2.0, 0.0, 1.0));
-    let noise_strength = noise_strength_ui;
-
-    // Animated wind derived from sun direction (perpendicular flow across sun).
-    // Uses Bevy's built-in globals.time (auto-updated, wraps at 1h).
-    let base_time_speed = 0.02;
-    let time_speed = base_time_speed + noise_strength * 0.08;
-    let t = globals.time * time_speed;
-
-    let sun2 = normalize(vec2<f32>(L.x, L.z));
-    // Defensively handle degenerate light_dir
-    var wind = vec2<f32>(0.7, 0.3);
-    if (length(sun2) > 1e-5) {
-      wind = normalize(vec2<f32>(L.z, -L.x));
-    }
-
-    // Sample coords in world meters; domain-warp to break tiling
-    let p0 = (in.world_position.xz * noise_scale_world) + wind * (t * 6.0);
-
-    var n_billow = 0.0;
-    if (noise_strength > 0.001) {
-      // Gentle domain warp — skip if noise_strength is very low to save massive ALU
-      var p_final = p0;
-      if (noise_strength > 0.2) {
-        let warp_strength = 0.4 * noise_strength + 0.08;
-        p_final = domain_warp(p0, warp_strength);
-      }
-
-      // Multi-scale billow FBM: skip second octave if zoomed out or low strength
-      let n1 = fbm_billow(p_final * 1.0);
-      var n2 = 0.0;
-      if (zoom < 10.0 && noise_strength > 0.4) {
-        n2 = fbm_billow(p_final * 2.3) * 0.55;
-        n_billow = clamp(n1 * 0.7 + n2 * 0.3, 0.0, 1.0);
-      } else {
-        n_billow = n1;
-      }
-    }
-
-    // Coverage/contrast control:
-    //  Lower threshold -> more coverage.
-    //  width controls softness of cloud edges.
-    let base_threshold = mix(0.72, 0.46, noise_strength); // higher noise_strength -> more clouds
-    let edge_width = mix(0.12, 0.20, 1.0 - noise_strength); // stronger noise -> sharper edges
-    let cloud_mask = smoothstep(base_threshold, base_threshold + edge_width, n_billow);
-
-    // Baseline ensures there are some clear areas when desired
-    let baseline = mix(0.03, 0.18, 1.0 - noise_strength);
-    let peak_gain = mix(1.0, 1.8, noise_strength);
-
-    let cloud_mod = baseline + (peak_gain - baseline) * cloud_mask;
-
-    var fog_factor = clamp(base_fog * cloud_mod, 0.0, 1.0);
-
-    // Subtle breathing so it doesn't look totally static; scaled by noise_strength
-    let breath = 0.5 + 0.5 * sin(globals.time * (0.06 + 0.02 * noise_strength) + (hash(in.world_position.xz * 0.11) * 6.2831));
-    fog_factor = clamp(fog_factor * mix(0.97, 1.03, (breath - 0.5) * 0.6 * noise_strength), 0.0, 1.0);
-
-    // Final cap set by UI alpha
-    let fog_mix = clamp(fog_factor * global_light.fog_color.a, 0.0, 1.0);
-
-    if (use_volumetric_fog) {
-      hdr_rgb = mix(hdr_rgb, effective_fog_color, fog_mix);
-    } else {
-      // Simple fallback: linearized distance*height blend capped by alpha
-      let flat_mix = clamp(base_fog * global_light.fog_color.a, 0.0, 1.0);
-      hdr_rgb = mix(hdr_rgb, effective_fog_color, flat_mix);
-    }
-  }
 
   // ============================================================================
   // Grading (vibrant, neutral contrast) + Tonemap (Reinhard + exposure)

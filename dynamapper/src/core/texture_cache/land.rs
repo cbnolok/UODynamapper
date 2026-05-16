@@ -12,7 +12,7 @@ use bevy::time::common_conditions::on_timer;
 use color_eyre::eyre;
 use std::time::{Duration, Instant};
 use udd_assets::{
-    bc7::{self, ImageExtent},
+    tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
 };
 use uocf::classic::land_texture::LandTextureSize;
@@ -41,12 +41,17 @@ const LAND_TEXTURE_GROUP_LAYERS: [TextureResidencyGroupLayers<LandTextureSize>; 
     },
 ];
 
-struct TexLandEcShaderImages {
+struct LandPageAtlasImages {
     page_atlas: Handle<Image>,
     lookup: Handle<Image>,
 }
 
-fn create_blank_tex_land_ec_shader_images(images: &mut Assets<Image>) -> TexLandEcShaderImages {
+enum LandShaderAtlasSource<'a> {
+    Cc(&'a TexLandCcPackage),
+    Ec(&'a TexLandEcPackage),
+}
+
+fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAtlasImages {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         TextureViewDimension,
@@ -82,33 +87,19 @@ fn create_blank_tex_land_ec_shader_images(images: &mut Assets<Image>) -> TexLand
     );
     lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
 
-    TexLandEcShaderImages {
+    LandPageAtlasImages {
         page_atlas: images.add(atlas),
         lookup: images.add(lookup),
     }
 }
 
-fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
-    let page = package
-        .pages()
-        .get(page_index as usize)
-        .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
-    let page_bytes = package.read_page_bytes(page_index)?;
-    let used_width = page.used_width;
-    let used_height = page.used_height;
-    let used_rgba = match page.pixel_format {
-        udd_assets::tex_art_cc::PagePixelFormat::Rgba8888 => page_bytes,
-        udd_assets::tex_art_cc::PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(
-            &page_bytes,
-            ImageExtent::new(used_width, used_height).map_err(|error| {
-                eyre::eyre!("invalid tex_land_ec used extent {used_width}x{used_height}: {error}")
-            })?,
-        )
-        .map_err(|error| eyre::eyre!("decode tex_land_ec page {page_index} BC7: {error}"))?,
-    };
-
-    let atlas_width = package.atlas_width();
-    let atlas_height = package.atlas_height();
+fn copy_land_page_into_full_atlas_rgba(
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    used_rgba: &[u8],
+) -> eyre::Result<Vec<u8>> {
     let mut atlas_rgba = vec![0u8; (atlas_width * atlas_height * 4) as usize];
     let row_bytes = used_width as usize * 4;
     for row in 0..used_height as usize {
@@ -122,26 +113,70 @@ fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> 
     Ok(atlas_rgba)
 }
 
-fn create_tex_land_ec_shader_images(
+fn decode_tex_land_cc_page_rgba(package: &TexLandCcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+    let page = package
+        .pages()
+        .get(page_index as usize)
+        .ok_or_else(|| eyre::eyre!("missing tex_land_cc page metadata for {page_index}"))?;
+    let used_rgba = package.read_page_rgba(page_index)?;
+    copy_land_page_into_full_atlas_rgba(
+        package.atlas_width(),
+        package.atlas_height(),
+        page.used_width,
+        page.used_height,
+        &used_rgba,
+    )
+}
+
+fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> eyre::Result<Vec<u8>> {
+    let page = package
+        .pages()
+        .get(page_index as usize)
+        .ok_or_else(|| eyre::eyre!("missing tex_land_ec page metadata for {page_index}"))?;
+    let used_rgba = package.read_page_rgba(page_index)?;
+    copy_land_page_into_full_atlas_rgba(
+        package.atlas_width(),
+        package.atlas_height(),
+        page.used_width,
+        page.used_height,
+        &used_rgba,
+    )
+}
+
+fn create_land_shader_images(
     images: &mut Assets<Image>,
-    package: Option<&TexLandEcPackage>,
-) -> eyre::Result<TexLandEcShaderImages> {
+    source: Option<LandShaderAtlasSource<'_>>,
+) -> eyre::Result<LandPageAtlasImages> {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         TextureViewDimension,
     };
 
-    let Some(package) = package else {
-        return Ok(create_blank_tex_land_ec_shader_images(images));
+    let Some(source) = source else {
+        return Ok(create_blank_land_page_atlas_images(images));
     };
 
-    let page_count = package.pages().len().max(1) as u32;
-    let atlas_width = package.atlas_width().max(1);
-    let atlas_height = package.atlas_height().max(1);
+    let (page_count, atlas_width, atlas_height) = match source {
+        LandShaderAtlasSource::Cc(package) => (
+            package.pages().len().max(1) as u32,
+            package.atlas_width().max(1),
+            package.atlas_height().max(1),
+        ),
+        LandShaderAtlasSource::Ec(package) => (
+            package.pages().len().max(1) as u32,
+            package.atlas_width().max(1),
+            package.atlas_height().max(1),
+        ),
+    };
+
     let mut atlas_bytes =
         Vec::with_capacity((atlas_width * atlas_height * 4 * page_count) as usize);
     for page_index in 0..page_count {
-        atlas_bytes.extend_from_slice(&decode_tex_land_ec_page_rgba(package, page_index)?);
+        let rgba = match source {
+            LandShaderAtlasSource::Cc(package) => decode_tex_land_cc_page_rgba(package, page_index)?,
+            LandShaderAtlasSource::Ec(package) => decode_tex_land_ec_page_rgba(package, page_index)?,
+        };
+        atlas_bytes.extend_from_slice(&rgba);
     }
 
     let mut atlas = Image::new(
@@ -168,23 +203,38 @@ fn create_tex_land_ec_shader_images(
 
     for tile_id in 0..max_cc_tile_id {
         let texel_offset = (tile_id as usize) * 16;
-        let values = if let Some(slot_id) = package.resolve_runtime_slot_id(tile_id) {
-            if let Some(slot) = package.slots().get(slot_id as usize) {
-                if slot.is_present() {
+        let values = match source {
+            LandShaderAtlasSource::Cc(package) => package
+                .present_slot(tile_id)
+                .map(|slot| {
                     [
                         slot.page_index,
                         slot.x as u32,
                         slot.y as u32,
                         (slot.width as u32) | ((slot.height as u32) << 16),
                     ]
+                })
+                .unwrap_or([0, 0, 0, 0]),
+            LandShaderAtlasSource::Ec(package) => {
+                if let Some(slot_id) = package.resolve_runtime_slot_id(tile_id) {
+                    if let Some(slot) = package.slots().get(slot_id as usize) {
+                        if slot.is_present() {
+                            [
+                                slot.page_index,
+                                slot.x as u32,
+                                slot.y as u32,
+                                (slot.width as u32) | ((slot.height as u32) << 16),
+                            ]
+                        } else {
+                            [0, 0, 0, 0]
+                        }
+                    } else {
+                        [0, 0, 0, 0]
+                    }
                 } else {
                     [0, 0, 0, 0]
                 }
-            } else {
-                [0, 0, 0, 0]
             }
-        } else {
-            [0, 0, 0, 0] // 0 width and 0 height act as absent sentinel for the shader
         };
         for (index, value) in values.into_iter().enumerate() {
             let start = texel_offset + index * 4;
@@ -205,10 +255,23 @@ fn create_tex_land_ec_shader_images(
     );
     lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
 
-    Ok(TexLandEcShaderImages {
+    Ok(LandPageAtlasImages {
         page_atlas: images.add(atlas),
         lookup: images.add(lookup),
     })
+}
+
+fn land_shader_source_from_cache<'a>(
+    cache: &'a cache::LandTextureCache,
+) -> Option<LandShaderAtlasSource<'a>> {
+    match cache.preferred_source() {
+        crate::configs::settings::ClientTextureSource::Cc => {
+            cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
+        }
+        crate::configs::settings::ClientTextureSource::Ec => {
+            cache.tex_land_ec.as_deref().map(LandShaderAtlasSource::Ec)
+        }
+    }
 }
 
 impl Plugin for LandTextureCachePlugin {
@@ -430,6 +493,9 @@ fn sys_apply_land_texture_source_changes(
     settings: Res<crate::configs::settings::Settings>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
     mut cache_r: ResMut<cache::LandTextureCache>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
+    shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
     time: Res<Time<Real>>,
     chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
 ) {
@@ -463,6 +529,13 @@ fn sys_apply_land_texture_source_changes(
     // remain the fallback path for unmapped EC ids, so clearing or reuploading
     // them here creates visible patchwork while those fallbacks stream back in.
     let _ = (&texmap_2d_r, &time);
+
+    let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&cache_r))
+        .expect("Failed to rebuild land atlas shader images for source switch");
+    if let Some(mat) = materials.get_mut(&shared_mat.0) {
+        mat.extension.land_page_atlas = shader_images.page_atlas;
+        mat.extension.land_page_lookup = shader_images.lookup;
+    }
 
     console_logger::one(
         LogSev::Info,
@@ -556,6 +629,7 @@ pub fn sys_setup_terrain_cache(
     );
 
     land_texture_cache.tex_art_cc = tex_art_cc_r.map(|r| r.0.clone());
+    land_texture_cache.tex_land_cc = Some(texmap_2d_r.0.clone());
     land_texture_cache.tex_art_ec = tex_art_ec_r.map(|r| r.0.clone());
     land_texture_cache.tex_land_ec = tex_land_ec_package.clone();
 
@@ -576,8 +650,6 @@ pub fn sys_setup_terrain_cache(
         );
     }
 
-    cmd.insert_resource(land_texture_cache);
-
     use crate::core::render::scene::world::land::{
         draw_mesh::SharedLandMaterial,
         mesh_material::{LandMaterialExtension, SceneUniform},
@@ -585,8 +657,10 @@ pub fn sys_setup_terrain_cache(
     };
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
-    let ec_shader_images = create_tex_land_ec_shader_images(&mut images, tex_land_ec_package.as_deref())
-        .expect("Failed to build EC land atlas shader images");
+    let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&land_texture_cache))
+        .expect("Failed to build land atlas shader images");
+
+    cmd.insert_resource(land_texture_cache);
 
     cmd.insert_resource(cache::TextureArrayImageHandles {
         small: handle_small.clone(),
@@ -646,8 +720,8 @@ pub fn sys_setup_terrain_cache(
             extension: LandMaterialExtension {
                 texarray_small: handle_small,
                 texarray_big: handle_big,
-                tex_land_ec_page_atlas: ec_shader_images.page_atlas,
-                tex_land_ec_lookup: ec_shader_images.lookup,
+                land_page_atlas: shader_images.page_atlas,
+                land_page_lookup: shader_images.lookup,
                 tile_meta_atlas: atlas_image_handle,
                 atlas_params: params,
                 scene_uniform: SceneUniform {

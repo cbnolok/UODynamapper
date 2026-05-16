@@ -19,7 +19,7 @@ impl Rg16u {
     /// Packs tile ID, height (Z), texture size, and is_wet flag into the Rg16u format.
     ///
     /// G channel high-byte layout (mirrored in atlas.wgsl):
-    ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing)
+    ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
     ///   bit  7:   `is_wet` (tile has the IsWet tiledata flag → animated water effect)
     ///
     /// This packing must be manually unrolled in the WGSL shader logic.

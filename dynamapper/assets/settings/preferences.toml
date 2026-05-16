@@ -16,7 +16,6 @@ perspective_camera = false
 
 [debug]
 map_render_wireframe = false
-hot_reload_enabled = false
 
 [performance]
 show_overlay = true

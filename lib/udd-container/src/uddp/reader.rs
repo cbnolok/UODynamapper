@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict, jxl_decompress, Cursor};
 use memmap2::Mmap;
@@ -18,6 +18,93 @@ struct RuntimeDictRef {
     offset: u64,
     size: u32,
     codec: Codec,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UddpReaderOptions {
+    pub enable_decoded_entry_cache: bool,
+}
+
+impl UddpReaderOptions {
+    pub const fn disabled() -> Self {
+        Self {
+            enable_decoded_entry_cache: false,
+        }
+    }
+
+    pub const fn enable_decoded_entry_cache() -> Self {
+        Self {
+            enable_decoded_entry_cache: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DecodedEntryCacheKey {
+    raw_size: u32,
+    meta32: Meta32,
+    pos64: Pos64,
+}
+
+impl From<&UddpLocator> for DecodedEntryCacheKey {
+    fn from(locator: &UddpLocator) -> Self {
+        Self {
+            raw_size: locator.raw_size,
+            meta32: locator.meta32,
+            pos64: locator.pos64,
+        }
+    }
+}
+
+struct DecodedEntryCache {
+    enabled: bool,
+    entries: RwLock<HashMap<DecodedEntryCacheKey, Arc<[u8]>>>,
+}
+
+impl DecodedEntryCache {
+    fn new(options: UddpReaderOptions) -> Self {
+        Self {
+            enabled: options.enable_decoded_entry_cache,
+            entries: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn clear(&self) {
+        self.entries
+            .write()
+            .expect("decoded entry cache poisoned")
+            .clear();
+    }
+
+    fn get_or_load<F>(&self, locator: &UddpLocator, load: F) -> Result<Vec<u8>, FormatError>
+    where
+        F: FnOnce() -> Result<Vec<u8>, FormatError>,
+    {
+        if !self.enabled {
+            return load();
+        }
+
+        let key = DecodedEntryCacheKey::from(locator);
+        if let Some(bytes) = self
+            .entries
+            .read()
+            .expect("decoded entry cache poisoned")
+            .get(&key)
+            .cloned()
+        {
+            return Ok(bytes.as_ref().to_vec());
+        }
+
+        let bytes = load()?;
+        let cached: Arc<[u8]> = Arc::from(bytes.clone());
+        let mut entries = self.entries.write().expect("decoded entry cache poisoned");
+        let bytes = entries.entry(key).or_insert_with(|| cached).clone();
+        Ok(bytes.as_ref().to_vec())
+    }
 }
 
 pub enum UddpData {
@@ -48,19 +135,34 @@ pub struct UddpReader {
     dense_index: Option<Vec<UddpLocator>>,
     path_index: Option<Vec<UddpPathEntry>>,
     sparse_index: Option<Vec<UddpSparseIdEntry>>,
+    decoded_entry_cache: Arc<DecodedEntryCache>,
 }
 
 impl UddpReader {
     /// Open and fully parse a package from a file using memory mapping.
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, FormatError> {
+        Self::load_with_options(path, UddpReaderOptions::disabled())
+    }
+
+    pub fn load_with_options(
+        path: impl AsRef<std::path::Path>,
+        options: UddpReaderOptions,
+    ) -> Result<Self, FormatError> {
         let file = std::fs::File::open(path).map_err(FormatError::Io)?;
         let mmap = unsafe { Mmap::map(&file).map_err(FormatError::Io)? };
-        Self::open_data(UddpData::Mmap(mmap))
+        Self::open_data(UddpData::Mmap(mmap), options)
     }
 
     /// Open and fully parse a package from its complete in-memory byte image.
     pub fn open(bytes: Vec<u8>) -> Result<Self, FormatError> {
-        Self::open_data(UddpData::Owned(bytes))
+        Self::open_with_options(bytes, UddpReaderOptions::disabled())
+    }
+
+    pub fn open_with_options(
+        bytes: Vec<u8>,
+        options: UddpReaderOptions,
+    ) -> Result<Self, FormatError> {
+        Self::open_data(UddpData::Owned(bytes), options)
     }
 
     /// Read a file completely into RAM and then parse it as a package.
@@ -68,11 +170,18 @@ impl UddpReader {
     /// Use this if you want to avoid memory-mapped I/O overhead or if you
     /// need to modify the bytes (though UddpReader is currently read-only).
     pub fn load_in_memory(path: impl AsRef<std::path::Path>) -> Result<Self, FormatError> {
-        let bytes = std::fs::read(path).map_err(FormatError::Io)?;
-        Self::open(bytes)
+        Self::load_in_memory_with_options(path, UddpReaderOptions::disabled())
     }
 
-    fn open_data(data: UddpData) -> Result<Self, FormatError> {
+    pub fn load_in_memory_with_options(
+        path: impl AsRef<std::path::Path>,
+        options: UddpReaderOptions,
+    ) -> Result<Self, FormatError> {
+        let bytes = std::fs::read(path).map_err(FormatError::Io)?;
+        Self::open_with_options(bytes, options)
+    }
+
+    fn open_data(data: UddpData, options: UddpReaderOptions) -> Result<Self, FormatError> {
         let mut cur = Cursor::new(&*data);
         let header = UddpHeader::read_from(&mut cur)?;
 
@@ -90,6 +199,7 @@ impl UddpReader {
             dense_index: None,
             path_index: None,
             sparse_index: None,
+            decoded_entry_cache: Arc::new(DecodedEntryCache::new(options)),
         };
 
         this.read_dictionary_table()?;
@@ -214,6 +324,14 @@ impl UddpReader {
         self.data.len()
     }
 
+    pub fn decoded_entry_cache_enabled(&self) -> bool {
+        self.decoded_entry_cache.is_enabled()
+    }
+
+    pub fn clear_decoded_entry_cache(&self) {
+        self.decoded_entry_cache.clear();
+    }
+
     /// Reads raw bytes from the package image at the given offset.
     pub fn read_entry(&self, offset: u64, dest: &mut [u8]) -> Result<(), FormatError> {
         let offset = usize::try_from(offset).map_err(|_| FormatError::Overflow)?;
@@ -302,28 +420,30 @@ impl UddpReader {
     }
 
     fn decode_locator(&self, locator: &UddpLocator) -> Result<Vec<u8>, FormatError> {
-        let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
-        let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
-        let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
-        let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
+        self.decoded_entry_cache.get_or_load(locator, || {
+            let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
+            let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
+            let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
+            let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
 
-        let decoded = match unpack_codec(locator.meta32) {
-            Codec::None => data.to_vec(),
-            Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
-            Codec::ZstdTypeDict => {
-                let data_type = unpack_type(locator.meta32);
-                let dict = self
-                    .dictionary_for_type(data_type)
-                    .ok_or(FormatError::MissingDictionary(data_type))?;
-                zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)?
-            }
-            Codec::JpegXl => {
-                jxl_decompress(data)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                    .map_err(FormatError::Io)?
-            }
-        };
+            let decoded = match unpack_codec(locator.meta32) {
+                Codec::None => data.to_vec(),
+                Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
+                Codec::ZstdTypeDict => {
+                    let data_type = unpack_type(locator.meta32);
+                    let dict = self
+                        .dictionary_for_type(data_type)
+                        .ok_or(FormatError::MissingDictionary(data_type))?;
+                    zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)?
+                }
+                Codec::JpegXl => {
+                    jxl_decompress(data)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .map_err(FormatError::Io)?
+                }
+            };
 
-        Ok(decoded)
+            Ok(decoded)
+        })
     }
 }
