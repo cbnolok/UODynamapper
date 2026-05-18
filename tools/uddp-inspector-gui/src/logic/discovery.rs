@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use byteorder::{LittleEndian, ReadBytesExt};
-// use udd_container::xxh64_virtual_path; 
+// use udd_container::xxh64_virtual_path;
 
 use crate::models::{AtlasPageInfo, AtlasPixelFormat, VirtualEntry, VirtualEntryData};
+
+const PACKING_MODE_HEADER_VERSION: u32 = 3;
 
 pub fn parse_atlas_page_manifest(data: &[u8]) -> HashMap<u32, AtlasPageInfo> {
     if data.len() < 25 {
@@ -20,7 +22,7 @@ pub fn parse_atlas_page_manifest(data: &[u8]) -> HashMap<u32, AtlasPageInfo> {
         return HashMap::new();
     }
 
-    let _version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
+    let version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let atlas_width = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let atlas_height = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _gutter = cursor.read_u32::<LittleEndian>().unwrap_or(0);
@@ -29,6 +31,12 @@ pub fn parse_atlas_page_manifest(data: &[u8]) -> HashMap<u32, AtlasPageInfo> {
         Some(1) => AtlasPixelFormat::Bc7,
         _ => return HashMap::new(),
     };
+    if version >= PACKING_MODE_HEADER_VERSION {
+        match cursor.read_u8().ok() {
+            Some(0 | 1) => {}
+            _ => return HashMap::new(),
+        }
+    }
     let page_count = cursor.read_u32::<LittleEndian>().unwrap_or(0);
 
     let mut pages = HashMap::new();
@@ -85,10 +93,16 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
         return Vec::new();
     };
 
-    let _version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
+    let version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _atlas_w = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _atlas_h = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _gutter = cursor.read_u32::<LittleEndian>().unwrap_or(0);
+    if version >= PACKING_MODE_HEADER_VERSION {
+        match cursor.read_u8().ok() {
+            Some(0 | 1) => {}
+            _ => return Vec::new(),
+        }
+    }
     let count = cursor.read_u32::<LittleEndian>().unwrap_or(0);
 
     let mut entries = Vec::new();
@@ -145,13 +159,16 @@ mod tests {
     use super::*;
     use byteorder::{LittleEndian, WriteBytesExt};
 
-    fn build_slot_manifest(magic: &[u8; 4], flags: u16) -> Vec<u8> {
+    fn build_slot_manifest(magic: &[u8; 4], version: u32, packing_mode: Option<u8>, flags: u16) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(magic);
-        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(version).unwrap();
         bytes.write_u32::<LittleEndian>(2048).unwrap();
         bytes.write_u32::<LittleEndian>(2048).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
+        if let Some(packing_mode) = packing_mode {
+            bytes.write_u8(packing_mode).unwrap();
+        }
         bytes.write_u32::<LittleEndian>(1).unwrap();
         bytes.write_u32::<LittleEndian>(42).unwrap();
         bytes.write_u32::<LittleEndian>(7).unwrap();
@@ -166,17 +183,22 @@ mod tests {
 
     fn build_page_manifest(
         magic: &[u8; 4],
+        version: u32,
         pixel_format: u8,
+        packing_mode: Option<u8>,
         used_width: u32,
         used_height: u32,
     ) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(magic);
-        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(version).unwrap();
         bytes.write_u32::<LittleEndian>(4096).unwrap();
         bytes.write_u32::<LittleEndian>(2048).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
         bytes.write_u8(pixel_format).unwrap();
+        if let Some(packing_mode) = packing_mode {
+            bytes.write_u8(packing_mode).unwrap();
+        }
         bytes.write_u32::<LittleEndian>(1).unwrap();
         bytes.write_u32::<LittleEndian>(7).unwrap();
         bytes.write_u32::<LittleEndian>(3).unwrap();
@@ -195,7 +217,7 @@ mod tests {
 
     #[test]
     fn parse_virtual_entries_accepts_tex_land_ec_manifests() {
-        let manifest = build_slot_manifest(b"ELSL", 1);
+        let manifest = build_slot_manifest(b"ELSL", 3, Some(1), 1);
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 
         assert_eq!(entries.len(), 1);
@@ -223,7 +245,7 @@ mod tests {
 
     #[test]
     fn parse_virtual_entries_skips_non_present_slots() {
-        let manifest = build_slot_manifest(b"CASL", 0);
+        let manifest = build_slot_manifest(b"CASL", 3, Some(1), 0);
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 
         assert!(entries.is_empty());
@@ -231,7 +253,7 @@ mod tests {
 
     #[test]
     fn parse_atlas_page_manifest_reads_shared_dimensions_and_format() {
-        let manifest = build_page_manifest(b"EAPG", 1, 3000, 1500);
+        let manifest = build_page_manifest(b"EAPG", 3, 1, Some(1), 3000, 1500);
         let pages = parse_atlas_page_manifest(&manifest);
         let info = pages.get(&7).unwrap();
 
@@ -240,5 +262,27 @@ mod tests {
         assert_eq!(info.used_width, 3000);
         assert_eq!(info.used_height, 1500);
         assert_eq!(info.pixel_format, AtlasPixelFormat::Bc7);
+    }
+
+    #[test]
+    fn parse_virtual_entries_accepts_legacy_slot_manifests_without_packing_mode() {
+        let manifest = build_slot_manifest(b"CASL", 2, None, 1);
+        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "CC Art");
+    }
+
+    #[test]
+    fn parse_atlas_page_manifest_accepts_legacy_headers_without_packing_mode() {
+        let manifest = build_page_manifest(b"CAPG", 2, 0, None, 512, 256);
+        let pages = parse_atlas_page_manifest(&manifest);
+        let info = pages.get(&7).unwrap();
+
+        assert_eq!(info.atlas_width, 4096);
+        assert_eq!(info.atlas_height, 2048);
+        assert_eq!(info.used_width, 512);
+        assert_eq!(info.used_height, 256);
+        assert_eq!(info.pixel_format, AtlasPixelFormat::Rgba8888);
     }
 }

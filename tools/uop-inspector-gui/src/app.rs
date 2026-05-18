@@ -562,3 +562,49 @@ impl eframe::App for UopInspectorApp {
         eframe::set_value(storage, "uop_inspector_settings", &self.settings);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uop_inspector_app_manual_log() {
+        let mut app = UopInspectorApp {
+            settings: AppSettings::default(),
+            logs: Vec::new(),
+            show_search_paths: false,
+            dictionary: Dictionary::new(),
+            uo_string_dictionary: None,
+            uop_cache: UopCache::new(),
+            client_data: None,
+            selected_uop_idx: None,
+            selected_file_hash: None,
+            selected_tex_art_cc_id: None,
+            selected_legacy_source: ArtSource::Any,
+            search_query: String::new(),
+            find_hash_query: String::new(),
+            status_message: String::new(),
+            view_mode: ViewMode::Home,
+            texture_previews: HashMap::new(),
+            ec_texture_previews: HashMap::new(),
+            selected_anim_id: 0,
+            selected_anim_file_idx: 0,
+            current_frame_idx: 0,
+            is_playing: false,
+            last_frame_time: 0.0,
+            playback_speed: 1.0,
+            loop_animation: true,
+            selected_anim_sequence: None,
+            selected_action_id: 0,
+            selected_direction: 0,
+            selected_multi_id: 0,
+            selected_hue_id: 0,
+            terrain_def_package: None,
+        };
+
+        assert_eq!(app.logs.len(), 0);
+        app.log("hello test");
+        assert_eq!(app.logs.len(), 1);
+        assert_eq!(app.logs[0], "hello test");
+    }
+}

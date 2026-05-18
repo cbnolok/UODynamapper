@@ -20,6 +20,12 @@ This document describes the high-level **code flow** and system interactions in 
   - `SceneRenderLandSysSet`: Detection of camera/zoom changes and terrain chunk lifecycle.
   - `SceneRenderArtSysSet`: Static art collection and draw orchestration.
 
+### 1.3 Package And Conversion Entry Points
+- `tools/udd-conv-cli`: build and inspection entry point for converted packages such as `tilemeta.uddp`, `tex_art_ec.uddp`, and `tex_land_ec.uddp`
+- `udd-conv`: conversion logic for EC and classic packaging
+- `udd-assets`: runtime package readers used by `dynamapper`
+- `uocf`: low-level classic and EC source parsing
+
 ---
 
 ## 2. Terrain Pipeline Flow
@@ -31,24 +37,47 @@ This document describes the high-level **code flow** and system interactions in 
 4. **Data Fetch**: `create_land_chunk_material` fetches CC map blocks from `uocf` and resolves EC texture coordinates.
 5. **Upload**: Chunk metadata is written to the global Paged Tile Atlas via `queue.write_texture`.
 
+Current runtime note:
+- runtime map chunking is intentionally kept at `32x32` for now even though package transport work can use larger units such as `64x64`.
+
 ### 2.2 Texture Management
 - **Resolution**: `mesh_material.rs` handles the resolution chain (CC ID → EC Material → UDDP Slot Index).
 - **Caching**: `LandTextureCachePlugin` manages the LRU residency of land textures in GPU arrays.
 - **Shader Group 3**: All chunks share a single `LandMaterialExtension` containing global texture arrays and paging parameters.
 
+### 2.3 EC Ownership And Packaging Flow
+- `uocf/src/enhanced/tileart.rs` is the ownership seam for tileart-owned EC statics and texture refs.
+- `uocf/src/enhanced/terrain_definition.rs` is the ownership seam for terrain-definition materials, layers, and aliases.
+- `udd-conv/src/tilemeta.rs` writes tilemeta sidecars used later by runtime routing.
+- `udd-assets/src/tilemeta.rs` exposes helpers such as main EC texture resolution from preserved item texture refs.
+- Current package split:
+  - `tex_art_ec.uddp` for tileart-owned visible bases
+  - `tex_land_ec.uddp` for terrain-definition-owned visible bases
+  - `tilemeta.uddp` for runtime metadata and sidecars
+
 ---
 
-## 3. Static Art Pipeline Flow (Missing previously)
+## 3. Static Art Pipeline Flow
 
 ### 3.1 Collection
 1. **Statics Fetch**: `statics_collect.rs` queries `uocf` for static objects belonging to active map blocks.
-2. **Filtering**: Objects are filtered by visibility and depth-ordering requirements.
-3. **Batching**: Statics are grouped by material and atlas residency to minimize draw calls.
+2. **Metadata Lookup**: collection can consult `tilemeta` and EC package state to distinguish ordinary art from surface-like EC statics.
+3. **Filtering**: objects are filtered by visibility, routing, and depth-ordering requirements.
+4. **Batching**: statics are grouped by material and atlas residency to minimize draw calls.
 
 ### 3.2 Drawing
 1. **Instance Data**: `statics_draw.rs` prepares per-instance data (position, UVs, color) for GPU submission.
 2. **Alpha Handling**: Shaders use alpha-masking for clean overlap of isometric sprites.
-3. **Z-Sorting**: Handled via a combination of Painter's Algorithm (logical order) and standard Z-buffering.
+3. **Depth Status**: current runtime still mixes normal sprite depth with staged logical-depth work; the full explicit UO-style depth-key port is still in progress.
+
+### 3.3 Surface-Like EC Static Routing
+- Reference implementation seam: `dynamapper/src/core/render/scene/world/art/statics_collect.rs` plus related inspection helpers.
+- Routing rule: prioritize `tilemeta.is_surface_like()` plus a resolvable `ec_land` slot over direct `ec_art.present_slot(tile_id)`.
+- Safe land resolution order for surface-like statics is:
+  - CC-based `tex_land_ec.resolve_runtime_slot_id(cc_texture_id)`
+  - direct populated `tex_land_ec.present_slot(main_ec_texture_id)`
+  - provenance fallback by `selected_texture_id`
+- If all land-style resolutions fail, the runtime should warn with sample tile ids instead of silently skipping the case.
 
 ---
 
@@ -58,6 +87,9 @@ This document describes the high-level **code flow** and system interactions in 
 - **I/O**: `UddpReader` uses `memmap2` for zero-copy access to converted packages.
 - **Decompression**: Zstd/BC7 decoding is offloaded to Bevy task pools to avoid blocking the main thread.
 - **Parallelism**: `rayon` is used during initial index building and bulk data processing.
+
+Current transport note:
+- terrain packaging work prefers `64x64` transport units, but the live renderer keeps its own `32x32` chunking decisions for now.
 
 ### 4.2 Texture Residency
 - **Lazy Loading**: `TexMap2D` handles on-demand loading of individual texture entries.
@@ -69,6 +101,10 @@ This document describes the high-level **code flow** and system interactions in 
 ## 5. Performance Monitoring
 - **Diagnostics**: `LogDiagnosticsPlugin` and custom overlays track frame times and VRAM usage.
 - **Profiling**: `LandProfilingPlugin` provides granular metrics for chunk generation and atlas upload pressure.
+
+Additional active concerns:
+- upload batching must remain bounded; do not regress into per-object texture writes
+- static-art depth behavior must be validated independently from visual billboard placement
 
 ---
 

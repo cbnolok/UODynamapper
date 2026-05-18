@@ -91,6 +91,31 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpscalePreviewTarget {
+    TexArtCc,
+    TexLandCc64,
+    TexLandCc128,
+    TexArtEc,
+    TexLandEc64,
+    TexLandEc128,
+    TexLandEc256,
+    TexLandEc512,
+}
+
+pub struct UpscalePreviewState {
+    pub target: UpscalePreviewTarget,
+    pub id: u32,
+    pub filter: UpscaleFilter,
+    pub texture: Option<egui::TextureHandle>,
+    pub upscaled_texture: Option<egui::TextureHandle>,
+    pub upscaled_size: [u32; 2],
+    pub original_size: [u32; 2],
+    pub id_buffer: String,
+    pub is_dirty: bool,
+    pub zoom: f32,
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum Tab {
     Sources,

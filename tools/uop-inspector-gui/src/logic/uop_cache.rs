@@ -35,3 +35,20 @@ pub struct ClientData {
     pub hues: Option<Arc<Vec<uocf::classic::hues::HueEntry>>>,
     pub anim_defs: Option<Arc<uocf::classic::anim::AnimationDefinition>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uop_cache_creation_and_addition() {
+        let mut cache = UopCache::new();
+        assert_eq!(cache.loaded_uops.len(), 0);
+
+        let dummy_package = UopPackage::new_default();
+        cache.add(PathBuf::from("dummy_path.uop"), dummy_package);
+
+        assert_eq!(cache.loaded_uops.len(), 1);
+        assert_eq!(cache.loaded_uops[0].path, PathBuf::from("dummy_path.uop"));
+    }
+}

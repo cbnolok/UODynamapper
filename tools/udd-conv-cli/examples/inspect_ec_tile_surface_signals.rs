@@ -6,7 +6,7 @@ use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
     tex_art_ec::TexArtEcPackage,
     tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
-    tilemeta::{TileMetaItemTile, TileMetaPackage},
+    tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
@@ -105,6 +105,7 @@ fn main() -> eyre::Result<()> {
 
         if let Some(tilemeta) = tilemeta.as_ref() {
             print_tilemeta(tilemeta.item_tile(art_id as u32));
+            print_tilemeta_texture_refs(tilemeta.item_texture_refs(art_id as u32));
         }
 
         if tex_art_ec.is_some() || tex_land_ec.is_some() {
@@ -233,6 +234,30 @@ fn print_tilemeta(item: Option<&TileMetaItemTile>) {
             );
         }
         None => println!("  tilemeta=missing"),
+    }
+}
+
+fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
+    if texture_refs.is_empty() {
+        println!("  tilemeta.texture_refs=none");
+        return;
+    }
+
+    println!("  tilemeta.texture_refs.count={}", texture_refs.len());
+    for (index, texture_ref) in texture_refs.iter().enumerate() {
+        println!(
+            "    ref[{index}] id={} type={} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
+            texture_ref.texture_id,
+            texture_ref.texture_type,
+            texture_ref.block_index,
+            texture_ref.item_index,
+            texture_ref.is_auxiliary(),
+            texture_ref.is_primary_selected(),
+            texture_ref.texture_stretch,
+            texture_ref.unk4,
+            texture_ref.unk6,
+            texture_ref.unk7,
+        );
     }
 }
 

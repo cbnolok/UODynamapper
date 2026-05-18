@@ -478,7 +478,7 @@ mod tests {
         let extent = ImageExtent::new(8, 8).unwrap();
         let bytes = vec![0; VramTextureFormat::Bc7RgbaUnormSrgb.expected_byte_len(extent)];
 
-        let (_, layout) = prepare_page_upload_bytes(&bytes, 8, 8, PagePixelFormat::Bc7).unwrap();
+        let (_, layout) = prepare_page_upload_bytes(&bytes, 8, 8, 8, 8, PagePixelFormat::Bc7).unwrap();
 
         assert_eq!(layout.bytes_per_row, 32);
         assert_eq!(layout.rows_per_image, 2);

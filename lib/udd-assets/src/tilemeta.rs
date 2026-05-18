@@ -6,6 +6,11 @@ use crate::common::{read_path_entry, read_pod_vec};
 
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
+pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
+pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
+
+pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
+pub const TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED: u8 = 1 << 1;
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -87,11 +92,50 @@ impl TileMetaItemTile {
     }
 }
 
+#[repr(C, align(8))]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+pub struct TileMetaItemTextureRefSpan {
+    pub start: u32,
+    pub len: u16,
+    pub _pad: u16,
+}
+
+#[repr(C, align(8))]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+pub struct TileMetaItemTextureRef {
+    pub texture_id: u32,
+    pub texture_type: u8,
+    pub block_index: u8,
+    pub item_index: u8,
+    pub flags: u8,
+    pub texture_stretch: f32,
+    pub unk4: u8,
+    pub _pad0: [u8; 3],
+    pub unk6: u32,
+    pub unk7: u32,
+}
+
+impl TileMetaItemTextureRef {
+    pub fn is_auxiliary(&self) -> bool {
+        self.flags & TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY != 0
+    }
+
+    pub fn is_primary_selected(&self) -> bool {
+        self.flags & TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED != 0
+    }
+
+    pub fn is_world_art(&self) -> bool {
+        self.texture_type == 1
+    }
+}
+
 pub struct TileMetaPackage {
     #[allow(dead_code)]
     package: UddpReader,
     land_tiles: Vec<TileMetaLandTile>,
     item_tiles: Vec<TileMetaItemTile>,
+    item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
+    item_texture_refs: Vec<TileMetaItemTextureRef>,
 }
 
 impl TileMetaPackage {
@@ -110,11 +154,21 @@ impl TileMetaPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let land_bytes = read_path_entry(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry(&package, TILEMETA_ITEM_ENTRY_PATH)?;
+        let item_texture_ref_spans = read_optional_pod_vec(
+            &package,
+            TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
+        )?;
+        let item_texture_refs = read_optional_pod_vec(
+            &package,
+            TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
+        )?;
 
         Ok(Self {
             package,
             land_tiles: read_pod_vec(&land_bytes, TILEMETA_LAND_ENTRY_PATH)?,
             item_tiles: read_pod_vec(&item_bytes, TILEMETA_ITEM_ENTRY_PATH)?,
+            item_texture_ref_spans,
+            item_texture_refs,
         })
     }
 
@@ -132,5 +186,65 @@ impl TileMetaPackage {
 
     pub fn item_tile(&self, tile_id: u32) -> Option<&TileMetaItemTile> {
         self.item_tiles.get(tile_id as usize)
+    }
+
+    pub fn item_texture_refs(&self, tile_id: u32) -> &[TileMetaItemTextureRef] {
+        let Some(span) = self.item_texture_ref_spans.get(tile_id as usize) else {
+            return &self.item_texture_refs[0..0];
+        };
+
+        let start = span.start as usize;
+        let end = start.saturating_add(span.len as usize);
+        if start > self.item_texture_refs.len() || end > self.item_texture_refs.len() {
+            return &self.item_texture_refs[0..0];
+        }
+
+        &self.item_texture_refs[start..end]
+    }
+
+    pub fn main_ec_texture_ref(&self, tile_id: u32) -> Option<&TileMetaItemTextureRef> {
+        let texture_refs = self.item_texture_refs(tile_id);
+
+        texture_refs
+            .iter()
+            .find(|texture_ref| {
+                !texture_ref.is_auxiliary()
+                    && texture_ref.is_world_art()
+                    && texture_ref.texture_id == tile_id
+            })
+            .or_else(|| {
+                texture_refs.iter().find(|texture_ref| {
+                    !texture_ref.is_auxiliary()
+                        && texture_ref.is_primary_selected()
+                        && texture_ref.is_world_art()
+                })
+            })
+            .or_else(|| {
+                texture_refs
+                    .iter()
+                    .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_world_art())
+            })
+            .or_else(|| {
+                texture_refs.iter().find(|texture_ref| {
+                    !texture_ref.is_auxiliary() && texture_ref.is_primary_selected()
+                })
+            })
+            .or_else(|| texture_refs.iter().find(|texture_ref| !texture_ref.is_auxiliary()))
+    }
+
+    pub fn main_ec_texture_id(&self, tile_id: u32) -> Option<u32> {
+        self.main_ec_texture_ref(tile_id)
+            .map(|texture_ref| texture_ref.texture_id)
+            .or_else(|| {
+                self.item_tile(tile_id)
+                    .and_then(|item| (item.ec_texture_id != 0).then_some(item.ec_texture_id))
+            })
+    }
+}
+
+fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
+    match read_path_entry(package, path) {
+        Ok(bytes) => read_pod_vec(&bytes, path),
+        Err(_) => Ok(Vec::new()),
     }
 }

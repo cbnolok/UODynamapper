@@ -27,7 +27,10 @@ use crate::source_paths::find_first_existing_file;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
 use udd_assets::tilemeta::{
-    TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
+    TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
+    TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
+    TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+    TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
     TILEMETA_LAND_ENTRY_PATH,
 };
 use udd_container::{
@@ -53,6 +56,8 @@ pub struct TileMetaBuildSummary {
 struct BuiltTileMetaTables {
     land_tiles: Vec<TileMetaLandTile>,
     item_tiles: Vec<TileMetaItemTile>,
+    item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
+    item_texture_refs: Vec<TileMetaItemTextureRef>,
     summary: TileMetaBuildSummary,
 }
 
@@ -117,6 +122,8 @@ pub fn build_tilemeta_uddp_from_split_sources(
 fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Result<()> {
     let land_bytes = bytemuck::cast_slice(&built.land_tiles);
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
+    let item_texture_ref_span_bytes = bytemuck::cast_slice(&built.item_texture_ref_spans);
+    let item_texture_ref_bytes = bytemuck::cast_slice(&built.item_texture_refs);
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -138,6 +145,26 @@ fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Res
         path_hash64: None,
         id: None,
         data: item_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: item_texture_ref_span_bytes,
+    })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: item_texture_ref_bytes,
     })?;
     build_and_write_package(&mut package, out_file)?;
 
@@ -294,6 +321,8 @@ fn build_tilemeta_tables_from_resolved_paths(
     }
 
     let mut tilemeta_items = Vec::with_capacity(cc_tiledata.item_tiles().len());
+    let mut item_texture_ref_spans = Vec::with_capacity(cc_tiledata.item_tiles().len());
+    let mut item_texture_refs = Vec::new();
     let mut adjusted_ec_item_count = 0u32;
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
@@ -323,6 +352,10 @@ fn build_tilemeta_tables_from_resolved_paths(
             cc_offset_x: 0,
             cc_offset_y: 0,
         };
+
+        let ref_start = u32::try_from(item_texture_refs.len()).map_err(|_| {
+            eyre::eyre!("tilemeta texture-ref table exceeds u32 address space")
+        })?;
 
         if let Some(ec_data) = tex_art_ec.definitions.get(&(tile.tile_id as u16)) {
             tile_meta_item.flags |= ec_data.flags.bits();
@@ -364,9 +397,41 @@ fn build_tilemeta_tables_from_resolved_paths(
                 tile_meta_item.cc_offset_x = cc_tex.offset_x as i16;
                 tile_meta_item.cc_offset_y = cc_tex.offset_y as i16;
             }
+
+            item_texture_refs.extend(ec_data.texture_items.iter().flatten().map(|item| {
+                let mut flags = 0u8;
+                if item.is_auxiliary {
+                    flags |= TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY;
+                }
+                if tile_meta_item.ec_texture_id != 0 && item.id == tile_meta_item.ec_texture_id {
+                    flags |= TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED;
+                }
+
+                TileMetaItemTextureRef {
+                    texture_id: item.id,
+                    texture_type: item.texture_type as u8,
+                    block_index: item.block_index,
+                    item_index: item.item_index,
+                    flags,
+                    texture_stretch: item.texture_stretch,
+                    unk4: item.unk4,
+                    _pad0: [0; 3],
+                    unk6: item.unk6,
+                    unk7: item.unk7,
+                }
+            }));
         } else {
             tile_meta_item.set_visual_kind(classify_item_visual_kind(tile.tile_id as u32, None));
         }
+
+        let ref_len = u16::try_from(item_texture_refs.len() - ref_start as usize).map_err(|_| {
+            eyre::eyre!("tile {} references too many EC textures for u16 span", tile.tile_id)
+        })?;
+        item_texture_ref_spans.push(TileMetaItemTextureRefSpan {
+            start: ref_start,
+            len: ref_len,
+            _pad: 0,
+        });
         tilemeta_items.push(tile_meta_item);
     }
     pb.finish_with_message("Tile Metadata unified");
@@ -374,6 +439,8 @@ fn build_tilemeta_tables_from_resolved_paths(
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
         item_tiles: tilemeta_items,
+        item_texture_ref_spans,
+        item_texture_refs,
         summary: TileMetaBuildSummary {
             adjusted_ec_item_count,
         },

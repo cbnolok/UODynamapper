@@ -80,4 +80,140 @@ impl UddConvApp {
             &rgba,
         ))
     }
+
+    pub fn ui_upscale_preview_window(&mut self, ctx: &egui::Context) {
+        if self.upscale_preview.is_none() {
+            return;
+        }
+
+        self.update_upscale_preview(ctx);
+
+        let preview = self.upscale_preview.as_mut().unwrap();
+        let mut open = true;
+        let mut is_dirty = false;
+        let mut id = preview.id;
+        let mut id_buffer = preview.id_buffer.clone();
+        let target = preview.target;
+        let filter = preview.filter;
+        let original_size = preview.original_size;
+        let upscaled_size = preview.upscaled_size;
+        let texture = preview.texture.clone();
+        let upscaled_texture = preview.upscaled_texture.clone();
+        let mut zoom = preview.zoom;
+
+        egui::Window::new(format!("Upscale Preview: {:?}", target))
+            .open(&mut open)
+            .resizable(true)
+            .default_size([1000.0, 800.0])
+            .show(ctx, |ui| {
+                // Toolbar
+                ui.horizontal(|ui| {
+                    ui.label("Item ID:");
+                    if ui.button("◀").clicked() {
+                        id = id.saturating_sub(1);
+                        id_buffer = id.to_string();
+                        is_dirty = true;
+                    }
+
+                    let resp =
+                        ui.add(egui::TextEdit::singleline(&mut id_buffer).desired_width(60.0));
+                    if resp.changed() {
+                        if let Ok(new_id) = id_buffer.parse::<u32>() {
+                            id = new_id;
+                            is_dirty = true;
+                        }
+                    }
+
+                    if ui.button("▶").clicked() {
+                        id = id.saturating_add(1);
+                        id_buffer = id.to_string();
+                        is_dirty = true;
+                    }
+
+                    ui.add_space(20.0);
+                    ui.label(format!("Filter: {:?}", filter));
+
+                    if original_size[0] > 0 {
+                        ui.add_space(20.0);
+                        ui.label(format!(
+                            "Original: {}x{}",
+                            original_size[0], original_size[1]
+                        ));
+                        ui.label(format!(
+                            "Upscaled: {}x{}",
+                            upscaled_size[0], upscaled_size[1]
+                        ));
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Reset").clicked() {
+                            zoom = 1.0;
+                        }
+                        ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
+                        if ui.button("➕").clicked() {
+                            zoom = (zoom * 1.2).min(20.0);
+                        }
+                        if ui.button("➖").clicked() {
+                            zoom = (zoom / 1.2).max(0.1);
+                        }
+                        ui.label(format!("{:.1}x", zoom));
+                    });
+                });
+                ui.separator();
+
+                // Handle zoom shortcuts and mouse wheel
+                if ui.ui_contains_pointer() || ui.is_enabled() {
+                    let zoom_delta = ui.input(|i| i.smooth_scroll_delta.y);
+                    if zoom_delta != 0.0 && ui.input(|i| i.modifiers.command) {
+                        zoom = (zoom * (zoom_delta * 0.005).exp()).clamp(0.1, 20.0);
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Plus)) {
+                         zoom = (zoom * 1.2).min(20.0);
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Minus)) {
+                         zoom = (zoom / 1.2).max(0.1);
+                    }
+                }
+
+                egui::ScrollArea::both().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if let Some(tex) = &texture {
+                            ui.vertical(|ui| {
+                                ui.label("Original");
+                                let sz = egui::vec2(
+                                    original_size[0] as f32 * zoom,
+                                    original_size[1] as f32 * zoom,
+                                );
+                                ui.add(egui::Image::new(tex).fit_to_exact_size(sz));
+                            });
+                        }
+                        ui.add_space(20.0);
+                        if let Some(tex) = &upscaled_texture {
+                            ui.vertical(|ui| {
+                                ui.label("Upscaled");
+                                let sz = egui::vec2(
+                                    upscaled_size[0] as f32 * zoom,
+                                    upscaled_size[1] as f32 * zoom,
+                                );
+                                ui.add(egui::Image::new(tex).fit_to_exact_size(sz));
+                            });
+                        }
+                    });
+                });
+            });
+
+        // Sync back
+        if let Some(preview) = self.upscale_preview.as_mut() {
+            preview.id = id;
+            preview.id_buffer = id_buffer;
+            preview.zoom = zoom;
+            if is_dirty {
+                preview.is_dirty = true;
+            }
+        }
+
+        if !open {
+            self.upscale_preview = None;
+        }
+    }
 }

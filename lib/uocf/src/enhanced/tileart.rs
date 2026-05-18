@@ -89,6 +89,7 @@ pub struct ArtData {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TextureType {
     #[default]
     Undefined,
@@ -102,6 +103,13 @@ pub struct TextureItem {
     pub texture_type: TextureType,
     pub id: u32,
     pub path: String,
+    pub block_index: u8,
+    pub item_index: u8,
+    pub texture_stretch: f32,
+    pub unk4: u8,
+    pub unk6: u32,
+    pub unk7: u32,
+    pub is_auxiliary: bool,
 }
 
 bitflags! {
@@ -455,42 +463,38 @@ impl TileArtEntry {
         if let Some(ec_texture_block) = self.texture_vector.get(0) {
             if ec_texture_block.has_texture == 1 {
                 art_data.tile_type = self.get_tile_type(ec_texture_block, string_dictionary);
-                if let Some(texture_item) = ec_texture_block.texture_items.get(0) {
-                    if let Some(id) = Self::get_texture_id_from_string_offset(
-                        texture_item.name_string_off,
-                        string_dictionary,
-                    ) {
-                        art_data.ec_texture = Some(ArtTexture {
-                            texture_id: id,
-                            start_x: self.ec_img_offset.x_start,
-                            start_y: self.ec_img_offset.y_start,
-                            end_x: self.ec_img_offset.x_end,
-                            end_y: self.ec_img_offset.y_end,
-                            offset_x: self.ec_img_offset.x_off,
-                            offset_y: self.ec_img_offset.y_off,
-                        });
-                    }
+                if let Some(id) =
+                    self.select_primary_texture_id(ec_texture_block, string_dictionary, None)
+                {
+                    art_data.ec_texture = Some(ArtTexture {
+                        texture_id: id,
+                        start_x: self.ec_img_offset.x_start,
+                        start_y: self.ec_img_offset.y_start,
+                        end_x: self.ec_img_offset.x_end,
+                        end_y: self.ec_img_offset.y_end,
+                        offset_x: self.ec_img_offset.x_off,
+                        offset_y: self.ec_img_offset.y_off,
+                    });
                 }
             }
         }
 
         if let Some(cc_texture_block) = self.texture_vector.get(1) {
             if cc_texture_block.has_texture == 1 {
-                if let Some(texture_item) = cc_texture_block.texture_items.get(0) {
-                    if let Some(id) = Self::get_texture_id_from_string_offset(
-                        texture_item.name_string_off,
-                        string_dictionary,
-                    ) {
-                        art_data.cc_texture = Some(ArtTexture {
-                            texture_id: id,
-                            start_x: self.cc_img_offset.x_start,
-                            start_y: self.cc_img_offset.y_start,
-                            end_x: self.cc_img_offset.x_end,
-                            end_y: self.cc_img_offset.y_end,
-                            offset_x: self.cc_img_offset.x_off,
-                            offset_y: self.cc_img_offset.y_off,
-                        });
-                    }
+                if let Some(id) = self.select_primary_texture_id(
+                    cc_texture_block,
+                    string_dictionary,
+                    Some(TextureType::TileArtLegacy),
+                ) {
+                    art_data.cc_texture = Some(ArtTexture {
+                        texture_id: id,
+                        start_x: self.cc_img_offset.x_start,
+                        start_y: self.cc_img_offset.y_start,
+                        end_x: self.cc_img_offset.x_end,
+                        end_y: self.cc_img_offset.y_end,
+                        offset_x: self.cc_img_offset.x_off,
+                        offset_y: self.cc_img_offset.y_off,
+                    });
                 }
             }
         }
@@ -503,10 +507,10 @@ impl TileArtEntry {
         string_dictionary: &UoStringDictionary,
     ) -> Vec<Vec<TextureItem>> {
         let mut texture_ids = Vec::new();
-        for texture in &self.texture_vector {
+        for (block_index, texture) in self.texture_vector.iter().enumerate() {
             if texture.has_texture == 1 {
                 let mut items = Vec::new();
-                for texture_item in &texture.texture_items {
+                for (item_index, texture_item) in texture.texture_items.iter().enumerate() {
                     if let Some(str) =
                         string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
                     {
@@ -516,6 +520,13 @@ impl TileArtEntry {
                             item.id = id;
                         }
                         item.path = str.to_string();
+                        item.block_index = block_index as u8;
+                        item.item_index = item_index as u8;
+                        item.texture_stretch = texture_item.texture_stretch;
+                        item.unk4 = texture_item.unk4;
+                        item.unk6 = texture_item.unk6;
+                        item.unk7 = texture_item.unk7;
+                        item.is_auxiliary = is_auxiliary_texture_path(&str);
 
                         items.push(item);
                     }
@@ -578,6 +589,48 @@ impl TileArtEntry {
             .get_string((offset - 1) as usize)
             .and_then(crate::utils::path::extract_texture_id_from_path)
     }
+
+    fn select_primary_texture_id(
+        &self,
+        texture_block: &TaeTexture,
+        string_dictionary: &UoStringDictionary,
+        preferred_type: Option<TextureType>,
+    ) -> Option<u32> {
+        let mut preferred_non_aux = None;
+        let mut non_aux = None;
+        let mut preferred_any = None;
+        let mut any = None;
+
+        for texture_item in &texture_block.texture_items {
+            let Some(path) = string_dictionary.get_string((texture_item.name_string_off - 1) as usize) else {
+                continue;
+            };
+            let Some(texture_id) = crate::utils::path::extract_texture_id_from_path(path) else {
+                continue;
+            };
+
+            let texture_type = classify_texture_path(path);
+            let auxiliary = is_auxiliary_texture_path(path);
+
+            any.get_or_insert(texture_id);
+
+            if !auxiliary {
+                non_aux.get_or_insert(texture_id);
+            }
+
+            if preferred_type.is_some_and(|preferred| texture_type == preferred) {
+                preferred_any.get_or_insert(texture_id);
+                if !auxiliary {
+                    preferred_non_aux.get_or_insert(texture_id);
+                }
+            }
+        }
+
+        preferred_non_aux
+            .or(non_aux)
+            .or(preferred_any)
+            .or(any)
+    }
 }
 
 pub fn classify_texture_path(path: &str) -> TextureType {
@@ -590,6 +643,94 @@ pub fn classify_texture_path(path: &str) -> TextureType {
         TextureType::TileArtEnhanced
     } else {
         TextureType::Undefined
+    }
+}
+
+fn is_auxiliary_texture_path(path: &str) -> bool {
+    let normalized = crate::utils::path::normalize_dictionary_path(path);
+    let file_name = normalized.rsplit('\\').next().unwrap_or(normalized.as_str());
+    let stem = file_name.split('.').next().unwrap_or(file_name);
+
+    stem.contains("noise")
+        || stem.contains("normal")
+        || stem
+            .split(['_', '-'])
+            .any(|segment| matches!(segment, "n" | "nm" | "nrm" | "norm"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dictionary_with_strings(values: &[&str]) -> UoStringDictionary {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0u64.to_le_bytes());
+        payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        for value in values {
+            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
+            payload.extend_from_slice(value.as_bytes());
+        }
+
+        UoStringDictionary::from_payload_bytes(&payload, "test dictionary")
+            .expect("build test dictionary")
+    }
+
+    fn dictionary_with_single_string(value: &str) -> UoStringDictionary {
+        dictionary_with_strings(&[value])
+    }
+
+    #[test]
+    fn tileart_get_tile_type_treats_unused1_sprite_as_solid() {
+        let dictionary = dictionary_with_single_string("UOSpriteShader");
+        let entry = TileArtEntry {
+            flags1: TaeFlag::Unused1,
+            ..Default::default()
+        };
+        let texture_block = TaeTexture {
+            type_string_off: 1,
+            has_texture: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(entry.get_tile_type(&texture_block, &dictionary), TileType::Solid);
+    }
+
+    #[test]
+    fn tileart_process_prefers_non_aux_ec_texture_item() {
+        let dictionary = dictionary_with_strings(&[
+            "UOStaticTerrainShader",
+            "Data\\WorldArt\\01000045_noise.tga",
+            "Data\\WorldArt\\02000130_Cave_Floor_A.tga",
+        ]);
+        let entry = TileArtEntry {
+            tile_id: 1345,
+            texture_vector: vec![
+                TaeTexture {
+                    has_texture: 1,
+                    type_string_off: 1,
+                    texture_items: vec![
+                        TaeTextureImage {
+                            name_string_off: 2,
+                            ..Default::default()
+                        },
+                        TaeTextureImage {
+                            name_string_off: 3,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                TaeTexture::default(),
+                TaeTexture::default(),
+                TaeTexture::default(),
+            ],
+            ..Default::default()
+        };
+
+        let art_data = entry.process(&dictionary);
+
+        assert_eq!(art_data.ec_texture.map(|texture| texture.texture_id), Some(2000130));
     }
 }
 

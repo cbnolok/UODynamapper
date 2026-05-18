@@ -6,7 +6,7 @@ High-level summary of the UODynamapper project for contributors and AI agents to
 
 ## 1. Project Summary
 
-**Goal**: Create a 2D client/dynamic map renderer for Ultima Online with a highly configurable renderer that can emulate both classic and modern (Kingdom Reborn) visuals.
+**Goal**: Create a dynamic Ultima Online renderer and tooling stack that can reproduce classic content, ingest Enhanced Client ownership and texture data, and evolve toward richer modern rendering without losing data provenance.
 
 **Tech Stack**:
 - **Language**: Rust (Edition 2024)
@@ -16,11 +16,13 @@ High-level summary of the UODynamapper project for contributors and AI agents to
 
 **Workspace Members**:
 - `dynamapper/` - Main application (Bevy app, rendering, UI, controls)
-- `uocf/` - Ultima Online file parser (map.mul, art.mul, tiledata.mul)
-- `uddconv/` - UODynamapper-specific converted asset packaging and runtime readers
-- `uddconv_ktx2/` - KTX2 texture handling
-- `tools/uddconv_cli/` - CLI for building and inspecting UODynamapper-specific converted packages
-- `tools/uocf_cli/` - Generic UO tooling CLI crate for UOP/package operations and format conversion utilities
+- `uocf/` - Ultima Online file parser for classic and EC package formats
+- `udd-assets/` - Runtime readers and package access helpers for converted assets
+- `udd-container/` - Container and package infrastructure
+- `udd-conv/` - UODynamapper-specific conversion and packaging logic
+- `udd-conv-ktx2/` - KTX2 texture handling
+- `tools/udd-conv-cli/` - CLI for building and inspecting converted UODynamapper packages
+- `tools/uocf-cli/` - Generic UO tooling CLI crate for UOP/package operations and format conversion utilities
 
 ---
 
@@ -50,6 +52,13 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 - **Zoom-Driven Chunk Scaling**: Dynamic chunk coverage (8x8 up to 256x256)
 - **Exact Viewport Visibility**: Uses Bevy camera ray projection
 - **Hot-Reload**: Shader changes apply automatically
+- **EC Material Routing**: surface-like statics can route through terrain-style EC land slots when tile metadata and provenance support it
+
+### Current Runtime Decisions
+- **Map Chunking**: `32x32` for now
+- **Statics Chunking**: `32x32` for now
+- **Terrain Transport Unit**: prefer `64x64` UDDP decompression units while keeping render granularity independent
+- **Static Depth Port**: staged migration; current runtime is still mixed between interpolated sprite depth and early logical-depth work
 
 ### User Interface
 - **Performance Overlay**: FPS, CPU%, RAM (top-right)
@@ -100,7 +109,14 @@ Terrain metadata is stored in a layered `Rg16Uint` texture array. This eliminate
 ### 7.2 Multi-Scale Chunk Rendering
 The renderer merges base 8x8 blocks into larger "super-chunks" (up to 256x256) as zoom increases to reduce draw-entity pressure.
 
-### 7.3 Rendering Presets
+### 7.3 Enhanced Client Material Ownership
+The EC pipeline does not rely on one flat texture list. Current work uses:
+- `tileart.uop` for art and static ownership
+- `TerrainDefinition.uop` for terrain ownership and aliases
+- `Texture.uop` and `LegacyTexture.uop` as shared mixed pools
+- `TerrainTexture.uop` and `EffectTexture.uop` as support-resource pools that must be preserved even when they are not directly renderable yet
+
+### 7.4 Rendering Presets
 Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes with unified shader paths.
 
 ---
@@ -122,12 +138,15 @@ Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes with unifie
 - [x] Zoom-based chunk scaling and LOD selection
 - [x] Exact camera-projected visibility computation
 - [x] Async asset streaming via Bevy task pools
+- [x] Tilemeta sidecar path for richer EC item texture references
+- [x] Surface-like EC static routing groundwork in the renderer and inspection tooling
 
 ### Planned (docs/TODO.md)
-- [ ] Reduce idle CPU further with event-driven scheduling
-- [ ] Adapt 'far' projection to zoom level
-- [ ] Hot-reload settings and presets
-- [ ] Reduce temporary allocations in chunk build/upload paths
+- [ ] Close remaining EC chosen-base, support-texture, and surface-like routing gaps
+- [ ] Finish the production static-art pipeline and explicit UO-style static depth follow-up
+- [ ] Harden UDDP packaging, streaming, and validation
+- [ ] Move from transitional terrain scaling toward clipmap-based terrain
+- [ ] Expand mobiles, paperdoll, and export tooling
 
 ---
 

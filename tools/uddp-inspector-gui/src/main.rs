@@ -232,6 +232,12 @@ impl InspectorApp {
                         self.texture_zoom =
                             (self.texture_zoom * (zoom_delta * 0.005).exp()).clamp(0.1, 50.0);
                     }
+                    if ui.input(|i| i.key_pressed(egui::Key::Plus)) {
+                         self.texture_zoom = (self.texture_zoom * 1.2).min(50.0);
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Minus)) {
+                         self.texture_zoom = (self.texture_zoom / 1.2).max(0.1);
+                    }
 
                     egui::ScrollArea::both()
                         .auto_shrink([false, false])

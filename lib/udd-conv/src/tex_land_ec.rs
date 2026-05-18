@@ -17,7 +17,7 @@
 //!   path from TerrainDefinition material entries to alias slots, selected texture ids,
 //!   and canonical packed slots.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -525,23 +525,40 @@ fn build_terrain_provenance_records(
             } else {
                 alias.alias
             };
-            let selected_texture_id = selected_texture_by_slot
-                .get(&provenance_slot_id)
-                .copied()
-                .unwrap_or(MISSING_TEXTURE_ID);
-            let canonical_slot_id = texture_slot_by_texture_id
-                .get(&selected_texture_id)
-                .copied()
-                .unwrap_or(MISSING_SLOT_ID);
-            records.push(TexLandEcTerrainProvenanceRecord {
-                material_id: entry.id,
-                material_name_id: entry.name_id,
-                alias_count_index: alias.count_index,
-                alias_slot_id: alias.alias,
-                alias_tile_flags: alias.tile_flags,
-                selected_texture_id,
-                canonical_slot_id,
-            });
+            let mut selected_texture_ids = entry
+                .texture
+                .as_ref()
+                .map(|texture| {
+                    texture
+                        .layers
+                        .iter()
+                        .filter_map(|layer| layer.texture_id)
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(selected_texture_id) = selected_texture_by_slot.get(&provenance_slot_id).copied() {
+                selected_texture_ids.insert(selected_texture_id);
+            }
+
+            if selected_texture_ids.is_empty() {
+                selected_texture_ids.insert(MISSING_TEXTURE_ID);
+            }
+
+            for selected_texture_id in selected_texture_ids {
+                let canonical_slot_id = texture_slot_by_texture_id
+                    .get(&selected_texture_id)
+                    .copied()
+                    .unwrap_or(MISSING_SLOT_ID);
+                records.push(TexLandEcTerrainProvenanceRecord {
+                    material_id: entry.id,
+                    material_name_id: entry.name_id,
+                    alias_count_index: alias.count_index,
+                    alias_slot_id: alias.alias,
+                    alias_tile_flags: alias.tile_flags,
+                    selected_texture_id,
+                    canonical_slot_id,
+                });
+            }
         }
     }
 
@@ -550,6 +567,7 @@ fn build_terrain_provenance_records(
             record.alias_slot_id,
             record.material_id,
             record.alias_count_index,
+            record.selected_texture_id,
         )
     });
     records
@@ -1146,6 +1164,10 @@ pub fn encode_terrain_provenance_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uocf::enhanced::terrain_definition::{
+        TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionTexture,
+        TerrainDefinitionTextureLayer, TerrainDefinitionTileAlias,
+    };
 
     fn tile(art_id: u32, width: u16, height: u16) -> DecodedArtTile {
         DecodedArtTile {
@@ -1180,5 +1202,58 @@ mod tests {
         assert_eq!(placed.y % 4, 0);
         assert_eq!(page.record.used_width % 4, 0);
         assert_eq!(page.record.used_height % 4, 0);
+    }
+
+    #[test]
+    fn terrain_provenance_includes_layer_only_texture_ids() {
+        let terrain_definition = TerrainDefinitionPackage {
+            entries: vec![TerrainDefinitionEntry {
+                id: 13,
+                name_id: 0,
+                aliases: vec![TerrainDefinitionTileAlias {
+                    count_index: 0,
+                    alias: 581,
+                    tile_flags: 0,
+                }],
+                texture: Some(TerrainDefinitionTexture {
+                    layers: vec![
+                        TerrainDefinitionTextureLayer {
+                            texture_id: Some(2000130),
+                            ..Default::default()
+                        },
+                        TerrainDefinitionTextureLayer {
+                            texture_id: Some(2000131),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        };
+        let selections = vec![TerrainTextureSelection {
+            slot_id: 581,
+            texture_id: 2000131,
+        }];
+        let texture_slot_by_texture_id = HashMap::from([(2000130, 9001), (2000131, 9002)]);
+
+        let records = build_terrain_provenance_records(
+            &terrain_definition,
+            &selections,
+            &texture_slot_by_texture_id,
+        );
+
+        assert!(records.iter().any(|record| {
+            record.material_id == 13
+                && record.alias_slot_id == 581
+                && record.selected_texture_id == 2000130
+                && record.canonical_slot_id == 9001
+        }));
+        assert!(records.iter().any(|record| {
+            record.material_id == 13
+                && record.alias_slot_id == 581
+                && record.selected_texture_id == 2000131
+                && record.canonical_slot_id == 9002
+        }));
     }
 }

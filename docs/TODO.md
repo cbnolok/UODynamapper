@@ -1,6 +1,18 @@
-# UODynamapper Roadmap and Technical TODO
+# UODynamapper Canonical TODO
 
-This document is the canonical implementation roadmap for graphics and asset streaming.
+This file is the single source of truth for remaining work.
+
+It supersedes the old split planning files:
+- `TODO_PHASE_1_STATIC_ART.md`
+- `TODO_PHASE_2_STREAMING_AND_EDITING.md`
+- `TODO_PHASE_3_ADVANCED_RENDERING.md`
+- `TODO_PHASE_4_MOBILES_AND_PAPERDOLL.md`
+- `URGENT_TESTS.md`
+- `TODO_CONSOLIDATED.md`
+
+It intentionally excludes work that is already landed or already reduced to completed investigation notes.
+
+## Targets And Constraints
 
 Primary targets:
 - 400+ FPS in military orthographic gameplay mode.
@@ -9,292 +21,340 @@ Primary targets:
 - Baseline hardware: GTX 1060 class GPU.
 
 Hard constraints:
-- No Mesh Shaders or vendor-only rendering features in core runtime path.
+- No Mesh Shaders or vendor-only rendering features in the core runtime path.
 - Partial texture uploads must be batched at least once per frame, never one upload per object.
 - Metadata used for gameplay logic must remain lossless end-to-end.
+- Runtime work must stay staged; do not merge base correctness, repetition, authored blends, liquid support, and extra passes into one change slice.
+
+Current execution decisions:
+- Keep `32x32` map chunks for now.
+- Keep `32x32` static chunking for now.
+- Keep `64x64` as the preferred UDDP transport and decompression unit for terrain payloads unless telemetry proves otherwise.
+- Keep transport granularity separate from render granularity.
 
 ## Architecture Principles
 
-- GPU-driven rendering: CPU submits compact state, shader code performs reconstruction/compositing.
-- Data indirection: immutable geometry + mutable metadata textures/buffers.
+- GPU-driven rendering: CPU submits compact state, shader code performs reconstruction and compositing.
+- Data indirection: immutable geometry plus mutable metadata textures or buffers.
 - Bounded memory: LRU with hysteresis for streamed content.
-- Streaming-first I/O: mmap + async tasks + upload scheduler.
+- Streaming-first I/O: `mmap` plus async tasks plus upload scheduler.
 - Format-aware compression: codec chosen by payload type and payload size.
+- EC evidence discipline: original UOP contents are primary, extracted original client shader text is secondary when present, third-party reconstructions are design references only.
 
-## Package and File Format Plan
+## How To Read This File
 
-- Container package: UDDP (UODynamapper Data Package), based on current UOP-compatible logic.
-- Single-object wrapper: UDDF (UODynamapper Data File).
-- Keep index and dictionary sections near header for fast startup lookup.
-- Keep visual payload and logic payload physically separable in package layout.
+- `Now`: active or near-term work that should drive implementation order.
+- `Next`: important follow-up that depends on `Now` being stable first.
+- `Later`: still planned, but not the best immediate use of time.
+- `Validation`: tests and regression work needed to keep the pipeline from drifting.
+- `Deferred`: still tracked, but intentionally not on the immediate path.
 
-### Compression Header Bit Layout (u16)
+## Now
 
-Planned packed semantics:
-- Bits 0..3: base compression type (0..15)
-- Bits 4..6: custom compression type (0..7)
-- Bits 7..15: content type id (0..511)
+### Baseline And Instrumentation
 
-Notes:
-- Compression and content selections are mutually exclusive enums, not bitmask combinations.
-- Content type drives decoding pipeline and optional preprocessing reversal.
+- Add frame-time breakdown telemetry for CPU update, extraction, upload, and render.
+- Add upload statistics for queued writes, bytes per frame, and batch count.
+- Add cache diagnostics for LRU hit rate, eviction reason, hysteresis counters, and queue backlog depth.
+- Define golden benchmark scenes and reproducible camera paths.
+- Make metrics visible in the debug overlay and persist them in logs for A/B runs.
 
-## Compression Policy Matrix
+### EC Material And Texture Ownership Pipeline
 
-- Land visual textures (runtime sampled): BC7 payload, usually stored raw in package (no second compression).
-- Metadata textures for logic: lossless integer formats in VRAM; package compression via Zstd/LZ4 depending on chunk size.
-- Small binary metadata (~2 KB): Zstd with per-content dictionaries.
-- Medium chunk payloads (around 16 KB): default to Zstd level 1..3; evaluate LZ4 where decompression latency dominates.
-- Tiny art tiles (8x8, 12x30, 16x16): never compress one-by-one; cluster into larger groups first.
+- Build a full owner-reference census from `tileart.uop` and `TerrainDefinition.uop` so direct package usage is measured instead of inferred.
+- Add dedicated inventories for `TerrainTexture.uop` and `EffectTexture.uop`, including direct-consumer linkage, file-kind classification, and anomaly buckets for names like `ripple`, `water_alpha`, `cube`, `env`, `splash`, `foam`, `glow`, `lava`, and `mask`.
+- Freeze the current chooser, routing, and shader baseline in explicit diagnostics before changing behavior further.
+- Split and preserve these metadata axes everywhere they matter:
+  - physical source package
+  - logical family
+  - stable role
+  - speculative role
+  - reason and confidence
+- Extend tileart parsing so `Textures`-style refs are preserved instead of collapsing into lossy fallback buckets.
+- Preserve raw path, normalized path, and `texture_stretch` for tileart-linked refs.
+- Promote multi-reference metadata to first-class runtime data for both item-owned and terrain-owned records.
+- Preserve metadata-only manifests for non-image `EffectTexture.uop` resources.
 
-## Milestone Roadmap
+### EC Packaging Boundaries
 
-## M0. Baseline and Instrumentation
+- Keep `tex_art_ec.uddp` for tileart-owned visible bases.
+- Keep `tex_land_ec.uddp` for `TerrainDefinition`-owned visible bases.
+- Add `ec_tex_aux.uddp` for non-base image-bearing support refs.
+- Keep non-image support resources as metadata manifests, not fake image slots.
+- Make package assignment inspectable and auditable.
+- Keep semantic ownership as the packaging driver; do not collapse EC assets into one flat texture-id atlas family.
 
-- [x] Add frame-time breakdown telemetry: CPU update, extraction, upload, render.
-- [x] Add upload statistics: queued writes, bytes/frame, batch count.
-- [x] Add cache diagnostics: LRU hit rate, eviction reason, hysteresis counters.
-- [ ] Define golden benchmark scenes and reproducible camera paths.
+### EC Base Selection And Visibility Rules
 
-Acceptance:
-- [x] Metrics visible in debug overlay and persisted in logs for A/B runs.
+- Replace the old non-aux-first base chooser with stable-role-first selection plus explicit reason logging.
+- Add override hooks for:
+  - base choice
+  - role correction
+  - metadata-only tagging
+- Replace the blanket tileart `Liquid` exclusion with a conservative base-eligibility decision.
+- Keep support-only and no-base liquid stacks preserved in metadata and auxiliary outputs.
+- Surface abnormalities for:
+  - missing base
+  - support-only stacks
+  - ambiguous multiple bases
+  - unresolved support-rich stacks
+  - low-confidence fallback selection
 
-## M1. Static Art Pipeline (Orthographic Military)
+### EC Runtime: Open Correctness Gaps
 
-- [ ] Implement art clustering in UDDP (group N art records per package entry, target payload 32..96 KB uncompressed).
-- [ ] Implement atlas packing with guillotiere for static art.
-- [ ] Support two runtime storage modes for art atlas pages:
-  - [ ] RGBA8 (lossless default for tiny/alpha-sensitive art)
-  - [ ] BC7 (optional for larger pages)
-- [ ] Build metadata table per art id: atlas layer, UV rectangle, pivot/offset, behavior flags.
-- [ ] Implement shader path with alpha mask and depth write for clean overlap.
+- Finish runtime consumption of chosen-base metadata for terrain-owned, art-owned, and surface-like art paths.
+- Resolve remaining surface-like static routing failures where tilemeta says `SurfaceLike` but runtime `ec_land` resolution is still missing.
+  - Known samples: `1345`, `1395`, `1396`, `1397`, `1398`, `1399`.
+  - `1345` points at `ec_texture_id=2000130` and appears to have `TerrainDefinition` matches.
+  - `1395..1399` point at `1000034` and currently show no `TerrainDefinition` matches.
+- Keep the safe static runtime precedence:
+  - `tilemeta.is_surface_like()` plus resolvable `ec_land` slot first
+  - then existing art fallback paths
+  - never route normal art through unsafe `selected_texture_id -> canonical_slot_id` shortcuts
+- Preserve the safe `ec_land` runtime rule:
+  - direct populated slot wins
+  - only then fall back through provenance or canonical mapping
+- Revisit runtime terrain-id override coverage, including the documented forest-family `196` case in `runtime_material_id_overrides`.
 
-Acceptance:
-- [ ] One shared material path for static art in military mode.
-- [ ] No visible sorting artifacts on masked sprites in baseline test map.
+### Static Art Pipeline And Residency
 
-### M1.x UO-Style Static Depth, Transparency, and Building Occlusion Follow-Up
+- Finish the production-grade clustered static-art pipeline.
+- Cluster tiny art records into `32..96 KB` uncompressed payload groups instead of compressing them individually.
+- Implement atlas packing with `guillotiere` for static art.
+- Support two runtime storage modes for art atlas pages:
+  - `RGBA8` as the lossless default for tiny and alpha-sensitive art
+  - `BC7` as optional for larger pages after validation
+- Build metadata lookup per art id for atlas layer, UV rectangle, pivot or offset, and behavior flags.
+- Keep metadata lookup O(1) and exact, with partial writes only when atlas slot assignment changes.
+- Implement the alpha-mask plus depth-write shader path for clean overlap.
+- Keep draw submission batched by material and atlas page or layer set rather than by object.
 
-Status:
-- Current runtime state after the first fixed-depth port:
-  - foliage ordering improved materially
-  - terrain-versus-land-static fighting improved partially
-  - remaining wall-vs-wall and similar same-band fighting is still effectively unchanged in live testing
-- Conclusion:
-  - the current projected logical-depth path is not sufficient
-  - the next required step is an explicit UO-style depth key derived from tile coordinates and priority Z, not more ad hoc bias tuning
+### Static Depth, Transparency, And Building Occlusion Follow-Up
 
-#### Technical Specification
-
-- Replace clip-space-derived logical ordering for statics with an explicit UO ordering metric.
+- Replace projected clip-space-derived static ordering with an explicit UO-style logical depth key.
 - Keep visual billboard placement and logical depth computation independent.
-- Preserve the current split between:
-  - visual position (`world_y`, billboard offsets, ground quad placement)
-  - logical ordering inputs (`tile_x`, `tile_y`, `priority_z_units`, class depth offset)
+- Preserve the split between:
+  - visual position and billboard offsets
+  - logical ordering inputs such as `tile_x`, `tile_y`, `priority_z_units`, and class depth offset
+- Freeze the explicit depth-key formula in code comments, docs, and shader or Rust contracts before further tuning.
+- Add `tile_x`, `tile_y`, and `priority_z_units` as first-class logical-depth inputs for static instances.
+- Stop using projected clip depth as the final ordering source for statics; use the explicit UO depth key instead.
+- Reapply class offset tables on top of `priority_z_units`, not visual Y bias.
+- Re-tune foliage only after the explicit depth key is live.
+- Implement timer-based alpha lerp for fade-in and fade-out behavior rather than abrupt opacity changes.
+- Add player-local building ceiling scan state similar to `_maxZ` or `_maxGroundZ` to support roof and upper-floor hiding or fading.
+- Validate the result in dense town and building scenes with equal-Z walls, foliage near walls, and terrain-versus-land-static overlap.
 
-Target logical depth model:
+## Next
 
-- `priority_z_units` is the effective UO Z used for ordering and occlusion, not necessarily the raw tile base Z.
-- `depth_key = (tile_x + tile_y) + (127 + priority_z_units) * 0.01`
-- Convert `depth_key` to stable GPU `frag_depth` in a deterministic way.
-- Do not feed visual Y bias into the logical depth formula.
+### UDDP, UDDF, Streaming, And Upload Scheduling
 
-Priority Z rules to preserve:
+- Finalize UDDP on-disk layout with explicit sections for header, dictionary index, dictionary blobs, entry table, and data blocks.
+- Keep UDDF as the single-object wrapper for standalone resources and tooling.
+- Preserve the planned `u16` compression header layout:
+  - bits `0..3`: base compression type
+  - bits `4..6`: custom compression type
+  - bits `7..15`: content type id
+- Implement async read and decode tasks through Bevy task pools.
+- Implement upload scheduling that merges writes and emits bounded GPU copy batches each frame.
+- Implement per-content dictionary handling for small payload classes.
+- Implement fallback decode paths per content type.
+- Keep predictive prefetch rings optional until telemetry proves they improve real movement behavior.
+- Keep live editing persistence and delta-merging deferred until editor and gameplay ownership is explicit.
 
-- Default static priority Z: `tile_z + effective_height`
-- Effective height rules:
-  - use metadata `height` when nonzero
-  - if `height == 0` and the tile is not `Background` and not `Surface`, use fallback height `10`
-  - if `Bridge`, halve the effective height
-- Surface-like floor/land-backed static tiles should keep using the base tile Z unless a verified client rule requires otherwise.
+### Terrain Metadata VRAM Optimization
 
-Flag-based logical depth offset rules currently targeted from client analysis:
+- Implement indexed metadata atlases for terrain so metadata can drop below the current per-tile footprint when the palette cardinality supports it.
+- Add per-page metadata palettes or dictionaries in a GPU-readable buffer.
+- Update the terrain atlas shader path to perform indexed metadata indirection.
+- Update the converter path to generate metadata palettes during packaging.
+- Keep this optimization lossless for gameplay-relevant height and id data.
 
-- `Background` -> `-0.001`
-- `Roof` -> `+0.002`
-- `Foliage` -> client reference uses a much larger positive offset; runtime tuning in this renderer may differ
-- default -> `0.0`
+### EC Review, Audit, And Artifact Surfaces
 
-Depth-class precedence must remain:
+- Emit machine-readable abnormality reports and owner-reference audits.
+- Keep override files source-controlled and reviewable.
+- Generate editable review artifacts grounded in original package evidence, not just current code behavior.
+- Extend inspectors so they print at least:
+  - owner kind
+  - source package
+  - logical family
+  - stable role
+  - speculative role
+  - reason
+  - confidence
+  - runtime routing
 
-- `Background`
-- `Roof`
-- `Foliage`
-- `SurfaceLikeFloor`
-- `Regular`
+### EC Runtime Staging
 
-Transparency / second-pass behavior:
+- World-space repetition and stretch precedence:
+  - make explicit metadata override texture-extent inference when warranted
+  - keep the rule inspectable
+- Single-terrain material mode for materials that are truly one-base by evidence.
+- Solid-terrain blend mode for materials with credible `Base`, `SecondaryBase`, and `AlphaMask` support.
+- Terrain-owned liquid mode with explicit uncertainty handling for ripple-like or normal-like support inputs.
+- Art-owned wet or liquid mode separate from terrain-liquid logic.
+- Extra-pass exploration only behind explicit feature gates and diagnostics.
 
-- Opaque art/static pass:
-  - alpha-mask style discard
-  - writes logical `frag_depth`
-- Transparent art/static pass:
-  - draws alpha below the cutoff only
-  - should not reuse opaque fixed-depth blindly if that causes artifacts
-  - uses client-style color modulation for translucent pixels
+### Camera Modes, Water, And Terrain Switching
 
-Opacity smoothing target behavior to port:
+- Keep camera projection concerns in camera setup rather than content data.
+- Implement or harden runtime switches for:
+  - military orthographic
+  - free orthographic
+  - perspective
+  - terrain blend mode
+  - water mode
+  - structural advanced path toggle
+- Preserve the mandatory water pass ordering:
+  - opaque terrain with water fragments excluded
+  - submerged art and mobiles
+  - transparent water final pass
+- Keep classic water as the baseline mode and treat enhanced procedural water as benchmark-first.
 
-- introduce timer-based alpha lerp rather than sudden opacity changes
-- target cadence: 20 ms
-- target step: 25 alpha units
-- full fade duration target: about 220 ms
-- applies to foliage fades, roofs, circle/transparency effects, and upper-floor occlusion fades
+### Future-Readiness Preservation
 
-Building / roof / upper-floor occlusion target behavior:
+- Preserve future blend candidates distinctly from generic support refs.
+- Preserve `NormalLike`, distortion-like, and flow-like candidates distinctly.
+- Preserve extra-pass candidates such as waterfall, splash, foam, flare, glow, and lava bubbles.
+- Add an implementation-readiness field for preserved support refs with categories like:
+  - `base-safe`
+  - `blend-ready`
+  - `liquid-ready`
+  - `normal-like experimental`
+  - `extra-pass only`
 
-- add `_maxZ` / `_maxGroundZ` style state derived from a local vertical scan at the player tile
-- detect overhead `Surface` / `Roof` above `player_z + 14`
-- when found, treat that overhead surface as the current building ceiling/floor cutoff
-- roofs above that level can be hidden
-- upper-floor statics above that level should fade or be excluded according to the later alpha/occlusion policy
+## Later
 
-UO coordinate translation notes to preserve:
+### Terrain Architecture Beyond Current EC Work
 
-- screen-space vertical movement: 1 UO Z unit corresponds to 4 screen pixels in the classic isometric projection
-- current render-side world placement still uses the engine's own world units for visuals
-- the important porting requirement is that logical ordering follows UO depth semantics even if the visual world-space scale differs
+- Keep the current threshold-based terrain scale and mesh path explicitly documented as transitional.
+- Replace discrete zoom mesh swapping with GPU clipmap rings.
+- Implement snapped world-space sampling in the vertex stage.
+- Use continuous LOD so zoom no longer depends on hard render-threshold swaps.
+- Add live-edit compatible terrain invalidation and update rules for the chosen clipmap path.
+- Preserve deterministic export compatibility while advanced rendering modes evolve.
 
-#### Implementation Plan
+### Terrain Blending And Water Modes
 
-- [ ] Freeze the explicit UO depth-key formula in code comments, docs, and shader/Rust contracts before further tuning.
-- [ ] Add `tile_x`, `tile_y`, and `priority_z_units` as first-class logical-depth inputs for static instances.
-- [ ] Stop using projected clip depth as the final ordering source for statics; use the explicit UO depth key instead.
-- [ ] Reapply the class offset table on top of `priority_z_units`, not on visual Y.
-- [ ] Re-tune foliage only after the explicit depth key is live.
-- [ ] Implement timer-based alpha lerp for fade-in/fade-out behavior.
-- [ ] Add player-local `_maxZ` building scan.
-- [ ] Hide/fade roofs and upper floors above `_maxZ`.
-- [ ] Validate all of the above in dense town/building scenes with equal-Z walls, foliage near walls, and terrain/land-static overlap.
+- Keep the original transition-tile path for classic fidelity.
+- Add automatic blend mode for custom maps that lack transition tiles.
+- Keep source logical tile ids immutable in both modes.
+- Treat stochastic or noise seam refinement as optional after the base auto-blend path works.
+- Keep depth-aware tinting for enhanced water bounded and benchmark-first.
 
-#### Validation Requirements
+### Mobiles, Animation, Hues, And Paperdoll
 
-- Verify equal-Z walls in towns/buildings specifically; this is the current known failure that remained unchanged after the priority-height experiment.
-- Verify terrain versus land-backed static tiles after explicit depth-key migration.
-- Verify foliage against walls and dense tree clusters after the explicit depth-key migration, not before.
-- Verify roof hiding and upper-floor fade behavior while walking into and out of buildings.
-- Record representative before/after captures for regression comparison.
+- Define the animation asset normalization path for classic and KR or EC sources.
+- Store a hue mask channel for tintable pixels.
+- Keep hue as a runtime parameter applied in the fragment shader rather than duplicating atlases per hue.
+- Reuse an existing secondary UV channel for hue and runtime payload where practical.
+- Build the clustered mobile animation pipeline.
+- Implement mobile streaming cache with LRU and hysteresis.
+- Benchmark and choose between:
+  - multi-quad layered composition
+  - single-quad fragment compositing
+- Preserve deterministic layering for mount, body, equipment, hair, and overlays.
 
-## M2. Streaming Core (UDDP/UDDF + mmap + upload scheduler)
+### Export And Tooling
 
-- [x] Finalize UDDP on-disk layout with sections:
-  - [x] header
-  - [x] dictionary index section
-  - [x] dictionary blobs section
-  - [x] entry table
-  - [x] data blocks
-- [x] Keep UDDF as single-object envelope for standalone resources and tooling.
-- [x] Implement async read/decompress tasks via Bevy task pools.
-- [x] Implement upload scheduler that merges writes and emits bounded GPU copy batches each frame.
-- [ ] Implement per-content dictionary handling for small payload classes.
-- [ ] Implement fallback decode paths per content type.
-- [ ] Adopt `64x64` as the preferred UDDP transport/decompression unit for terrain payloads.
-- [ ] Keep transport granularity separate from render granularity; do not force render entities to match UDDP chunk size.
-- [ ] Treat predictive prefetch rings as optional until telemetry proves they improve terrain streaming under real motion.
+- Implement the 1:1 tiled world export pipeline.
+- Add WebP output profile controls for quality, lossless, and speed.
+- Add CLI pack validation for UDDP consistency and dictionary coverage.
+- Improve `uddp_inspector` atlas preview with selective CPU decode for BC7 sub-rects instead of full-page decode.
 
-Acceptance:
-- [ ] No main-thread stalls during normal camera motion.
-- [ ] Upload bursts remain bounded under stress camera sweeps.
+## Validation
 
-## M2.x VRAM Optimizations (Indexed Metadata)
+### Immediate Regression Protection
 
-- [ ] Implement Indexed Metadata Atlas for terrain to reduce VRAM from 4 bytes/tile to 2 bytes/tile (or 1 byte/tile).
-- [ ] Implement a metadata palette/dictionary per page (2048x2048) in a `StorageBuffer`.
-- [ ] Update `atlas.wgsl` to perform the indexed lookup indirection.
-- [ ] Update `cc_map.rs` to generate the palette during conversion.
+- Add parser tests for:
+  - tileart `Textures`-family classification
+  - stable-role classification
+  - speculative-role tagging
+  - owner-reference census correctness
+- Add packer tests for:
+  - sidecar integrity
+  - auxiliary-package owner linkage
+  - liquid base retention
+- Add metadata round-trip and bit-packing tests where format packing is critical.
+- Add UDDP alignment and `mmap` safety tests for package layout.
+- Keep RLE or decode fuzzing for high-risk decode paths.
 
-Acceptance:
-- [ ] 50-75% reduction in terrain metadata VRAM.
-- [ ] Zero loss in height or ID precision.
+### Priority Test Inventory
 
-## M3. Land Clipmap and Continuous LOD
+- `test_metadata_packing_roundtrip`
+- `test_uddp_alignment_verification`
+- `test_mmap_block_access`
+- `test_iso_depth_sorting`
+- `test_subtile_precision_bias`
+- `fuzz_rle_decoder`
+- `test_hue_lookup_logic`
 
-- [ ] Keep the current threshold-based terrain scale/mesh path explicitly documented as transitional.
-- [ ] Replace discrete zoom mesh swapping with GPU clipmap rings.
-- [ ] Implement snapped world-space sampling in vertex stage.
-- [ ] Use a continuous LOD path so zoom no longer depends on hard render-threshold swaps.
-- [ ] Add live-edit compatible terrain invalidation/update rules for the chosen clipmap path.
+### Screenshot-Family Regression Buckets
 
-Acceptance:
-- [ ] No zoom-threshold redraw hitches.
-- [ ] Stable visual continuity at all zoom levels.
+- Build fixture families instead of validating only isolated ids.
+- Keep at least these families covered:
+  - marble floors
+  - cave floors
+  - marsh water
+  - lava
+  - blood stains
+  - waterfall or snow scenes
+  - roads and plazas
+  - grass-to-sand transitions
+- Combine structural tests and screenshot-family checks; do not rely on only one of them.
 
-## M4. Camera Modes and Material Switches
+### Acceptance Gates
 
-- [ ] Keep camera projection concerns in camera setup, not content data.
-- [ ] Implement shader specialization switches for:
-  - [ ] military orthographic mode
-  - [ ] free orthographic mode with billboarding where enabled
-  - [ ] perspective mode with optional enhanced effects
-- [ ] Keep minimal register pressure in military mode variant.
-- [ ] Treat shader specialization as benchmark-first if the unified shader path already holds the military-mode target.
+- Static art in military mode uses one shared material path and shows no visible sorting artifacts on masked sprites in the baseline map.
+- Equal-Z walls, roof edges, and terrain-versus-land-backed statics remain stable after the explicit depth-key migration.
+- No main-thread stalls during normal camera motion.
+- Upload bursts remain bounded under stress camera sweeps.
+- No zoom-threshold redraw hitches once the clipmap path replaces the transitional mesh swap path.
+- Terrain metadata VRAM optimization must not lose height precision or tile-id precision.
+- Military mode maintains the target performance profile on the benchmark scene.
+- Perspective and advanced modes remain deterministic under runtime switching.
+- Multiple hue variants share the same base atlas allocation.
 
-Acceptance:
-- [ ] One-time switch hitch acceptable; no recurring hitch after pipeline warmup.
-- [ ] 400+ FPS maintained in military mode on target scene.
+## Documentation And Evidence Hygiene
 
-## M5. Terrain Blending and Water Modes
+- Add one durable documentation artifact that explains how the third-party world-space UV proof-of-concept maps into the current data model.
+- Keep it explicit that the third-party renderer is reconstruction-only, not original EC source.
+- Preserve both decoded repetition values and texture extents as separate signals for future comparison.
+- Keep unresolved scaling questions explicit rather than flattening them into false certainty.
 
-- [ ] M5.1 Terrain blend modes:
-  - [ ] Keep original transition-tile path for classic fidelity.
-  - [ ] Add automatic blend mode for custom maps lacking transition tiles.
-  - [ ] Keep source logical tile IDs immutable in both modes.
-  - [ ] Treat stochastic/noise seam refinement as optional after the base auto-blend path works.
-- [ ] M5.2 Water modes:
-  - [ ] Keep classic frame-based water as the baseline mode.
-  - [ ] Add enhanced procedural water with depth-aware tinting only if benchmark cost is acceptable.
-- [ ] M5.3 Pass ordering correctness:
-  - [ ] Render opaque terrain with water fragments excluded.
-  - [ ] Render submerged art/mobile content before transparent water.
-  - [ ] Render transparent water as the final water pass.
+## Known Open Constraints And Rules
 
-Acceptance:
-- [ ] Mode switches produce deterministic visuals without state corruption.
+- `tileart.uop` ownership remains authoritative for art-owned wet and liquid entries even when support inputs come from `TerrainTexture.uop` or `EffectTexture.uop`.
+- `TerrainDefinition.uop` ownership remains authoritative for terrain materials.
+- `Texture.uop` is a mixed pool; package origin alone is not sufficient classification.
+- `ec_land` and `ec_art` may legitimately duplicate the same source image when semantics differ.
+- `tex_art_ec` must keep `TileType::Solid` admission; only the old liquid blanket exclusion was wrong.
+- Surface-like statics need dedicated runtime handling and must not be forced through ordinary billboard-art assumptions.
+- Shader specialization is benchmark-first, not architecture-first.
+- Water pass ordering correctness has priority over cosmetic enhanced-water work.
 
-## M6. Mobiles and Paperdoll Foundation
-
-- [ ] Define animation asset normalization path (classic and KR/EC sources).
-- [ ] Store a hue mask channel for tintable pixels.
-- [ ] Keep hue as runtime parameter and apply in fragment shader (no per-hue atlas generation).
-- [ ] Use second UV set for hue/runtime payload where practical.
-- [ ] Implement mobile streaming cache with LRU + hysteresis.
-
-Acceptance:
-- [ ] Multiple hue variants share same base atlas allocation.
-- [ ] No dynamic atlas duplication per hue.
-
-## M7. Mobile Advanced Composition
-
-- [ ] Evaluate two composition paths and pick per platform profile:
-  - [ ] multi-quad layered composition
-  - [ ] single-quad fragment compositing
-- [ ] Preserve deterministic layering (mount/body/equipment/hair etc.).
-- [ ] Validate depth behavior against world statics in all camera modes.
-
-Acceptance:
-- [ ] Correct visual order in combat-density test scenes.
-
-## M8. Export and Tooling
-
-- [ ] Implement 1:1 tiled world export pipeline.
-- [ ] Add WebP output profile controls (quality/lossless/speed).
-- [ ] Add CLI pack validation for UDDP consistency and dictionary coverage.
-
-Acceptance:
-- [ ] End-to-end reproducible export from same content build.
-
-## Risks and Mitigations
+## Risks And Mitigations
 
 - Risk: over-fragmented atlas allocation under long sessions.
-  - Mitigation: periodic defrag/copy plan + migration map updates.
-- Risk: too many small write_texture calls.
+  - Mitigation: periodic defrag or copy planning plus migration-map updates.
+- Risk: too many small `queue.write_texture` calls.
   - Mitigation: per-frame upload queue coalescing and hard caps.
 - Risk: over-specialized compression policy complexity.
-  - Mitigation: keep policy table centralized by content id.
+  - Mitigation: keep the policy table centralized by content id.
 
-## Deferred but Tracked
+## Deferred
 
-- [ ] Improve `uddp_inspector` atlas preview path with selective CPU decode for BC7 sub-rects instead of decoding full atlas pages first. Keep this explicitly lower priority than the RGBA path, because most current UDDP texture payloads are plain uncompressed RGBA rather than BC7.
-- [ ] Full lighting model parity with original client time-of-day rules.
-- [ ] Networking protocol integration.
-- [ ] Editor UX layer for live map sculpting and tile painting.
+- Full lighting-model parity with original client time-of-day rules.
+- Networking protocol integration.
+- Editor UX for live map sculpting and tile painting.
+
+## Suggested Execution Order
+
+1. Finish baseline instrumentation and EC evidence, metadata, and packaging cleanup.
+2. Close the remaining EC runtime routing and chosen-base correctness gaps.
+3. Finish the static art pipeline and bounded upload discipline.
+4. Lock in audit, override, and review surfaces.
+5. Continue runtime staging in narrow, falsifiable slices only.
+6. Harden regression coverage with parser, packer, inspector, and screenshot-family validation.
+7. Resume broader roadmap items such as clipmaps, streaming hardening, mobiles, export, and advanced camera modes once the EC material pipeline is stable.

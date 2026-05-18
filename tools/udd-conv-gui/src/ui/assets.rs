@@ -57,18 +57,19 @@ impl UddConvApp {
                     cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
 
-                    if draw_asset_card(
+                    let (clicked, preview) = draw_asset_card(
                         &mut cols[0],
                         "Classic Art",
                         "Classic items and land textures (art.mul)",
                         Some(&mut self.settings.opt_tex_art_cc),
                         Some(&mut self.settings.packing_tex_art_cc),
-                        Some(&mut self.settings.upscale_tex_art_cc),
+                        Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                         vec![],
-                    ) {
-                        self.convert_tex_art_cc();
-                    }
-                    if draw_asset_card(
+                    );
+                    if clicked { self.convert_tex_art_cc(); }
+                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+
+                    let (clicked, preview) = draw_asset_card(
                         &mut cols[1],
                         "Classic Texmaps",
                         "Classic high-res terrain textures (texmaps.mul)",
@@ -76,12 +77,12 @@ impl UddConvApp {
                         Some(&mut self.settings.packing_tex_land_cc),
                         None,
                         vec![
-                            ("64x64", &mut self.settings.upscale_tex_land_cc_64),
-                            ("128x128", &mut self.settings.upscale_tex_land_cc_128),
+                            ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
+                            ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
                         ],
-                    ) {
-                        self.convert_tex_land_cc();
-                    }
+                    );
+                    if clicked { self.convert_tex_land_cc(); }
+                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
                 });
 
                 ui.add_space(8.0);
@@ -92,18 +93,19 @@ impl UddConvApp {
                     cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
 
-                    if draw_asset_card(
+                    let (clicked, preview) = draw_asset_card(
                         &mut cols[0],
                         "Enhanced Art",
                         "Enhanced Client static items (worldart)",
                         Some(&mut self.settings.opt_tex_art_ec),
                         Some(&mut self.settings.packing_tex_art_ec),
-                        Some(&mut self.settings.upscale_tex_art_ec),
+                        Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
                         vec![],
-                    ) {
-                        self.convert_tex_art_ec();
-                    }
-                    if draw_asset_card(
+                    );
+                    if clicked { self.convert_tex_art_ec(); }
+                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+
+                    let (clicked, preview) = draw_asset_card(
                         &mut cols[1],
                         "Enhanced Land",
                         "Enhanced Client high-res terrain textures",
@@ -111,14 +113,14 @@ impl UddConvApp {
                         Some(&mut self.settings.packing_tex_land_ec),
                         None,
                         vec![
-                            ("64x64", &mut self.settings.upscale_tex_land_ec_64),
-                            ("128x128", &mut self.settings.upscale_tex_land_ec_128),
-                            ("256x256", &mut self.settings.upscale_tex_land_ec_256),
-                            ("512x512", &mut self.settings.upscale_tex_land_ec_512),
+                            ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
+                            ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
+                            ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
+                            ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
                         ],
-                    ) {
-                        self.convert_tex_land_ec();
-                    }
+                    );
+                    if clicked { self.convert_tex_land_ec(); }
+                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
                 });
 
                 ui.add_space(8.0);
@@ -131,7 +133,7 @@ impl UddConvApp {
                     None,
                     None,
                     vec![],
-                ) {
+                ).0 {
                     self.convert_tilemeta();
                 }
             });
@@ -145,10 +147,11 @@ fn draw_asset_card(
     desc: &str,
     opt: Option<&mut TextureOptimization>,
     packing_mode: Option<&mut AtlasPackingModeSetting>,
-    upscale_single: Option<&mut UpscaleFilter>,
-    mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig)>,
-) -> bool {
+    upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
+    mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
+) -> (bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
     let mut clicked = false;
+    let mut preview_req = None;
 
     egui::Frame::group(ui.style())
         .fill(ui.visuals().widgets.noninteractive.bg_fill)
@@ -274,10 +277,13 @@ fn draw_asset_card(
                             ui.add_space(25.0);
                         }
 
-                        if let Some(up_val) = upscale_single {
+                        if let Some((up_val, target)) = upscale_single {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new("Upscale Filter:").size(12.5).weak());
                                 draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
+                                if ui.button("🔍 Preview").clicked() {
+                                    preview_req = Some((target, *up_val));
+                                }
                             });
                         }
                     });
@@ -286,18 +292,23 @@ fn draw_asset_card(
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
-                            for (label, config) in upscale_configs.iter_mut() {
+                            for (label, config, target) in upscale_configs.iter_mut() {
                                 ui.vertical(|ui| {
                                     ui.label(
                                         egui::RichText::new(format!("Upscale {}", label))
                                             .size(12.0)
                                             .weak(),
                                     );
-                                    draw_upscale_filter(
-                                        ui,
-                                        format!("{}_upscale_{}", title, label),
-                                        &mut config.filter,
-                                    );
+                                    ui.horizontal(|ui| {
+                                        draw_upscale_filter(
+                                            ui,
+                                            format!("{}_upscale_{}", title, label),
+                                            &mut config.filter,
+                                        );
+                                        if ui.button("🔍").clicked() {
+                                            preview_req = Some((*target, config.filter));
+                                        }
+                                    });
                                 });
                                 ui.add_space(15.0);
                             }
@@ -307,7 +318,7 @@ fn draw_asset_card(
             });
         });
 
-    clicked
+    (clicked, preview_req)
 }
 
 fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter) {

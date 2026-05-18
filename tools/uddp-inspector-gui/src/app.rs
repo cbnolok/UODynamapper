@@ -932,3 +932,263 @@ impl InspectorApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use udd_container::FileKey;
+
+    #[test]
+    fn test_clear_preview_state() {
+        let mut app = InspectorApp {
+            package: None,
+            entries: Vec::new(),
+            atlas_pages: HashMap::new(),
+            selected_idx: None,
+            filter: String::new(),
+            package_path: None,
+            view_mode: ViewMode::Package,
+            virtual_entries: Vec::new(),
+            selected_virtual_idx: None,
+            preview_text: Some("hello".to_string()),
+            preview_texture: None,
+            preview_texture_size: Some([10, 10]),
+            atlas_texture: None,
+            atlas_texture_size: Some([20, 20]),
+            atlas_text: Some("world".to_string()),
+            preview_mode: PreviewModeKind::Atlas,
+            image_window_open: true,
+            image_window_mode: PreviewModeKind::Atlas,
+            texture_zoom: 2.5,
+            focus_filter: false,
+            scroll_to_selected: false,
+        };
+
+        app.clear_preview_state();
+
+        assert_eq!(app.preview_text, None);
+        assert_eq!(app.preview_texture_size, None);
+        assert_eq!(app.atlas_texture_size, None);
+        assert_eq!(app.atlas_text, None);
+        assert_eq!(app.preview_mode, PreviewModeKind::Entry);
+        assert_eq!(app.image_window_mode, PreviewModeKind::Entry);
+        assert_eq!(app.texture_zoom, 1.0);
+    }
+
+    #[test]
+    fn test_filtered_package_indices() {
+        let mut app = InspectorApp {
+            package: None,
+            entries: vec![
+                EntryInfo {
+                    key: FileKey::Id(42),
+                    raw_size: 100,
+                    stored_size: 100,
+                    data_type: 1, // Art
+                    codec: udd_container::Codec::None,
+                    offset: 0,
+                },
+                EntryInfo {
+                    key: FileKey::PathHash(0xABCDEF1234567890),
+                    raw_size: 200,
+                    stored_size: 200,
+                    data_type: 9, // Texture (maps to "Texture")
+                    codec: udd_container::Codec::None,
+                    offset: 0,
+                },
+                EntryInfo {
+                    key: FileKey::Id(999),
+                    raw_size: 300,
+                    stored_size: 300,
+                    data_type: 3, // Map (maps to "Map")
+                    codec: udd_container::Codec::None,
+                    offset: 0,
+                },
+            ],
+            atlas_pages: HashMap::new(),
+            selected_idx: None,
+            filter: String::new(),
+            package_path: None,
+            view_mode: ViewMode::Package,
+            virtual_entries: Vec::new(),
+            selected_virtual_idx: None,
+            preview_text: None,
+            preview_texture: None,
+            preview_texture_size: None,
+            atlas_texture: None,
+            atlas_texture_size: None,
+            atlas_text: None,
+            preview_mode: PreviewModeKind::Entry,
+            image_window_open: false,
+            image_window_mode: PreviewModeKind::Entry,
+            texture_zoom: 1.0,
+            focus_filter: false,
+            scroll_to_selected: false,
+        };
+
+        // Empty filter matches all
+        assert_eq!(app.filtered_package_indices(), vec![0, 1, 2]);
+
+        // Filter by Decimal ID
+        app.filter = "42".to_string();
+        assert_eq!(app.filtered_package_indices(), vec![0]);
+
+        // Filter by Hex Hash
+        app.filter = "0xABCDEF1234567890".to_string();
+        assert_eq!(app.filtered_package_indices(), vec![1]);
+
+        // Filter by Hex Hash without 0x prefix
+        app.filter = "ABCDEF1234567890".to_string();
+        assert_eq!(app.filtered_package_indices(), vec![1]);
+
+        // Filter by data type name substring
+        app.filter = "text".to_string();
+        assert_eq!(app.filtered_package_indices(), vec![1]);
+
+        app.filter = "art".to_string();
+        assert_eq!(app.filtered_package_indices(), vec![0]);
+    }
+
+    #[test]
+    fn test_filtered_virtual_indices() {
+        let mut app = InspectorApp {
+            package: None,
+            entries: Vec::new(),
+            atlas_pages: HashMap::new(),
+            selected_idx: None,
+            filter: String::new(),
+            package_path: None,
+            view_mode: ViewMode::Virtual,
+            virtual_entries: vec![
+                VirtualEntry {
+                    id: 100,
+                    _data_type: 1,
+                    kind: "CC Art".to_string(),
+                    summary: "16x16 at 0,0".to_string(),
+                    location: "page 0".to_string(),
+                    data: VirtualEntryData::AtlasRect {
+                        page_index: 0,
+                        x: 0,
+                        y: 0,
+                        width: 16,
+                        height: 16,
+                        flags: 1,
+                    },
+                },
+                VirtualEntry {
+                    id: 200,
+                    _data_type: 11,
+                    kind: "TileMeta Land".to_string(),
+                    summary: "Grass Tile".to_string(),
+                    location: "metadata/land.bin".to_string(),
+                    data: VirtualEntryData::TileMetaLand(TileMetaLandInfo {
+                        texture_id: 5,
+                        tile_type: 1,
+                        flags: 0,
+                        radar_color: [0, 255, 0, 255],
+                        name: "Grass".to_string(),
+                    }),
+                },
+            ],
+            selected_virtual_idx: None,
+            preview_text: None,
+            preview_texture: None,
+            preview_texture_size: None,
+            atlas_texture: None,
+            atlas_texture_size: None,
+            atlas_text: None,
+            preview_mode: PreviewModeKind::Entry,
+            image_window_open: false,
+            image_window_mode: PreviewModeKind::Entry,
+            texture_zoom: 1.0,
+            focus_filter: false,
+            scroll_to_selected: false,
+        };
+
+        // Empty filter matches all
+        assert_eq!(app.filtered_virtual_indices(), vec![0, 1]);
+
+        // Filter by Decimal ID
+        app.filter = "100".to_string();
+        assert_eq!(app.filtered_virtual_indices(), vec![0]);
+
+        // Filter by kind substring
+        app.filter = "meta".to_string();
+        assert_eq!(app.filtered_virtual_indices(), vec![1]);
+
+        // Filter by summary substring
+        app.filter = "grass".to_string();
+        assert_eq!(app.filtered_virtual_indices(), vec![1]);
+    }
+
+    #[test]
+    fn test_detect_block_virtual_entries() {
+        let app = InspectorApp {
+            package: None,
+            entries: vec![
+                EntryInfo {
+                    key: FileKey::Id(5),
+                    raw_size: 1024,
+                    stored_size: 1024,
+                    data_type: DATA_TYPE_MAP,
+                    codec: udd_container::Codec::None,
+                    offset: 100,
+                },
+                EntryInfo {
+                    key: FileKey::Id(10),
+                    raw_size: 512,
+                    stored_size: 512,
+                    data_type: DATA_TYPE_STATIC,
+                    codec: udd_container::Codec::None,
+                    offset: 200,
+                },
+                EntryInfo {
+                    key: FileKey::PathHash(1234), // Should be skipped (needs Id)
+                    raw_size: 512,
+                    stored_size: 512,
+                    data_type: DATA_TYPE_STATIC,
+                    codec: udd_container::Codec::None,
+                    offset: 300,
+                },
+            ],
+            atlas_pages: HashMap::new(),
+            selected_idx: None,
+            filter: String::new(),
+            package_path: None,
+            view_mode: ViewMode::Package,
+            virtual_entries: Vec::new(),
+            selected_virtual_idx: None,
+            preview_text: None,
+            preview_texture: None,
+            preview_texture_size: None,
+            atlas_texture: None,
+            atlas_texture_size: None,
+            atlas_text: None,
+            preview_mode: PreviewModeKind::Entry,
+            image_window_open: false,
+            image_window_mode: PreviewModeKind::Entry,
+            texture_zoom: 1.0,
+            focus_filter: false,
+            scroll_to_selected: false,
+        };
+
+        let virtuals = app.detect_block_virtual_entries();
+        assert_eq!(virtuals.len(), 2);
+
+        assert_eq!(virtuals[0].id, 5);
+        assert_eq!(virtuals[0].kind, "Map Block");
+        if let VirtualEntryData::MapBlock { source_entry_idx } = virtuals[0].data {
+            assert_eq!(source_entry_idx, 0);
+        } else {
+            panic!("Expected MapBlock data");
+        }
+
+        assert_eq!(virtuals[1].id, 10);
+        assert_eq!(virtuals[1].kind, "Static Block");
+        if let VirtualEntryData::StaticBlock { source_entry_idx } = virtuals[1].data {
+            assert_eq!(source_entry_idx, 1);
+        } else {
+            panic!("Expected StaticBlock data");
+        }
+    }
+}

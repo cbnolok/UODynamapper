@@ -41,6 +41,7 @@ impl eframe::App for UddConvApp {
 
         // External preview window (for big textures)
         self.ui_preview_window(ctx);
+        self.ui_upscale_preview_window(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {

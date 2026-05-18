@@ -21,15 +21,15 @@ emit_tree_plugin_build = true
 # Custom filters for specific modules or severities
 [[logging.filters]]
 sev = "Debug"
-suppress = true
+suppress = false
 
 [[logging.filters]]
 sev = "DebugVerbose"
-suppress = true
+suppress = false
 
 [[logging.filters]]
 about = "RenderWorldLand"
-suppress = true
+suppress = false
 
 [[logging.filters]]
 about = "Startup"

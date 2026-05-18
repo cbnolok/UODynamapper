@@ -4,6 +4,7 @@ use crate::core::controls::input_actions::{
 use crate::core::render::scene::world::art::statics_collect::{
     depth_class_y_bias, resolve_priority_z_units, resolve_static_billboard_bounds,
     resolve_static_depth_class, resolve_surface_like_ground_quad_bounds, static_depth_key,
+    static_tile_is_surface_like,
 };
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
@@ -766,6 +767,7 @@ fn hovered_static_match(
         tex_art_cc_res,
         tex_art_ec_res,
         tex_land_ec_res,
+        tilemeta_res,
         tilemeta,
         graphic,
         world_x,
@@ -797,6 +799,7 @@ fn resolve_hovered_static_geometry(
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
+    tilemeta_res: Option<&TileMetaPackageRes>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     graphic: u16,
     world_x: f32,
@@ -836,6 +839,8 @@ fn resolve_hovered_static_geometry(
             let world_x = world_x + 0.5;
             let world_z = world_z + 1.5;
             if let Some(runtime_slot_id) = resolve_overlay_tex_land_ec_runtime_slot(
+                graphic as u32,
+                tilemeta_res.map(|package| &*package.0),
                 tilemeta,
                 tex_land_ec_res.map(|package| &*package.0),
             ) {
@@ -956,13 +961,15 @@ fn screen_polygon_contains(
 }
 
 fn resolve_overlay_tex_land_ec_runtime_slot(
+    tile_id: u32,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
     };
-    if !meta.is_surface_like() {
+    if !static_tile_is_surface_like(tilemeta) {
         return None;
     }
 
@@ -970,36 +977,48 @@ fn resolve_overlay_tex_land_ec_runtime_slot(
         return None;
     };
 
-    if let Some(slot_id) = package.resolve_runtime_slot_id(meta.cc_texture_id) {
-        return Some(slot_id);
+    let Some(main_ec_texture_id) = tilemeta_package
+        .and_then(|package| package.main_ec_texture_id(tile_id))
+        .or_else(|| (meta.ec_texture_id != 0).then_some(meta.ec_texture_id))
+    else {
+        return package.resolve_runtime_slot_id(meta.cc_texture_id);
+    };
+
+    if package.present_slot(main_ec_texture_id).is_some() {
+        return Some(main_ec_texture_id);
     }
 
-    let mut unique_slots = BTreeSet::new();
+    let mut canonical_slots = BTreeSet::new();
+    let mut alias_slots = BTreeSet::new();
     for record in package
         .terrain_provenance()
         .iter()
-        .filter(|record| record.selected_texture_id == meta.ec_texture_id)
+        .filter(|record| record.selected_texture_id == main_ec_texture_id)
     {
         if record.canonical_slot_id != 0
             && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
-            unique_slots.insert(record.canonical_slot_id);
+            canonical_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
             && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
-            unique_slots.insert(record.alias_slot_id);
-        }
-
-        if unique_slots.len() > 1 {
-            return None;
+            alias_slots.insert(record.alias_slot_id);
         }
     }
 
-    unique_slots.into_iter().next()
+    if canonical_slots.len() == 1 {
+        return canonical_slots.into_iter().next();
+    }
+
+    if canonical_slots.is_empty() && alias_slots.len() == 1 {
+        return alias_slots.into_iter().next();
+    }
+
+    package.resolve_runtime_slot_id(meta.cc_texture_id)
 }
 
 fn resolve_cursor_tile_coords(
@@ -1152,14 +1171,18 @@ fn describe_static_tile_details(
         .filter(|name| !name.is_empty())
         .unwrap_or("<unnamed>");
     let cc_texture_id = meta.map(|item| item.cc_texture_id);
-    let ec_texture_id = meta.map(|item| item.ec_texture_id);
-    let is_surface_like = meta.map(|item| item.is_surface_like()).unwrap_or(false);
+    let ec_texture_id = tilemeta_res.and_then(|meta_package| meta_package.0.main_ec_texture_id(graphic as u32));
+    let is_surface_like = static_tile_is_surface_like(meta);
     let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
     let cc_slot =
         tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
     let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
-    let tex_land_ec_runtime_slot =
-        resolve_overlay_tex_land_ec_runtime_slot(meta, tex_land_ec_res.map(|res| &*res.0));
+    let tex_land_ec_runtime_slot = resolve_overlay_tex_land_ec_runtime_slot(
+        graphic as u32,
+        tilemeta_res.map(|meta_package| &*meta_package.0),
+        meta,
+        tex_land_ec_res.map(|res| &*res.0),
+    );
     let tex_land_ec_slot = tex_land_ec_runtime_slot
         .and_then(|slot_id| tex_land_ec_res.and_then(|package| (&*package.0).present_slot(slot_id)));
     let live_decision = match settings.graphics.art_texture_source {

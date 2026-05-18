@@ -15,6 +15,7 @@ pub struct UddConvApp {
     pub tool_file_2: Option<PathBuf>,
     pub preview_path: Option<PathBuf>,
     pub preview_texture: Option<egui::TextureHandle>,
+    pub upscale_preview: Option<crate::models::UpscalePreviewState>,
 }
 
 impl UddConvApp {
@@ -33,6 +34,7 @@ impl UddConvApp {
             tool_file_2: None,
             preview_path: None,
             preview_texture: None,
+            upscale_preview: None,
         }
     }
 
@@ -45,5 +47,66 @@ impl UddConvApp {
 
     pub fn get_input_uddp_path(&self, filename: &str) -> PathBuf {
         self.settings.input_uddp_dir.join(filename)
+    }
+
+    pub fn open_upscale_preview(&mut self, target: crate::models::UpscalePreviewTarget, filter: udd_conv::upscale::UpscaleFilter) {
+        self.upscale_preview = Some(crate::models::UpscalePreviewState {
+            target,
+            id: 0,
+            filter,
+            texture: None,
+            upscaled_texture: None,
+            upscaled_size: [0, 0],
+            original_size: [0, 0],
+            id_buffer: "0".to_string(),
+            is_dirty: true,
+            zoom: 1.0,
+        });
+    }
+
+    pub fn update_upscale_preview(&mut self, ctx: &egui::Context) {
+        let Some(preview) = &mut self.upscale_preview else {
+            return;
+        };
+        if !preview.is_dirty {
+            return;
+        }
+
+        let cc_dir = self.settings.cc_dir.as_deref();
+        let ec_dir = self.settings.ec_dir.as_deref();
+
+        match crate::logic::preview::load_raw_asset(cc_dir, ec_dir, preview.target, preview.id) {
+            Ok(raw) => {
+                preview.original_size = [raw.width, raw.height];
+
+                // Original texture
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [raw.width as usize, raw.height as usize],
+                    &raw.rgba,
+                );
+                preview.texture =
+                    Some(ctx.load_texture("preview_orig", color_image, Default::default()));
+
+                // Upscaled texture
+                let (up_w, up_h, up_rgba) = preview.filter.apply(raw.width, raw.height, &raw.rgba);
+                preview.upscaled_size = [up_w, up_h];
+                let up_color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [up_w as usize, up_h as usize],
+                    &up_rgba,
+                );
+                preview.upscaled_texture = Some(ctx.load_texture(
+                    "preview_upscaled",
+                    up_color_image,
+                    Default::default(),
+                ));
+            }
+            Err(e) => {
+                eprintln!("Preview error: {}", e);
+                preview.texture = None;
+                preview.upscaled_texture = None;
+            }
+        }
+
+        preview.is_dirty = false;
     }
 }

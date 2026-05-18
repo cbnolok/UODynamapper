@@ -31,6 +31,7 @@ const GROUND_ART_Y_BIAS: f32 = 0.0;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
+const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -140,6 +141,16 @@ const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
 
+pub(crate) fn static_tile_is_surface_like(
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+) -> bool {
+    let Some(meta) = tilemeta else {
+        return false;
+    };
+
+    meta.is_surface_like() || meta.flags & (TILE_FLAG_SURFACE | TILE_FLAG_WET) != 0
+}
+
 pub(crate) fn resolve_static_depth_class(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> StaticDepthClass {
@@ -159,7 +170,7 @@ pub(crate) fn resolve_static_depth_class(
         return StaticDepthClass::Foliage;
     }
 
-    if meta.is_surface_like() {
+    if static_tile_is_surface_like(tilemeta) {
         return StaticDepthClass::SurfaceLikeFloor;
     }
 
@@ -272,6 +283,21 @@ fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
     }
 }
 
+fn push_sample_tile_id(
+    sample: &mut [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
+    sample_len: &mut usize,
+    tile_id: u16,
+) {
+    if sample[..*sample_len].contains(&tile_id) {
+        return;
+    }
+
+    if *sample_len < UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT {
+        sample[*sample_len] = tile_id;
+        *sample_len += 1;
+    }
+}
+
 fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
     let mut last_base_key: Option<f32> = None;
     let mut tie_break_ordinal = 0u32;
@@ -296,13 +322,15 @@ fn assign_ground_depth_tie_breakers(instances: &mut [GroundTileInstance]) {
 }
 
 fn resolve_surface_like_tex_land_ec_slot_id(
+    tile_id: u32,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<u32> {
     let Some(meta) = tilemeta else {
         return None;
     };
-    if !meta.is_surface_like() {
+    if !static_tile_is_surface_like(tilemeta) {
         return None;
     }
 
@@ -310,41 +338,54 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return None;
     };
 
-    if let Some(slot_id) = package.resolve_runtime_slot_id(meta.cc_texture_id) {
-        return Some(slot_id);
+    let Some(main_ec_texture_id) = tilemeta_package
+        .and_then(|package| package.main_ec_texture_id(tile_id))
+        .or_else(|| (meta.ec_texture_id != 0).then_some(meta.ec_texture_id))
+    else {
+        return package.resolve_runtime_slot_id(meta.cc_texture_id);
+    };
+
+    if package.present_slot(main_ec_texture_id).is_some() {
+        return Some(main_ec_texture_id);
     }
 
-    let mut unique_slots = BTreeSet::new();
+    let mut canonical_slots = BTreeSet::new();
+    let mut alias_slots = BTreeSet::new();
     for record in package
         .terrain_provenance()
         .iter()
-        .filter(|record| record.selected_texture_id == meta.ec_texture_id)
+        .filter(|record| record.selected_texture_id == main_ec_texture_id)
     {
         if record.canonical_slot_id != 0
             && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.canonical_slot_id).is_some()
         {
-            unique_slots.insert(record.canonical_slot_id);
+            canonical_slots.insert(record.canonical_slot_id);
         }
 
         if record.alias_slot_id != 0
             && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
             && package.present_slot(record.alias_slot_id).is_some()
         {
-            unique_slots.insert(record.alias_slot_id);
-        }
-
-        if unique_slots.len() > 1 {
-            return None;
+            alias_slots.insert(record.alias_slot_id);
         }
     }
 
-    unique_slots.into_iter().next()
+    if canonical_slots.len() == 1 {
+        return canonical_slots.into_iter().next();
+    }
+
+    if canonical_slots.is_empty() && alias_slots.len() == 1 {
+        return alias_slots.into_iter().next();
+    }
+
+    package.resolve_runtime_slot_id(meta.cc_texture_id)
 }
 
 fn resolve_static_visual_kind(
     art_source: ClientTextureSource,
     tile_graphic: u16,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
@@ -361,7 +402,13 @@ fn resolve_static_visual_kind(
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
             tex_art_ec.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
-            resolve_surface_like_tex_land_ec_slot_id(tilemeta, tex_land_ec).is_some(),
+            resolve_surface_like_tex_land_ec_slot_id(
+                tile_graphic as u32,
+                tilemeta_package,
+                tilemeta,
+                tex_land_ec,
+            )
+            .is_some(),
         ),
     }
 }
@@ -475,6 +522,9 @@ struct CachedStaticChunkStats {
     visited_blocks: usize,
     source_tiles: usize,
     ground_land_tiles: usize,
+    unresolved_surface_like_tiles: usize,
+    unresolved_surface_like_sample: [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
+    unresolved_surface_like_sample_len: usize,
     atlas_hits: usize,
     atlas_misses: usize,
     requested_pages: Vec<u64>,
@@ -529,13 +579,14 @@ fn log_static_collect_stats(
             LogSev::DebugVerbose,
             LogAbout::RenderWorldArt,
             &format!(
-                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={}",
+                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={} unresolved_surface_like={}",
                 stats.map_id,
                 stats.dot_mode,
                 stats.visible_chunks,
                 stats.visited_blocks,
                 stats.source_tiles,
                 stats.ground_land_tiles,
+                stats.unresolved_surface_like_tiles,
             ),
         );
         console_logger::one(
@@ -552,6 +603,22 @@ fn log_static_collect_stats(
                 stats.emitted_instances,
             ),
         );
+        if stats.unresolved_surface_like_tiles > 0 {
+            let sample = stats.unresolved_surface_like_sample[..stats.unresolved_surface_like_sample_len]
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::RenderWorldArt,
+                &format!(
+                    "Skipped {} unresolved surface-like EC static tiles; sample tile ids: [{}].",
+                    stats.unresolved_surface_like_tiles,
+                    sample,
+                ),
+            );
+        }
         debug_state.last = Some(stats);
     }
 }
@@ -564,6 +631,9 @@ pub struct StaticArtCollectStats {
     pub visited_blocks: usize,
     pub source_tiles: usize,
     pub ground_land_tiles: usize,
+    pub unresolved_surface_like_tiles: usize,
+    pub unresolved_surface_like_sample: [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
+    pub unresolved_surface_like_sample_len: usize,
     pub unique_requested_pages: usize,
     pub resident_pages: usize,
     pub pending_pages: usize,
@@ -744,6 +814,9 @@ pub fn sys_collect_visible_statics(
     let mut visited_blocks = 0usize;
     let mut source_tiles = 0usize;
     let mut ground_land_tiles = 0usize;
+    let mut unresolved_surface_like_tiles = 0usize;
+    let mut unresolved_surface_like_sample = [0u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT];
+    let mut unresolved_surface_like_sample_len = 0usize;
     let mut atlas_hits = 0usize;
     let mut atlas_misses = 0usize;
     let mut unique_requested_pages = HashSet::new();
@@ -788,6 +861,9 @@ pub fn sys_collect_visible_statics(
         let mut visited_blocks = 0usize;
         let mut source_tiles = 0usize;
         let mut ground_land_tiles = 0usize;
+        let mut unresolved_surface_like_tiles = 0usize;
+        let mut unresolved_surface_like_sample = [0u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT];
+        let mut unresolved_surface_like_sample_len = 0usize;
         let mut atlas_hits = 0usize;
         let mut atlas_misses = 0usize;
         let mut unique_requested_pages = HashSet::new();
@@ -800,6 +876,18 @@ pub fn sys_collect_visible_statics(
             visited_blocks += chunk.stats.visited_blocks;
             source_tiles += chunk.stats.source_tiles;
             ground_land_tiles += chunk.stats.ground_land_tiles;
+            unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
+            for tile_id in chunk.stats.unresolved_surface_like_sample
+                [..chunk.stats.unresolved_surface_like_sample_len]
+                .iter()
+                .copied()
+            {
+                push_sample_tile_id(
+                    &mut unresolved_surface_like_sample,
+                    &mut unresolved_surface_like_sample_len,
+                    tile_id,
+                );
+            }
             atlas_hits += chunk.stats.atlas_hits;
             atlas_misses += chunk.stats.atlas_misses;
             unique_requested_pages.extend(chunk.stats.requested_pages.iter().copied());
@@ -814,6 +902,9 @@ pub fn sys_collect_visible_statics(
                 visited_blocks,
                 source_tiles,
                 ground_land_tiles,
+                unresolved_surface_like_tiles,
+                unresolved_surface_like_sample,
+                unresolved_surface_like_sample_len,
                 unique_requested_pages: unique_requested_pages.len(),
                 resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
                 pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
@@ -926,6 +1017,7 @@ pub fn sys_collect_visible_statics(
                         let visual_kind = resolve_static_visual_kind(
                             art_source,
                             tile.graphic,
+                            tilemeta_res.as_ref().map(|res| &*res.0),
                             tilemeta,
                             tex_art_ec_res.as_ref().map(|package| &*package.0),
                             tex_land_ec_res.as_ref().map(|package| &*package.0),
@@ -969,9 +1061,17 @@ pub fn sys_collect_visible_statics(
                                         continue;
                                     };
                                     let Some(runtime_slot_id) = resolve_surface_like_tex_land_ec_slot_id(
+                                        tile.graphic as u32,
+                                        tilemeta_res.as_ref().map(|res| &*res.0),
                                         tilemeta,
                                         Some(tex_land_ec),
                                     ) else {
+                                        chunk_stats.unresolved_surface_like_tiles += 1;
+                                        push_sample_tile_id(
+                                            &mut chunk_stats.unresolved_surface_like_sample,
+                                            &mut chunk_stats.unresolved_surface_like_sample_len,
+                                            tile.graphic,
+                                        );
                                         continue;
                                     };
 
@@ -1132,6 +1232,18 @@ pub fn sys_collect_visible_statics(
         visited_blocks += chunk.stats.visited_blocks;
         source_tiles += chunk.stats.source_tiles;
         ground_land_tiles += chunk.stats.ground_land_tiles;
+        unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
+        for tile_id in chunk.stats.unresolved_surface_like_sample
+            [..chunk.stats.unresolved_surface_like_sample_len]
+            .iter()
+            .copied()
+        {
+            push_sample_tile_id(
+                &mut unresolved_surface_like_sample,
+                &mut unresolved_surface_like_sample_len,
+                tile_id,
+            );
+        }
         atlas_hits += chunk.stats.atlas_hits;
         atlas_misses += chunk.stats.atlas_misses;
         unique_requested_pages.extend(chunk.stats.requested_pages.iter().copied());
@@ -1171,6 +1283,9 @@ pub fn sys_collect_visible_statics(
             visited_blocks,
             source_tiles,
             ground_land_tiles,
+            unresolved_surface_like_tiles,
+            unresolved_surface_like_sample,
+            unresolved_surface_like_sample_len,
             unique_requested_pages: unique_requested_pages.len(),
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),

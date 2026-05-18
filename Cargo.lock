@@ -821,6 +821,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bcdec_rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09c37bc0e9f0924b7dae9988265ef3c76c88538f41a3b06caf4bed07cee5226"
+
+[[package]]
 name = "bevy"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4408,6 +4414,7 @@ dependencies = [
 name = "image-postprocess"
 version = "0.1.0"
 dependencies = [
+ "bcdec_rs",
  "hqx",
  "image",
  "mmpx",
@@ -7939,9 +7946,11 @@ dependencies = [
  "serde",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "udd-assets",
  "udd-conv",
  "udd-conv-cli",
  "udd-conv-ktx2",
+ "uocf",
  "zstd",
 ]
 
