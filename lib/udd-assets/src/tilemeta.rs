@@ -1,8 +1,8 @@
-use std::path::Path;
-use color_eyre::eyre::{self, WrapErr};
-use bytemuck::{Pod, Zeroable};
-use udd_container::UddpReader;
 use crate::common::{read_path_entry, read_pod_vec};
+use bytemuck::{Pod, Zeroable};
+use color_eyre::eyre::{self, WrapErr};
+use std::path::Path;
+use udd_container::UddpReader;
 
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
@@ -11,6 +11,130 @@ pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_re
 
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
 pub const TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED: u8 = 1 << 1;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EcMaterialPhysicalPackage {
+    #[default]
+    Unknown = 0,
+    Texture = 1,
+    LegacyTexture = 2,
+    TerrainTexture = 3,
+    EffectTexture = 4,
+    SystemTextures = 5,
+    ShaderResources = 6,
+}
+
+impl EcMaterialPhysicalPackage {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Texture,
+            2 => Self::LegacyTexture,
+            3 => Self::TerrainTexture,
+            4 => Self::EffectTexture,
+            5 => Self::SystemTextures,
+            6 => Self::ShaderResources,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EcMaterialLogicalFamily {
+    #[default]
+    Unknown = 0,
+    WorldArt = 1,
+    TileArtLegacy = 2,
+    TileArtEnhanced = 3,
+    Textures = 4,
+    Effects = 5,
+    SystemTextures = 6,
+    ShaderResources = 7,
+}
+
+impl EcMaterialLogicalFamily {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::WorldArt,
+            2 => Self::TileArtLegacy,
+            3 => Self::TileArtEnhanced,
+            4 => Self::Textures,
+            5 => Self::Effects,
+            6 => Self::SystemTextures,
+            7 => Self::ShaderResources,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EcMaterialStableRole {
+    #[default]
+    UnknownSupport = 0,
+    Base = 1,
+    SecondaryBase = 2,
+    AlphaMask = 3,
+    GenericMask = 4,
+    Noise = 5,
+    Detail = 6,
+    Overlay = 7,
+    NormalLike = 8,
+    ImageSupport = 9,
+    EffectOnlyMetadata = 10,
+}
+
+impl EcMaterialStableRole {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Base,
+            2 => Self::SecondaryBase,
+            3 => Self::AlphaMask,
+            4 => Self::GenericMask,
+            5 => Self::Noise,
+            6 => Self::Detail,
+            7 => Self::Overlay,
+            8 => Self::NormalLike,
+            9 => Self::ImageSupport,
+            10 => Self::EffectOnlyMetadata,
+            _ => Self::UnknownSupport,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EcMaterialSpeculativeRole {
+    #[default]
+    UnknownSupport = 0,
+    LiquidRipple = 1,
+    LiquidReflectionSupport = 2,
+    LiquidEnvProbe = 3,
+    FoamHighlight = 4,
+    FlowMapLike = 5,
+    RefractionDistortionLike = 6,
+    WaterfallSupport = 7,
+    LavaBubbleSupport = 8,
+    PostBlendSupport = 9,
+}
+
+impl EcMaterialSpeculativeRole {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::LiquidRipple,
+            2 => Self::LiquidReflectionSupport,
+            3 => Self::LiquidEnvProbe,
+            4 => Self::FoamHighlight,
+            5 => Self::FlowMapLike,
+            6 => Self::RefractionDistortionLike,
+            7 => Self::WaterfallSupport,
+            8 => Self::LavaBubbleSupport,
+            9 => Self::PostBlendSupport,
+            _ => Self::UnknownSupport,
+        }
+    }
+}
 
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -110,7 +234,9 @@ pub struct TileMetaItemTextureRef {
     pub flags: u8,
     pub texture_stretch: f32,
     pub unk4: u8,
-    pub _pad0: [u8; 3],
+    pub physical_package: u8,
+    pub stable_role: u8,
+    pub speculative_role: u8,
     pub unk6: u32,
     pub unk7: u32,
 }
@@ -126,6 +252,22 @@ impl TileMetaItemTextureRef {
 
     pub fn is_world_art(&self) -> bool {
         self.texture_type == 1
+    }
+
+    pub fn logical_family(&self) -> EcMaterialLogicalFamily {
+        EcMaterialLogicalFamily::from_u8(self.texture_type)
+    }
+
+    pub fn physical_package(&self) -> EcMaterialPhysicalPackage {
+        EcMaterialPhysicalPackage::from_u8(self.physical_package)
+    }
+
+    pub fn stable_role(&self) -> EcMaterialStableRole {
+        EcMaterialStableRole::from_u8(self.stable_role)
+    }
+
+    pub fn speculative_role(&self) -> EcMaterialSpeculativeRole {
+        EcMaterialSpeculativeRole::from_u8(self.speculative_role)
     }
 }
 
@@ -154,14 +296,10 @@ impl TileMetaPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let land_bytes = read_path_entry(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry(&package, TILEMETA_ITEM_ENTRY_PATH)?;
-        let item_texture_ref_spans = read_optional_pod_vec(
-            &package,
-            TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
-        )?;
-        let item_texture_refs = read_optional_pod_vec(
-            &package,
-            TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
-        )?;
+        let item_texture_ref_spans =
+            read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)?;
+        let item_texture_refs =
+            read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
 
         Ok(Self {
             package,
@@ -229,7 +367,11 @@ impl TileMetaPackage {
                     !texture_ref.is_auxiliary() && texture_ref.is_primary_selected()
                 })
             })
-            .or_else(|| texture_refs.iter().find(|texture_ref| !texture_ref.is_auxiliary()))
+            .or_else(|| {
+                texture_refs
+                    .iter()
+                    .find(|texture_ref| !texture_ref.is_auxiliary())
+            })
     }
 
     pub fn main_ec_texture_id(&self, tile_id: u32) -> Option<u32> {
@@ -246,5 +388,62 @@ fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Resu
     match read_path_entry(package, path) {
         Ok(bytes) => read_pod_vec(&bytes, path),
         Err(_) => Ok(Vec::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_texture_ref_material_axes_decode_from_dense_bytes() {
+        let texture_ref = TileMetaItemTextureRef {
+            texture_id: 42,
+            texture_type: EcMaterialLogicalFamily::Textures as u8,
+            physical_package: EcMaterialPhysicalPackage::TerrainTexture as u8,
+            stable_role: EcMaterialStableRole::ImageSupport as u8,
+            speculative_role: EcMaterialSpeculativeRole::LiquidRipple as u8,
+            ..TileMetaItemTextureRef::zeroed()
+        };
+
+        assert_eq!(
+            texture_ref.logical_family(),
+            EcMaterialLogicalFamily::Textures
+        );
+        assert_eq!(
+            texture_ref.physical_package(),
+            EcMaterialPhysicalPackage::TerrainTexture
+        );
+        assert_eq!(
+            texture_ref.stable_role(),
+            EcMaterialStableRole::ImageSupport
+        );
+        assert_eq!(
+            texture_ref.speculative_role(),
+            EcMaterialSpeculativeRole::LiquidRipple
+        );
+    }
+
+    #[test]
+    fn zeroed_item_texture_ref_keeps_old_sidecar_axes_unknown() {
+        let texture_ref = TileMetaItemTextureRef::zeroed();
+
+        assert_eq!(
+            texture_ref.logical_family(),
+            EcMaterialLogicalFamily::Unknown
+        );
+        assert_eq!(
+            texture_ref.physical_package(),
+            EcMaterialPhysicalPackage::Unknown
+        );
+        assert_eq!(
+            texture_ref.stable_role(),
+            EcMaterialStableRole::UnknownSupport
+        );
+        assert_eq!(
+            texture_ref.speculative_role(),
+            EcMaterialSpeculativeRole::UnknownSupport
+        );
+        assert_eq!(std::mem::size_of::<TileMetaItemTextureRef>(), 24);
     }
 }

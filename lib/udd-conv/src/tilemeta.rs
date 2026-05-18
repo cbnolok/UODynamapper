@@ -20,23 +20,23 @@ use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 
-use crate::tex_art_ec::compute_tex_art_ec_crop_adjustments_from_sources;
-use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
-use uocf::classic::tiledata::TileData;
-use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
+use crate::tex_art_ec::compute_tex_art_ec_crop_adjustments_from_sources;
+use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::{
-    TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
-    TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
-    TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-    TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
-    TILEMETA_LAND_ENTRY_PATH,
+    EcMaterialPhysicalPackage, EcMaterialSpeculativeRole, EcMaterialStableRole,
+    TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind,
+    TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
+    TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
+    TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
 };
 use udd_container::{
-    xxh64_virtual_path, AddFileRequest, DataType, LookupMode, CompressionFlag, UddpBuilder,
+    xxh64_virtual_path, AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
     UddpReader,
 };
+use uocf::classic::tiledata::TileData;
+use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TileMetaBuildOptions {
@@ -79,6 +79,42 @@ fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
     package
         .read_file_by_path_hash(xxh64_virtual_path(path))
         .wrap_err_with(|| format!("unpack {path}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uocf::enhanced::tileart::{TextureItem, TextureType};
+
+    #[test]
+    fn tileart_textures_refs_are_preserved_as_terraintexture_support() {
+        let item = TextureItem {
+            texture_type: TextureType::Textures,
+            ..TextureItem::default()
+        };
+
+        assert_eq!(
+            physical_package_for_tileart_texture_type(item.texture_type),
+            EcMaterialPhysicalPackage::TerrainTexture
+        );
+        assert_eq!(
+            stable_role_for_tileart_texture_ref(&item, 0),
+            EcMaterialStableRole::ImageSupport
+        );
+    }
+
+    #[test]
+    fn primary_selected_tileart_ref_gets_base_role_without_changing_policy() {
+        let item = TextureItem {
+            texture_type: TextureType::WorldArt,
+            ..TextureItem::default()
+        };
+
+        assert_eq!(
+            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
+            EcMaterialStableRole::Base
+        );
+    }
 }
 
 pub fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -242,7 +278,6 @@ fn build_tilemeta_tables_from_resolved_paths(
     options: &TileMetaBuildOptions,
     progress_label: &str,
 ) -> eyre::Result<BuiltTileMetaTables> {
-
     info!("Using tiledata.mul: {}", tiledata_path.display());
     info!("Using tileart.uop: {}", tileart_path.display());
     info!("Using string dictionary: {}", stringdict_path.display());
@@ -353,9 +388,8 @@ fn build_tilemeta_tables_from_resolved_paths(
             cc_offset_y: 0,
         };
 
-        let ref_start = u32::try_from(item_texture_refs.len()).map_err(|_| {
-            eyre::eyre!("tilemeta texture-ref table exceeds u32 address space")
-        })?;
+        let ref_start = u32::try_from(item_texture_refs.len())
+            .map_err(|_| eyre::eyre!("tilemeta texture-ref table exceeds u32 address space"))?;
 
         if let Some(ec_data) = tex_art_ec.definitions.get(&(tile.tile_id as u16)) {
             tile_meta_item.flags |= ec_data.flags.bits();
@@ -415,7 +449,10 @@ fn build_tilemeta_tables_from_resolved_paths(
                     flags,
                     texture_stretch: item.texture_stretch,
                     unk4: item.unk4,
-                    _pad0: [0; 3],
+                    physical_package: physical_package_for_tileart_texture_type(item.texture_type)
+                        as u8,
+                    stable_role: stable_role_for_tileart_texture_ref(item, flags) as u8,
+                    speculative_role: EcMaterialSpeculativeRole::UnknownSupport as u8,
                     unk6: item.unk6,
                     unk7: item.unk7,
                 }
@@ -424,9 +461,13 @@ fn build_tilemeta_tables_from_resolved_paths(
             tile_meta_item.set_visual_kind(classify_item_visual_kind(tile.tile_id as u32, None));
         }
 
-        let ref_len = u16::try_from(item_texture_refs.len() - ref_start as usize).map_err(|_| {
-            eyre::eyre!("tile {} references too many EC textures for u16 span", tile.tile_id)
-        })?;
+        let ref_len =
+            u16::try_from(item_texture_refs.len() - ref_start as usize).map_err(|_| {
+                eyre::eyre!(
+                    "tile {} references too many EC textures for u16 span",
+                    tile.tile_id
+                )
+            })?;
         item_texture_ref_spans.push(TileMetaItemTextureRefSpan {
             start: ref_start,
             len: ref_len,
@@ -445,6 +486,35 @@ fn build_tilemeta_tables_from_resolved_paths(
             adjusted_ec_item_count,
         },
     })
+}
+
+fn physical_package_for_tileart_texture_type(
+    texture_type: uocf::enhanced::tileart::TextureType,
+) -> EcMaterialPhysicalPackage {
+    match texture_type {
+        uocf::enhanced::tileart::TextureType::WorldArt => EcMaterialPhysicalPackage::Texture,
+        uocf::enhanced::tileart::TextureType::TileArtLegacy => {
+            EcMaterialPhysicalPackage::LegacyTexture
+        }
+        uocf::enhanced::tileart::TextureType::Textures => EcMaterialPhysicalPackage::TerrainTexture,
+        uocf::enhanced::tileart::TextureType::TileArtEnhanced
+        | uocf::enhanced::tileart::TextureType::Undefined => EcMaterialPhysicalPackage::Unknown,
+    }
+}
+
+fn stable_role_for_tileart_texture_ref(
+    item: &uocf::enhanced::tileart::TextureItem,
+    flags: u8,
+) -> EcMaterialStableRole {
+    if flags & TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED != 0 {
+        EcMaterialStableRole::Base
+    } else if item.is_auxiliary
+        || item.texture_type == uocf::enhanced::tileart::TextureType::Textures
+    {
+        EcMaterialStableRole::ImageSupport
+    } else {
+        EcMaterialStableRole::UnknownSupport
+    }
 }
 
 fn tilemeta_progress_bar(total: u64, progress_label: &str) -> ProgressBar {
