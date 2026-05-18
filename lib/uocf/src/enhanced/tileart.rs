@@ -96,6 +96,7 @@ pub enum TextureType {
     WorldArt,
     TileArtLegacy,
     TileArtEnhanced,
+    Textures,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -602,7 +603,9 @@ impl TileArtEntry {
         let mut any = None;
 
         for texture_item in &texture_block.texture_items {
-            let Some(path) = string_dictionary.get_string((texture_item.name_string_off - 1) as usize) else {
+            let Some(path) =
+                string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
+            else {
                 continue;
             };
             let Some(texture_id) = crate::utils::path::extract_texture_id_from_path(path) else {
@@ -626,10 +629,7 @@ impl TileArtEntry {
             }
         }
 
-        preferred_non_aux
-            .or(non_aux)
-            .or(preferred_any)
-            .or(any)
+        preferred_non_aux.or(non_aux).or(preferred_any).or(any)
     }
 }
 
@@ -641,6 +641,8 @@ pub fn classify_texture_path(path: &str) -> TextureType {
         TextureType::TileArtLegacy
     } else if normalized.contains("data\\tileartenhanced\\") {
         TextureType::TileArtEnhanced
+    } else if normalized.contains("data\\textures\\") {
+        TextureType::Textures
     } else {
         TextureType::Undefined
     }
@@ -648,7 +650,10 @@ pub fn classify_texture_path(path: &str) -> TextureType {
 
 fn is_auxiliary_texture_path(path: &str) -> bool {
     let normalized = crate::utils::path::normalize_dictionary_path(path);
-    let file_name = normalized.rsplit('\\').next().unwrap_or(normalized.as_str());
+    let file_name = normalized
+        .rsplit('\\')
+        .next()
+        .unwrap_or(normalized.as_str());
     let stem = file_name.split('.').next().unwrap_or(file_name);
 
     stem.contains("noise")
@@ -693,7 +698,10 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(entry.get_tile_type(&texture_block, &dictionary), TileType::Solid);
+        assert_eq!(
+            entry.get_tile_type(&texture_block, &dictionary),
+            TileType::Solid
+        );
     }
 
     #[test]
@@ -730,10 +738,17 @@ mod tests {
 
         let art_data = entry.process(&dictionary);
 
-        assert_eq!(art_data.ec_texture.map(|texture| texture.texture_id), Some(2000130));
+        assert_eq!(
+            art_data.ec_texture.map(|texture| texture.texture_id),
+            Some(2000130)
+        );
+    }
+
+    #[test]
+    fn classify_texture_path_recognizes_textures_family() {
+        assert_eq!(
+            classify_texture_path("Data\\Textures\\00001234_water_alpha.dds"),
+            TextureType::Textures
+        );
     }
 }
-
-
-
-

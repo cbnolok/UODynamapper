@@ -2,6 +2,12 @@
 
 Build a UOP-grounded EC material pipeline that preserves every potentially useful linked resource, fixes current base-texture selection without discarding future blend or liquid-support inputs, and stages runtime work from base-correctness to world-space repetition to authored solid-terrain blending to liquid support and only then to extra passes. The key correction to the previous draft is evidence discipline: original EC UOP contents are primary, extracted original Shaders.uop text is secondary when present, third-party reconstructed FX files are design references only, and current Rust or WGSL code is proof of current engine behavior, not proof of original EC intent.
 
+**Phase Completion Discipline**
+- Treat each phase as complete only after re-validating the intent, implementation path, plan alignment, and test results.
+- Re-validation questions: why do we want this feature, did we still want to implement it this way after seeing the evidence, did the work stick to the plan, improve it, or significantly diverge from it?
+- Commit the files changed for each completed, re-validated, and tested phase before starting the next phase.
+- Keep unrelated working-tree changes out of those commits.
+
 **Evidence Tiers**
 - Original EC package evidence: tileart.uop, TerrainDefinition.uop, Texture.uop, LegacyTexture.uop, TerrainTexture.uop, EffectTexture.uop, string_dictionary.uop, and any additional directly referenced package families discovered by full scans.
 - Extracted original shader evidence: the currently extracted Shaders.uop texts, which so far confirm the simple sprite, hue, UI, death, and bloom or postprocess family only.

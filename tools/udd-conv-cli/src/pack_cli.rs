@@ -1,44 +1,42 @@
 use std::path::{Path, PathBuf};
 
+use crate::ec_material_audit::{
+    audit_ec_material_refs, inventory_ec_support_textures, write_ec_material_baseline_report,
+};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
 use udd_conv::{
-    AtlasPackingMode,
-    tex_art_cc::{
-        TexArtCcAtlasOptions, DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
-        DEFAULT_ATLAS_PAGE_HEIGHT as CC_DEFAULT_ATLAS_PAGE_HEIGHT,
-        DEFAULT_ATLAS_PAGE_WIDTH as CC_DEFAULT_ATLAS_PAGE_WIDTH,
-        convert_art_mul_to_tex_art_cc_uddp_from_sources,
-    },
-    tex_art_ec::{
-        DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
-        DEFAULT_ATLAS_PAGE_HEIGHT as EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT,
-        DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH, TexArtEcAtlasOptions,
-        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources,
-        load_tex_art_ec_sources,
-    },
-    tex_land_ec::{
-        DEFAULT_ATLAS_GUTTER as EC_LAND_DEFAULT_ATLAS_GUTTER,
-        DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
-        DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH, TexLandEcAtlasOptions,
-        convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources,
-    },
-    source_paths::{gather_source_dirs, resolve_output_path},
-    tilemeta::{
-        build_tilemeta_uddp_from_sources, TileMetaBuildOptions,
-    },
     cc_map::{convert_map_mul_to_uddp_from_sources, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources,
+    source_paths::{gather_source_dirs, resolve_output_path},
+    tex_art_cc::{
+        convert_art_mul_to_tex_art_cc_uddp_from_sources, TexArtCcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as CC_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as CC_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
+    tex_art_ec::{
+        convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources, load_tex_art_ec_sources,
+        TexArtEcAtlasOptions, DEFAULT_ATLAS_GUTTER as EC_ART_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
     tex_land_cc::{
         convert_texmaps_mul_to_tex_land_cc_uddp, TexLandCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_TEXMAPS_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH,
     },
-    world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
+    tex_land_ec::{
+        convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources, TexLandEcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as EC_LAND_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
+    tilemeta::{build_tilemeta_uddp_from_sources, TileMetaBuildOptions},
     upscale::UpscaleFilter,
-    CompressionFlag,
-    PagePixelFormat,
+    world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
+    AtlasPackingMode, CompressionFlag, PagePixelFormat,
 };
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
@@ -196,7 +194,11 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, default_value_t = false, help = "Use BC7 compression (VRAM optimization).")]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Use BC7 compression (VRAM optimization)."
+        )]
         bc7: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
@@ -227,7 +229,11 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_TEXMAPS_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, default_value_t = false, help = "Use BC7 compression (VRAM optimization).")]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Use BC7 compression (VRAM optimization)."
+        )]
         bc7: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
@@ -254,7 +260,11 @@ enum Commands {
         land_atlas_height: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
         land_gutter: u16,
-        #[arg(long, default_value_t = false, help = "Use BC7 compression for land (VRAM optimization).")]
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Use BC7 compression for land (VRAM optimization)."
+        )]
         land_bc7: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
         art_packing_mode: CliAtlasPackingMode,
@@ -278,6 +288,29 @@ enum Commands {
         upscale_512_algo: CliUpscaleFilter,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None, help = "Legacy global upscale filter for art.")]
         upscale: CliUpscaleFilter,
+    },
+    /// Audits direct EC material texture references from tileart.uop and TerrainDefinition.uop.
+    AuditEcMaterialRefs {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "ec_material_owner_refs.csv")]
+        output: PathBuf,
+    },
+    /// Inventories TerrainTexture.uop and EffectTexture.uop support resources.
+    InventoryEcSupportTextures {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "terraintexture_inventory.csv")]
+        terrain_output: PathBuf,
+        #[arg(long, default_value = "effecttexture_inventory.csv")]
+        effect_output: PathBuf,
+    },
+    /// Writes a developer baseline report for current EC material heuristics and metadata axes.
+    ReportEcMaterialBaseline {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "ec_material_baseline.md")]
+        output: PathBuf,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
@@ -364,7 +397,11 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let compression = if bc7 { CompressionFlag::None } else { CompressionFlag::ZstdNoDict };
+            let compression = if bc7 {
+                CompressionFlag::None
+            } else {
+                CompressionFlag::ZstdNoDict
+            };
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -374,7 +411,11 @@ pub fn run() -> eyre::Result<()> {
                     gutter,
                     compression,
                     upscale: upscale.into(),
-                    pixel_format: if bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    pixel_format: if bc7 {
+                        PagePixelFormat::Bc7
+                    } else {
+                        PagePixelFormat::Rgba8888
+                    },
                     packing_mode: packing_mode.into(),
                 },
             )?;
@@ -399,7 +440,11 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let compression = if bc7 { CompressionFlag::None } else { CompressionFlag::ZstdNoDict };
+            let compression = if bc7 {
+                CompressionFlag::None
+            } else {
+                CompressionFlag::ZstdNoDict
+            };
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
@@ -408,9 +453,19 @@ pub fn run() -> eyre::Result<()> {
                     atlas_height,
                     gutter,
                     compression,
-                    upscale_64: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
-                    upscale_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: upscale.into() },
-                    pixel_format: if bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    upscale_64: udd_conv::upscale::UpscaleConfig {
+                        target_size: 256,
+                        filter: upscale.into(),
+                    },
+                    upscale_128: udd_conv::upscale::UpscaleConfig {
+                        target_size: 256,
+                        filter: upscale.into(),
+                    },
+                    pixel_format: if bc7 {
+                        PagePixelFormat::Bc7
+                    } else {
+                        PagePixelFormat::Rgba8888
+                    },
                     packing_mode: packing_mode.into(),
                 },
             )?;
@@ -486,7 +541,11 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width: land_atlas_width,
                     atlas_height: land_atlas_height,
                     gutter: land_gutter,
-                    compression: if land_bc7 { CompressionFlag::None } else { CompressionFlag::ZstdNoDict },
+                    compression: if land_bc7 {
+                        CompressionFlag::None
+                    } else {
+                        CompressionFlag::ZstdNoDict
+                    },
                     upscale_64: udd_conv::upscale::UpscaleConfig {
                         target_size: upscale_64_size,
                         filter: upscale_64_algo.into(),
@@ -503,7 +562,11 @@ pub fn run() -> eyre::Result<()> {
                         target_size: upscale_512_size,
                         filter: upscale_512_algo.into(),
                     },
-                    pixel_format: if land_bc7 { PagePixelFormat::Bc7 } else { PagePixelFormat::Rgba8888 },
+                    pixel_format: if land_bc7 {
+                        PagePixelFormat::Bc7
+                    } else {
+                        PagePixelFormat::Rgba8888
+                    },
                     packing_mode: land_packing_mode.into(),
                 },
             )?;
@@ -524,6 +587,32 @@ pub fn run() -> eyre::Result<()> {
                 land_summary.slot_count,
                 land_out_file.display()
             );
+        }
+        Commands::AuditEcMaterialRefs {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            audit_ec_material_refs(&paths, &out_file)?;
+        }
+        Commands::InventoryEcSupportTextures {
+            source_dirs: source_dir_args,
+            terrain_output,
+            effect_output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let terrain_out_file = resolve_output_path(&paths, &terrain_output);
+            let effect_out_file = resolve_output_path(&paths, &effect_output);
+            inventory_ec_support_textures(&paths, &terrain_out_file, &effect_out_file)?;
+        }
+        Commands::ReportEcMaterialBaseline {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_ec_material_baseline_report(&out_file)?;
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
@@ -556,7 +645,11 @@ pub fn run() -> eyre::Result<()> {
                 &paths,
                 &out_file,
                 map_id,
-                if uop { CcMapSourcePreference::Uop } else { CcMapSourcePreference::Mul },
+                if uop {
+                    CcMapSourcePreference::Uop
+                } else {
+                    CcMapSourcePreference::Mul
+                },
             )?;
             println!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
@@ -575,11 +668,7 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
             let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
-            let summary = convert_statics_mul_to_uddp_from_sources(
-                &paths,
-                &out_file,
-                map_id,
-            )?;
+            let summary = convert_statics_mul_to_uddp_from_sources(&paths, &out_file, map_id)?;
             println!(
                 "Wrote {} chunks with {} total statics for map {} to '{}'.",
                 summary.chunk_count,
@@ -606,7 +695,8 @@ pub fn run() -> eyre::Result<()> {
                 _ => eyre::bail!("Invalid format: {}. Valid: rgba8, bc7, bc7ktx2", format),
             };
 
-            let default_output = PathBuf::from(format!("facet0{}.{}", map_id, radar_format.extension()));
+            let default_output =
+                PathBuf::from(format!("facet0{}.{}", map_id, radar_format.extension()));
 
             let output_path_to_use = output.as_ref().unwrap_or(&default_output);
             let out_file = if let Some(dir) = &outdir {
@@ -635,7 +725,7 @@ pub fn run() -> eyre::Result<()> {
                     &udd_conv::cc_radar::RadarBuildOptions {
                         format: radar_format,
                         zstd_level,
-                    }
+                    },
                 )?;
             }
         }
@@ -646,14 +736,16 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let compression = if no_compression { CompressionFlag::None } else { CompressionFlag::ZstdNoDict };
+            let compression = if no_compression {
+                CompressionFlag::None
+            } else {
+                CompressionFlag::ZstdNoDict
+            };
             convert_client_lights_to_world_lights_uddp(
                 source_dir_args.ccdir.as_deref(),
                 source_dir_args.ecdir.as_deref(),
                 &out_file,
-                &WorldLightsOptions {
-                    compression,
-                },
+                &WorldLightsOptions { compression },
             )?;
             println!("Wrote world_lights.uddp to '{}'.", out_file.display());
         }
@@ -753,5 +845,4 @@ mod tests {
             _ => panic!("unexpected command parsed"),
         }
     }
-
 }
