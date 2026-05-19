@@ -696,8 +696,10 @@ fn decode_present_tiles(
 fn should_include_art_tile(tile_type: TileType) -> bool {
     // Tileart ownership is authoritative for tex_art_ec packing. Surface-like
     // entries still belong to tileart even when higher-level metadata classifies
-    // them as solid for runtime routing. Only liquid shader entries are excluded.
-    tile_type != TileType::Liquid
+    // them as solid or liquid for runtime routing. Entries without a decodable
+    // base naturally fall out later when no source texture can be resolved.
+    let _ = tile_type;
+    true
 }
 
 pub fn requested_source_window(texture: &ArtTexture) -> Option<SourceClipRect> {
@@ -709,35 +711,16 @@ pub fn requested_source_window(texture: &ArtTexture) -> Option<SourceClipRect> {
     })
 }
 
-fn is_flat_material_sheet_static(art_data: &ArtData) -> bool {
-    if art_data.height != 0 {
-        return false;
-    }
-
-    let Some(texture) = art_data.ec_texture.as_ref() else {
-        return false;
-    };
-
-    texture.start_x == 0
-        && texture.start_y == 0
-        && texture.end_x == 0
-        && texture.end_y == 0
-        && texture.offset_x == 0
-        && texture.offset_y == 0
-}
-
 fn should_skip_terrain_material_static(
-    art_data: &ArtData,
+    _art_data: &ArtData,
     _texture: &ArtTexture,
     _file: &TextureFile,
     _terrain_source_texture_ids: &HashSet<u32>,
 ) -> eyre::Result<bool> {
-    if is_flat_material_sheet_static(art_data) {
-        return Ok(true);
-    }
-
     // Tileart ownership is authoritative for tex_art_ec. Sharing a source texture
-    // id with terrain materials is not enough reason to drop a static art entry.
+    // id with terrain materials, or using a whole flat material sheet, is not
+    // enough reason to drop a static art entry. If an art-owned surface should
+    // route to tex_land_ec instead, routing metadata must prove that separately.
     Ok(false)
 }
 
@@ -1418,9 +1401,9 @@ mod tests {
     }
 
     #[test]
-    fn art_decode_includes_solid_tileart_entries() {
+    fn art_decode_includes_tileart_owned_surface_entries() {
         assert!(should_include_art_tile(TileType::Static));
         assert!(should_include_art_tile(TileType::Solid));
-        assert!(!should_include_art_tile(TileType::Liquid));
+        assert!(should_include_art_tile(TileType::Liquid));
     }
 }
