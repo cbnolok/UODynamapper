@@ -138,6 +138,11 @@ impl EcMaterialSpeculativeRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileMetaMainEcTextureReason {
+    RoleBaseExactTileId,
+    RoleBasePrimarySelected,
+    RoleBaseFirst,
+    RoleSecondaryBasePrimarySelected,
+    RoleSecondaryBaseFirst,
     ExactWorldArtTileId,
     PrimarySelectedWorldArt,
     FirstWorldArt,
@@ -149,6 +154,11 @@ pub enum TileMetaMainEcTextureReason {
 impl TileMetaMainEcTextureReason {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::RoleBaseExactTileId => "role_base_exact_tile_id",
+            Self::RoleBasePrimarySelected => "role_base_primary_selected",
+            Self::RoleBaseFirst => "role_base_first",
+            Self::RoleSecondaryBasePrimarySelected => "role_secondary_base_primary_selected",
+            Self::RoleSecondaryBaseFirst => "role_secondary_base_first",
             Self::ExactWorldArtTileId => "exact_worldart_tile_id",
             Self::PrimarySelectedWorldArt => "primary_selected_worldart",
             Self::FirstWorldArt => "first_worldart",
@@ -407,20 +417,85 @@ fn choose_main_ec_texture_ref(
         .iter()
         .find(|texture_ref| {
             !texture_ref.is_auxiliary()
-                && texture_ref.is_world_art()
+                && texture_ref.stable_role() == EcMaterialStableRole::Base
                 && texture_ref.texture_id == tile_id
         })
-        .map(|texture_ref| {
-            (
-                texture_ref,
-                TileMetaMainEcTextureReason::ExactWorldArtTileId,
-            )
+        .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::RoleBaseExactTileId))
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
+                    !texture_ref.is_auxiliary()
+                        && texture_ref.stable_role() == EcMaterialStableRole::Base
+                        && texture_ref.is_primary_selected()
+                })
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::RoleBasePrimarySelected,
+                    )
+                })
         })
         .or_else(|| {
             texture_refs
                 .iter()
                 .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
+                        && texture_ref.stable_role() == EcMaterialStableRole::Base
+                })
+                .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::RoleBaseFirst))
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
+                    !texture_ref.is_auxiliary()
+                        && texture_ref.stable_role() == EcMaterialStableRole::SecondaryBase
+                        && texture_ref.is_primary_selected()
+                })
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::RoleSecondaryBasePrimarySelected,
+                    )
+                })
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
+                    !texture_ref.is_auxiliary()
+                        && texture_ref.stable_role() == EcMaterialStableRole::SecondaryBase
+                })
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::RoleSecondaryBaseFirst,
+                    )
+                })
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
+                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && !texture_ref.is_auxiliary()
+                        && texture_ref.is_world_art()
+                        && texture_ref.texture_id == tile_id
+                })
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::ExactWorldArtTileId,
+                    )
+                })
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
+                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && !texture_ref.is_auxiliary()
                         && texture_ref.is_primary_selected()
                         && texture_ref.is_world_art()
                 })
@@ -434,13 +509,21 @@ fn choose_main_ec_texture_ref(
         .or_else(|| {
             texture_refs
                 .iter()
-                .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_world_art())
+                .find(|texture_ref| {
+                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && !texture_ref.is_auxiliary()
+                        && texture_ref.is_world_art()
+                })
                 .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstWorldArt))
         })
         .or_else(|| {
             texture_refs
                 .iter()
-                .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_primary_selected())
+                .find(|texture_ref| {
+                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && !texture_ref.is_auxiliary()
+                        && texture_ref.is_primary_selected()
+                })
                 .map(|texture_ref| {
                     (
                         texture_ref,
@@ -451,7 +534,10 @@ fn choose_main_ec_texture_ref(
         .or_else(|| {
             texture_refs
                 .iter()
-                .find(|texture_ref| !texture_ref.is_auxiliary())
+                .find(|texture_ref| {
+                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && !texture_ref.is_auxiliary()
+                })
                 .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstNonAuxiliary))
         })
 }
@@ -555,14 +641,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn main_ec_texture_prefers_base_role_over_exact_unknown_worldart() {
+        let texture_refs = [
+            texture_ref(100, EcMaterialLogicalFamily::WorldArt, 0),
+            texture_ref_with_role(
+                42,
+                EcMaterialLogicalFamily::Textures,
+                EcMaterialStableRole::Base,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+        ];
+
+        let (chosen, reason) =
+            choose_main_ec_texture_ref(&texture_refs, 100).expect("chosen texture");
+
+        assert_eq!(chosen.texture_id, 42);
+        assert_eq!(reason, TileMetaMainEcTextureReason::RoleBasePrimarySelected);
+    }
+
+    #[test]
+    fn main_ec_texture_rejects_explicit_support_roles() {
+        let texture_refs = [
+            texture_ref_with_role(
+                100,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::AlphaMask,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+            texture_ref_with_role(
+                101,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::NormalLike,
+                0,
+            ),
+        ];
+
+        assert!(choose_main_ec_texture_ref(&texture_refs, 100).is_none());
+    }
+
     fn texture_ref(
         texture_id: u32,
         family: EcMaterialLogicalFamily,
         flags: u8,
     ) -> TileMetaItemTextureRef {
+        texture_ref_with_role(texture_id, family, EcMaterialStableRole::UnknownSupport, flags)
+    }
+
+    fn texture_ref_with_role(
+        texture_id: u32,
+        family: EcMaterialLogicalFamily,
+        role: EcMaterialStableRole,
+        flags: u8,
+    ) -> TileMetaItemTextureRef {
         TileMetaItemTextureRef {
             texture_id,
             texture_type: family as u8,
+            stable_role: role as u8,
             flags,
             ..TileMetaItemTextureRef::zeroed()
         }

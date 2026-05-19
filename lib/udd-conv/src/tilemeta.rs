@@ -115,6 +115,34 @@ mod tests {
             EcMaterialStableRole::Base
         );
     }
+
+    #[test]
+    fn primary_selected_alpha_mask_keeps_support_role() {
+        let item = TextureItem {
+            texture_type: TextureType::WorldArt,
+            path: "Data\\WorldArt\\02000042_alpha.dds".to_string(),
+            ..TextureItem::default()
+        };
+
+        assert_eq!(
+            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
+            EcMaterialStableRole::AlphaMask
+        );
+    }
+
+    #[test]
+    fn primary_selected_normal_map_keeps_support_role() {
+        let item = TextureItem {
+            texture_type: TextureType::Textures,
+            path: "Data\\Textures\\water_normal.dds".to_string(),
+            ..TextureItem::default()
+        };
+
+        assert_eq!(
+            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
+            EcMaterialStableRole::NormalLike
+        );
+    }
 }
 
 pub fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -506,12 +534,37 @@ fn stable_role_for_tileart_texture_ref(
     item: &uocf::enhanced::tileart::TextureItem,
     flags: u8,
 ) -> EcMaterialStableRole {
-    if flags & TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED != 0 {
+    let path_role = stable_role_from_tileart_texture_path(&item.path);
+    if path_role != EcMaterialStableRole::UnknownSupport {
+        path_role
+    } else if flags & TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED != 0 {
         EcMaterialStableRole::Base
     } else if item.is_auxiliary
         || item.texture_type == uocf::enhanced::tileart::TextureType::Textures
     {
         EcMaterialStableRole::ImageSupport
+    } else {
+        EcMaterialStableRole::UnknownSupport
+    }
+}
+
+fn stable_role_from_tileart_texture_path(path: &str) -> EcMaterialStableRole {
+    let lower = path.to_ascii_lowercase();
+    let basename = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
+    let stem = basename.split('.').next().unwrap_or(basename);
+
+    if stem.contains("normal") || stem.contains("_n") {
+        EcMaterialStableRole::NormalLike
+    } else if stem.contains("alpha") {
+        EcMaterialStableRole::AlphaMask
+    } else if stem.contains("mask") {
+        EcMaterialStableRole::GenericMask
+    } else if stem.contains("noise") {
+        EcMaterialStableRole::Noise
+    } else if stem.contains("detail") {
+        EcMaterialStableRole::Detail
+    } else if stem.contains("light") || stem.contains("glow") {
+        EcMaterialStableRole::Overlay
     } else {
         EcMaterialStableRole::UnknownSupport
     }
