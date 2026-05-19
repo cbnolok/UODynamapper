@@ -18,7 +18,7 @@ use udd_conv::tex_land_ec::{
     encode_slot_manifest as encode_tex_land_ec_slot_manifest, encode_terrain_provenance_manifest,
 };
 use udd_assets::tex_land_ec::{
-    MISSING_SLOT_ID, MISSING_TEXTURE_ID,
+    MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID,
     UDDP_SLOT_MANIFEST_ENTRY_VPATH as TEX_LAND_EC_SLOT_MANIFEST_ENTRY_PATH,
     UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
 };
@@ -949,6 +949,10 @@ fn write_tex_land_ec_terrain_provenance_csv(
         "alias_tile_flags",
         "selected_texture_id",
         "canonical_slot_id",
+        "primary_texture_id",
+        "primary_layer_index",
+        "primary_selection_reason",
+        "primary_selection_flags",
     ])?;
     for record in records {
         writer.write_record([
@@ -959,6 +963,10 @@ fn write_tex_land_ec_terrain_provenance_csv(
             record.alias_tile_flags.to_string(),
             optional_u32_string(record.selected_texture_id, MISSING_TEXTURE_ID),
             optional_u32_string(record.canonical_slot_id, MISSING_SLOT_ID),
+            optional_u32_string(record.primary_texture_id, MISSING_TEXTURE_ID),
+            optional_u32_string(record.primary_layer_index, MISSING_TERRAIN_LAYER_INDEX),
+            record.primary_selection_reason.to_string(),
+            record.primary_selection_flags.to_string(),
         ])?;
     }
     writer.flush()?;
@@ -981,6 +989,10 @@ fn read_tex_land_ec_terrain_provenance_csv(
     let alias_tile_flags = csv_header_index(&headers, "alias_tile_flags")?;
     let selected_texture_id = csv_header_index(&headers, "selected_texture_id")?;
     let canonical_slot_id = csv_header_index(&headers, "canonical_slot_id")?;
+    let primary_texture_id = optional_csv_header_index(&headers, "primary_texture_id");
+    let primary_layer_index = optional_csv_header_index(&headers, "primary_layer_index");
+    let primary_selection_reason = optional_csv_header_index(&headers, "primary_selection_reason");
+    let primary_selection_flags = optional_csv_header_index(&headers, "primary_selection_flags");
 
     let mut records = Vec::new();
     for (row_index, row) in reader.records().enumerate() {
@@ -1020,6 +1032,34 @@ fn read_tex_land_ec_terrain_provenance_csv(
                 "canonical_slot_id",
                 line_number,
                 MISSING_SLOT_ID,
+            )?,
+            primary_texture_id: parse_optional_u32_field_or_default(
+                &row,
+                primary_texture_id,
+                "primary_texture_id",
+                line_number,
+                MISSING_TEXTURE_ID,
+            )?,
+            primary_layer_index: parse_optional_u32_field_or_default(
+                &row,
+                primary_layer_index,
+                "primary_layer_index",
+                line_number,
+                MISSING_TERRAIN_LAYER_INDEX,
+            )?,
+            primary_selection_reason: parse_u8_field_or_default(
+                &row,
+                primary_selection_reason,
+                "primary_selection_reason",
+                line_number,
+                0,
+            )?,
+            primary_selection_flags: parse_u16_field_or_default(
+                &row,
+                primary_selection_flags,
+                "primary_selection_flags",
+                line_number,
+                0,
             )?,
         });
     }
@@ -1283,6 +1323,10 @@ fn csv_header_index(headers: &StringRecord, name: &str) -> eyre::Result<usize> {
         .ok_or_else(|| eyre::eyre!("missing CSV header '{name}'"))
 }
 
+fn optional_csv_header_index(headers: &StringRecord, name: &str) -> Option<usize> {
+    headers.iter().position(|header| header == name)
+}
+
 fn parse_u32_field(
     row: &StringRecord,
     index: usize,
@@ -1305,6 +1349,50 @@ fn parse_u16_field(
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<u16>()
         .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
+}
+
+fn parse_u8_field_or_default(
+    row: &StringRecord,
+    index: Option<usize>,
+    field_name: &str,
+    line_number: usize,
+    default: u8,
+) -> eyre::Result<u8> {
+    let Some(index) = index else {
+        return Ok(default);
+    };
+    let value = row
+        .get(index)
+        .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?;
+    if value.is_empty() {
+        Ok(default)
+    } else {
+        value.parse::<u8>().map_err(|error| {
+            eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
+        })
+    }
+}
+
+fn parse_u16_field_or_default(
+    row: &StringRecord,
+    index: Option<usize>,
+    field_name: &str,
+    line_number: usize,
+    default: u16,
+) -> eyre::Result<u16> {
+    let Some(index) = index else {
+        return Ok(default);
+    };
+    let value = row
+        .get(index)
+        .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?;
+    if value.is_empty() {
+        Ok(default)
+    } else {
+        value.parse::<u16>().map_err(|error| {
+            eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
+        })
+    }
 }
 
 fn parse_i32_field(
@@ -1348,6 +1436,19 @@ fn parse_optional_u32_field(
             eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
         })
     }
+}
+
+fn parse_optional_u32_field_or_default(
+    row: &StringRecord,
+    index: Option<usize>,
+    field_name: &str,
+    line_number: usize,
+    missing: u32,
+) -> eyre::Result<u32> {
+    let Some(index) = index else {
+        return Ok(missing);
+    };
+    parse_optional_u32_field(row, index, field_name, line_number, missing)
 }
 
 fn optional_u32_string(value: u32, missing: u32) -> String {

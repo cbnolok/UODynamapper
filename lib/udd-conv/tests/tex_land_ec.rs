@@ -108,6 +108,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         alias_tile_flags: 0x55,
         selected_texture_id: 2_000_540,
         canonical_slot_id: 0,
+        ..Default::default()
     }];
     let terrain_provenance_manifest =
         serialize_terrain_provenance_manifest(&terrain_provenance).unwrap();
@@ -250,6 +251,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_540,
             canonical_slot_id: 26,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 171,
@@ -259,6 +261,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_131,
             canonical_slot_id: 581,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 4,
@@ -268,6 +271,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 4,
@@ -277,6 +281,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_040,
             canonical_slot_id: 196,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 172,
@@ -286,6 +291,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_000,
             canonical_slot_id: 0,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 172,
@@ -295,6 +301,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_131,
             canonical_slot_id: 581,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 197,
@@ -304,6 +311,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 197,
@@ -313,6 +321,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_040,
             canonical_slot_id: 196,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 198,
@@ -322,6 +331,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 198,
@@ -331,6 +341,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 256,
             selected_texture_id: 16_110,
             canonical_slot_id: 16_110,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 199,
@@ -340,6 +351,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 0,
             selected_texture_id: 2_000_000,
             canonical_slot_id: 2,
+            ..Default::default()
         },
         TexLandEcTerrainProvenanceRecord {
             material_id: 199,
@@ -349,6 +361,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             alias_tile_flags: 256,
             selected_texture_id: 16_111,
             canonical_slot_id: 16_111,
+            ..Default::default()
         },
     ];
     let terrain_provenance_manifest =

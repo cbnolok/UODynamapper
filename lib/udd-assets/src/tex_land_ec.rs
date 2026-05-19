@@ -11,7 +11,7 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 1;
+const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 2;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
@@ -25,8 +25,23 @@ pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 pub const MISSING_TEXTURE_ID: u32 = u32::MAX;
 pub const MISSING_SLOT_ID: u32 = u32::MAX;
+pub const MISSING_TERRAIN_LAYER_INDEX: u32 = u32::MAX;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub const TERRAIN_PRIMARY_REASON_UNKNOWN: u8 = 0;
+pub const TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION: u8 = 1;
+pub const TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK: u8 = 2;
+pub const TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK: u8 = 3;
+pub const TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK: u8 = 4;
+
+pub const TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT: u16 = 1 << 0;
+pub const TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE: u16 = 1 << 1;
+pub const TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION: u16 = 1 << 2;
+pub const TERRAIN_PRIMARY_FLAG_FALLBACK_REASON: u16 = 1 << 3;
+pub const TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT: u16 = 1 << 4;
+pub const TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC: u16 = 1 << 5;
+pub const TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER: u16 = 1 << 6;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexLandEcTerrainProvenanceRecord {
     pub material_id: u32,
     pub material_name_id: i32,
@@ -35,6 +50,10 @@ pub struct TexLandEcTerrainProvenanceRecord {
     pub alias_tile_flags: u64,
     pub selected_texture_id: u32,
     pub canonical_slot_id: u32,
+    pub primary_texture_id: u32,
+    pub primary_layer_index: u32,
+    pub primary_selection_reason: u8,
+    pub primary_selection_flags: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -385,7 +404,7 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
     cursor.read_exact(&mut magic)?;
     if magic != TERRAIN_PROVENANCE_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION { eyre::bail!("invalid version"); }
+    if !(1..=TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).contains(&version) { eyre::bail!("invalid version"); }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
@@ -397,6 +416,26 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
             alias_tile_flags: cursor.read_u64::<LittleEndian>()?,
             selected_texture_id: cursor.read_u32::<LittleEndian>()?,
             canonical_slot_id: cursor.read_u32::<LittleEndian>()?,
+            primary_texture_id: if version >= 2 {
+                cursor.read_u32::<LittleEndian>()?
+            } else {
+                MISSING_TEXTURE_ID
+            },
+            primary_layer_index: if version >= 2 {
+                cursor.read_u32::<LittleEndian>()?
+            } else {
+                MISSING_TERRAIN_LAYER_INDEX
+            },
+            primary_selection_reason: if version >= 2 {
+                cursor.read_u8()?
+            } else {
+                TERRAIN_PRIMARY_REASON_UNKNOWN
+            },
+            primary_selection_flags: if version >= 2 {
+                cursor.read_u16::<LittleEndian>()?
+            } else {
+                0
+            },
         });
     }
     Ok(records)
@@ -420,4 +459,35 @@ fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>
         }
     }
     Some(transcode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use byteorder::WriteBytesExt;
+
+    #[test]
+    fn terrain_provenance_parser_accepts_v1_records_with_unknown_primary_fields() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(12).unwrap();
+        bytes.write_i32::<LittleEndian>(34).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(56).unwrap();
+        bytes.write_u64::<LittleEndian>(0x55).unwrap();
+        bytes.write_u32::<LittleEndian>(2_000_540).unwrap();
+        bytes.write_u32::<LittleEndian>(56).unwrap();
+
+        let records = parse_terrain_provenance_manifest(&bytes).expect("parse v1 provenance");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].material_id, 12);
+        assert_eq!(records[0].selected_texture_id, 2_000_540);
+        assert_eq!(records[0].primary_texture_id, MISSING_TEXTURE_ID);
+        assert_eq!(records[0].primary_layer_index, MISSING_TERRAIN_LAYER_INDEX);
+        assert_eq!(records[0].primary_selection_reason, TERRAIN_PRIMARY_REASON_UNKNOWN);
+        assert_eq!(records[0].primary_selection_flags, 0);
+    }
 }
