@@ -136,6 +136,29 @@ impl EcMaterialSpeculativeRole {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileMetaMainEcTextureReason {
+    ExactWorldArtTileId,
+    PrimarySelectedWorldArt,
+    FirstWorldArt,
+    PrimarySelectedAnyFamily,
+    FirstNonAuxiliary,
+    LegacyEcTextureIdFallback,
+}
+
+impl TileMetaMainEcTextureReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactWorldArtTileId => "exact_worldart_tile_id",
+            Self::PrimarySelectedWorldArt => "primary_selected_worldart",
+            Self::FirstWorldArt => "first_worldart",
+            Self::PrimarySelectedAnyFamily => "primary_selected_any_family",
+            Self::FirstNonAuxiliary => "first_non_auxiliary",
+            Self::LegacyEcTextureIdFallback => "legacy_ec_texture_id_fallback",
+        }
+    }
+}
+
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TileMetaLandTile {
@@ -341,47 +364,96 @@ impl TileMetaPackage {
     }
 
     pub fn main_ec_texture_ref(&self, tile_id: u32) -> Option<&TileMetaItemTextureRef> {
-        let texture_refs = self.item_texture_refs(tile_id);
+        self.main_ec_texture_ref_with_reason(tile_id)
+            .map(|(texture_ref, _)| texture_ref)
+    }
 
-        texture_refs
-            .iter()
-            .find(|texture_ref| {
-                !texture_ref.is_auxiliary()
-                    && texture_ref.is_world_art()
-                    && texture_ref.texture_id == tile_id
-            })
+    pub fn main_ec_texture_ref_with_reason(
+        &self,
+        tile_id: u32,
+    ) -> Option<(&TileMetaItemTextureRef, TileMetaMainEcTextureReason)> {
+        choose_main_ec_texture_ref(self.item_texture_refs(tile_id), tile_id)
+    }
+
+    pub fn main_ec_texture_id(&self, tile_id: u32) -> Option<u32> {
+        self.main_ec_texture_id_with_reason(tile_id)
+            .map(|(texture_id, _)| texture_id)
+    }
+
+    pub fn main_ec_texture_id_with_reason(
+        &self,
+        tile_id: u32,
+    ) -> Option<(u32, TileMetaMainEcTextureReason)> {
+        self.main_ec_texture_ref_with_reason(tile_id)
+            .map(|(texture_ref, reason)| (texture_ref.texture_id, reason))
             .or_else(|| {
-                texture_refs.iter().find(|texture_ref| {
+                self.item_tile(tile_id)
+                    .and_then(|item| (item.ec_texture_id != 0).then_some(item.ec_texture_id))
+                    .map(|texture_id| {
+                        (
+                            texture_id,
+                            TileMetaMainEcTextureReason::LegacyEcTextureIdFallback,
+                        )
+                    })
+            })
+    }
+}
+
+fn choose_main_ec_texture_ref(
+    texture_refs: &[TileMetaItemTextureRef],
+    tile_id: u32,
+) -> Option<(&TileMetaItemTextureRef, TileMetaMainEcTextureReason)> {
+    texture_refs
+        .iter()
+        .find(|texture_ref| {
+            !texture_ref.is_auxiliary()
+                && texture_ref.is_world_art()
+                && texture_ref.texture_id == tile_id
+        })
+        .map(|texture_ref| {
+            (
+                texture_ref,
+                TileMetaMainEcTextureReason::ExactWorldArtTileId,
+            )
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
                         && texture_ref.is_primary_selected()
                         && texture_ref.is_world_art()
                 })
-            })
-            .or_else(|| {
-                texture_refs
-                    .iter()
-                    .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_world_art())
-            })
-            .or_else(|| {
-                texture_refs.iter().find(|texture_ref| {
-                    !texture_ref.is_auxiliary() && texture_ref.is_primary_selected()
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::PrimarySelectedWorldArt,
+                    )
                 })
-            })
-            .or_else(|| {
-                texture_refs
-                    .iter()
-                    .find(|texture_ref| !texture_ref.is_auxiliary())
-            })
-    }
-
-    pub fn main_ec_texture_id(&self, tile_id: u32) -> Option<u32> {
-        self.main_ec_texture_ref(tile_id)
-            .map(|texture_ref| texture_ref.texture_id)
-            .or_else(|| {
-                self.item_tile(tile_id)
-                    .and_then(|item| (item.ec_texture_id != 0).then_some(item.ec_texture_id))
-            })
-    }
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_world_art())
+                .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstWorldArt))
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| !texture_ref.is_auxiliary() && texture_ref.is_primary_selected())
+                .map(|texture_ref| {
+                    (
+                        texture_ref,
+                        TileMetaMainEcTextureReason::PrimarySelectedAnyFamily,
+                    )
+                })
+        })
+        .or_else(|| {
+            texture_refs
+                .iter()
+                .find(|texture_ref| !texture_ref.is_auxiliary())
+                .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstNonAuxiliary))
+        })
 }
 
 fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
@@ -445,5 +517,54 @@ mod tests {
             EcMaterialSpeculativeRole::UnknownSupport
         );
         assert_eq!(std::mem::size_of::<TileMetaItemTextureRef>(), 24);
+    }
+
+    #[test]
+    fn main_ec_texture_reason_freezes_exact_worldart_branch() {
+        let texture_refs = [
+            texture_ref(42, EcMaterialLogicalFamily::Textures, 0),
+            texture_ref(100, EcMaterialLogicalFamily::WorldArt, 0),
+        ];
+
+        let (chosen, reason) =
+            choose_main_ec_texture_ref(&texture_refs, 100).expect("chosen texture");
+
+        assert_eq!(chosen.texture_id, 100);
+        assert_eq!(reason, TileMetaMainEcTextureReason::ExactWorldArtTileId);
+        assert_eq!(reason.as_str(), "exact_worldart_tile_id");
+    }
+
+    #[test]
+    fn main_ec_texture_reason_freezes_primary_any_family_branch() {
+        let texture_refs = [
+            texture_ref(10, EcMaterialLogicalFamily::Textures, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY),
+            texture_ref(
+                42,
+                EcMaterialLogicalFamily::Textures,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+        ];
+
+        let (chosen, reason) =
+            choose_main_ec_texture_ref(&texture_refs, 100).expect("chosen texture");
+
+        assert_eq!(chosen.texture_id, 42);
+        assert_eq!(
+            reason,
+            TileMetaMainEcTextureReason::PrimarySelectedAnyFamily
+        );
+    }
+
+    fn texture_ref(
+        texture_id: u32,
+        family: EcMaterialLogicalFamily,
+        flags: u8,
+    ) -> TileMetaItemTextureRef {
+        TileMetaItemTextureRef {
+            texture_id,
+            texture_type: family as u8,
+            flags,
+            ..TileMetaItemTextureRef::zeroed()
+        }
     }
 }

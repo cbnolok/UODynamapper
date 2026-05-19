@@ -7,6 +7,7 @@ Build a UOP-grounded EC material pipeline that preserves every potentially usefu
 - Re-validation questions: why do we want this feature, did we still want to implement it this way after seeing the evidence, did the work stick to the plan, improve it, or significantly diverge from it?
 - Commit the files changed for each completed, re-validated, and tested phase before starting the next phase.
 - Keep unrelated working-tree changes out of those commits.
+- Do not run `cargo fmt`; full workspace formatting is maintainer-only and happens at a specific human-controlled point in the development process.
 
 **Evidence Tiers**
 - Original EC package evidence: tileart.uop, TerrainDefinition.uop, Texture.uop, LegacyTexture.uop, TerrainTexture.uop, EffectTexture.uop, string_dictionary.uop, and any additional directly referenced package families discovered by full scans.

@@ -104,7 +104,7 @@ fn main() -> eyre::Result<()> {
         }
 
         if let Some(tilemeta) = tilemeta.as_ref() {
-            print_tilemeta(tilemeta.item_tile(art_id as u32));
+            print_tilemeta(tilemeta, art_id as u32);
             print_tilemeta_texture_refs(tilemeta.item_texture_refs(art_id as u32));
         }
 
@@ -207,7 +207,8 @@ fn dictionary_string(
         .map(str::to_string)
 }
 
-fn print_tilemeta(item: Option<&TileMetaItemTile>) {
+fn print_tilemeta(tilemeta: &TileMetaPackage, art_id: u32) {
+    let item = tilemeta.item_tile(art_id);
     match item {
         Some(item) => {
             println!("  tilemeta.visual_kind={:?}", item.visual_kind());
@@ -232,6 +233,14 @@ fn print_tilemeta(item: Option<&TileMetaItemTile>) {
                 item.cc_offset_x,
                 item.cc_offset_y
             );
+            match tilemeta.main_ec_texture_id_with_reason(art_id) {
+                Some((texture_id, reason)) => println!(
+                    "  tilemeta.main_ec_texture_id={} reason={}",
+                    texture_id,
+                    reason.as_str()
+                ),
+                None => println!("  tilemeta.main_ec_texture_id=missing"),
+            }
         }
         None => println!("  tilemeta=missing"),
     }
@@ -246,9 +255,12 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
     println!("  tilemeta.texture_refs.count={}", texture_refs.len());
     for (index, texture_ref) in texture_refs.iter().enumerate() {
         println!(
-            "    ref[{index}] id={} type={} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
+            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
             texture_ref.texture_id,
-            texture_ref.texture_type,
+            texture_ref.logical_family(),
+            texture_ref.physical_package(),
+            texture_ref.stable_role(),
+            texture_ref.speculative_role(),
             texture_ref.block_index,
             texture_ref.item_index,
             texture_ref.is_auxiliary(),
