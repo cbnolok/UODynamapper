@@ -146,8 +146,6 @@ pub enum TileMetaMainEcTextureReason {
     ExactWorldArtTileId,
     PrimarySelectedWorldArt,
     FirstWorldArt,
-    PrimarySelectedAnyFamily,
-    FirstNonAuxiliary,
     LegacyEcTextureIdFallback,
 }
 
@@ -162,8 +160,6 @@ impl TileMetaMainEcTextureReason {
             Self::ExactWorldArtTileId => "exact_worldart_tile_id",
             Self::PrimarySelectedWorldArt => "primary_selected_worldart",
             Self::FirstWorldArt => "first_worldart",
-            Self::PrimarySelectedAnyFamily => "primary_selected_any_family",
-            Self::FirstNonAuxiliary => "first_non_auxiliary",
             Self::LegacyEcTextureIdFallback => "legacy_ec_texture_id_fallback",
         }
     }
@@ -516,30 +512,6 @@ fn choose_main_ec_texture_ref(
                 })
                 .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstWorldArt))
         })
-        .or_else(|| {
-            texture_refs
-                .iter()
-                .find(|texture_ref| {
-                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
-                        && !texture_ref.is_auxiliary()
-                        && texture_ref.is_primary_selected()
-                })
-                .map(|texture_ref| {
-                    (
-                        texture_ref,
-                        TileMetaMainEcTextureReason::PrimarySelectedAnyFamily,
-                    )
-                })
-        })
-        .or_else(|| {
-            texture_refs
-                .iter()
-                .find(|texture_ref| {
-                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
-                        && !texture_ref.is_auxiliary()
-                })
-                .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::FirstNonAuxiliary))
-        })
 }
 
 fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
@@ -621,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn main_ec_texture_reason_freezes_primary_any_family_branch() {
+    fn main_ec_texture_ignores_unknown_primary_non_worldart() {
         let texture_refs = [
             texture_ref(10, EcMaterialLogicalFamily::Textures, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY),
             texture_ref(
@@ -631,14 +603,7 @@ mod tests {
             ),
         ];
 
-        let (chosen, reason) =
-            choose_main_ec_texture_ref(&texture_refs, 100).expect("chosen texture");
-
-        assert_eq!(chosen.texture_id, 42);
-        assert_eq!(
-            reason,
-            TileMetaMainEcTextureReason::PrimarySelectedAnyFamily
-        );
+        assert!(choose_main_ec_texture_ref(&texture_refs, 100).is_none());
     }
 
     #[test]
