@@ -432,6 +432,8 @@ pub fn audit_ec_surface_redirection(
         let canonical_slots = present_canonical_slots(&tex_land_ec, &provenance_records);
         let alias_slots = present_alias_slots(&tex_land_ec, &provenance_records);
         let fallback_slot = tex_land_ec.resolve_runtime_slot_id(item.cc_texture_id);
+        let art_availability =
+            surface_art_availability(tex_art_ec.as_ref(), item, main_ec_texture_id);
         let resolution = resolve_surface_redirection_like_runtime(
             &tex_land_ec,
             item,
@@ -440,6 +442,7 @@ pub fn audit_ec_surface_redirection(
             canonical_slots.as_slice(),
             alias_slots.as_slice(),
             fallback_slot,
+            art_availability.art_id_tex_art_slot_kind.as_deref() == Some("land"),
         );
         let abnormality_flags = surface_redirection_flags(
             item,
@@ -457,8 +460,6 @@ pub fn audit_ec_surface_redirection(
             .filter(|match_row| match_row.primary_match)
             .count();
         let layer_only_match_count = terrain_matches.len() - primary_match_count;
-        let art_availability =
-            surface_art_availability(tex_art_ec.as_ref(), item, main_ec_texture_id);
         let review_class = surface_review_class(
             item,
             art_data.map(|data| data.tile_type),
@@ -1389,8 +1390,11 @@ struct SurfaceMainTextureReport {
 struct SurfaceArtAvailabilityReport {
     ec_art_package_provided: bool,
     art_id_tex_art_slot_present: Option<bool>,
+    art_id_tex_art_slot_kind: Option<String>,
     selected_texture_tex_art_slot_present: Option<bool>,
+    selected_texture_tex_art_slot_kind: Option<String>,
     legacy_ec_texture_tex_art_slot_present: Option<bool>,
+    legacy_ec_texture_tex_art_slot_kind: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1525,18 +1529,43 @@ fn surface_art_availability(
         return SurfaceArtAvailabilityReport {
             ec_art_package_provided: false,
             art_id_tex_art_slot_present: None,
+            art_id_tex_art_slot_kind: None,
             selected_texture_tex_art_slot_present: None,
+            selected_texture_tex_art_slot_kind: None,
             legacy_ec_texture_tex_art_slot_present: None,
+            legacy_ec_texture_tex_art_slot_kind: None,
         };
     };
 
+    let art_id_slot = tex_art_ec.present_slot(item.tile_id);
+    let selected_texture_slot =
+        main_ec_texture_id.and_then(|texture_id| tex_art_ec.present_slot(texture_id));
+    let legacy_texture_slot =
+        optional_nonzero_u32(item.ec_texture_id).and_then(|texture_id| tex_art_ec.present_slot(texture_id));
+
     SurfaceArtAvailabilityReport {
         ec_art_package_provided: true,
-        art_id_tex_art_slot_present: Some(tex_art_ec.present_slot(item.tile_id).is_some()),
-        selected_texture_tex_art_slot_present: main_ec_texture_id
-            .map(|texture_id| tex_art_ec.present_slot(texture_id).is_some()),
+        art_id_tex_art_slot_present: Some(art_id_slot.is_some()),
+        art_id_tex_art_slot_kind: art_id_slot.map(tex_art_ec_slot_kind).map(str::to_string),
+        selected_texture_tex_art_slot_present: main_ec_texture_id.map(|_| selected_texture_slot.is_some()),
+        selected_texture_tex_art_slot_kind: selected_texture_slot
+            .map(tex_art_ec_slot_kind)
+            .map(str::to_string),
         legacy_ec_texture_tex_art_slot_present: optional_nonzero_u32(item.ec_texture_id)
-            .map(|texture_id| tex_art_ec.present_slot(texture_id).is_some()),
+            .map(|_| legacy_texture_slot.is_some()),
+        legacy_ec_texture_tex_art_slot_kind: legacy_texture_slot
+            .map(tex_art_ec_slot_kind)
+            .map(str::to_string),
+    }
+}
+
+fn tex_art_ec_slot_kind(slot: &udd_assets::tex_art_ec::TexArtEcSlotRecord) -> &'static str {
+    if slot.is_land() {
+        "land"
+    } else if slot.is_static() {
+        "static"
+    } else {
+        "unknown"
     }
 }
 
@@ -1549,6 +1578,10 @@ fn surface_review_class(
 ) -> &'static str {
     if resolved_slot.is_some() {
         return "resolved_tex_land_ec";
+    }
+
+    if art_availability.art_id_tex_art_slot_kind.as_deref() == Some("land") {
+        return "tileart_surface_material_available";
     }
 
     if art_availability.art_id_tex_art_slot_present == Some(true) {
@@ -1675,6 +1708,7 @@ fn resolve_surface_redirection_like_runtime(
     canonical_slots: &[u32],
     alias_slots: &[u32],
     fallback_slot: Option<u32>,
+    tileart_surface_material_available: bool,
 ) -> SurfaceRedirectionResolution {
     let Some(main_ec_texture_id) = main_ec_texture_id else {
         return SurfaceRedirectionResolution {
@@ -1713,6 +1747,14 @@ fn resolve_surface_redirection_like_runtime(
     }
 
     let slot_id = package.resolve_runtime_slot_id(item.cc_texture_id);
+    if slot_id.is_none() && tileart_surface_material_available {
+        return SurfaceRedirectionResolution {
+            slot_id: None,
+            route_decision: "EcTileartSurfaceMaterial",
+            decision_reason: "tileart_surface_material_slot_available",
+        };
+    }
+
     SurfaceRedirectionResolution {
         slot_id,
         route_decision: if slot_id.is_some() {

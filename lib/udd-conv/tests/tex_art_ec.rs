@@ -13,6 +13,7 @@ use udd_assets::{
     TexArtEcPackage,
 };
 use udd_container::CompressionFlag;
+use uocf::enhanced::tileart::{TaeFlag, TileType};
 
 fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
     DecodedArtTile {
@@ -48,6 +49,22 @@ fn sparse_slots_keep_absent_records() {
     assert!(!slots[2].is_present());
     assert!(slots[3].is_present());
     assert_eq!(slots[4].page_index, MISSING_PAGE_INDEX);
+}
+
+#[test]
+fn tileart_unused1_surfaces_pack_as_land_material_slots() {
+    assert_eq!(
+        art_tile_kind_for_tileart(TileType::Solid, TaeFlag::Unused1),
+        ArtTileKind::Land
+    );
+    assert_eq!(
+        art_tile_kind_for_tileart(TileType::Liquid, TaeFlag::None),
+        ArtTileKind::Land
+    );
+    assert_eq!(
+        art_tile_kind_for_tileart(TileType::Static, TaeFlag::None),
+        ArtTileKind::Static
+    );
 }
 
 #[test]

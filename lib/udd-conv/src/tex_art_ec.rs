@@ -47,7 +47,7 @@ use uocf::enhanced::{
     terrain_definition::TerrainDefinitionPackage,
     textures::{TextureFile, Textures},
     tile_database::ArtDefinition,
-    tileart::{ArtData, ArtTexture, TileType},
+    tileart::{ArtData, ArtTexture, TaeFlag, TileType},
 };
 
 use crate::upscale::UpscaleFilter;
@@ -143,6 +143,7 @@ pub struct DecodedArtTile {
 #[derive(Debug, Clone)]
 struct PreparedArtDecodeGroup {
     canonical_art_id: u32,
+    kind: ArtTileKind,
     texture_bounds: ArtTexture,
     file: TextureFile,
     alias_art_ids: Vec<u32>,
@@ -151,6 +152,7 @@ struct PreparedArtDecodeGroup {
 #[derive(Debug, Clone)]
 struct DecodedArtDecodeGroup {
     canonical_art_id: u32,
+    kind: ArtTileKind,
     width: u16,
     height: u16,
     rgba: Vec<u8>,
@@ -599,6 +601,7 @@ fn decode_present_tiles(
             canonical_by_source.insert(canonical_key, decode_groups.len());
             decode_groups.push(PreparedArtDecodeGroup {
                 canonical_art_id: art_id as u32,
+                kind: art_tile_kind_for_tileart(art_data.tile_type, art_data.flags),
                 texture_bounds: texture_bounds.clone(),
                 file,
                 alias_art_ids: Vec::new(),
@@ -637,6 +640,7 @@ fn decode_present_tiles(
             decode_pb.inc(1);
             Ok(DecodedArtDecodeGroup {
                 canonical_art_id: group.canonical_art_id,
+                kind: group.kind,
                 width,
                 height,
                 rgba,
@@ -667,7 +671,7 @@ fn decode_present_tiles(
             );
             decoded_tiles.push(DecodedArtTile {
                 art_id: decoded_group.canonical_art_id,
-                kind: ArtTileKind::Static,
+                kind: decoded_group.kind,
                 width: decoded_group.width,
                 height: decoded_group.height,
                 rgba: decoded_group.rgba,
@@ -700,6 +704,14 @@ fn should_include_art_tile(tile_type: TileType) -> bool {
     // base naturally fall out later when no source texture can be resolved.
     let _ = tile_type;
     true
+}
+
+pub fn art_tile_kind_for_tileart(tile_type: TileType, flags: TaeFlag) -> ArtTileKind {
+    if tile_type != TileType::Static || flags.contains(TaeFlag::Unused1) {
+        ArtTileKind::Land
+    } else {
+        ArtTileKind::Static
+    }
 }
 
 pub fn requested_source_window(texture: &ArtTexture) -> Option<SourceClipRect> {
