@@ -14,6 +14,7 @@ use csv::WriterBuilder;
 use log::info;
 use serde::Serialize;
 use udd_assets::{
+    tex_art_ec::TexArtEcPackage,
     tex_land_ec::{
         TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
         MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
@@ -387,17 +388,22 @@ pub fn audit_ec_terrain_primary_selection(
 pub fn audit_ec_surface_redirection(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
+    tex_art_ec_path: Option<&Path>,
     tex_land_ec_path: &Path,
     output: &Path,
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
     let tilemeta = TileMetaPackage::load(tilemeta_path)?;
+    let tex_art_ec = tex_art_ec_path
+        .map(TexArtEcPackage::load)
+        .transpose()?;
     let tex_land_ec = TexLandEcPackage::load(tex_land_ec_path)?;
     let mut entries = Vec::new();
     let mut routed_count = 0u64;
     let mut flag_counts = BTreeMap::<String, u64>::new();
     let mut route_decision_counts = BTreeMap::<String, u64>::new();
     let mut decision_reason_counts = BTreeMap::<String, u64>::new();
+    let mut review_class_counts = BTreeMap::<String, u64>::new();
 
     for item in tilemeta
         .item_tiles()
@@ -451,6 +457,15 @@ pub fn audit_ec_surface_redirection(
             .filter(|match_row| match_row.primary_match)
             .count();
         let layer_only_match_count = terrain_matches.len() - primary_match_count;
+        let art_availability =
+            surface_art_availability(tex_art_ec.as_ref(), item, main_ec_texture_id);
+        let review_class = surface_review_class(
+            item,
+            art_data.map(|data| data.tile_type),
+            &art_availability,
+            resolution.slot_id,
+            terrain_matches.as_slice(),
+        );
 
         if resolution.slot_id.is_some() {
             routed_count += 1;
@@ -460,6 +475,7 @@ pub fn audit_ec_surface_redirection(
         }
         increment_count(&mut route_decision_counts, resolution.route_decision);
         increment_count(&mut decision_reason_counts, resolution.decision_reason);
+        increment_count(&mut review_class_counts, review_class);
 
         entries.push(SurfaceRedirectionEntryReport {
             art_id,
@@ -479,6 +495,7 @@ pub fn audit_ec_surface_redirection(
                 source: main_source.to_string(),
                 direct_tex_land_slot_present: direct_slot_present,
             },
+            art_availability,
             terrain_definition: SurfaceTerrainDefinitionReport {
                 match_count: terrain_matches.len(),
                 primary_match_count,
@@ -502,6 +519,7 @@ pub fn audit_ec_surface_redirection(
                 route_decision: resolution.route_decision.to_string(),
                 decision_reason: resolution.decision_reason.to_string(),
             },
+            review_class: review_class.to_string(),
             abnormality_flags: abnormality_flag_values,
         });
     }
@@ -516,6 +534,7 @@ pub fn audit_ec_surface_redirection(
             unresolved_count: (row_count - routed_count) as usize,
             route_decision_counts: route_decision_counts.clone(),
             decision_reason_counts: decision_reason_counts.clone(),
+            review_class_counts: review_class_counts.clone(),
             abnormality_flag_counts: flag_counts.clone(),
         },
         entries,
@@ -530,6 +549,7 @@ pub fn audit_ec_surface_redirection(
     info!("EC surface redirection resolved rows: {routed_count}/{row_count}");
     log_count_summary("EC surface redirection route decisions", &route_decision_counts);
     log_count_summary("EC surface redirection decision reasons", &decision_reason_counts);
+    log_count_summary("EC surface redirection review classes", &review_class_counts);
     log_count_summary("EC surface redirection flags", &flag_counts);
 
     Ok(())
@@ -1328,6 +1348,7 @@ struct SurfaceRedirectionSummary {
     unresolved_count: usize,
     route_decision_counts: BTreeMap<String, u64>,
     decision_reason_counts: BTreeMap<String, u64>,
+    review_class_counts: BTreeMap<String, u64>,
     abnormality_flag_counts: BTreeMap<String, u64>,
 }
 
@@ -1338,10 +1359,12 @@ struct SurfaceRedirectionEntryReport {
     tile_flags: Option<String>,
     tilemeta: SurfaceTileMetaReport,
     main_ec_texture: SurfaceMainTextureReport,
+    art_availability: SurfaceArtAvailabilityReport,
     terrain_definition: SurfaceTerrainDefinitionReport,
     provenance: SurfaceProvenanceReport,
     fallback_resolve_runtime_slot: Option<u32>,
     resolution: SurfaceResolutionReport,
+    review_class: String,
     abnormality_flags: Vec<String>,
 }
 
@@ -1360,6 +1383,14 @@ struct SurfaceMainTextureReport {
     reason: String,
     source: String,
     direct_tex_land_slot_present: bool,
+}
+
+#[derive(Serialize)]
+struct SurfaceArtAvailabilityReport {
+    ec_art_package_provided: bool,
+    art_id_tex_art_slot_present: Option<bool>,
+    selected_texture_tex_art_slot_present: Option<bool>,
+    legacy_ec_texture_tex_art_slot_present: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -1483,6 +1514,88 @@ fn terrain_matches_for_texture(
         }
     }
     matches
+}
+
+fn surface_art_availability(
+    tex_art_ec: Option<&TexArtEcPackage>,
+    item: &TileMetaItemTile,
+    main_ec_texture_id: Option<u32>,
+) -> SurfaceArtAvailabilityReport {
+    let Some(tex_art_ec) = tex_art_ec else {
+        return SurfaceArtAvailabilityReport {
+            ec_art_package_provided: false,
+            art_id_tex_art_slot_present: None,
+            selected_texture_tex_art_slot_present: None,
+            legacy_ec_texture_tex_art_slot_present: None,
+        };
+    };
+
+    SurfaceArtAvailabilityReport {
+        ec_art_package_provided: true,
+        art_id_tex_art_slot_present: Some(tex_art_ec.present_slot(item.tile_id).is_some()),
+        selected_texture_tex_art_slot_present: main_ec_texture_id
+            .map(|texture_id| tex_art_ec.present_slot(texture_id).is_some()),
+        legacy_ec_texture_tex_art_slot_present: optional_nonzero_u32(item.ec_texture_id)
+            .map(|texture_id| tex_art_ec.present_slot(texture_id).is_some()),
+    }
+}
+
+fn surface_review_class(
+    item: &TileMetaItemTile,
+    tile_type: Option<TileType>,
+    art_availability: &SurfaceArtAvailabilityReport,
+    resolved_slot: Option<u32>,
+    terrain_matches: &[TerrainTextureMatch],
+) -> &'static str {
+    if resolved_slot.is_some() {
+        return "resolved_tex_land_ec";
+    }
+
+    if art_availability.art_id_tex_art_slot_present == Some(true) {
+        return "regular_ec_art_available";
+    }
+
+    if !art_availability.ec_art_package_provided {
+        return "manual_review_candidate_missing_ec_art_package";
+    }
+
+    if surface_is_liquid_like(item, tile_type) {
+        return "liquid_like_without_provenance";
+    }
+
+    if surface_is_terrain_like(item) {
+        return "terrain_like_without_provenance";
+    }
+
+    if !terrain_matches.is_empty() {
+        return "terrain_layer_match_without_route";
+    }
+
+    "missing_regular_and_land_route"
+}
+
+fn surface_is_liquid_like(item: &TileMetaItemTile, tile_type: Option<TileType>) -> bool {
+    if tile_type == Some(TileType::Liquid) {
+        return true;
+    }
+
+    let name = item.name_ascii().to_ascii_lowercase();
+    name.contains("water")
+        || name.contains("lava")
+        || name.contains("swamp")
+        || name.contains("pond")
+        || name.contains("whirlpool")
+}
+
+fn surface_is_terrain_like(item: &TileMetaItemTile) -> bool {
+    let name = item.name_ascii().to_ascii_lowercase();
+    name.contains("grass")
+        || name.contains("dirt")
+        || name.contains("sand")
+        || name.contains("rock")
+        || name.contains("stone")
+        || name.contains("paver")
+        || name.contains("flagstone")
 }
 
 fn surface_terrain_match_report(match_row: &TerrainTextureMatch) -> SurfaceTerrainMatchReport {

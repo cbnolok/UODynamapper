@@ -336,6 +336,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[arg(long)]
         tilemeta: PathBuf,
+        #[arg(long = "ec-art")]
+        tex_art_ec: Option<PathBuf>,
         #[arg(long = "ec-land")]
         tex_land_ec: PathBuf,
         #[arg(long, default_value = "ec_surface_redirection.json")]
@@ -655,12 +657,19 @@ pub fn run() -> eyre::Result<()> {
         Commands::AuditEcSurfaceRedirection {
             source_dirs: source_dir_args,
             tilemeta,
+            tex_art_ec,
             tex_land_ec,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            audit_ec_surface_redirection(&paths, &tilemeta, &tex_land_ec, &out_file)?;
+            audit_ec_surface_redirection(
+                &paths,
+                &tilemeta,
+                tex_art_ec.as_deref(),
+                &tex_land_ec,
+                &out_file,
+            )?;
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
