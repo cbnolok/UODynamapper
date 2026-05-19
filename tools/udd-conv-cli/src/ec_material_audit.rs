@@ -16,7 +16,10 @@ use udd_conv::source_paths::find_first_existing_file;
 use udd_conv::tex_art_ec::{load_tex_art_ec_sources, TexArtEcLoadedSources};
 use uocf::{
     enhanced::{
-        terrain_definition::TerrainTextureType,
+        terrain_definition::{
+            TerrainDefinitionEntry, TerrainDefinitionPrimaryLayerReason,
+            TerrainDefinitionTextureLayer, TerrainTextureType,
+        },
         textures::TextureItem as EnhancedTextureItem,
         tileart::{TextureType as TileArtTextureType, TileType},
     },
@@ -160,6 +163,179 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
     log_count_summary("owner refs", &owner_counts);
     log_count_summary("physical package guesses", &package_counts);
     log_count_summary("logical families", &family_counts);
+
+    Ok(())
+}
+
+pub fn audit_ec_terrain_primary_selection(
+    source_dirs: &[PathBuf],
+    output: &Path,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let mut writer = WriterBuilder::new().from_path(output)?;
+    writer.write_record([
+        "material_id",
+        "material_name",
+        "aliases",
+        "shader_name",
+        "selected_layer_index",
+        "selected_texture_id",
+        "selected_path",
+        "selection_reason",
+        "selected_current_support_heuristic",
+        "selected_support_like_clue",
+        "selected_preferred_repetition",
+        "selected_texture_repetition",
+        "selected_unk4",
+        "selected_unk6_opaque_order",
+        "selected_unk7",
+        "selected_physical_package_guess",
+        "selected_logical_family",
+        "layer_count",
+        "texture_layer_count",
+        "support_like_layer_count",
+        "current_support_layer_count",
+        "preferred_repetition_layer_count",
+        "candidate_layers",
+        "audit_flags",
+    ])?;
+
+    let mut row_count = 0u64;
+    let mut reason_counts = BTreeMap::<String, u64>::new();
+    let mut flag_counts = BTreeMap::<String, u64>::new();
+    let mut selected_support_like_count = 0u64;
+    let mut selected_texture_count = 0u64;
+
+    for entry in &sources.terrain_definition.entries {
+        let Some(texture) = entry.texture.as_ref() else {
+            continue;
+        };
+        let primary = entry.primary_texture_layer_with_reason();
+        let (selected_layer_index, selected_layer, selection_reason) = primary
+            .and_then(|(layer, reason)| {
+                texture.layers
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, layer))
+                    .map(|index| (Some(index), Some(layer), Some(reason)))
+            })
+            .unwrap_or((None, None, None));
+
+        let aliases = entry
+            .runtime_slot_ids()
+            .into_iter()
+            .map(|alias| alias.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        let shader_name = texture.shader_name.as_deref().unwrap_or("");
+        let texture_layer_count = texture
+            .layers
+            .iter()
+            .filter(|layer| layer.texture_id.is_some())
+            .count();
+        let support_like_layer_count = texture
+            .layers
+            .iter()
+            .filter(|layer| layer.has_support_like_name_clue())
+            .count();
+        let current_support_layer_count = texture
+            .layers
+            .iter()
+            .filter(|layer| layer.is_support_layer_by_current_name_heuristic())
+            .count();
+        let preferred_repetition_layer_count = texture
+            .layers
+            .iter()
+            .filter(|layer| layer.has_preferred_primary_repetition())
+            .count();
+        let candidate_layers = terrain_candidate_layers_summary(&texture.layers);
+        let audit_flags = terrain_primary_audit_flags(entry, selected_layer, selection_reason);
+
+        if let Some(reason) = selection_reason {
+            increment_count(&mut reason_counts, reason.as_str());
+        } else {
+            increment_count(&mut reason_counts, "missing");
+        }
+        for flag in audit_flags.split(';').filter(|flag| !flag.is_empty()) {
+            increment_count(&mut flag_counts, flag);
+        }
+        if let Some(layer) = selected_layer {
+            selected_texture_count += 1;
+            if layer.has_support_like_name_clue() {
+                selected_support_like_count += 1;
+            }
+        }
+
+        let selected_path = selected_layer
+            .and_then(|layer| layer.path.as_deref())
+            .unwrap_or("");
+        let normalized_path = normalize_dictionary_path(selected_path);
+        let selected_package = selected_layer
+            .map(|layer| physical_package_guess(&normalized_path, layer.texture_id, &package_membership))
+            .unwrap_or("Unknown");
+        let selected_family = selected_layer
+            .map(|layer| terrain_texture_family_name(layer.texture_type, selected_package))
+            .unwrap_or("Unknown");
+
+        writer.write_record([
+            &entry.id.to_string(),
+            entry.name.as_deref().unwrap_or(""),
+            &aliases,
+            shader_name,
+            &selected_layer_index.map(|index| index.to_string()).unwrap_or_default(),
+            &selected_layer
+                .and_then(|layer| layer.texture_id)
+                .map(|texture_id| texture_id.to_string())
+                .unwrap_or_default(),
+            selected_path,
+            selection_reason.map(|reason| reason.as_str()).unwrap_or("missing"),
+            bool_str(selected_layer.is_some_and(|layer| {
+                layer.is_support_layer_by_current_name_heuristic()
+            })),
+            bool_str(selected_layer.is_some_and(|layer| layer.has_support_like_name_clue())),
+            bool_str(selected_layer.is_some_and(|layer| {
+                layer.has_preferred_primary_repetition()
+            })),
+            &selected_layer
+                .map(|layer| format_float(layer.texture_repetition))
+                .unwrap_or_default(),
+            &selected_layer
+                .map(|layer| layer.unk4.to_string())
+                .unwrap_or_default(),
+            &selected_layer
+                .map(|layer| layer.unk6.to_string())
+                .unwrap_or_default(),
+            &selected_layer
+                .map(|layer| layer.unk7.to_string())
+                .unwrap_or_default(),
+            selected_package,
+            selected_family,
+            &texture.layers.len().to_string(),
+            &texture_layer_count.to_string(),
+            &support_like_layer_count.to_string(),
+            &current_support_layer_count.to_string(),
+            &preferred_repetition_layer_count.to_string(),
+            &candidate_layers,
+            &audit_flags,
+        ])?;
+
+        row_count += 1;
+    }
+
+    writer.flush()?;
+
+    info!(
+        "wrote {row_count} EC terrain primary-selection rows to '{}'",
+        output.display()
+    );
+    log_count_summary("terrain primary selection reasons", &reason_counts);
+    log_count_summary("terrain primary audit flags", &flag_counts);
+    if selected_texture_count > 0 {
+        let percent = selected_support_like_count as f64 * 100.0 / selected_texture_count as f64;
+        info!(
+            "terrain primary selections with support-like clues: {selected_support_like_count}/{selected_texture_count} ({percent:.2}%)"
+        );
+    }
 
     Ok(())
 }
@@ -844,6 +1020,112 @@ fn inventory_notes(
         notes.push("not_decodable_as_dds_or_tga");
     }
     notes.join(";")
+}
+
+fn terrain_candidate_layers_summary(layers: &[TerrainDefinitionTextureLayer]) -> String {
+    layers
+        .iter()
+        .enumerate()
+        .map(|(index, layer)| {
+            format!(
+                "{}:id={}:path={}:rep={}:current_support={}:support_like={}:preferred_rep={}:unk4={}:unk6={}:unk7={}",
+                index,
+                layer
+                    .texture_id
+                    .map(|texture_id| texture_id.to_string())
+                    .unwrap_or_default(),
+                layer.path.as_deref().unwrap_or(""),
+                format_float(layer.texture_repetition),
+                bool_str(layer.is_support_layer_by_current_name_heuristic()),
+                bool_str(layer.has_support_like_name_clue()),
+                bool_str(layer.has_preferred_primary_repetition()),
+                layer.unk4,
+                layer.unk6,
+                layer.unk7
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn terrain_primary_audit_flags(
+    entry: &TerrainDefinitionEntry,
+    selected_layer: Option<&TerrainDefinitionTextureLayer>,
+    selection_reason: Option<TerrainDefinitionPrimaryLayerReason>,
+) -> String {
+    let mut flags = Vec::new();
+
+    let Some(texture) = entry.texture.as_ref() else {
+        flags.push("missing_texture_block");
+        return flags.join(";");
+    };
+    let Some(selected_layer) = selected_layer else {
+        flags.push("missing_selected_layer");
+        return flags.join(";");
+    };
+
+    if selected_layer.has_support_like_name_clue() {
+        flags.push("selected_support_like_name");
+    }
+    if selected_layer.is_support_layer_by_current_name_heuristic() {
+        flags.push("selected_current_support_heuristic");
+    }
+    if matches!(
+        selection_reason,
+        Some(TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback)
+            | Some(TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback)
+            | Some(TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback)
+    ) {
+        flags.push("fallback_selection_reason");
+    }
+
+    let preferred_non_support_count = texture
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer.texture_id.is_some()
+                && !layer.is_support_layer_by_current_name_heuristic()
+                && layer.has_preferred_primary_repetition()
+        })
+        .count();
+    if preferred_non_support_count > 1 {
+        flags.push("multiple_preferred_non_support_layers");
+    }
+
+    let selected_rank_peer_count = texture
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer.texture_id.is_some()
+                && layer.is_support_layer_by_current_name_heuristic()
+                    == selected_layer.is_support_layer_by_current_name_heuristic()
+                && layer.has_preferred_primary_repetition()
+                    == selected_layer.has_preferred_primary_repetition()
+        })
+        .count();
+    if selected_rank_peer_count > 1 {
+        flags.push("opaque_unk6_order_tiebreaker_involved");
+    }
+
+    let support_like_not_current_count = texture
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer.texture_id.is_some()
+                && layer.has_support_like_name_clue()
+                && !layer.is_support_layer_by_current_name_heuristic()
+        })
+        .count();
+    if support_like_not_current_count > 0 {
+        flags.push("support_like_outside_current_heuristic");
+    }
+
+    let selected_texture_id = selected_layer.texture_id;
+    if selected_texture_id.is_none() {
+        flags.push("selected_layer_missing_texture_id");
+    }
+
+    flags.join(";")
 }
 
 fn increment_count(counts: &mut BTreeMap<String, u64>, key: &str) {

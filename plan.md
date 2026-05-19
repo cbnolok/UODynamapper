@@ -8,6 +8,7 @@ Build a UOP-grounded EC material pipeline that preserves every potentially usefu
 - Commit the files changed for each completed, re-validated, and tested phase before starting the next phase.
 - Keep unrelated working-tree changes out of those commits.
 - Do not run `cargo fmt`; full workspace formatting is maintainer-only and happens at a specific human-controlled point in the development process.
+- Treat TerrainDefinition `unk6` as an opaque ordering value only. Do not use or describe it as a meaningful role flag unless audit evidence proves it is useful in at least 75% of relevant cases.
 
 **Evidence Tiers**
 - Original EC package evidence: tileart.uop, TerrainDefinition.uop, Texture.uop, LegacyTexture.uop, TerrainTexture.uop, EffectTexture.uop, string_dictionary.uop, and any additional directly referenced package families discovered by full scans.

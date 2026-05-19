@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::ec_material_audit::{
-    audit_ec_material_refs, inventory_ec_support_textures, write_ec_material_baseline_report,
+    audit_ec_material_refs, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
+    write_ec_material_baseline_report,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
@@ -312,6 +313,13 @@ enum Commands {
         #[arg(long, default_value = "ec_material_baseline.md")]
         output: PathBuf,
     },
+    /// Audits current TerrainDefinition primary texture selection and suspicious support-like choices.
+    AuditEcTerrainPrimarySelection {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "ec_terrain_primary_selection.csv")]
+        output: PathBuf,
+    },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
@@ -613,6 +621,14 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             write_ec_material_baseline_report(&out_file)?;
+        }
+        Commands::AuditEcTerrainPrimarySelection {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            audit_ec_terrain_primary_selection(&paths, &out_file)?;
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
