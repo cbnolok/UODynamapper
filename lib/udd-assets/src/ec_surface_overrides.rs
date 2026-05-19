@@ -36,7 +36,7 @@ impl EcSurfaceOverrides {
                 .cc_art = Some(CcArtOverride {
                     target_id: entry.target_id,
                     mode: entry.mode.clone(),
-                    reason: entry.reason.clone(),
+                    reason_code: entry.code.clone(),
                 });
         }
         for entry in &self.ec_material_entries {
@@ -45,14 +45,14 @@ impl EcSurfaceOverrides {
                 .ec_material = Some(EcMaterialOverride {
                     material_id: entry.material_id,
                     package: entry.package.clone(),
-                    reason: entry.reason.clone(),
+                    reason_code: entry.code.clone(),
                 });
         }
         for entry in &self.ignore_entries {
             map.entry(entry.cc_id)
                 .or_insert_with(|| EcSurfaceOverrideEntry::new(entry.cc_id))
                 .ignore = Some(IgnoreOverride {
-                    reason: entry.reason.clone(),
+                    reason_code: entry.code.clone(),
                 });
         }
         map
@@ -68,7 +68,7 @@ pub struct CcArtOverrideEntry {
     #[knuffel(property)]
     pub mode: String,
     #[knuffel(property)]
-    pub reason: Option<String>,
+    pub code: Option<String>,
 }
 
 #[derive(Decode, Debug, Clone)]
@@ -80,7 +80,7 @@ pub struct EcMaterialOverrideEntry {
     #[knuffel(property)]
     pub package: Option<String>,
     #[knuffel(property)]
-    pub reason: Option<String>,
+    pub code: Option<String>,
 }
 
 #[derive(Decode, Debug, Clone)]
@@ -88,7 +88,7 @@ pub struct IgnoreOverrideEntry {
     #[knuffel(argument)]
     pub cc_id: u32,
     #[knuffel(property)]
-    pub reason: Option<String>,
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,7 +140,7 @@ pub enum EcSurfaceOverrideAction<'a> {
 pub struct CcArtOverride {
     pub target_id: u32,
     pub mode: String,
-    pub reason: Option<String>,
+    pub reason_code: Option<String>,
 }
 
 impl CcArtOverride {
@@ -164,12 +164,12 @@ pub enum CcArtOverrideMode {
 pub struct EcMaterialOverride {
     pub material_id: u32,
     pub package: Option<String>,
-    pub reason: Option<String>,
+    pub reason_code: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IgnoreOverride {
-    pub reason: Option<String>,
+    pub reason_code: Option<String>,
 }
 
 #[cfg(test)]
@@ -181,10 +181,10 @@ mod tests {
         let overrides = EcSurfaceOverrides::parse(
             "test.kdl",
             r#"
-cc_art 39698 1170 mode="resolve-ec" reason="reuse reviewed material"
+cc_art 39698 1170 mode="resolve-ec" code="reuse_reviewed_material"
 cc_art 39699 40000 mode="raw-cc"
-ec_material 39700 1179 package="Texture.uop" reason="direct material"
-ignore 39805 reason="not ported"
+ec_material 39700 1179 package="Texture.uop" code="direct_material"
+ignore 39805 code="not_ported"
 "#,
         )
         .expect("parse overrides");
@@ -210,6 +210,6 @@ ignore 39805 reason="not ported"
         let EcSurfaceOverrideAction::Ignore(ignore) = map[&39805].action() else {
             panic!("expected ignore action");
         };
-        assert_eq!(ignore.reason.as_deref(), Some("not ported"));
+        assert_eq!(ignore.reason_code.as_deref(), Some("not_ported"));
     }
 }
