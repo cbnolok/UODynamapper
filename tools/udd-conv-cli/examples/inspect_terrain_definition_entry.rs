@@ -48,6 +48,19 @@ fn main() -> eyre::Result<()> {
         println!("  name_id={}", entry.name_id);
         println!("  name={:?}", entry.name);
         println!("  primary_texture_id={:?}", entry.primary_texture_id());
+        match entry.primary_texture_layer_with_reason() {
+            Some((layer, reason)) => {
+                println!("  primary_texture_reason={}", reason.as_str());
+                println!(
+                    "  primary_texture_layer path={:?} current_support={} support_like_clue={} preferred_repetition={}",
+                    layer.path,
+                    layer.is_support_layer_by_current_name_heuristic(),
+                    layer.has_support_like_name_clue(),
+                    layer.has_preferred_primary_repetition()
+                );
+            }
+            None => println!("  primary_texture_reason=missing"),
+        }
         println!("  aliases:");
         for alias in &entry.aliases {
             println!(
@@ -64,12 +77,15 @@ fn main() -> eyre::Result<()> {
                 println!("  layers:");
                 for (index, layer) in texture.layers.iter().enumerate() {
                     println!(
-                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} unk4={} unk6={} unk7={}",
+                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} unk4={} unk6={} unk7={}",
                         index,
                         layer.path,
                         layer.texture_id,
                         layer.texture_type,
                         layer.texture_repetition,
+                        layer.is_support_layer_by_current_name_heuristic(),
+                        layer.has_support_like_name_clue(),
+                        layer.has_preferred_primary_repetition(),
                         layer.unk4,
                         layer.unk6,
                         layer.unk7

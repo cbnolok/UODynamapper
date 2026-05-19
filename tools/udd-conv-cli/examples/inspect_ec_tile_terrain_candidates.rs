@@ -128,7 +128,10 @@ fn inspect_terrain_candidates(
             continue;
         }
 
-        let primary_match = entry.primary_texture_id() == Some(texture_id);
+        let primary_selection = entry.primary_texture_layer_with_reason();
+        let primary_match = primary_selection
+            .map(|(layer, _)| layer.texture_id == Some(texture_id))
+            .unwrap_or(false);
         let runtime_slot_ids = entry.runtime_slot_ids();
         if let Some(tex_land_ec) = tex_land_ec {
             for runtime_slot_id in &runtime_slot_ids {
@@ -180,6 +183,17 @@ fn inspect_terrain_candidates(
         println!("    name={:?}", entry.name);
         println!("    shader_name={:?}", entry.texture.as_ref().and_then(|texture| texture.shader_name.as_deref()));
         println!("    primary_texture_id={:?}", entry.primary_texture_id());
+        match entry.primary_texture_layer_with_reason() {
+            Some((layer, reason)) => println!(
+                "    primary_texture_reason={} current_support={} support_like_clue={} preferred_repetition={} path={:?}",
+                reason.as_str(),
+                layer.is_support_layer_by_current_name_heuristic(),
+                layer.has_support_like_name_clue(),
+                layer.has_preferred_primary_repetition(),
+                layer.path
+            ),
+            None => println!("    primary_texture_reason=missing"),
+        }
         println!("    primary_match={primary_match}");
         println!("    runtime_slot_ids={runtime_slot_ids:?}");
         if let Some(tex_land_ec) = tex_land_ec {
@@ -221,9 +235,12 @@ fn resolve_runtime_slot_for_material(
 
 fn print_matching_layer(index: usize, layer: &TerrainDefinitionTextureLayer) {
     println!(
-        "    layer[{index}] path={:?} repetition={} unk4={} unk6={} unk7={}",
+        "    layer[{index}] path={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} unk4={} unk6={} unk7={}",
         layer.path,
         layer.texture_repetition,
+        layer.is_support_layer_by_current_name_heuristic(),
+        layer.has_support_like_name_clue(),
+        layer.has_preferred_primary_repetition(),
         layer.unk4,
         layer.unk6,
         layer.unk7,

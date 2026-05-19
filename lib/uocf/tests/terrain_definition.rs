@@ -189,6 +189,14 @@ fn terrain_definition_primary_texture_ignores_support_layers() {
 
     assert_eq!(package.entries.len(), 1);
     assert_eq!(package.entries[0].primary_texture_id(), Some(2_000_540));
+    let (primary_layer, reason) = package.entries[0]
+        .primary_texture_layer_with_reason()
+        .expect("primary terrain layer");
+    assert_eq!(primary_layer.texture_id, Some(2_000_540));
+    assert_eq!(
+        reason,
+        TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback
+    );
     assert_eq!(package.texture_selections(), vec![(54, 2_000_540)]);
 
     let _ = std::fs::remove_file(dict_path);
@@ -247,5 +255,59 @@ fn terrain_definition_extract_texture_id_normalizes_dictionary_name_patterns() {
     assert_eq!(
         extract_texture_id_from_path("Data/TileArtEnhanced/02000540_Sand_Cliff_EW_A.tga"),
         Some(2000540)
+    );
+}
+
+#[test]
+fn terrain_definition_primary_reason_exposes_support_fallback() {
+    let entry = TerrainDefinitionEntry {
+        texture: Some(TerrainDefinitionTexture {
+            layers: vec![
+                TerrainDefinitionTextureLayer {
+                    texture_id: Some(10),
+                    path: Some("01000003_noise_alpha.tga".to_string()),
+                    texture_repetition: 8.0,
+                    name_string_off: 1,
+                    ..TerrainDefinitionTextureLayer::default()
+                },
+                TerrainDefinitionTextureLayer {
+                    texture_id: Some(20),
+                    path: Some("01000004_noise_mask.tga".to_string()),
+                    texture_repetition: 16.0,
+                    name_string_off: 2,
+                    ..TerrainDefinitionTextureLayer::default()
+                },
+            ],
+            ..TerrainDefinitionTexture::default()
+        }),
+        ..TerrainDefinitionEntry::default()
+    };
+
+    let (layer, reason) = entry
+        .primary_texture_layer_with_reason()
+        .expect("primary terrain layer");
+
+    assert_eq!(layer.texture_id, Some(10));
+    assert_eq!(
+        reason,
+        TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback
+    );
+    assert_eq!(reason.as_str(), "support_preferred_repetition_fallback");
+}
+
+#[test]
+fn terrain_definition_support_like_clue_is_broader_than_current_heuristic() {
+    let layer = TerrainDefinitionTextureLayer {
+        texture_id: Some(10),
+        path: Some("02000123alphaedge.tga".to_string()),
+        texture_repetition: 4.0,
+        ..TerrainDefinitionTextureLayer::default()
+    };
+
+    assert!(!layer.is_support_layer_by_current_name_heuristic());
+    assert!(layer.has_support_like_name_clue());
+    assert_eq!(
+        layer.current_primary_selection_reason(),
+        TerrainDefinitionPrimaryLayerReason::NonSupportPreferredRepetition
     );
 }

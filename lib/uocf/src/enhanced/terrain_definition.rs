@@ -49,11 +49,11 @@ pub struct TerrainDefinitionTextureLayer {
 }
 
 impl TerrainDefinitionTextureLayer {
-    fn is_primary_candidate(&self) -> bool {
+    pub fn has_preferred_primary_repetition(&self) -> bool {
         (4.0..=8.0).contains(&self.texture_repetition)
     }
 
-    fn is_support_layer(&self) -> bool {
+    pub fn is_support_layer_by_current_name_heuristic(&self) -> bool {
         let Some(path) = self.path.as_deref() else {
             return false;
         };
@@ -63,6 +63,53 @@ impl TerrainDefinitionTextureLayer {
             || path.contains("normal")
             || path.contains("mask")
             || path.contains("_alpha")
+    }
+
+    pub fn has_support_like_name_clue(&self) -> bool {
+        let Some(path) = self.path.as_deref() else {
+            return false;
+        };
+
+        let path = path.to_ascii_lowercase();
+        path.contains("alpha")
+            || path.contains("mask")
+            || path.contains("noise")
+            || path.contains("normal")
+            || path.contains("bump")
+            || path.contains("ripple")
+            || path.contains("flow")
+            || path.contains("distort")
+    }
+
+    pub fn current_primary_selection_reason(&self) -> TerrainDefinitionPrimaryLayerReason {
+        match (
+            self.is_support_layer_by_current_name_heuristic(),
+            self.has_preferred_primary_repetition(),
+        ) {
+            (false, true) => TerrainDefinitionPrimaryLayerReason::NonSupportPreferredRepetition,
+            (false, false) => TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback,
+            (true, true) => TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback,
+            (true, false) => TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerrainDefinitionPrimaryLayerReason {
+    NonSupportPreferredRepetition,
+    NonSupportRepetitionFallback,
+    SupportPreferredRepetitionFallback,
+    SupportRepetitionFallback,
+}
+
+impl TerrainDefinitionPrimaryLayerReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NonSupportPreferredRepetition => "non_support_preferred_repetition",
+            Self::NonSupportRepetitionFallback => "non_support_repetition_fallback",
+            Self::SupportPreferredRepetitionFallback => "support_preferred_repetition_fallback",
+            Self::SupportRepetitionFallback => "support_repetition_fallback",
+        }
     }
 }
 
@@ -183,6 +230,13 @@ impl TerrainDefinitionEntry {
     }
 
     pub fn primary_texture_id(&self) -> Option<u32> {
+        self.primary_texture_layer_with_reason()
+            .and_then(|(layer, _)| layer.texture_id)
+    }
+
+    pub fn primary_texture_layer_with_reason(
+        &self,
+    ) -> Option<(&TerrainDefinitionTextureLayer, TerrainDefinitionPrimaryLayerReason)> {
         let texture = self.texture.as_ref()?;
 
         texture
@@ -191,20 +245,20 @@ impl TerrainDefinitionEntry {
             .filter(|layer| layer.texture_id.is_some())
             .min_by(|left, right| {
                 let left_rank = (
-                    left.is_support_layer(),
-                    !left.is_primary_candidate(),
+                    left.is_support_layer_by_current_name_heuristic(),
+                    !left.has_preferred_primary_repetition(),
                     left.unk6,
                     left.name_string_off,
                 );
                 let right_rank = (
-                    right.is_support_layer(),
-                    !right.is_primary_candidate(),
+                    right.is_support_layer_by_current_name_heuristic(),
+                    !right.has_preferred_primary_repetition(),
                     right.unk6,
                     right.name_string_off,
                 );
                 left_rank.cmp(&right_rank)
             })
-            .and_then(|layer| layer.texture_id)
+            .map(|layer| (layer, layer.current_primary_selection_reason()))
     }
 }
 
@@ -330,6 +384,5 @@ fn find_neighboring_string_dictionary(path: &Path) -> Option<PathBuf> {
         .map(|name| parent.join(name))
         .find(|candidate| candidate.exists())
 }
-
 
 
