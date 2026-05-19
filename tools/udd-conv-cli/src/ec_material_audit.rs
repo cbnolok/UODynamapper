@@ -14,6 +14,7 @@ use csv::WriterBuilder;
 use log::info;
 use serde::Serialize;
 use udd_assets::{
+    cc_tex_land_ec_transcode::{LayerDef, TerrainDefEntry, TerrainDefinitionKdl},
     ec_surface_overrides::{
         CcArtOverrideMode, EcSurfaceOverrideAction, EcSurfaceOverrideEntry, EcSurfaceOverrides,
     },
@@ -385,6 +386,86 @@ pub fn audit_ec_terrain_primary_selection(
         );
     }
 
+    Ok(())
+}
+
+pub fn audit_ec_terrain_definition_kdl(
+    source_dirs: &[PathBuf],
+    kdl_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    let terrain_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
+        .ok_or_else(|| eyre::eyre!("missing TerrainDefinition.uop"))?;
+    let uop = uocf::enhanced::terrain_definition::TerrainDefinitionPackage::load(&terrain_path)?;
+    let kdl = TerrainDefinitionKdl::load(kdl_path)?;
+    let uop_by_id = uop
+        .entries
+        .iter()
+        .map(|entry| (entry.id, entry))
+        .collect::<HashMap<_, _>>();
+    let kdl_by_id = kdl
+        .entries
+        .iter()
+        .map(|entry| (entry.id, entry))
+        .collect::<HashMap<_, _>>();
+    let ids = uop_by_id
+        .keys()
+        .copied()
+        .chain(kdl_by_id.keys().copied())
+        .collect::<BTreeSet<_>>();
+
+    let mut entries = Vec::new();
+    let mut finding_counts = BTreeMap::<String, u64>::new();
+    let mut matched_id_count = 0usize;
+    let mut kdl_only_count = 0usize;
+    let mut uop_only_count = 0usize;
+
+    for id in ids {
+        let kdl_entry = kdl_by_id.get(&id).copied();
+        let uop_entry = uop_by_id.get(&id).copied();
+        match (kdl_entry.is_some(), uop_entry.is_some()) {
+            (true, true) => matched_id_count += 1,
+            (true, false) => kdl_only_count += 1,
+            (false, true) => uop_only_count += 1,
+            (false, false) => {}
+        }
+
+        let findings = terrain_definition_kdl_findings(kdl_entry, uop_entry);
+        for finding in &findings {
+            increment_count(&mut finding_counts, &finding.status);
+        }
+
+        entries.push(TerrainDefinitionKdlAuditEntry {
+            id,
+            kdl_present: kdl_entry.is_some(),
+            uop_present: uop_entry.is_some(),
+            kdl: kdl_entry.map(terrain_definition_kdl_entry_report),
+            uop: uop_entry.map(terrain_definition_uop_entry_report),
+            findings,
+        });
+    }
+
+    let report = TerrainDefinitionKdlAuditReport {
+        schema: "ec_terrain_definition_kdl_audit",
+        schema_version: 1,
+        summary: TerrainDefinitionKdlAuditSummary {
+            kdl_entry_count: kdl.entries.len(),
+            uop_entry_count: uop.entries.len(),
+            matched_id_count,
+            kdl_only_count,
+            uop_only_count,
+            finding_counts: finding_counts.clone(),
+        },
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
+
+    info!(
+        "wrote TerrainDefinition KDL audit JSON to '{}'",
+        output.display()
+    );
+    log_count_summary("TerrainDefinition KDL audit findings", &finding_counts);
     Ok(())
 }
 
@@ -1366,6 +1447,82 @@ struct TerrainLayerReport {
 }
 
 #[derive(Serialize)]
+struct TerrainDefinitionKdlAuditReport {
+    schema: &'static str,
+    schema_version: u32,
+    summary: TerrainDefinitionKdlAuditSummary,
+    entries: Vec<TerrainDefinitionKdlAuditEntry>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionKdlAuditSummary {
+    kdl_entry_count: usize,
+    uop_entry_count: usize,
+    matched_id_count: usize,
+    kdl_only_count: usize,
+    uop_only_count: usize,
+    finding_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionKdlAuditEntry {
+    id: u32,
+    kdl_present: bool,
+    uop_present: bool,
+    kdl: Option<TerrainDefinitionKdlEntryReport>,
+    uop: Option<TerrainDefinitionUopEntryReport>,
+    findings: Vec<TerrainDefinitionKdlFindingReport>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionKdlEntryReport {
+    terrain_type: String,
+    flags: Vec<String>,
+    speed: Option<f32>,
+    waveheight: Option<f32>,
+    textureid: Option<u32>,
+    layers: Vec<TerrainDefinitionKdlLayerReport>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionKdlLayerReport {
+    role: &'static str,
+    texture_id: u32,
+    stretch: f32,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionUopEntryReport {
+    name: Option<String>,
+    unknown_floats: [f32; 3],
+    alias_record_count: usize,
+    concrete_alias_count: usize,
+    runtime_slot_ids: Vec<u32>,
+    shader_name: Option<String>,
+    layers: Vec<TerrainDefinitionUopLayerReport>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionUopLayerReport {
+    layer_index: usize,
+    texture_id: Option<u32>,
+    repetition: f32,
+    path: Option<String>,
+    support_like_name: bool,
+    current_support_heuristic: bool,
+    unk4: u8,
+    unk6: i32,
+    unk7: i32,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionKdlFindingReport {
+    field: String,
+    status: String,
+    detail: String,
+}
+
+#[derive(Serialize)]
 struct SurfaceRedirectionReport {
     schema: &'static str,
     schema_version: u32,
@@ -2109,6 +2266,314 @@ fn terrain_layer_report(
         logical_family: terrain_texture_family_name(layer.texture_type, physical_package)
             .to_string(),
     }
+}
+
+fn terrain_definition_kdl_entry_report(
+    entry: &TerrainDefEntry,
+) -> TerrainDefinitionKdlEntryReport {
+    TerrainDefinitionKdlEntryReport {
+        terrain_type: entry.terrain_type.clone(),
+        flags: terrain_type_flags(&entry.terrain_type),
+        speed: entry.speed,
+        waveheight: entry.waveheight,
+        textureid: entry.textureid,
+        layers: kdl_layers(entry)
+            .into_iter()
+            .map(|(role, layer)| TerrainDefinitionKdlLayerReport {
+                role,
+                texture_id: layer.id,
+                stretch: layer.stretch,
+            })
+            .collect(),
+    }
+}
+
+fn terrain_definition_uop_entry_report(
+    entry: &TerrainDefinitionEntry,
+) -> TerrainDefinitionUopEntryReport {
+    TerrainDefinitionUopEntryReport {
+        name: entry.name.clone(),
+        unknown_floats: [entry.unk, entry.unk2, entry.unk3],
+        alias_record_count: entry.aliases.len(),
+        concrete_alias_count: entry.aliases.iter().filter(|alias| alias.alias != 0).count(),
+        runtime_slot_ids: entry.runtime_slot_ids(),
+        shader_name: entry
+            .texture
+            .as_ref()
+            .and_then(|texture| texture.shader_name.clone()),
+        layers: entry
+            .texture
+            .as_ref()
+            .map(|texture| {
+                texture
+                    .layers
+                    .iter()
+                    .enumerate()
+                    .map(|(layer_index, layer)| TerrainDefinitionUopLayerReport {
+                        layer_index,
+                        texture_id: layer.texture_id,
+                        repetition: layer.texture_repetition,
+                        path: layer.path.clone(),
+                        support_like_name: layer.has_support_like_name_clue(),
+                        current_support_heuristic: layer
+                            .is_support_layer_by_current_name_heuristic(),
+                        unk4: layer.unk4,
+                        unk6: layer.unk6,
+                        unk7: layer.unk7,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn terrain_definition_kdl_findings(
+    kdl_entry: Option<&TerrainDefEntry>,
+    uop_entry: Option<&TerrainDefinitionEntry>,
+) -> Vec<TerrainDefinitionKdlFindingReport> {
+    let mut findings = Vec::new();
+    match (kdl_entry, uop_entry) {
+        (Some(_), None) => {
+            findings.push(terrain_kdl_finding(
+                "entry",
+                "kdl_only_entry",
+                "KDL entry id has no TerrainDefinition.uop entry with the same id",
+            ));
+            return findings;
+        }
+        (None, Some(_)) => {
+            findings.push(terrain_kdl_finding(
+                "entry",
+                "uop_only_entry",
+                "TerrainDefinition.uop entry id has no KDL entry with the same id",
+            ));
+            return findings;
+        }
+        (None, None) => return findings,
+        (Some(_), Some(_)) => {}
+    }
+
+    let kdl_entry = kdl_entry.expect("checked");
+    let uop_entry = uop_entry.expect("checked");
+    let uop_layers = uop_entry
+        .texture
+        .as_ref()
+        .map(|texture| texture.layers.as_slice())
+        .unwrap_or(&[]);
+    let uop_texture_ids = uop_layers
+        .iter()
+        .filter_map(|layer| layer.texture_id)
+        .collect::<BTreeSet<_>>();
+
+    for flag in terrain_type_flags(&kdl_entry.terrain_type) {
+        let status = terrain_type_flag_status(&flag, uop_entry);
+        findings.push(terrain_kdl_finding(
+            &format!("terrain_type.{flag}"),
+            status,
+            terrain_type_flag_detail(&flag, uop_entry),
+        ));
+    }
+
+    if let Some(speed) = kdl_entry.speed {
+        findings.push(terrain_kdl_float_finding("speed", speed, uop_entry));
+    }
+    if let Some(waveheight) = kdl_entry.waveheight {
+        findings.push(terrain_kdl_float_finding("waveheight", waveheight, uop_entry));
+    }
+    if let Some(textureid) = kdl_entry.textureid {
+        let status = if uop_texture_ids.contains(&textureid) {
+            "matches_uop_layer_texture"
+        } else {
+            "kdl_only_texture_id"
+        };
+        findings.push(terrain_kdl_finding(
+            "textureid",
+            status,
+            format!("KDL textureid={textureid}"),
+        ));
+    }
+
+    for (role, layer) in kdl_layers(kdl_entry) {
+        findings.push(terrain_kdl_layer_finding(role, layer, uop_layers));
+    }
+
+    for uop_layer in uop_layers {
+        if let Some(texture_id) = uop_layer.texture_id {
+            let in_kdl = kdl_layers(kdl_entry)
+                .iter()
+                .any(|(_, kdl_layer)| kdl_layer.id == texture_id);
+            if !in_kdl {
+                findings.push(terrain_kdl_finding(
+                    &format!("uop_layer.{texture_id}"),
+                    "uop_only_layer_texture",
+                    uop_layer
+                        .path
+                        .clone()
+                        .unwrap_or_else(|| "missing path".to_string()),
+                ));
+            }
+        }
+    }
+
+    findings
+}
+
+fn terrain_type_flags(terrain_type: &str) -> Vec<String> {
+    terrain_type
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn terrain_type_flag_status(flag: &str, entry: &TerrainDefinitionEntry) -> &'static str {
+    let shader = entry
+        .texture
+        .as_ref()
+        .and_then(|texture| texture.shader_name.as_deref())
+        .unwrap_or("");
+    match flag {
+        "Liquid" if shader.to_ascii_lowercase().contains("water") => {
+            "inferable_from_uop_shader"
+        }
+        "Single" if entry.texture.as_ref().is_some_and(|texture| texture.layers.len() == 1) => {
+            "inferable_from_uop_layer_count"
+        }
+        "Solid" => "default_policy_not_direct_uop",
+        "Smooth" | "FollowCenter" => "kdl_only_runtime_policy",
+        _ => "kdl_only_or_unproven",
+    }
+}
+
+fn terrain_type_flag_detail(flag: &str, entry: &TerrainDefinitionEntry) -> String {
+    let shader = entry
+        .texture
+        .as_ref()
+        .and_then(|texture| texture.shader_name.clone())
+        .unwrap_or_else(|| "missing shader".to_string());
+    format!("flag={flag}; uop_shader={shader}")
+}
+
+fn terrain_kdl_float_finding(
+    field: &'static str,
+    value: f32,
+    entry: &TerrainDefinitionEntry,
+) -> TerrainDefinitionKdlFindingReport {
+    let unknowns = [entry.unk, entry.unk2, entry.unk3];
+    let status = if unknowns
+        .iter()
+        .any(|unknown| floats_match(*unknown, value))
+    {
+        "matches_uop_unknown_float"
+    } else {
+        "kdl_only_no_known_uop_field"
+    };
+    terrain_kdl_finding(
+        field,
+        status,
+        format!(
+            "kdl={value}; uop_unknowns={},{},{}",
+            entry.unk, entry.unk2, entry.unk3
+        ),
+    )
+}
+
+fn terrain_kdl_layer_finding(
+    role: &'static str,
+    kdl_layer: &LayerDef,
+    uop_layers: &[TerrainDefinitionTextureLayer],
+) -> TerrainDefinitionKdlFindingReport {
+    let matching_layers = uop_layers
+        .iter()
+        .enumerate()
+        .filter(|(_, layer)| layer.texture_id == Some(kdl_layer.id))
+        .collect::<Vec<_>>();
+
+    if matching_layers.is_empty() {
+        return terrain_kdl_finding(
+            &format!("layer.{role}"),
+            "kdl_only_layer_texture",
+            format!("texture_id={}; stretch={}", kdl_layer.id, kdl_layer.stretch),
+        );
+    }
+
+    let stretch_match = matching_layers.iter().any(|(_, layer)| {
+        floats_match(layer.texture_repetition, kdl_layer.stretch)
+    });
+    let support_name_match = matching_layers
+        .iter()
+        .any(|(_, layer)| terrain_role_matches_layer_name(role, layer));
+    let status = match (stretch_match, support_name_match) {
+        (true, true) => "matches_uop_layer_and_role_name",
+        (true, false) => "matches_uop_layer_id_and_stretch",
+        (false, true) => "matches_uop_layer_id_and_role_name",
+        (false, false) => "matches_uop_layer_id_only",
+    };
+    let layer_descriptions = matching_layers
+        .iter()
+        .map(|(index, layer)| {
+            format!(
+                "uop_index={index}; repetition={}; path={}",
+                layer.texture_repetition,
+                layer.path.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    terrain_kdl_finding(
+        &format!("layer.{role}"),
+        status,
+        format!(
+            "kdl_texture_id={}; kdl_stretch={}; {layer_descriptions}",
+            kdl_layer.id, kdl_layer.stretch
+        ),
+    )
+}
+
+fn terrain_role_matches_layer_name(role: &str, layer: &TerrainDefinitionTextureLayer) -> bool {
+    let path = layer
+        .path
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match role {
+        "m" => path.contains("mask") || path.contains("alpha"),
+        "n" => path.contains("normal") || path.contains("bump") || path.contains("ripple"),
+        "t0" | "t1" => !layer.has_support_like_name_clue(),
+        "s" => true,
+        _ => false,
+    }
+}
+
+fn kdl_layers(entry: &TerrainDefEntry) -> Vec<(&'static str, &LayerDef)> {
+    [
+        ("t0", entry.t0.as_ref()),
+        ("t1", entry.t1.as_ref()),
+        ("m", entry.m.as_ref()),
+        ("s", entry.s.as_ref()),
+        ("n", entry.n.as_ref()),
+    ]
+    .into_iter()
+    .filter_map(|(role, layer)| layer.map(|layer| (role, layer)))
+    .collect()
+}
+
+fn terrain_kdl_finding(
+    field: impl Into<String>,
+    status: impl Into<String>,
+    detail: impl Into<String>,
+) -> TerrainDefinitionKdlFindingReport {
+    TerrainDefinitionKdlFindingReport {
+        field: field.into(),
+        status: status.into(),
+        detail: detail.into(),
+    }
+}
+
+fn floats_match(left: f32, right: f32) -> bool {
+    (left - right).abs() <= 0.001
 }
 
 fn terrain_primary_audit_flags(

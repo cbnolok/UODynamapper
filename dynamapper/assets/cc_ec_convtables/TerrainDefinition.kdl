@@ -480,7 +480,7 @@ d 68 "Solid" {
 }
 
 // Planks in sand (E-W)
-d 19 Solid
+d 19 "Solid"
 
 // Swamp2
 d 69 "Solid" {
@@ -495,7 +495,7 @@ d 70 "Liquid,Smooth" speed=0.01 waveheight=0.3 {
     s 02000704 10
     n 02000703 16
 }
-d 71 Solid
+d 71 "Solid"
 
 // Tile (terra cotta) Plain
 d 72 "Solid" {
@@ -1099,4 +1099,3 @@ d 200 "Solid"
 // d 189 "Solid" {
 //     t0 00000000 1
 // }
-
