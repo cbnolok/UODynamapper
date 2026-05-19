@@ -72,6 +72,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 0
+enable_grunge = 0
+grunge_strength = 0.0
+light_decal_intensity = 1.0
+enable_normal_maps = 0
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -119,6 +124,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 0
+enable_grunge = 0
+grunge_strength = 0.0
+light_decal_intensity = 1.0
+enable_normal_maps = 0
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -166,6 +176,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 0
+enable_grunge = 0
+grunge_strength = 0.0
+light_decal_intensity = 1.0
+enable_normal_maps = 0
 
 [classic.night.lighting]
 enable_fog = 0
@@ -213,6 +228,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 0
+enable_grunge = 0
+grunge_strength = 0.0
+light_decal_intensity = 1.0
+enable_normal_maps = 0
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -265,6 +285,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 1
+enable_grunge = 1
+grunge_strength = 0.18
+light_decal_intensity = 0.75
+enable_normal_maps = 0
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -311,6 +336,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 1
+enable_grunge = 1
+grunge_strength = 0.18
+light_decal_intensity = 0.75
+enable_normal_maps = 0
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -357,6 +387,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 1
+enable_grunge = 1
+grunge_strength = 0.18
+light_decal_intensity = 0.75
+enable_normal_maps = 0
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -403,6 +438,11 @@ sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
 enable_water_animation = 1
+post_process_profile = 1
+enable_grunge = 1
+grunge_strength = 0.18
+light_decal_intensity = 0.75
+enable_normal_maps = 0
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -455,6 +495,11 @@ sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
 enable_water_animation = 1
+post_process_profile = 2
+enable_grunge = 1
+grunge_strength = 0.75
+light_decal_intensity = 1.35
+enable_normal_maps = 0
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -501,6 +546,11 @@ sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
 enable_water_animation = 1
+post_process_profile = 2
+enable_grunge = 1
+grunge_strength = 0.75
+light_decal_intensity = 1.35
+enable_normal_maps = 0
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -547,6 +597,11 @@ sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
 enable_water_animation = 1
+post_process_profile = 2
+enable_grunge = 1
+grunge_strength = 0.75
+light_decal_intensity = 1.35
+enable_normal_maps = 0
 
 [kr.night.lighting]
 enable_fog = 1
@@ -593,6 +648,11 @@ sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
 enable_water_animation = 1
+post_process_profile = 2
+enable_grunge = 1
+grunge_strength = 0.75
+light_decal_intensity = 1.35
+enable_normal_maps = 0
 
 [kr.cave.lighting]
 enable_fog = 1

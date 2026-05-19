@@ -131,7 +131,8 @@ pub struct LandEffectsUniform {
     pub enable_blur: u32,
     pub enable_linear_filtering: u32,
 
-    // --- Graphics / texture reconstruction (vec4 slot 1) ---
+    // --- Graphics controls (vec4 slot 1) ---
+    /// Reserved for layout compatibility; shader upscaling/reconstruction is disabled.
     pub reconstruction_mode: u32,
     pub sharpening_amount: f32,
     /// Mix factor (0..1) with blurred albedo.
@@ -143,12 +144,27 @@ pub struct LandEffectsUniform {
     /// 1 = apply sin/cos UV distortion to IsWet tiles; 0 = disable.
     /// Automatically suppressed at high zoom (> 10) in the shader.
     pub enable_water_animation: u32,
+    /// 0 = neutral/current, 1 = Enhanced Client, 2 = Kingdom Reborn.
+    #[serde(default)]
+    pub post_process_profile: u32,
+    /// Procedural world-space grunge/weathering multiplier.
+    #[serde(default)]
+    pub enable_grunge: u32,
     #[serde(default)]
     pub _pad_eff0: u32,
+
+    // --- Atmosphere controls (vec4 slot 3) ---
+    /// Strength of procedural grunge/weathering on terrain and art.
+    #[serde(default)]
+    pub grunge_strength: f32,
+    /// Reserved for future additive light decals.
+    #[serde(default)]
+    pub light_decal_intensity: f32,
+    /// Reserved for future texture normal-map atlas sampling.
+    #[serde(default)]
+    pub enable_normal_maps: u32,
     #[serde(default)]
     pub _pad_eff1: u32,
-    #[serde(default)]
-    pub _pad_eff2: u32,
 }
 
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).

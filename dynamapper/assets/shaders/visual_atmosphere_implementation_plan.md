@@ -6,6 +6,81 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 
 ---
 
+## Current Implementation Status
+
+### Implemented
+1.  **Shared visual profile uniform**
+    *   `LandEffectsUniform.post_process_profile` exists.
+    *   Values:
+        *   `0 = Neutral`
+        *   `1 = Enhanced Client (EC)`
+        *   `2 = Kingdom Reborn (KR)`
+    *   The same profile is pushed to land, art sprites, and ground art.
+
+2.  **Shared tonemapping helpers**
+    *   `dynamapper/assets/shaders/postprocess/tonemapping.wgsl` contains shared tonemap logic.
+    *   Land and art shaders call the same EC/KR-aware tone curve.
+    *   EC currently uses a neutral/lower-luminance profile.
+    *   KR currently uses the KR-like constants: `luminance = 2.0`, `middle_gray = 0.18`, `white_cutoff = 0.8`.
+
+3.  **Shared global lighting helper**
+    *   `dynamapper/assets/shaders/postprocess/global_lighting.wgsl` contains scene-wide lighting scale logic.
+    *   Land and art shaders use this shared helper.
+
+4.  **Shared color grading helper**
+    *   `dynamapper/assets/shaders/postprocess/color_grading.wgsl` contains the shared vibrant grading logic.
+    *   Land and art shaders use the same grading path before tonemapping.
+
+5.  **Procedural grunge/weathering**
+    *   `dynamapper/assets/shaders/postprocess/grunge.wgsl` contains procedural world-space grunge.
+    *   The effect applies to land, art sprites, and ground art.
+    *   `enable_grunge` and `grunge_strength` are exposed in `LandEffectsUniform`.
+    *   Presets use:
+        *   Classic: grunge off.
+        *   EC: subtle grunge.
+        *   KR: stronger grunge.
+
+6.  **UI controls**
+    *   Terrain shader UI exposes:
+        *   Visual Profile: `Neutral / EC / KR`
+        *   Grunge / Weathering
+        *   Grunge Strength
+    *   `light_decal_intensity` and `enable_normal_maps` are reserved in the uniform but not active.
+
+7.  **Preset defaults**
+    *   `dynamapper/assets/defaults/shader_presets.toml` has profile/grunge defaults for Classic, EC, and KR slots.
+
+### Still Missing
+1.  **Real fullscreen EC/KR post-process pipeline**
+    *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.
+    *   Bloom, bright-pass extraction, downscale, blur, and final additive bloom composite are not implemented in the Bevy render graph yet.
+    *   Reference shaders remain in:
+        *   `dynamapper/assets/shaders/postprocess_ec_doc/`
+        *   `dynamapper/assets/shaders/postprocess_kr_doc/`
+
+2.  **Texture-backed grunge**
+    *   Current grunge is procedural.
+    *   KR/EC-style grunge texture loading and binding (`noise.tga` or equivalent DDS) is not implemented.
+    *   A future implementation should add a shared grunge texture binding and replace or blend with the procedural fallback.
+
+3.  **Dynamic additive light decals**
+    *   `light_decal_intensity` exists as a reserved uniform field.
+    *   There is no extraction/spawn system for `world_lights.uddp`.
+    *   There is no light decal mesh/material/draw path.
+    *   There is no ordering guarantee that additive lights render before fullscreen tonemap/bloom.
+
+4.  **Texture normal maps**
+    *   `enable_normal_maps` exists as a reserved uniform field.
+    *   There is no normal-map atlas or material binding.
+    *   `sampling.wgsl` does not yet provide `sample_tile_normal()`.
+    *   Land shading still uses geometric/bicubic terrain normals, not tangent-space texture normals.
+
+5.  **Post-process settings resource**
+    *   There is not yet a dedicated `PostProcessSettings` resource/uniform for fullscreen profile constants.
+    *   The current profile is carried through `LandEffectsUniform` because the active implementation runs in land/art material shaders.
+
+---
+
 ## 1. Tonemapping and Exposure (The Post-Processing Pipeline)
 
 The core driver of the overall mood in both clients is the screen-space post-processing pipeline, specifically the Reinhard Tonemapper. 
@@ -15,9 +90,11 @@ The core driver of the overall mood in both clients is the screen-space post-pro
 *   **EC Approach (The Brightness):** While EC uses the exact same shader binary (`F6`), the engine either disables the tonemap pass entirely or overrides the `Luminance` uniform at runtime to a much lower value (e.g., `0.2`), mapping the HDR colors 1:1 to the monitor without crushing them.
 
 ### Implementation Steps (UODynamapper)
-1.  **Integrate Post-Processing:** Add a Bevy custom `PostProcessPass` using the translated `kr_bloom_pipeline.wgsl`.
-2.  **Expose Uniforms:** Create a `PostProcessSettings` uniform buffer that controls the constants.
-3.  **Toggle Settings:**
+1.  **DONE (material path):** Add shared EC/KR-aware tonemapping helpers in `postprocess/tonemapping.wgsl`.
+2.  **DONE (material path):** Expose `post_process_profile` through the shared effects uniform and presets.
+3.  **TODO (fullscreen path):** Add a Bevy custom `PostProcessPass` using the translated `kr_bloom_pipeline.wgsl`.
+4.  **TODO (fullscreen path):** Create a `PostProcessSettings` uniform buffer that controls the constants independently of material uniforms.
+5.  **TODO (fullscreen path):** Toggle settings:
     *   *KR Preset:* Set `luminance = 2.0`, `middle_gray = 0.18`, `white_cutoff = 0.8`, `bloom_scale = 2.0`.
     *   *EC Preset:* Bypass tonemapping entirely, or set `luminance = 0.18` (neutral exposure) and lower `bloom_scale`.
 
@@ -32,10 +109,13 @@ To make repeating tiles look organic and "painterly," the engine multiplies surf
 *   **EC Approach:** Uses grunge much more sparingly, relying on the inherently brighter, cleaner textures to carry the visual weight.
 
 ### Implementation Steps (UODynamapper)
-1.  **Asset Loading:** Load `noise.tga` (or the equivalent DDS) as a global `Image` resource.
-2.  **Shader Binding:** Bind the noise texture to `sampling.wgsl` and `mesh_material.wgsl`.
-3.  **World-Space Multiplication:** In the fragment shader, sample the noise texture using world-space UVs (e.g., `world_pos.xz * 0.05`) so it spans seamlessly across multiple terrain tiles.
-4.  **Application:** 
+1.  **DONE (procedural fallback):** Add procedural world-space grunge in `postprocess/grunge.wgsl`.
+2.  **DONE:** Apply grunge to land, art sprites, and ground art.
+3.  **DONE:** Expose `enable_grunge` and `grunge_strength`.
+4.  **TODO (texture-backed KR/EC parity):** Load `noise.tga` (or the equivalent DDS) as a global `Image` resource.
+5.  **TODO (texture-backed KR/EC parity):** Bind the noise texture to land/art shader materials.
+6.  **TODO (texture-backed KR/EC parity):** Sample the noise texture using world-space UVs (e.g., `world_pos.xz * 0.05`) so it spans seamlessly across multiple terrain tiles.
+7.  **Target application:** 
     *   `out_color.rgb *= mix(vec3(1.0), noise_sample.rgb, grunge_strength);`
     *   Expose `grunge_strength` as a uniform (1.0 for KR, 0.0-0.2 for EC).
 
@@ -50,9 +130,11 @@ Because full 3D normal-mapped point lights are expensive, both clients use 2D gl
 *   **EC Approach:** Because the base scene is already bright, the additive decals are less noticeable and look more like flat color overlays rather than true illumination.
 
 ### Implementation Steps (UODynamapper)
-1.  **Light Extraction:** Use the `world_lights.uddp` package to spawn light entities at their correct world coordinates.
-2.  **Billboard System:** Instead of standard Bevy `PointLight` components (which are true 3D lights), spawn 2D Quads (billboards) flat against the terrain.
-3.  **Material Setup:** 
+1.  **TODO:** Use the `world_lights.uddp` package to spawn light entities at their correct world coordinates.
+2.  **TODO:** Instead of standard Bevy `PointLight` components (which are true 3D lights), spawn 2D quads/billboards flat against or slightly above the terrain.
+3.  **TODO:** Add a dedicated light decal material and draw path.
+4.  **TODO:** Feed `light_decal_intensity` into that material once the draw path exists.
+5.  **TODO:** Material setup:
     *   Assign the extracted light PNGs (starburst, soft radial, directional beams) to the quads.
     *   Set the material `blend_mode` to **Additive** (`BlendState::ADDITIVE`).
     *   Multiply the texture by the light's designated color/hue.
@@ -69,9 +151,12 @@ We have confirmed that the assets contain tangent-space normal maps (the purplis
 *   **EC Approach:** Normal maps were largely discarded or ignored to improve performance and flatten the look back to the classic 2D aesthetic.
 
 ### Implementation Steps (UODynamapper)
-1.  **Atlas Expansion:** The current tile atlas (`tex_land_ec_page_atlas`) only holds the Albedo (color) map. It must be expanded to a struct or multiple arrays to hold the corresponding Normal map pages.
-2.  **Shader Update (`sampling.wgsl`):** Create a `sample_tile_normal()` function that fetches from the normal atlas.
-3.  **Directional Lighting:** In the main fragment shader, calculate basic N dot L lighting:
+1.  **TODO:** Expand the current tile atlas (`tex_land_ec_page_atlas`) or add parallel texture arrays/pages to hold corresponding normal maps.
+2.  **TODO:** Add Rust material bindings for the normal-map atlas.
+3.  **TODO:** Add metadata linking albedo pages to normal-map pages.
+4.  **TODO:** Add `sample_tile_normal()` in `sampling.wgsl`.
+5.  **TODO:** Use `enable_normal_maps` to switch between texture normals and current geometry/bicubic terrain normals.
+6.  **Target directional lighting:** In the main fragment shader, calculate basic N dot L lighting:
     ```wgsl
     let normal_sample = sample_tile_normal(uv);
     let world_normal = normalize(normal_sample.xyz * 2.0 - 1.0); // Convert from [0,1] to [-1,1]
@@ -79,7 +164,8 @@ We have confirmed that the assets contain tangent-space normal maps (the purplis
     let light_intensity = max(dot(world_normal, sun_dir), 0.2); // 0.2 is ambient baseline
     base_albedo *= light_intensity;
     ```
-4.  **Toggle:** Expose an `enable_normal_mapping` flag in the terrain uniforms to disable this entirely for the EC preset.
+7.  **DONE (reserved only):** Expose an `enable_normal_maps` field in the shared effects uniform.
+8.  **TODO:** Make the reserved toggle active once the normal atlas exists.
 
 ---
 
@@ -87,7 +173,16 @@ We have confirmed that the assets contain tangent-space normal maps (the purplis
 
 To allow the user to transition between EC and KR visually, the `LandEffectsUniform` and global `SceneSettings` must expose:
 
-1.  **`post_process_profile`**: Enum `[Disabled, EC, KR]`. Drives the uniform constants sent to `kr_bloom_pipeline.wgsl`.
-2.  **`grunge_strength`**: Float `[0.0 - 1.0]`. Controls the opacity of the `noise.tga` multiplication on terrain/statics.
-3.  **`enable_normal_maps`**: Boolean. Toggles whether the directional lighting pass is calculated in the fragment shader.
-4.  **`light_decal_intensity`**: Float. Scales the alpha multiplier of the additive 2D light quads.
+1.  **`post_process_profile`**: Enum `[Neutral, EC, KR]`.
+    *   Current: drives material-shader tonemap constants.
+    *   Future: should drive fullscreen `PostProcessSettings` once bloom/tonemap is moved to a real post-process pass.
+2.  **`enable_grunge`**: Boolean. Enables shared grunge/weathering.
+3.  **`grunge_strength`**: Float `[0.0 - 1.0]`.
+    *   Current: controls procedural grunge on terrain/statics.
+    *   Future: should control texture-backed `noise.tga`/DDS grunge.
+4.  **`enable_normal_maps`**: Boolean.
+    *   Current: reserved.
+    *   Future: toggles texture normal-map sampling once normal atlas bindings exist.
+5.  **`light_decal_intensity`**: Float.
+    *   Current: reserved.
+    *   Future: scales the alpha/intensity multiplier of additive 2D light quads.

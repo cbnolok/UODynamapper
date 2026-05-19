@@ -1,12 +1,7 @@
 // ============================================================================
 // land::sampling — Texture sampling helpers for terrain tile albedo.
 //
-//  Supports three reconstruction modes (selected via effects.reconstruction_mode):
-//   0 = Nearest (direct textureLoad or textureSample)
-//   1 = Bicubic  (Mitchell-Netravali 4×4 kernel)
-//   2 = FSR EASU edge-adaptive (AMD FidelityFX Super Resolution 1.0)
-//
-//  Also provides an optional 9-tap blur (blurred_albedo) and unsharp-mask
+//  Provides direct texture sampling, optional 9-tap blur (blurred_albedo), and unsharp-mask
 //  sharpening (apply_sharpening), plus gradient-stable variants for the blur.
 // ============================================================================
 //
@@ -35,8 +30,6 @@
 
 #import "shaders/worldmap/common_bindings.wgsl"::{LandEffectsUniform}
 #import "shaders/worldmap/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, tex_small_sampler, effects}
-#import "shaders/worldmap/land/lighting.wgsl"::{luminance}
-#import "shaders/worldmap/land/fsr_easu.wgsl"::{sample_tile_fsr_easu}
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
@@ -113,29 +106,6 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   }
 }
 
-// Integer-coordinate nearest tap — used by FSR and blur.
-// For EC tiles, iuv should be derived from the world-space tiling UV
-// (see ec_world_uv) scaled to the texture's pixel dimensions.
-fn sample_tile_albedo_at(iuv: vec2<i32>, tile: TileUniform) -> vec3<f32> {
-  let layer: i32 = i32(tile.texture_layer);
-  if (tile.texture_size == 3u) {
-    return vec3<f32>(0.0);
-  }
-  if (tile.texture_size == 2u || tile.texture_size == 4u) {
-    // iuv here is already a [0..extent) pixel coordinate within the texture slot.
-    let local_iuv = clamp(iuv, vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
-    let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
-    return textureLoad(land_page_atlas, atlas_iuv, layer, 0).rgb;
-  }
-  if (tile.texture_size == 1u) {
-    let dims = vec2<i32>(textureDimensions(tex_big));
-    return textureLoad(tex_big, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
-  } else {
-    let dims = vec2<i32>(textureDimensions(tex_small));
-    return textureLoad(tex_small, clamp(iuv, vec2<i32>(0), dims - 1), layer, 0).rgb;
-  }
-}
-
 // Gradient-stable tap: explicit dPdx/dPdy keep LOD consistent across multi-tap
 // blur kernels, matching the mip chosen at the center tap.
 // NOTE: the WGSL signature is textureSampleGrad(tex, sampler, uv, layer, ddx, ddy).
@@ -180,71 +150,6 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
       return textureLoad(tex_small, iuv, layer, 0).rgb;
     }
   }
-}
-
-// ============================================================================
-// Reconstruction modes
-// ============================================================================
-
-// Mitchell-Netravali cubic weight (used by bicubic reconstruction)
-fn cubic_weight(f: f32, i: f32) -> f32 {
-    let x = abs(f - i);
-    if (x <= 1.0) {
-        return (1.5 * x - 2.5) * x * x + 1.0;
-    } else if (x <= 2.0) {
-        return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
-    }
-    return 0.0;
-}
-
-// Bicubic reconstruction: smooth 4×4 tap kernel around the sample point.
-fn sample_tile_bicubic(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  var dims = vec2<f32>(0.0);
-  if (tile.texture_size == 2u || tile.texture_size == 4u) {
-    dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
-  } else {
-    dims = select(vec2<f32>(textureDimensions(tex_small)), vec2<f32>(textureDimensions(tex_big)), tile.texture_size == 1u);
-  }
-  let f_uv = uv * dims - 0.5;
-  let i_uv = floor(f_uv);
-  let f = fract(f_uv);
-
-  var result = vec3<f32>(0.0);
-  var total_weight = 0.0;
-
-  for (var j: i32 = -1; j <= 2; j++) {
-    let v_weight = cubic_weight(f.y, f32(j));
-    for (var i: i32 = -1; i <= 2; i++) {
-        let h_weight = cubic_weight(f.x, f32(i));
-        let weight = h_weight * v_weight;
-        let sample_uv = (i_uv + vec2<f32>(f32(i), f32(j)) + 0.5) / dims;
-        result += sample_tile_albedo(clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(1.0)), tile) * weight;
-        total_weight += weight;
-    }
-  }
-  return result / total_weight;
-}
-
-// FSR EASU edge-adaptive reconstruction (12-tap directional Lanczos-like kernel).
-// Full AMD FidelityFX Super Resolution 1.0 EASU — see fsr_easu.wgsl.
-fn sample_tile_fsr(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  return sample_tile_fsr_easu(uv, tile);
-}
-
-// Dispatch to the correct reconstruction mode (0=nearest, 1=bicubic, 2=FSR-like)
-fn sample_tile_reconstructed(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  if (tile.texture_size == 3u) {
-    return vec3<f32>(0.0);
-  }
-
-    let mode = effects.reconstruction_mode;
-    if (mode == 1u) {
-        return sample_tile_bicubic(uv, tile);
-    } else if (mode == 2u || mode == 4u) {
-        return sample_tile_fsr(uv, tile);
-    } else {
-        return sample_tile_albedo(uv, tile);
-    }
 }
 
 // ============================================================================

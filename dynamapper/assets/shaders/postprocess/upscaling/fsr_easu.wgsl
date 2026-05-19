@@ -1,5 +1,5 @@
 // ============================================================================
-// land::fsr_easu — FSR (FidelityFX Super Resolution) EASU pass
+// postprocess::upscaling::fsr_easu — FSR (FidelityFX Super Resolution) EASU pass
 //
 //  Edge Adaptive Spatial Upsampling — a 12-tap directional kernel that
 //  detects edges via luma gradients, stretches along them, and applies a
@@ -9,8 +9,7 @@
 //  Reference: https://www.shadertoy.com/view/stXSWB
 // ============================================================================
 
-#import "shaders/worldmap/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, tex_small_sampler}
-#import "shaders/worldmap/land/lighting.wgsl"::{luminance}
+#import "shaders/worldmap/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas}
 
 // ============================================================================
 // Texel fetch helper — integer-coordinate nearest tap

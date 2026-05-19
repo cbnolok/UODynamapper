@@ -29,10 +29,13 @@
 #import "shaders/worldmap/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
 #import "shaders/worldmap/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
 #import "shaders/worldmap/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
-#import "shaders/worldmap/land/lighting.wgsl"::{luminance, grade_color_vibrant, tonemap_reinhard_with_exposure}
+#import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
+#import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
+#import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
+#import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/worldmap/land/sampling.wgsl"::{
   ec_world_uv,
-  sample_tile_albedo, sample_tile_reconstructed,
+  sample_tile_albedo,
   apply_sharpening, blurred_albedo,
 }
 #import "shaders/worldmap/land/shading.wgsl"::{
@@ -113,6 +116,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let shading_mode   = effects.shading_mode;
   let enable_tonemap = global_light.enable_tonemap;
   let enable_grading = global_light.enable_grading;
+  let visual_profile = effects.post_process_profile;
 
   // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
   if (shading_mode == 3u) {
@@ -120,7 +124,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
-  // zoom > 5  : bicubic/FSR reconstruction → nearest (saves ~15 tex reads)
   // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)
   // zoom > 20 : disable bent normals (saves ~4 tex reads)
   // zoom > 30 : disable volumetric fog → flat fog (saves heavy FBM ALU)
@@ -131,12 +134,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var enable_gloom   = global_light.enable_gloom;
   var enable_blur    = effects.enable_blur;
   var use_volumetric_fog = USE_VOLUMETRIC_NOISE == 1u;
-  var force_nearest  = false;
   var disable_sharpen = false;
 
-  if (zoom > 5.0) {
-    force_nearest = true;  // skip bicubic/FSR, use direct nearest sample
-  }
   if (zoom > 10.0) {
     enable_blur = 0u;      // skip 9-tap blur
     disable_sharpen = true; // skip sharpening (4 extra taps)
@@ -235,12 +234,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv_q = (floor(sample_uv * cells) + vec2<f32>(0.5)) / cells;
     base_albedo = sample_tile_albedo(uv_q, tile);
   } else {
-    // force_nearest: skip bicubic/FSR at high zoom to save ~15 tex reads per pixel
-    if (force_nearest) {
-      base_albedo = sample_tile_albedo(sample_uv, tile);
-    } else {
-      base_albedo = sample_tile_reconstructed(sample_uv, tile);
-    }
+    base_albedo = sample_tile_albedo(sample_uv, tile);
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
       let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
@@ -248,6 +242,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (!disable_sharpen && effects.sharpening_amount > 0.0) {
       base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount);
     }
+  }
+  if (effects.enable_grunge == 1u) {
+    base_albedo = apply_visual_grunge(base_albedo, in.world_position.xz, effects.grunge_strength, visual_profile);
   }
 
   // ---- Normals ----
@@ -286,19 +283,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     );
   }
 
-  // Apply global scene lighting scaler (UI: "Global Lighting / Scene Luminosity")
-  hdr_rgb *= max(scene.global_lighting, 0.0);
+  hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
 
   // ============================================================================
   // Grading (vibrant, neutral contrast) + Tonemap (Reinhard + exposure)
   // ============================================================================
   var post = hdr_rgb;
   if (enable_grading == 1u) {
-    post = grade_color_vibrant(post); // no pre-tonemap clamping
+    post = grade_color_vibrant(post, global_light);
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {
-    final_rgb = tonemap_reinhard_with_exposure(max(post, vec3<f32>(0.0)), exposure);
+    final_rgb = tonemap_ec_kr_profile(max(post, vec3<f32>(0.0)), exposure, visual_profile);
   }
 
   final_rgb = max(final_rgb, vec3<f32>(0.0));

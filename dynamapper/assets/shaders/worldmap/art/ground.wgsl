@@ -4,6 +4,10 @@
     mesh_view_bindings::globals,
 }
 #import "shaders/worldmap/surface_effects.wgsl"::apply_water_animation
+#import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
+#import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
+#import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
+#import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 
 #import "shaders/worldmap/art/art_ground_bindings.wgsl"::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -120,10 +124,20 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
+    if (effects.enable_grunge == 1u) {
+        shaded = vec4<f32>(apply_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile), shaded.a);
+    }
 
-    // Apply scene-wide lighting
-    shaded = vec4<f32>(shaded.rgb * scene.global_lighting, shaded.a);
+    shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
 
-    out.color = vec4<f32>(shaded.rgb, shaded.a);
+    var final_rgb = shaded.rgb;
+    if (global_light.enable_grading == 1u) {
+        final_rgb = grade_color_vibrant(final_rgb, global_light);
+    }
+    if (global_light.enable_tonemap == 1u) {
+        final_rgb = tonemap_ec_kr_profile(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile);
+    }
+
+    out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);
     return out;
 }

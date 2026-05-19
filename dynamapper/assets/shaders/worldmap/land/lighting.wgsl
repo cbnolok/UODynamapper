@@ -1,8 +1,7 @@
 // ============================================================================
 // land::lighting — Lighting math helpers shared across all shading modes.
 //
-//  Includes: Lambert, Blinn-Phong specular, rim, hemisphere fill,
-//  contrast S-curve, vibrant color grading, gloom, Reinhard tonemap.
+//  Includes: Lambert, Blinn-Phong specular, rim, hemisphere fill, gloom.
 // ============================================================================
 
 
@@ -57,54 +56,6 @@ fn get_hemisphere_fill(N: vec3<f32>) -> vec3<f32> {
 // Post-process helpers
 // ============================================================================
 
-// Contrast S-curve with neutral at contrast=1.0 (k = contrast-1 in [-1,1]).
-// NOTE: Do NOT clamp here — keep HDR headroom pre-tonemap.
-fn apply_contrast_neutral(x: vec3<f32>, contrast: f32) -> vec3<f32> {
-  let t = clamp(contrast - 1.0, -1.0, 1.0);
-  // y = x + t * (x - x*x) * 2  (S-curve around ~0.5; zero effect when t=0)
-  return x + t * ((x - x * x) * 2.0);
-}
-
-// Strong, stylized color grading (vibrant), with:
-//  - truly neutral contrast=1 (no clamp inside),
-//  - multiplicative split-toning normalized to luma=1 so mid-grays stay neutral.
-fn grade_color_vibrant(color_in: vec3<f32>) -> vec3<f32> {
-  let strength    = global_light.grade_params.x;  // overall grade amount
-  let vibrance    = global_light.grade_extra.x;   // selective saturation
-  let saturation  = global_light.grade_extra.y;   // global saturation
-  let contrast    = global_light.grade_extra.z;   // S-curve; 1.0 = neutral
-  let split_str   = global_light.grade_extra.w;   // split-toning strength
-
-  // Global saturation around luminance pivot
-  let l = luminance(color_in);
-  let sat_col = mix(vec3<f32>(l), color_in, saturation);
-
-  // Vibrance: boost low-sat regions more (mask stronger for low chroma)
-  let chroma = sat_col - vec3<f32>(l);
-  let sat_mag = max(max(abs(chroma.r), abs(chroma.g)), abs(chroma.b));
-  let vib_mask = smoothstep(0.0, 0.7, 1.0 - sat_mag);
-  let vib_col = sat_col + chroma * (vibrance * vib_mask);
-
-  // Contrast (neutral at 1.0), keep HDR — no clamp here
-  let ctr_col = apply_contrast_neutral(vib_col, contrast);
-
-  // Split-toning by luminance: cool lows, warm highs — multiplicative, luma-normalized
-  let warm = global_light.grade_warm_color.rgb;
-  let cool = global_light.grade_cool_color.rgb;
-  let wmix = smoothstep(0.25, 0.85, l);
-  let tint = mix(cool, warm, wmix);
-
-  // Normalize tint so its luma is ~1 → keeps mid-gray unchanged when applied multiplicatively
-  let tint_luma = max(luminance(tint), 1e-6);
-  let tint_norm = tint / tint_luma;
-  let split_mult = mix(vec3<f32>(1.0), tint_norm, split_str);
-
-  // Apply split toning multiplicatively, then blend with original by overall strength
-  let graded_hq = ctr_col * split_mult;
-  let graded = mix(color_in, graded_hq, clamp(strength, 0.0, 2.0));
-  return max(graded, vec3<f32>(0.0));
-}
-
 // Gloom: general darkening, height-fading, optional shadow bias.
 // gloom_params: [amount, height_falloff_height, shadow_bias, fog_height_bias]
 fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<f32>) -> vec3<f32> {
@@ -135,10 +86,4 @@ fn apply_gloom(color_in: vec3<f32>, world_pos: vec3<f32>, N: vec3<f32>, L: vec3<
   let desaturated = mix(color_in, vec3<f32>(luma), desat_amount);
 
   return desaturated * mix(vec3<f32>(1.0), gloom_tint, g);
-}
-
-// Tonemap: Reinhard with configurable exposure
-fn tonemap_reinhard_with_exposure(c: vec3<f32>, exposure: f32) -> vec3<f32> {
-  let e = max(exposure, 1e-6);
-  return (c * e) / (vec3<f32>(1.0) + c * e);
 }

@@ -92,10 +92,34 @@ pub fn terrain_ui_system(
  
             // ------------------------- Effects -------------------------
             ui.collapsing("Effects", |ui| {
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    ui.label("Visual Profile:");
+                    let mut profile = u.effects.post_process_profile;
+                    for (label, val) in [("Neutral", 0u32), ("EC", 1u32), ("KR", 2u32)] {
+                        if ui.selectable_label(profile == val, label).clicked() {
+                            profile = val;
+                        }
+                    }
+                    if profile != u.effects.post_process_profile {
+                        u.effects.post_process_profile = profile;
+                        changed = true;
+                    }
+                });
                 if toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation) {
-                    u.dirty = true;
+                    changed = true;
                 }
                 if toggle_u32(ui, "Fog", &mut u.lighting.enable_fog) {
+                    changed = true;
+                }
+                changed |= toggle_u32(ui, "Grunge / Weathering", &mut u.effects.enable_grunge);
+                changed |= slider_s(
+                    ui,
+                    "Grunge Strength",
+                    &mut u.effects.grunge_strength,
+                    0.0..=1.0,
+                );
+                if changed {
                     u.dirty = true;
                 }
             });
@@ -442,21 +466,14 @@ pub fn terrain_ui_system(
 
                 changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
 
-                ui.horizontal(|ui| {
-                    ui.label("Reconstruction:");
-                    let mut mode = u.effects.reconstruction_mode;
-                    for (label, val) in [("None", 0u32), ("Bicubic", 1u32), ("AMD FSR 1", 2u32)] {
-                        if ui.selectable_label(mode == val, label).clicked() {
-                            mode = val;
-                        }
-                    }
-                    if mode != u.effects.reconstruction_mode {
-                        u.effects.reconstruction_mode = mode;
-                        changed = true;
-                    }
-                });
+                if u.effects.reconstruction_mode != 0 {
+                    u.effects.reconstruction_mode = 0;
+                    changed = true;
+                }
 
                 changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
+
+                ui.add_enabled(false, egui::Label::new("Light decals and texture normal maps need dedicated asset/draw bindings."));
 
                 if changed {
                     u.dirty = true;

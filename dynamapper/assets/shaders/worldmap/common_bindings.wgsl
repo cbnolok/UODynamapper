@@ -21,14 +21,18 @@ struct LandEffectsUniform {
     normal_mode:    u32,
     enable_blur:    u32,
     enable_linear_filtering: u32,
-    reconstruction_mode:     u32,
+    reconstruction_mode:     u32, // Reserved; upscaling/reconstruction selectors are disabled.
     sharpening_amount:       f32,
     blur_strength:           f32,
     blur_radius:             f32,
     enable_water_animation: u32,
+    post_process_profile: u32,
+    enable_grunge: u32,
     _pad_eff0: u32,
+    grunge_strength: f32,
+    light_decal_intensity: f32,
+    enable_normal_maps: u32,
     _pad_eff1: u32,
-    _pad_eff2: u32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).
