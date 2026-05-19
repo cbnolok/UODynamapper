@@ -330,7 +330,7 @@ enum Commands {
         #[arg(long, default_value = "ec_terrain_primary_selection.json")]
         output: PathBuf,
     },
-    /// Audits current surface-like art redirection through tilemeta and tex_land_ec provenance.
+    /// Writes a JSON audit of surface-like art redirection through tilemeta and tex_land_ec provenance.
     AuditEcSurfaceRedirection {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -338,7 +338,7 @@ enum Commands {
         tilemeta: PathBuf,
         #[arg(long = "ec-land")]
         tex_land_ec: PathBuf,
-        #[arg(long, default_value = "ec_surface_redirection.csv")]
+        #[arg(long, default_value = "ec_surface_redirection.json")]
         output: PathBuf,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.

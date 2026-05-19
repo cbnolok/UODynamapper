@@ -16,7 +16,7 @@ use serde::Serialize;
 use udd_assets::{
     tex_land_ec::{
         TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
-        TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
+        MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
         TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
         TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER,
         TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT,
@@ -393,36 +393,11 @@ pub fn audit_ec_surface_redirection(
     let sources = load_tex_art_ec_sources(source_dirs)?;
     let tilemeta = TileMetaPackage::load(tilemeta_path)?;
     let tex_land_ec = TexLandEcPackage::load(tex_land_ec_path)?;
-    let mut writer = WriterBuilder::new().from_path(output)?;
-    writer.write_record([
-        "art_id",
-        "tile_type",
-        "tile_flags",
-        "tilemeta_visual_kind",
-        "tilemeta_surface_like",
-        "cc_texture_id",
-        "legacy_ec_texture_id",
-        "main_ec_texture_id",
-        "main_ec_texture_reason",
-        "main_ec_texture_source",
-        "direct_tex_land_slot_present",
-        "terrain_material_matches",
-        "primary_material_matches",
-        "layer_only_material_matches",
-        "matched_materials",
-        "provenance_records_considered",
-        "canonical_slots_present",
-        "alias_slots_present",
-        "fallback_resolve_runtime_slot",
-        "resolved_runtime_slot",
-        "route_decision",
-        "decision_reason",
-        "abnormality_flags",
-    ])?;
-
-    let mut row_count = 0u64;
+    let mut entries = Vec::new();
     let mut routed_count = 0u64;
     let mut flag_counts = BTreeMap::<String, u64>::new();
+    let mut route_decision_counts = BTreeMap::<String, u64>::new();
+    let mut decision_reason_counts = BTreeMap::<String, u64>::new();
 
     for item in tilemeta
         .item_tiles()
@@ -470,62 +445,91 @@ pub fn audit_ec_surface_redirection(
             alias_slots.as_slice(),
             resolution.slot_id,
         );
+        let abnormality_flag_values = split_flags(&abnormality_flags);
+        let primary_match_count = terrain_matches
+            .iter()
+            .filter(|match_row| match_row.primary_match)
+            .count();
+        let layer_only_match_count = terrain_matches.len() - primary_match_count;
 
         if resolution.slot_id.is_some() {
             routed_count += 1;
         }
-        for flag in abnormality_flags.split(';').filter(|flag| !flag.is_empty()) {
+        for flag in &abnormality_flag_values {
             increment_count(&mut flag_counts, flag);
         }
+        increment_count(&mut route_decision_counts, resolution.route_decision);
+        increment_count(&mut decision_reason_counts, resolution.decision_reason);
 
-        writer.write_record([
-            &art_id.to_string(),
-            art_data
-                .map(|data| tile_type_name(data.tile_type))
-                .unwrap_or("missing"),
-            &art_data
-                .map(|data| format!("{:?}", data.flags))
-                .unwrap_or_default(),
-            &format!("{:?}", item.visual_kind()),
-            bool_str(item.is_surface_like()),
-            &item.cc_texture_id.to_string(),
-            &optional_u32(item.ec_texture_id),
-            &main_ec_texture_id.map(|value| value.to_string()).unwrap_or_default(),
-            main_reason.as_deref().unwrap_or("missing"),
-            main_source,
-            bool_str(direct_slot_present),
-            &terrain_matches.len().to_string(),
-            &terrain_matches
-                .iter()
-                .filter(|match_row| match_row.primary_match)
-                .count()
-                .to_string(),
-            &terrain_matches
-                .iter()
-                .filter(|match_row| !match_row.primary_match)
-                .count()
-                .to_string(),
-            &join_terrain_matches(&terrain_matches),
-            &join_provenance_records(&provenance_records),
-            &join_u32_slice(canonical_slots.as_slice()),
-            &join_u32_slice(alias_slots.as_slice()),
-            &fallback_slot.map(|value| value.to_string()).unwrap_or_default(),
-            &resolution.slot_id.map(|value| value.to_string()).unwrap_or_default(),
-            resolution.route_decision,
-            resolution.decision_reason,
-            &abnormality_flags,
-        ])?;
-
-        row_count += 1;
+        entries.push(SurfaceRedirectionEntryReport {
+            art_id,
+            tile_type: art_data
+                .map(|data| tile_type_name(data.tile_type).to_string()),
+            tile_flags: art_data.map(|data| format!("{:?}", data.flags)),
+            tilemeta: SurfaceTileMetaReport {
+                visual_kind: format!("{:?}", item.visual_kind()),
+                surface_like: item.is_surface_like(),
+                name: item.name_ascii().to_string(),
+                cc_texture_id: optional_nonzero_u32(item.cc_texture_id),
+                legacy_ec_texture_id: optional_nonzero_u32(item.ec_texture_id),
+            },
+            main_ec_texture: SurfaceMainTextureReport {
+                texture_id: main_ec_texture_id,
+                reason: main_reason.unwrap_or_else(|| "missing".to_string()),
+                source: main_source.to_string(),
+                direct_tex_land_slot_present: direct_slot_present,
+            },
+            terrain_definition: SurfaceTerrainDefinitionReport {
+                match_count: terrain_matches.len(),
+                primary_match_count,
+                layer_only_match_count,
+                matches: terrain_matches
+                    .iter()
+                    .map(surface_terrain_match_report)
+                    .collect(),
+            },
+            provenance: SurfaceProvenanceReport {
+                records_considered: provenance_records
+                    .iter()
+                    .map(surface_provenance_record_report)
+                    .collect(),
+                canonical_slots_present: canonical_slots,
+                alias_slots_present: alias_slots,
+            },
+            fallback_resolve_runtime_slot: fallback_slot,
+            resolution: SurfaceResolutionReport {
+                resolved_runtime_slot: resolution.slot_id,
+                route_decision: resolution.route_decision.to_string(),
+                decision_reason: resolution.decision_reason.to_string(),
+            },
+            abnormality_flags: abnormality_flag_values,
+        });
     }
 
-    writer.flush()?;
+    let row_count = entries.len() as u64;
+    let report = SurfaceRedirectionReport {
+        schema: "ec_surface_redirection",
+        schema_version: 1,
+        summary: SurfaceRedirectionSummary {
+            surface_like_count: row_count as usize,
+            resolved_count: routed_count as usize,
+            unresolved_count: (row_count - routed_count) as usize,
+            route_decision_counts: route_decision_counts.clone(),
+            decision_reason_counts: decision_reason_counts.clone(),
+            abnormality_flag_counts: flag_counts.clone(),
+        },
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
 
     info!(
-        "wrote {row_count} EC surface redirection audit rows to '{}'",
+        "wrote {row_count} EC surface redirection JSON entries to '{}'",
         output.display()
     );
     info!("EC surface redirection resolved rows: {routed_count}/{row_count}");
+    log_count_summary("EC surface redirection route decisions", &route_decision_counts);
+    log_count_summary("EC surface redirection decision reasons", &decision_reason_counts);
     log_count_summary("EC surface redirection flags", &flag_counts);
 
     Ok(())
@@ -1309,6 +1313,106 @@ struct TerrainLayerReport {
     logical_family: String,
 }
 
+#[derive(Serialize)]
+struct SurfaceRedirectionReport {
+    schema: &'static str,
+    schema_version: u32,
+    summary: SurfaceRedirectionSummary,
+    entries: Vec<SurfaceRedirectionEntryReport>,
+}
+
+#[derive(Serialize)]
+struct SurfaceRedirectionSummary {
+    surface_like_count: usize,
+    resolved_count: usize,
+    unresolved_count: usize,
+    route_decision_counts: BTreeMap<String, u64>,
+    decision_reason_counts: BTreeMap<String, u64>,
+    abnormality_flag_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Serialize)]
+struct SurfaceRedirectionEntryReport {
+    art_id: u32,
+    tile_type: Option<String>,
+    tile_flags: Option<String>,
+    tilemeta: SurfaceTileMetaReport,
+    main_ec_texture: SurfaceMainTextureReport,
+    terrain_definition: SurfaceTerrainDefinitionReport,
+    provenance: SurfaceProvenanceReport,
+    fallback_resolve_runtime_slot: Option<u32>,
+    resolution: SurfaceResolutionReport,
+    abnormality_flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SurfaceTileMetaReport {
+    visual_kind: String,
+    surface_like: bool,
+    name: String,
+    cc_texture_id: Option<u32>,
+    legacy_ec_texture_id: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct SurfaceMainTextureReport {
+    texture_id: Option<u32>,
+    reason: String,
+    source: String,
+    direct_tex_land_slot_present: bool,
+}
+
+#[derive(Serialize)]
+struct SurfaceTerrainDefinitionReport {
+    match_count: usize,
+    primary_match_count: usize,
+    layer_only_match_count: usize,
+    matches: Vec<SurfaceTerrainMatchReport>,
+}
+
+#[derive(Serialize)]
+struct SurfaceTerrainMatchReport {
+    material_id: u32,
+    material_name: String,
+    layer_index: usize,
+    primary_match: bool,
+    aliases: Vec<u32>,
+    layer_path: String,
+    layer_current_support: bool,
+    layer_support_like: bool,
+    primary_texture_id: Option<u32>,
+    primary_reason: String,
+}
+
+#[derive(Serialize)]
+struct SurfaceProvenanceReport {
+    records_considered: Vec<SurfaceProvenanceRecordReport>,
+    canonical_slots_present: Vec<u32>,
+    alias_slots_present: Vec<u32>,
+}
+
+#[derive(Serialize)]
+struct SurfaceProvenanceRecordReport {
+    material_id: u32,
+    material_name_id: i32,
+    alias_count_index: u32,
+    alias_slot_id: Option<u32>,
+    alias_tile_flags: u64,
+    selected_texture_id: Option<u32>,
+    canonical_slot_id: Option<u32>,
+    primary_texture_id: Option<u32>,
+    primary_layer_index: Option<u32>,
+    primary_selection_reason: String,
+    primary_selection_flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SurfaceResolutionReport {
+    resolved_runtime_slot: Option<u32>,
+    route_decision: String,
+    decision_reason: String,
+}
+
 struct TerrainTextureMatch {
     material_id: u32,
     material_name: String,
@@ -1379,6 +1483,43 @@ fn terrain_matches_for_texture(
         }
     }
     matches
+}
+
+fn surface_terrain_match_report(match_row: &TerrainTextureMatch) -> SurfaceTerrainMatchReport {
+    SurfaceTerrainMatchReport {
+        material_id: match_row.material_id,
+        material_name: match_row.material_name.clone(),
+        layer_index: match_row.layer_index,
+        primary_match: match_row.primary_match,
+        aliases: match_row.aliases.clone(),
+        layer_path: match_row.layer_path.clone(),
+        layer_current_support: match_row.layer_current_support,
+        layer_support_like: match_row.layer_support_like,
+        primary_texture_id: match_row.primary_texture_id,
+        primary_reason: match_row.primary_reason.clone(),
+    }
+}
+
+fn surface_provenance_record_report(
+    record: &TexLandEcTerrainProvenanceRecord,
+) -> SurfaceProvenanceRecordReport {
+    SurfaceProvenanceRecordReport {
+        material_id: record.material_id,
+        material_name_id: record.material_name_id,
+        alias_count_index: record.alias_count_index,
+        alias_slot_id: optional_slot_id(record.alias_slot_id),
+        alias_tile_flags: record.alias_tile_flags,
+        selected_texture_id: optional_texture_id(record.selected_texture_id),
+        canonical_slot_id: optional_slot_id(record.canonical_slot_id),
+        primary_texture_id: optional_texture_id(record.primary_texture_id),
+        primary_layer_index: optional_terrain_layer_index(record.primary_layer_index),
+        primary_selection_reason: terrain_primary_reason_name(record.primary_selection_reason)
+            .to_string(),
+        primary_selection_flags: terrain_primary_flags_vec(record.primary_selection_flags)
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+    }
 }
 
 fn present_canonical_slots(
@@ -1514,51 +1655,6 @@ fn surface_redirection_flags(
     flags.join(";")
 }
 
-fn join_terrain_matches(matches: &[TerrainTextureMatch]) -> String {
-    matches
-        .iter()
-        .map(|match_row| {
-            format!(
-                "material={}:name={}:layer={}:primary_match={}:aliases={}:path={}:current_support={}:support_like={}:primary_texture={}:primary_reason={}",
-                match_row.material_id,
-                match_row.material_name,
-                match_row.layer_index,
-                bool_str(match_row.primary_match),
-                join_u32_slice(match_row.aliases.as_slice()),
-                match_row.layer_path,
-                bool_str(match_row.layer_current_support),
-                bool_str(match_row.layer_support_like),
-                match_row
-                    .primary_texture_id
-                    .map(|texture_id| texture_id.to_string())
-                    .unwrap_or_default(),
-                match_row.primary_reason
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
-fn join_provenance_records(records: &[TexLandEcTerrainProvenanceRecord]) -> String {
-    records
-        .iter()
-        .map(|record| {
-            format!(
-                "material={}:alias={}:selected_texture={}:canonical={}:primary_texture={}:primary_layer={}:primary_reason={}:primary_flags={}",
-                record.material_id,
-                record.alias_slot_id,
-                record.selected_texture_id,
-                record.canonical_slot_id,
-                record.primary_texture_id,
-                record.primary_layer_index,
-                terrain_primary_reason_name(record.primary_selection_reason),
-                terrain_primary_flags_name(record.primary_selection_flags)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
 fn terrain_primary_reason_name(reason: u8) -> &'static str {
     match reason {
         1 => "non_support_preferred_repetition",
@@ -1569,7 +1665,7 @@ fn terrain_primary_reason_name(reason: u8) -> &'static str {
     }
 }
 
-fn terrain_primary_flags_name(flags: u16) -> String {
+fn terrain_primary_flags_vec(flags: u16) -> Vec<&'static str> {
     let mut names = Vec::new();
     if flags & TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT != 0 {
         names.push("selected_current_support");
@@ -1592,23 +1688,23 @@ fn terrain_primary_flags_name(flags: u16) -> String {
     if flags & TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER != 0 {
         names.push("opaque_unk6_tiebreaker");
     }
-    names.join(";")
+    names
 }
 
-fn join_u32_slice(values: &[u32]) -> String {
-    values
-        .iter()
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>()
-        .join(";")
+fn optional_nonzero_u32(value: u32) -> Option<u32> {
+    (value != 0).then_some(value)
 }
 
-fn optional_u32(value: u32) -> String {
-    if value == 0 {
-        String::new()
-    } else {
-        value.to_string()
-    }
+fn optional_slot_id(value: u32) -> Option<u32> {
+    (value != 0 && value != MISSING_SLOT_ID).then_some(value)
+}
+
+fn optional_texture_id(value: u32) -> Option<u32> {
+    (value != 0 && value != MISSING_TEXTURE_ID).then_some(value)
+}
+
+fn optional_terrain_layer_index(value: u32) -> Option<u32> {
+    (value != MISSING_TERRAIN_LAYER_INDEX).then_some(value)
 }
 
 fn terrain_material_shape(
