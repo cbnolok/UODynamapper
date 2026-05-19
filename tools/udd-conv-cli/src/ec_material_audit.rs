@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre;
 use csv::WriterBuilder;
 use log::info;
+use serde::Serialize;
 use udd_assets::{
     tex_land_ec::{
         TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
@@ -186,37 +187,10 @@ pub fn audit_ec_terrain_primary_selection(
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
     let package_membership = EcPackageMembership::load(source_dirs)?;
-    let mut writer = WriterBuilder::new().from_path(output)?;
-    writer.write_record([
-        "material_id",
-        "material_name",
-        "aliases",
-        "shader_name",
-        "selected_layer_index",
-        "selected_texture_id",
-        "selected_path",
-        "selection_reason",
-        "selected_current_support_heuristic",
-        "selected_support_like_clue",
-        "selected_preferred_repetition",
-        "selected_texture_repetition",
-        "selected_unk4",
-        "selected_unk6_opaque_order",
-        "selected_unk7",
-        "selected_physical_package_guess",
-        "selected_logical_family",
-        "layer_count",
-        "texture_layer_count",
-        "support_like_layer_count",
-        "current_support_layer_count",
-        "preferred_repetition_layer_count",
-        "candidate_layers",
-        "audit_flags",
-    ])?;
-
-    let mut row_count = 0u64;
+    let mut entries = Vec::new();
     let mut reason_counts = BTreeMap::<String, u64>::new();
     let mut flag_counts = BTreeMap::<String, u64>::new();
+    let mut shape_counts = BTreeMap::<String, u64>::new();
     let mut selected_support_like_count = 0u64;
     let mut selected_texture_count = 0u64;
 
@@ -234,17 +208,29 @@ pub fn audit_ec_terrain_primary_selection(
             })
             .unwrap_or((None, None, None));
 
-        let aliases = entry
-            .runtime_slot_ids()
-            .into_iter()
-            .map(|alias| alias.to_string())
-            .collect::<Vec<_>>()
-            .join(";");
-        let shader_name = texture.shader_name.as_deref().unwrap_or("");
+        let runtime_slot_ids = entry.runtime_slot_ids();
+        let alias_record_count = entry.aliases.len();
+        let zero_alias_count = entry.aliases.iter().filter(|alias| alias.alias == 0).count();
+        let concrete_alias_count = entry.aliases.iter().filter(|alias| alias.alias != 0).count();
         let texture_layer_count = texture
             .layers
             .iter()
             .filter(|layer| layer.texture_id.is_some())
+            .count();
+        let unique_texture_id_count = texture
+            .layers
+            .iter()
+            .filter_map(|layer| layer.texture_id)
+            .collect::<BTreeSet<_>>()
+            .len();
+        let non_support_texture_layer_count = texture
+            .layers
+            .iter()
+            .filter(|layer| {
+                layer.texture_id.is_some()
+                    && !layer.is_support_layer_by_current_name_heuristic()
+                    && !layer.has_support_like_name_clue()
+            })
             .count();
         let support_like_layer_count = texture
             .layers
@@ -261,17 +247,27 @@ pub fn audit_ec_terrain_primary_selection(
             .iter()
             .filter(|layer| layer.has_preferred_primary_repetition())
             .count();
-        let candidate_layers = terrain_candidate_layers_summary(&texture.layers);
         let audit_flags = terrain_primary_audit_flags(entry, selected_layer, selection_reason);
+        let audit_flag_values = split_flags(&audit_flags);
+        let runtime_slot_count = runtime_slot_ids.len();
+        let material_shape = terrain_material_shape(
+            alias_record_count,
+            concrete_alias_count,
+            texture_layer_count,
+            unique_texture_id_count,
+            non_support_texture_layer_count,
+            support_like_layer_count,
+        );
 
         if let Some(reason) = selection_reason {
             increment_count(&mut reason_counts, reason.as_str());
         } else {
             increment_count(&mut reason_counts, "missing");
         }
-        for flag in audit_flags.split(';').filter(|flag| !flag.is_empty()) {
+        for flag in &audit_flag_values {
             increment_count(&mut flag_counts, flag);
         }
+        increment_count(&mut shape_counts, material_shape);
         if let Some(layer) = selected_layer {
             selected_texture_count += 1;
             if layer.has_support_like_name_clue() {
@@ -284,65 +280,100 @@ pub fn audit_ec_terrain_primary_selection(
             .unwrap_or("");
         let normalized_path = normalize_dictionary_path(selected_path);
         let selected_package = selected_layer
-            .map(|layer| physical_package_guess(&normalized_path, layer.texture_id, &package_membership))
+            .map(|layer| {
+                physical_package_guess(&normalized_path, layer.texture_id, &package_membership)
+            })
             .unwrap_or("Unknown");
         let selected_family = selected_layer
             .map(|layer| terrain_texture_family_name(layer.texture_type, selected_package))
             .unwrap_or("Unknown");
 
-        writer.write_record([
-            &entry.id.to_string(),
-            entry.name.as_deref().unwrap_or(""),
-            &aliases,
-            shader_name,
-            &selected_layer_index.map(|index| index.to_string()).unwrap_or_default(),
-            &selected_layer
-                .and_then(|layer| layer.texture_id)
-                .map(|texture_id| texture_id.to_string())
-                .unwrap_or_default(),
-            selected_path,
-            selection_reason.map(|reason| reason.as_str()).unwrap_or("missing"),
-            bool_str(selected_layer.is_some_and(|layer| {
-                layer.is_support_layer_by_current_name_heuristic()
-            })),
-            bool_str(selected_layer.is_some_and(|layer| layer.has_support_like_name_clue())),
-            bool_str(selected_layer.is_some_and(|layer| {
-                layer.has_preferred_primary_repetition()
-            })),
-            &selected_layer
-                .map(|layer| format_float(layer.texture_repetition))
-                .unwrap_or_default(),
-            &selected_layer
-                .map(|layer| layer.unk4.to_string())
-                .unwrap_or_default(),
-            &selected_layer
-                .map(|layer| layer.unk6.to_string())
-                .unwrap_or_default(),
-            &selected_layer
-                .map(|layer| layer.unk7.to_string())
-                .unwrap_or_default(),
-            selected_package,
-            selected_family,
-            &texture.layers.len().to_string(),
-            &texture_layer_count.to_string(),
-            &support_like_layer_count.to_string(),
-            &current_support_layer_count.to_string(),
-            &preferred_repetition_layer_count.to_string(),
-            &candidate_layers,
-            &audit_flags,
-        ])?;
-
-        row_count += 1;
+        entries.push(TerrainPrimarySelectionEntryReport {
+            material_id: entry.id,
+            material_name: entry.name.clone(),
+            alias_records: entry
+                .aliases
+                .iter()
+                .map(|alias| TerrainAliasReport {
+                    count_index: alias.count_index,
+                    alias: alias.alias,
+                    tile_flags: alias.tile_flags,
+                    is_placeholder: alias.alias == 0,
+                })
+                .collect(),
+            runtime_slot_ids,
+            alias_summary: TerrainAliasSummaryReport {
+                alias_record_count,
+                zero_alias_count,
+                concrete_alias_count,
+                has_alias_records: alias_record_count > 0,
+                has_concrete_aliases: concrete_alias_count > 0,
+                runtime_slot_count,
+            },
+            shader_name: texture.shader_name.clone(),
+            material_shape: material_shape.to_string(),
+            selected_layer: selected_layer.map(|layer| TerrainSelectedLayerReport {
+                layer_index: selected_layer_index.unwrap_or_default(),
+                texture_id: layer.texture_id,
+                path: layer.path.clone(),
+                selection_reason: selection_reason
+                    .map(|reason| reason.as_str().to_string())
+                    .unwrap_or_else(|| "missing".to_string()),
+                current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
+                support_like_clue: layer.has_support_like_name_clue(),
+                preferred_repetition: layer.has_preferred_primary_repetition(),
+                texture_repetition: layer.texture_repetition,
+                unk4: layer.unk4,
+                unk6_opaque_order: layer.unk6,
+                unk7: layer.unk7,
+                physical_package_guess: selected_package.to_string(),
+                logical_family: selected_family.to_string(),
+            }),
+            layer_summary: TerrainLayerSummaryReport {
+                layer_count: texture.layers.len(),
+                texture_layer_count,
+                unique_texture_id_count,
+                non_support_texture_layer_count,
+                support_like_layer_count,
+                current_support_layer_count,
+                preferred_repetition_layer_count,
+            },
+            layers: texture
+                .layers
+                .iter()
+                .enumerate()
+                .map(|(layer_index, layer)| {
+                    terrain_layer_report(layer_index, layer, &package_membership)
+                })
+                .collect(),
+            audit_flags: audit_flag_values,
+        });
     }
 
-    writer.flush()?;
+    let row_count = entries.len() as u64;
+    let report = TerrainPrimarySelectionReport {
+        schema: "ec_terrain_primary_selection",
+        schema_version: 1,
+        summary: TerrainPrimarySelectionSummary {
+            material_count: row_count as usize,
+            selection_reason_counts: reason_counts.clone(),
+            audit_flag_counts: flag_counts.clone(),
+            material_shape_counts: shape_counts.clone(),
+            selected_support_like_count: selected_support_like_count as usize,
+            selected_texture_count: selected_texture_count as usize,
+        },
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
 
     info!(
-        "wrote {row_count} EC terrain primary-selection rows to '{}'",
+        "wrote {row_count} EC terrain primary-selection JSON entries to '{}'",
         output.display()
     );
     log_count_summary("terrain primary selection reasons", &reason_counts);
     log_count_summary("terrain primary audit flags", &flag_counts);
+    log_count_summary("terrain material shapes", &shape_counts);
     if selected_texture_count > 0 {
         let percent = selected_support_like_count as f64 * 100.0 / selected_texture_count as f64;
         info!(
@@ -1182,6 +1213,102 @@ fn inventory_notes(
     notes.join(";")
 }
 
+#[derive(Serialize)]
+struct TerrainPrimarySelectionReport {
+    schema: &'static str,
+    schema_version: u32,
+    summary: TerrainPrimarySelectionSummary,
+    entries: Vec<TerrainPrimarySelectionEntryReport>,
+}
+
+#[derive(Serialize)]
+struct TerrainPrimarySelectionSummary {
+    material_count: usize,
+    selection_reason_counts: BTreeMap<String, u64>,
+    audit_flag_counts: BTreeMap<String, u64>,
+    material_shape_counts: BTreeMap<String, u64>,
+    selected_support_like_count: usize,
+    selected_texture_count: usize,
+}
+
+#[derive(Serialize)]
+struct TerrainPrimarySelectionEntryReport {
+    material_id: u32,
+    material_name: Option<String>,
+    alias_records: Vec<TerrainAliasReport>,
+    runtime_slot_ids: Vec<u32>,
+    alias_summary: TerrainAliasSummaryReport,
+    shader_name: Option<String>,
+    material_shape: String,
+    selected_layer: Option<TerrainSelectedLayerReport>,
+    layer_summary: TerrainLayerSummaryReport,
+    layers: Vec<TerrainLayerReport>,
+    audit_flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainAliasReport {
+    count_index: u32,
+    alias: u32,
+    tile_flags: u64,
+    is_placeholder: bool,
+}
+
+#[derive(Serialize)]
+struct TerrainAliasSummaryReport {
+    alias_record_count: usize,
+    zero_alias_count: usize,
+    concrete_alias_count: usize,
+    has_alias_records: bool,
+    has_concrete_aliases: bool,
+    runtime_slot_count: usize,
+}
+
+#[derive(Serialize)]
+struct TerrainSelectedLayerReport {
+    layer_index: usize,
+    texture_id: Option<u32>,
+    path: Option<String>,
+    selection_reason: String,
+    current_support_heuristic: bool,
+    support_like_clue: bool,
+    preferred_repetition: bool,
+    texture_repetition: f32,
+    unk4: u8,
+    unk6_opaque_order: i32,
+    unk7: i32,
+    physical_package_guess: String,
+    logical_family: String,
+}
+
+#[derive(Serialize)]
+struct TerrainLayerSummaryReport {
+    layer_count: usize,
+    texture_layer_count: usize,
+    unique_texture_id_count: usize,
+    non_support_texture_layer_count: usize,
+    support_like_layer_count: usize,
+    current_support_layer_count: usize,
+    preferred_repetition_layer_count: usize,
+}
+
+#[derive(Serialize)]
+struct TerrainLayerReport {
+    layer_index: usize,
+    texture_id: Option<u32>,
+    path: Option<String>,
+    texture_type: String,
+    current_support_heuristic: bool,
+    support_like_clue: bool,
+    preferred_repetition: bool,
+    texture_repetition: f32,
+    unk4: u8,
+    unk6_opaque_order: i32,
+    unk7: i32,
+    physical_package_guess: String,
+    logical_family: String,
+}
+
 struct TerrainTextureMatch {
     material_id: u32,
     material_name: String,
@@ -1484,30 +1611,65 @@ fn optional_u32(value: u32) -> String {
     }
 }
 
-fn terrain_candidate_layers_summary(layers: &[TerrainDefinitionTextureLayer]) -> String {
-    layers
-        .iter()
-        .enumerate()
-        .map(|(index, layer)| {
-            format!(
-                "{}:id={}:path={}:rep={}:current_support={}:support_like={}:preferred_rep={}:unk4={}:unk6={}:unk7={}",
-                index,
-                layer
-                    .texture_id
-                    .map(|texture_id| texture_id.to_string())
-                    .unwrap_or_default(),
-                layer.path.as_deref().unwrap_or(""),
-                format_float(layer.texture_repetition),
-                bool_str(layer.is_support_layer_by_current_name_heuristic()),
-                bool_str(layer.has_support_like_name_clue()),
-                bool_str(layer.has_preferred_primary_repetition()),
-                layer.unk4,
-                layer.unk6,
-                layer.unk7
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("|")
+fn terrain_material_shape(
+    alias_record_count: usize,
+    concrete_alias_count: usize,
+    texture_layer_count: usize,
+    unique_texture_id_count: usize,
+    non_support_texture_layer_count: usize,
+    support_like_layer_count: usize,
+) -> &'static str {
+    let has_aliases = alias_record_count > 0;
+    let has_concrete_aliases = concrete_alias_count > 0;
+    let has_multiple_unique_textures = unique_texture_id_count > 1;
+    let has_multiple_non_support = non_support_texture_layer_count > 1;
+    let has_support = support_like_layer_count > 0;
+    let is_complex = texture_layer_count > 1
+        && (has_multiple_unique_textures || has_multiple_non_support || has_support);
+
+    match (has_aliases, has_concrete_aliases, is_complex) {
+        (true, true, true) => "concrete_aliases_complex_material",
+        (true, true, false) => "concrete_aliases_simple_material",
+        (true, false, true) => "placeholder_alias_complex_material",
+        (true, false, false) => "placeholder_alias_simple_material",
+        (false, _, true) => "no_alias_complex_material",
+        (false, _, false) => "no_alias_simple_material",
+    }
+}
+
+fn split_flags(flags: &str) -> Vec<String> {
+    if flags.is_empty() {
+        Vec::new()
+    } else {
+        flags.split(';').map(str::to_string).collect()
+    }
+}
+
+fn terrain_layer_report(
+    layer_index: usize,
+    layer: &TerrainDefinitionTextureLayer,
+    package_membership: &EcPackageMembership,
+) -> TerrainLayerReport {
+    let raw_path = layer.path.as_deref().unwrap_or("");
+    let normalized_path = normalize_dictionary_path(raw_path);
+    let physical_package =
+        physical_package_guess(&normalized_path, layer.texture_id, package_membership);
+    TerrainLayerReport {
+        layer_index,
+        texture_id: layer.texture_id,
+        path: layer.path.clone(),
+        texture_type: terrain_texture_type_name(layer.texture_type).to_string(),
+        current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
+        support_like_clue: layer.has_support_like_name_clue(),
+        preferred_repetition: layer.has_preferred_primary_repetition(),
+        texture_repetition: layer.texture_repetition,
+        unk4: layer.unk4,
+        unk6_opaque_order: layer.unk6,
+        unk7: layer.unk7,
+        physical_package_guess: physical_package.to_string(),
+        logical_family: terrain_texture_family_name(layer.texture_type, physical_package)
+            .to_string(),
+    }
 }
 
 fn terrain_primary_audit_flags(
@@ -1631,6 +1793,16 @@ fn tileart_texture_family_name(texture_type: TileArtTextureType) -> &'static str
         TileArtTextureType::TileArtLegacy => "TileArtLegacy",
         TileArtTextureType::TileArtEnhanced => "TileArtEnhanced",
         TileArtTextureType::Textures => "Textures",
+    }
+}
+
+fn terrain_texture_type_name(texture_type: TerrainTextureType) -> &'static str {
+    match texture_type {
+        TerrainTextureType::Undefined => "Undefined",
+        TerrainTextureType::WorldArt => "WorldArt",
+        TerrainTextureType::TileArtLegacy => "TileArtLegacy",
+        TerrainTextureType::TileArtEnhanced => "TileArtEnhanced",
+        TerrainTextureType::Textures => "Textures",
     }
 }
 

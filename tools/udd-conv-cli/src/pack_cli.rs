@@ -323,11 +323,11 @@ enum Commands {
         #[arg(long, default_value = "ec_material_baseline.md")]
         output: PathBuf,
     },
-    /// Audits current TerrainDefinition primary texture selection and suspicious support-like choices.
+    /// Writes a JSON audit of TerrainDefinition primary texture selection and layer reasoning.
     AuditEcTerrainPrimarySelection {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
-        #[arg(long, default_value = "ec_terrain_primary_selection.csv")]
+        #[arg(long, default_value = "ec_terrain_primary_selection.json")]
         output: PathBuf,
     },
     /// Audits current surface-like art redirection through tilemeta and tex_land_ec provenance.
