@@ -340,6 +340,11 @@ enum Commands {
         tex_art_ec: Option<PathBuf>,
         #[arg(long = "ec-land")]
         tex_land_ec: PathBuf,
+        #[arg(
+            long = "surface-overrides",
+            default_value = "dynamapper/assets/cc_ec_convtables/EcSurfaceOverrides.kdl"
+        )]
+        surface_overrides: PathBuf,
         #[arg(long, default_value = "ec_surface_redirection.json")]
         output: PathBuf,
     },
@@ -659,15 +664,18 @@ pub fn run() -> eyre::Result<()> {
             tilemeta,
             tex_art_ec,
             tex_land_ec,
+            surface_overrides,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
+            let surface_overrides = surface_overrides.exists().then_some(surface_overrides);
             audit_ec_surface_redirection(
                 &paths,
                 &tilemeta,
                 tex_art_ec.as_deref(),
                 &tex_land_ec,
+                surface_overrides.as_deref(),
                 &out_file,
             )?;
         }

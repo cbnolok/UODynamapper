@@ -14,6 +14,9 @@ use csv::WriterBuilder;
 use log::info;
 use serde::Serialize;
 use udd_assets::{
+    ec_surface_overrides::{
+        CcArtOverrideMode, EcSurfaceOverrideAction, EcSurfaceOverrideEntry, EcSurfaceOverrides,
+    },
     tex_art_ec::TexArtEcPackage,
     tex_land_ec::{
         TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
@@ -390,6 +393,7 @@ pub fn audit_ec_surface_redirection(
     tilemeta_path: &Path,
     tex_art_ec_path: Option<&Path>,
     tex_land_ec_path: &Path,
+    surface_overrides_path: Option<&Path>,
     output: &Path,
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
@@ -398,12 +402,23 @@ pub fn audit_ec_surface_redirection(
         .map(TexArtEcPackage::load)
         .transpose()?;
     let tex_land_ec = TexLandEcPackage::load(tex_land_ec_path)?;
+    let surface_overrides = surface_overrides_path
+        .map(EcSurfaceOverrides::load)
+        .transpose()?
+        .map(|overrides| overrides.to_map())
+        .unwrap_or_default();
+    let item_by_id = tilemeta
+        .item_tiles()
+        .iter()
+        .map(|item| (item.tile_id, item))
+        .collect::<HashMap<_, _>>();
     let mut entries = Vec::new();
     let mut routed_count = 0u64;
     let mut flag_counts = BTreeMap::<String, u64>::new();
     let mut route_decision_counts = BTreeMap::<String, u64>::new();
     let mut decision_reason_counts = BTreeMap::<String, u64>::new();
     let mut review_class_counts = BTreeMap::<String, u64>::new();
+    let mut override_action_counts = BTreeMap::<String, u64>::new();
 
     for item in tilemeta
         .item_tiles()
@@ -467,6 +482,13 @@ pub fn audit_ec_surface_redirection(
             resolution.slot_id,
             terrain_matches.as_slice(),
         );
+        let manual_override = surface_override_report(
+            surface_overrides.get(&art_id),
+            &surface_overrides,
+            &item_by_id,
+            tex_art_ec.as_ref(),
+            &tex_land_ec,
+        );
 
         if resolution.slot_id.is_some() {
             routed_count += 1;
@@ -477,6 +499,9 @@ pub fn audit_ec_surface_redirection(
         increment_count(&mut route_decision_counts, resolution.route_decision);
         increment_count(&mut decision_reason_counts, resolution.decision_reason);
         increment_count(&mut review_class_counts, review_class);
+        if let Some(manual_override) = &manual_override {
+            increment_count(&mut override_action_counts, &manual_override.action);
+        }
 
         entries.push(SurfaceRedirectionEntryReport {
             art_id,
@@ -520,6 +545,7 @@ pub fn audit_ec_surface_redirection(
                 route_decision: resolution.route_decision.to_string(),
                 decision_reason: resolution.decision_reason.to_string(),
             },
+            manual_override,
             review_class: review_class.to_string(),
             abnormality_flags: abnormality_flag_values,
         });
@@ -536,6 +562,7 @@ pub fn audit_ec_surface_redirection(
             route_decision_counts: route_decision_counts.clone(),
             decision_reason_counts: decision_reason_counts.clone(),
             review_class_counts: review_class_counts.clone(),
+            manual_override_action_counts: override_action_counts.clone(),
             abnormality_flag_counts: flag_counts.clone(),
         },
         entries,
@@ -551,6 +578,10 @@ pub fn audit_ec_surface_redirection(
     log_count_summary("EC surface redirection route decisions", &route_decision_counts);
     log_count_summary("EC surface redirection decision reasons", &decision_reason_counts);
     log_count_summary("EC surface redirection review classes", &review_class_counts);
+    log_count_summary(
+        "EC surface redirection manual override actions",
+        &override_action_counts,
+    );
     log_count_summary("EC surface redirection flags", &flag_counts);
 
     Ok(())
@@ -1350,6 +1381,7 @@ struct SurfaceRedirectionSummary {
     route_decision_counts: BTreeMap<String, u64>,
     decision_reason_counts: BTreeMap<String, u64>,
     review_class_counts: BTreeMap<String, u64>,
+    manual_override_action_counts: BTreeMap<String, u64>,
     abnormality_flag_counts: BTreeMap<String, u64>,
 }
 
@@ -1365,8 +1397,28 @@ struct SurfaceRedirectionEntryReport {
     provenance: SurfaceProvenanceReport,
     fallback_resolve_runtime_slot: Option<u32>,
     resolution: SurfaceResolutionReport,
+    manual_override: Option<SurfaceManualOverrideReport>,
     review_class: String,
     abnormality_flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SurfaceManualOverrideReport {
+    action: String,
+    target_id: Option<u32>,
+    mode: Option<String>,
+    package: Option<String>,
+    reason: Option<String>,
+    valid: bool,
+    validation_flags: Vec<String>,
+    resolved_preview: Option<SurfaceManualOverridePreviewReport>,
+}
+
+#[derive(Serialize)]
+struct SurfaceManualOverridePreviewReport {
+    target_exists_in_tilemeta: bool,
+    target_tex_art_slot_kind: Option<String>,
+    target_tex_land_runtime_slot: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -1540,14 +1592,15 @@ fn surface_art_availability(
     let art_id_slot = tex_art_ec.present_slot(item.tile_id);
     let selected_texture_slot =
         main_ec_texture_id.and_then(|texture_id| tex_art_ec.present_slot(texture_id));
-    let legacy_texture_slot =
-        optional_nonzero_u32(item.ec_texture_id).and_then(|texture_id| tex_art_ec.present_slot(texture_id));
+    let legacy_texture_slot = optional_nonzero_u32(item.ec_texture_id)
+        .and_then(|texture_id| tex_art_ec.present_slot(texture_id));
 
     SurfaceArtAvailabilityReport {
         ec_art_package_provided: true,
         art_id_tex_art_slot_present: Some(art_id_slot.is_some()),
         art_id_tex_art_slot_kind: art_id_slot.map(tex_art_ec_slot_kind).map(str::to_string),
-        selected_texture_tex_art_slot_present: main_ec_texture_id.map(|_| selected_texture_slot.is_some()),
+        selected_texture_tex_art_slot_present: main_ec_texture_id
+            .map(|_| selected_texture_slot.is_some()),
         selected_texture_tex_art_slot_kind: selected_texture_slot
             .map(tex_art_ec_slot_kind)
             .map(str::to_string),
@@ -1566,6 +1619,141 @@ fn tex_art_ec_slot_kind(slot: &udd_assets::tex_art_ec::TexArtEcSlotRecord) -> &'
         "static"
     } else {
         "unknown"
+    }
+}
+
+fn surface_override_report(
+    entry: Option<&EcSurfaceOverrideEntry>,
+    overrides: &HashMap<u32, EcSurfaceOverrideEntry>,
+    item_by_id: &HashMap<u32, &TileMetaItemTile>,
+    tex_art_ec: Option<&TexArtEcPackage>,
+    tex_land_ec: &TexLandEcPackage,
+) -> Option<SurfaceManualOverrideReport> {
+    let entry = entry?;
+    let mut validation_flags = Vec::new();
+
+    if entry.active_action_count() != 1 {
+        validation_flags.push("override_must_have_exactly_one_action".to_string());
+    }
+
+    let mut report = match entry.action() {
+        EcSurfaceOverrideAction::CcArt(cc_art) => {
+            let mode = cc_art.mode_kind();
+
+            if mode == CcArtOverrideMode::Unknown {
+                validation_flags.push("unknown_cc_art_override_mode".to_string());
+            }
+
+            if mode == CcArtOverrideMode::ResolveEc {
+                if detects_resolve_ec_cycle(entry.cc_id, cc_art.target_id, overrides) {
+                    validation_flags.push("resolve_ec_cycle".to_string());
+                }
+            }
+
+            let preview = if let Some(target_item) = item_by_id.get(&cc_art.target_id) {
+                let target_tex_art_slot_kind = tex_art_ec
+                    .and_then(|package| package.present_slot(cc_art.target_id))
+                    .map(tex_art_ec_slot_kind)
+                    .map(str::to_string);
+                Some(SurfaceManualOverridePreviewReport {
+                    target_exists_in_tilemeta: true,
+                    target_tex_art_slot_kind,
+                    target_tex_land_runtime_slot: tex_land_ec
+                        .resolve_runtime_slot_id(target_item.cc_texture_id),
+                })
+            } else {
+                validation_flags.push("target_cc_id_missing_from_tilemeta".to_string());
+                Some(SurfaceManualOverridePreviewReport {
+                    target_exists_in_tilemeta: false,
+                    target_tex_art_slot_kind: None,
+                    target_tex_land_runtime_slot: None,
+                })
+            };
+
+            SurfaceManualOverrideReport {
+                action: "cc-art".to_string(),
+                target_id: Some(cc_art.target_id),
+                mode: Some(cc_art.mode.clone()),
+                package: None,
+                reason: cc_art.reason.clone(),
+                valid: false,
+                validation_flags,
+                resolved_preview: preview,
+            }
+        }
+        EcSurfaceOverrideAction::EcMaterial(material) => {
+            let target_tex_art_slot_kind = tex_art_ec
+                .and_then(|package| package.present_slot(material.material_id))
+                .map(tex_art_ec_slot_kind)
+                .map(str::to_string);
+            let target_tex_land_runtime_slot =
+                tex_land_ec.resolve_runtime_slot_id(material.material_id);
+            if target_tex_art_slot_kind.is_none() && target_tex_land_runtime_slot.is_none() {
+                validation_flags.push("target_ec_material_missing_from_known_packages".to_string());
+            }
+
+            SurfaceManualOverrideReport {
+                action: "ec-material".to_string(),
+                target_id: Some(material.material_id),
+                mode: None,
+                package: material.package.clone(),
+                reason: material.reason.clone(),
+                valid: false,
+                validation_flags,
+                resolved_preview: Some(SurfaceManualOverridePreviewReport {
+                    target_exists_in_tilemeta: item_by_id.contains_key(&material.material_id),
+                    target_tex_art_slot_kind,
+                    target_tex_land_runtime_slot,
+                }),
+            }
+        }
+        EcSurfaceOverrideAction::Ignore(ignore) => SurfaceManualOverrideReport {
+            action: "ignore".to_string(),
+            target_id: None,
+            mode: None,
+            package: None,
+            reason: ignore.reason.clone(),
+            valid: false,
+            validation_flags,
+            resolved_preview: None,
+        },
+        EcSurfaceOverrideAction::Invalid => SurfaceManualOverrideReport {
+            action: "invalid".to_string(),
+            target_id: None,
+            mode: None,
+            package: None,
+            reason: None,
+            valid: false,
+            validation_flags,
+            resolved_preview: None,
+        },
+    };
+
+    report.valid = report.validation_flags.is_empty();
+    Some(report)
+}
+
+fn detects_resolve_ec_cycle(
+    origin_id: u32,
+    mut target_id: u32,
+    overrides: &HashMap<u32, EcSurfaceOverrideEntry>,
+) -> bool {
+    let mut visited = BTreeSet::from([origin_id]);
+    loop {
+        if !visited.insert(target_id) {
+            return true;
+        }
+
+        let Some(entry) = overrides.get(&target_id) else {
+            return false;
+        };
+        let EcSurfaceOverrideAction::CcArt(cc_art) = entry.action() else {
+            return false;
+        };
+        if cc_art.mode_kind() != CcArtOverrideMode::ResolveEc {
+            return false;
+        }
+        target_id = cc_art.target_id;
     }
 }
 

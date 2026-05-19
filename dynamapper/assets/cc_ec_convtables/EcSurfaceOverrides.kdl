@@ -1,0 +1,24 @@
+// Manual routing table for EC surface-like art tiles that cannot be resolved
+// automatically from tileart.uop, TerrainDefinition.uop, and packed EC material
+// provenance.
+//
+// Supported actions:
+// - cc_art CC_ID TARGET mode="raw-cc"
+//   Render TARGET as Classic art even while running in EC mode.
+// - cc_art CC_ID TARGET mode="resolve-ec"
+//   Restart EC surface resolution from TARGET. The resolver must reject cycles.
+// - ec_material CC_ID TARGET package="Texture.uop"
+//   Route directly to a known EC material id.
+// - ignore CC_ID
+//   Treat the tile as transparent/no-render.
+//
+// Unmatched candidates from the 2026-05-19 FP audit. Uncomment and choose an
+// action only after manual visual review.
+//
+// ignore 39698 reason="unmatched in EC audit; review before enabling"
+//
+// ignore 39699 reason="unmatched in EC audit; review before enabling"
+//
+// ignore 39700 reason="unmatched in EC audit; review before enabling"
+//
+// ignore 39805 reason="unmatched in EC audit; review before enabling"
