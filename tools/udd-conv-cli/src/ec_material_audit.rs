@@ -12,6 +12,19 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre;
 use csv::WriterBuilder;
 use log::info;
+use udd_assets::{
+    tex_land_ec::{
+        TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
+        TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
+        TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
+        TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER,
+        TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT,
+        TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
+        TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE,
+        TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC,
+    },
+    tilemeta::{TileMetaItemTile, TileMetaPackage},
+};
 use udd_conv::source_paths::find_first_existing_file;
 use udd_conv::tex_art_ec::{load_tex_art_ec_sources, TexArtEcLoadedSources};
 use uocf::{
@@ -336,6 +349,153 @@ pub fn audit_ec_terrain_primary_selection(
             "terrain primary selections with support-like clues: {selected_support_like_count}/{selected_texture_count} ({percent:.2}%)"
         );
     }
+
+    Ok(())
+}
+
+pub fn audit_ec_surface_redirection(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    tex_land_ec_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let tilemeta = TileMetaPackage::load(tilemeta_path)?;
+    let tex_land_ec = TexLandEcPackage::load(tex_land_ec_path)?;
+    let mut writer = WriterBuilder::new().from_path(output)?;
+    writer.write_record([
+        "art_id",
+        "tile_type",
+        "tile_flags",
+        "tilemeta_visual_kind",
+        "tilemeta_surface_like",
+        "cc_texture_id",
+        "legacy_ec_texture_id",
+        "main_ec_texture_id",
+        "main_ec_texture_reason",
+        "main_ec_texture_source",
+        "direct_tex_land_slot_present",
+        "terrain_material_matches",
+        "primary_material_matches",
+        "layer_only_material_matches",
+        "matched_materials",
+        "provenance_records_considered",
+        "canonical_slots_present",
+        "alias_slots_present",
+        "fallback_resolve_runtime_slot",
+        "resolved_runtime_slot",
+        "route_decision",
+        "decision_reason",
+        "abnormality_flags",
+    ])?;
+
+    let mut row_count = 0u64;
+    let mut routed_count = 0u64;
+    let mut flag_counts = BTreeMap::<String, u64>::new();
+
+    for item in tilemeta
+        .item_tiles()
+        .iter()
+        .filter(|item| item.tile_id != 0 && item.is_surface_like())
+    {
+        let art_id = item.tile_id;
+        let art_data = sources.art_definition.definitions.get(&(art_id as u16));
+        let (main_ec_texture_id, main_reason, main_source) =
+            surface_main_ec_texture(&tilemeta, item);
+        let terrain_matches = main_ec_texture_id
+            .map(|texture_id| terrain_matches_for_texture(&sources, texture_id))
+            .unwrap_or_default();
+        let direct_slot_present = main_ec_texture_id
+            .is_some_and(|texture_id| tex_land_ec.present_slot(texture_id).is_some());
+        let provenance_records = main_ec_texture_id
+            .map(|texture_id| {
+                tex_land_ec
+                    .terrain_provenance()
+                    .iter()
+                    .filter(|record| record.selected_texture_id == texture_id)
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let canonical_slots = present_canonical_slots(&tex_land_ec, &provenance_records);
+        let alias_slots = present_alias_slots(&tex_land_ec, &provenance_records);
+        let fallback_slot = tex_land_ec.resolve_runtime_slot_id(item.cc_texture_id);
+        let resolution = resolve_surface_redirection_like_runtime(
+            &tex_land_ec,
+            item,
+            main_ec_texture_id,
+            direct_slot_present,
+            canonical_slots.as_slice(),
+            alias_slots.as_slice(),
+            fallback_slot,
+        );
+        let abnormality_flags = surface_redirection_flags(
+            item,
+            main_ec_texture_id,
+            direct_slot_present,
+            &terrain_matches,
+            &provenance_records,
+            canonical_slots.as_slice(),
+            alias_slots.as_slice(),
+            resolution.slot_id,
+        );
+
+        if resolution.slot_id.is_some() {
+            routed_count += 1;
+        }
+        for flag in abnormality_flags.split(';').filter(|flag| !flag.is_empty()) {
+            increment_count(&mut flag_counts, flag);
+        }
+
+        writer.write_record([
+            &art_id.to_string(),
+            art_data
+                .map(|data| tile_type_name(data.tile_type))
+                .unwrap_or("missing"),
+            &art_data
+                .map(|data| format!("{:?}", data.flags))
+                .unwrap_or_default(),
+            &format!("{:?}", item.visual_kind()),
+            bool_str(item.is_surface_like()),
+            &item.cc_texture_id.to_string(),
+            &optional_u32(item.ec_texture_id),
+            &main_ec_texture_id.map(|value| value.to_string()).unwrap_or_default(),
+            main_reason.as_deref().unwrap_or("missing"),
+            main_source,
+            bool_str(direct_slot_present),
+            &terrain_matches.len().to_string(),
+            &terrain_matches
+                .iter()
+                .filter(|match_row| match_row.primary_match)
+                .count()
+                .to_string(),
+            &terrain_matches
+                .iter()
+                .filter(|match_row| !match_row.primary_match)
+                .count()
+                .to_string(),
+            &join_terrain_matches(&terrain_matches),
+            &join_provenance_records(&provenance_records),
+            &join_u32_slice(canonical_slots.as_slice()),
+            &join_u32_slice(alias_slots.as_slice()),
+            &fallback_slot.map(|value| value.to_string()).unwrap_or_default(),
+            &resolution.slot_id.map(|value| value.to_string()).unwrap_or_default(),
+            resolution.route_decision,
+            resolution.decision_reason,
+            &abnormality_flags,
+        ])?;
+
+        row_count += 1;
+    }
+
+    writer.flush()?;
+
+    info!(
+        "wrote {row_count} EC surface redirection audit rows to '{}'",
+        output.display()
+    );
+    info!("EC surface redirection resolved rows: {routed_count}/{row_count}");
+    log_count_summary("EC surface redirection flags", &flag_counts);
 
     Ok(())
 }
@@ -1020,6 +1180,308 @@ fn inventory_notes(
         notes.push("not_decodable_as_dds_or_tga");
     }
     notes.join(";")
+}
+
+struct TerrainTextureMatch {
+    material_id: u32,
+    material_name: String,
+    layer_index: usize,
+    primary_match: bool,
+    aliases: Vec<u32>,
+    layer_path: String,
+    layer_current_support: bool,
+    layer_support_like: bool,
+    primary_texture_id: Option<u32>,
+    primary_reason: String,
+}
+
+struct SurfaceRedirectionResolution {
+    slot_id: Option<u32>,
+    route_decision: &'static str,
+    decision_reason: &'static str,
+}
+
+fn surface_main_ec_texture(
+    tilemeta: &TileMetaPackage,
+    item: &TileMetaItemTile,
+) -> (Option<u32>, Option<String>, &'static str) {
+    match tilemeta.main_ec_texture_id_with_reason(item.tile_id) {
+        Some((texture_id, reason)) => {
+            let source = if reason.as_str() == "legacy_ec_texture_id_fallback" {
+                "tilemeta_item_legacy_ec_texture_id"
+            } else {
+                "tilemeta_texture_ref_chooser"
+            };
+            (Some(texture_id), Some(reason.as_str().to_string()), source)
+        }
+        None => (None, None, "missing"),
+    }
+}
+
+fn terrain_matches_for_texture(
+    sources: &TexArtEcLoadedSources,
+    texture_id: u32,
+) -> Vec<TerrainTextureMatch> {
+    let mut matches = Vec::new();
+    for entry in &sources.terrain_definition.entries {
+        let Some(texture) = entry.texture.as_ref() else {
+            continue;
+        };
+        let primary = entry.primary_texture_layer_with_reason();
+        for (layer_index, layer) in texture.layers.iter().enumerate() {
+            if layer.texture_id != Some(texture_id) {
+                continue;
+            }
+            let primary_match = primary
+                .map(|(primary_layer, _)| std::ptr::eq(primary_layer, layer))
+                .unwrap_or(false);
+            matches.push(TerrainTextureMatch {
+                material_id: entry.id,
+                material_name: entry.name.clone().unwrap_or_default(),
+                layer_index,
+                primary_match,
+                aliases: entry.runtime_slot_ids(),
+                layer_path: layer.path.clone().unwrap_or_default(),
+                layer_current_support: layer.is_support_layer_by_current_name_heuristic(),
+                layer_support_like: layer.has_support_like_name_clue(),
+                primary_texture_id: primary.and_then(|(primary_layer, _)| primary_layer.texture_id),
+                primary_reason: primary
+                    .map(|(_, reason)| reason.as_str().to_string())
+                    .unwrap_or_else(|| "missing".to_string()),
+            });
+        }
+    }
+    matches
+}
+
+fn present_canonical_slots(
+    package: &TexLandEcPackage,
+    provenance_records: &[TexLandEcTerrainProvenanceRecord],
+) -> Vec<u32> {
+    let mut slots = BTreeSet::new();
+    for record in provenance_records {
+        if record.canonical_slot_id != 0
+            && record.canonical_slot_id != MISSING_SLOT_ID
+            && package.present_slot(record.canonical_slot_id).is_some()
+        {
+            slots.insert(record.canonical_slot_id);
+        }
+    }
+    slots.into_iter().collect()
+}
+
+fn present_alias_slots(
+    package: &TexLandEcPackage,
+    provenance_records: &[TexLandEcTerrainProvenanceRecord],
+) -> Vec<u32> {
+    let mut slots = BTreeSet::new();
+    for record in provenance_records {
+        if record.alias_slot_id != 0
+            && record.alias_slot_id != MISSING_SLOT_ID
+            && package.present_slot(record.alias_slot_id).is_some()
+        {
+            slots.insert(record.alias_slot_id);
+        }
+    }
+    slots.into_iter().collect()
+}
+
+fn resolve_surface_redirection_like_runtime(
+    package: &TexLandEcPackage,
+    item: &TileMetaItemTile,
+    main_ec_texture_id: Option<u32>,
+    direct_slot_present: bool,
+    canonical_slots: &[u32],
+    alias_slots: &[u32],
+    fallback_slot: Option<u32>,
+) -> SurfaceRedirectionResolution {
+    let Some(main_ec_texture_id) = main_ec_texture_id else {
+        return SurfaceRedirectionResolution {
+            slot_id: fallback_slot,
+            route_decision: if fallback_slot.is_some() {
+                "TexLandEcArt"
+            } else {
+                "EcRegularArt"
+            },
+            decision_reason: "missing_main_ec_texture_fallback_to_cc_runtime_slot",
+        };
+    };
+
+    if direct_slot_present {
+        return SurfaceRedirectionResolution {
+            slot_id: Some(main_ec_texture_id),
+            route_decision: "TexLandEcArt",
+            decision_reason: "main_ec_texture_id_present_as_tex_land_slot",
+        };
+    }
+
+    if canonical_slots.len() == 1 {
+        return SurfaceRedirectionResolution {
+            slot_id: canonical_slots.first().copied(),
+            route_decision: "TexLandEcArt",
+            decision_reason: "unique_present_canonical_slot_from_provenance",
+        };
+    }
+
+    if canonical_slots.is_empty() && alias_slots.len() == 1 {
+        return SurfaceRedirectionResolution {
+            slot_id: alias_slots.first().copied(),
+            route_decision: "TexLandEcArt",
+            decision_reason: "unique_present_alias_slot_from_provenance",
+        };
+    }
+
+    let slot_id = package.resolve_runtime_slot_id(item.cc_texture_id);
+    SurfaceRedirectionResolution {
+        slot_id,
+        route_decision: if slot_id.is_some() {
+            "TexLandEcArt"
+        } else {
+            "EcRegularArt"
+        },
+        decision_reason: if canonical_slots.len() > 1 {
+            "ambiguous_canonical_slots_fallback_to_cc_runtime_slot"
+        } else if alias_slots.len() > 1 {
+            "ambiguous_alias_slots_fallback_to_cc_runtime_slot"
+        } else {
+            "no_provenance_slot_fallback_to_cc_runtime_slot"
+        },
+    }
+}
+
+fn surface_redirection_flags(
+    item: &TileMetaItemTile,
+    main_ec_texture_id: Option<u32>,
+    direct_slot_present: bool,
+    terrain_matches: &[TerrainTextureMatch],
+    provenance_records: &[TexLandEcTerrainProvenanceRecord],
+    canonical_slots: &[u32],
+    alias_slots: &[u32],
+    resolved_slot: Option<u32>,
+) -> String {
+    let mut flags = Vec::new();
+    if main_ec_texture_id.is_none() {
+        flags.push("missing_main_ec_texture");
+    }
+    if !direct_slot_present && provenance_records.is_empty() {
+        flags.push("no_provenance_records_for_main_texture");
+    }
+    if terrain_matches.is_empty() {
+        flags.push("no_terrain_definition_layer_match");
+    }
+    if !terrain_matches.is_empty() && terrain_matches.iter().all(|match_row| !match_row.primary_match) {
+        flags.push("layer_only_terrain_matches");
+    }
+    if canonical_slots.len() > 1 {
+        flags.push("ambiguous_canonical_slots");
+    }
+    if alias_slots.len() > 1 {
+        flags.push("ambiguous_alias_slots");
+    }
+    if resolved_slot.is_none() {
+        flags.push("unresolved_runtime_slot");
+    }
+    if item.cc_texture_id == 0 {
+        flags.push("missing_cc_texture_id_fallback");
+    }
+    flags.join(";")
+}
+
+fn join_terrain_matches(matches: &[TerrainTextureMatch]) -> String {
+    matches
+        .iter()
+        .map(|match_row| {
+            format!(
+                "material={}:name={}:layer={}:primary_match={}:aliases={}:path={}:current_support={}:support_like={}:primary_texture={}:primary_reason={}",
+                match_row.material_id,
+                match_row.material_name,
+                match_row.layer_index,
+                bool_str(match_row.primary_match),
+                join_u32_slice(match_row.aliases.as_slice()),
+                match_row.layer_path,
+                bool_str(match_row.layer_current_support),
+                bool_str(match_row.layer_support_like),
+                match_row
+                    .primary_texture_id
+                    .map(|texture_id| texture_id.to_string())
+                    .unwrap_or_default(),
+                match_row.primary_reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn join_provenance_records(records: &[TexLandEcTerrainProvenanceRecord]) -> String {
+    records
+        .iter()
+        .map(|record| {
+            format!(
+                "material={}:alias={}:selected_texture={}:canonical={}:primary_texture={}:primary_layer={}:primary_reason={}:primary_flags={}",
+                record.material_id,
+                record.alias_slot_id,
+                record.selected_texture_id,
+                record.canonical_slot_id,
+                record.primary_texture_id,
+                record.primary_layer_index,
+                terrain_primary_reason_name(record.primary_selection_reason),
+                terrain_primary_flags_name(record.primary_selection_flags)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn terrain_primary_reason_name(reason: u8) -> &'static str {
+    match reason {
+        1 => "non_support_preferred_repetition",
+        2 => "non_support_repetition_fallback",
+        3 => "support_preferred_repetition_fallback",
+        4 => "support_repetition_fallback",
+        _ => "unknown",
+    }
+}
+
+fn terrain_primary_flags_name(flags: u16) -> String {
+    let mut names = Vec::new();
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT != 0 {
+        names.push("selected_current_support");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE != 0 {
+        names.push("selected_support_like");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION != 0 {
+        names.push("selected_preferred_repetition");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_FALLBACK_REASON != 0 {
+        names.push("fallback_reason");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT != 0 {
+        names.push("multiple_preferred_non_support");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC != 0 {
+        names.push("support_like_outside_current_heuristic");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER != 0 {
+        names.push("opaque_unk6_tiebreaker");
+    }
+    names.join(";")
+}
+
+fn join_u32_slice(values: &[u32]) -> String {
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn optional_u32(value: u32) -> String {
+    if value == 0 {
+        String::new()
+    } else {
+        value.to_string()
+    }
 }
 
 fn terrain_candidate_layers_summary(layers: &[TerrainDefinitionTextureLayer]) -> String {

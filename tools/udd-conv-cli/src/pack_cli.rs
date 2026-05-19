@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::ec_material_audit::{
-    audit_ec_material_refs, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
-    write_ec_material_baseline_report,
+    audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_primary_selection,
+    inventory_ec_support_textures, write_ec_material_baseline_report,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
@@ -34,7 +34,10 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH,
     },
-    tilemeta::{build_tilemeta_uddp_from_sources, TileMetaBuildOptions},
+    tilemeta::{
+        build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
+        TileMetaBuildOptions,
+    },
     upscale::UpscaleFilter,
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
     AtlasPackingMode, CompressionFlag, PagePixelFormat,
@@ -62,6 +65,13 @@ fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
         eyre::bail!("at least one source root must be provided via --ccdir or --ecdir");
     }
     Ok(dirs)
+}
+
+fn collect_ec_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
+    args.ecdir
+        .as_ref()
+        .map(|path| vec![path.clone()])
+        .ok_or_else(|| eyre::eyre!("--ecdir is required for EC source files"))
 }
 
 fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
@@ -320,6 +330,17 @@ enum Commands {
         #[arg(long, default_value = "ec_terrain_primary_selection.csv")]
         output: PathBuf,
     },
+    /// Audits current surface-like art redirection through tilemeta and tex_land_ec provenance.
+    AuditEcSurfaceRedirection {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        tilemeta: PathBuf,
+        #[arg(long = "ec-land")]
+        tex_land_ec: PathBuf,
+        #[arg(long, default_value = "ec_surface_redirection.csv")]
+        output: PathBuf,
+    },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
@@ -510,9 +531,10 @@ pub fn run() -> eyre::Result<()> {
             upscale,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let art_out_file = resolve_output_path(&paths, &art_output);
-            let land_out_file = resolve_output_path(&paths, &land_output);
-            let shared_sources = load_tex_art_ec_sources(&paths)?;
+            let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
+            let art_out_file = resolve_output_path(&ec_paths, &art_output);
+            let land_out_file = resolve_output_path(&ec_paths, &land_output);
+            let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
@@ -600,7 +622,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             audit_ec_material_refs(&paths, &out_file)?;
         }
@@ -609,7 +631,7 @@ pub fn run() -> eyre::Result<()> {
             terrain_output,
             effect_output,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
             let terrain_out_file = resolve_output_path(&paths, &terrain_output);
             let effect_out_file = resolve_output_path(&paths, &effect_output);
             inventory_ec_support_textures(&paths, &terrain_out_file, &effect_out_file)?;
@@ -618,7 +640,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             write_ec_material_baseline_report(&out_file)?;
         }
@@ -626,9 +648,19 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             audit_ec_terrain_primary_selection(&paths, &out_file)?;
+        }
+        Commands::AuditEcSurfaceRedirection {
+            source_dirs: source_dir_args,
+            tilemeta,
+            tex_land_ec,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            audit_ec_surface_redirection(&paths, &tilemeta, &tex_land_ec, &out_file)?;
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
@@ -638,14 +670,18 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            build_tilemeta_uddp_from_sources(
-                &paths,
-                &out_file,
-                &TileMetaBuildOptions {
-                    adjust_tex_art_ec_sampling: ec_art_cropped,
-                    use_ec_radarcol,
-                },
-            )?;
+            let options = TileMetaBuildOptions {
+                adjust_tex_art_ec_sampling: ec_art_cropped,
+                use_ec_radarcol,
+            };
+            match (source_dir_args.ccdir.as_ref(), source_dir_args.ecdir.as_ref()) {
+                (Some(ccdir), Some(ecdir)) => {
+                    build_tilemeta_uddp_from_split_sources(ccdir, ecdir, &out_file, &options)?;
+                }
+                _ => {
+                    build_tilemeta_uddp_from_sources(&paths, &out_file, &options)?;
+                }
+            }
             println!("Wrote tilemeta.uddp to '{}'.", out_file.display());
         }
         Commands::PackMap {
@@ -797,6 +833,28 @@ mod tests {
         .expect("collect source dirs");
 
         assert_eq!(dirs, vec![PathBuf::from("/tmp/uo-client")]);
+    }
+
+    #[test]
+    fn collect_ec_source_dirs_uses_only_ec_root() {
+        let dirs = collect_ec_source_dirs(&SourceDirArgs {
+            ccdir: Some(PathBuf::from("/cc")),
+            ecdir: Some(PathBuf::from("/ec")),
+        })
+        .expect("collect ec dirs");
+
+        assert_eq!(dirs, vec![PathBuf::from("/ec")]);
+    }
+
+    #[test]
+    fn collect_ec_source_dirs_rejects_cc_only_root() {
+        let error = collect_ec_source_dirs(&SourceDirArgs {
+            ccdir: Some(PathBuf::from("/cc")),
+            ecdir: None,
+        })
+        .expect_err("cc-only roots must not satisfy EC source loading");
+
+        assert!(error.to_string().contains("--ecdir is required"));
     }
 
     #[test]
