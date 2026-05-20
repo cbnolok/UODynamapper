@@ -530,7 +530,8 @@ pub fn write_ec_terrain_override_candidates(
     content.push_str("// Generated review skeleton for EC terrain manual integration.\n");
     content.push_str("// Source-derived TerrainDefinition.uop data remains authoritative.\n");
     content.push_str("// Keep entries only when manual review proves the value is needed.\n");
-    content.push_str("// Candidate codes are audit statuses, not runtime policy names.\n\n");
+    content.push_str("// Suggestions are commented out. Uncomment only after manual review.\n");
+    content.push_str("// Candidate codes are audit statuses, not final reason codes.\n\n");
     for (code, count) in &candidate_counts {
         content.push_str(&format!("// {code}: {count}\n"));
     }
@@ -540,35 +541,41 @@ pub fn write_ec_terrain_override_candidates(
     for candidate in &candidates {
         if current_id != Some(candidate.id) {
             if current_id.is_some() {
-                content.push_str("}\n\n");
+                content.push_str("// }\n\n");
             }
             current_id = Some(candidate.id);
-            content.push_str(&format!("terrain {} {{\n", candidate.id));
+            content.push_str(&format!("// terrain {} {{\n", candidate.id));
+            if let Some(terrain_type) = &candidate.kdl_terrain_type {
+                content.push_str(&format!("//     // type: {}\n", kdl_comment_text(terrain_type)));
+            }
+            if let Some(shader) = &candidate.uop_shader_name {
+                content.push_str(&format!("//     // shader: {}\n", kdl_comment_text(shader)));
+            }
+            if !candidate.runtime_slot_ids.is_empty() {
+                content.push_str(&format!(
+                    "//     // runtime slots: {}\n",
+                    join_u32_list(&candidate.runtime_slot_ids)
+                ));
+            }
         }
 
-        content.push_str("    candidate");
-        content.push_str(&format!(" field={}", kdl_quote(&candidate.field)));
-        content.push_str(&format!(" code={}", kdl_quote(&candidate.code)));
-        if let Some(terrain_type) = &candidate.kdl_terrain_type {
-            content.push_str(&format!(" type={}", kdl_quote(terrain_type)));
-        }
-        if let Some(shader) = &candidate.uop_shader_name {
-            content.push_str(&format!(" shader={}", kdl_quote(shader)));
-        }
-        if !candidate.runtime_slot_ids.is_empty() {
-            content.push_str(&format!(
-                " runtime_slots={}",
-                kdl_quote(&join_u32_list(&candidate.runtime_slot_ids))
-            ));
-        }
-        content.push('\n');
         content.push_str(&format!(
-            "    // detail: {}\n",
+            "//     // source field: {}; candidate code: {}\n",
+            kdl_comment_text(&candidate.field),
+            kdl_comment_text(&candidate.code)
+        ));
+        content.push_str(&format!(
+            "//     // detail: {}\n",
             kdl_comment_text(&candidate.detail)
         ));
+        for suggestion in terrain_override_candidate_suggestions(candidate) {
+            content.push_str("//     ");
+            content.push_str(&suggestion);
+            content.push('\n');
+        }
     }
     if current_id.is_some() {
-        content.push_str("}\n");
+        content.push_str("// }\n");
     }
 
     fs::write(output, content)?;
@@ -2575,6 +2582,116 @@ fn terrain_definition_manual_candidate_report(
         runtime_slot_ids: uop_entry
             .map(TerrainDefinitionEntry::runtime_slot_ids)
             .unwrap_or_default(),
+    }
+}
+
+fn terrain_override_candidate_suggestions(
+    candidate: &TerrainDefinitionManualCandidateReport,
+) -> Vec<String> {
+    match candidate.field.as_str() {
+        "terrain_type.Smooth" => vec![format!(
+            "policy \"smooth\" code={}",
+            kdl_quote("reviewed_runtime_policy")
+        )],
+        "terrain_type.FollowCenter" => vec![format!(
+            "policy \"follow-center\" code={}",
+            kdl_quote("reviewed_runtime_policy")
+        )],
+        "terrain_type.Single" => vec![format!(
+            "policy \"single\" code={}",
+            kdl_quote("reviewed_single_policy")
+        )],
+        "speed" => terrain_kdl_value(&candidate.detail)
+            .map(|speed| format!("liquid speed={speed} code={}", kdl_quote("reviewed_liquid_motion")))
+            .into_iter()
+            .collect(),
+        "waveheight" => terrain_kdl_value(&candidate.detail)
+            .map(|waveheight| {
+                format!(
+                    "liquid waveheight={waveheight} code={}",
+                    kdl_quote("reviewed_liquid_motion")
+                )
+            })
+            .into_iter()
+            .collect(),
+        "textureid" => terrain_kdl_textureid(&candidate.detail)
+            .map(|texture| {
+                format!(
+                    "texture {texture} role=\"base\" code={}",
+                    kdl_quote("reviewed_textureid")
+                )
+            })
+            .into_iter()
+            .collect(),
+        field if field.starts_with("layer.") => {
+            let role = field.trim_start_matches("layer.");
+            terrain_kdl_layer_values(&candidate.detail)
+                .map(|(texture, stretch)| {
+                    format!(
+                        "layer {} tex={texture} stretch={} code={}",
+                        kdl_quote(role),
+                        kdl_float_literal(stretch),
+                        kdl_quote(layer_override_reason_code(role))
+                    )
+                })
+                .into_iter()
+                .collect()
+        }
+        field if field.starts_with("terrain_type.") => {
+            let policy = field
+                .trim_start_matches("terrain_type.")
+                .to_ascii_lowercase()
+                .replace('_', "-");
+            vec![format!(
+                "policy {} code={}",
+                kdl_quote(&policy),
+                kdl_quote("reviewed_runtime_policy")
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn terrain_kdl_value(detail: &str) -> Option<&str> {
+    detail
+        .strip_prefix("kdl=")
+        .and_then(|rest| rest.split_once(';').map(|(value, _)| value.trim()))
+}
+
+fn terrain_kdl_textureid(detail: &str) -> Option<u32> {
+    detail
+        .strip_prefix("KDL textureid=")
+        .and_then(|value| value.trim().parse().ok())
+}
+
+fn terrain_kdl_layer_values(detail: &str) -> Option<(u32, f32)> {
+    let mut texture = None;
+    let mut stretch = None;
+    for part in detail.split(';') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("texture_id=") {
+            texture = value.trim().parse().ok();
+        } else if let Some(value) = part.strip_prefix("stretch=") {
+            stretch = value.trim().parse().ok();
+        }
+    }
+    Some((texture?, stretch?))
+}
+
+fn layer_override_reason_code(role: &str) -> &'static str {
+    match role {
+        "m" => "reviewed_mask_texture",
+        "n" => "reviewed_normal_texture",
+        _ => "reviewed_layer_texture",
+    }
+}
+
+fn kdl_float_literal(value: f32) -> String {
+    let literal = value.to_string();
+    if literal.contains('.') {
+        literal
+    } else {
+        format!("{literal}.0")
     }
 }
 
