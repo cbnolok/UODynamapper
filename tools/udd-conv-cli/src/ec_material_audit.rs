@@ -193,6 +193,7 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
 pub fn audit_ec_terrain_primary_selection(
     source_dirs: &[PathBuf],
     overrides_path: Option<&Path>,
+    tex_land_ec_path: Option<&Path>,
     output: &Path,
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
@@ -203,6 +204,19 @@ pub fn audit_ec_terrain_primary_selection(
         .transpose()?
         .map(|overrides| overrides.to_map())
         .unwrap_or_default();
+    let packed_terrain = tex_land_ec_path
+        .filter(|path| path.exists())
+        .map(TexLandEcPackage::load)
+        .transpose()?;
+    let packed_provenance_by_material = packed_terrain
+        .as_ref()
+        .map(packed_terrain_provenance_by_material)
+        .unwrap_or_default();
+    let packaged_override_summary = packed_terrain
+        .as_ref()
+        .map(packaged_terrain_override_summary)
+        .transpose()?
+        .flatten();
     let mut entries = Vec::new();
     let mut reason_counts = BTreeMap::<String, u64>::new();
     let mut flag_counts = BTreeMap::<String, u64>::new();
@@ -303,6 +317,11 @@ pub fn audit_ec_terrain_primary_selection(
         let selected_family = selected_layer
             .map(|layer| terrain_texture_family_name(layer.texture_type, selected_package))
             .unwrap_or("Unknown");
+        let packed_provenance = packed_provenance_by_material
+            .get(&entry.id)
+            .map(|records| {
+                packed_terrain_provenance_report(records, selected_layer, selected_layer_index)
+            });
 
         entries.push(TerrainPrimarySelectionEntryReport {
             material_id: entry.id,
@@ -331,6 +350,7 @@ pub fn audit_ec_terrain_primary_selection(
             overrides: overrides
                 .get(&entry.id)
                 .map(terrain_definition_override_entry_report),
+            packed_provenance,
             selected_layer: selected_layer.map(|layer| TerrainSelectedLayerReport {
                 layer_index: selected_layer_index.unwrap_or_default(),
                 texture_id: layer.texture_id,
@@ -372,10 +392,13 @@ pub fn audit_ec_terrain_primary_selection(
     let row_count = entries.len() as u64;
     let report = TerrainPrimarySelectionReport {
         schema: "ec_terrain_primary_selection",
-        schema_version: 1,
+        schema_version: 2,
         summary: TerrainPrimarySelectionSummary {
             material_count: row_count as usize,
             override_entry_count: overrides.len(),
+            tex_land_ec_path: tex_land_ec_path.map(|path| path.display().to_string()),
+            packaged_override_summary,
+            packed_provenance_material_count: packed_provenance_by_material.len(),
             selection_reason_counts: reason_counts.clone(),
             audit_flag_counts: flag_counts.clone(),
             material_shape_counts: shape_counts.clone(),
@@ -1580,6 +1603,9 @@ struct TerrainPrimarySelectionReport {
 struct TerrainPrimarySelectionSummary {
     material_count: usize,
     override_entry_count: usize,
+    tex_land_ec_path: Option<String>,
+    packaged_override_summary: Option<PackagedTerrainOverrideSummaryReport>,
+    packed_provenance_material_count: usize,
     selection_reason_counts: BTreeMap<String, u64>,
     audit_flag_counts: BTreeMap<String, u64>,
     material_shape_counts: BTreeMap<String, u64>,
@@ -1597,10 +1623,35 @@ struct TerrainPrimarySelectionEntryReport {
     shader_name: Option<String>,
     material_shape: String,
     overrides: Option<TerrainDefinitionOverrideEntryReport>,
+    packed_provenance: Option<PackedTerrainProvenanceReport>,
     selected_layer: Option<TerrainSelectedLayerReport>,
     layer_summary: TerrainLayerSummaryReport,
     layers: Vec<TerrainLayerReport>,
     audit_flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PackagedTerrainOverrideSummaryReport {
+    schema: Option<String>,
+    schema_version: Option<u64>,
+    override_count: Option<u64>,
+    active_action_count: Option<u64>,
+    source_path: Option<String>,
+    byte_count: usize,
+}
+
+#[derive(Serialize)]
+struct PackedTerrainProvenanceReport {
+    record_count: usize,
+    alias_slot_ids: Vec<u32>,
+    canonical_slot_ids: Vec<u32>,
+    selected_texture_ids: Vec<u32>,
+    primary_texture_ids: Vec<u32>,
+    primary_layer_indices: Vec<u32>,
+    primary_selection_reasons: Vec<String>,
+    primary_selection_flags: Vec<String>,
+    selected_layer_texture_present_in_packed_provenance: Option<bool>,
+    selected_layer_index_present_in_packed_provenance: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -2674,6 +2725,106 @@ fn terrain_definition_override_entry_report(
             .collect(),
         ignore_reason_code: entry.ignore.as_ref().and_then(|ignore| ignore.code.clone()),
     }
+}
+
+fn packed_terrain_provenance_by_material(
+    package: &TexLandEcPackage,
+) -> BTreeMap<u32, Vec<TexLandEcTerrainProvenanceRecord>> {
+    let mut by_material = BTreeMap::<u32, Vec<TexLandEcTerrainProvenanceRecord>>::new();
+    for record in package.terrain_provenance() {
+        by_material
+            .entry(record.material_id)
+            .or_default()
+            .push(*record);
+    }
+    by_material
+}
+
+fn packaged_terrain_override_summary(
+    package: &TexLandEcPackage,
+) -> eyre::Result<Option<PackagedTerrainOverrideSummaryReport>> {
+    let Some(bytes) = package.read_terrain_overrides_metadata()? else {
+        return Ok(None);
+    };
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+    Ok(Some(PackagedTerrainOverrideSummaryReport {
+        schema: value
+            .get("schema")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        schema_version: value.get("schema_version").and_then(|value| value.as_u64()),
+        override_count: value.get("override_count").and_then(|value| value.as_u64()),
+        active_action_count: value
+            .get("active_action_count")
+            .and_then(|value| value.as_u64()),
+        source_path: value
+            .get("source_path")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        byte_count: bytes.len(),
+    }))
+}
+
+fn packed_terrain_provenance_report(
+    records: &[TexLandEcTerrainProvenanceRecord],
+    selected_layer: Option<&TerrainDefinitionTextureLayer>,
+    selected_layer_index: Option<usize>,
+) -> PackedTerrainProvenanceReport {
+    let selected_texture_id = selected_layer.and_then(|layer| layer.texture_id);
+
+    PackedTerrainProvenanceReport {
+        record_count: records.len(),
+        alias_slot_ids: sorted_unique_present_u32(
+            records.iter().map(|record| record.alias_slot_id),
+            MISSING_SLOT_ID,
+        ),
+        canonical_slot_ids: sorted_unique_present_u32(
+            records.iter().map(|record| record.canonical_slot_id),
+            MISSING_SLOT_ID,
+        ),
+        selected_texture_ids: sorted_unique_present_u32(
+            records.iter().map(|record| record.selected_texture_id),
+            MISSING_TEXTURE_ID,
+        ),
+        primary_texture_ids: sorted_unique_present_u32(
+            records.iter().map(|record| record.primary_texture_id),
+            MISSING_TEXTURE_ID,
+        ),
+        primary_layer_indices: sorted_unique_present_u32(
+            records.iter().map(|record| record.primary_layer_index),
+            MISSING_TERRAIN_LAYER_INDEX,
+        ),
+        primary_selection_reasons: sorted_unique_strings(records.iter().map(|record| {
+            terrain_primary_reason_name(record.primary_selection_reason).to_string()
+        })),
+        primary_selection_flags: sorted_unique_strings(records.iter().flat_map(|record| {
+            terrain_primary_flags_vec(record.primary_selection_flags)
+                .into_iter()
+                .map(str::to_string)
+        })),
+        selected_layer_texture_present_in_packed_provenance: selected_texture_id.map(|texture_id| {
+            records.iter().any(|record| {
+                record.primary_texture_id == texture_id || record.selected_texture_id == texture_id
+            })
+        }),
+        selected_layer_index_present_in_packed_provenance: selected_layer_index.map(|layer_index| {
+            records
+                .iter()
+                .any(|record| record.primary_layer_index == layer_index as u32)
+        }),
+    }
+}
+
+fn sorted_unique_present_u32(values: impl Iterator<Item = u32>, missing: u32) -> Vec<u32> {
+    values
+        .filter(|value| *value != missing)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn sorted_unique_strings(values: impl Iterator<Item = String>) -> Vec<String> {
+    values.collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 fn terrain_definition_kdl_findings(

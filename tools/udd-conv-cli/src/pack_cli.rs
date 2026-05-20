@@ -333,6 +333,8 @@ enum Commands {
             default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
         )]
         terrain_overrides: PathBuf,
+        #[arg(long = "tex-land-ec")]
+        tex_land_ec: Option<PathBuf>,
         #[arg(long, default_value = "ec_terrain_primary_selection.json")]
         output: PathBuf,
     },
@@ -708,12 +710,18 @@ pub fn run() -> eyre::Result<()> {
         Commands::AuditEcTerrainPrimarySelection {
             source_dirs: source_dir_args,
             terrain_overrides,
+            tex_land_ec,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
-            audit_ec_terrain_primary_selection(&paths, terrain_overrides.as_deref(), &out_file)?;
+            audit_ec_terrain_primary_selection(
+                &paths,
+                terrain_overrides.as_deref(),
+                tex_land_ec.as_deref(),
+                &out_file,
+            )?;
         }
         Commands::AuditEcTerrainDefinitionKdl {
             source_dirs: source_dir_args,
