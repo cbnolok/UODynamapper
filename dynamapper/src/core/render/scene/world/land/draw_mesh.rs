@@ -33,6 +33,10 @@ const EC_DIAG_LOG_PROVENANCE: bool = false;
 const EC_DIAG_LOG_VISIBLE_TILES: bool = false;
 /// When true, visible tile logs are restricted to those that failed to resolve to an EC texture.
 const EC_DIAG_LOG_ONLY_MISSING: bool = true;
+/// When true, compares the current EC land lookup result with the material decision resolver.
+const EC_DIAG_LOG_RESOLVER_DRY_RUN: bool = false;
+/// Maximum resolver mismatch rows to print when dry-run logging is enabled.
+const EC_DIAG_RESOLVER_DRY_RUN_SAMPLE_LIMIT: usize = 32;
 
 use super::{
     mesh_material::*, LCMesh, LandUploadBudget, CHUNK_STORAGE_BLOCKS_DIM,
@@ -1365,5 +1369,127 @@ fn log_tex_land_ec_diagnostics(
                 }
             }
         }
+    }
+
+    if EC_DIAG_LOG_RESOLVER_DRY_RUN {
+        log_tex_land_ec_resolver_dry_run(
+            ec,
+            map_planes_r,
+            current_map_id,
+            blocks_to_draw,
+            texture_lookup_cache,
+        );
+    }
+}
+
+fn log_tex_land_ec_resolver_dry_run(
+    ec: &udd_assets::tex_land_ec::TexLandEcPackage,
+    map_planes_r: &MapPlanesRes,
+    current_map_id: u32,
+    blocks_to_draw: &[MapBlockRelPos],
+    texture_lookup_cache: &[u32],
+) {
+    let Some(plane) = map_planes_r
+        .0
+        .get(current_map_id as usize)
+        .and_then(|o| o.as_ref())
+    else {
+        return;
+    };
+
+    let mut checked_tiles = 0usize;
+    let mut missing_lookup_count = 0usize;
+    let mut resolver_mismatch_count = 0usize;
+    let mut override_action_visible_count = 0usize;
+    let mut logged_mismatches = 0usize;
+
+    for &bp in blocks_to_draw.iter() {
+        let Some(block) = plane.block_no_update(bp) else {
+            continue;
+        };
+        for (cell_index, cell) in block.cells.iter().enumerate() {
+            checked_tiles += 1;
+            let current_runtime_slot = texture_lookup_cache
+                .get(cell.id as usize)
+                .and_then(|packed| current_ec_runtime_slot_from_lookup(*packed));
+            let decision = ec.resolve_material_decision(cell.id as u32);
+            if decision.override_actions.is_some() {
+                override_action_visible_count += 1;
+            }
+            if current_runtime_slot.is_none() {
+                missing_lookup_count += 1;
+            }
+            if current_runtime_slot != decision.runtime_slot_id {
+                resolver_mismatch_count += 1;
+                if logged_mismatches < EC_DIAG_RESOLVER_DRY_RUN_SAMPLE_LIMIT {
+                    logged_mismatches += 1;
+                    let local_x = (cell_index as u32) & (MapBlock::CELLS_PER_ROW - 1);
+                    let local_y = (cell_index as u32) / MapBlock::CELLS_PER_ROW;
+                    let world_x = bp.x * MAP_STORAGE_BLOCK_TILE_DIM + local_x;
+                    let world_y = bp.y * MAP_STORAGE_BLOCK_TILE_DIM + local_y;
+                    console_logger::one(
+                        LogSev::Info,
+                        LogAbout::General,
+                        &format!(
+                            "[EC-DIAG] resolver-dry-run mismatch world=({world_x},{world_y}) cell_id={} z={} current_slot={} resolver_slot={} material_id={} primary_texture={} primary_layer={} override_actions={} source={}",
+                            cell.id,
+                            cell.z,
+                            optional_u32_log(current_runtime_slot),
+                            optional_u32_log(decision.runtime_slot_id),
+                            optional_u32_log(decision.material_id),
+                            optional_u32_log(decision.primary_texture_id),
+                            optional_u32_log(decision.primary_layer_index),
+                            decision
+                                .override_actions
+                                .map(|actions| actions.action_flags.to_string())
+                                .unwrap_or_else(|| "none".to_string()),
+                            decision
+                                .runtime_slot_source
+                                .map(ec_runtime_slot_source_name)
+                                .unwrap_or("none"),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::General,
+        &format!(
+            "[EC-DIAG] resolver-dry-run summary checked={} missing_lookup={} mismatches={} visible_override_actions={} samples_logged={}",
+            checked_tiles,
+            missing_lookup_count,
+            resolver_mismatch_count,
+            override_action_visible_count,
+            logged_mismatches,
+        ),
+    );
+}
+
+fn current_ec_runtime_slot_from_lookup(packed: u32) -> Option<u32> {
+    match packed & 0xF {
+        2 | 4 => Some(packed >> 4),
+        _ => None,
+    }
+}
+
+fn optional_u32_log(value: Option<u32>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
+}
+
+fn ec_runtime_slot_source_name(
+    source: udd_assets::tex_land_ec::TexLandEcRuntimeSlotSource,
+) -> &'static str {
+    match source {
+        udd_assets::tex_land_ec::TexLandEcRuntimeSlotSource::TranscodedMaterialAlias => {
+            "transcoded_material_alias"
+        }
+        udd_assets::tex_land_ec::TexLandEcRuntimeSlotSource::TranscodedMaterialPlaceholder => {
+            "transcoded_material_placeholder"
+        }
+        udd_assets::tex_land_ec::TexLandEcRuntimeSlotSource::DirectAlias => "direct_alias",
+        udd_assets::tex_land_ec::TexLandEcRuntimeSlotSource::DirectSlot => "direct_slot",
     }
 }
