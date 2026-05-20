@@ -192,10 +192,17 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
 
 pub fn audit_ec_terrain_primary_selection(
     source_dirs: &[PathBuf],
+    overrides_path: Option<&Path>,
     output: &Path,
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
     let package_membership = EcPackageMembership::load(source_dirs)?;
+    let overrides = overrides_path
+        .filter(|path| path.exists())
+        .map(EcTerrainOverrides::load)
+        .transpose()?
+        .map(|overrides| overrides.to_map())
+        .unwrap_or_default();
     let mut entries = Vec::new();
     let mut reason_counts = BTreeMap::<String, u64>::new();
     let mut flag_counts = BTreeMap::<String, u64>::new();
@@ -321,6 +328,9 @@ pub fn audit_ec_terrain_primary_selection(
             },
             shader_name: texture.shader_name.clone(),
             material_shape: material_shape.to_string(),
+            overrides: overrides
+                .get(&entry.id)
+                .map(terrain_definition_override_entry_report),
             selected_layer: selected_layer.map(|layer| TerrainSelectedLayerReport {
                 layer_index: selected_layer_index.unwrap_or_default(),
                 texture_id: layer.texture_id,
@@ -365,6 +375,7 @@ pub fn audit_ec_terrain_primary_selection(
         schema_version: 1,
         summary: TerrainPrimarySelectionSummary {
             material_count: row_count as usize,
+            override_entry_count: overrides.len(),
             selection_reason_counts: reason_counts.clone(),
             audit_flag_counts: flag_counts.clone(),
             material_shape_counts: shape_counts.clone(),
@@ -1568,6 +1579,7 @@ struct TerrainPrimarySelectionReport {
 #[derive(Serialize)]
 struct TerrainPrimarySelectionSummary {
     material_count: usize,
+    override_entry_count: usize,
     selection_reason_counts: BTreeMap<String, u64>,
     audit_flag_counts: BTreeMap<String, u64>,
     material_shape_counts: BTreeMap<String, u64>,
@@ -1584,6 +1596,7 @@ struct TerrainPrimarySelectionEntryReport {
     alias_summary: TerrainAliasSummaryReport,
     shader_name: Option<String>,
     material_shape: String,
+    overrides: Option<TerrainDefinitionOverrideEntryReport>,
     selected_layer: Option<TerrainSelectedLayerReport>,
     layer_summary: TerrainLayerSummaryReport,
     layers: Vec<TerrainLayerReport>,
