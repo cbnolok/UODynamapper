@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
+use uocf::enhanced::hues::EcHuePackage;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::TileArtEntry;
@@ -32,6 +33,12 @@ pub enum ViewMode {
 pub enum TileMetadataSource {
     CcTileData,
     EcTileArt,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum HuesSource {
+    CcMul,
+    EcUop,
 }
 
 #[derive(Clone)]
@@ -73,6 +80,7 @@ pub struct UopInspectorApp {
     pub selected_tex_art_cc_id: Option<u32>,
     pub selected_terrain_def_hash: Option<u64>,
     pub selected_tileart_hash: Option<u64>,
+    pub selected_ec_hue_hash: Option<u64>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -81,6 +89,7 @@ pub struct UopInspectorApp {
     pub status_message: String,
     pub view_mode: ViewMode,
     pub tile_metadata_source: TileMetadataSource,
+    pub hues_source: HuesSource,
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
@@ -100,10 +109,12 @@ pub struct UopInspectorApp {
 
     pub selected_multi_id: u32,
     pub selected_hue_id: u16,
+    pub selected_ec_hue_id: u16,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
     pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
+    pub ec_hues: Option<Arc<EcHuePackage>>,
 }
 
 impl UopInspectorApp {
@@ -131,6 +142,7 @@ impl UopInspectorApp {
             selected_tex_art_cc_id: None,
             selected_terrain_def_hash: None,
             selected_tileart_hash: None,
+            selected_ec_hue_hash: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -138,9 +150,11 @@ impl UopInspectorApp {
             status_message: "Welcome to UOCF Inspector".to_string(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
+            hues_source: HuesSource::CcMul,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
+            ec_hues: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
 
@@ -156,6 +170,7 @@ impl UopInspectorApp {
             selected_direction: 0,
             selected_multi_id: 0,
             selected_hue_id: 0,
+            selected_ec_hue_id: 1,
         };
 
         app.log("UOCF Inspector starting...");
@@ -173,6 +188,8 @@ impl UopInspectorApp {
 
     pub fn trigger_reload(&mut self) {
         self.log("Starting asset reload...");
+        self.ec_hues = None;
+        self.selected_ec_hue_hash = None;
 
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
@@ -318,9 +335,25 @@ impl UopInspectorApp {
                 }
             }
 
+            let hues_path = ec_base_path.join("hues.uop");
+            if hues_path.exists() {
+                self.log(format!("Parsing hues.uop from {}", hues_path.display()));
+                match EcHuePackage::load(&hues_path) {
+                    Ok(hues) => {
+                        let bitmap_count = hues.bitmaps.len();
+                        self.ec_hues = Some(Arc::new(hues));
+                        self.log(format!("Parsed EC hues.uop with {} hue bitmaps.", bitmap_count));
+                    }
+                    Err(e) => {
+                        self.log(format!("Failed to parse hues.uop: {}", e));
+                    }
+                }
+            }
+
             // Load additional EC UOPs into the cache for exploration
             let ec_uops = [
                 "string_dictionary.uop",
+                "hues.uop",
                 "tileart.uop",
                 "terraindefinition.uop",
                 "terraintexture.uop",
@@ -533,9 +566,21 @@ impl UopInspectorApp {
             return Some(handle.clone());
         }
 
-        let format = if name.to_lowercase().ends_with(".dds") {
+        let lower_name = name.to_lowercase();
+        if lower_name.ends_with(".bmp") {
+            let (width, height, pixels) = uocf::enhanced::hues::decode_hue_image_to_rgba(data).ok()?;
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [width as usize, height as usize],
+                &pixels,
+            );
+            let handle = ctx.load_texture(name, color_image, Default::default());
+            self.texture_previews.insert(hash, handle.clone());
+            return Some(handle);
+        }
+
+        let format = if lower_name.ends_with(".dds") {
             ECImageFormat::DDS
-        } else if name.to_lowercase().ends_with(".tga") {
+        } else if lower_name.ends_with(".tga") {
             ECImageFormat::TGA
         } else {
             ECImageFormat::Unknown
@@ -785,6 +830,68 @@ impl UopInspectorApp {
         true
     }
 
+    pub fn select_raw_ec_hue_bitmap(&mut self, hue_id: u16) -> bool {
+        let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_hues_atlas(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::hues_atlas_hash();
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_huenames(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::huenames_hash();
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_ec_hue_palette(&mut self) -> bool {
+        let hash = uocf::enhanced::hues::FIXED_PALETTE_HASH;
+        if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
+            self.selected_ec_hue_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn get_hues_uop_texture(
+        &mut self,
+        ctx: &egui::Context,
+        hash: u64,
+        name: &str,
+    ) -> Option<egui::TextureHandle> {
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let is_hues = loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(uocf::enhanced::hues::HUES_UOP_NAME))
+                .unwrap_or(false);
+            if !is_hues {
+                continue;
+            }
+            if let Some(file) = loaded.package.get_file_by_hash(hash) {
+                if let Ok(data) = file.unpack() {
+                    return self.get_uop_texture(ctx, hash, &data, name);
+                }
+            }
+        }
+        None
+    }
+
     pub fn select_raw_art_entry(&mut self, art_id: u32, source: ArtSource) -> bool {
         let candidates: &[(&str, &str)] = match source {
             ArtSource::CcUop => &[("artlegacymul.uop", "build/artlegacymul/{id:08}.tga")],
@@ -839,12 +946,14 @@ mod tests {
             selected_tex_art_cc_id: None,
             selected_terrain_def_hash: None,
             selected_tileart_hash: None,
+            selected_ec_hue_hash: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
             status_message: String::new(),
             view_mode: ViewMode::Home,
             tile_metadata_source: TileMetadataSource::CcTileData,
+            hues_source: HuesSource::CcMul,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             selected_anim_id: 0,
@@ -859,9 +968,11 @@ mod tests {
             selected_direction: 0,
             selected_multi_id: 0,
             selected_hue_id: 0,
+            selected_ec_hue_id: 1,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
+            ec_hues: None,
         }
     }
 
@@ -893,6 +1004,46 @@ mod tests {
         let mut app = test_app();
 
         assert!(!app.select_raw_uop_entry("missing.uop", 0x1234));
+        assert_eq!(app.selected_uop_idx, None);
+        assert_eq!(app.selected_file_hash, None);
+        assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn select_raw_ec_hue_bitmap_uses_hues_package() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("hues.uop"), UopPackage::new_default());
+
+        let expected = uocf::enhanced::hues::hue_bitmap_hash(42);
+        assert!(app.select_raw_ec_hue_bitmap(42));
+        assert_eq!(app.selected_uop_idx, Some(0));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_ec_hue_hash, Some(expected));
+        assert_eq!(app.find_hash_query, format!("{expected:016X}"));
+    }
+
+    #[test]
+    fn select_raw_ec_hues_special_files_use_expected_hashes() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("hues.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_ec_hues_atlas());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::hues_atlas_hash()));
+
+        assert!(app.select_raw_ec_huenames());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::huenames_hash()));
+
+        assert!(app.select_raw_ec_hue_palette());
+        assert_eq!(app.selected_file_hash, Some(uocf::enhanced::hues::FIXED_PALETTE_HASH));
+    }
+
+    #[test]
+    fn missing_hues_uop_does_not_select_raw_ec_hue() {
+        let mut app = test_app();
+
+        assert!(!app.select_raw_ec_hue_bitmap(1));
         assert_eq!(app.selected_uop_idx, None);
         assert_eq!(app.selected_file_hash, None);
         assert_eq!(app.view_mode, ViewMode::Home);

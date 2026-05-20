@@ -34,6 +34,8 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if app.client_data.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
+            }
+            if app.client_data.is_some() || app.ec_hues.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
             }
             if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
