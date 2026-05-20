@@ -155,15 +155,23 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
     )?;
 
     let metadata_dir = out_dir.join("metadata");
+    let terrain_overrides_metadata = package.read_terrain_overrides_metadata()?;
     let summary = format!(
-        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\n",
+        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nterrain_overrides_bytes={}\n",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
         package.slots().iter().filter(|slot| slot.is_present()).count(),
         package.terrain_provenance().len(),
+        terrain_overrides_metadata
+            .as_ref()
+            .map(|bytes| bytes.len())
+            .unwrap_or(0),
     );
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
+    if let Some(bytes) = terrain_overrides_metadata {
+        std::fs::write(metadata_dir.join("terrain_overrides.json"), bytes)?;
+    }
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
     for slot in package.slots().iter().filter(|slot| slot.is_present()) {

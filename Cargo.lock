@@ -7908,6 +7908,7 @@ dependencies = [
  "log",
  "rayon",
  "serde",
+ "serde_json",
  "udd-assets",
  "udd-container",
  "uocf",

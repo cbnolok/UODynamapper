@@ -3,7 +3,7 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
-use udd_container::UddpReader;
+use udd_container::{xxh64_virtual_path, UddpReader};
 use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
@@ -16,6 +16,7 @@ const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 2;
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
 pub const UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH: &str = "metadata/terrain_provenance.bin";
+pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides.json";
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
@@ -219,6 +220,18 @@ impl TexLandEcPackage {
 
     pub fn terrain_provenance(&self) -> &[TexLandEcTerrainProvenanceRecord] {
         &self.terrain_provenance
+    }
+
+    pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Option<Vec<u8>>> {
+        if self
+            .package
+            .find_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH))
+            .is_none()
+        {
+            return Ok(None);
+        }
+
+        read_path_entry(&self.package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).map(Some)
     }
 
     pub fn atlas_cache_enabled(&self) -> bool {

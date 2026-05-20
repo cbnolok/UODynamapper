@@ -663,6 +663,13 @@ pub fn run() -> eyre::Result<()> {
                 land_summary.unique_texture_selection_count,
                 land_summary.unique_packed_texture_count,
             );
+            if let Some(path) = land_summary.terrain_override_source.as_ref() {
+                println!(
+                    "Embedded {} reviewed terrain override entries from '{}'.",
+                    land_summary.terrain_override_entry_count,
+                    path.display()
+                );
+            }
             println!(
                 "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
                 land_summary.page_count,

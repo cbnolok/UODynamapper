@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 use rayon::prelude::*;
+use serde::Serialize;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -52,7 +53,12 @@ use udd_assets::tex_land_ec::{
     TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK,
     TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK, TERRAIN_PRIMARY_REASON_UNKNOWN,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
-    UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH, UDDP_TRANSCODE_ENTRY_VPATH,
+    UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+    UDDP_TRANSCODE_ENTRY_VPATH,
+};
+use udd_assets::ec_terrain_overrides::{
+    EcTerrainOverrideEntry, EcTerrainOverrides, TerrainIgnoreOverride, TerrainLayerOverride,
+    TerrainLiquidOverride, TerrainPolicyOverride, TerrainTextureOverride,
 };
 use udd_container::xxh64_virtual_path;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
@@ -88,10 +94,65 @@ const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
 const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 2;
+const TEX_LAND_EC_TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
+
+#[derive(Debug, Serialize)]
+struct TerrainOverridesMetadata {
+    schema: &'static str,
+    schema_version: u32,
+    source_path: String,
+    override_count: u32,
+    active_action_count: u32,
+    entries: Vec<TerrainOverrideMetadataEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainOverrideMetadataEntry {
+    material_id: u32,
+    active_action_count: u32,
+    policies: Vec<TerrainPolicyMetadata>,
+    liquid: Option<TerrainLiquidMetadata>,
+    layers: Vec<TerrainLayerMetadata>,
+    textures: Vec<TerrainTextureMetadata>,
+    ignore: Option<TerrainIgnoreMetadata>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainPolicyMetadata {
+    policy: String,
+    code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainLiquidMetadata {
+    speed: Option<f32>,
+    waveheight: Option<f32>,
+    code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainLayerMetadata {
+    role: String,
+    texture_id: u32,
+    stretch: Option<f32>,
+    code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainTextureMetadata {
+    texture_id: u32,
+    role: Option<String>,
+    code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TerrainIgnoreMetadata {
+    code: Option<String>,
+}
 
 use crate::upscale::{UpscaleConfig, UpscaleFilter};
 
@@ -140,6 +201,8 @@ pub struct TexLandEcBuildSummary {
     pub unique_source_texture_count: u32,
     pub unique_texture_selection_count: u32,
     pub unique_packed_texture_count: u32,
+    pub terrain_override_entry_count: u32,
+    pub terrain_override_source: Option<PathBuf>,
     pub ignored_source_texture_ids: Vec<u32>,
     pub slot_count: u32,
     pub populated_slot_count: u32,
@@ -325,6 +388,22 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
     let terrain_provenance_manifest = serialize_terrain_provenance_manifest(&terrain_provenance)?;
+    let terrain_overrides_kdl_path = find_first_existing_file_in_sources_or_cwd(
+        source_dirs,
+        &[
+            "EcTerrainOverrides.kdl",
+            "cc_ec_convtables/EcTerrainOverrides.kdl",
+            "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
+        ],
+    );
+    let terrain_overrides_manifest = terrain_overrides_kdl_path
+        .as_ref()
+        .map(|path| serialize_terrain_overrides_metadata(path))
+        .transpose()?;
+    let terrain_override_entry_count = terrain_overrides_manifest
+        .as_ref()
+        .map(|manifest| manifest.entry_count)
+        .unwrap_or(0);
 
     let transcode_kdl_path = find_first_existing_file(
         source_dirs,
@@ -381,6 +460,18 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         id: None,
         data: &terrain_provenance_manifest,
     })?;
+    if let Some(manifest) = terrain_overrides_manifest.as_ref() {
+        package.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: &manifest.bytes,
+        })?;
+    }
 
     if let Some(transcode_path) = transcode_kdl_path {
         let transcode_bytes = fs::read(&transcode_path)?;
@@ -491,6 +582,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         unique_source_texture_count,
         unique_texture_selection_count,
         unique_packed_texture_count,
+        terrain_override_entry_count,
+        terrain_override_source: terrain_overrides_kdl_path,
         ignored_source_texture_ids,
         slot_count,
         populated_slot_count,
@@ -513,6 +606,114 @@ fn validate_options(options: &TexLandEcAtlasOptions) -> eyre::Result<()> {
         eyre::bail!("BC7 compression requires atlas dimensions divisible by 4");
     }
     Ok(())
+}
+
+struct SerializedTerrainOverridesMetadata {
+    bytes: Vec<u8>,
+    entry_count: u32,
+}
+
+fn find_first_existing_file_in_sources_or_cwd(
+    source_dirs: &[PathBuf],
+    file_names: &[&str],
+) -> Option<PathBuf> {
+    find_first_existing_file(source_dirs, file_names).or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| find_first_existing_file(&[cwd], file_names))
+    })
+}
+
+fn serialize_terrain_overrides_metadata(
+    path: &Path,
+) -> eyre::Result<SerializedTerrainOverridesMetadata> {
+    let overrides = EcTerrainOverrides::load(path)?;
+    let mut entries = overrides
+        .to_map()
+        .into_values()
+        .filter(|entry| entry.active_action_count() > 0)
+        .map(terrain_override_metadata_entry)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.material_id);
+
+    let active_action_count = entries
+        .iter()
+        .map(|entry| entry.active_action_count)
+        .sum::<u32>();
+    let metadata = TerrainOverridesMetadata {
+        schema: "tex_land_ec_terrain_overrides",
+        schema_version: TEX_LAND_EC_TERRAIN_OVERRIDES_SCHEMA_VERSION,
+        source_path: path.display().to_string(),
+        override_count: entries.len() as u32,
+        active_action_count,
+        entries,
+    };
+    let entry_count = metadata.override_count;
+    let mut bytes = serde_json::to_vec_pretty(&metadata)
+        .wrap_err_with(|| format!("serialize terrain overrides metadata from {}", path.display()))?;
+    bytes.push(b'\n');
+
+    Ok(SerializedTerrainOverridesMetadata { bytes, entry_count })
+}
+
+fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOverrideMetadataEntry {
+    TerrainOverrideMetadataEntry {
+        material_id: entry.id,
+        active_action_count: entry.active_action_count() as u32,
+        policies: entry
+            .policies
+            .into_iter()
+            .map(terrain_policy_metadata)
+            .collect(),
+        liquid: entry.liquid.map(terrain_liquid_metadata),
+        layers: entry
+            .layers
+            .into_iter()
+            .map(terrain_layer_metadata)
+            .collect(),
+        textures: entry
+            .textures
+            .into_iter()
+            .map(terrain_texture_metadata)
+            .collect(),
+        ignore: entry.ignore.map(terrain_ignore_metadata),
+    }
+}
+
+fn terrain_policy_metadata(policy: TerrainPolicyOverride) -> TerrainPolicyMetadata {
+    TerrainPolicyMetadata {
+        policy: policy.policy,
+        code: policy.code,
+    }
+}
+
+fn terrain_liquid_metadata(liquid: TerrainLiquidOverride) -> TerrainLiquidMetadata {
+    TerrainLiquidMetadata {
+        speed: liquid.speed,
+        waveheight: liquid.waveheight,
+        code: liquid.code,
+    }
+}
+
+fn terrain_layer_metadata(layer: TerrainLayerOverride) -> TerrainLayerMetadata {
+    TerrainLayerMetadata {
+        role: layer.role,
+        texture_id: layer.texture,
+        stretch: layer.stretch,
+        code: layer.code,
+    }
+}
+
+fn terrain_texture_metadata(texture: TerrainTextureOverride) -> TerrainTextureMetadata {
+    TerrainTextureMetadata {
+        texture_id: texture.texture,
+        role: texture.role,
+        code: texture.code,
+    }
+}
+
+fn terrain_ignore_metadata(ignore: TerrainIgnoreOverride) -> TerrainIgnoreMetadata {
+    TerrainIgnoreMetadata { code: ignore.code }
 }
 
 fn build_terrain_provenance_records(
@@ -1415,5 +1616,34 @@ mod tests {
                 TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION
             );
         }
+    }
+
+    #[test]
+    fn terrain_override_metadata_preserves_reviewed_codes() {
+        let path = std::env::temp_dir().join(format!(
+            "ec_terrain_overrides_metadata_test_{}.kdl",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"
+terrain 52 {
+    policy "smooth" code="reviewed_runtime_policy"
+    layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
+}
+"#,
+        )
+        .expect("write override fixture");
+
+        let manifest = serialize_terrain_overrides_metadata(&path)
+            .expect("serialize terrain override metadata");
+        let json = String::from_utf8(manifest.bytes).expect("metadata json is utf8");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(manifest.entry_count, 1);
+        assert!(json.contains("\"schema\": \"tex_land_ec_terrain_overrides\""));
+        assert!(json.contains("\"material_id\": 52"));
+        assert!(json.contains("\"code\": \"reviewed_layer_texture\""));
+        assert!(json.contains("\"texture_id\": 2000510"));
     }
 }
