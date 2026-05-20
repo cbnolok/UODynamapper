@@ -35,3 +35,19 @@
 // - reviewed_normal_texture
 // - reviewed_textureid
 // - intentionally_hidden
+
+terrain 52 {
+    // Source candidate: kdl_only_layer_texture
+    // UOP material exists, but these KDL layer textures were not present in
+    // the parsed TerrainDefinition.uop layer list.
+    layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
+    layer "t1" tex=2000511 stretch=5.0 code="reviewed_layer_texture"
+}
+
+terrain 201 {
+    // Source candidate: kdl_only_layer_texture
+    // UOP material exists, but these KDL layer textures were not present in
+    // the parsed TerrainDefinition.uop layer list.
+    layer "t0" tex=2000640 stretch=5.0 code="reviewed_layer_texture"
+    layer "t1" tex=2000641 stretch=5.0 code="reviewed_layer_texture"
+}
