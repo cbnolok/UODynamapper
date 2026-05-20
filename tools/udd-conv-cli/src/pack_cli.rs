@@ -4,6 +4,7 @@ use crate::ec_material_audit::{
     audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
     audit_ec_terrain_overrides, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
     write_ec_material_baseline_report, write_ec_terrain_override_candidates,
+    write_ec_terrain_practical_review,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
@@ -336,6 +337,20 @@ enum Commands {
         #[arg(long = "tex-land-ec")]
         tex_land_ec: Option<PathBuf>,
         #[arg(long, default_value = "ec_terrain_primary_selection.json")]
+        output: PathBuf,
+    },
+    /// Writes a short JSON queue of terrain material decisions needed before runtime use.
+    ReportEcTerrainPracticalReview {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(
+            long = "terrain-overrides",
+            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
+        )]
+        terrain_overrides: PathBuf,
+        #[arg(long = "tex-land-ec")]
+        tex_land_ec: Option<PathBuf>,
+        #[arg(long, default_value = "ec_terrain_practical_review.json")]
         output: PathBuf,
     },
     /// Compares TerrainDefinition.kdl against TerrainDefinition.uop and reports manual-only fields.
@@ -723,6 +738,22 @@ pub fn run() -> eyre::Result<()> {
                 &out_file,
             )?;
         }
+        Commands::ReportEcTerrainPracticalReview {
+            source_dirs: source_dir_args,
+            terrain_overrides,
+            tex_land_ec,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
+            write_ec_terrain_practical_review(
+                &paths,
+                terrain_overrides.as_deref(),
+                tex_land_ec.as_deref(),
+                &out_file,
+            )?;
+        }
         Commands::AuditEcTerrainDefinitionKdl {
             source_dirs: source_dir_args,
             terrain_definition_kdl,
@@ -1030,6 +1061,35 @@ mod tests {
                 assert_eq!(art_output, PathBuf::from("tex_art_ec.uddp"));
                 assert_eq!(land_output, PathBuf::from("tex_land_ec.uddp"));
                 assert!(land_bc7);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_terrain_practical_review() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "report-ec-terrain-practical-review",
+            "--ecdir",
+            "/ec",
+            "--tex-land-ec",
+            "/tmp/tex_land_ec.uddp",
+            "--output",
+            "/tmp/review.json",
+        ])
+        .expect("parse terrain practical review args");
+
+        match cli.command {
+            Commands::ReportEcTerrainPracticalReview {
+                source_dirs,
+                tex_land_ec,
+                output,
+                ..
+            } => {
+                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert_eq!(tex_land_ec, Some(PathBuf::from("/tmp/tex_land_ec.uddp")));
+                assert_eq!(output, PathBuf::from("/tmp/review.json"));
             }
             _ => panic!("unexpected command parsed"),
         }

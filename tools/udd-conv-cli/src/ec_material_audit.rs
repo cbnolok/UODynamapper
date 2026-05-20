@@ -427,6 +427,180 @@ pub fn audit_ec_terrain_primary_selection(
     Ok(())
 }
 
+pub fn write_ec_terrain_practical_review(
+    source_dirs: &[PathBuf],
+    overrides_path: Option<&Path>,
+    tex_land_ec_path: Option<&Path>,
+    output: &Path,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let overrides = overrides_path
+        .filter(|path| path.exists())
+        .map(EcTerrainOverrides::load)
+        .transpose()?
+        .map(|overrides| overrides.to_map())
+        .unwrap_or_default();
+    let packed_terrain = tex_land_ec_path
+        .filter(|path| path.exists())
+        .map(TexLandEcPackage::load)
+        .transpose()?;
+    let packed_provenance_by_material = packed_terrain
+        .as_ref()
+        .map(packed_terrain_provenance_by_material)
+        .unwrap_or_default();
+
+    let mut entries = Vec::new();
+    let mut queued_finding_counts = BTreeMap::<String, u64>::new();
+    let mut audit_only_finding_counts = BTreeMap::<String, u64>::new();
+    let mut priority_counts = BTreeMap::<String, u64>::new();
+    let mut audit_only_material_count = 0usize;
+
+    for entry in &sources.terrain_definition.entries {
+        let Some(texture) = entry.texture.as_ref() else {
+            continue;
+        };
+        let primary = entry.primary_texture_layer_with_reason();
+        let (selected_layer_index, selected_layer, selection_reason) = primary
+            .and_then(|(layer, reason)| {
+                texture
+                    .layers
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, layer))
+                    .map(|index| (Some(index), Some(layer), Some(reason)))
+            })
+            .unwrap_or((None, None, None));
+        let manual_override = overrides.get(&entry.id);
+        let packed_records = packed_provenance_by_material.get(&entry.id);
+        let mut findings = split_flags(&terrain_primary_audit_flags(
+            entry,
+            selected_layer,
+            selection_reason,
+        ));
+
+        if let Some(records) = packed_records {
+            if let Some(texture_id) = selected_layer.and_then(|layer| layer.texture_id) {
+                if !records.iter().any(|record| {
+                    record.primary_texture_id == texture_id
+                        || record.selected_texture_id == texture_id
+                }) {
+                    findings.push("selected_texture_missing_from_packed_provenance".to_string());
+                }
+            }
+            if let Some(layer_index) = selected_layer_index {
+                if !records
+                    .iter()
+                    .any(|record| record.primary_layer_index == layer_index as u32)
+                {
+                    findings.push("selected_layer_index_missing_from_packed_provenance".to_string());
+                }
+            }
+        } else if packed_terrain.is_some() {
+            findings.push("missing_packed_provenance".to_string());
+        }
+
+        if let Some(manual_override) = manual_override {
+            if !manual_override.policies.is_empty() {
+                findings.push("manual_policy_override_present".to_string());
+            }
+            if manual_override.liquid.is_some() {
+                findings.push("manual_liquid_override_present".to_string());
+            }
+            if !manual_override.layers.is_empty() {
+                findings.push("manual_layer_override_present".to_string());
+            }
+            if !manual_override.textures.is_empty() {
+                findings.push("manual_texture_override_present".to_string());
+            }
+            if manual_override.ignore.is_some() {
+                findings.push("manual_ignore_override_present".to_string());
+            }
+        }
+
+        findings.sort();
+        findings.dedup();
+        if findings.is_empty() {
+            continue;
+        }
+
+        let priority = terrain_practical_review_priority(&findings).to_string();
+        if priority == "selection_audit" {
+            audit_only_material_count += 1;
+            for finding in &findings {
+                increment_count(&mut audit_only_finding_counts, finding);
+            }
+            continue;
+        }
+
+        for finding in &findings {
+            increment_count(&mut queued_finding_counts, finding);
+        }
+        increment_count(&mut priority_counts, &priority);
+        let recommended_next_action = terrain_practical_review_next_action_for_findings(&findings);
+
+        entries.push(TerrainPracticalReviewEntryReport {
+            material_id: entry.id,
+            material_name: entry.name.clone(),
+            priority,
+            findings,
+            runtime_slot_ids: entry.runtime_slot_ids(),
+            selected_layer: selected_layer.map(|layer| {
+                terrain_selected_layer_report(
+                    selected_layer_index.unwrap_or_default(),
+                    layer,
+                    selection_reason,
+                    &package_membership,
+                )
+            }),
+            overrides: manual_override.map(terrain_definition_override_entry_report),
+            packed_provenance: packed_records.map(|records| {
+                packed_terrain_provenance_report(records, selected_layer, selected_layer_index)
+            }),
+            recommended_next_action,
+        });
+    }
+
+    entries.sort_by_key(|entry| {
+        (
+            terrain_practical_review_priority_rank(&entry.priority),
+            entry.material_id,
+        )
+    });
+
+    let report = TerrainPracticalReviewReport {
+        schema: "ec_terrain_practical_review",
+        schema_version: 1,
+        summary: TerrainPracticalReviewSummary {
+            reviewed_material_count: sources.terrain_definition.entries.len(),
+            queued_material_count: entries.len(),
+            override_entry_count: overrides.len(),
+            tex_land_ec_path: tex_land_ec_path.map(|path| path.display().to_string()),
+            packed_provenance_material_count: packed_provenance_by_material.len(),
+            audit_only_material_count,
+            queued_finding_counts: queued_finding_counts.clone(),
+            audit_only_finding_counts: audit_only_finding_counts.clone(),
+            priority_counts: priority_counts.clone(),
+        },
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
+
+    info!(
+        "wrote {} EC terrain practical-review entries to '{}'",
+        report.summary.queued_material_count,
+        output.display()
+    );
+    log_count_summary("terrain practical review queued findings", &queued_finding_counts);
+    log_count_summary(
+        "terrain practical review audit-only findings",
+        &audit_only_finding_counts,
+    );
+    log_count_summary("terrain practical review priorities", &priority_counts);
+
+    Ok(())
+}
+
 pub fn audit_ec_terrain_definition_kdl(
     source_dirs: &[PathBuf],
     kdl_path: &Path,
@@ -1655,6 +1829,40 @@ struct PackedTerrainProvenanceReport {
 }
 
 #[derive(Serialize)]
+struct TerrainPracticalReviewReport {
+    schema: &'static str,
+    schema_version: u32,
+    summary: TerrainPracticalReviewSummary,
+    entries: Vec<TerrainPracticalReviewEntryReport>,
+}
+
+#[derive(Serialize)]
+struct TerrainPracticalReviewSummary {
+    reviewed_material_count: usize,
+    queued_material_count: usize,
+    override_entry_count: usize,
+    tex_land_ec_path: Option<String>,
+    packed_provenance_material_count: usize,
+    audit_only_material_count: usize,
+    queued_finding_counts: BTreeMap<String, u64>,
+    audit_only_finding_counts: BTreeMap<String, u64>,
+    priority_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Serialize)]
+struct TerrainPracticalReviewEntryReport {
+    material_id: u32,
+    material_name: Option<String>,
+    priority: String,
+    findings: Vec<String>,
+    runtime_slot_ids: Vec<u32>,
+    selected_layer: Option<TerrainSelectedLayerReport>,
+    overrides: Option<TerrainDefinitionOverrideEntryReport>,
+    packed_provenance: Option<PackedTerrainProvenanceReport>,
+    recommended_next_action: &'static str,
+}
+
+#[derive(Serialize)]
 struct TerrainAliasReport {
     count_index: u32,
     alias: u32,
@@ -2727,6 +2935,36 @@ fn terrain_definition_override_entry_report(
     }
 }
 
+fn terrain_selected_layer_report(
+    layer_index: usize,
+    layer: &TerrainDefinitionTextureLayer,
+    selection_reason: Option<TerrainDefinitionPrimaryLayerReason>,
+    package_membership: &EcPackageMembership,
+) -> TerrainSelectedLayerReport {
+    let selected_path = layer.path.as_deref().unwrap_or("");
+    let normalized_path = normalize_dictionary_path(selected_path);
+    let selected_package =
+        physical_package_guess(&normalized_path, layer.texture_id, package_membership);
+    TerrainSelectedLayerReport {
+        layer_index,
+        texture_id: layer.texture_id,
+        path: layer.path.clone(),
+        selection_reason: selection_reason
+            .map(|reason| reason.as_str().to_string())
+            .unwrap_or_else(|| "missing".to_string()),
+        current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
+        support_like_clue: layer.has_support_like_name_clue(),
+        preferred_repetition: layer.has_preferred_primary_repetition(),
+        texture_repetition: layer.texture_repetition,
+        unk4: layer.unk4,
+        unk6_opaque_order: layer.unk6,
+        unk7: layer.unk7,
+        physical_package_guess: selected_package.to_string(),
+        logical_family: terrain_texture_family_name(layer.texture_type, selected_package)
+            .to_string(),
+    }
+}
+
 fn packed_terrain_provenance_by_material(
     package: &TexLandEcPackage,
 ) -> BTreeMap<u32, Vec<TexLandEcTerrainProvenanceRecord>> {
@@ -2825,6 +3063,66 @@ fn sorted_unique_present_u32(values: impl Iterator<Item = u32>, missing: u32) ->
 
 fn sorted_unique_strings(values: impl Iterator<Item = String>) -> Vec<String> {
     values.collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+fn terrain_practical_review_priority(findings: &[String]) -> &'static str {
+    if findings.iter().any(|finding| {
+        matches!(
+            finding.as_str(),
+            "missing_packed_provenance"
+                | "selected_texture_missing_from_packed_provenance"
+                | "selected_layer_index_missing_from_packed_provenance"
+                | "manual_ignore_override_present"
+        )
+    }) {
+        "blocking"
+    } else if findings.iter().any(|finding| {
+        matches!(
+            finding.as_str(),
+            "manual_layer_override_present"
+                | "manual_texture_override_present"
+                | "manual_policy_override_present"
+                | "manual_liquid_override_present"
+        )
+    }) {
+        "runtime_integration"
+    } else {
+        "selection_audit"
+    }
+}
+
+fn terrain_practical_review_priority_rank(priority: &str) -> u8 {
+    match priority {
+        "blocking" => 0,
+        "runtime_integration" => 1,
+        _ => 2,
+    }
+}
+
+fn terrain_practical_review_next_action_for_findings(findings: &[String]) -> &'static str {
+    if findings.iter().any(|finding| finding == "missing_packed_provenance") {
+        "inspect missing material provenance before runtime consumption"
+    } else if findings.iter().any(|finding| {
+        finding == "selected_texture_missing_from_packed_provenance"
+            || finding == "selected_layer_index_missing_from_packed_provenance"
+    }) {
+        "compare source selection against packed package and fix pack/provenance mismatch"
+    } else if findings
+        .iter()
+        .any(|finding| finding == "manual_ignore_override_present")
+    {
+        "implement explicit ignore/transparent runtime policy"
+    } else if findings.iter().any(|finding| {
+        finding == "manual_layer_override_present" || finding == "manual_texture_override_present"
+    }) {
+        "wire reviewed texture/layer override into runtime material resolver"
+    } else if findings.iter().any(|finding| {
+        finding == "manual_policy_override_present" || finding == "manual_liquid_override_present"
+    }) {
+        "wire reviewed policy metadata into runtime material/effect resolver"
+    } else {
+        "keep as selection audit evidence; no manual override is required yet"
+    }
 }
 
 fn terrain_definition_kdl_findings(
