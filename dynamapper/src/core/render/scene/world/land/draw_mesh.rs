@@ -780,7 +780,11 @@ pub fn sys_draw_spawned_land_chunks(
                     crate::configs::settings::ClientTextureSource::Ec => cache_r
                         .tex_land_ec
                         .as_ref()
-                        .and_then(|package| package.resolve_runtime_slot_id(id as u32))
+                        .and_then(|package| {
+                            package
+                                .resolve_material_decision(id as u32)
+                                .runtime_slot_id
+                        })
                         .map(|_| id as u32),
                 }
             } else {
