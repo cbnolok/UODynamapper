@@ -416,6 +416,8 @@ pub fn audit_ec_terrain_definition_kdl(
 
     let mut entries = Vec::new();
     let mut finding_counts = BTreeMap::<String, u64>::new();
+    let mut manual_candidate_counts = BTreeMap::<String, u64>::new();
+    let mut manual_candidates = Vec::new();
     let mut matched_id_count = 0usize;
     let mut kdl_only_count = 0usize;
     let mut uop_only_count = 0usize;
@@ -433,6 +435,12 @@ pub fn audit_ec_terrain_definition_kdl(
         let findings = terrain_definition_kdl_findings(kdl_entry, uop_entry);
         for finding in &findings {
             increment_count(&mut finding_counts, &finding.status);
+            if terrain_kdl_finding_needs_manual_review(&finding.status) {
+                increment_count(&mut manual_candidate_counts, &finding.status);
+                manual_candidates.push(terrain_definition_manual_candidate_report(
+                    id, kdl_entry, uop_entry, finding,
+                ));
+            }
         }
 
         entries.push(TerrainDefinitionKdlAuditEntry {
@@ -455,8 +463,10 @@ pub fn audit_ec_terrain_definition_kdl(
             kdl_only_count,
             uop_only_count,
             finding_counts: finding_counts.clone(),
+            manual_candidate_counts: manual_candidate_counts.clone(),
         },
         entries,
+        manual_candidates,
     };
     let json = serde_json::to_vec_pretty(&report)?;
     fs::write(output, json)?;
@@ -466,6 +476,10 @@ pub fn audit_ec_terrain_definition_kdl(
         output.display()
     );
     log_count_summary("TerrainDefinition KDL audit findings", &finding_counts);
+    log_count_summary(
+        "TerrainDefinition manual candidate findings",
+        &manual_candidate_counts,
+    );
     Ok(())
 }
 
@@ -1452,6 +1466,7 @@ struct TerrainDefinitionKdlAuditReport {
     schema_version: u32,
     summary: TerrainDefinitionKdlAuditSummary,
     entries: Vec<TerrainDefinitionKdlAuditEntry>,
+    manual_candidates: Vec<TerrainDefinitionManualCandidateReport>,
 }
 
 #[derive(Serialize)]
@@ -1462,6 +1477,7 @@ struct TerrainDefinitionKdlAuditSummary {
     kdl_only_count: usize,
     uop_only_count: usize,
     finding_counts: BTreeMap<String, u64>,
+    manual_candidate_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize)]
@@ -1520,6 +1536,17 @@ struct TerrainDefinitionKdlFindingReport {
     field: String,
     status: String,
     detail: String,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionManualCandidateReport {
+    id: u32,
+    field: String,
+    code: String,
+    detail: String,
+    kdl_terrain_type: Option<String>,
+    uop_shader_name: Option<String>,
+    runtime_slot_ids: Vec<u32>,
 }
 
 #[derive(Serialize)]
@@ -2416,6 +2443,42 @@ fn terrain_definition_kdl_findings(
     }
 
     findings
+}
+
+fn terrain_kdl_finding_needs_manual_review(status: &str) -> bool {
+    matches!(
+        status,
+        "kdl_only_entry"
+            | "kdl_only_layer_texture"
+            | "kdl_only_no_known_uop_field"
+            | "kdl_only_or_unproven"
+            | "kdl_only_runtime_policy"
+            | "kdl_only_texture_id"
+    )
+}
+
+fn terrain_definition_manual_candidate_report(
+    id: u32,
+    kdl_entry: Option<&TerrainDefEntry>,
+    uop_entry: Option<&TerrainDefinitionEntry>,
+    finding: &TerrainDefinitionKdlFindingReport,
+) -> TerrainDefinitionManualCandidateReport {
+    TerrainDefinitionManualCandidateReport {
+        id,
+        field: finding.field.clone(),
+        code: finding.status.clone(),
+        detail: finding.detail.clone(),
+        kdl_terrain_type: kdl_entry.map(|entry| entry.terrain_type.clone()),
+        uop_shader_name: uop_entry.and_then(|entry| {
+            entry
+                .texture
+                .as_ref()
+                .and_then(|texture| texture.shader_name.clone())
+        }),
+        runtime_slot_ids: uop_entry
+            .map(TerrainDefinitionEntry::runtime_slot_ids)
+            .unwrap_or_default(),
+    }
 }
 
 fn terrain_type_flags(terrain_type: &str) -> Vec<String> {
