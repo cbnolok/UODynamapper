@@ -1,4 +1,4 @@
-// fog_post_process.rs — Fullscreen fog post-processing pass plugin.
+// world::effects::fog_pass — Fullscreen fog post-processing pass plugin.
 //
 // Implements fog as a fullscreen pass that runs after the main 3D render,
 // covering both land terrain and art/sprite tiles uniformly. This solves
@@ -70,7 +70,7 @@ pub struct FogPostProcessUniform {
 
 impl FullscreenMaterial for FogPostProcessUniform {
     fn fragment_shader() -> ShaderRef {
-        "shaders/worldmap/fog_pass.wgsl".into()
+        "shaders/world/effects/fog_pass.wgsl".into()
     }
 
     fn node_edges() -> Vec<InternedRenderLabel> {

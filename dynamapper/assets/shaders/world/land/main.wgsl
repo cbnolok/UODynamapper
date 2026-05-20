@@ -18,32 +18,32 @@
 }
 
 // ---- Land shader modules (quoted asset-path imports for on-demand loading) ----
-#import "shaders/worldmap/common_bindings.wgsl"::{
+#import "shaders/world/common_bindings.wgsl"::{
   SceneUniform, LandEffectsUniform, GlobalLightingUniforms, USE_VOLUMETRIC_NOISE
 }
-#import "shaders/worldmap/land/land_bindings.wgsl"::{
+#import "shaders/world/land/land_bindings.wgsl"::{
   TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
   ATLAS, scene, effects, global_light, land_light
 }
-#import "shaders/worldmap/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
-#import "shaders/worldmap/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
-#import "shaders/worldmap/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
+#import "shaders/world/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
+#import "shaders/world/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
+#import "shaders/world/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
-#import "shaders/worldmap/land/sampling.wgsl"::{
+#import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
   sample_tile_albedo,
   apply_sharpening, blurred_albedo,
 }
-#import "shaders/worldmap/land/shading.wgsl"::{
+#import "shaders/world/land/shading.wgsl"::{
   shade_mode0_classic_vertex,
   shade_mode1_enhanced_fragment,
   shade_mode2_kr_fragment,
 }
-#import "shaders/worldmap/surface_effects.wgsl"::apply_water_animation
+#import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
 
 // ============================================================================
 // Vertex shader

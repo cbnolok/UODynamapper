@@ -1,5 +1,5 @@
 use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
-use crate::core::render::fog_post_process::FogPostProcessUniform;
+use crate::core::render::scene::world::effects::fog_pass::FogPostProcessUniform;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;

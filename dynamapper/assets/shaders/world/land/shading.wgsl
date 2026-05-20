@@ -9,9 +9,9 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/common_bindings.wgsl"::{GlobalLightingUniforms}
-#import "shaders/worldmap/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light}
-#import "shaders/worldmap/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
+#import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
+#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light}
+#import "shaders/world/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
 
 // ============================================================================
 // Mode 0: Classic (Gouraud, vertex-lit)

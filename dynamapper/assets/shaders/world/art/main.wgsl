@@ -3,20 +3,20 @@
     view_transformations,
     mesh_view_bindings::globals,
 }
-#import "shaders/worldmap/surface_effects.wgsl"::apply_water_animation
+#import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 
-#import "shaders/worldmap/art/art_bindings.wgsl"::{
+#import "shaders/world/art/art_bindings.wgsl"::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
     PASS_MODE_TRANSPARENT, SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 }
-#import "shaders/worldmap/land/noise.wgsl"::hash
+#import "shaders/world/land/noise.wgsl"::hash
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,

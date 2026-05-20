@@ -3,7 +3,7 @@
 //                  compile-time constants shared by all land shader modules.
 // ============================================================================
 
-#import "shaders/worldmap/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform, USE_VOLUMETRIC_NOISE}
+#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform, USE_VOLUMETRIC_NOISE}
 
 // Virtual metadata record extracted from the tile_meta_atlas.
 struct TileUniform {

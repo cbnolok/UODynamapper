@@ -1,5 +1,6 @@
 pub mod land;
 pub mod art;
+pub mod effects;
 
 use nohash_hasher::BuildNoHashHasher;
 use indexmap::IndexMap;
@@ -65,4 +66,3 @@ fn sys_populate_world_geo_data(
         }
     }
 }
-

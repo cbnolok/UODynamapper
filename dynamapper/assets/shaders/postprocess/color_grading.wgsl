@@ -2,7 +2,7 @@
 // postprocess::color_grading — Shared scene color grading helpers.
 // ============================================================================
 
-#import "shaders/worldmap/common_bindings.wgsl"::{GlobalLightingUniforms}
+#import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
 
 fn color_grading_luminance(c: vec3<f32>) -> f32 {
   return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));

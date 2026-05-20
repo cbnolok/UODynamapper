@@ -3,7 +3,7 @@
 //                compile-time constants shared by all art shader modules.
 // ============================================================================
 
-#import "shaders/worldmap/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform}
+#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform}
 
 struct SpriteInstance {
     world_x: f32,

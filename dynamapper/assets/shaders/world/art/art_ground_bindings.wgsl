@@ -3,7 +3,7 @@
 //                       storage type for the ground shader.
 // ============================================================================
 
-#import "shaders/worldmap/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform}
+#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform}
 
 struct GroundTileInstance {
     world_x: f32,

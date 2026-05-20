@@ -123,19 +123,19 @@ struct AtlasAllocationSpec {
 
 impl MaterialExtension for ArtSpriteMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/worldmap/art/main.wgsl".into()
+        "shaders/world/art/main.wgsl".into()
     }
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/worldmap/art/main.wgsl".into()
+        "shaders/world/art/main.wgsl".into()
     }
 }
 
 impl MaterialExtension for ArtGroundMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/worldmap/art/ground.wgsl".into()
+        "shaders/world/art/ground.wgsl".into()
     }
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/worldmap/art/ground.wgsl".into()
+        "shaders/world/art/ground.wgsl".into()
     }
 }
 

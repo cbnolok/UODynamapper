@@ -28,8 +28,8 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/common_bindings.wgsl"::{LandEffectsUniform}
-#import "shaders/worldmap/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, tex_small_sampler, effects}
+#import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
+#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, tex_small_sampler, effects}
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.

@@ -9,7 +9,7 @@
 //  Reference: https://www.shadertoy.com/view/stXSWB
 // ============================================================================
 
-#import "shaders/worldmap/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas}
+#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas}
 
 // ============================================================================
 // Texel fetch helper — integer-coordinate nearest tap

@@ -1,5 +1,4 @@
 pub mod dialogs;
-pub mod fog_post_process;
 pub mod overlays;
 pub mod scene;
 
@@ -27,7 +26,7 @@ impl Plugin for RenderPlugin {
             dialogs::DialogsPlugin {
                 registered_by: "RenderPlugin",
             },
-            fog_post_process::FogPostProcessPlugin {
+            scene::world::effects::fog_pass::FogPostProcessPlugin {
                 registered_by: "RenderPlugin",
             },
         ));

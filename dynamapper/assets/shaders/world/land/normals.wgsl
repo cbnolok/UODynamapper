@@ -9,7 +9,7 @@
 // ============================================================================
 
 
-#import "shaders/worldmap/land/atlas.wgsl"::{atlas_read_height}
+#import "shaders/world/land/atlas.wgsl"::{atlas_read_height}
 
 // ============================================================================
 // Cubic interpolation helpers (value + derivative) for heightfield normals
