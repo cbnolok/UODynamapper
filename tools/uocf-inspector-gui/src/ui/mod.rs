@@ -6,6 +6,7 @@ pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
 pub mod hues;
+pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
 
@@ -33,10 +34,17 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
             if app.client_data.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
+            }
+            if app.client_data.as_ref().and_then(|client| client.multis.as_ref()).is_some()
+                || app.multi_collection.is_some()
+            {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }
             if app.client_data.is_some() || app.ec_hues.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
+            }
+            if app.cliloc.is_some() || app.localized_strings.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Clilocs, "CliLocs");
             }
             if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
@@ -149,6 +157,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::Hues => {
             hues::ui_hues(app, ctx);
+        }
+        crate::app::ViewMode::Clilocs => {
+            clilocs::ui_clilocs(app, ctx);
         }
         crate::app::ViewMode::TerrainDefinition => {
             terrain_definition::ui_terrain_definition(app, ctx);

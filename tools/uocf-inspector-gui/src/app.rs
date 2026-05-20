@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
+use uocf::classic::cliloc::Cliloc;
 use uocf::enhanced::hues::EcHuePackage;
+use uocf::enhanced::localized_strings::LocalizedStringsPackage;
+use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::TileArtEntry;
@@ -25,6 +28,7 @@ pub enum ViewMode {
     Animations,
     Multis,
     Hues,
+    Clilocs,
     TerrainDefinition,
     StringDictionary,
 }
@@ -39,6 +43,18 @@ pub enum TileMetadataSource {
 pub enum HuesSource {
     CcMul,
     EcUop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum MultisSource {
+    ClassicMul,
+    Uop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum LocalizedStringsSource {
+    Cliloc,
+    LocalizedStringsUop,
 }
 
 #[derive(Clone)]
@@ -70,6 +86,8 @@ pub struct UopInspectorApp {
 
     pub dictionary: Dictionary,
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
+    pub cliloc: Option<Arc<Cliloc>>,
+    pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
     pub string_dictionary_raw_hash: Option<u64>,
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
@@ -81,6 +99,8 @@ pub struct UopInspectorApp {
     pub selected_terrain_def_hash: Option<u64>,
     pub selected_tileart_hash: Option<u64>,
     pub selected_ec_hue_hash: Option<u64>,
+    pub selected_multi_uop_hash: Option<u64>,
+    pub selected_localized_file_hash: Option<u64>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -90,6 +110,8 @@ pub struct UopInspectorApp {
     pub view_mode: ViewMode,
     pub tile_metadata_source: TileMetadataSource,
     pub hues_source: HuesSource,
+    pub multis_source: MultisSource,
+    pub localized_strings_source: LocalizedStringsSource,
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
@@ -110,11 +132,13 @@ pub struct UopInspectorApp {
     pub selected_multi_id: u32,
     pub selected_hue_id: u16,
     pub selected_ec_hue_id: u16,
+    pub selected_cliloc_number: i32,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
     pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
     pub ec_hues: Option<Arc<EcHuePackage>>,
+    pub multi_collection: Option<Arc<MultiCollection>>,
 }
 
 impl UopInspectorApp {
@@ -133,6 +157,8 @@ impl UopInspectorApp {
 
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            cliloc: None,
+            localized_strings: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
@@ -143,6 +169,8 @@ impl UopInspectorApp {
             selected_terrain_def_hash: None,
             selected_tileart_hash: None,
             selected_ec_hue_hash: None,
+            selected_multi_uop_hash: None,
+            selected_localized_file_hash: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -151,10 +179,13 @@ impl UopInspectorApp {
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
             hues_source: HuesSource::CcMul,
+            multis_source: MultisSource::ClassicMul,
+            localized_strings_source: LocalizedStringsSource::Cliloc,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
             ec_hues: None,
+            multi_collection: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
 
@@ -171,6 +202,7 @@ impl UopInspectorApp {
             selected_multi_id: 0,
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
+            selected_cliloc_number: 0,
         };
 
         app.log("UOCF Inspector starting...");
@@ -190,6 +222,11 @@ impl UopInspectorApp {
         self.log("Starting asset reload...");
         self.ec_hues = None;
         self.selected_ec_hue_hash = None;
+        self.cliloc = None;
+        self.localized_strings = None;
+        self.multi_collection = None;
+        self.selected_multi_uop_hash = None;
+        self.selected_localized_file_hash = None;
 
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
@@ -215,6 +252,11 @@ impl UopInspectorApp {
                     let multis = uocf::classic::multi::MultiMap::load(&path)
                         .ok()
                         .map(Arc::new);
+                    let cliloc = uocf::classic::cliloc::Cliloc::load(path.join("Cliloc.enu"))
+                        .or_else(|_| uocf::classic::cliloc::Cliloc::load(path.join("cliloc.enu")))
+                        .ok()
+                        .map(Arc::new);
+                    self.cliloc = cliloc.clone();
                     let hues = uocf::classic::hues::load_hues(&path.join("hues.mul"))
                         .ok()
                         .map(Arc::new);
@@ -269,6 +311,27 @@ impl UopInspectorApp {
                         Err(e) => {
                             self.log(format!("Failed to load {}: {}", uop_name, e));
                         }
+                    }
+                    break;
+                }
+            }
+
+            for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
+                let uop_path = path.join(uop_name);
+                if uop_path.exists() {
+                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
+                    match MultiCollection::load(&uop_path) {
+                        Ok(collection) => {
+                            let count = collection.items.len();
+                            self.multi_collection = Some(Arc::new(collection));
+                            self.log(format!("Parsed {} MultiCollection.uop entries.", count));
+                        }
+                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                    }
+                    self.log(format!("Loading {} into cache", uop_name));
+                    match UopPackage::load(&uop_path) {
+                        Ok(package) => self.uop_cache.add(uop_path, package),
+                        Err(e) => self.log(format!("Failed to load {}: {}", uop_name, e)),
                     }
                     break;
                 }
@@ -350,10 +413,46 @@ impl UopInspectorApp {
                 }
             }
 
+            for uop_name in ["MultiCollection.uop", "multicollection.uop"] {
+                let uop_path = ec_base_path.join(uop_name);
+                if uop_path.exists() {
+                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
+                    match MultiCollection::load(&uop_path) {
+                        Ok(collection) => {
+                            let count = collection.items.len();
+                            self.multi_collection = Some(Arc::new(collection));
+                            self.log(format!("Parsed {} MultiCollection.uop entries.", count));
+                        }
+                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                    }
+                    break;
+                }
+            }
+
+            for uop_name in ["localizedstrings.uop", "LocalizedStrings.uop"] {
+                let uop_path = ec_base_path.join(uop_name);
+                if uop_path.exists() {
+                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
+                    match LocalizedStringsPackage::load(&uop_path) {
+                        Ok(strings) => {
+                            let count = strings.len();
+                            self.localized_strings = Some(Arc::new(strings));
+                            self.log(format!("Parsed {} localized string entries.", count));
+                        }
+                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+                    }
+                    break;
+                }
+            }
+
             // Load additional EC UOPs into the cache for exploration
             let ec_uops = [
                 "string_dictionary.uop",
+                "localizedstrings.uop",
+                "LocalizedStrings.uop",
                 "hues.uop",
+                "MultiCollection.uop",
+                "multicollection.uop",
                 "tileart.uop",
                 "terraindefinition.uop",
                 "terraintexture.uop",
@@ -866,6 +965,40 @@ impl UopInspectorApp {
         false
     }
 
+    pub fn select_raw_multi_collection_entry(&mut self, multi_id: u32) -> bool {
+        let hash = uocf::enhanced::multis::multi_collection_hash(multi_id);
+        if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
+            || self.select_raw_uop_entry("multicollection.uop", hash)
+        {
+            self.selected_multi_uop_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_multi_collection_housing(&mut self) -> bool {
+        let hash = uocf::enhanced::multis::housing_hash();
+        if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
+            || self.select_raw_uop_entry("multicollection.uop", hash)
+        {
+            self.selected_multi_uop_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_raw_localized_strings_file(&mut self, hash: u64) -> bool {
+        if self.select_raw_uop_entry(
+            uocf::enhanced::localized_strings::LOCALIZED_STRINGS_UOP_NAME,
+            hash,
+        ) || self.select_raw_uop_entry("LocalizedStrings.uop", hash)
+        {
+            self.selected_localized_file_hash = Some(hash);
+            return true;
+        }
+        false
+    }
+
     pub fn get_hues_uop_texture(
         &mut self,
         ctx: &egui::Context,
@@ -937,6 +1070,8 @@ mod tests {
             show_search_paths: false,
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            cliloc: None,
+            localized_strings: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
@@ -947,6 +1082,8 @@ mod tests {
             selected_terrain_def_hash: None,
             selected_tileart_hash: None,
             selected_ec_hue_hash: None,
+            selected_multi_uop_hash: None,
+            selected_localized_file_hash: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
@@ -954,6 +1091,8 @@ mod tests {
             view_mode: ViewMode::Home,
             tile_metadata_source: TileMetadataSource::CcTileData,
             hues_source: HuesSource::CcMul,
+            multis_source: MultisSource::ClassicMul,
+            localized_strings_source: LocalizedStringsSource::Cliloc,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             selected_anim_id: 0,
@@ -969,10 +1108,12 @@ mod tests {
             selected_multi_id: 0,
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
+            selected_cliloc_number: 0,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
             ec_hues: None,
+            multi_collection: None,
         }
     }
 
@@ -1047,5 +1188,28 @@ mod tests {
         assert_eq!(app.selected_uop_idx, None);
         assert_eq!(app.selected_file_hash, None);
         assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn select_raw_multi_collection_entry_uses_expected_hash() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("MultiCollection.uop"), UopPackage::new_default());
+
+        let expected = uocf::enhanced::multis::multi_collection_hash(7);
+        assert!(app.select_raw_multi_collection_entry(7));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_multi_uop_hash, Some(expected));
+    }
+
+    #[test]
+    fn select_raw_localized_strings_file_uses_expected_hash() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("localizedstrings.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_localized_strings_file(0x1234));
+        assert_eq!(app.selected_file_hash, Some(0x1234));
+        assert_eq!(app.selected_localized_file_hash, Some(0x1234));
     }
 }
