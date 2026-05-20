@@ -1,6 +1,7 @@
 use crate::app::{TerrainDefinitionFileEntry, UopInspectorApp};
 use eframe::egui;
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
+use std::collections::BTreeSet;
 
 pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let files_arc = if let Some(ref files) = app.terrain_def_files {
@@ -50,7 +51,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
         if let Some(selected_hash) = app.selected_terrain_def_hash {
             if let Some(file) = files.iter().find(|file| file.filename_hash == selected_hash) {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui_terrain_file(ui, file);
+                    ui_terrain_file(app, ctx, ui, file);
                 });
             }
         } else {
@@ -61,7 +62,12 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn ui_terrain_file(ui: &mut egui::Ui, file: &TerrainDefinitionFileEntry) {
+fn ui_terrain_file(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    file: &TerrainDefinitionFileEntry,
+) {
     let entry = &file.entry;
     ui.heading(format!(
         "Terrain Definition: {} ({})",
@@ -118,14 +124,60 @@ fn ui_terrain_file(ui: &mut egui::Ui, file: &TerrainDefinitionFileEntry) {
     }
 
     ui.add_space(10.0);
-    ui_texture_data(ui, entry);
+    ui_cc_alias_textures(app, ctx, ui, entry);
+
+    ui.add_space(10.0);
+    ui_texture_data(app, ctx, ui, entry);
 
     ui.add_space(10.0);
     ui.heading("Raw Encoded Prefix");
     ui.monospace(hex_prefix(&file.raw_prefix));
 }
 
-fn ui_texture_data(ui: &mut egui::Ui, entry: &TerrainDefinitionEntry) {
+fn ui_cc_alias_textures(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    entry: &TerrainDefinitionEntry,
+) {
+    ui.heading("Linked CC Land Art");
+
+    let mut aliases = entry
+        .aliases
+        .iter()
+        .map(|alias| alias.alias)
+        .filter(|alias| *alias != 0)
+        .collect::<BTreeSet<_>>();
+
+    if aliases.is_empty() {
+        aliases.insert(entry.id);
+    }
+
+    if app.client_data.is_none() {
+        ui.label("Select a Classic Client path to preview linked CC land art.");
+        return;
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        for alias in aliases {
+            ui.vertical(|ui| {
+                ui.label(format!("0x{:04X}", alias));
+                if let Some(handle) = app.get_tex_art_cc_texture(ctx, alias) {
+                    ui.add(thumbnail(&handle, 72.0));
+                } else {
+                    ui.label("missing");
+                }
+            });
+        }
+    });
+}
+
+fn ui_texture_data(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    entry: &TerrainDefinitionEntry,
+) {
     if let Some(texture) = &entry.texture {
         ui.heading("Texture Item");
         egui::Grid::new("td_texture_header_grid").striped(true).show(ui, |ui| {
@@ -161,6 +213,7 @@ fn ui_texture_data(ui: &mut egui::Ui, entry: &TerrainDefinitionEntry) {
             ui.label("repetition");
             ui.label("unk6");
             ui.label("unk7");
+            ui.label("preview");
             ui.end_row();
 
             for (i, layer) in texture.layers.iter().enumerate() {
@@ -173,6 +226,15 @@ fn ui_texture_data(ui: &mut egui::Ui, entry: &TerrainDefinitionEntry) {
                 ui.label(layer.texture_repetition.to_string());
                 ui.label(layer.unk6.to_string());
                 ui.label(layer.unk7.to_string());
+                if let Some(texture_id) = layer.texture_id {
+                    if let Some(handle) = app.get_ec_texture_by_id(ctx, texture_id) {
+                        ui.add(thumbnail(&handle, 96.0));
+                    } else {
+                        ui.label("missing");
+                    }
+                } else {
+                    ui.label("None");
+                }
                 ui.end_row();
             }
         });
@@ -180,6 +242,14 @@ fn ui_texture_data(ui: &mut egui::Ui, entry: &TerrainDefinitionEntry) {
         ui.heading("Texture Item");
         ui.label("No texture definition.");
     }
+}
+
+fn thumbnail(handle: &egui::TextureHandle, max_side: f32) -> egui::Image<'_> {
+    let [width, height] = handle.size();
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let scale = (max_side / width).min(max_side / height).min(1.0);
+    egui::Image::new(handle).fit_to_exact_size(egui::vec2(width * scale, height * scale))
 }
 
 fn hex_prefix(bytes: &[u8]) -> String {
