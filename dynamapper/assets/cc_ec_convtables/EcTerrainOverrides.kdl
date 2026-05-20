@@ -40,6 +40,9 @@ terrain 5 {
     // Source candidate: kdl_only_no_known_uop_field
     // Liquid motion value preserved from TerrainDefinition.kdl; not found in
     // the currently parsed TerrainDefinition.uop unknown float fields.
+    // Source candidate: kdl_only_runtime_policy
+    policy "smooth" code="reviewed_runtime_policy"
+    policy "follow-center" code="reviewed_runtime_policy"
     liquid waveheight=0.3 code="reviewed_liquid_motion"
 }
 
@@ -47,6 +50,8 @@ terrain 10 {
     // Source candidate: kdl_only_no_known_uop_field
     // Liquid motion values preserved from TerrainDefinition.kdl; not found in
     // the currently parsed TerrainDefinition.uop unknown float fields.
+    // Source candidate: kdl_only_runtime_policy
+    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.2 code="reviewed_liquid_motion"
 }
 
@@ -54,6 +59,8 @@ terrain 49 {
     // Source candidate: kdl_only_no_known_uop_field
     // Liquid motion values preserved from TerrainDefinition.kdl; not found in
     // the currently parsed TerrainDefinition.uop unknown float fields.
+    // Source candidate: kdl_only_runtime_policy
+    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
 }
 
@@ -69,7 +76,24 @@ terrain 70 {
     // Source candidate: kdl_only_no_known_uop_field
     // Liquid motion values preserved from TerrainDefinition.kdl; not found in
     // the currently parsed TerrainDefinition.uop unknown float fields.
+    // Source candidate: kdl_only_runtime_policy
+    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
+}
+
+terrain 53 {
+    // Source candidate: kdl_only_runtime_policy
+    // Water material policy preserved from TerrainDefinition.kdl; not directly
+    // represented by parsed TerrainDefinition.uop fields.
+    policy "smooth" code="reviewed_runtime_policy"
+    policy "follow-center" code="reviewed_runtime_policy"
+}
+
+terrain 195 {
+    // Source candidate: kdl_only_runtime_policy
+    // Water material policy preserved from TerrainDefinition.kdl; not directly
+    // represented by parsed TerrainDefinition.uop fields.
+    policy "smooth" code="reviewed_runtime_policy"
 }
 
 terrain 201 {
