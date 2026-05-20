@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
+use udd_assets::{HuesPackage, TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_container::{
     reconstruct_stored_size, unpack_codec, unpack_type, Codec, LookupMode, UDDP_MAGIC, UDPI_MAGIC,
     UddpReader,
@@ -125,6 +125,25 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             "Tilemeta: land_tiles={}, item_tiles={}",
             package.land_tiles().len(),
             package.item_tiles().len()
+        );
+        return Ok(true);
+    }
+
+    if let Ok(package) = HuesPackage::from_uddp_package(package.clone()) {
+        let populated = package
+            .slots()
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .filter(|slot| slot.is_present())
+            .count();
+        println!("Recognized package: hues");
+        println!("Known logical files: metadata=1, textures=1");
+        println!(
+            "Hues: slots={}, populated={}, texture={}x{}",
+            package.slots().len(),
+            populated,
+            udd_assets::hues::HUES_TEXTURE_WIDTH,
+            udd_assets::hues::HUES_TEXTURE_HEIGHT
         );
         return Ok(true);
     }

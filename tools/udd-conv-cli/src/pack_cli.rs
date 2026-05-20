@@ -11,6 +11,7 @@ use color_eyre::eyre;
 use udd_conv::{
     cc_map::{convert_map_mul_to_uddp_from_sources, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources,
+    hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
     source_paths::{gather_source_dirs, resolve_output_path},
     tex_art_cc::{
         convert_art_mul_to_tex_art_cc_uddp_from_sources, TexArtCcAtlasOptions,
@@ -468,6 +469,15 @@ enum Commands {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
         #[arg(long, default_value = "world_lights.uddp")]
+        output: PathBuf,
+        #[arg(long, default_value_t = false, help = "Do not use compression.")]
+        no_compression: bool,
+    },
+    /// Packs Classic hues.mul into hues.uddp.
+    PackHues {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "hues.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
         no_compression: bool,
@@ -947,6 +957,25 @@ pub fn run() -> eyre::Result<()> {
             )?;
             println!("Wrote world_lights.uddp to '{}'.", out_file.display());
         }
+        Commands::PackHues {
+            source_dirs: source_dir_args,
+            output,
+            no_compression,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let compression = if no_compression {
+                CompressionFlag::None
+            } else {
+                CompressionFlag::ZstdNoDict
+            };
+            convert_hues_mul_to_hues_uddp_from_sources(
+                &paths,
+                &out_file,
+                &HuesOptions { compression },
+            )?;
+            println!("Wrote hues.uddp to '{}'.", out_file.display());
+        }
     }
 
     Ok(())
@@ -1090,6 +1119,27 @@ mod tests {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(tex_land_ec, Some(PathBuf::from("/tmp/tex_land_ec.uddp")));
                 assert_eq!(output, PathBuf::from("/tmp/review.json"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_hues() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-hues",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "hues.uddp",
+        ])
+        .expect("parse hues args");
+
+        match cli.command {
+            Commands::PackHues { source_dirs, output, .. } => {
+                assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
+                assert_eq!(output, PathBuf::from("hues.uddp"));
             }
             _ => panic!("unexpected command parsed"),
         }
