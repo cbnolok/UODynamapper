@@ -42,6 +42,63 @@ pub const TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT: u16 = 1 << 4;
 pub const TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC: u16 = 1 << 5;
 pub const TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER: u16 = 1 << 6;
 
+pub const TERRAIN_OVERRIDE_ACTION_POLICY: u16 = 1 << 0;
+pub const TERRAIN_OVERRIDE_ACTION_LIQUID: u16 = 1 << 1;
+pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 2;
+pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 3;
+pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 4;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TexLandEcTerrainOverrideActions {
+    pub material_id: u32,
+    pub action_count: u32,
+    pub action_flags: u16,
+}
+
+impl TexLandEcTerrainOverrideActions {
+    pub fn has_policy(self) -> bool {
+        (self.action_flags & TERRAIN_OVERRIDE_ACTION_POLICY) != 0
+    }
+
+    pub fn has_liquid(self) -> bool {
+        (self.action_flags & TERRAIN_OVERRIDE_ACTION_LIQUID) != 0
+    }
+
+    pub fn has_layer(self) -> bool {
+        (self.action_flags & TERRAIN_OVERRIDE_ACTION_LAYER) != 0
+    }
+
+    pub fn has_texture(self) -> bool {
+        (self.action_flags & TERRAIN_OVERRIDE_ACTION_TEXTURE) != 0
+    }
+
+    pub fn has_ignore(self) -> bool {
+        (self.action_flags & TERRAIN_OVERRIDE_ACTION_IGNORE) != 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexLandEcRuntimeSlotSource {
+    TranscodedMaterialAlias,
+    TranscodedMaterialPlaceholder,
+    DirectAlias,
+    DirectSlot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TexLandEcMaterialDecision {
+    pub query_tile_id: u32,
+    pub material_id: Option<u32>,
+    pub runtime_slot_id: Option<u32>,
+    pub runtime_slot_source: Option<TexLandEcRuntimeSlotSource>,
+    pub provenance_record_count: u32,
+    pub primary_texture_id: Option<u32>,
+    pub primary_layer_index: Option<u32>,
+    pub primary_selection_reason: u8,
+    pub primary_selection_flags: u16,
+    pub override_actions: Option<TexLandEcTerrainOverrideActions>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexLandEcTerrainProvenanceRecord {
     pub material_id: u32,
@@ -114,6 +171,7 @@ pub struct TexLandEcPackage {
     pages: Vec<TexLandEcPageRecord>,
     slots: Vec<TexLandEcSlotRecord>,
     terrain_provenance: Vec<TexLandEcTerrainProvenanceRecord>,
+    terrain_override_actions: HashMap<u32, TexLandEcTerrainOverrideActions>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
 }
@@ -172,6 +230,8 @@ impl TexLandEcPackage {
         }
 
         let transcode = read_transcode_from_package(&package).unwrap_or_default();
+        let terrain_override_actions = read_terrain_override_actions_from_package(&package)
+            .unwrap_or_default();
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -181,6 +241,7 @@ impl TexLandEcPackage {
             pages,
             slots,
             terrain_provenance,
+            terrain_override_actions,
             transcode,
             page_cache: AtlasPageCache::new(options),
         })
@@ -220,6 +281,17 @@ impl TexLandEcPackage {
 
     pub fn terrain_provenance(&self) -> &[TexLandEcTerrainProvenanceRecord] {
         &self.terrain_provenance
+    }
+
+    pub fn terrain_override_actions(&self) -> &HashMap<u32, TexLandEcTerrainOverrideActions> {
+        &self.terrain_override_actions
+    }
+
+    pub fn terrain_override_actions_for(
+        &self,
+        material_id: u32,
+    ) -> Option<&TexLandEcTerrainOverrideActions> {
+        self.terrain_override_actions.get(&material_id)
     }
 
     pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Option<Vec<u8>>> {
@@ -301,6 +373,75 @@ impl TexLandEcPackage {
         None
     }
 
+    pub fn resolve_material_decision(&self, cc_tile_id: u32) -> TexLandEcMaterialDecision {
+        let mut material_id = self.transcode.get(&cc_tile_id).copied();
+        let mut material_records = if let Some(material_id) = material_id {
+            self.terrain_provenance
+                .iter()
+                .filter(|record| record.material_id == material_id)
+                .collect::<Vec<_>>()
+        } else {
+            let records = self
+                .terrain_provenance
+                .iter()
+                .filter(|record| record.alias_slot_id == cc_tile_id)
+                .collect::<Vec<_>>();
+            if let Some(record) = records.first() {
+                material_id = Some(record.material_id);
+            }
+            records
+        };
+
+        let (runtime_slot_id, runtime_slot_source) = if self.transcode.contains_key(&cc_tile_id) {
+            self.resolve_material_runtime_slot(&material_records)
+        } else if let Some(slot_id) = material_records
+            .iter()
+            .find_map(|record| self.resolve_provenance_record_slot(record))
+        {
+            (Some(slot_id), Some(TexLandEcRuntimeSlotSource::DirectAlias))
+        } else if self.present_slot(cc_tile_id).is_some() {
+            (Some(cc_tile_id), Some(TexLandEcRuntimeSlotSource::DirectSlot))
+        } else {
+            (None, None)
+        };
+
+        material_records.sort_by_key(|record| {
+            (
+                optional_texture_sort_key(record.primary_texture_id, MISSING_TEXTURE_ID),
+                optional_texture_sort_key(record.selected_texture_id, MISSING_TEXTURE_ID),
+                record.alias_count_index,
+            )
+        });
+        let primary_record = material_records
+            .iter()
+            .find(|record| {
+                record.primary_texture_id != MISSING_TEXTURE_ID
+                    || record.primary_layer_index != MISSING_TERRAIN_LAYER_INDEX
+            })
+            .copied();
+
+        TexLandEcMaterialDecision {
+            query_tile_id: cc_tile_id,
+            material_id,
+            runtime_slot_id,
+            runtime_slot_source,
+            provenance_record_count: material_records.len() as u32,
+            primary_texture_id: primary_record
+                .and_then(|record| optional_texture_id(record.primary_texture_id)),
+            primary_layer_index: primary_record
+                .and_then(|record| optional_terrain_layer_index(record.primary_layer_index)),
+            primary_selection_reason: primary_record
+                .map(|record| record.primary_selection_reason)
+                .unwrap_or(TERRAIN_PRIMARY_REASON_UNKNOWN),
+            primary_selection_flags: primary_record
+                .map(|record| record.primary_selection_flags)
+                .unwrap_or(0),
+            override_actions: material_id.and_then(|id| {
+                self.terrain_override_actions.get(&id).copied()
+            }),
+        }
+    }
+
     fn resolve_provenance_record_slot(
         &self,
         record: &TexLandEcTerrainProvenanceRecord,
@@ -318,6 +459,44 @@ impl TexLandEcPackage {
         }
 
         None
+    }
+
+    fn resolve_material_runtime_slot(
+        &self,
+        material_records: &[&TexLandEcTerrainProvenanceRecord],
+    ) -> (Option<u32>, Option<TexLandEcRuntimeSlotSource>) {
+        if let Some(slot_id) = material_records
+            .iter()
+            .filter(|record| {
+                record.alias_slot_id != 0
+                    && record.alias_slot_id != MISSING_SLOT_ID
+                    && self.resolve_provenance_record_slot(record).is_some()
+            })
+            .min_by_key(|record| record.alias_count_index)
+            .and_then(|record| self.resolve_provenance_record_slot(record))
+        {
+            return (
+                Some(slot_id),
+                Some(TexLandEcRuntimeSlotSource::TranscodedMaterialAlias),
+            );
+        }
+
+        if let Some(slot_id) = material_records
+            .iter()
+            .filter(|record| {
+                record.alias_slot_id == 0
+                    && self.resolve_provenance_record_slot(record).is_some()
+            })
+            .min_by_key(|record| record.alias_count_index)
+            .and_then(|record| self.resolve_provenance_record_slot(record))
+        {
+            return (
+                Some(slot_id),
+                Some(TexLandEcRuntimeSlotSource::TranscodedMaterialPlaceholder),
+            );
+        }
+
+        (None, None)
     }
 
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
@@ -474,10 +653,214 @@ fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>
     Some(transcode)
 }
 
+fn read_terrain_override_actions_from_package(
+    package: &UddpReader,
+) -> Option<HashMap<u32, TexLandEcTerrainOverrideActions>> {
+    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_actions_metadata(&bytes).ok()
+}
+
+fn parse_terrain_override_actions_metadata(
+    bytes: &[u8],
+) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideActions>> {
+    let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
+    let mut actions = HashMap::new();
+    let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
+        return Ok(actions);
+    };
+
+    for entry in entries {
+        let Some(material_id) = entry
+            .get("material_id")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            continue;
+        };
+        let action_count = entry
+            .get("active_action_count")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0);
+        let mut action_flags = 0u16;
+        if json_array_is_non_empty(entry, "policies") {
+            action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
+        }
+        if !entry.get("liquid").unwrap_or(&serde_json::Value::Null).is_null() {
+            action_flags |= TERRAIN_OVERRIDE_ACTION_LIQUID;
+        }
+        if json_array_is_non_empty(entry, "layers") {
+            action_flags |= TERRAIN_OVERRIDE_ACTION_LAYER;
+        }
+        if json_array_is_non_empty(entry, "textures") {
+            action_flags |= TERRAIN_OVERRIDE_ACTION_TEXTURE;
+        }
+        if !entry.get("ignore").unwrap_or(&serde_json::Value::Null).is_null() {
+            action_flags |= TERRAIN_OVERRIDE_ACTION_IGNORE;
+        }
+
+        actions.insert(
+            material_id,
+            TexLandEcTerrainOverrideActions {
+                material_id,
+                action_count,
+                action_flags,
+            },
+        );
+    }
+
+    Ok(actions)
+}
+
+fn json_array_is_non_empty(value: &serde_json::Value, key: &str) -> bool {
+    value
+        .get(key)
+        .and_then(|value| value.as_array())
+        .is_some_and(|values| !values.is_empty())
+}
+
+fn optional_texture_id(value: u32) -> Option<u32> {
+    (value != MISSING_TEXTURE_ID).then_some(value)
+}
+
+fn optional_terrain_layer_index(value: u32) -> Option<u32> {
+    (value != MISSING_TERRAIN_LAYER_INDEX).then_some(value)
+}
+
+fn optional_texture_sort_key(value: u32, missing: u32) -> u32 {
+    if value == missing {
+        u32::MAX
+    } else {
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use byteorder::WriteBytesExt;
+    use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+
+    fn add_metadata_file(
+        package: &mut UddpBuilder,
+        virtual_path: &str,
+        data: &[u8],
+    ) {
+        package
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(virtual_path),
+                path_hash64: None,
+                id: None,
+                data,
+            })
+            .expect("add metadata file");
+    }
+
+    fn page_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
+        bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u8(PagePixelFormat::Rgba8888 as u8).unwrap();
+        bytes.write_u8(AtlasPackingMode::MaximumPacking as u8).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes
+    }
+
+    fn slot_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
+        bytes.write_u32::<LittleEndian>(TEX_LAND_EC_METADATA_VERSION).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u8(AtlasPackingMode::MaximumPacking as u8).unwrap();
+        bytes.write_u32::<LittleEndian>(101).unwrap();
+        for art_id in 0..=100u32 {
+            bytes.write_u32::<LittleEndian>(art_id).unwrap();
+            if art_id == 77 || art_id == 100 {
+                bytes.write_u32::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(SLOT_FLAG_PRESENT | SLOT_FLAG_LAND).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(44).unwrap();
+                bytes.write_u16::<LittleEndian>(44).unwrap();
+            } else {
+                bytes.write_u32::<LittleEndian>(MISSING_PAGE_INDEX).unwrap();
+                bytes.write_u16::<LittleEndian>(MISSING_PAGE_TILE_INDEX).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+            }
+        }
+        bytes
+    }
+
+    fn terrain_provenance_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
+        bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(52).unwrap();
+        bytes.write_i32::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(77).unwrap();
+        bytes.write_u64::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(2000520).unwrap();
+        bytes.write_u32::<LittleEndian>(100).unwrap();
+        bytes.write_u32::<LittleEndian>(2000520).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();
+        bytes.write_u16::<LittleEndian>(TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION).unwrap();
+        bytes
+    }
+
+    fn terrain_overrides_json() -> Vec<u8> {
+        br#"{
+  "schema": "tex_land_ec_terrain_overrides",
+  "schema_version": 1,
+  "entries": [
+    {
+      "material_id": 52,
+      "active_action_count": 2,
+      "policies": [],
+      "liquid": null,
+      "layers": [{"role": "t0", "texture_id": 2000510}],
+      "textures": [],
+      "ignore": null
+    }
+  ]
+}"#
+        .to_vec()
+    }
+
+    fn test_package() -> TexLandEcPackage {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest_bytes());
+        add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest_bytes());
+        add_metadata_file(
+            &mut builder,
+            UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+            &terrain_provenance_bytes(),
+        );
+        add_metadata_file(
+            &mut builder,
+            UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH,
+            &terrain_overrides_json(),
+        );
+        let bytes = builder.build().expect("build test package");
+        TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
+            .expect("load test package")
+    }
 
     #[test]
     fn terrain_provenance_parser_accepts_v1_records_with_unknown_primary_fields() {
@@ -502,5 +885,34 @@ mod tests {
         assert_eq!(records[0].primary_layer_index, MISSING_TERRAIN_LAYER_INDEX);
         assert_eq!(records[0].primary_selection_reason, TERRAIN_PRIMARY_REASON_UNKNOWN);
         assert_eq!(records[0].primary_selection_flags, 0);
+    }
+
+    #[test]
+    fn terrain_override_metadata_parser_records_action_flags() {
+        let actions = parse_terrain_override_actions_metadata(&terrain_overrides_json())
+            .expect("parse override actions");
+        let action = actions.get(&52).expect("material 52 override");
+
+        assert_eq!(action.action_count, 2);
+        assert!(action.has_layer());
+        assert!(!action.has_policy());
+    }
+
+    #[test]
+    fn material_decision_preserves_current_slot_resolution_and_override_metadata() {
+        let package = test_package();
+        let decision = package.resolve_material_decision(77);
+
+        assert_eq!(package.resolve_runtime_slot_id(77), Some(100));
+        assert_eq!(decision.material_id, Some(52));
+        assert_eq!(decision.runtime_slot_id, Some(100));
+        assert_eq!(decision.runtime_slot_source, Some(TexLandEcRuntimeSlotSource::DirectAlias));
+        assert_eq!(decision.primary_texture_id, Some(2000520));
+        assert_eq!(decision.primary_layer_index, Some(0));
+        assert_eq!(decision.primary_selection_reason, TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION);
+        assert_eq!(
+            decision.override_actions.map(|actions| actions.action_flags),
+            Some(TERRAIN_OVERRIDE_ACTION_LAYER)
+        );
     }
 }

@@ -24,8 +24,9 @@ use udd_assets::{
     },
     tex_art_ec::TexArtEcPackage,
     tex_land_ec::{
-        TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
-        MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
+        TexLandEcMaterialDecision, TexLandEcPackage, TexLandEcRuntimeSlotSource,
+        TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
+        MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
         TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
         TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER,
         TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT,
@@ -472,6 +473,15 @@ pub fn write_ec_terrain_practical_review(
             .unwrap_or((None, None, None));
         let manual_override = overrides.get(&entry.id);
         let packed_records = packed_provenance_by_material.get(&entry.id);
+        let resolver_decision = packed_terrain.as_ref().map(|package| {
+            package.resolve_material_decision(
+                entry
+                    .runtime_slot_ids()
+                    .first()
+                    .copied()
+                    .unwrap_or(entry.id),
+            )
+        });
         let mut findings = split_flags(&terrain_primary_audit_flags(
             entry,
             selected_layer,
@@ -553,6 +563,7 @@ pub fn write_ec_terrain_practical_review(
                 )
             }),
             overrides: manual_override.map(terrain_definition_override_entry_report),
+            resolver_decision: resolver_decision.map(terrain_resolver_decision_report),
             packed_provenance: packed_records.map(|records| {
                 packed_terrain_provenance_report(records, selected_layer, selected_layer_index)
             }),
@@ -1858,8 +1869,24 @@ struct TerrainPracticalReviewEntryReport {
     runtime_slot_ids: Vec<u32>,
     selected_layer: Option<TerrainSelectedLayerReport>,
     overrides: Option<TerrainDefinitionOverrideEntryReport>,
+    resolver_decision: Option<TerrainResolverDecisionReport>,
     packed_provenance: Option<PackedTerrainProvenanceReport>,
     recommended_next_action: &'static str,
+}
+
+#[derive(Serialize)]
+struct TerrainResolverDecisionReport {
+    query_tile_id: u32,
+    material_id: Option<u32>,
+    runtime_slot_id: Option<u32>,
+    runtime_slot_source: Option<&'static str>,
+    provenance_record_count: u32,
+    primary_texture_id: Option<u32>,
+    primary_layer_index: Option<u32>,
+    primary_selection_reason: String,
+    primary_selection_flags: Vec<String>,
+    override_action_count: Option<u32>,
+    override_action_flags: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -2963,6 +2990,66 @@ fn terrain_selected_layer_report(
         logical_family: terrain_texture_family_name(layer.texture_type, selected_package)
             .to_string(),
     }
+}
+
+fn terrain_resolver_decision_report(
+    decision: TexLandEcMaterialDecision,
+) -> TerrainResolverDecisionReport {
+    TerrainResolverDecisionReport {
+        query_tile_id: decision.query_tile_id,
+        material_id: decision.material_id,
+        runtime_slot_id: decision.runtime_slot_id,
+        runtime_slot_source: decision
+            .runtime_slot_source
+            .map(terrain_runtime_slot_source_name),
+        provenance_record_count: decision.provenance_record_count,
+        primary_texture_id: decision.primary_texture_id,
+        primary_layer_index: decision.primary_layer_index,
+        primary_selection_reason: terrain_primary_reason_name(decision.primary_selection_reason)
+            .to_string(),
+        primary_selection_flags: terrain_primary_flags_vec(decision.primary_selection_flags)
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        override_action_count: decision
+            .override_actions
+            .map(|actions| actions.action_count),
+        override_action_flags: decision
+            .override_actions
+            .map(|actions| terrain_override_action_flags_vec(actions.action_flags))
+            .unwrap_or_default(),
+    }
+}
+
+fn terrain_runtime_slot_source_name(source: TexLandEcRuntimeSlotSource) -> &'static str {
+    match source {
+        TexLandEcRuntimeSlotSource::TranscodedMaterialAlias => "transcoded_material_alias",
+        TexLandEcRuntimeSlotSource::TranscodedMaterialPlaceholder => {
+            "transcoded_material_placeholder"
+        }
+        TexLandEcRuntimeSlotSource::DirectAlias => "direct_alias",
+        TexLandEcRuntimeSlotSource::DirectSlot => "direct_slot",
+    }
+}
+
+fn terrain_override_action_flags_vec(flags: u16) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_POLICY != 0 {
+        names.push("policy");
+    }
+    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_LIQUID != 0 {
+        names.push("liquid");
+    }
+    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_LAYER != 0 {
+        names.push("layer");
+    }
+    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_TEXTURE != 0 {
+        names.push("texture");
+    }
+    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_IGNORE != 0 {
+        names.push("ignore");
+    }
+    names
 }
 
 fn packed_terrain_provenance_by_material(

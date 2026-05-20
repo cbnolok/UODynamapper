@@ -7874,6 +7874,7 @@ dependencies = [
  "color-eyre",
  "dds",
  "knuffel",
+ "serde_json",
  "udd-container",
  "uocf",
  "wgpu-types 27.0.1",
