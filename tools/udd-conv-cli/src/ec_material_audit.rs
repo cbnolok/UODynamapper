@@ -429,6 +429,8 @@ pub fn audit_ec_terrain_definition_kdl(
     let mut entries = Vec::new();
     let mut finding_counts = BTreeMap::<String, u64>::new();
     let mut manual_candidate_counts = BTreeMap::<String, u64>::new();
+    let mut manual_candidate_covered_counts = BTreeMap::<String, u64>::new();
+    let mut manual_candidate_unresolved_counts = BTreeMap::<String, u64>::new();
     let mut manual_candidates = Vec::new();
     let mut matched_id_count = 0usize;
     let mut kdl_only_count = 0usize;
@@ -449,9 +451,18 @@ pub fn audit_ec_terrain_definition_kdl(
             increment_count(&mut finding_counts, &finding.status);
             if terrain_kdl_finding_needs_manual_review(&finding.status) {
                 increment_count(&mut manual_candidate_counts, &finding.status);
-                manual_candidates.push(terrain_definition_manual_candidate_report(
+                let mut candidate = terrain_definition_manual_candidate_report(
                     id, kdl_entry, uop_entry, finding,
-                ));
+                );
+                candidate.override_covered = overrides.get(&id).is_some_and(|entry| {
+                    terrain_manual_candidate_covered_by_override(&candidate, entry)
+                });
+                if candidate.override_covered {
+                    increment_count(&mut manual_candidate_covered_counts, &finding.status);
+                } else {
+                    increment_count(&mut manual_candidate_unresolved_counts, &finding.status);
+                }
+                manual_candidates.push(candidate);
             }
         }
 
@@ -481,6 +492,8 @@ pub fn audit_ec_terrain_definition_kdl(
             uop_only_count,
             finding_counts: finding_counts.clone(),
             manual_candidate_counts: manual_candidate_counts.clone(),
+            manual_candidate_covered_counts,
+            manual_candidate_unresolved_counts,
         },
         entries,
         manual_candidates,
@@ -1659,6 +1672,8 @@ struct TerrainDefinitionKdlAuditSummary {
     uop_only_count: usize,
     finding_counts: BTreeMap<String, u64>,
     manual_candidate_counts: BTreeMap<String, u64>,
+    manual_candidate_covered_counts: BTreeMap<String, u64>,
+    manual_candidate_unresolved_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize)]
@@ -1768,6 +1783,7 @@ struct TerrainDefinitionManualCandidateReport {
     kdl_terrain_type: Option<String>,
     uop_shader_name: Option<String>,
     runtime_slot_ids: Vec<u32>,
+    override_covered: bool,
 }
 
 #[derive(Serialize)]
@@ -2773,6 +2789,54 @@ fn terrain_definition_manual_candidate_report(
         runtime_slot_ids: uop_entry
             .map(TerrainDefinitionEntry::runtime_slot_ids)
             .unwrap_or_default(),
+        override_covered: false,
+    }
+}
+
+fn terrain_manual_candidate_covered_by_override(
+    candidate: &TerrainDefinitionManualCandidateReport,
+    override_entry: &EcTerrainOverrideEntry,
+) -> bool {
+    match candidate.field.as_str() {
+        "speed" => override_entry
+            .liquid
+            .as_ref()
+            .is_some_and(|liquid| liquid.speed.is_some()),
+        "waveheight" => override_entry
+            .liquid
+            .as_ref()
+            .is_some_and(|liquid| liquid.waveheight.is_some()),
+        "textureid" => terrain_kdl_textureid(&candidate.detail).is_some_and(|texture_id| {
+            override_entry
+                .textures
+                .iter()
+                .any(|texture| texture.texture == texture_id)
+        }),
+        "terrain_type.Smooth" => override_entry
+            .policies
+            .iter()
+            .any(|policy| policy.policy == "smooth"),
+        "terrain_type.FollowCenter" => override_entry
+            .policies
+            .iter()
+            .any(|policy| policy.policy == "follow-center"),
+        "terrain_type.Single" => override_entry
+            .policies
+            .iter()
+            .any(|policy| policy.policy == "single"),
+        field if field.starts_with("layer.") => {
+            let role = field.trim_start_matches("layer.");
+            terrain_kdl_layer_values(&candidate.detail).is_some_and(|(texture_id, stretch)| {
+                override_entry.layers.iter().any(|layer| {
+                    layer.role == role
+                        && layer.texture == texture_id
+                        && layer
+                            .stretch
+                            .is_some_and(|override_stretch| floats_match(override_stretch, stretch))
+                })
+            })
+        }
+        _ => false,
     }
 }
 
