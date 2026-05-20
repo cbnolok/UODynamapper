@@ -1409,9 +1409,13 @@ fn log_tex_land_ec_resolver_dry_run(
         };
         for (cell_index, cell) in block.cells.iter().enumerate() {
             checked_tiles += 1;
+            let shader_lookup_payload = texture_lookup_cache
+                .get(cell.id as usize)
+                .and_then(|packed| current_ec_lookup_payload(*packed));
             let current_runtime_slot = texture_lookup_cache
                 .get(cell.id as usize)
-                .and_then(|packed| current_ec_runtime_slot_from_lookup(*packed));
+                .and_then(|packed| ((*packed & 0xF) == 2).then(|| ec.resolve_runtime_slot_id(cell.id as u32)))
+                .flatten();
             let decision = ec.resolve_material_decision(cell.id as u32);
             if decision.override_actions.is_some() {
                 override_action_visible_count += 1;
@@ -1431,9 +1435,10 @@ fn log_tex_land_ec_resolver_dry_run(
                         LogSev::Info,
                         LogAbout::General,
                         &format!(
-                            "[EC-DIAG] resolver-dry-run mismatch world=({world_x},{world_y}) cell_id={} z={} current_slot={} resolver_slot={} material_id={} primary_texture={} primary_layer={} override_actions={} source={}",
+                            "[EC-DIAG] resolver-dry-run mismatch world=({world_x},{world_y}) cell_id={} z={} shader_payload={} current_slot={} resolver_slot={} material_id={} primary_texture={} primary_layer={} override_actions={} source={}",
                             cell.id,
                             cell.z,
+                            optional_u32_log(shader_lookup_payload),
                             optional_u32_log(current_runtime_slot),
                             optional_u32_log(decision.runtime_slot_id),
                             optional_u32_log(decision.material_id),
@@ -1468,7 +1473,7 @@ fn log_tex_land_ec_resolver_dry_run(
     );
 }
 
-fn current_ec_runtime_slot_from_lookup(packed: u32) -> Option<u32> {
+fn current_ec_lookup_payload(packed: u32) -> Option<u32> {
     match packed & 0xF {
         2 | 4 => Some(packed >> 4),
         _ => None,
