@@ -18,6 +18,10 @@ use udd_assets::{
     ec_surface_overrides::{
         CcArtOverrideMode, EcSurfaceOverrideAction, EcSurfaceOverrideEntry, EcSurfaceOverrides,
     },
+    ec_terrain_overrides::{
+        EcTerrainOverrideTerrainEntry, EcTerrainOverrides, TerrainLayerOverride,
+        TerrainTextureOverride,
+    },
     tex_art_ec::TexArtEcPackage,
     tex_land_ec::{
         TexLandEcPackage, TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID,
@@ -584,6 +588,65 @@ pub fn write_ec_terrain_override_candidates(
         output.display()
     );
     log_count_summary("EC terrain override candidate findings", &candidate_counts);
+    Ok(())
+}
+
+pub fn audit_ec_terrain_overrides(
+    source_dirs: &[PathBuf],
+    overrides_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    let terrain_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
+        .ok_or_else(|| eyre::eyre!("missing TerrainDefinition.uop"))?;
+    let terrain_definition =
+        uocf::enhanced::terrain_definition::TerrainDefinitionPackage::load(&terrain_path)?;
+    let terrain_ids = terrain_definition
+        .entries
+        .iter()
+        .map(|entry| entry.id)
+        .collect::<BTreeSet<_>>();
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let overrides = EcTerrainOverrides::load(overrides_path)?;
+
+    let mut entries = Vec::new();
+    let mut finding_counts = BTreeMap::<String, u64>::new();
+    let mut terrain_seen = BTreeMap::<u32, u32>::new();
+    for terrain in &overrides.terrains {
+        *terrain_seen.entry(terrain.id).or_default() += 1;
+    }
+
+    for terrain in &overrides.terrains {
+        let findings = terrain_override_findings(
+            terrain,
+            &terrain_ids,
+            &terrain_seen,
+            &package_membership,
+        );
+        for finding in &findings {
+            increment_count(&mut finding_counts, &finding.code);
+        }
+        entries.push(TerrainOverrideAuditEntry {
+            terrain_id: terrain.id,
+            action_count: terrain_override_action_count(terrain),
+            findings,
+        });
+    }
+
+    let report = TerrainOverrideAuditReport {
+        schema: "ec_terrain_override_audit",
+        schema_version: 1,
+        summary: TerrainOverrideAuditSummary {
+            override_terrain_count: overrides.terrains.len(),
+            finding_counts: finding_counts.clone(),
+        },
+        entries,
+    };
+    fs::write(output, serde_json::to_vec_pretty(&report)?)?;
+    info!(
+        "wrote EC terrain override audit JSON to '{}'",
+        output.display()
+    );
+    log_count_summary("EC terrain override audit findings", &finding_counts);
     Ok(())
 }
 
@@ -1654,6 +1717,34 @@ struct TerrainDefinitionManualCandidateReport {
 }
 
 #[derive(Serialize)]
+struct TerrainOverrideAuditReport {
+    schema: &'static str,
+    schema_version: u32,
+    summary: TerrainOverrideAuditSummary,
+    entries: Vec<TerrainOverrideAuditEntry>,
+}
+
+#[derive(Serialize)]
+struct TerrainOverrideAuditSummary {
+    override_terrain_count: usize,
+    finding_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Serialize)]
+struct TerrainOverrideAuditEntry {
+    terrain_id: u32,
+    action_count: usize,
+    findings: Vec<TerrainOverrideFinding>,
+}
+
+#[derive(Serialize)]
+struct TerrainOverrideFinding {
+    field: String,
+    code: String,
+    detail: String,
+}
+
+#[derive(Serialize)]
 struct SurfaceRedirectionReport {
     schema: &'static str,
     schema_version: u32,
@@ -2582,6 +2673,243 @@ fn terrain_definition_manual_candidate_report(
         runtime_slot_ids: uop_entry
             .map(TerrainDefinitionEntry::runtime_slot_ids)
             .unwrap_or_default(),
+    }
+}
+
+fn terrain_override_findings(
+    terrain: &EcTerrainOverrideTerrainEntry,
+    terrain_ids: &BTreeSet<u32>,
+    terrain_seen: &BTreeMap<u32, u32>,
+    package_membership: &EcPackageMembership,
+) -> Vec<TerrainOverrideFinding> {
+    let mut findings = Vec::new();
+    if terrain_ids.contains(&terrain.id) {
+        findings.push(terrain_override_finding(
+            "terrain",
+            "valid_terrain_id",
+            format!("terrain id {} exists in TerrainDefinition.uop", terrain.id),
+        ));
+    } else {
+        findings.push(terrain_override_finding(
+            "terrain",
+            "unknown_terrain_id",
+            format!("terrain id {} is not present in TerrainDefinition.uop", terrain.id),
+        ));
+    }
+
+    if terrain_seen.get(&terrain.id).copied().unwrap_or_default() > 1 {
+        findings.push(terrain_override_finding(
+            "terrain",
+            "duplicate_terrain_entry",
+            format!("terrain id {} has multiple override blocks", terrain.id),
+        ));
+    }
+
+    let action_count = terrain_override_action_count(terrain);
+    if action_count == 0 {
+        findings.push(terrain_override_finding(
+            "terrain",
+            "empty_override",
+            "terrain override block has no actions",
+        ));
+    }
+    if terrain.ignore.is_some() && action_count > 1 {
+        findings.push(terrain_override_finding(
+            "ignore",
+            "ignore_conflicts_with_actions",
+            "ignore should not be combined with policy, liquid, layer, or texture overrides",
+        ));
+    }
+
+    for policy in &terrain.policies {
+        if accepted_terrain_policy(&policy.policy) {
+            findings.push(terrain_override_finding(
+                "policy",
+                "valid_policy",
+                format!("policy={}", policy.policy),
+            ));
+        } else {
+            findings.push(terrain_override_finding(
+                "policy",
+                "unknown_policy",
+                format!("policy={}", policy.policy),
+            ));
+        }
+        findings.extend(terrain_override_code_findings("policy.code", policy.code.as_deref()));
+    }
+
+    if let Some(liquid) = &terrain.liquid {
+        if liquid.speed.is_none() && liquid.waveheight.is_none() {
+            findings.push(terrain_override_finding(
+                "liquid",
+                "empty_liquid_override",
+                "liquid override has neither speed nor waveheight",
+            ));
+        }
+        findings.extend(terrain_override_code_findings("liquid.code", liquid.code.as_deref()));
+    }
+
+    for layer in &terrain.layers {
+        findings.extend(terrain_layer_override_findings(layer, package_membership));
+    }
+    for texture in &terrain.textures {
+        findings.extend(terrain_texture_override_findings(texture, package_membership));
+    }
+    if let Some(ignore) = &terrain.ignore {
+        findings.extend(terrain_override_code_findings("ignore.code", ignore.code.as_deref()));
+    }
+
+    findings
+}
+
+fn terrain_layer_override_findings(
+    layer: &TerrainLayerOverride,
+    package_membership: &EcPackageMembership,
+) -> Vec<TerrainOverrideFinding> {
+    let mut findings = Vec::new();
+    if accepted_terrain_layer_role(&layer.role) {
+        findings.push(terrain_override_finding(
+            "layer.role",
+            "valid_layer_role",
+            format!("role={}", layer.role),
+        ));
+    } else {
+        findings.push(terrain_override_finding(
+            "layer.role",
+            "unknown_layer_role",
+            format!("role={}", layer.role),
+        ));
+    }
+    findings.push(terrain_override_texture_membership_finding(
+        "layer.tex",
+        layer.texture,
+        package_membership,
+    ));
+    findings.extend(terrain_override_code_findings("layer.code", layer.code.as_deref()));
+    findings
+}
+
+fn terrain_texture_override_findings(
+    texture: &TerrainTextureOverride,
+    package_membership: &EcPackageMembership,
+) -> Vec<TerrainOverrideFinding> {
+    let mut findings = vec![terrain_override_texture_membership_finding(
+        "texture",
+        texture.texture,
+        package_membership,
+    )];
+    if let Some(role) = &texture.role {
+        if accepted_terrain_texture_role(role) {
+            findings.push(terrain_override_finding(
+                "texture.role",
+                "valid_texture_role",
+                format!("role={role}"),
+            ));
+        } else {
+            findings.push(terrain_override_finding(
+                "texture.role",
+                "unknown_texture_role",
+                format!("role={role}"),
+            ));
+        }
+    }
+    findings.extend(terrain_override_code_findings("texture.code", texture.code.as_deref()));
+    findings
+}
+
+fn terrain_override_texture_membership_finding(
+    field: &'static str,
+    texture_id: u32,
+    package_membership: &EcPackageMembership,
+) -> TerrainOverrideFinding {
+    let package = physical_package_by_hash_membership(texture_id, package_membership);
+    if package == "Unknown" {
+        terrain_override_finding(
+            field,
+            "unknown_texture_id",
+            format!("texture {texture_id} was not found in known EC image packages"),
+        )
+    } else {
+        terrain_override_finding(
+            field,
+            "valid_texture_id",
+            format!("texture {texture_id} resolved to {package}"),
+        )
+    }
+}
+
+fn terrain_override_code_findings(
+    field: &'static str,
+    code: Option<&str>,
+) -> Vec<TerrainOverrideFinding> {
+    let Some(code) = code else {
+        return vec![terrain_override_finding(
+            field,
+            "missing_reason_code",
+            "override action has no reason code",
+        )];
+    };
+    if accepted_terrain_override_code(code) {
+        vec![terrain_override_finding(
+            field,
+            "valid_reason_code",
+            format!("code={code}"),
+        )]
+    } else {
+        vec![terrain_override_finding(
+            field,
+            "unknown_reason_code",
+            format!("code={code}"),
+        )]
+    }
+}
+
+fn terrain_override_action_count(terrain: &EcTerrainOverrideTerrainEntry) -> usize {
+    terrain.policies.len()
+        + usize::from(terrain.liquid.is_some())
+        + terrain.layers.len()
+        + terrain.textures.len()
+        + usize::from(terrain.ignore.is_some())
+}
+
+fn accepted_terrain_policy(policy: &str) -> bool {
+    matches!(policy, "smooth" | "follow-center" | "single")
+}
+
+fn accepted_terrain_layer_role(role: &str) -> bool {
+    matches!(role, "t0" | "t1" | "m" | "s" | "n")
+}
+
+fn accepted_terrain_texture_role(role: &str) -> bool {
+    matches!(
+        role,
+        "base" | "secondary-base" | "alpha-mask" | "mask" | "normal-like" | "support"
+    )
+}
+
+fn accepted_terrain_override_code(code: &str) -> bool {
+    matches!(
+        code,
+        "reviewed_runtime_policy"
+            | "reviewed_single_policy"
+            | "reviewed_liquid_motion"
+            | "reviewed_layer_texture"
+            | "reviewed_mask_texture"
+            | "reviewed_normal_texture"
+            | "reviewed_textureid"
+            | "intentionally_hidden"
+    )
+}
+
+fn terrain_override_finding(
+    field: impl Into<String>,
+    code: impl Into<String>,
+    detail: impl Into<String>,
+) -> TerrainOverrideFinding {
+    TerrainOverrideFinding {
+        field: field.into(),
+        code: code.into(),
+        detail: detail.into(),
     }
 }
 
