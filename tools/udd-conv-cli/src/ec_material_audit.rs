@@ -2605,6 +2605,8 @@ fn terrain_definition_kdl_findings(
     if let Some(textureid) = kdl_entry.textureid {
         let status = if uop_texture_ids.contains(&textureid) {
             "matches_uop_layer_texture"
+        } else if !uop_layers.is_empty() {
+            "legacy_textureid_superseded_by_uop_layers"
         } else {
             "kdl_only_texture_id"
         };
@@ -3067,13 +3069,19 @@ fn terrain_type_flag_status(flag: &str, entry: &TerrainDefinitionEntry) -> &'sta
         .as_ref()
         .and_then(|texture| texture.shader_name.as_deref())
         .unwrap_or("");
+    let layer_count = entry
+        .texture
+        .as_ref()
+        .map(|texture| texture.layers.len())
+        .unwrap_or_default();
     match flag {
         "Liquid" if shader.to_ascii_lowercase().contains("water") => {
             "inferable_from_uop_shader"
         }
-        "Single" if entry.texture.as_ref().is_some_and(|texture| texture.layers.len() == 1) => {
+        "Single" if layer_count == 1 => {
             "inferable_from_uop_layer_count"
         }
+        "Single" if layer_count > 1 => "legacy_single_superseded_by_uop_layers",
         "Solid" => "default_policy_not_direct_uop",
         "Smooth" | "FollowCenter" => "kdl_only_runtime_policy",
         _ => "kdl_only_or_unproven",
