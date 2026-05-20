@@ -19,8 +19,8 @@ use udd_assets::{
         CcArtOverrideMode, EcSurfaceOverrideAction, EcSurfaceOverrideEntry, EcSurfaceOverrides,
     },
     ec_terrain_overrides::{
-        EcTerrainOverrideTerrainEntry, EcTerrainOverrides, TerrainLayerOverride,
-        TerrainTextureOverride,
+        EcTerrainOverrideEntry, EcTerrainOverrideTerrainEntry, EcTerrainOverrides,
+        TerrainLayerOverride, TerrainTextureOverride,
     },
     tex_art_ec::TexArtEcPackage,
     tex_land_ec::{
@@ -396,6 +396,7 @@ pub fn audit_ec_terrain_primary_selection(
 pub fn audit_ec_terrain_definition_kdl(
     source_dirs: &[PathBuf],
     kdl_path: &Path,
+    overrides_path: Option<&Path>,
     output: &Path,
 ) -> eyre::Result<()> {
     let terrain_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
@@ -412,10 +413,17 @@ pub fn audit_ec_terrain_definition_kdl(
         .iter()
         .map(|entry| (entry.id, entry))
         .collect::<HashMap<_, _>>();
+    let overrides = overrides_path
+        .filter(|path| path.exists())
+        .map(EcTerrainOverrides::load)
+        .transpose()?
+        .map(|overrides| overrides.to_map())
+        .unwrap_or_default();
     let ids = uop_by_id
         .keys()
         .copied()
         .chain(kdl_by_id.keys().copied())
+        .chain(overrides.keys().copied())
         .collect::<BTreeSet<_>>();
 
     let mut entries = Vec::new();
@@ -451,8 +459,12 @@ pub fn audit_ec_terrain_definition_kdl(
             id,
             kdl_present: kdl_entry.is_some(),
             uop_present: uop_entry.is_some(),
+            override_present: overrides.contains_key(&id),
             kdl: kdl_entry.map(terrain_definition_kdl_entry_report),
             uop: uop_entry.map(terrain_definition_uop_entry_report),
+            overrides: overrides
+                .get(&id)
+                .map(terrain_definition_override_entry_report),
             findings,
         });
     }
@@ -463,6 +475,7 @@ pub fn audit_ec_terrain_definition_kdl(
         summary: TerrainDefinitionKdlAuditSummary {
             kdl_entry_count: kdl.entries.len(),
             uop_entry_count: uop.entries.len(),
+            override_entry_count: overrides.len(),
             matched_id_count,
             kdl_only_count,
             uop_only_count,
@@ -1640,6 +1653,7 @@ struct TerrainDefinitionKdlAuditReport {
 struct TerrainDefinitionKdlAuditSummary {
     kdl_entry_count: usize,
     uop_entry_count: usize,
+    override_entry_count: usize,
     matched_id_count: usize,
     kdl_only_count: usize,
     uop_only_count: usize,
@@ -1652,8 +1666,10 @@ struct TerrainDefinitionKdlAuditEntry {
     id: u32,
     kdl_present: bool,
     uop_present: bool,
+    override_present: bool,
     kdl: Option<TerrainDefinitionKdlEntryReport>,
     uop: Option<TerrainDefinitionUopEntryReport>,
+    overrides: Option<TerrainDefinitionOverrideEntryReport>,
     findings: Vec<TerrainDefinitionKdlFindingReport>,
 }
 
@@ -1703,6 +1719,44 @@ struct TerrainDefinitionKdlFindingReport {
     field: String,
     status: String,
     detail: String,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionOverrideEntryReport {
+    action_count: usize,
+    policies: Vec<TerrainDefinitionPolicyOverrideReport>,
+    liquid: Option<TerrainDefinitionLiquidOverrideReport>,
+    layers: Vec<TerrainDefinitionLayerOverrideReport>,
+    textures: Vec<TerrainDefinitionTextureOverrideReport>,
+    ignore_reason_code: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionPolicyOverrideReport {
+    policy: String,
+    reason_code: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionLiquidOverrideReport {
+    speed: Option<f32>,
+    waveheight: Option<f32>,
+    reason_code: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionLayerOverrideReport {
+    role: String,
+    texture_id: u32,
+    stretch: Option<f32>,
+    reason_code: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionTextureOverrideReport {
+    texture_id: u32,
+    role: Option<String>,
+    reason_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2546,6 +2600,50 @@ fn terrain_definition_uop_entry_report(
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+fn terrain_definition_override_entry_report(
+    entry: &EcTerrainOverrideEntry,
+) -> TerrainDefinitionOverrideEntryReport {
+    TerrainDefinitionOverrideEntryReport {
+        action_count: entry.active_action_count(),
+        policies: entry
+            .policies
+            .iter()
+            .map(|policy| TerrainDefinitionPolicyOverrideReport {
+                policy: policy.policy.clone(),
+                reason_code: policy.code.clone(),
+            })
+            .collect(),
+        liquid: entry
+            .liquid
+            .as_ref()
+            .map(|liquid| TerrainDefinitionLiquidOverrideReport {
+                speed: liquid.speed,
+                waveheight: liquid.waveheight,
+                reason_code: liquid.code.clone(),
+            }),
+        layers: entry
+            .layers
+            .iter()
+            .map(|layer| TerrainDefinitionLayerOverrideReport {
+                role: layer.role.clone(),
+                texture_id: layer.texture,
+                stretch: layer.stretch,
+                reason_code: layer.code.clone(),
+            })
+            .collect(),
+        textures: entry
+            .textures
+            .iter()
+            .map(|texture| TerrainDefinitionTextureOverrideReport {
+                texture_id: texture.texture,
+                role: texture.role.clone(),
+                reason_code: texture.code.clone(),
+            })
+            .collect(),
+        ignore_reason_code: entry.ignore.as_ref().and_then(|ignore| ignore.code.clone()),
     }
 }
 

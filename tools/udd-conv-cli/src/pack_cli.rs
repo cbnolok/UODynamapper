@@ -340,6 +340,11 @@ enum Commands {
             default_value = "dynamapper/assets/cc_ec_convtables/TerrainDefinition.kdl"
         )]
         terrain_definition_kdl: PathBuf,
+        #[arg(
+            long = "terrain-overrides",
+            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
+        )]
+        terrain_overrides: PathBuf,
         #[arg(long, default_value = "ec_terrain_definition_kdl_audit.json")]
         output: PathBuf,
     },
@@ -699,11 +704,18 @@ pub fn run() -> eyre::Result<()> {
         Commands::AuditEcTerrainDefinitionKdl {
             source_dirs: source_dir_args,
             terrain_definition_kdl,
+            terrain_overrides,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            audit_ec_terrain_definition_kdl(&paths, &terrain_definition_kdl, &out_file)?;
+            let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
+            audit_ec_terrain_definition_kdl(
+                &paths,
+                &terrain_definition_kdl,
+                terrain_overrides.as_deref(),
+                &out_file,
+            )?;
         }
         Commands::ReportEcTerrainOverrideCandidates {
             source_dirs: source_dir_args,
