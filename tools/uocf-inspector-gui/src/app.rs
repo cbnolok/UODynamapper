@@ -9,6 +9,7 @@ use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
+use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -41,6 +42,12 @@ pub struct TerrainDefinitionFileEntry {
     pub entry: TerrainDefinitionEntry,
 }
 
+#[derive(Clone)]
+pub struct TileArtFileEntry {
+    pub filename_hash: u64,
+    pub entry: TileArtEntry,
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppSettings {
     pub cc_path: Option<PathBuf>,
@@ -65,6 +72,7 @@ pub struct UopInspectorApp {
     pub selected_file_hash: Option<u64>,
     pub selected_tex_art_cc_id: Option<u32>,
     pub selected_terrain_def_hash: Option<u64>,
+    pub selected_tileart_hash: Option<u64>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -95,7 +103,7 @@ pub struct UopInspectorApp {
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
-    pub ec_tileart_entries: Option<Arc<Vec<TileArtEntry>>>,
+    pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
 }
 
 impl UopInspectorApp {
@@ -122,6 +130,7 @@ impl UopInspectorApp {
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
             selected_terrain_def_hash: None,
+            selected_tileart_hash: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -227,6 +236,26 @@ impl UopInspectorApp {
                     self.log(format!("Failed to load CC art assets: {}", e));
                 }
             }
+
+            for uop_name in ["artlegacymul.uop", "artLegacyMUL.uop"] {
+                let uop_path = path.join(uop_name);
+                if uop_path.exists() {
+                    self.log(format!("Loading {} into cache", uop_name));
+                    match UopPackage::load(&uop_path) {
+                        Ok(package) => {
+                            self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
+                                path: uop_path,
+                                package,
+                            }));
+                            self.log(format!("Successfully loaded {}", uop_name));
+                        }
+                        Err(e) => {
+                            self.log(format!("Failed to load {}: {}", uop_name, e));
+                        }
+                    }
+                    break;
+                }
+            }
         }
 
         // 2. Try to load EC assets (string dictionary and legacy texture)
@@ -327,11 +356,14 @@ impl UopInspectorApp {
                         let mut failed = 0usize;
                         for file in package.iter_files() {
                             match TileArtEntry::parse_raw(&file) {
-                                Ok(entry) => entries.push(entry),
+                                Ok(entry) => entries.push(TileArtFileEntry {
+                                    filename_hash: file.filename_hash(),
+                                    entry,
+                                }),
                                 Err(_) => failed += 1,
                             }
                         }
-                        entries.sort_by_key(|entry| entry.tile_id);
+                        entries.sort_by_key(|file| file.entry.tile_id);
                         let count = entries.len();
                         self.ec_tileart_entries = Some(Arc::new(entries));
                         self.log(format!(
@@ -752,6 +784,28 @@ impl UopInspectorApp {
         self.view_mode = ViewMode::UopExplorer;
         true
     }
+
+    pub fn select_raw_art_entry(&mut self, art_id: u32, source: ArtSource) -> bool {
+        let candidates: &[(&str, &str)] = match source {
+            ArtSource::CcUop => &[("artlegacymul.uop", "build/artlegacymul/{id:08}.tga")],
+            ArtSource::EcUop => &[
+                ("legacytexture.uop", "build/tileartlegacy/{id:08}.dds"),
+                ("legacytexture.uop", "build/tileartlegacy/{id:08}.tga"),
+                ("legacytexture.uop", "build/legacytexture/{id:08}.tga"),
+            ],
+            ArtSource::Mul | ArtSource::Any => return false,
+        };
+
+        for (package_name, template) in candidates {
+            let path = template.replace("{id:08}", &format!("{:08}", art_id));
+            let hash = hash_file_name_single(&path);
+            if self.select_raw_uop_entry(package_name, hash) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 impl eframe::App for UopInspectorApp {
@@ -769,9 +823,8 @@ impl eframe::App for UopInspectorApp {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_uocf_inspector_app_manual_log() {
-        let mut app = UopInspectorApp {
+    fn test_app() -> UopInspectorApp {
+        UopInspectorApp {
             settings: AppSettings::default(),
             logs: Vec::new(),
             show_search_paths: false,
@@ -785,6 +838,7 @@ mod tests {
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
             selected_terrain_def_hash: None,
+            selected_tileart_hash: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
@@ -808,11 +862,39 @@ mod tests {
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
-        };
+        }
+    }
+
+    #[test]
+    fn test_uocf_inspector_app_manual_log() {
+        let mut app = test_app();
 
         assert_eq!(app.logs.len(), 0);
         app.log("hello test");
         assert_eq!(app.logs.len(), 1);
         assert_eq!(app.logs[0], "hello test");
+    }
+
+    #[test]
+    fn select_raw_uop_entry_selects_matching_package() {
+        let mut app = test_app();
+        app.uop_cache
+            .add(PathBuf::from("tileart.uop"), UopPackage::new_default());
+
+        assert!(app.select_raw_uop_entry("TileArt.uop", 0x1234));
+        assert_eq!(app.selected_uop_idx, Some(0));
+        assert_eq!(app.selected_file_hash, Some(0x1234));
+        assert_eq!(app.find_hash_query, "0000000000001234");
+        assert_eq!(app.view_mode, ViewMode::UopExplorer);
+    }
+
+    #[test]
+    fn select_raw_uop_entry_rejects_missing_package() {
+        let mut app = test_app();
+
+        assert!(!app.select_raw_uop_entry("missing.uop", 0x1234));
+        assert_eq!(app.selected_uop_idx, None);
+        assert_eq!(app.selected_file_hash, None);
+        assert_eq!(app.view_mode, ViewMode::Home);
     }
 }

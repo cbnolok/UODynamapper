@@ -88,6 +88,13 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui_cc_tiledata(app, ctx, ui);
         } else if let Some(id) = app.selected_tex_art_cc_id {
             ui.horizontal(|ui| {
+                ui.selectable_value(&mut app.view_mode, ViewMode::TexArtCc, "Specialized");
+                if ui.button("Raw UOP").clicked() {
+                    app.select_raw_art_entry(id, app.selected_legacy_source);
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.heading(format!("Art ID: {}", id));
                     if let Some(handle) = app.get_tex_art_cc_texture(ctx, id) {
@@ -165,6 +172,19 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             TileMetadataSource::EcTileArt,
             "tileart.uop",
         );
+        ui.separator();
+        if ui.button("Raw UOP").clicked() {
+            match app.tile_metadata_source {
+                TileMetadataSource::CcTileData => {
+                    app.status_message = "tiledata.mul is not UOP-backed.".to_string();
+                }
+                TileMetadataSource::EcTileArt => {
+                    if let Some(hash) = app.selected_tileart_hash {
+                        app.select_raw_uop_entry("tileart.uop", hash);
+                    }
+                }
+            }
+        }
     });
 
     ui.horizontal(|ui| {
@@ -244,13 +264,22 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                 ui.label("Textures");
                 ui.end_row();
 
-                for entry in entries.iter() {
+                for file in entries.iter() {
+                    let entry = &file.entry;
                     if !tileart_row_matches(&query, entry) {
                         continue;
                     }
 
                     let texture_summary = tileart_texture_summary(app, entry);
-                    ui.label(entry.tile_id.to_string());
+                    if ui
+                        .selectable_label(
+                            app.selected_tileart_hash == Some(file.filename_hash),
+                            entry.tile_id.to_string(),
+                        )
+                        .clicked()
+                    {
+                        app.selected_tileart_hash = Some(file.filename_hash);
+                    }
                     ui.label(entry.old_id.to_string());
                     ui.label(tileart_type_name(entry.type_val));
                     ui.label(tileart_property(entry, PropertyKey::Height).unwrap_or(0).to_string());

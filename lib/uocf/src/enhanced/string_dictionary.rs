@@ -133,3 +133,35 @@ impl UoStringDictionary {
 }
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload_with_strings(values: &[&str]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0x1122334455667788u64.to_le_bytes());
+        payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&0x99AABBCCu32.to_le_bytes());
+        for value in values {
+            payload.extend_from_slice(&(value.len() as u16).to_le_bytes());
+            payload.extend_from_slice(value.as_bytes());
+        }
+        payload
+    }
+
+    #[test]
+    fn exposes_header_count_and_iterated_strings() {
+        let dictionary =
+            UoStringDictionary::from_payload_bytes(&payload_with_strings(&["Data\\WorldArt\\1.tga", "foo"]), "test")
+                .unwrap();
+
+        assert_eq!(dictionary.unk1(), 0x1122334455667788);
+        assert_eq!(dictionary.unk2(), 0x99AABBCC);
+        assert_eq!(dictionary.len(), 2);
+        assert_eq!(dictionary.get_string(1), Some("foo"));
+        assert_eq!(
+            dictionary.iter().collect::<Vec<_>>(),
+            vec![(0, "Data\\WorldArt\\1.tga"), (1, "foo")]
+        );
+    }
+}
