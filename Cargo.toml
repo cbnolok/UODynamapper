@@ -12,7 +12,7 @@ members = [
     "tools/uocf-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",
-    "tools/uop-inspector-gui",
+    "tools/uocf-inspector-gui",
     "tools/uop-dict-populator-gui",
 ]
 
@@ -73,7 +73,7 @@ panic = "abort"
 #[profile.profiling.package.uddp-inspector-gui]
 #[profile.profiling.package.udd-conv-ktx2]
 #[profile.profiling.package.uocf-cli]
-#[profile.profiling.package.uop-inspector-gui]
+#[profile.profiling.package.uocf-inspector-gui]
 #[profile.profiling.package.uop-dict-populator-gui]
 
 
@@ -161,7 +161,7 @@ debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.uop-inspector-gui]
+[profile.dev.package.uocf-inspector-gui]
 opt-level = 1
 debug = true
 debug-assertions = true

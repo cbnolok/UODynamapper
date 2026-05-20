@@ -170,7 +170,7 @@ package name="dynamapper-pkg" target="":
     for util in "${CLI_UTILS[@]}"; do
         [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/cli/"
     done
-    GUI_UTILS=("udd-conv-gui" "uddp-inspector-gui" "uop-inspector-gui" "uop-dict-populator-gui")
+    GUI_UTILS=("udd-conv-gui" "uddp-inspector-gui" "uocf-inspector-gui" "uop-dict-populator-gui")
     for util in "${GUI_UTILS[@]}"; do
         [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/gui/"
     done
@@ -190,7 +190,7 @@ package name="dynamapper-pkg" target="":
     if (Test-Path \"$releaseDir/dynamapper.exe\") { Copy-Item \"$releaseDir/dynamapper.exe\" \"$destDir/\" }; \
     $cliUtils = @('udd-pack.exe', 'udd-tool.exe', 'uop-tool.exe', 'cc-uop-mul-converter.exe', 'uop-dict-populator-cli.exe'); \
     foreach ($util in $cliUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/cli/\" } }; \
-    $guiUtils = @('udd-conv-gui.exe', 'uddp-inspector-gui.exe', 'uop-inspector-gui.exe', 'uop-dict-populator-gui.exe'); \
+    $guiUtils = @('udd-conv-gui.exe', 'uddp-inspector-gui.exe', 'uocf-inspector-gui.exe', 'uop-dict-populator-gui.exe'); \
     foreach ($util in $guiUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/gui/\" } }; \
     if (Test-Path \"$releaseDir/texture-scanner.exe\") { Copy-Item \"$releaseDir/texture-scanner.exe\" \"$destDir/tools/dev-tools/\" }; \
     Copy-Item -Recurse assets \"$destDir/\"; \

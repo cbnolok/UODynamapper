@@ -6,6 +6,7 @@ use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
+use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
@@ -17,10 +18,17 @@ pub enum ViewMode {
     UopExplorer,
     TexArtCc,
     CcTileData,
+    TileMetadata,
     Animations,
     Multis,
     Hues,
     TerrainDefinition,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum TileMetadataSource {
+    CcTileData,
+    EcTileArt,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -40,6 +48,7 @@ pub struct UopInspectorApp {
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
+    pub cc_tiledata: Option<Arc<TileData>>,
 
     pub selected_uop_idx: Option<usize>,
     pub selected_file_hash: Option<u64>,
@@ -51,6 +60,7 @@ pub struct UopInspectorApp {
     pub find_hash_query: String,
     pub status_message: String,
     pub view_mode: ViewMode,
+    pub tile_metadata_source: TileMetadataSource,
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
@@ -72,6 +82,7 @@ pub struct UopInspectorApp {
     pub selected_hue_id: u16,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
+    pub ec_tileart_entries: Option<Arc<Vec<TileArtEntry>>>,
 }
 
 impl UopInspectorApp {
@@ -80,7 +91,7 @@ impl UopInspectorApp {
 
         let settings: AppSettings = cc
             .storage
-            .and_then(|s| eframe::get_value(s, "uop_inspector_settings"))
+            .and_then(|s| eframe::get_value(s, "uocf_inspector_settings"))
             .unwrap_or_default();
 
         let mut app = Self {
@@ -92,6 +103,7 @@ impl UopInspectorApp {
             uo_string_dictionary: None,
             uop_cache: UopCache::new(),
             client_data: None,
+            cc_tiledata: None,
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
@@ -99,9 +111,11 @@ impl UopInspectorApp {
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
-            status_message: "Welcome to UOP Inspector".to_string(),
+            status_message: "Welcome to UOCF Inspector".to_string(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
+            tile_metadata_source: TileMetadataSource::CcTileData,
             terrain_def_package: None,
+            ec_tileart_entries: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
 
@@ -119,7 +133,7 @@ impl UopInspectorApp {
             selected_hue_id: 0,
         };
 
-        app.log("UOP Inspector starting...");
+        app.log("UOCF Inspector starting...");
         app.log("Loading previous settings...");
         app.trigger_reload();
 
@@ -140,19 +154,22 @@ impl UopInspectorApp {
             self.log(format!("Trying to load CC assets from {}", path.display()));
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
+            let loaded_tiledata = match td_res {
+                Ok(td) => {
+                    let td = Arc::new(td);
+                    self.cc_tiledata = Some(Arc::clone(&td));
+                    Some(td)
+                }
+                Err(e) => {
+                    self.log(format!("tiledata.mul unavailable: {}", e));
+                    self.cc_tiledata = None;
+                    None
+                }
+            };
 
             match art_res {
                 Ok(art) => {
-                    let td = match td_res {
-                        Ok(td) => td,
-                        Err(e) => {
-                            self.log(format!(
-                                "tiledata.mul unavailable, continuing with art-only metadata: {}",
-                                e
-                            ));
-                            TileData::new_empty()
-                        }
-                    };
+                    let td = loaded_tiledata.unwrap_or_else(|| Arc::new(TileData::new_empty()));
                     let multis = uocf::classic::multi::MultiMap::load(&path)
                         .ok()
                         .map(Arc::new);
@@ -182,7 +199,7 @@ impl UopInspectorApp {
                     self.client_data = Some(ClientData {
                         path: path.clone(),
                         art: Arc::new(art),
-                        tiledata: Arc::new(td),
+                        tiledata: td,
                         multis,
                         _ec_multis: None,
                         hues,
@@ -252,6 +269,7 @@ impl UopInspectorApp {
 
             // Load additional EC UOPs into the cache for exploration
             let ec_uops = [
+                "tileart.uop",
                 "terraindefinition.uop",
                 "terraintexture.uop",
                 "legacytexture.uop",
@@ -273,6 +291,33 @@ impl UopInspectorApp {
                         Err(e) => {
                             self.log(format!("Failed to load {}: {}", uop_name, e));
                         }
+                    }
+                }
+            }
+
+            let tileart_path = ec_base_path.join("tileart.uop");
+            if tileart_path.exists() {
+                self.log(format!("Parsing tileart.uop from {}", tileart_path.display()));
+                match UopPackage::load(&tileart_path) {
+                    Ok(package) => {
+                        let mut entries = Vec::new();
+                        let mut failed = 0usize;
+                        for file in package.iter_files() {
+                            match TileArtEntry::parse_raw(&file) {
+                                Ok(entry) => entries.push(entry),
+                                Err(_) => failed += 1,
+                            }
+                        }
+                        entries.sort_by_key(|entry| entry.tile_id);
+                        let count = entries.len();
+                        self.ec_tileart_entries = Some(Arc::new(entries));
+                        self.log(format!(
+                            "Parsed {} tileart.uop entries ({} skipped).",
+                            count, failed
+                        ));
+                    }
+                    Err(e) => {
+                        self.log(format!("Failed to load tileart.uop: {}", e));
                     }
                 }
             }
@@ -627,7 +672,7 @@ impl eframe::App for UopInspectorApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.last_view_mode = Some(self.view_mode);
-        eframe::set_value(storage, "uop_inspector_settings", &self.settings);
+        eframe::set_value(storage, "uocf_inspector_settings", &self.settings);
     }
 }
 
@@ -636,7 +681,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uop_inspector_app_manual_log() {
+    fn test_uocf_inspector_app_manual_log() {
         let mut app = UopInspectorApp {
             settings: AppSettings::default(),
             logs: Vec::new(),
@@ -645,6 +690,7 @@ mod tests {
             uo_string_dictionary: None,
             uop_cache: UopCache::new(),
             client_data: None,
+            cc_tiledata: None,
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
@@ -653,6 +699,7 @@ mod tests {
             find_hash_query: String::new(),
             status_message: String::new(),
             view_mode: ViewMode::Home,
+            tile_metadata_source: TileMetadataSource::CcTileData,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             selected_anim_id: 0,
@@ -668,6 +715,7 @@ mod tests {
             selected_multi_id: 0,
             selected_hue_id: 0,
             terrain_def_package: None,
+            ec_tileart_entries: None,
         };
 
         assert_eq!(app.logs.len(), 0);

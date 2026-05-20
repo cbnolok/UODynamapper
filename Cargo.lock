@@ -8115,6 +8115,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "uocf-inspector-gui"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "color-eyre",
+ "eframe",
+ "egui 0.31.1",
+ "egui_extras",
+ "env_logger",
+ "rfd 0.15.4",
+ "serde",
+ "uocf",
+]
+
+[[package]]
 name = "uop-dict-populator-gui"
 version = "0.1.0"
 dependencies = [
@@ -8128,21 +8143,6 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 0.8.23",
- "uocf",
-]
-
-[[package]]
-name = "uop-inspector-gui"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "color-eyre",
- "eframe",
- "egui 0.31.1",
- "egui_extras",
- "env_logger",
- "rfd 0.15.4",
- "serde",
  "uocf",
 ]
 

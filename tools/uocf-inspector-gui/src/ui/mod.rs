@@ -32,9 +32,11 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
             if app.client_data.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::CcTileData, "CC TileData");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
+            }
+            if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
             if app.terrain_def_package.is_some() {
@@ -129,6 +131,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::TexArtCc | crate::app::ViewMode::CcTileData => {
             art_viewer::ui_art_viewer(app, ctx);
+        }
+        crate::app::ViewMode::TileMetadata => {
+            art_viewer::ui_tile_metadata(app, ctx);
         }
         crate::app::ViewMode::Animations => {
             animations::ui_animations(app, ctx);

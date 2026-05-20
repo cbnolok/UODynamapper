@@ -30,7 +30,7 @@ This project is organized as a Cargo workspace with several specialized componen
   - `texture_scanner`: Identification and isolation of land/terrain candidates from UO texture pools.
   - `uop-dict-populator-cli`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
 - **[uddp-inspector-gui](tools/uddp-inspector-gui/)**: GUI for inspecting `.uddp` package contents, atlas layers, and metadata slots.
-- **[uop-inspector-gui](tools/uop-inspector-gui/)**: GUI for inspecting `.uop` package structures, files, and hash redirects.
+- **[uocf-inspector-gui](tools/uocf-inspector-gui/)**: GUI for inspecting UOCF-supported client formats, including `.uop` packages, `tiledata.mul`, and EC `tileart.uop` metadata.
 - **[udd-conv-gui](tools/udd-conv-gui/)**: GUI frontend for the asset conversion pipeline.
 - **[uop-dict-populator-gui](tools/uop-dict-populator-gui/)**: GUI for building and expanding UOP hash dictionaries.
 
