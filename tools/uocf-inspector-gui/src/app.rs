@@ -7,6 +7,7 @@ pub use uocf::classic::art::ArtSource;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::TileArtEntry;
+use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,14 @@ pub enum TileMetadataSource {
     EcTileArt,
 }
 
+#[derive(Clone)]
+pub struct TerrainDefinitionFileEntry {
+    pub filename_hash: u64,
+    pub byte_len: usize,
+    pub raw_prefix: Vec<u8>,
+    pub entry: TerrainDefinitionEntry,
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppSettings {
     pub cc_path: Option<PathBuf>,
@@ -53,6 +62,7 @@ pub struct UopInspectorApp {
     pub selected_uop_idx: Option<usize>,
     pub selected_file_hash: Option<u64>,
     pub selected_tex_art_cc_id: Option<u32>,
+    pub selected_terrain_def_hash: Option<u64>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -82,6 +92,7 @@ pub struct UopInspectorApp {
     pub selected_hue_id: u16,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
+    pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
     pub ec_tileart_entries: Option<Arc<Vec<TileArtEntry>>>,
 }
 
@@ -107,6 +118,7 @@ impl UopInspectorApp {
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
+            selected_terrain_def_hash: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -115,6 +127,7 @@ impl UopInspectorApp {
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
             terrain_def_package: None,
+            terrain_def_files: None,
             ec_tileart_entries: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
@@ -329,13 +342,59 @@ impl UopInspectorApp {
                     "Parsing TerrainDefinitionPackage from {}",
                     td_path.display()
                 ));
-                match uocf::enhanced::terrain_definition::TerrainDefinitionPackage::load(&td_path) {
-                    Ok(pkg) => {
-                        self.terrain_def_package = Some(Arc::new(pkg));
-                        self.log("Successfully parsed TerrainDefinitionPackage.");
+                match UopPackage::load(&td_path) {
+                    Ok(package) => {
+                        let dict_arc = self.uo_string_dictionary.clone();
+                        let dict = dict_arc.as_deref();
+                        match uocf::enhanced::terrain_definition::TerrainDefinitionPackage::from_package(
+                            &package,
+                            dict,
+                        ) {
+                            Ok(pkg) => {
+                                self.terrain_def_package = Some(Arc::new(pkg));
+                                self.log("Successfully parsed TerrainDefinitionPackage.");
+                            }
+                            Err(e) => {
+                                self.log(format!("Failed to parse TerrainDefinitionPackage: {}", e));
+                            }
+                        }
+
+                        let mut files = Vec::new();
+                        let mut failed = 0usize;
+                        for file in package.iter_files() {
+                            if !file.has_size() {
+                                continue;
+                            }
+
+                            let data = match file.unpack() {
+                                Ok(data) => data,
+                                Err(_) => {
+                                    failed += 1;
+                                    continue;
+                                }
+                            };
+                            match uocf::enhanced::terrain_definition::parse_entry(&file, dict) {
+                                Ok(entry) => {
+                                    files.push(TerrainDefinitionFileEntry {
+                                        filename_hash: file.filename_hash(),
+                                        byte_len: data.len(),
+                                        raw_prefix: data[..data.len().min(256)].to_vec(),
+                                        entry,
+                                    });
+                                }
+                                Err(_) => failed += 1,
+                            }
+                        }
+                        files.sort_by_key(|file| file.entry.id);
+                        let count = files.len();
+                        self.terrain_def_files = Some(Arc::new(files));
+                        self.log(format!(
+                            "Parsed {} TerrainDefinition.uop files ({} skipped).",
+                            count, failed
+                        ));
                     }
                     Err(e) => {
-                        self.log(format!("Failed to parse TerrainDefinitionPackage: {}", e));
+                        self.log(format!("Failed to load TerrainDefinition.uop: {}", e));
                     }
                 }
             }
@@ -694,6 +753,7 @@ mod tests {
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
+            selected_terrain_def_hash: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
@@ -715,6 +775,7 @@ mod tests {
             selected_multi_id: 0,
             selected_hue_id: 0,
             terrain_def_package: None,
+            terrain_def_files: None,
             ec_tileart_entries: None,
         };
 
