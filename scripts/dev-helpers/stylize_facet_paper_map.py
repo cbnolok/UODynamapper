@@ -21,6 +21,7 @@ from PIL import Image, ImageFilter, ImageOps
 
 
 DEFAULT_PALETTE = {
+    "paper": np.array([179, 146, 96], dtype=np.float32),
     "water": np.array([91, 116, 109], dtype=np.float32),
     "grass": np.array([139, 150, 103], dtype=np.float32),
     "desert": np.array([206, 184, 133], dtype=np.float32),
@@ -118,17 +119,20 @@ def classify_source(rgb: np.ndarray) -> dict[str, np.ndarray]:
     saturation = (max_channel - min_channel) / np.maximum(max_channel, 1.0 / 255.0)
     luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
 
-    water = (b > 0.22) & (g > 0.16) & (r < 0.20) & (b >= g * 0.90) & (saturation > 0.22)
-    snow = ~water & (luma > 0.72) & (saturation < 0.22)
-    desert = ~water & ~snow & (r > 0.42) & (g > 0.32) & (b < 0.35) & (r >= g * 0.92)
-    mountain = ~water & ~snow & ~desert & (saturation < 0.24) & (luma > 0.20) & (luma < 0.72)
-    dark = ~water & ~snow & (luma < 0.18)
-    grass = ~(water | snow | desert | mountain | dark)
+    void = (luma < 0.085) & (saturation < 0.12)
+    water = ~void & (b > 0.22) & (g > 0.16) & (r < 0.20) & (b >= g * 0.90) & (saturation > 0.22)
+    snow = ~void & ~water & (luma > 0.72) & (saturation < 0.22)
+    desert = ~void & ~water & ~snow & (r > 0.42) & (g > 0.32) & (b < 0.35) & (r >= g * 0.92)
+    mountain = ~void & ~water & ~snow & ~desert & (saturation < 0.24) & (luma > 0.20) & (luma < 0.72)
+    green_terrain = (g > r * 1.08) & (g >= b * 0.95)
+    dark = ~void & ~water & ~snow & ~green_terrain & (luma < 0.18)
+    grass = ~(void | water | snow | desert | mountain | dark)
 
-    road = ~water & (luma < 0.27) & (r > b * 0.95) & (g > b * 0.72)
-    detail = ~water & ((luma < 0.13) | ((saturation > 0.55) & (luma < 0.58)))
+    road = ~void & ~water & (luma < 0.27) & (r > b * 0.95) & (g > b * 0.72)
+    detail = ~void & ~water & ((luma < 0.13) | ((saturation > 0.55) & (luma < 0.58)))
 
     return {
+        "paper": void,
         "water": water,
         "snow": snow,
         "desert": desert,
@@ -137,7 +141,7 @@ def classify_source(rgb: np.ndarray) -> dict[str, np.ndarray]:
         "grass": grass,
         "road": road,
         "detail": detail,
-        "land": ~water,
+        "land": ~(void | water),
         "luma": luma,
     }
 
@@ -148,22 +152,67 @@ def median_color(rgb: np.ndarray, mask: np.ndarray, fallback: np.ndarray) -> np.
     return np.median(rgb[mask] * 255.0, axis=0).astype(np.float32)
 
 
+def quantile_color(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    quantile: float,
+    fallback: np.ndarray,
+) -> np.ndarray:
+    pixels = rgb[mask]
+    if len(pixels) < 64:
+        return fallback
+
+    luma = pixels @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    center = np.quantile(luma, quantile)
+    band = np.abs(luma - center) <= 0.035
+    if int(band.sum()) < 32:
+        band = np.abs(luma - center) <= 0.065
+    return np.median(pixels[band] * 255.0, axis=0).astype(np.float32)
+
+
+def color_luma(color: np.ndarray) -> float:
+    return float(color @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))
+
+
+def scale_to_luma(color: np.ndarray, target_luma: float) -> np.ndarray:
+    current_luma = color_luma(color)
+    if current_luma <= 0.0:
+        return color
+    return np.clip(color * (target_luma / current_luma), 0.0, 255.0)
+
+
+def enforce_palette_order(palette: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    mountain_luma = color_luma(palette["mountain"])
+    snow_luma = color_luma(palette["snow"])
+    if mountain_luma >= snow_luma - 18.0:
+        palette["mountain"] = scale_to_luma(palette["mountain"], max(80.0, snow_luma - 30.0))
+
+    mountain_luma = color_luma(palette["mountain"])
+    desert_luma = color_luma(palette["desert"])
+    if desert_luma <= mountain_luma + 8.0:
+        palette["desert"] = scale_to_luma(palette["desert"], min(230.0, mountain_luma + 18.0))
+
+    return palette
+
+
 def sample_palette(
     reference: Image.Image | None,
     masks: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
     if reference is None:
-        return dict(DEFAULT_PALETTE)
+        return enforce_palette_order(dict(DEFAULT_PALETTE))
 
     ref_rgb = image_to_float(reference)
     palette = dict(DEFAULT_PALETTE)
-    for name in ("water", "grass", "desert", "mountain", "snow", "dark"):
+    for name in ("paper", "water", "grass", "desert", "dark"):
         palette[name] = median_color(ref_rgb, masks[name], DEFAULT_PALETTE[name])
 
+    palette["mountain"] = quantile_color(ref_rgb, masks["mountain"], 0.35, DEFAULT_PALETTE["mountain"])
+    palette["snow"] = quantile_color(ref_rgb, masks["snow"], 0.72, DEFAULT_PALETTE["snow"])
     palette["road"] = median_color(ref_rgb, masks["road"], DEFAULT_PALETTE["road"])
     shore_mask = dilate_mask(masks["land"], 15) & ~masks["land"]
     palette["shore"] = median_color(ref_rgb, shore_mask, DEFAULT_PALETTE["shore"])
-    return palette
+    return enforce_palette_order(palette)
 
 
 def mask_image(mask: np.ndarray) -> Image.Image:
@@ -227,15 +276,16 @@ def stylize(source: Image.Image, reference: Image.Image | None, options: StyleOp
     height, width, _ = source_rgb.shape
 
     out = np.zeros((height, width, 3), dtype=np.float32)
-    for name in ("water", "grass", "desert", "mountain", "snow", "dark"):
+    for name in ("paper", "water", "grass", "desert", "mountain", "snow", "dark"):
         out[masks[name]] = palette[name]
 
     luma = masks["luma"]
     class_luma = np.zeros((height, width), dtype=np.float32)
-    for name in ("water", "grass", "desert", "mountain", "snow", "dark"):
+    for name in ("paper", "water", "grass", "desert", "mountain", "snow", "dark"):
         class_values = luma[masks[name]]
         class_luma[masks[name]] = float(np.median(class_values)) if class_values.size else 0.5
     relief = np.clip((luma - class_luma) * 105.0, -24.0, 30.0)
+    relief[masks["paper"]] = 0.0
     out = np.clip(out + relief[:, :, None], 0.0, 255.0)
 
     simplified = Image.fromarray(out.astype(np.uint8), mode="RGB").filter(
@@ -245,12 +295,13 @@ def stylize(source: Image.Image, reference: Image.Image | None, options: StyleOp
     out = out * 0.32 + simplified_rgb * 0.68
 
     land = masks["land"]
+    paper = masks["paper"]
     land_image = mask_image(land)
     land_blur = np.asarray(
         land_image.filter(ImageFilter.GaussianBlur(radius=options.halo_radius)),
         dtype=np.float32,
     ) / 255.0
-    water_halo = np.clip(land_blur * (~land).astype(np.float32) * 1.9, 0.0, 0.72)
+    water_halo = np.clip(land_blur * masks["water"].astype(np.float32) * 1.9, 0.0, 0.72)
     out = blend(out, palette["shore"], water_halo)
 
     water_blur = np.asarray(
@@ -276,6 +327,7 @@ def stylize(source: Image.Image, reference: Image.Image | None, options: StyleOp
 
     edge = land_image.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.GaussianBlur(radius=0.55))
     edge_alpha = np.asarray(edge, dtype=np.float32) / 255.0
+    edge_alpha[paper] *= 0.25
     out = blend(out, palette["ink"], np.clip(edge_alpha * 0.11, 0.0, 0.16))
 
     out = add_paper_grain(out, options.seed, options.paper_strength)
