@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::ec_material_audit::{
     audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
     audit_ec_terrain_primary_selection, inventory_ec_support_textures,
-    write_ec_material_baseline_report,
+    write_ec_material_baseline_report, write_ec_terrain_override_candidates,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
@@ -343,6 +343,18 @@ enum Commands {
         #[arg(long, default_value = "ec_terrain_definition_kdl_audit.json")]
         output: PathBuf,
     },
+    /// Writes a KDL review skeleton for TerrainDefinition manual integration candidates.
+    ReportEcTerrainOverrideCandidates {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(
+            long = "terrain-definition-kdl",
+            default_value = "dynamapper/assets/cc_ec_convtables/TerrainDefinition.kdl"
+        )]
+        terrain_definition_kdl: PathBuf,
+        #[arg(long, default_value = "EcTerrainOverrides.review.kdl")]
+        output: PathBuf,
+    },
     /// Writes a JSON audit of surface-like art redirection through tilemeta and tex_land_ec provenance.
     AuditEcSurfaceRedirection {
         #[command(flatten)]
@@ -680,6 +692,15 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             audit_ec_terrain_definition_kdl(&paths, &terrain_definition_kdl, &out_file)?;
+        }
+        Commands::ReportEcTerrainOverrideCandidates {
+            source_dirs: source_dir_args,
+            terrain_definition_kdl,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_ec_terrain_override_candidates(&paths, &terrain_definition_kdl, &out_file)?;
         }
         Commands::AuditEcSurfaceRedirection {
             source_dirs: source_dir_args,

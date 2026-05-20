@@ -483,6 +483,103 @@ pub fn audit_ec_terrain_definition_kdl(
     Ok(())
 }
 
+pub fn write_ec_terrain_override_candidates(
+    source_dirs: &[PathBuf],
+    kdl_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    let terrain_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
+        .ok_or_else(|| eyre::eyre!("missing TerrainDefinition.uop"))?;
+    let uop = uocf::enhanced::terrain_definition::TerrainDefinitionPackage::load(&terrain_path)?;
+    let kdl = TerrainDefinitionKdl::load(kdl_path)?;
+    let uop_by_id = uop
+        .entries
+        .iter()
+        .map(|entry| (entry.id, entry))
+        .collect::<HashMap<_, _>>();
+    let kdl_by_id = kdl
+        .entries
+        .iter()
+        .map(|entry| (entry.id, entry))
+        .collect::<HashMap<_, _>>();
+    let ids = uop_by_id
+        .keys()
+        .copied()
+        .chain(kdl_by_id.keys().copied())
+        .collect::<BTreeSet<_>>();
+
+    let mut candidates = Vec::new();
+    let mut candidate_counts = BTreeMap::<String, u64>::new();
+    for id in ids {
+        let kdl_entry = kdl_by_id.get(&id).copied();
+        let uop_entry = uop_by_id.get(&id).copied();
+        for finding in terrain_definition_kdl_findings(kdl_entry, uop_entry) {
+            if terrain_kdl_finding_needs_manual_review(&finding.status) {
+                increment_count(&mut candidate_counts, &finding.status);
+                candidates.push(terrain_definition_manual_candidate_report(
+                    id,
+                    kdl_entry,
+                    uop_entry,
+                    &finding,
+                ));
+            }
+        }
+    }
+
+    let mut content = String::new();
+    content.push_str("// Generated review skeleton for EC terrain manual integration.\n");
+    content.push_str("// Source-derived TerrainDefinition.uop data remains authoritative.\n");
+    content.push_str("// Keep entries only when manual review proves the value is needed.\n");
+    content.push_str("// Candidate codes are audit statuses, not runtime policy names.\n\n");
+    for (code, count) in &candidate_counts {
+        content.push_str(&format!("// {code}: {count}\n"));
+    }
+    content.push('\n');
+
+    let mut current_id = None;
+    for candidate in &candidates {
+        if current_id != Some(candidate.id) {
+            if current_id.is_some() {
+                content.push_str("}\n\n");
+            }
+            current_id = Some(candidate.id);
+            content.push_str(&format!("terrain {} {{\n", candidate.id));
+        }
+
+        content.push_str("    candidate");
+        content.push_str(&format!(" field={}", kdl_quote(&candidate.field)));
+        content.push_str(&format!(" code={}", kdl_quote(&candidate.code)));
+        if let Some(terrain_type) = &candidate.kdl_terrain_type {
+            content.push_str(&format!(" type={}", kdl_quote(terrain_type)));
+        }
+        if let Some(shader) = &candidate.uop_shader_name {
+            content.push_str(&format!(" shader={}", kdl_quote(shader)));
+        }
+        if !candidate.runtime_slot_ids.is_empty() {
+            content.push_str(&format!(
+                " runtime_slots={}",
+                kdl_quote(&join_u32_list(&candidate.runtime_slot_ids))
+            ));
+        }
+        content.push('\n');
+        content.push_str(&format!(
+            "    // detail: {}\n",
+            kdl_comment_text(&candidate.detail)
+        ));
+    }
+    if current_id.is_some() {
+        content.push_str("}\n");
+    }
+
+    fs::write(output, content)?;
+    info!(
+        "wrote EC terrain override candidate KDL to '{}'",
+        output.display()
+    );
+    log_count_summary("EC terrain override candidate findings", &candidate_counts);
+    Ok(())
+}
+
 pub fn audit_ec_surface_redirection(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
@@ -2479,6 +2576,35 @@ fn terrain_definition_manual_candidate_report(
             .map(TerrainDefinitionEntry::runtime_slot_ids)
             .unwrap_or_default(),
     }
+}
+
+fn join_u32_list(values: &[u32]) -> String {
+    values
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn kdl_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn kdl_comment_text(value: &str) -> String {
+    value.replace('\n', " ").replace('\r', " ")
 }
 
 fn terrain_type_flags(terrain_type: &str) -> Vec<String> {
