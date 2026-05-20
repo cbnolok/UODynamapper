@@ -141,8 +141,18 @@ impl UopInspectorApp {
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
 
-            match (art_res, td_res) {
-                (Ok(art), Ok(td)) => {
+            match art_res {
+                Ok(art) => {
+                    let td = match td_res {
+                        Ok(td) => td,
+                        Err(e) => {
+                            self.log(format!(
+                                "tiledata.mul unavailable, continuing with art-only metadata: {}",
+                                e
+                            ));
+                            TileData::new_empty()
+                        }
+                    };
                     let multis = uocf::classic::multi::MultiMap::load(&path)
                         .ok()
                         .map(Arc::new);
@@ -180,8 +190,8 @@ impl UopInspectorApp {
                     });
                     self.log("Successfully loaded CC assets.");
                 }
-                _ => {
-                    self.log("Failed to load CC assets (art.mul or tiledata.mul missing).");
+                Err(e) => {
+                    self.log(format!("Failed to load CC art assets: {}", e));
                 }
             }
         }
@@ -467,6 +477,41 @@ impl UopInspectorApp {
         None
     }
 
+    fn get_uop_art_image_texture(
+        &mut self,
+        ctx: &egui::Context,
+        key: u64,
+        art_id: u32,
+        source: ArtSource,
+        scratch: &[u8],
+    ) -> Option<egui::TextureHandle> {
+        let format = if scratch.starts_with(b"DDS ") {
+            ECImageFormat::DDS
+        } else {
+            ECImageFormat::TGA
+        };
+        let tex_file = TextureFile {
+            metadata: RawTextureItem::absent(),
+            is_ec: source == ArtSource::EcUop,
+            format,
+            props: None,
+            raw_data: Arc::from(scratch),
+        };
+        let img = tex_file.decode_to_rgba().ok()?;
+        let rgba = img.to_rgba8();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [rgba.width() as usize, rgba.height() as usize],
+            rgba.as_raw(),
+        );
+        let handle = ctx.load_texture(
+            format!("uop_art_image_{}_{:?}_h{}", art_id, source, self.selected_hue_id),
+            image,
+            Default::default(),
+        );
+        self.texture_previews.insert(key, handle.clone());
+        Some(handle)
+    }
+
     fn get_tex_art_cc_texture_from_source(
         &mut self,
         ctx: &egui::Context,
@@ -480,32 +525,55 @@ impl UopInspectorApp {
         }
 
         if let Some(client) = &self.client_data {
+            let art = Arc::clone(&client.art);
+            let hues = client.hues.clone();
             let mut scratch = Vec::new();
             if art_id < 0x4000 {
-                let mut pixels = [0u8; 44 * 44 * 4];
-                if client
-                    .art
-                    .decode_land_tile_from_source(art_id, source, &mut scratch, &mut pixels)
+                if art
+                    .get_raw_art_data_from_source(art_id, source, &mut scratch)
                     .is_ok()
                 {
-                    let image = egui::ColorImage::from_rgba_unmultiplied([44, 44], &pixels[..]);
-                    let handle = ctx.load_texture(
-                        format!("cc_land_{}_{:?}_h{}", art_id, source, hue_id),
-                        image,
-                        Default::default(),
-                    );
-                    self.texture_previews.insert(key, handle.clone());
-                    return Some(handle);
+                    if scratch.starts_with(b"DDS ") {
+                        return self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch);
+                    }
+                    if source != ArtSource::Mul {
+                        if let Some(handle) =
+                            self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch)
+                        {
+                            return Some(handle);
+                        }
+                    }
+
+                    let mut pixels = [0u8; 44 * 44 * 4];
+                    if uocf::classic::art::decode_land_tile_from_raw(&scratch, &mut pixels)
+                        .is_ok()
+                    {
+                        let image =
+                            egui::ColorImage::from_rgba_unmultiplied([44, 44], &pixels[..]);
+                        let handle = ctx.load_texture(
+                            format!("cc_land_{}_{:?}_h{}", art_id, source, hue_id),
+                            image,
+                            Default::default(),
+                        );
+                        self.texture_previews.insert(key, handle.clone());
+                        return Some(handle);
+                    }
                 }
             } else {
+                if art
+                    .get_raw_art_data_from_source(art_id, source, &mut scratch)
+                    .is_ok()
+                    && scratch.starts_with(b"DDS ")
+                {
+                    return self.get_uop_art_image_texture(ctx, key, art_id, source, &scratch);
+                }
+
                 if let Ok((w, h, mut pixels)) =
-                    client
-                        .art
-                        .decode_static_tile_from_source(art_id, source, &mut scratch)
+                    art.decode_static_tile_from_source(art_id, source, &mut scratch)
                 {
                     // Apply hue if selected
                     if hue_id > 0 {
-                        if let Some(hues) = &client.hues {
+                        if let Some(hues) = &hues {
                             if let Some(hue) = hues.get((hue_id as usize).saturating_sub(1)) {
                                 for i in (0..pixels.len()).step_by(4) {
                                     let r = pixels[i] as u32;

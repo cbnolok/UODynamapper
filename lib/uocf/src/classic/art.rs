@@ -262,6 +262,21 @@ pub enum ArtSource {
     Any,
 }
 
+fn uop_art_candidates(art_id: u32, source: ArtSource) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if source == ArtSource::CcUop || source == ArtSource::Any {
+        candidates.push(format!("build/artlegacymul/{:08}.tga", art_id));
+        candidates.push(format!("build/artlegacy/{:08}.dat", art_id));
+        candidates.push(format!("build/art/{:08}.tga", art_id));
+    }
+    if source == ArtSource::EcUop || source == ArtSource::Any {
+        candidates.push(format!("build/tileartlegacy/{:08}.dds", art_id));
+        candidates.push(format!("build/tileartlegacy/{:08}.tga", art_id));
+        candidates.push(format!("build/legacytexture/{:08}.tga", art_id));
+    }
+    candidates
+}
+
 impl ArtMap {
     pub fn load_standalone_uop(uop: UopPackage) -> Self {
         Self {
@@ -359,17 +374,7 @@ impl ArtMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            let mut candidates = Vec::new();
-            if source == ArtSource::CcUop || source == ArtSource::Any {
-                candidates.push(format!("build/artlegacymul/{:08}.tga", art_id));
-            }
-            if source == ArtSource::EcUop || source == ArtSource::Any {
-                candidates.push(format!("build/tileartlegacy/{:08}.dds", art_id));
-                candidates.push(format!("build/tileartlegacy/{:08}.tga", art_id));
-                candidates.push(format!("build/legacytexture/{:08}.tga", art_id));
-            }
-
-            for file_name in candidates {
+            for file_name in uop_art_candidates(art_id, source) {
                 let hash = crate::uop_container::hash::hash_file_name_single(&file_name);
                 if let Some(file) = uop.get_file_by_hash(hash) {
                     file.unpack_to(scratch_buffer)?;
@@ -465,18 +470,16 @@ impl ArtMap {
     pub fn has_id(&self, art_id: u32) -> bool {
         if let Some(idx) = &self.idx_file {
             if let Ok(entry) = idx.element(art_id as usize) {
-                return entry.lookup().is_some()
-                    && classic_art_payload_is_structurally_valid(art_id, entry.len().unwrap_or(0));
+                if entry.lookup().is_some()
+                    && classic_art_payload_is_structurally_valid(art_id, entry.len().unwrap_or(0))
+                {
+                    return true;
+                }
             }
-            false
-        } else if let Some(uop) = &self.uop_package {
-            // Check UOP candidates
-            let candidates = [
-                format!("build/artlegacymul/{:08}.tga", art_id),
-                format!("build/artlegacy/{:08}.dat", art_id),
-                format!("build/art/{:08}.tga", art_id),
-            ];
-            for name in candidates {
+        }
+
+        if let Some(uop) = &self.uop_package {
+            for name in uop_art_candidates(art_id, ArtSource::Any) {
                 if uop
                     .get_file_by_hash(crate::uop_container::hash::hash_file_name_single(&name))
                     .is_some()
