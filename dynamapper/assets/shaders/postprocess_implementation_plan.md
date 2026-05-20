@@ -1,1 +1,0 @@
-can you write a very detailed implementation plan for every of those components? and differentiate the kr approach to the ec one? 
