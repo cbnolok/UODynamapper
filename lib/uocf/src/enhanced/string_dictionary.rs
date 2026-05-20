@@ -111,7 +111,25 @@ impl UoStringDictionary {
     pub fn get_string(&self, string_index: usize) -> Option<&str> {
         self.strings.get(string_index).map(|s| s.as_str())
     }
-}
 
+    pub fn unk1(&self) -> u64 {
+        self.unk1
+    }
+
+    pub fn unk2(&self) -> u32 {
+        self.unk2
+    }
+
+    pub fn len(&self) -> usize {
+        self.strings_count as usize
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.strings
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (index, value.as_str()))
+    }
+}
 
 

@@ -47,6 +47,21 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         });
 
+    egui::TopBottomPanel::top("terrain_definition_tabs").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.selectable_value(
+                &mut app.view_mode,
+                crate::app::ViewMode::TerrainDefinition,
+                "Specialized",
+            );
+            if ui.button("Raw UOP").clicked() {
+                if let Some(hash) = app.selected_terrain_def_hash {
+                    app.select_raw_uop_entry("terraindefinition.uop", hash);
+                }
+            }
+        });
+    });
+
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(selected_hash) = app.selected_terrain_def_hash {
             if let Some(file) = files.iter().find(|file| file.filename_hash == selected_hash) {

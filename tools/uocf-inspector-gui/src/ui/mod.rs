@@ -7,6 +7,7 @@ pub mod uop_browser;
 pub mod multis;
 pub mod hues;
 pub mod terrain_definition;
+pub mod string_dictionary;
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -41,6 +42,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
             if app.terrain_def_package.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TerrainDefinition, "Terrain Def");
+            }
+            if app.uo_string_dictionary.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
             }
         });
     });
@@ -146,6 +150,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::TerrainDefinition => {
             terrain_definition::ui_terrain_definition(app, ctx);
+        }
+        crate::app::ViewMode::StringDictionary => {
+            string_dictionary::ui_string_dictionary(app, ctx);
         }
     }
 }

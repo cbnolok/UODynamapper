@@ -24,6 +24,7 @@ pub enum ViewMode {
     Multis,
     Hues,
     TerrainDefinition,
+    StringDictionary,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -55,6 +56,7 @@ pub struct UopInspectorApp {
 
     pub dictionary: Dictionary,
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
+    pub string_dictionary_raw_hash: Option<u64>,
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
@@ -112,6 +114,7 @@ impl UopInspectorApp {
 
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
@@ -241,6 +244,12 @@ impl UopInspectorApp {
                     Ok(dict) => {
                         self.uo_string_dictionary = Some(Arc::new(dict));
                         self.log("Successfully loaded EC string dictionary.");
+                        if let Ok(package) = UopPackage::load(&sd_path) {
+                            self.string_dictionary_raw_hash = package
+                                .get_file_by_hash(0)
+                                .map(|file| file.filename_hash())
+                                .or_else(|| package.iter_files().find(|file| file.has_size()).map(|file| file.filename_hash()));
+                        }
                     }
                     Err(e) => {
                         self.log(format!("Failed to load EC string dictionary: {}", e));
@@ -282,6 +291,7 @@ impl UopInspectorApp {
 
             // Load additional EC UOPs into the cache for exploration
             let ec_uops = [
+                "string_dictionary.uop",
                 "tileart.uop",
                 "terraindefinition.uop",
                 "terraintexture.uop",
@@ -722,6 +732,26 @@ impl UopInspectorApp {
     ) -> Option<egui::TextureHandle> {
         self.get_tex_art_cc_texture_from_source(ctx, art_id, self.selected_legacy_source)
     }
+
+    pub fn select_raw_uop_entry(&mut self, package_name: &str, file_hash: u64) -> bool {
+        let package_name = package_name.to_ascii_lowercase();
+        let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
+            loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(&package_name))
+                .unwrap_or(false)
+        }) else {
+            return false;
+        };
+
+        self.selected_uop_idx = Some(index);
+        self.selected_file_hash = Some(file_hash);
+        self.find_hash_query = format!("{:016X}", file_hash);
+        self.view_mode = ViewMode::UopExplorer;
+        true
+    }
 }
 
 impl eframe::App for UopInspectorApp {
@@ -747,6 +777,7 @@ mod tests {
             show_search_paths: false,
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
