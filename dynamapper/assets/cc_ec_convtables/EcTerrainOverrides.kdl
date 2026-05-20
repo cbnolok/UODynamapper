@@ -1,0 +1,37 @@
+// Manual integration table for EC terrain material facts that cannot be
+// recovered automatically from TerrainDefinition.uop and packed provenance.
+//
+// Source-derived data remains authoritative. Keep this file narrow:
+// - do not duplicate TerrainDefinition.uop layer ids, repetition, aliases, or
+//   shader names that are already proven by source data
+// - add entries only after reviewing generated candidates
+// - keep code values short and enumerable
+//
+// Supported nodes:
+//
+// terrain TERRAIN_ID {
+//     policy "smooth" code="reviewed_runtime_policy"
+//     policy "follow-center" code="reviewed_runtime_policy"
+//     policy "single" code="reviewed_single_policy"
+//
+//     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
+//
+//     layer "t0" tex=2000510 stretch=1.0 code="reviewed_layer_texture"
+//     layer "t1" tex=2000511 stretch=1.0 code="reviewed_layer_texture"
+//     layer "m" tex=2000640 stretch=1.0 code="reviewed_mask_texture"
+//     layer "n" tex=2000641 stretch=1.0 code="reviewed_normal_texture"
+//
+//     texture 1269 role="base" code="reviewed_textureid"
+//
+//     ignore code="intentionally_hidden"
+// }
+//
+// Suggested initial code set:
+// - reviewed_runtime_policy
+// - reviewed_single_policy
+// - reviewed_liquid_motion
+// - reviewed_layer_texture
+// - reviewed_mask_texture
+// - reviewed_normal_texture
+// - reviewed_textureid
+// - intentionally_hidden

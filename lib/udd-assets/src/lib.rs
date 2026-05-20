@@ -6,6 +6,7 @@ pub mod tex_art_ec;
 pub mod tex_land_ec;
 pub mod cc_tex_land_ec_transcode;
 pub mod ec_surface_overrides;
+pub mod ec_terrain_overrides;
 pub mod tilemeta;
 pub mod world_lights;
 
