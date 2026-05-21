@@ -10,6 +10,7 @@ pub mod hues;
 pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
+pub mod sounds;
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -59,6 +60,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
             if app.uo_string_dictionary.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
+            }
+            if app.cc_sounds.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Sounds");
             }
         });
     });
@@ -173,6 +177,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::StringDictionary => {
             string_dictionary::ui_string_dictionary(app, ctx);
+        }
+        crate::app::ViewMode::Sounds => {
+            sounds::ui_sounds(app, ctx);
         }
     }
 }

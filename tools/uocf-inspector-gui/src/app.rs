@@ -5,6 +5,7 @@ use std::sync::Arc;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
+use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
 use uocf::enhanced::localized_strings::LocalizedStringsPackage;
 use uocf::enhanced::multis::MultiCollection;
@@ -32,6 +33,7 @@ pub enum ViewMode {
     Clilocs,
     TerrainDefinition,
     StringDictionary,
+    Sounds,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -72,12 +74,81 @@ pub struct TileArtFileEntry {
     pub entry: TileArtEntry,
 }
 
+#[derive(Clone, Debug)]
+pub struct SoundListEntry {
+    pub slot_id: u32,
+    pub name: String,
+    pub pcm_bytes: usize,
+    pub duration_seconds: f64,
+}
+
+pub struct SoundPlayer {
+    _stream: rodio::OutputStream,
+    handle: rodio::OutputStreamHandle,
+    sink: Option<rodio::Sink>,
+}
+
+impl SoundPlayer {
+    pub fn new() -> color_eyre::eyre::Result<Self> {
+        let (_stream, handle) = rodio::OutputStream::try_default()?;
+        Ok(Self {
+            _stream,
+            handle,
+            sink: None,
+        })
+    }
+
+    pub fn play_pcm(&mut self, pcm_data: &[u8]) -> color_eyre::eyre::Result<()> {
+        self.stop();
+        let samples: Vec<i16> = pcm_data
+            .chunks_exact(2)
+            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+            .collect();
+        let source = rodio::buffer::SamplesBuffer::new(
+            uocf::classic::sound::CHANNELS,
+            uocf::classic::sound::SAMPLE_RATE,
+            samples,
+        );
+        let sink = rodio::Sink::try_new(&self.handle)?;
+        sink.append(source);
+        self.sink = Some(sink);
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(sink) = self.sink.take() {
+            sink.stop();
+        }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.sink.as_ref().map_or(false, |sink| !sink.empty())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppSettings {
     pub cc_path: Option<PathBuf>,
     pub ec_path: Option<PathBuf>,
     pub dict_path: Option<PathBuf>,
     pub last_view_mode: Option<ViewMode>,
+}
+
+fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
+    let mut entries = Vec::new();
+    for slot_id in 0..sounds.slot_count() as u32 {
+        if let Ok(Some(sound)) = sounds.read_slot(slot_id) {
+            let pcm_bytes = sound.pcm_data.len();
+            let duration_seconds = sound.duration_seconds();
+            entries.push(SoundListEntry {
+                slot_id,
+                name: sound.name,
+                pcm_bytes,
+                duration_seconds,
+            });
+        }
+    }
+    entries
 }
 
 pub struct UopInspectorApp {
@@ -93,6 +164,9 @@ pub struct UopInspectorApp {
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
+    pub cc_sounds: Option<Arc<SoundMap>>,
+    pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
+    pub sound_player: Option<SoundPlayer>,
 
     pub selected_uop_idx: Option<usize>,
     pub selected_file_hash: Option<u64>,
@@ -134,6 +208,9 @@ pub struct UopInspectorApp {
     pub selected_direction: u8,
 
     pub selected_multi_id: u32,
+    pub selected_sound_slot: u32,
+    pub selected_sound_id: u32,
+    pub sound_search_query: String,
     pub selected_hue_id: u16,
     pub selected_ec_hue_id: u16,
     pub selected_cliloc_number: i32,
@@ -167,6 +244,9 @@ impl UopInspectorApp {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_sounds: None,
+            cc_sound_entries: None,
+            sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
@@ -207,6 +287,9 @@ impl UopInspectorApp {
             selected_action_id: 0,
             selected_direction: 0,
             selected_multi_id: 0,
+            selected_sound_slot: 0,
+            selected_sound_id: 0,
+            sound_search_query: String::new(),
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
             selected_cliloc_number: 0,
@@ -234,12 +317,23 @@ impl UopInspectorApp {
         self.multi_collection = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
+        self.cc_sounds = None;
+        self.cc_sound_entries = None;
+        if let Some(player) = &mut self.sound_player {
+            player.stop();
+        }
 
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
             self.log(format!("Trying to load CC assets from {}", path.display()));
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
+            let loaded_sounds = SoundMap::load(&path).ok().map(Arc::new);
+            let loaded_sound_entries = loaded_sounds
+                .as_ref()
+                .map(|sounds| Arc::new(collect_sound_entries(sounds)));
+            self.cc_sounds = loaded_sounds.clone();
+            self.cc_sound_entries = loaded_sound_entries.clone();
             let loaded_tiledata = match td_res {
                 Ok(td) => {
                     let td = Arc::new(td);
@@ -270,7 +364,6 @@ impl UopInspectorApp {
                     let animdata = uocf::classic::animdata::AnimData::load(path.join("animdata.mul"))
                         .ok()
                         .map(Arc::new);
-
                     let mut anim_defs = None;
                     let anim_def_path = path.join("AnimationDefinition.uop");
                     if anim_def_path.exists() {
@@ -1097,6 +1190,9 @@ mod tests {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_sounds: None,
+            cc_sound_entries: None,
+            sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
             selected_tex_art_cc_id: None,
@@ -1130,6 +1226,9 @@ mod tests {
             selected_action_id: 0,
             selected_direction: 0,
             selected_multi_id: 0,
+            selected_sound_slot: 0,
+            selected_sound_id: 0,
+            sound_search_query: String::new(),
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
             selected_cliloc_number: 0,
