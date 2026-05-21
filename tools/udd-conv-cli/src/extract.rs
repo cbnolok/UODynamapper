@@ -7,7 +7,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use udd_assets::bc7::{decode_bc7_to_rgba8888, ImageExtent};
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
-use udd_assets::tex_land_ec::{MISSING_SLOT_ID, MISSING_TEXTURE_ID};
+use udd_assets::tex_land_ec::{
+    MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID,
+};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_container::{
     reconstruct_stored_size, unpack_codec, Codec, FileKey, LookupMode, UddpReader,
@@ -298,19 +300,23 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
     write_text_file(&out_dir.join("metadata/present_slots.csv"), &slots_csv)?;
 
     let mut provenance_csv = String::from(
-        "material_id,material_name_id,alias_count_index,alias_slot_id,alias_tile_flags,selected_texture_id,canonical_slot_id\n",
+        "material_id,material_name_id,alias_count_index,alias_slot_id,alias_tile_flags,selected_texture_id,canonical_slot_id,primary_texture_id,primary_layer_index,primary_selection_reason,primary_selection_flags\n",
     );
     for record in package.terrain_provenance() {
         writeln!(
             provenance_csv,
-            "{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{}",
             record.material_id,
             record.material_name_id,
             record.alias_count_index,
             record.alias_slot_id,
             record.alias_tile_flags,
             optional_u32_csv(record.selected_texture_id, MISSING_TEXTURE_ID),
-            optional_u32_csv(record.canonical_slot_id, MISSING_SLOT_ID)
+            optional_u32_csv(record.canonical_slot_id, MISSING_SLOT_ID),
+            optional_u32_csv(record.primary_texture_id, MISSING_TEXTURE_ID),
+            optional_u32_csv(record.primary_layer_index, MISSING_TERRAIN_LAYER_INDEX),
+            record.primary_selection_reason,
+            record.primary_selection_flags
         )
         .unwrap();
     }

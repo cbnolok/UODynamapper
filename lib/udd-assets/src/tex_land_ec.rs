@@ -427,40 +427,18 @@ impl TexLandEcPackage {
                 .filter(|r| r.material_id == material_id)
                 .collect::<Vec<_>>();
 
-            if let Some(slot_id) = material_records
-                .iter()
-                .filter(|record| {
-                    record.alias_slot_id != 0
-                        && record.alias_slot_id != MISSING_SLOT_ID
-                        && self.resolve_provenance_record_slot(record).is_some()
-                })
-                .min_by_key(|record| record.alias_count_index)
-                .and_then(|record| self.resolve_provenance_record_slot(record))
-            {
-                return Some(slot_id);
-            }
-
-            if let Some(slot_id) = material_records
-                .iter()
-                .filter(|record| {
-                    record.alias_slot_id == 0
-                        && self.resolve_provenance_record_slot(record).is_some()
-                })
-                .min_by_key(|record| record.alias_count_index)
-                .and_then(|record| self.resolve_provenance_record_slot(record))
-            {
+            if let Some(slot_id) = self.resolve_material_runtime_slot(&material_records).0 {
                 return Some(slot_id);
             }
         }
 
-        for record in self
+        let material_records = self
             .terrain_provenance
             .iter()
             .filter(|r| r.alias_slot_id == cc_tile_id)
-        {
-            if let Some(slot_id) = self.resolve_provenance_record_slot(record) {
-                return Some(slot_id);
-            }
+            .collect::<Vec<_>>();
+        if let Some(slot_id) = self.resolve_alias_runtime_slot(&material_records) {
+            return Some(slot_id);
         }
 
         if self.present_slot(cc_tile_id).is_some() {
@@ -491,10 +469,7 @@ impl TexLandEcPackage {
 
         let (runtime_slot_id, runtime_slot_source) = if self.transcode.contains_key(&cc_tile_id) {
             self.resolve_material_runtime_slot(&material_records)
-        } else if let Some(slot_id) = material_records
-            .iter()
-            .find_map(|record| self.resolve_provenance_record_slot(record))
-        {
+        } else if let Some(slot_id) = self.resolve_alias_runtime_slot(&material_records) {
             (Some(slot_id), Some(TexLandEcRuntimeSlotSource::DirectAlias))
         } else if self.present_slot(cc_tile_id).is_some() {
             (Some(cc_tile_id), Some(TexLandEcRuntimeSlotSource::DirectSlot))
@@ -612,6 +587,13 @@ impl TexLandEcPackage {
         &self,
         material_records: &[&TexLandEcTerrainProvenanceRecord],
     ) -> (Option<u32>, Option<TexLandEcRuntimeSlotSource>) {
+        if let Some(slot_id) = self.resolve_primary_runtime_slot(material_records) {
+            return (
+                Some(slot_id),
+                Some(TexLandEcRuntimeSlotSource::TranscodedMaterialAlias),
+            );
+        }
+
         if let Some(slot_id) = material_records
             .iter()
             .filter(|record| {
@@ -644,6 +626,38 @@ impl TexLandEcPackage {
         }
 
         (None, None)
+    }
+
+    fn resolve_alias_runtime_slot(
+        &self,
+        material_records: &[&TexLandEcTerrainProvenanceRecord],
+    ) -> Option<u32> {
+        self.resolve_primary_runtime_slot(material_records).or_else(|| {
+            material_records
+                .iter()
+                .find_map(|record| self.resolve_provenance_record_slot(record))
+        })
+    }
+
+    fn resolve_primary_runtime_slot(
+        &self,
+        material_records: &[&TexLandEcTerrainProvenanceRecord],
+    ) -> Option<u32> {
+        material_records
+            .iter()
+            .filter(|record| {
+                record.primary_texture_id != MISSING_TEXTURE_ID
+                    && record.selected_texture_id == record.primary_texture_id
+                    && self.resolve_provenance_record_slot(record).is_some()
+            })
+            .min_by_key(|record| {
+                (
+                    record.alias_slot_id == 0 || record.alias_slot_id == MISSING_SLOT_ID,
+                    record.alias_count_index,
+                    record.alias_slot_id,
+                )
+            })
+            .and_then(|record| self.resolve_provenance_record_slot(record))
     }
 
     fn material_query_tile_id(&self, material_id: u32) -> Option<u32> {
@@ -1123,9 +1137,14 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
         bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).unwrap();
-        bytes.write_u32::<LittleEndian>(2).unwrap();
-        for texture_id in [2000520, 2000510] {
-            let canonical_slot_id = if texture_id == 2000510 { 101 } else { 100 };
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        for texture_id in [1000003, 2000520, 2000510] {
+            let canonical_slot_id = match texture_id {
+                1000003 => 77,
+                2000520 => 100,
+                2000510 => 101,
+                _ => unreachable!(),
+            };
             bytes.write_u32::<LittleEndian>(52).unwrap();
             bytes.write_i32::<LittleEndian>(0).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
