@@ -33,6 +33,7 @@ pub struct ClientData {
     pub multis: Option<Arc<uocf::classic::multi::MultiMap>>,
     pub _ec_multis: Option<Arc<uocf::enhanced::multis::MultiCollection>>,
     pub hues: Option<Arc<Vec<uocf::classic::hues::HueEntry>>>,
+    pub animdata: Option<Arc<uocf::classic::animdata::AnimData>>,
     pub anim_defs: Option<Arc<uocf::classic::anim::AnimationDefinition>>,
 }
 

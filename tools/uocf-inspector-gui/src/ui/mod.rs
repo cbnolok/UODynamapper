@@ -2,6 +2,7 @@ use eframe::egui;
 use crate::app::UopInspectorApp;
 
 pub mod animations;
+pub mod animdata;
 pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
@@ -50,6 +51,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
+            if app.client_data.as_ref().and_then(|client| client.animdata.as_ref()).is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::AnimData, "AnimData");
+            }
             if app.terrain_def_package.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TerrainDefinition, "Terrain Def");
             }
@@ -151,6 +155,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::Animations => {
             animations::ui_animations(app, ctx);
+        }
+        crate::app::ViewMode::AnimData => {
+            animdata::ui_animdata(app, ctx);
         }
         crate::app::ViewMode::Multis => {
             multis::ui_multis(app, ctx);

@@ -26,6 +26,7 @@ pub enum ViewMode {
     CcTileData,
     TileMetadata,
     Animations,
+    AnimData,
     Multis,
     Hues,
     Clilocs,
@@ -118,6 +119,7 @@ pub struct UopInspectorApp {
 
     // Animations
     pub selected_anim_id: u32,
+    pub selected_animdata_id: u32,
     pub selected_anim_file_idx: u8,
     pub current_frame_idx: usize,
     pub is_playing: bool,
@@ -190,6 +192,7 @@ impl UopInspectorApp {
             ec_texture_previews: HashMap::new(),
 
             selected_anim_id: 0,
+            selected_animdata_id: 0,
             selected_anim_file_idx: 0,
             current_frame_idx: 0,
             is_playing: false,
@@ -260,6 +263,9 @@ impl UopInspectorApp {
                     let hues = uocf::classic::hues::load_hues(&path.join("hues.mul"))
                         .ok()
                         .map(Arc::new);
+                    let animdata = uocf::classic::animdata::AnimData::load(path.join("animdata.mul"))
+                        .ok()
+                        .map(Arc::new);
 
                     let mut anim_defs = None;
                     let anim_def_path = path.join("AnimationDefinition.uop");
@@ -287,6 +293,7 @@ impl UopInspectorApp {
                         multis,
                         _ec_multis: None,
                         hues,
+                        animdata,
                         anim_defs,
                     });
                     self.log("Successfully loaded CC assets.");
@@ -387,6 +394,7 @@ impl UopInspectorApp {
                                 multis: None,
                                 _ec_multis: None,
                                 hues: None,
+                                animdata: None,
                                 anim_defs: None,
                             });
                             self.log("Loaded standalone Legacy Art UOP from EC folder.");
@@ -1096,6 +1104,7 @@ mod tests {
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             selected_anim_id: 0,
+            selected_animdata_id: 0,
             selected_anim_file_idx: 0,
             current_frame_idx: 0,
             is_playing: false,
