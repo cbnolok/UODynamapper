@@ -17,6 +17,11 @@ struct TileUniform {
   is_wet: u32,
   // Reviewed EC terrain hints packed by the CPU: bit 0=smooth, bit 1=follow-center, bit 2=liquid.
   terrain_flags: u32,
+  // Original land-page lookup payload. EC material sampling uses this to load
+  // optional detail/mask slots from land_page_lookup.
+  texture_payload: u32,
+  // Authored terrain stretch/repetition in world tiles. 0 means derive from extent.
+  texture_stretch: f32,
 };
 
 // Parameters for the LRU paged tile metadata atlas.

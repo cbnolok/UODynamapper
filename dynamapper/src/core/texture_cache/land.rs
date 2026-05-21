@@ -51,6 +51,13 @@ enum LandShaderAtlasSource<'a> {
     Ec(&'a TexLandEcPackage),
 }
 
+const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
+const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16_384;
+const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 3;
+const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
+const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
+const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
+
 fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAtlasImages {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
@@ -143,6 +150,49 @@ fn decode_tex_land_ec_page_rgba(package: &TexLandEcPackage, page_index: u32) -> 
     )
 }
 
+fn packed_page_and_stretch(page_index: u32, texture_repetition: f32) -> u32 {
+    let stretch_q8 = if texture_repetition.is_finite() && texture_repetition > 0.0 {
+        (texture_repetition * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+    } else {
+        0
+    };
+    (page_index & 0xFFFF) | (stretch_q8 << 16)
+}
+
+fn land_lookup_values_from_ec_slot(
+    package: &TexLandEcPackage,
+    slot_id: u32,
+    texture_repetition: f32,
+) -> [u32; 4] {
+    package
+        .slots()
+        .get(slot_id as usize)
+        .filter(|slot| slot.is_present())
+        .map(|slot| {
+            [
+                packed_page_and_stretch(slot.page_index, texture_repetition),
+                slot.x as u32,
+                slot.y as u32,
+                (slot.width as u32) | ((slot.height as u32) << 16),
+            ]
+        })
+        .unwrap_or([0, 0, 0, 0])
+}
+
+fn write_land_lookup_entry(
+    bytes: &mut [u8],
+    tile_id: u32,
+    role: u32,
+    values: [u32; 4],
+) {
+    let lookup_index = role * LAND_PAGE_LOOKUP_TILE_CAPACITY + tile_id;
+    let texel_offset = (lookup_index as usize) * 16;
+    for (index, value) in values.into_iter().enumerate() {
+        let start = texel_offset + index * 4;
+        bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
+    }
+}
+
 fn create_land_shader_images(
     images: &mut Assets<Image>,
     source: Option<LandShaderAtlasSource<'_>>,
@@ -196,50 +246,84 @@ fn create_land_shader_images(
         ..Default::default()
     });
 
-    let max_cc_tile_id = 16384u32;
-    let lookup_width = 256u32;
-    let lookup_height = (max_cc_tile_id + lookup_width - 1) / lookup_width;
+    let max_cc_tile_id = LAND_PAGE_LOOKUP_TILE_CAPACITY;
+    let lookup_width = LAND_PAGE_LOOKUP_WIDTH;
+    let lookup_entry_count = max_cc_tile_id * LAND_PAGE_LOOKUP_ROLE_COUNT;
+    let lookup_height = (lookup_entry_count + lookup_width - 1) / lookup_width;
     let mut lookup_bytes = vec![0u8; (lookup_width * lookup_height * 16) as usize];
 
     for tile_id in 0..max_cc_tile_id {
-        let texel_offset = (tile_id as usize) * 16;
-        let values = match source {
-            LandShaderAtlasSource::Cc(package) => package
-                .present_slot(tile_id)
-                .map(|slot| {
-                    [
-                        slot.page_index,
-                        slot.x as u32,
-                        slot.y as u32,
-                        (slot.width as u32) | ((slot.height as u32) << 16),
-                    ]
-                })
-                .unwrap_or([0, 0, 0, 0]),
+        match source {
+            LandShaderAtlasSource::Cc(package) => {
+                if let Some(slot) = package.present_slot(tile_id) {
+                    write_land_lookup_entry(
+                        &mut lookup_bytes,
+                        tile_id,
+                        LAND_PAGE_LOOKUP_ROLE_BASE,
+                        [
+                            slot.page_index,
+                            slot.x as u32,
+                            slot.y as u32,
+                            (slot.width as u32) | ((slot.height as u32) << 16),
+                        ],
+                    );
+                }
+            }
             LandShaderAtlasSource::Ec(package) => {
-                if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
-                    if let Some(slot) = package.slots().get(slot_id as usize) {
-                        if slot.is_present() {
-                            [
-                                slot.page_index,
-                                slot.x as u32,
-                                slot.y as u32,
-                                (slot.width as u32) | ((slot.height as u32) << 16),
-                            ]
-                        } else {
-                            [0, 0, 0, 0]
+                let layer0 = package.resolve_material_layer_slot(tile_id, 0);
+                let layer1 = package.resolve_material_layer_slot(tile_id, 1);
+                let layer2 = package.resolve_material_layer_slot(tile_id, 2);
+                let has_blend_layers = layer0
+                    .as_ref()
+                    .and_then(|layer| layer.runtime_slot_id)
+                    .is_some()
+                    && layer1
+                        .as_ref()
+                        .and_then(|layer| layer.runtime_slot_id)
+                        .is_some()
+                    && layer2
+                        .as_ref()
+                        .and_then(|layer| layer.runtime_slot_id)
+                        .is_some();
+
+                if has_blend_layers {
+                    for (role, layer) in [
+                        (LAND_PAGE_LOOKUP_ROLE_BASE, layer0),
+                        (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
+                        (LAND_PAGE_LOOKUP_ROLE_MASK, layer2),
+                    ] {
+                        if let Some(layer) = layer {
+                            if let Some(slot_id) = layer.runtime_slot_id {
+                                let values = land_lookup_values_from_ec_slot(
+                                    package,
+                                    slot_id,
+                                    layer.texture_repetition,
+                                );
+                                write_land_lookup_entry(&mut lookup_bytes, tile_id, role, values);
+                            }
                         }
-                    } else {
-                        [0, 0, 0, 0]
                     }
-                } else {
-                    [0, 0, 0, 0]
+                } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
+                    let texture_repetition = package
+                        .resolve_material_decision(tile_id)
+                        .primary_layer_index
+                        .and_then(|layer_index| {
+                            package
+                                .resolve_material_layer_slot(tile_id, layer_index)
+                                .map(|layer| layer.texture_repetition)
+                        })
+                        .unwrap_or(0.0);
+                    let values =
+                        land_lookup_values_from_ec_slot(package, slot_id, texture_repetition);
+                    write_land_lookup_entry(
+                        &mut lookup_bytes,
+                        tile_id,
+                        LAND_PAGE_LOOKUP_ROLE_BASE,
+                        values,
+                    );
                 }
             }
         };
-        for (index, value) in values.into_iter().enumerate() {
-            let start = texel_offset + index * 4;
-            lookup_bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
-        }
     }
 
     let mut lookup = Image::new(

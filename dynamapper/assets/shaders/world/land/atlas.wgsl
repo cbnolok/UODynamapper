@@ -18,7 +18,7 @@
 // when the requested tile falls outside the paged region.
 fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   if (world_x < 0 || world_z < 0) {
-    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u);
+    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u, 0u, 0.0);
   }
 
   let wx = u32(world_x);
@@ -42,7 +42,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   }
 
   if (layer >= ATLAS.max_layers) {
-    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u);
+    return TileUniform(0.0, 0u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), 0u, 0u, 0u, 0.0);
   }
 
   // Load from Rg16Uint texture array
@@ -73,27 +73,32 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
       i32(texture_payload / lookup_dims.x),
     );
     let slot = textureLoad(land_page_lookup, lookup_uv, 0);
+    let page_index = slot.x & 0xFFFFu;
+    let stretch_q8 = slot.x >> 16u;
+    let texture_stretch = f32(stretch_q8) / 256.0;
     let packed_wh = slot.w;
     let w = packed_wh & 0xFFFFu;
     let h = packed_wh >> 16u;
 
     if (w == 0u && h == 0u) {
-      return TileUniform(tile_height, 3u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), is_wet, terrain_flags);
+      return TileUniform(tile_height, 3u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), is_wet, terrain_flags, texture_payload, 0.0);
     }
 
     return TileUniform(
       tile_height,
       tex_size,
-      slot.x,
+      page_index,
       0u,
       vec2<u32>(slot.y, slot.z),
       vec2<u32>(w, h),
       is_wet,
       terrain_flags,
+      texture_payload,
+      texture_stretch,
     );
   }
 
-  return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u), is_wet, terrain_flags);
+  return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u), is_wet, terrain_flags, texture_payload, 0.0);
 }
 
 // Convenience wrapper: just return the world-space Y height for a tile.

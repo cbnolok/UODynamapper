@@ -11,7 +11,7 @@ const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 2;
+const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 3;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
@@ -137,6 +137,15 @@ pub struct TexLandEcResolvedOverrideTexture {
     pub runtime_slot_id: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexLandEcResolvedMaterialLayer {
+    pub material_id: u32,
+    pub layer_index: u32,
+    pub texture_id: u32,
+    pub runtime_slot_id: Option<u32>,
+    pub texture_repetition: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TexLandEcEffectiveOverrideSlotChange {
     pub material_id: u32,
@@ -145,7 +154,7 @@ pub struct TexLandEcEffectiveOverrideSlotChange {
     pub effective_runtime_slot_id: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TexLandEcTerrainProvenanceRecord {
     pub material_id: u32,
     pub material_name_id: i32,
@@ -154,6 +163,8 @@ pub struct TexLandEcTerrainProvenanceRecord {
     pub alias_tile_flags: u64,
     pub selected_texture_id: u32,
     pub canonical_slot_id: u32,
+    pub selected_layer_index: u32,
+    pub selected_texture_repetition: f32,
     pub primary_texture_id: u32,
     pub primary_layer_index: u32,
     pub primary_selection_reason: u8,
@@ -389,6 +400,46 @@ impl TexLandEcPackage {
                     .and_then(|record| self.resolve_provenance_record_slot(record)),
             })
             .collect()
+    }
+
+    pub fn resolve_material_layer_slot(
+        &self,
+        cc_tile_id: u32,
+        layer_index: u32,
+    ) -> Option<TexLandEcResolvedMaterialLayer> {
+        let decision = self.resolve_material_decision(cc_tile_id);
+        let material_id = decision.material_id?;
+        self.resolve_material_layer_slot_by_material(material_id, cc_tile_id, layer_index)
+    }
+
+    fn resolve_material_layer_slot_by_material(
+        &self,
+        material_id: u32,
+        cc_tile_id: u32,
+        layer_index: u32,
+    ) -> Option<TexLandEcResolvedMaterialLayer> {
+        self.terrain_provenance
+            .iter()
+            .filter(|record| {
+                record.material_id == material_id
+                    && record.selected_layer_index == layer_index
+                    && record.selected_texture_id != MISSING_TEXTURE_ID
+            })
+            .min_by_key(|record| {
+                (
+                    record.alias_slot_id != cc_tile_id,
+                    record.alias_slot_id == 0 || record.alias_slot_id == MISSING_SLOT_ID,
+                    record.alias_count_index,
+                    record.alias_slot_id,
+                )
+            })
+            .map(|record| TexLandEcResolvedMaterialLayer {
+                material_id,
+                layer_index,
+                texture_id: record.selected_texture_id,
+                runtime_slot_id: self.resolve_provenance_record_slot(record),
+                texture_repetition: record.selected_texture_repetition,
+            })
     }
 
     pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Option<Vec<u8>>> {
@@ -781,6 +832,16 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
             alias_tile_flags: cursor.read_u64::<LittleEndian>()?,
             selected_texture_id: cursor.read_u32::<LittleEndian>()?,
             canonical_slot_id: cursor.read_u32::<LittleEndian>()?,
+            selected_layer_index: if version >= 3 {
+                cursor.read_u32::<LittleEndian>()?
+            } else {
+                MISSING_TERRAIN_LAYER_INDEX
+            },
+            selected_texture_repetition: if version >= 3 {
+                cursor.read_f32::<LittleEndian>()?
+            } else {
+                0.0
+            },
             primary_texture_id: if version >= 2 {
                 cursor.read_u32::<LittleEndian>()?
             } else {
@@ -1152,6 +1213,18 @@ mod tests {
             bytes.write_u64::<LittleEndian>(0).unwrap();
             bytes.write_u32::<LittleEndian>(texture_id).unwrap();
             bytes.write_u32::<LittleEndian>(canonical_slot_id).unwrap();
+            bytes
+                .write_u32::<LittleEndian>(if texture_id == 1000003 {
+                    MISSING_TERRAIN_LAYER_INDEX
+                } else if texture_id == 2000520 {
+                    0
+                } else {
+                    1
+                })
+                .unwrap();
+            bytes
+                .write_f32::<LittleEndian>(if texture_id == 1000003 { 0.0 } else { 5.0 })
+                .unwrap();
             bytes.write_u32::<LittleEndian>(2000520).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
             bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();

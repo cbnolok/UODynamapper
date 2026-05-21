@@ -36,6 +36,7 @@
 #import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
   sample_tile_albedo,
+  sample_ec_material_albedo,
   apply_sharpening, blurred_albedo,
 }
 #import "shaders/world/land/shading.wgsl"::{
@@ -235,9 +236,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // We still run full lighting/fog/shadows below to keep visual consistency.
     let cells = mix(2.0, 4.0, smoothstep(0.0, 1.0, adaptive));
     let uv_q = (floor(sample_uv * cells) + vec2<f32>(0.5)) / cells;
-    base_albedo = sample_tile_albedo(uv_q, tile);
+    if (tile.texture_size == 2u) {
+      let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
+      base_albedo = sample_ec_material_albedo(world_xz, uv_q, tile);
+    } else {
+      base_albedo = sample_tile_albedo(uv_q, tile);
+    }
   } else {
-    base_albedo = sample_tile_albedo(sample_uv, tile);
+    if (tile.texture_size == 2u) {
+      let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
+      base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile);
+    } else {
+      base_albedo = sample_tile_albedo(sample_uv, tile);
+    }
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
       let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));

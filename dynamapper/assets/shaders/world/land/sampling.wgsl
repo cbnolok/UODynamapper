@@ -29,11 +29,22 @@
 
 
 #import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, tex_small_sampler, effects}
+#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects}
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
 const CC_TILE_PX: f32 = 44.0;
+const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16384u;
+const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
+const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
+
+struct LandLookupSlot {
+  present: bool,
+  texture_layer: u32,
+  texture_origin: vec2<u32>,
+  texture_extent: vec2<u32>,
+  texture_stretch: f32,
+};
 
 // ============================================================================
 // EC-specific world-space UV helper
@@ -48,9 +59,72 @@ fn ec_world_uv(world_xz: vec2<f32>, tile: TileUniform) -> vec2<f32> {
   // How many world tiles one texture repetition covers.
   // A 44-px EC texture maps exactly to 1 tile; a 176-px one to 4 tiles, etc.
   let tile_w = max(f32(tile.texture_extent.x), 1.0);
-  let stretch = tile_w / CC_TILE_PX;
+  let stretch = select(tile_w / CC_TILE_PX, tile.texture_stretch, tile.texture_stretch > 0.0);
   // World-space UV — wraps to [0,1) so the texture tiles infinitely.
   return fract(world_xz / stretch);
+}
+
+fn ec_lookup_uv(payload: u32, role: u32) -> vec2<i32> {
+  let lookup_dims = textureDimensions(land_page_lookup);
+  let lookup_index = role * LAND_PAGE_LOOKUP_TILE_CAPACITY + payload;
+  return vec2<i32>(
+    i32(lookup_index % lookup_dims.x),
+    i32(lookup_index / lookup_dims.x),
+  );
+}
+
+fn read_ec_lookup_slot(payload: u32, role: u32) -> LandLookupSlot {
+  let slot = textureLoad(land_page_lookup, ec_lookup_uv(payload, role), 0);
+  let packed_wh = slot.w;
+  let w = packed_wh & 0xFFFFu;
+  let h = packed_wh >> 16u;
+  let page_index = slot.x & 0xFFFFu;
+  let stretch_q8 = slot.x >> 16u;
+  return LandLookupSlot(
+    w != 0u || h != 0u,
+    page_index,
+    vec2<u32>(slot.y, slot.z),
+    vec2<u32>(w, h),
+    f32(stretch_q8) / 256.0,
+  );
+}
+
+fn ec_slot_world_uv(world_xz: vec2<f32>, slot: LandLookupSlot) -> vec2<f32> {
+  let tile_w = max(f32(slot.texture_extent.x), 1.0);
+  let stretch = select(tile_w / CC_TILE_PX, slot.texture_stretch, slot.texture_stretch > 0.0);
+  return fract(world_xz / stretch);
+}
+
+fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
+  let layer: i32 = i32(slot.texture_layer);
+  let tile_dims = max(vec2<f32>(slot.texture_extent), vec2<f32>(1.0));
+  let use_linear = effects.enable_linear_filtering == 1u;
+
+  if (use_linear) {
+    let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
+    let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+    let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
+    return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
+  }
+
+  let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(slot.texture_extent) - 1);
+  let atlas_iuv = vec2<i32>(slot.texture_origin) + local_iuv;
+  return textureLoad(land_page_atlas, atlas_iuv, layer, 0).rgb;
+}
+
+fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  let detail = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL);
+  let mask = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK);
+  if (!detail.present || !mask.present) {
+    return sample_tile_albedo(base_uv, tile);
+  }
+
+  let base = sample_tile_albedo(base_uv, tile);
+  let detail_uv = ec_slot_world_uv(world_xz, detail);
+  let mask_uv = ec_slot_world_uv(world_xz, mask);
+  let detail_color = sample_ec_lookup_slot(detail_uv, detail);
+  let mask_value = sample_ec_lookup_slot(mask_uv, mask).r;
+  return mix(base, detail_color, clamp(mask_value, 0.0, 1.0));
 }
 
 // ============================================================================

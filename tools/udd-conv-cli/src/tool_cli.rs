@@ -949,6 +949,8 @@ fn write_tex_land_ec_terrain_provenance_csv(
         "alias_tile_flags",
         "selected_texture_id",
         "canonical_slot_id",
+        "selected_layer_index",
+        "selected_texture_repetition",
         "primary_texture_id",
         "primary_layer_index",
         "primary_selection_reason",
@@ -963,6 +965,8 @@ fn write_tex_land_ec_terrain_provenance_csv(
             record.alias_tile_flags.to_string(),
             optional_u32_string(record.selected_texture_id, MISSING_TEXTURE_ID),
             optional_u32_string(record.canonical_slot_id, MISSING_SLOT_ID),
+            optional_u32_string(record.selected_layer_index, MISSING_TERRAIN_LAYER_INDEX),
+            record.selected_texture_repetition.to_string(),
             optional_u32_string(record.primary_texture_id, MISSING_TEXTURE_ID),
             optional_u32_string(record.primary_layer_index, MISSING_TERRAIN_LAYER_INDEX),
             record.primary_selection_reason.to_string(),
@@ -989,6 +993,9 @@ fn read_tex_land_ec_terrain_provenance_csv(
     let alias_tile_flags = csv_header_index(&headers, "alias_tile_flags")?;
     let selected_texture_id = csv_header_index(&headers, "selected_texture_id")?;
     let canonical_slot_id = csv_header_index(&headers, "canonical_slot_id")?;
+    let selected_layer_index = optional_csv_header_index(&headers, "selected_layer_index");
+    let selected_texture_repetition =
+        optional_csv_header_index(&headers, "selected_texture_repetition");
     let primary_texture_id = optional_csv_header_index(&headers, "primary_texture_id");
     let primary_layer_index = optional_csv_header_index(&headers, "primary_layer_index");
     let primary_selection_reason = optional_csv_header_index(&headers, "primary_selection_reason");
@@ -1032,6 +1039,20 @@ fn read_tex_land_ec_terrain_provenance_csv(
                 "canonical_slot_id",
                 line_number,
                 MISSING_SLOT_ID,
+            )?,
+            selected_layer_index: parse_optional_u32_field_or_default(
+                &row,
+                selected_layer_index,
+                "selected_layer_index",
+                line_number,
+                MISSING_TERRAIN_LAYER_INDEX,
+            )?,
+            selected_texture_repetition: parse_f32_field_or_default(
+                &row,
+                selected_texture_repetition,
+                "selected_texture_repetition",
+                line_number,
+                0.0,
             )?,
             primary_texture_id: parse_optional_u32_field_or_default(
                 &row,
@@ -1390,6 +1411,28 @@ fn parse_u16_field_or_default(
         Ok(default)
     } else {
         value.parse::<u16>().map_err(|error| {
+            eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
+        })
+    }
+}
+
+fn parse_f32_field_or_default(
+    row: &StringRecord,
+    index: Option<usize>,
+    field_name: &str,
+    line_number: usize,
+    default: f32,
+) -> eyre::Result<f32> {
+    let Some(index) = index else {
+        return Ok(default);
+    };
+    let value = row
+        .get(index)
+        .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?;
+    if value.is_empty() {
+        Ok(default)
+    } else {
+        value.parse::<f32>().map_err(|error| {
             eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}")
         })
     }

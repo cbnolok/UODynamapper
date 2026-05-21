@@ -17,7 +17,7 @@
 //!   path from TerrainDefinition material entries to alias slots, selected texture ids,
 //!   and canonical packed slots.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -93,7 +93,7 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 2;
+const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 3;
 const TEX_LAND_EC_TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
@@ -358,14 +358,14 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
             "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
         ],
     );
-    let terrain_override_texture_ids_by_material = terrain_overrides_kdl_path
+    let terrain_override_layers_by_material = terrain_overrides_kdl_path
         .as_ref()
-        .map(|path| terrain_override_texture_ids_by_material(path))
+        .map(|path| terrain_override_layers_by_material(path))
         .transpose()?
         .unwrap_or_default();
-    let terrain_override_texture_ids = terrain_override_texture_ids_by_material
+    let terrain_override_texture_ids = terrain_override_layers_by_material
         .values()
-        .flat_map(|texture_ids| texture_ids.iter().copied())
+        .flat_map(|layers| layers.keys().copied())
         .collect::<BTreeSet<_>>();
     let land_slot_ids = terrain_definition.land_slot_ids();
     let source_texture_ids = terrain_definition
@@ -410,7 +410,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         &terrain_definition,
         &selections,
         &texture_slot_by_texture_id,
-        &terrain_override_texture_ids_by_material,
+        &terrain_override_layers_by_material,
     );
 
     let page_manifest = serialize_page_manifest(&pages, options)?;
@@ -676,17 +676,36 @@ fn serialize_terrain_overrides_metadata(
     Ok(SerializedTerrainOverridesMetadata { bytes, entry_count })
 }
 
-fn terrain_override_texture_ids_by_material(
+#[derive(Debug, Clone, Copy)]
+struct TerrainLayerProvenance {
+    layer_index: u32,
+    texture_repetition: f32,
+}
+
+fn terrain_override_layers_by_material(
     path: &Path,
-) -> eyre::Result<HashMap<u32, BTreeSet<u32>>> {
+) -> eyre::Result<HashMap<u32, BTreeMap<u32, TerrainLayerProvenance>>> {
     let overrides = EcTerrainOverrides::load(path)?;
-    let mut ids_by_material = HashMap::<u32, BTreeSet<u32>>::new();
+    let mut layers_by_material = HashMap::<u32, BTreeMap<u32, TerrainLayerProvenance>>::new();
     for (material_id, entry) in overrides.to_map() {
-        let ids = ids_by_material.entry(material_id).or_default();
-        ids.extend(entry.layers.iter().map(|layer| layer.texture));
-        ids.extend(entry.textures.iter().map(|texture| texture.texture));
+        let layers = layers_by_material.entry(material_id).or_default();
+        for (index, layer) in entry.layers.iter().enumerate() {
+            layers.insert(
+                layer.texture,
+                TerrainLayerProvenance {
+                    layer_index: index as u32,
+                    texture_repetition: layer.stretch.unwrap_or(1.0),
+                },
+            );
+        }
+        for texture in &entry.textures {
+            layers.entry(texture.texture).or_insert(TerrainLayerProvenance {
+                layer_index: MISSING_TERRAIN_LAYER_INDEX,
+                texture_repetition: 1.0,
+            });
+        }
     }
-    Ok(ids_by_material)
+    Ok(layers_by_material)
 }
 
 fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOverrideMetadataEntry {
@@ -753,7 +772,7 @@ fn build_terrain_provenance_records(
     terrain_definition: &TerrainDefinitionPackage,
     selections: &[TerrainTextureSelection],
     texture_slot_by_texture_id: &HashMap<u32, u32>,
-    override_texture_ids_by_material: &HashMap<u32, BTreeSet<u32>>,
+    override_layers_by_material: &HashMap<u32, BTreeMap<u32, TerrainLayerProvenance>>,
 ) -> Vec<TexLandEcTerrainProvenanceRecord> {
     let selected_texture_by_slot = selections
         .iter()
@@ -774,29 +793,49 @@ fn build_terrain_provenance_records(
             } else {
                 alias.alias
             };
-            let mut selected_texture_ids = entry
+            let mut selected_layers = entry
                 .texture
                 .as_ref()
                 .map(|texture| {
                     texture
                         .layers
                         .iter()
-                        .filter_map(|layer| layer.texture_id)
-                        .collect::<BTreeSet<_>>()
+                        .enumerate()
+                        .filter_map(|(layer_index, layer)| {
+                            layer.texture_id.map(|texture_id| {
+                                (
+                                    texture_id,
+                                    TerrainLayerProvenance {
+                                        layer_index: layer_index as u32,
+                                        texture_repetition: layer.texture_repetition,
+                                    },
+                                )
+                            })
+                        })
+                        .collect::<BTreeMap<_, _>>()
                 })
                 .unwrap_or_default();
             if let Some(selected_texture_id) = selected_texture_by_slot.get(&provenance_slot_id).copied() {
-                selected_texture_ids.insert(selected_texture_id);
+                selected_layers.entry(selected_texture_id).or_insert(TerrainLayerProvenance {
+                    layer_index: MISSING_TERRAIN_LAYER_INDEX,
+                    texture_repetition: 1.0,
+                });
             }
-            if let Some(override_texture_ids) = override_texture_ids_by_material.get(&entry.id) {
-                selected_texture_ids.extend(override_texture_ids.iter().copied());
+            if let Some(override_layers) = override_layers_by_material.get(&entry.id) {
+                selected_layers.extend(override_layers.iter().map(|(texture_id, layer)| (*texture_id, *layer)));
             }
 
-            if selected_texture_ids.is_empty() {
-                selected_texture_ids.insert(MISSING_TEXTURE_ID);
+            if selected_layers.is_empty() {
+                selected_layers.insert(
+                    MISSING_TEXTURE_ID,
+                    TerrainLayerProvenance {
+                        layer_index: MISSING_TERRAIN_LAYER_INDEX,
+                        texture_repetition: 0.0,
+                    },
+                );
             }
 
-            for selected_texture_id in selected_texture_ids {
+            for (selected_texture_id, selected_layer) in selected_layers {
                 let canonical_slot_id = texture_slot_by_texture_id
                     .get(&selected_texture_id)
                     .copied()
@@ -809,6 +848,8 @@ fn build_terrain_provenance_records(
                     alias_tile_flags: alias.tile_flags,
                     selected_texture_id,
                     canonical_slot_id,
+                    selected_layer_index: selected_layer.layer_index,
+                    selected_texture_repetition: selected_layer.texture_repetition,
                     primary_texture_id: primary.texture_id,
                     primary_layer_index: primary.layer_index,
                     primary_selection_reason: primary.reason,
@@ -1534,6 +1575,8 @@ pub fn serialize_terrain_provenance_manifest(
         bytes.write_u64::<LittleEndian>(record.alias_tile_flags)?;
         bytes.write_u32::<LittleEndian>(record.selected_texture_id)?;
         bytes.write_u32::<LittleEndian>(record.canonical_slot_id)?;
+        bytes.write_u32::<LittleEndian>(record.selected_layer_index)?;
+        bytes.write_f32::<LittleEndian>(record.selected_texture_repetition)?;
         bytes.write_u32::<LittleEndian>(record.primary_texture_id)?;
         bytes.write_u32::<LittleEndian>(record.primary_layer_index)?;
         bytes.write_u8(record.primary_selection_reason)?;
@@ -1627,7 +1670,16 @@ mod tests {
         }];
         let texture_slot_by_texture_id =
             HashMap::from([(2000130, 9001), (2000131, 9002), (2000132, 9003)]);
-        let override_texture_ids = HashMap::from([(13, BTreeSet::from([2000132]))]);
+        let override_texture_ids = HashMap::from([(
+            13,
+            BTreeMap::from([(
+                2000132,
+                TerrainLayerProvenance {
+                    layer_index: 2,
+                    texture_repetition: 6.0,
+                },
+            )]),
+        )]);
 
         let records = build_terrain_provenance_records(
             &terrain_definition,
@@ -1653,6 +1705,8 @@ mod tests {
                 && record.alias_slot_id == 581
                 && record.selected_texture_id == 2000132
                 && record.canonical_slot_id == 9003
+                && record.selected_layer_index == 2
+                && record.selected_texture_repetition == 6.0
         }));
         for record in &records {
             assert_eq!(record.primary_texture_id, 2000131);
