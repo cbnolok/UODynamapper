@@ -163,8 +163,23 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
         .flat_map(|material_id| package.resolve_override_texture_slots(*material_id))
         .collect::<Vec<_>>();
     let effective_slot_changes = package.effective_override_slot_changes();
+    let policy_count = package
+        .terrain_override_details()
+        .values()
+        .map(|details| details.policies.len())
+        .sum::<usize>();
+    let liquid_count = package
+        .terrain_override_details()
+        .values()
+        .filter(|details| details.liquid.is_some())
+        .count();
+    let ignore_count = package
+        .terrain_override_details()
+        .values()
+        .filter(|details| details.ignore_code.is_some())
+        .count();
     let summary = format!(
-        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nterrain_overrides_bytes={}\nterrain_override_entries={}\nterrain_override_texture_refs={}\nterrain_override_texture_refs_resolved={}\neffective_slot_override_materials={}\n",
+        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nterrain_overrides_bytes={}\nterrain_override_entries={}\nterrain_override_policies={}\nterrain_override_liquids={}\nterrain_override_ignores={}\nterrain_override_texture_refs={}\nterrain_override_texture_refs_resolved={}\neffective_slot_override_materials={}\n",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
@@ -175,6 +190,9 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
             .map(|bytes| bytes.len())
             .unwrap_or(0),
         terrain_override_entries,
+        policy_count,
+        liquid_count,
+        ignore_count,
         resolved_override_textures.len(),
         resolved_override_textures
             .iter()
@@ -185,6 +203,45 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
     if let Some(bytes) = terrain_overrides_metadata {
         std::fs::write(metadata_dir.join("terrain_overrides.json"), bytes)?;
+    }
+    if !package.terrain_override_details().is_empty() {
+        let mut details = package
+            .terrain_override_details()
+            .values()
+            .collect::<Vec<_>>();
+        details.sort_by_key(|details| details.material_id);
+        let mut csv = String::from("material_id,policies,liquid_speed,liquid_waveheight,ignore_code\n");
+        for details in details {
+            let policies = details
+                .policies
+                .iter()
+                .map(|policy| policy.policy.as_str())
+                .collect::<Vec<_>>()
+                .join("|");
+            let liquid_speed = details
+                .liquid
+                .as_ref()
+                .and_then(|liquid| liquid.speed)
+                .map(|speed| speed.to_string())
+                .unwrap_or_default();
+            let liquid_waveheight = details
+                .liquid
+                .as_ref()
+                .and_then(|liquid| liquid.waveheight)
+                .map(|waveheight| waveheight.to_string())
+                .unwrap_or_default();
+            writeln!(
+                csv,
+                "{},{},{},{},{}",
+                details.material_id,
+                policies,
+                liquid_speed,
+                liquid_waveheight,
+                details.ignore_code.as_deref().unwrap_or("")
+            )
+            .unwrap();
+        }
+        write_text_file(&metadata_dir.join("terrain_override_details.csv"), &csv)?;
     }
     if !resolved_override_textures.is_empty() {
         let mut csv = String::from("material_id,role,texture_id,runtime_slot_id,packed\n");

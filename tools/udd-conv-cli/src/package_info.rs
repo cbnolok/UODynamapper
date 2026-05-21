@@ -116,6 +116,21 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .filter(|texture| texture.runtime_slot_id.is_some())
             .count();
         let effective_slot_changes = package.effective_override_slot_changes();
+        let policy_count = package
+            .terrain_override_details()
+            .values()
+            .map(|details| details.policies.len())
+            .sum::<usize>();
+        let liquid_count = package
+            .terrain_override_details()
+            .values()
+            .filter(|details| details.liquid.is_some())
+            .count();
+        let ignore_count = package
+            .terrain_override_details()
+            .values()
+            .filter(|details| details.ignore_code.is_some())
+            .count();
         println!("Recognized package: tex_land_ec");
         println!("Known logical files: metadata>=3, textures={}", package.pages().len());
         println!(
@@ -129,12 +144,37 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
         );
         println!("Terrain provenance rows: {}", package.terrain_provenance().len());
         println!(
-            "Terrain override metadata: entries={}, texture_refs={} (resolved={}), effective_slot_changes={}",
+            "Terrain override metadata: entries={}, policies={}, liquids={}, ignores={}, texture_refs={} (resolved={}), effective_slot_changes={}",
             override_entries,
+            policy_count,
+            liquid_count,
+            ignore_count,
             override_texture_refs,
             resolved_override_texture_refs,
             effective_slot_changes.len()
         );
+        let mut override_details = package
+            .terrain_override_details()
+            .values()
+            .collect::<Vec<_>>();
+        override_details.sort_by_key(|details| details.material_id);
+        for details in override_details.into_iter().take(8) {
+            if !details.policies.is_empty() || details.liquid.is_some() || details.ignore_code.is_some() {
+                let policies = details
+                    .policies
+                    .iter()
+                    .map(|policy| policy.policy.as_str())
+                    .collect::<Vec<_>>()
+                    .join("|");
+                println!(
+                    "  material {} override details: policies={} liquid={} ignore={}",
+                    details.material_id,
+                    if policies.is_empty() { "none" } else { policies.as_str() },
+                    details.liquid.is_some(),
+                    details.ignore_code.is_some()
+                );
+            }
+        }
         for change in effective_slot_changes.iter().take(8) {
             println!(
                 "  material {} query {}: runtime_slot={:?} effective_slot={:?}",

@@ -106,6 +106,29 @@ pub struct TexLandEcTerrainOverrideTextureRef {
     pub texture_id: u32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TexLandEcTerrainOverridePolicy {
+    pub material_id: u32,
+    pub policy: String,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TexLandEcTerrainOverrideLiquid {
+    pub material_id: u32,
+    pub speed: Option<f32>,
+    pub waveheight: Option<f32>,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TexLandEcTerrainOverrideDetails {
+    pub material_id: u32,
+    pub policies: Vec<TexLandEcTerrainOverridePolicy>,
+    pub liquid: Option<TexLandEcTerrainOverrideLiquid>,
+    pub ignore_code: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TexLandEcResolvedOverrideTexture {
     pub material_id: u32,
@@ -195,6 +218,7 @@ pub struct TexLandEcPackage {
     slots: Vec<TexLandEcSlotRecord>,
     terrain_provenance: Vec<TexLandEcTerrainProvenanceRecord>,
     terrain_override_actions: HashMap<u32, TexLandEcTerrainOverrideActions>,
+    terrain_override_details: HashMap<u32, TexLandEcTerrainOverrideDetails>,
     terrain_override_texture_refs: HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
@@ -256,6 +280,8 @@ impl TexLandEcPackage {
         let transcode = read_transcode_from_package(&package).unwrap_or_default();
         let terrain_override_actions = read_terrain_override_actions_from_package(&package)
             .unwrap_or_default();
+        let terrain_override_details = read_terrain_override_details_from_package(&package)
+            .unwrap_or_default();
         let terrain_override_texture_refs =
             read_terrain_override_texture_refs_from_package(&package).unwrap_or_default();
         Ok(Self {
@@ -268,6 +294,7 @@ impl TexLandEcPackage {
             slots,
             terrain_provenance,
             terrain_override_actions,
+            terrain_override_details,
             terrain_override_texture_refs,
             transcode,
             page_cache: AtlasPageCache::new(options),
@@ -319,6 +346,17 @@ impl TexLandEcPackage {
         material_id: u32,
     ) -> Option<&TexLandEcTerrainOverrideActions> {
         self.terrain_override_actions.get(&material_id)
+    }
+
+    pub fn terrain_override_details(&self) -> &HashMap<u32, TexLandEcTerrainOverrideDetails> {
+        &self.terrain_override_details
+    }
+
+    pub fn terrain_override_details_for(
+        &self,
+        material_id: u32,
+    ) -> Option<&TexLandEcTerrainOverrideDetails> {
+        self.terrain_override_details.get(&material_id)
     }
 
     pub fn terrain_override_texture_refs_for(
@@ -788,6 +826,13 @@ fn read_terrain_override_texture_refs_from_package(
     parse_terrain_override_texture_refs_metadata(&bytes).ok()
 }
 
+fn read_terrain_override_details_from_package(
+    package: &UddpReader,
+) -> Option<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
+    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_details_metadata(&bytes).ok()
+}
+
 fn parse_terrain_override_actions_metadata(
     bytes: &[u8],
 ) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideActions>> {
@@ -838,6 +883,64 @@ fn parse_terrain_override_actions_metadata(
     }
 
     Ok(actions)
+}
+
+fn parse_terrain_override_details_metadata(
+    bytes: &[u8],
+) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
+    let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
+    let mut details_by_material = HashMap::<u32, TexLandEcTerrainOverrideDetails>::new();
+    let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
+        return Ok(details_by_material);
+    };
+
+    for entry in entries {
+        let Some(material_id) = json_u32(entry, "material_id") else {
+            continue;
+        };
+
+        let policies = entry
+            .get("policies")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|policy| {
+                let policy_name = policy.get("policy").and_then(|value| value.as_str())?;
+                Some(TexLandEcTerrainOverridePolicy {
+                    material_id,
+                    policy: policy_name.to_string(),
+                    code: json_string(policy, "code"),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let liquid = entry
+            .get("liquid")
+            .filter(|value| !value.is_null())
+            .map(|liquid| TexLandEcTerrainOverrideLiquid {
+                material_id,
+                speed: json_f32(liquid, "speed"),
+                waveheight: json_f32(liquid, "waveheight"),
+                code: json_string(liquid, "code"),
+            });
+
+        let ignore_code = entry
+            .get("ignore")
+            .filter(|value| !value.is_null())
+            .and_then(|ignore| json_string(ignore, "code"));
+
+        details_by_material.insert(
+            material_id,
+            TexLandEcTerrainOverrideDetails {
+                material_id,
+                policies,
+                liquid,
+                ignore_code,
+            },
+        );
+    }
+
+    Ok(details_by_material)
 }
 
 fn parse_terrain_override_texture_refs_metadata(
@@ -907,6 +1010,20 @@ fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
         .get(key)
         .and_then(|value| value.as_u64())
         .and_then(|value| u32::try_from(value).ok())
+}
+
+fn json_f32(value: &serde_json::Value, key: &str) -> Option<f32> {
+    value
+        .get(key)
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32)
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 fn json_array_is_non_empty(value: &serde_json::Value, key: &str) -> bool {
@@ -1031,9 +1148,9 @@ mod tests {
   "entries": [
     {
       "material_id": 52,
-      "active_action_count": 2,
-      "policies": [],
-      "liquid": null,
+      "active_action_count": 4,
+      "policies": [{"policy": "smooth", "code": "reviewed_runtime_policy"}],
+      "liquid": {"speed": 0.01, "waveheight": 0.3, "code": "reviewed_liquid_motion"},
       "layers": [{"role": "t0", "texture_id": 2000510}],
       "textures": [],
       "ignore": null
@@ -1093,9 +1210,32 @@ mod tests {
             .expect("parse override actions");
         let action = actions.get(&52).expect("material 52 override");
 
-        assert_eq!(action.action_count, 2);
+        assert_eq!(action.action_count, 4);
         assert!(action.has_layer());
-        assert!(!action.has_policy());
+        assert!(action.has_policy());
+        assert!(action.has_liquid());
+    }
+
+    #[test]
+    fn terrain_override_metadata_parser_preserves_policy_and_liquid_details() {
+        let details = parse_terrain_override_details_metadata(&terrain_overrides_json())
+            .expect("parse override details");
+        let detail = details.get(&52).expect("material 52 override details");
+
+        assert_eq!(detail.policies.len(), 1);
+        assert_eq!(detail.policies[0].policy, "smooth");
+        assert_eq!(
+            detail.policies[0].code.as_deref(),
+            Some("reviewed_runtime_policy")
+        );
+        assert_eq!(
+            detail.liquid.as_ref().and_then(|liquid| liquid.speed),
+            Some(0.01)
+        );
+        assert_eq!(
+            detail.liquid.as_ref().and_then(|liquid| liquid.code.as_deref()),
+            Some("reviewed_liquid_motion")
+        );
     }
 
     #[test]
@@ -1113,7 +1253,19 @@ mod tests {
         assert_eq!(decision.primary_selection_reason, TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION);
         assert_eq!(
             decision.override_actions.map(|actions| actions.action_flags),
-            Some(TERRAIN_OVERRIDE_ACTION_LAYER)
+            Some(
+                TERRAIN_OVERRIDE_ACTION_POLICY
+                    | TERRAIN_OVERRIDE_ACTION_LIQUID
+                    | TERRAIN_OVERRIDE_ACTION_LAYER
+            )
+        );
+        let details = package
+            .terrain_override_details_for(52)
+            .expect("material 52 override details");
+        assert_eq!(details.policies[0].policy, "smooth");
+        assert_eq!(
+            details.liquid.as_ref().and_then(|liquid| liquid.waveheight),
+            Some(0.3)
         );
         assert_eq!(override_slots.len(), 1);
         assert_eq!(override_slots[0].role, "t0");
