@@ -14,5 +14,6 @@ pub mod multi;
 pub mod generic_def;
 pub mod generic_index;
 pub mod gump;
+pub mod sound;
 pub mod vd_codec;
 pub mod michelangelo_uop_codec;
