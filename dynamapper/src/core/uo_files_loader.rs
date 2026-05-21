@@ -53,12 +53,6 @@ pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
 
-/// Enhanced terrain definitions.
-#[derive(Resource)]
-pub struct TerrainDefinitionRes(
-    pub Arc<HashMap<u32, udd_assets::cc_tex_land_ec_transcode::TerrainDefEntry>>,
-);
-
 pub struct UoFilesSettings {
     pub udd_folder: PathBuf,
 }
@@ -360,24 +354,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         lg(&format!(
             "TerrainTranscode.kdl not found at {}",
             transcode_path.display()
-        ));
-    }
-
-    let definition_path = asset_root.join("cc_ec_convtables/TerrainDefinition.kdl");
-    if definition_path.exists() {
-        match udd_assets::cc_tex_land_ec_transcode::TerrainDefinitionKdl::load(&definition_path) {
-            Ok(definition) => {
-                lg("Loaded TerrainDefinition.kdl");
-                commands.insert_resource(TerrainDefinitionRes(Arc::new(definition.to_map())));
-            }
-            Err(e) => {
-                bevy::log::error!("Failed to load TerrainDefinition.kdl: {e}");
-            }
-        }
-    } else {
-        lg(&format!(
-            "TerrainDefinition.kdl not found at {}",
-            definition_path.display()
         ));
     }
 

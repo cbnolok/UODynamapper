@@ -1,0 +1,1101 @@
+/*
+    Terrain Definition format for UODynamapper
+    ------------------------------------------
+    This file defines how classic UO terrain IDs are mapped to Enhanced Client (EC) textures
+    and rendering properties.
+
+    - d [Id] "[Type]" { ... }
+        Defines a terrain mapping for the given Classic ID.
+        Type is a comma-separated list of flags:
+            - Solid: Prevents traversal (standard for non-liquids).
+            - Liquid: Marks as water/lava/acid with flow animations.
+            - Smooth: Enables texture blending with neighboring tiles.
+            - FollowCenter: For liquids, aligns surface to center.
+            - Single: Uses a single texture (TextureId) instead of multi-layer blending.
+
+    - Properties:
+        - speed: Flow speed for liquid animations.
+        - waveheight: Height of waves for liquid surfaces.
+        - textureid: Direct texture reference for 'Single' type.
+
+    - Texture Layers (within braces):
+        - t0 [Id] [Stretch]: Texture 0 (Primary Albedo)
+        - t1 [Id] [Stretch]: Texture 1 (Secondary Albedo)
+        - m  [Id] [Stretch]: AlphaMask (used for blending t0/t1)
+        - s  [Id] [Stretch]: Static (Secondary static texture or detail)
+        - n  [Id] [Stretch]: Normal (Surface normal map)
+        
+        Stretch is a scaling divisor for the texture coordinates.
+ */
+
+// Void / No-Draw
+d 0 "Solid" {
+    t0 02000000 8
+    t1 02000001 6
+    m 01000003 32
+}
+
+// Grass
+d 1 "Solid,Smooth" {
+    t0 02000010 10
+    t1 02000011 4
+    m 01000003 32
+}
+
+// Dirt
+d 2 "Solid,Smooth" {
+    t0 02000020 5
+    t1 02000021 5
+    m 01000003 16
+}
+
+// Jungle
+d 3 "Solid,Smooth" {
+    t0 02000030 5
+    t1 02000031 5
+    m 01000003 16
+}
+
+// Forest
+d 4 "Solid,Smooth" {
+    t0 02000040 4
+    t1 02000041 4
+    m 01000003 16
+}
+
+// Water
+d 5 "Liquid,Smooth,FollowCenter" speed=0 waveheight=0.3 {
+    t0 01000017 30
+    s 02000051 4
+    n 01000013 16
+}
+
+// Rock
+d 6 "Solid,Smooth" {
+    t0 02000060 9
+    t1 02000061 6
+    m 01000003 24
+}
+
+// Sand
+d 7 "Solid,Smooth" {
+    t0 02000070 6
+    t1 02000071 6
+    m 01000003 16
+}
+
+// Snow
+d 8 "Solid,Smooth" {
+    t0 02000080 5
+    t1 02000081 5
+    m 01000003 16
+}
+
+// Cobblestone
+d 9 "Solid,Smooth" {
+    t0 02000090 8
+    t1 02000091 8
+    m 01000004 48
+}
+
+// Lava
+d 10 "Liquid,Smooth" speed=0.01 waveheight=0.2 {
+    t0 02000100 6
+    s 02000100 8
+    n 01000012 12
+}
+
+// Wooden Floor (E-W)
+d 11 "Solid" {
+    t0 02000110 4
+    t1 02000111 4
+    m 01000003 16
+}
+
+// Wooden Floor (N-S)
+d 12 "Solid" {
+    t0 02000120 4
+    t1 02000121 4
+    m 01000003 16
+}
+
+// Cave Floor
+d 13 "Solid,Smooth" {
+    t0 02000130 12
+    t1 02000131 6
+    m 01000003 16
+}
+
+// Cave wall (N-S)
+d 14 "Solid,Smooth" {
+    t0 02000140 5
+    t1 02000141 5
+    m 01000003 16
+}
+
+// Cave wall (NW-SE)
+d 15 "Solid,Smooth" {
+    t0 02000151 5
+    t1 02000151 5
+    m 01000003 16
+}
+
+// Cave wall (E-W)
+d 16 "Solid,Smooth" {
+    t0 02000160 5
+    t1 02000161 5
+    m 01000003 16
+}
+
+// Furrows (N-S)
+d 20 "Solid,Smooth" {
+    t0 02000200 5
+    t1 02000201 5
+    m 01000003 16
+}
+
+// Furrows (E-W)
+d 21 "Solid,Smooth" {
+    t0 02000210 5
+    t1 02000211 5
+    m 01000003 16
+}
+
+// Wooden Planks (E-W)
+d 22 "Solid" {
+    t0 02000230 4
+    t1 02000231 4
+    m 01000003 16
+}
+
+// Wooden Planks (N-S)
+d 23 "Solid" {
+    t0 02000220 4
+    t1 02000221 4
+    m 01000003 16
+}
+
+// Flagstone (tan)
+d 24 "Solid" {
+    t0 02000240 5
+    t1 02000241 5
+    m 01000003 16
+}
+
+// Stone (light) Pavers
+d 25 "Solid" {
+    t0 02000250 4
+    t1 02000251 4
+    m 01000003 16
+}
+
+// Stone (medium) Pavers
+d 26 "Solid" {
+    t0 02000260 4
+    t1 02000261 4
+    m 01000003 16
+}
+
+// Stone (darker) Pavers
+d 27 "Solid" {
+    t0 02000270 4
+    t1 02000271 4
+    m 01000003 16
+}
+
+// Stone (light tan) Pavers
+d 28 "Solid" {
+    t0 02000280 4
+    t1 02000281 4
+    m 01000003 16
+}
+
+// Stone (dark tan) Pavers
+d 29 "Solid" {
+    t0 02000290 4
+    t1 02000291 4
+    m 01000003 16
+}
+
+// Light sand stone brick (E-W)
+d 30 "Solid" {
+    t0 02000300 4
+    t1 02000301 4
+    m 01000003 16
+}
+
+// Light sand stone brick (N-S)
+d 31 "Solid" {
+    t0 02000310 4
+    t1 02000311 4
+    m 01000003 16
+}
+
+// Dark sand stone brick (E-W)
+d 32 "Solid" {
+    t0 02000320 4
+    t1 02000321 4
+    m 01000003 16
+}
+
+// Dark sand stone brick (N-S)
+d 33 "Solid" {
+    t0 02000330 4
+    t1 02000331 4
+    m 01000003 16
+}
+
+// Red brick3 (mixed direction)
+d 34 "Solid" {
+    t0 02000340 4
+    t1 02000341 4
+    m 01000003 16
+}
+
+// Red brick (E-W)
+d 35 "Solid" {
+    t0 02000350 4
+    t1 02000351 4
+    m 01000003 16
+}
+
+// Red brick (N-S)
+d 36 "Solid" {
+    t0 02000360 4
+    t1 02000361 4
+    m 01000003 16
+}
+
+// Marble (grey)
+d 37 "Solid" {
+    t0 00001299 2.5
+    t1 00001300 2.5
+    m 01000003 16
+}
+
+// Brown brick4 (E-W)
+d 38 "Solid" {
+    t0 02000380 4
+    t1 02000381 4
+    m 01000003 16
+}
+
+// Brown brick (N-S)
+d 39 "Solid" {
+    t0 02000390 4
+    t1 02000391 4
+    m 01000003 16
+}
+
+// Marble (teal)
+d 40 "Solid" {
+    t0 02000400 4
+    t1 02000401 4
+    m 01000003 16
+}
+
+// Marble (white)
+d 41 "Solid" {
+    t0 02000410 2
+    t1 02000411 2
+    m 01000003 16
+}
+
+// Flagstone (grey)
+d 42 "Solid" {
+    t0 02000420 4
+    t1 02000421 4
+    m 01000003 16
+}
+
+// Marble (no tiles)
+d 43 "Solid" {
+    t0 02000430 4
+    t1 02000431 4
+    m 01000003 16
+}
+d 44 "Solid"
+
+// Cave exit 2
+d 45 "Solid" {
+    t0 02000450 5
+    t1 02000450 5
+    m 01000003 16
+}
+
+// Embank (E-W)
+d 46 "Solid" {
+    t0 02000580 5
+    t1 02000581 5
+    m 01000003 16
+}
+
+// Embank (N-S)
+d 47 "Solid" {
+    t0 02000600 5
+    t1 02000601 5
+    m 01000003 16
+}
+d 48 "Solid"
+
+// Acid (solid)
+d 49 "Liquid,Smooth" speed=0.01 waveheight=0.3 {
+    t0 02000490 8
+    s 02000490 8
+    n 01000012 12
+}
+
+// Obsidian
+d 50 "Solid" {
+    t0 02000500 5
+    t1 02000501 5
+    m 01000003 16
+}
+d 51 "Solid"
+
+// Tan no-name (under static water)
+d 52 "Solid" {
+    t0 02000510 5
+    t1 02000511 5
+    m 01000003 16
+}
+
+// Stars
+d 53 "Liquid,Smooth,FollowCenter" {
+    t0 02000532 24
+    s 02000531 0.5
+    n 02000530 24
+}
+
+// Sand Cliff (E-W)
+d 54 "Solid" {
+    t0 02000540 1
+    t1 02000541 1
+    m 01000003 8
+}
+
+// Sand Cliff (NW-SE)
+d 55 "Solid" {
+    t0 02000550 2
+    t1 02000551 2
+    m 01000003 8
+}
+
+// Sand Cliff (N-S)
+d 56 "Solid" {
+    t0 02000560 1
+    t1 02000561 1
+    m 01000003 8
+}
+
+// Sand Cliff (NE-SW)
+d 57 "Solid" {
+    t0 02000570 1
+    t1 02000571 1
+    m 01000003 8
+}
+
+// Dirt Cliff (E-W)
+d 58 "Solid" {
+    t0 02000580 5
+    t1 02000581 5
+    m 01000003 16
+}
+
+// Dirt Cliff (NW-SE)
+d 59 "Solid" {
+    t0 02000590 5
+    t1 02000591 5
+    m 01000003 16
+}
+
+// Dirt Cliff (N-S)
+d 60 "Solid" {
+    t0 02000600 5
+    t1 02000601 5
+    m 01000003 16
+}
+
+// Snow Cliff (E-W)
+d 61 "Solid" {
+    t0 02000610 5
+    t1 02000611 5
+    m 01000003 16
+}
+
+// Snow Cliff (NW-SE)
+d 62 "Solid" {
+    t0 02000620 5
+    t1 02000621 5
+    m 01000003 16
+}
+
+// Snow Cliff (N-S)
+d 63 "Solid" {
+    t0 02000630 5
+    t1 02000631 5
+    m 01000003 16
+}
+
+// Snow Cliff (NE-SW)
+d 64 "Solid" {
+    t0 02000640 5
+    t1 02000641 5
+    m 01000003 16
+}
+
+// Embank Snow (E-W)
+d 65 "Solid" {
+    t0 02000610 5
+    t1 02000611 5
+    m 01000003 16
+}
+
+// Embank Snow  (NW-SE)
+d 66 "Solid" {
+    t0 02000620 5
+    t1 02000621 5
+    m 01000003 16
+}
+
+// Embank Snow  (NE-SO)
+d 201 "Solid" {
+    t0 02000640 5
+    t1 02000641 5
+    m 01000003 16
+}
+
+// Embank Snow (N-S)
+d 67 "Solid" {
+    t0 02000630 5
+    t1 02000631 5
+    m 01000003 16
+}
+
+// Planks in sand (N-S)
+d 68 "Solid" {
+    t0 02000680 5
+    t1 02000681 5
+    m 01000003 16
+}
+
+// Planks in sand (E-W)
+d 19 "Solid"
+
+// Swamp2
+d 69 "Solid" {
+    t0 02000480 5
+    t1 02000481 5
+    m 01000003 16
+}
+
+// Swamp Water
+d 70 "Liquid,Smooth" speed=0.01 waveheight=0.3 {
+    t0 02000702 20
+    s 02000704 10
+    n 02000703 16
+}
+d 71 "Solid"
+
+// Tile (terra cotta) Plain
+d 72 "Solid" {
+    t0 02000720 5
+    t1 02000721 5
+    m 01000003 32
+}
+
+// Tile (terra cotta) Ornate
+d 73 "Solid,Single" textureid=00001267
+
+// Tile (terra cotta) Ornate
+d 74 "Solid,Single" textureid=00001268
+
+// Tile (terra cotta) Ornate
+d 75 "Solid,Single" textureid=00001269
+
+// Tile (terra cotta) Ornate
+d 76 "Solid,Single" textureid=00001270
+
+// Tile (terra cotta) Ornate
+d 77 "Solid,Single" textureid=00001271
+
+// Tile (terra cotta) Ornate
+d 78 "Solid,Single" textureid=00001272
+
+// Tile (terra cotta) Ornate
+d 79 "Solid,Single" textureid=00001273
+
+// Tile (terra cotta) Ornate
+d 80 "Solid,Single" textureid=00001274
+
+// Tile (terra cotta) Ornate
+d 81 "Solid,Single" textureid=00001275
+
+// Tile (blue slate) Plain
+d 88 "Solid" {
+    t0 02000880 4
+    t1 02000881 4
+    m 01000003 16
+}
+
+// Tile (blue slate) Ornate
+d 89 "Solid,Single" textureid=00001266
+
+// Tile (blue slate) Ornate
+d 90 "Solid,Single" textureid=00001258
+
+// Tile (blue slate) Ornate
+d 91 "Solid,Single" textureid=00001259
+
+// Tile (blue slate) Ornate
+d 92 "Solid,Single" textureid=00001260
+
+// Tile (blue slate) Ornate
+d 93 "Solid,Single" textureid=00001261
+
+// Tile (blue slate) Ornate
+d 94 "Solid,Single" textureid=00001262
+
+// Tile (blue slate) Ornate
+d 95 "Solid,Single" textureid=00001263
+
+// Tile (blue slate) Ornate
+d 96 "Solid,Single" textureid=00001264
+
+// Tile (blue slate) Ornate
+d 97 "Solid,Single" textureid=00001265
+
+// Brown Deco Tile
+d 104 "Solid" {
+    t0 02001040 1
+    t1 02001041 1
+    m 01000003 8
+}
+
+// Brown Deco Tile
+d 105 "Solid" {
+    t0 02001050 1
+    t1 02001051 1
+    m 01000003 8
+}
+
+// Brown Deco Tile
+d 106 "Solid" {
+    t0 02001060 1
+    t1 02001061 1
+    m 01000003 8
+}
+
+// Brown Deco Tile
+d 107 "Solid" {
+    t0 02001070 1
+    t1 02001071 1
+    m 01000003 8
+}
+
+// Brown Deco Tile
+d 108 "Solid" {
+    t0 02001080 1
+    t1 02001081 1
+    m 01000003 8
+}
+
+// Wooden floor edges (E-W)
+d 109 "Solid" {
+    t0 02000110 4
+    t1 02000111 4
+    m 01000003 16
+}
+
+// Woodenfloor edges (N-S)
+d 119 "Solid" {
+    t0 02000120 4
+    t1 02000121 4
+    m 01000003 16
+}
+
+// Swamp2 edges
+d 129 "Solid" {
+    t0 02000480 5
+    t1 02000481 5
+    m 01000003 16
+}
+
+// Leaves
+d 145 "Solid" {
+    t0 02001450 5
+    t1 02001451 5
+    m 01000003 16
+}
+
+// Dark Rock
+d 146 "Solid" {
+    t0 02001460 5
+    t1 02001461 5
+    m 01000003 16
+}
+
+// Tree bark (E-W)
+d 147 "Solid" {
+    t0 02001470 5
+    t1 02001471 5
+    m 01000003 16
+}
+
+// Tree path (E-W)
+d 148 "Solid" {
+    t0 02001480 5
+    t1 02001481 5
+    m 01000003 16
+}
+
+// Tree bark horz
+d 149 "Solid" {
+    t0 02001490 5
+    t1 02001491 5
+    m 01000003 16
+}
+
+// Tree bark horz
+d 150 "Solid" {
+    t0 02001500 5
+    t1 02001501 5
+    m 01000003 16
+}
+
+// Tree bark vert
+d 151 "Solid" {
+    t0 02001510 5
+    t1 02001511 5
+    m 01000003 16
+}
+
+// Tree bark vert
+d 152 "Solid" {
+    t0 02001520 5
+    t1 02001521 5
+    m 01000003 16
+}
+
+// Tree bark (N-S)
+d 153 "Solid" {
+    t0 02001530 5
+    t1 02001531 5
+    m 01000003 16
+}
+
+// Dirt with Large Rocks
+d 155 "Solid" {
+    t0 02001540 4
+    t1 02001541 4
+    m 01000003 16
+}
+
+// Black
+d 170 "Solid,Single" textureid=02001700
+
+// Cave Transition
+d 171 "Solid" {
+    t0 02000130 12
+    t1 02000131 6
+    m 01000003 16
+}
+
+// Road
+d 190 "Solid" {
+    t0 02001900 5
+    t1 01000006 5
+    m 01000003 16
+}
+
+// Stone (moss) Pavers
+d 191 "Solid" {
+    t0 02000250 4
+    t1 03000262 4
+    m 01000003 16
+}
+
+// Stone (mossDark) Pavers
+d 192 "Solid" {
+    t0 02000271 4
+    t1 02000272 4
+    m 01000003 16
+}
+
+// Cool Lava
+d 193 "Solid" {
+    t0 02000103 4
+    t1 02000103 4
+    m 01000003 16
+}
+
+// Void Destruction
+d 194 "Solid" {
+    t0 02000103 6
+    t1 02000103 4
+    m 01000003 32
+}
+
+// Void
+d 195 "Liquid,Smooth" {
+    t0 02000531 24
+    s 02000531 24
+    n 02000002 1
+}
+d 196 "Solid"
+d 197 "Solid"
+d 198 "Solid"
+d 199 "Solid"
+d 200 "Solid"
+
+// --- TODO: Missing definitions identified from TileDictionary.bin ---
+
+// TODO: Unknown (Check transcode context)
+// d 17 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 82 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 83 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 84 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 85 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 86 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (terra cotta) Ornate
+// d 87 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 98 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 99 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 100 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 101 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 102 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Tile (blue slate) Ornate
+// d 103 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 110 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 111 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 112 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 113 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 114 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 115 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 116 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 117 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (EW)
+// d 118 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 120 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 121 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 122 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 123 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 124 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 125 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 126 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 127 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Woodenfloor edges (NS)
+// d 128 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 130 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 131 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 132 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 133 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 134 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 135 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 136 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 137 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 138 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 139 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 140 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 141 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 142 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 143 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Swamp2 edges
+// d 144 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Rock hole
+// d 154 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 160 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 161 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 162 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Dark Sandstone corners
+// d 163 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Unknown (Check transcode context)
+// d 169 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 172 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 173 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 174 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 175 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 176 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 177 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 178 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 179 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 180 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 181 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 182 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 183 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 184 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 185 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 186 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 187 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition
+// d 188 "Solid" {
+//     t0 00000000 1
+// }
+
+// TODO: Cave Transition (ACID TODO)
+// d 189 "Solid" {
+//     t0 00000000 1
+// }
