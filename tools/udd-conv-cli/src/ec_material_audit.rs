@@ -456,6 +456,7 @@ pub fn write_ec_terrain_practical_review(
     let mut audit_only_finding_counts = BTreeMap::<String, u64>::new();
     let mut priority_counts = BTreeMap::<String, u64>::new();
     let mut audit_only_material_count = 0usize;
+    let mut effective_slot_override_count = 0usize;
 
     for entry in &sources.terrain_definition.entries {
         let Some(texture) = entry.texture.as_ref() else {
@@ -482,6 +483,17 @@ pub fn write_ec_terrain_practical_review(
                     .unwrap_or(entry.id),
             )
         });
+        let effective_runtime_slot = packed_terrain.as_ref().and_then(|package| {
+            entry
+                .runtime_slot_ids()
+                .first()
+                .copied()
+                .or(Some(entry.id))
+                .and_then(|query_id| package.resolve_effective_runtime_slot_id(query_id))
+        });
+        let effective_slot_changed = resolver_decision
+            .as_ref()
+            .is_some_and(|decision| decision.runtime_slot_id != effective_runtime_slot);
         let mut findings = split_flags(&terrain_primary_audit_flags(
             entry,
             selected_layer,
@@ -542,6 +554,10 @@ pub fn write_ec_terrain_practical_review(
             continue;
         }
 
+        if effective_slot_changed {
+            effective_slot_override_count += 1;
+        }
+
         for finding in &findings {
             increment_count(&mut queued_finding_counts, finding);
         }
@@ -563,7 +579,8 @@ pub fn write_ec_terrain_practical_review(
                 )
             }),
             overrides: manual_override.map(terrain_definition_override_entry_report),
-            resolver_decision: resolver_decision.map(terrain_resolver_decision_report),
+            resolver_decision: resolver_decision
+                .map(|decision| terrain_resolver_decision_report(decision, effective_runtime_slot)),
             resolved_override_textures: packed_terrain
                 .as_ref()
                 .map(|package| terrain_resolved_override_texture_reports(package, entry.id))
@@ -592,6 +609,7 @@ pub fn write_ec_terrain_practical_review(
             tex_land_ec_path: tex_land_ec_path.map(|path| path.display().to_string()),
             packed_provenance_material_count: packed_provenance_by_material.len(),
             audit_only_material_count,
+            effective_slot_override_count,
             queued_finding_counts: queued_finding_counts.clone(),
             audit_only_finding_counts: audit_only_finding_counts.clone(),
             priority_counts: priority_counts.clone(),
@@ -1859,6 +1877,7 @@ struct TerrainPracticalReviewSummary {
     tex_land_ec_path: Option<String>,
     packed_provenance_material_count: usize,
     audit_only_material_count: usize,
+    effective_slot_override_count: usize,
     queued_finding_counts: BTreeMap<String, u64>,
     audit_only_finding_counts: BTreeMap<String, u64>,
     priority_counts: BTreeMap<String, u64>,
@@ -1884,6 +1903,8 @@ struct TerrainResolverDecisionReport {
     query_tile_id: u32,
     material_id: Option<u32>,
     runtime_slot_id: Option<u32>,
+    effective_runtime_slot_id: Option<u32>,
+    effective_slot_changed: bool,
     runtime_slot_source: Option<&'static str>,
     provenance_record_count: u32,
     primary_texture_id: Option<u32>,
@@ -3007,11 +3028,14 @@ fn terrain_selected_layer_report(
 
 fn terrain_resolver_decision_report(
     decision: TexLandEcMaterialDecision,
+    effective_runtime_slot_id: Option<u32>,
 ) -> TerrainResolverDecisionReport {
     TerrainResolverDecisionReport {
         query_tile_id: decision.query_tile_id,
         material_id: decision.material_id,
         runtime_slot_id: decision.runtime_slot_id,
+        effective_runtime_slot_id,
+        effective_slot_changed: decision.runtime_slot_id != effective_runtime_slot_id,
         runtime_slot_source: decision
             .runtime_slot_source
             .map(terrain_runtime_slot_source_name),
