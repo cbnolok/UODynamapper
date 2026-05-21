@@ -350,8 +350,29 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         .iter()
         .map(|entry| entry.aliases.len() as u32)
         .sum();
+    let terrain_overrides_kdl_path = find_first_existing_file_in_sources_or_cwd(
+        source_dirs,
+        &[
+            "EcTerrainOverrides.kdl",
+            "cc_ec_convtables/EcTerrainOverrides.kdl",
+            "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
+        ],
+    );
+    let terrain_override_texture_ids_by_material = terrain_overrides_kdl_path
+        .as_ref()
+        .map(|path| terrain_override_texture_ids_by_material(path))
+        .transpose()?
+        .unwrap_or_default();
+    let terrain_override_texture_ids = terrain_override_texture_ids_by_material
+        .values()
+        .flat_map(|texture_ids| texture_ids.iter().copied())
+        .collect::<BTreeSet<_>>();
     let land_slot_ids = terrain_definition.land_slot_ids();
-    let source_texture_ids = terrain_definition.land_source_texture_ids();
+    let source_texture_ids = terrain_definition
+        .land_source_texture_ids()
+        .into_iter()
+        .chain(terrain_override_texture_ids.iter().copied())
+        .collect::<BTreeSet<_>>();
     let unique_alias_slot_count = land_slot_ids.len() as u32;
     let selections = terrain_definition
         .texture_selections()
@@ -364,7 +385,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     let unique_source_texture_count = source_texture_ids.len() as u32;
     let unique_texture_selection_count = selections.len() as u32;
     let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
-        decode_present_tiles(world_textures, legacy_textures, terrain_definition, options)?;
+        decode_present_tiles(
+            world_textures,
+            legacy_textures,
+            terrain_definition,
+            &terrain_override_texture_ids,
+            options,
+        )?;
     let slot_count = land_slot_ids
         .iter()
         .copied()
@@ -383,19 +410,12 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         &terrain_definition,
         &selections,
         &texture_slot_by_texture_id,
+        &terrain_override_texture_ids_by_material,
     );
 
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
     let terrain_provenance_manifest = serialize_terrain_provenance_manifest(&terrain_provenance)?;
-    let terrain_overrides_kdl_path = find_first_existing_file_in_sources_or_cwd(
-        source_dirs,
-        &[
-            "EcTerrainOverrides.kdl",
-            "cc_ec_convtables/EcTerrainOverrides.kdl",
-            "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
-        ],
-    );
     let terrain_overrides_manifest = terrain_overrides_kdl_path
         .as_ref()
         .map(|path| serialize_terrain_overrides_metadata(path))
@@ -656,6 +676,19 @@ fn serialize_terrain_overrides_metadata(
     Ok(SerializedTerrainOverridesMetadata { bytes, entry_count })
 }
 
+fn terrain_override_texture_ids_by_material(
+    path: &Path,
+) -> eyre::Result<HashMap<u32, BTreeSet<u32>>> {
+    let overrides = EcTerrainOverrides::load(path)?;
+    let mut ids_by_material = HashMap::<u32, BTreeSet<u32>>::new();
+    for (material_id, entry) in overrides.to_map() {
+        let ids = ids_by_material.entry(material_id).or_default();
+        ids.extend(entry.layers.iter().map(|layer| layer.texture));
+        ids.extend(entry.textures.iter().map(|texture| texture.texture));
+    }
+    Ok(ids_by_material)
+}
+
 fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOverrideMetadataEntry {
     TerrainOverrideMetadataEntry {
         material_id: entry.id,
@@ -720,6 +753,7 @@ fn build_terrain_provenance_records(
     terrain_definition: &TerrainDefinitionPackage,
     selections: &[TerrainTextureSelection],
     texture_slot_by_texture_id: &HashMap<u32, u32>,
+    override_texture_ids_by_material: &HashMap<u32, BTreeSet<u32>>,
 ) -> Vec<TexLandEcTerrainProvenanceRecord> {
     let selected_texture_by_slot = selections
         .iter()
@@ -753,6 +787,9 @@ fn build_terrain_provenance_records(
                 .unwrap_or_default();
             if let Some(selected_texture_id) = selected_texture_by_slot.get(&provenance_slot_id).copied() {
                 selected_texture_ids.insert(selected_texture_id);
+            }
+            if let Some(override_texture_ids) = override_texture_ids_by_material.get(&entry.id) {
+                selected_texture_ids.extend(override_texture_ids.iter().copied());
             }
 
             if selected_texture_ids.is_empty() {
@@ -919,6 +956,7 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     terrain_definition: &TerrainDefinitionPackage,
+    override_texture_ids: &BTreeSet<u32>,
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
@@ -935,6 +973,9 @@ fn decode_present_tiles(
     let mut ignored_source_texture_ids = Vec::new();
     let texture_ids = terrain_definition
         .land_source_texture_ids()
+        .into_iter()
+        .chain(override_texture_ids.iter().copied())
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
     let mut next_synthetic_slot_id = terrain_definition
@@ -1584,12 +1625,15 @@ mod tests {
             slot_id: 581,
             texture_id: 2000131,
         }];
-        let texture_slot_by_texture_id = HashMap::from([(2000130, 9001), (2000131, 9002)]);
+        let texture_slot_by_texture_id =
+            HashMap::from([(2000130, 9001), (2000131, 9002), (2000132, 9003)]);
+        let override_texture_ids = HashMap::from([(13, BTreeSet::from([2000132]))]);
 
         let records = build_terrain_provenance_records(
             &terrain_definition,
             &selections,
             &texture_slot_by_texture_id,
+            &override_texture_ids,
         );
 
         assert!(records.iter().any(|record| {
@@ -1603,6 +1647,12 @@ mod tests {
                 && record.alias_slot_id == 581
                 && record.selected_texture_id == 2000131
                 && record.canonical_slot_id == 9002
+        }));
+        assert!(records.iter().any(|record| {
+            record.material_id == 13
+                && record.alias_slot_id == 581
+                && record.selected_texture_id == 2000132
+                && record.canonical_slot_id == 9003
         }));
         for record in &records {
             assert_eq!(record.primary_texture_id, 2000131);
