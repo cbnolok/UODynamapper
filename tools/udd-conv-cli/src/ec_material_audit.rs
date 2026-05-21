@@ -564,6 +564,10 @@ pub fn write_ec_terrain_practical_review(
             }),
             overrides: manual_override.map(terrain_definition_override_entry_report),
             resolver_decision: resolver_decision.map(terrain_resolver_decision_report),
+            resolved_override_textures: packed_terrain
+                .as_ref()
+                .map(|package| terrain_resolved_override_texture_reports(package, entry.id))
+                .unwrap_or_default(),
             packed_provenance: packed_records.map(|records| {
                 packed_terrain_provenance_report(records, selected_layer, selected_layer_index)
             }),
@@ -1870,6 +1874,7 @@ struct TerrainPracticalReviewEntryReport {
     selected_layer: Option<TerrainSelectedLayerReport>,
     overrides: Option<TerrainDefinitionOverrideEntryReport>,
     resolver_decision: Option<TerrainResolverDecisionReport>,
+    resolved_override_textures: Vec<TerrainResolvedOverrideTextureReport>,
     packed_provenance: Option<PackedTerrainProvenanceReport>,
     recommended_next_action: &'static str,
 }
@@ -1887,6 +1892,14 @@ struct TerrainResolverDecisionReport {
     primary_selection_flags: Vec<String>,
     override_action_count: Option<u32>,
     override_action_flags: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct TerrainResolvedOverrideTextureReport {
+    role: String,
+    texture_id: u32,
+    runtime_slot_id: Option<u32>,
+    packed: bool,
 }
 
 #[derive(Serialize)]
@@ -3030,6 +3043,22 @@ fn terrain_runtime_slot_source_name(source: TexLandEcRuntimeSlotSource) -> &'sta
         TexLandEcRuntimeSlotSource::DirectAlias => "direct_alias",
         TexLandEcRuntimeSlotSource::DirectSlot => "direct_slot",
     }
+}
+
+fn terrain_resolved_override_texture_reports(
+    package: &TexLandEcPackage,
+    material_id: u32,
+) -> Vec<TerrainResolvedOverrideTextureReport> {
+    package
+        .resolve_override_texture_slots(material_id)
+        .into_iter()
+        .map(|resolved| TerrainResolvedOverrideTextureReport {
+            role: resolved.role,
+            texture_id: resolved.texture_id,
+            runtime_slot_id: resolved.runtime_slot_id,
+            packed: resolved.runtime_slot_id.is_some(),
+        })
+        .collect()
 }
 
 fn terrain_override_action_flags_vec(flags: u16) -> Vec<&'static str> {

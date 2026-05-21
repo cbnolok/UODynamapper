@@ -99,6 +99,21 @@ pub struct TexLandEcMaterialDecision {
     pub override_actions: Option<TexLandEcTerrainOverrideActions>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TexLandEcTerrainOverrideTextureRef {
+    pub material_id: u32,
+    pub role: String,
+    pub texture_id: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TexLandEcResolvedOverrideTexture {
+    pub material_id: u32,
+    pub role: String,
+    pub texture_id: u32,
+    pub runtime_slot_id: Option<u32>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexLandEcTerrainProvenanceRecord {
     pub material_id: u32,
@@ -172,6 +187,7 @@ pub struct TexLandEcPackage {
     slots: Vec<TexLandEcSlotRecord>,
     terrain_provenance: Vec<TexLandEcTerrainProvenanceRecord>,
     terrain_override_actions: HashMap<u32, TexLandEcTerrainOverrideActions>,
+    terrain_override_texture_refs: HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
 }
@@ -232,6 +248,8 @@ impl TexLandEcPackage {
         let transcode = read_transcode_from_package(&package).unwrap_or_default();
         let terrain_override_actions = read_terrain_override_actions_from_package(&package)
             .unwrap_or_default();
+        let terrain_override_texture_refs =
+            read_terrain_override_texture_refs_from_package(&package).unwrap_or_default();
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -242,6 +260,7 @@ impl TexLandEcPackage {
             slots,
             terrain_provenance,
             terrain_override_actions,
+            terrain_override_texture_refs,
             transcode,
             page_cache: AtlasPageCache::new(options),
         })
@@ -292,6 +311,38 @@ impl TexLandEcPackage {
         material_id: u32,
     ) -> Option<&TexLandEcTerrainOverrideActions> {
         self.terrain_override_actions.get(&material_id)
+    }
+
+    pub fn terrain_override_texture_refs_for(
+        &self,
+        material_id: u32,
+    ) -> &[TexLandEcTerrainOverrideTextureRef] {
+        self.terrain_override_texture_refs
+            .get(&material_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn resolve_override_texture_slots(
+        &self,
+        material_id: u32,
+    ) -> Vec<TexLandEcResolvedOverrideTexture> {
+        self.terrain_override_texture_refs_for(material_id)
+            .iter()
+            .map(|texture_ref| TexLandEcResolvedOverrideTexture {
+                material_id,
+                role: texture_ref.role.clone(),
+                texture_id: texture_ref.texture_id,
+                runtime_slot_id: self
+                    .terrain_provenance
+                    .iter()
+                    .find(|record| {
+                        record.material_id == material_id
+                            && record.selected_texture_id == texture_ref.texture_id
+                    })
+                    .and_then(|record| self.resolve_provenance_record_slot(record)),
+            })
+            .collect()
     }
 
     pub fn read_terrain_overrides_metadata(&self) -> eyre::Result<Option<Vec<u8>>> {
@@ -660,6 +711,13 @@ fn read_terrain_override_actions_from_package(
     parse_terrain_override_actions_metadata(&bytes).ok()
 }
 
+fn read_terrain_override_texture_refs_from_package(
+    package: &UddpReader,
+) -> Option<HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>> {
+    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_texture_refs_metadata(&bytes).ok()
+}
+
 fn parse_terrain_override_actions_metadata(
     bytes: &[u8],
 ) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideActions>> {
@@ -710,6 +768,75 @@ fn parse_terrain_override_actions_metadata(
     }
 
     Ok(actions)
+}
+
+fn parse_terrain_override_texture_refs_metadata(
+    bytes: &[u8],
+) -> eyre::Result<HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>> {
+    let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
+    let mut refs_by_material = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
+    let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
+        return Ok(refs_by_material);
+    };
+
+    for entry in entries {
+        let Some(material_id) = entry
+            .get("material_id")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok())
+        else {
+            continue;
+        };
+        if let Some(layers) = entry.get("layers").and_then(|value| value.as_array()) {
+            for layer in layers {
+                let Some(texture_id) = json_u32(layer, "texture_id") else {
+                    continue;
+                };
+                let role = layer
+                    .get("role")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("layer")
+                    .to_string();
+                refs_by_material
+                    .entry(material_id)
+                    .or_default()
+                    .push(TexLandEcTerrainOverrideTextureRef {
+                        material_id,
+                        role,
+                        texture_id,
+                    });
+            }
+        }
+        if let Some(textures) = entry.get("textures").and_then(|value| value.as_array()) {
+            for texture in textures {
+                let Some(texture_id) = json_u32(texture, "texture_id") else {
+                    continue;
+                };
+                let role = texture
+                    .get("role")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("texture")
+                    .to_string();
+                refs_by_material
+                    .entry(material_id)
+                    .or_default()
+                    .push(TexLandEcTerrainOverrideTextureRef {
+                        material_id,
+                        role,
+                        texture_id,
+                    });
+            }
+        }
+    }
+
+    Ok(refs_by_material)
+}
+
+fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
 }
 
 fn json_array_is_non_empty(value: &serde_json::Value, key: &str) -> bool {
@@ -809,18 +936,20 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
         bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).unwrap();
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u32::<LittleEndian>(52).unwrap();
-        bytes.write_i32::<LittleEndian>(0).unwrap();
-        bytes.write_u32::<LittleEndian>(0).unwrap();
-        bytes.write_u32::<LittleEndian>(77).unwrap();
-        bytes.write_u64::<LittleEndian>(0).unwrap();
-        bytes.write_u32::<LittleEndian>(2000520).unwrap();
-        bytes.write_u32::<LittleEndian>(100).unwrap();
-        bytes.write_u32::<LittleEndian>(2000520).unwrap();
-        bytes.write_u32::<LittleEndian>(0).unwrap();
-        bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();
-        bytes.write_u16::<LittleEndian>(TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION).unwrap();
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        for texture_id in [2000520, 2000510] {
+            bytes.write_u32::<LittleEndian>(52).unwrap();
+            bytes.write_i32::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(77).unwrap();
+            bytes.write_u64::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(texture_id).unwrap();
+            bytes.write_u32::<LittleEndian>(100).unwrap();
+            bytes.write_u32::<LittleEndian>(2000520).unwrap();
+            bytes.write_u32::<LittleEndian>(0).unwrap();
+            bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();
+            bytes.write_u16::<LittleEndian>(TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION).unwrap();
+        }
         bytes
     }
 
@@ -902,6 +1031,7 @@ mod tests {
     fn material_decision_preserves_current_slot_resolution_and_override_metadata() {
         let package = test_package();
         let decision = package.resolve_material_decision(77);
+        let override_slots = package.resolve_override_texture_slots(52);
 
         assert_eq!(package.resolve_runtime_slot_id(77), Some(100));
         assert_eq!(decision.material_id, Some(52));
@@ -914,5 +1044,9 @@ mod tests {
             decision.override_actions.map(|actions| actions.action_flags),
             Some(TERRAIN_OVERRIDE_ACTION_LAYER)
         );
+        assert_eq!(override_slots.len(), 1);
+        assert_eq!(override_slots[0].role, "t0");
+        assert_eq!(override_slots[0].texture_id, 2000510);
+        assert_eq!(override_slots[0].runtime_slot_id, Some(100));
     }
 }
