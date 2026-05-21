@@ -586,26 +586,26 @@ impl UopInspectorApp {
             }
         }
 
-        // 3. Try to load Dictionary from settings path
+        // 3. Try to load .dic hash dictionary from settings path
         if let Some(path) = self.settings.dict_path.clone() {
             self.log(format!(
                 "Trying to load dictionary from {}",
                 path.display()
             ));
-            match self.dictionary.load_bin(&path) {
+            match self.dictionary.load_dic(&path) {
                 Ok(_) => {
                     self.log(format!(
-                        "Loaded binary dictionary with {} entries",
+                        "Loaded DIC dictionary with {} named entries",
                         self.dictionary.count()
                     ));
                 }
                 Err(e) => {
-                    self.log(format!("Failed to load binary dictionary: {}", e));
+                    self.log(format!("Failed to load DIC dictionary: {}", e));
                 }
             }
         }
 
-        // 4. Always try to find .bin dicts in current folder as well
+        // 4. Always try to find .dic dicts in current folder as well
         self.load_local_dictionaries();
     }
 
@@ -628,17 +628,17 @@ impl UopInspectorApp {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bin") {
-                    self.log(format!("Found binary dictionary candidate: {}", path.display()));
-                    match self.dictionary.load_bin(&path) {
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("dic") {
+                    self.log(format!("Found DIC dictionary candidate: {}", path.display()));
+                    match self.dictionary.load_dic(&path) {
                         Ok(_) => {
                             self.log(format!(
-                                "Successfully loaded binary dictionary: {}",
+                                "Successfully loaded DIC dictionary: {}",
                                 path.display()
                             ));
                         }
                         Err(_) => {
-                            // Silently ignore if it's not a valid dict, might be another .bin file
+                            // Silently ignore if it's not a valid dictionary.
                         }
                     }
                 }

@@ -167,7 +167,7 @@ impl eframe::App for UopPopulatorApp {
                     ui.label("Dictionary File:");
                     let text = self.dictionary_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "Select/Create File...".to_string());
                     if ui.button(text).clicked() {
-                        if let Some(path) = FileDialog::new().add_filter("JSON Dictionary", &["json"]).add_filter("Text List", &["txt"]).save_file() {
+                        if let Some(path) = FileDialog::new().add_filter("DIC Dictionary", &["dic"]).save_file() {
                             self.dictionary_path = Some(path);
                             if self.dictionary_path.as_ref().unwrap().exists() {
                                 match UopDictionary::load(self.dictionary_path.as_ref().unwrap()) {

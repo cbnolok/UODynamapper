@@ -4,6 +4,7 @@ pub mod file;
 pub mod package;
 pub mod template;
 pub mod hash;
+pub mod hash_dictionary;
 pub mod hash_bruteforce;
 pub mod compression;
 

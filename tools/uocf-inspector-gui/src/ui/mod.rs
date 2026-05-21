@@ -107,7 +107,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     });
                     ui.end_row();
 
-                    ui.label("Dictionary (.bin):");
+                    ui.label("Dictionary (.dic):");
                     ui.horizontal(|ui| {
                         if let Some(path) = &app.settings.dict_path {
                             ui.label(path.display().to_string());
@@ -116,7 +116,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         }
                         if ui.button("Select...").clicked() {
                             if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("Binary Dictionary", &["bin"])
+                                .add_filter("DIC Dictionary", &["dic"])
                                 .pick_file()
                             {
                                 app.settings.dict_path = Some(path);

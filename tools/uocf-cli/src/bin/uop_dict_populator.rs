@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 
 use clap::Parser;
 use serde::Deserialize;
-use uocf::uop_container::hash;
+use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 use uocf::uop_container::template::UopTemplate;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -21,11 +21,11 @@ struct Args {
     #[arg(short, long)]
     uop_dir: PathBuf,
 
-    /// Path to the output dictionary file (JSON)
-    #[arg(short, long, default_value = "uop_dictionary.json")]
+    /// Path to the output dictionary file (.dic)
+    #[arg(short, long, default_value = "Dictionary.dic")]
     output: PathBuf,
 
-    /// Path to an existing dictionary to load first (optional)
+    /// Path to an existing .dic dictionary to load first (optional)
     #[arg(short, long)]
     input: Option<PathBuf>,
 }
@@ -51,23 +51,10 @@ fn main() -> color_eyre::eyre::Result<()> {
     let config_content = std::fs::read_to_string(&args.config)?;
     let config: PopulatorConfig = toml::from_str(&config_content)?;
 
-    // Load existing dictionary if any
-    let mut dictionary: HashMap<u64, String> = if let Some(input_path) = &args.input {
-        let content = std::fs::read_to_string(input_path)?;
-        if content.trim().starts_with('{') {
-            serde_json::from_str(&content)?
-        } else {
-            let mut dict = HashMap::new();
-            for line in content.lines() {
-                let name = line.trim();
-                if !name.is_empty() {
-                    dict.insert(hash::hash_file_name_single(name), name.to_string());
-                }
-            }
-            dict
-        }
+    let mut hash_dictionary = if let Some(input_path) = &args.input {
+        HashDictionary::load(input_path)?
     } else {
-        HashMap::new()
+        HashDictionary::new()
     };
 
     let stop_signal = Arc::new(AtomicBool::new(false));
@@ -83,7 +70,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         let package = UopPackage::load(&uop_path)?;
         let missing_hashes: HashSet<u64> = package.iter_files()
             .map(|f| f.filename_hash())
-            .filter(|h| !dictionary.contains_key(h))
+            .filter(|h| !hash_dictionary.contains(*h))
             .collect();
 
         if missing_hashes.is_empty() {
@@ -108,22 +95,20 @@ fn main() -> color_eyre::eyre::Result<()> {
                 let found = template.crack(&missing_hashes, &stop_signal);
                 for (h, s) in found {
                     println!("    Found match: 0x{:016X} -> {}", h, s);
-                    dictionary.insert(h, s);
+                    hash_dictionary.set(h, s);
                 }
                 pb.finish_and_clear();
             } else {
                 let found = template.crack(&missing_hashes, &stop_signal);
                 for (h, s) in found {
                     println!("    Found match: 0x{:016X} -> {}", h, s);
-                    dictionary.insert(h, s);
+                    hash_dictionary.set(h, s);
                 }
             }
         }
     }
 
-    // Save final dictionary
-    let json = serde_json::to_string_pretty(&dictionary)?;
-    std::fs::write(&args.output, json)?;
+    hash_dictionary.save(&args.output)?;
     println!("Saved dictionary to {}", args.output.display());
 
     Ok(())

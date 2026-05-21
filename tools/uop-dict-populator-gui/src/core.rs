@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 use uocf::uop_container::template::UopTemplate;
 
@@ -19,35 +20,27 @@ pub struct PackageConfig {
     pub range: Option<[u64; 2]>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct UopDictionary {
     pub hash_to_name: HashMap<u64, String>,
 }
 
 impl UopDictionary {
     pub fn load(path: impl AsRef<Path>) -> color_eyre::eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let dict = if content.trim().starts_with('{') {
-            serde_json::from_str(&content)?
-        } else {
-            // Assume simple text format (one name per line)
-            let mut hash_to_name = HashMap::new();
-            for line in content.lines() {
-                let name = line.trim();
-                if !name.is_empty() {
-                    let hash = uocf::uop_container::hash::hash_file_name_single(name);
-                    hash_to_name.insert(hash, name.to_string());
-                }
-            }
-            Self { hash_to_name }
-        };
-        Ok(dict)
+        let dictionary = HashDictionary::load(path.as_ref())?;
+        let hash_to_name = dictionary
+            .iter()
+            .filter_map(|(hash, name)| name.map(|name| (hash, name.to_string())))
+            .collect();
+        Ok(Self { hash_to_name })
     }
 
     pub fn save(&self, path: impl AsRef<Path>) -> color_eyre::eyre::Result<()> {
-        let json = serde_json::to_string_pretty(&self.hash_to_name)?;
-        std::fs::write(path, json)?;
-        Ok(())
+        let mut dictionary = HashDictionary::new();
+        for (hash, name) in &self.hash_to_name {
+            dictionary.set(*hash, name.as_str());
+        }
+        dictionary.save(path.as_ref())
     }
 }
 

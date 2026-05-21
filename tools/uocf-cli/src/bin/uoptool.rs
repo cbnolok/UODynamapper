@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use uocf::uop_container::file::{CompressionFlag, UopFile};
 use uocf::uop_container::hash_bruteforce;
+use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 use uocf_cli::parse_hex_u64;
 
@@ -94,6 +95,16 @@ enum Commands {
         /// Optional path to a string dictionary UOP to resolve hashes.
         #[arg(long)]
         dictionary: Option<PathBuf>,
+    },
+    /// Merge raw UOP string/hash dictionaries in DIC format.
+    MergeDic {
+        /// The merged dictionary output path.
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Raw DIC dictionary files to merge.
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
     },
 }
 
@@ -299,6 +310,33 @@ fn main() -> eyre::Result<()> {
                 count += 1;
             }
             println!("Successfully extracted {} files.", count);
+        }
+        Commands::MergeDic { output, inputs } => {
+            let mut dictionary = HashDictionary::new();
+            let mut input_entries = 0usize;
+            let mut new_hashes = 0usize;
+            let mut new_file_names = 0usize;
+            let mut duplicate_hashes = 0usize;
+            for input in inputs {
+                let incoming = HashDictionary::load(input)?;
+                println!("Loaded {} entries from {}", incoming.len(), input.display());
+                input_entries += incoming.len();
+                let report = dictionary.merge(incoming);
+                new_hashes += report.new_hashes;
+                new_file_names += report.new_file_names;
+                duplicate_hashes += report.duplicate_hashes;
+            }
+
+            dictionary.save(output)?;
+            println!(
+                "Merged {} input entries into {} unique entries at {} ({} new hashes, {} new names, {} duplicate hashes)",
+                input_entries,
+                dictionary.len(),
+                output.display(),
+                new_hashes,
+                new_file_names,
+                duplicate_hashes
+            );
         }
     }
 

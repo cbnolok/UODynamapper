@@ -46,7 +46,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         let hash = file.filename_hash();
                         let resolved_name = app.dictionary.resolve(hash);
                         let display_name = match resolved_name {
-                            Some(name) => name.clone(),
+                            Some(name) => name.to_string(),
                             None => format!("{:016X}", hash),
                         };
 
@@ -67,7 +67,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             let loaded_uop = app.uop_cache.loaded_uops[uop_idx].clone();
             if let Some(file) = loaded_uop.package.get_file_by_hash(file_hash) {
                 let hash = file.filename_hash();
-                let resolved_name = app.dictionary.resolve(hash).cloned().unwrap_or_else(|| format!("{:016X}", hash));
+                let resolved_name = app.dictionary.resolve(hash).map(str::to_string).unwrap_or_else(|| format!("{:016X}", hash));
                 
                 ui.horizontal(|ui| {
                     ui.heading("Entry Details");
