@@ -278,3 +278,107 @@ impl AnimationFrame {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use byteorder::{LittleEndian, WriteBytesExt};
+
+    fn single_frame_payload(
+        header_init_x: i16,
+        header_init_y: i16,
+        frame_init_x: i16,
+        frame_init_y: i16,
+        frame_end_x: i16,
+        frame_end_y: i16,
+        frame_bytes: &[u8],
+    ) -> Vec<u8> {
+        let colours = [
+            [255u8, 0, 0, 255],
+            [0u8, 255, 0, 255],
+        ];
+        let header_size = 40u32;
+        let colours_offset = header_size;
+        let frames_offset = colours_offset + (colours.len() as u32 * 4);
+        let image_offset = frames_offset + 16;
+        let total_size = image_offset + frame_bytes.len() as u32;
+
+        let mut bytes = Vec::with_capacity(total_size as usize);
+        bytes.extend_from_slice(b"AMO\x04");
+        bytes.write_u32::<LittleEndian>(4).unwrap();
+        bytes.write_u32::<LittleEndian>(total_size).unwrap();
+        bytes.write_u32::<LittleEndian>(42).unwrap();
+        bytes.write_i16::<LittleEndian>(header_init_x).unwrap();
+        bytes.write_i16::<LittleEndian>(header_init_y).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_end_x).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_end_y).unwrap();
+        bytes.write_u32::<LittleEndian>(colours.len() as u32).unwrap();
+        bytes.write_u32::<LittleEndian>(colours_offset).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(frames_offset).unwrap();
+
+        for colour in colours {
+            bytes.extend_from_slice(&colour);
+        }
+
+        bytes.write_u16::<LittleEndian>(9).unwrap();
+        bytes.write_u16::<LittleEndian>(11).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_init_x).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_init_y).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_end_x).unwrap();
+        bytes.write_i16::<LittleEndian>(frame_end_y).unwrap();
+        bytes.write_u32::<LittleEndian>(image_offset - frames_offset).unwrap();
+        bytes.extend_from_slice(frame_bytes);
+
+        bytes
+    }
+
+    #[test]
+    fn load_resolves_palette_frame_table_and_relative_image_offset() {
+        let payload = single_frame_payload(5, 6, 3, 4, 5, 5, &[130, 0, 0, 1]);
+
+        let animation = AnimationFrame::load(&payload).unwrap();
+
+        assert_eq!(animation.version, 4);
+        assert_eq!(animation.total_size, payload.len() as u32);
+        assert_eq!(animation.animation_id, 42);
+        assert_eq!(animation.colours, vec![[255, 0, 0, 255], [0, 255, 0, 255]]);
+        assert_eq!(animation.frames.len(), 1);
+        assert_eq!(animation.frames[0].frame, 9);
+        assert_eq!(animation.frames[0].unknown, 11);
+        assert_eq!(animation.frames[0].data_offset, 64);
+    }
+
+    #[test]
+    fn decode_frame_expands_solid_rle_pixels() {
+        let payload = single_frame_payload(5, 6, 3, 4, 5, 5, &[130, 0, 0, 1]);
+        let animation = AnimationFrame::load(&payload).unwrap();
+
+        let frame = animation.decode_frame(&animation.frames[0]).unwrap();
+
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 1);
+        assert_eq!(frame.center_x, 2);
+        assert_eq!(frame.center_y, 2);
+        assert_eq!(frame.data, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn decode_frame_handles_skips_and_partial_blend_pixels() {
+        let payload = single_frame_payload(0, 0, 0, 0, 3, 1, &[1, 129, 0x80, 1, 0]);
+        let animation = AnimationFrame::load(&payload).unwrap();
+
+        let frame = animation.decode_frame(&animation.frames[0]).unwrap();
+
+        assert_eq!(frame.width, 3);
+        assert_eq!(frame.height, 1);
+        assert_eq!(
+            frame.data,
+            vec![
+                0, 0, 0, 0,
+                0, 127, 0, 127,
+                255, 0, 0, 255,
+            ]
+        );
+    }
+}

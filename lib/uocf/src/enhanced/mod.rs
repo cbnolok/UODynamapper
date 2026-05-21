@@ -9,7 +9,6 @@ pub mod facet_decoder;
 pub mod facet_encoder;
 pub mod hues;
 pub mod localized_strings;
-pub mod mobile_animation;
 pub mod multis;
 pub mod string_dictionary;
 pub mod terrain;
