@@ -1,6 +1,6 @@
 use eframe::egui;
 use crate::app::{UopInspectorApp, ArtSource, TileMetadataSource, ViewMode};
-use uocf::enhanced::tileart::{PropertyKey, TileArtEntry};
+use uocf::enhanced::tileart::{PropertyKey, TaeAnimationAppearance, TaeSittingAnimation, TileArtEntry};
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("tex_art_cc_list")
@@ -262,6 +262,8 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                 ui.label("EC Rect");
                 ui.label("CC Rect");
                 ui.label("Textures");
+                ui.label("Sitting");
+                ui.label("Appearance");
                 ui.end_row();
 
                 for file in entries.iter() {
@@ -303,10 +305,40 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                         entry.cc_img_offset.y_off
                     ));
                     ui.label(texture_summary);
+                    ui.label(tileart_sitting_summary(entry.sitting.as_ref()));
+                    ui.label(tileart_appearance_summary(&entry.appearance_vector));
                     ui.end_row();
                 }
             });
         });
+
+        ui.separator();
+        if let Some(selected_hash) = app.selected_tileart_hash {
+            if let Some(file) = entries.iter().find(|file| file.filename_hash == selected_hash) {
+                ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
+                egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
+                    ui.label("Sitting");
+                    ui.label(tileart_sitting_summary(file.entry.sitting.as_ref()));
+                    ui.end_row();
+                    ui.label("Appearance");
+                    ui.label(tileart_appearance_summary(&file.entry.appearance_vector));
+                    ui.end_row();
+                    if let Some(sitting) = &file.entry.sitting {
+                        ui.label("Sitting Values");
+                        ui.monospace(format!(
+                            "{}, {}, {}, {}",
+                            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+                        ));
+                        ui.end_row();
+                    }
+                    for (index, appearance) in file.entry.appearance_vector.iter().enumerate() {
+                        ui.label(format!("Appearance {}", index));
+                        ui.label(tileart_appearance_detail(appearance));
+                        ui.end_row();
+                    }
+                });
+            }
+        }
     } else {
         ui.label("Select an Enhanced Client path containing tileart.uop.");
     }
@@ -363,4 +395,61 @@ fn tileart_texture_summary(app: &UopInspectorApp, entry: &TileArtEntry) -> Strin
         }
     }
     parts.join(" | ")
+}
+
+fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
+    if let Some(sitting) = sitting {
+        format!(
+            "yes ({}, {}, {}, {})",
+            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+        )
+    } else {
+        "no".to_string()
+    }
+}
+
+fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
+    if appearance.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut counts = [0usize; 2];
+    let mut other = 0usize;
+    for item in appearance {
+        match item.sub_type {
+            0 => counts[0] += 1,
+            1 => counts[1] += 1,
+            _ => other += 1,
+        }
+    }
+
+    format!(
+        "{} records (type0 {}, type1 {}, other {})",
+        appearance.len(),
+        counts[0],
+        counts[1],
+        other
+    )
+}
+
+fn tileart_appearance_detail(appearance: &TaeAnimationAppearance) -> String {
+    if let Some(sub1) = &appearance.sub1 {
+        return format!("type {}: {}, {}", appearance.sub_type, sub1.unk1, sub1.unk2);
+    }
+    if let Some(sub2) = &appearance.sub2 {
+        let pairs = sub2
+            .sub3_vector
+            .iter()
+            .map(|sub3| format!("{}:{}", sub3.unk1, sub3.unk2))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!(
+            "type {}: {} records [{}]",
+            appearance.sub_type,
+            sub2.sub_count,
+            pairs
+        );
+    }
+
+    format!("type {}: empty", appearance.sub_type)
 }

@@ -86,6 +86,8 @@ pub struct ArtData {
     pub cc_texture: Option<ArtTexture>,
     pub radar_color: TaeRadarcol,
     pub texture_items: Vec<Vec<TextureItem>>,
+    pub appearance: Vec<TaeAnimationAppearance>,
+    pub sitting: Option<TaeSittingAnimation>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -460,6 +462,8 @@ impl TileArtEntry {
         art_data.radar_color = self.radarcol.clone();
         art_data.height = self.get_property(PropertyKey::Height).unwrap_or(0) as u8;
         art_data.texture_items = self.get_texture_item_vector(string_dictionary);
+        art_data.appearance = self.appearance_vector.clone();
+        art_data.sitting = self.sitting.clone();
 
         if let Some(ec_texture_block) = self.texture_vector.get(0) {
             if ec_texture_block.has_texture == 1 {
@@ -750,5 +754,33 @@ mod tests {
             classify_texture_path("Data\\Textures\\00001234_water_alpha.dds"),
             TextureType::Textures
         );
+    }
+
+    #[test]
+    fn tileart_process_preserves_animation_and_sitting_metadata() {
+        let dictionary = dictionary_with_single_string("UOSpriteShader");
+        let entry = TileArtEntry {
+            appearance_vector: vec![TaeAnimationAppearance {
+                sub_type: 1,
+                sub1: Some(TaeAnimationAppearanceSub1 {
+                    unk1: 7,
+                    unk2: 1234,
+                }),
+                sub2: None,
+            }],
+            sitting: Some(TaeSittingAnimation {
+                unk1: 1,
+                unk2: 2,
+                unk3: 3,
+                unk4: 4,
+            }),
+            ..Default::default()
+        };
+
+        let art_data = entry.process(&dictionary);
+
+        assert_eq!(art_data.appearance.len(), 1);
+        assert_eq!(art_data.appearance[0].sub_type, 1);
+        assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.unk3), Some(3));
     }
 }
