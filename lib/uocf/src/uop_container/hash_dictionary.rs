@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -129,7 +129,13 @@ impl HashDictionary {
     }
 
     pub fn insert_unknown(&mut self, hash: u64) -> bool {
-        self.entries.insert(hash, None).is_none()
+        match self.entries.entry(hash) {
+            Entry::Vacant(entry) => {
+                entry.insert(None);
+                true
+            }
+            Entry::Occupied(_) => false,
+        }
     }
 
     pub fn contains(&self, hash: u64) -> bool {
@@ -207,44 +213,122 @@ fn write_7bit_encoded_usize(writer: &mut Vec<u8>, mut value: usize) -> eyre::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn hash_dictionary_roundtrips_dic_bytes() {
-        let mut dictionary = HashDictionary::new();
-        dictionary.set(0x818a15b51c6f3601, "build/sectors/waypoint.bin");
-        dictionary.set(0x70efc7b90345eaab, "build/animationdefinition/00000060.bin");
-        dictionary.insert_unknown(0x947f5dd64c557dd7);
+    fn hash_dictionary_reads_reference_dic_bytes() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"DIC\0");
+        bytes.push(1);
+        bytes.extend_from_slice(&0x818a15b51c6f3601u64.to_le_bytes());
+        bytes.push(1);
+        bytes.push(26);
+        bytes.extend_from_slice(b"build/sectors/waypoint.bin");
+        bytes.extend_from_slice(&0x947f5dd64c557dd7u64.to_le_bytes());
+        bytes.push(0);
 
-        let bytes = dictionary.to_bytes().expect("serialize DIC dictionary");
         let parsed = HashDictionary::from_bytes(&bytes).expect("parse DIC dictionary");
 
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed.named_len(), 1);
         assert_eq!(parsed.resolve(0x818a15b51c6f3601), Some("build/sectors/waypoint.bin"));
-        assert_eq!(
-            parsed.resolve(0x70efc7b90345eaab),
-            Some("build/animationdefinition/00000060.bin")
-        );
         assert!(parsed.contains(0x947f5dd64c557dd7));
         assert_eq!(parsed.resolve(0x947f5dd64c557dd7), None);
     }
 
     #[test]
-    fn hash_dictionary_merge_matches_reference_semantics() {
+    fn hash_dictionary_writes_reference_dic_bytes() {
+        let mut dictionary = HashDictionary::new();
+        dictionary.set(0x818a15b51c6f3601, "build/sectors/waypoint.bin");
+        dictionary.insert_unknown(0x947f5dd64c557dd7);
+
+        let bytes = dictionary.to_bytes().expect("serialize DIC dictionary");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"DIC\0");
+        expected.push(1);
+        expected.extend_from_slice(&0x818a15b51c6f3601u64.to_le_bytes());
+        expected.push(1);
+        expected.push(26);
+        expected.extend_from_slice(b"build/sectors/waypoint.bin");
+        expected.extend_from_slice(&0x947f5dd64c557dd7u64.to_le_bytes());
+        expected.push(0);
+
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn hash_dictionary_roundtrips_long_dotnet_strings() {
+        let mut dictionary = HashDictionary::new();
+        let long_name = format!("build/{}", "a".repeat(130));
+        dictionary.set(0x70efc7b90345eaab, &long_name);
+
+        let bytes = dictionary.to_bytes().expect("serialize DIC dictionary");
+        let parsed = HashDictionary::from_bytes(&bytes).expect("parse DIC dictionary");
+
+        assert_eq!(parsed.resolve(0x70efc7b90345eaab), Some(long_name.as_str()));
+    }
+
+    #[test]
+    fn hash_dictionary_save_and_load_preserves_entries() {
+        let path = temp_dic_path("save_load");
+        let mut dictionary = HashDictionary::new();
+        dictionary.set(1001, "first_entry");
+        dictionary.insert_unknown(2002);
+
+        dictionary.save(&path).expect("save DIC dictionary");
+        let loaded = HashDictionary::load(&path).expect("load DIC dictionary");
+
+        let _ = fs::remove_file(path);
+
+        assert_eq!(loaded.resolve(1001), Some("first_entry"));
+        assert!(loaded.contains(2002));
+        assert_eq!(loaded.resolve(2002), None);
+    }
+
+    #[test]
+    fn hash_dictionary_updates_unknowns_without_overwriting_names() {
+        let mut dictionary = HashDictionary::new();
+        assert!(dictionary.insert_unknown(1));
+        assert!(dictionary.set(1, "filled"));
+        assert!(!dictionary.set(1, "ignored"));
+        assert!(!dictionary.insert_unknown(1));
+
+        assert_eq!(dictionary.resolve(1), Some("filled"));
+    }
+
+    #[test]
+    fn hash_dictionary_merges_using_reference_semantics() {
         let mut base = HashDictionary::new();
         base.insert_unknown(1);
         base.set(2, "existing");
+        base.set(4, "same");
 
         let mut incoming = HashDictionary::new();
         incoming.set(1, "filled");
         incoming.set(2, "ignored");
         incoming.set(3, "new");
+        incoming.set(4, "same");
+        incoming.insert_unknown(5);
 
         let report = base.merge(incoming);
 
         assert_eq!(base.resolve(1), Some("filled"));
         assert_eq!(base.resolve(2), Some("existing"));
         assert_eq!(base.resolve(3), Some("new"));
-        assert_eq!(report.new_hashes, 1);
+        assert_eq!(base.resolve(4), Some("same"));
+        assert!(base.contains(5));
+        assert_eq!(base.resolve(5), None);
+        assert_eq!(report.new_hashes, 2);
         assert_eq!(report.new_file_names, 2);
-        assert_eq!(report.duplicate_hashes, 2);
+        assert_eq!(report.duplicate_hashes, 3);
+    }
+
+    fn temp_dic_path(test_name: &str) -> std::path::PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("uocf_hash_dictionary_{test_name}_{timestamp}.dic"))
     }
 }
