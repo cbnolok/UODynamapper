@@ -17,3 +17,4 @@ pub mod terrain_definition;
 pub mod textures;
 pub mod tile_database;
 pub mod tileart;
+pub mod waypoints;

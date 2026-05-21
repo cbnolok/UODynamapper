@@ -15,6 +15,7 @@ These files are responsible for bit-for-bit decoding of raw `.uop` blocks into i
 | `mobile_animation.rs` | `mobileanimation*.uop` | Metadata and sequences for character and creature animations. |
 | `multis.rs` | `multi.uop` | Multi-part structures (houses, ships) and their components. |
 | `facet.rs` | `facet*.uop` | Map data. Stores terrain IDs and height information in a paged block format. |
+| `waypoints.rs` | `waypoints.uop` | Raw waypoint section decoder for `build/sectors/waypoint.bin`; field semantics are still intentionally unresolved. |
 
 ## 2. Abstractions & Custom Data
 
