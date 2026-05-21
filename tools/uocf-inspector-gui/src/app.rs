@@ -120,6 +120,8 @@ pub struct UopInspectorApp {
     // Animations
     pub selected_anim_id: u32,
     pub selected_animdata_id: u32,
+    pub selected_animdata_art_source: ArtSource,
+    pub animdata_frame_delay_ms: f32,
     pub selected_anim_file_idx: u8,
     pub current_frame_idx: usize,
     pub is_playing: bool,
@@ -193,6 +195,8 @@ impl UopInspectorApp {
 
             selected_anim_id: 0,
             selected_animdata_id: 0,
+            selected_animdata_art_source: ArtSource::CcUop,
+            animdata_frame_delay_ms: 100.0,
             selected_anim_file_idx: 0,
             current_frame_idx: 0,
             is_playing: false,
@@ -917,6 +921,15 @@ impl UopInspectorApp {
         self.get_tex_art_cc_texture_from_source(ctx, art_id, self.selected_legacy_source)
     }
 
+    pub fn get_tex_art_texture_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<egui::TextureHandle> {
+        self.get_tex_art_cc_texture_from_source(ctx, art_id, source)
+    }
+
     pub fn select_raw_uop_entry(&mut self, package_name: &str, file_hash: u64) -> bool {
         let package_name = package_name.to_ascii_lowercase();
         let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
@@ -1105,6 +1118,8 @@ mod tests {
             ec_texture_previews: HashMap::new(),
             selected_anim_id: 0,
             selected_animdata_id: 0,
+            selected_animdata_art_source: ArtSource::CcUop,
+            animdata_frame_delay_ms: 100.0,
             selected_anim_file_idx: 0,
             current_frame_idx: 0,
             is_playing: false,
