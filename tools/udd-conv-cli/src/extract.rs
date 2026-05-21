@@ -156,8 +156,15 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
 
     let metadata_dir = out_dir.join("metadata");
     let terrain_overrides_metadata = package.read_terrain_overrides_metadata()?;
+    let terrain_override_entries = package.terrain_override_actions().len();
+    let resolved_override_textures = package
+        .terrain_override_actions()
+        .keys()
+        .flat_map(|material_id| package.resolve_override_texture_slots(*material_id))
+        .collect::<Vec<_>>();
+    let effective_slot_changes = package.effective_override_slot_changes();
     let summary = format!(
-        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nterrain_overrides_bytes={}\n",
+        "package=tex_land_ec\natlas_width={}\natlas_height={}\ngutter={}\npresent_slots={}\nterrain_provenance_rows={}\nterrain_overrides_bytes={}\nterrain_override_entries={}\nterrain_override_texture_refs={}\nterrain_override_texture_refs_resolved={}\neffective_slot_override_materials={}\n",
         package.atlas_width(),
         package.atlas_height(),
         package.gutter(),
@@ -167,10 +174,51 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
             .as_ref()
             .map(|bytes| bytes.len())
             .unwrap_or(0),
+        terrain_override_entries,
+        resolved_override_textures.len(),
+        resolved_override_textures
+            .iter()
+            .filter(|texture| texture.runtime_slot_id.is_some())
+            .count(),
+        effective_slot_changes.len(),
     );
     write_text_file(&metadata_dir.join("summary.txt"), &summary)?;
     if let Some(bytes) = terrain_overrides_metadata {
         std::fs::write(metadata_dir.join("terrain_overrides.json"), bytes)?;
+    }
+    if !resolved_override_textures.is_empty() {
+        let mut csv = String::from("material_id,role,texture_id,runtime_slot_id,packed\n");
+        for texture in &resolved_override_textures {
+            writeln!(
+                csv,
+                "{},{},{},{},{}",
+                texture.material_id,
+                texture.role,
+                texture.texture_id,
+                optional_u32_csv(texture.runtime_slot_id.unwrap_or(MISSING_SLOT_ID), MISSING_SLOT_ID),
+                texture.runtime_slot_id.is_some()
+            )
+            .unwrap();
+        }
+        write_text_file(&metadata_dir.join("terrain_override_textures.csv"), &csv)?;
+    }
+    if !effective_slot_changes.is_empty() {
+        let mut csv = String::from("material_id,query_tile_id,runtime_slot_id,effective_runtime_slot_id\n");
+        for change in &effective_slot_changes {
+            writeln!(
+                csv,
+                "{},{},{},{}",
+                change.material_id,
+                change.query_tile_id,
+                optional_u32_csv(change.runtime_slot_id.unwrap_or(MISSING_SLOT_ID), MISSING_SLOT_ID),
+                optional_u32_csv(
+                    change.effective_runtime_slot_id.unwrap_or(MISSING_SLOT_ID),
+                    MISSING_SLOT_ID
+                )
+            )
+            .unwrap();
+        }
+        write_text_file(&metadata_dir.join("terrain_effective_slot_changes.csv"), &csv)?;
     }
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");

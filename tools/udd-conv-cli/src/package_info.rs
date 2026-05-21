@@ -103,8 +103,21 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
 
     if let Ok(package) = TexLandEcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
+        let override_entries = package.terrain_override_actions().len();
+        let override_texture_refs = package
+            .terrain_override_actions()
+            .keys()
+            .map(|material_id| package.resolve_override_texture_slots(*material_id).len())
+            .sum::<usize>();
+        let resolved_override_texture_refs = package
+            .terrain_override_actions()
+            .keys()
+            .flat_map(|material_id| package.resolve_override_texture_slots(*material_id))
+            .filter(|texture| texture.runtime_slot_id.is_some())
+            .count();
+        let effective_slot_changes = package.effective_override_slot_changes();
         println!("Recognized package: tex_land_ec");
-        println!("Known logical files: metadata=3, textures={}", package.pages().len());
+        println!("Known logical files: metadata>=3, textures={}", package.pages().len());
         println!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
             package.atlas_width(),
@@ -115,6 +128,22 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             populated_slots
         );
         println!("Terrain provenance rows: {}", package.terrain_provenance().len());
+        println!(
+            "Terrain override metadata: entries={}, texture_refs={} (resolved={}), effective_slot_changes={}",
+            override_entries,
+            override_texture_refs,
+            resolved_override_texture_refs,
+            effective_slot_changes.len()
+        );
+        for change in effective_slot_changes.iter().take(8) {
+            println!(
+                "  material {} query {}: runtime_slot={:?} effective_slot={:?}",
+                change.material_id,
+                change.query_tile_id,
+                change.runtime_slot_id,
+                change.effective_runtime_slot_id
+            );
+        }
         return Ok(true);
     }
 

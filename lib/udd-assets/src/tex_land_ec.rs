@@ -114,6 +114,14 @@ pub struct TexLandEcResolvedOverrideTexture {
     pub runtime_slot_id: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TexLandEcEffectiveOverrideSlotChange {
+    pub material_id: u32,
+    pub query_tile_id: u32,
+    pub runtime_slot_id: Option<u32>,
+    pub effective_runtime_slot_id: Option<u32>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexLandEcTerrainProvenanceRecord {
     pub material_id: u32,
@@ -514,6 +522,35 @@ impl TexLandEcPackage {
         decision.runtime_slot_id
     }
 
+    pub fn effective_override_slot_changes(&self) -> Vec<TexLandEcEffectiveOverrideSlotChange> {
+        let mut changes = Vec::new();
+        let mut material_ids = self
+            .terrain_override_actions
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        material_ids.sort_unstable();
+        material_ids.dedup();
+
+        for material_id in material_ids {
+            let Some(query_tile_id) = self.material_query_tile_id(material_id) else {
+                continue;
+            };
+            let decision = self.resolve_material_decision(query_tile_id);
+            let effective_runtime_slot_id = self.resolve_effective_runtime_slot_id(query_tile_id);
+            if decision.runtime_slot_id != effective_runtime_slot_id {
+                changes.push(TexLandEcEffectiveOverrideSlotChange {
+                    material_id,
+                    query_tile_id,
+                    runtime_slot_id: decision.runtime_slot_id,
+                    effective_runtime_slot_id,
+                });
+            }
+        }
+
+        changes
+    }
+
     fn resolve_provenance_record_slot(
         &self,
         record: &TexLandEcTerrainProvenanceRecord,
@@ -569,6 +606,18 @@ impl TexLandEcPackage {
         }
 
         (None, None)
+    }
+
+    fn material_query_tile_id(&self, material_id: u32) -> Option<u32> {
+        self.terrain_provenance
+            .iter()
+            .filter(|record| record.material_id == material_id)
+            .filter_map(|record| {
+                (record.alias_slot_id != 0 && record.alias_slot_id != MISSING_SLOT_ID)
+                    .then_some(record.alias_slot_id)
+            })
+            .min()
+            .or(Some(material_id))
     }
 
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
@@ -1071,5 +1120,11 @@ mod tests {
         assert_eq!(override_slots[0].texture_id, 2000510);
         assert_eq!(override_slots[0].runtime_slot_id, Some(101));
         assert_eq!(package.resolve_effective_runtime_slot_id(77), Some(101));
+
+        let changes = package.effective_override_slot_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].material_id, 52);
+        assert_eq!(changes[0].runtime_slot_id, Some(100));
+        assert_eq!(changes[0].effective_runtime_slot_id, Some(101));
     }
 }
