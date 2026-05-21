@@ -216,7 +216,7 @@ fn create_land_shader_images(
                 })
                 .unwrap_or([0, 0, 0, 0]),
             LandShaderAtlasSource::Ec(package) => {
-                if let Some(slot_id) = package.resolve_material_decision(tile_id).runtime_slot_id {
+                if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
                     if let Some(slot) = package.slots().get(slot_id as usize) {
                         if slot.is_present() {
                             [

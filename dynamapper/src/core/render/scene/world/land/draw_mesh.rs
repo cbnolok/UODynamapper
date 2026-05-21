@@ -782,8 +782,7 @@ pub fn sys_draw_spawned_land_chunks(
                         .as_ref()
                         .and_then(|package| {
                             package
-                                .resolve_material_decision(id as u32)
-                                .runtime_slot_id
+                                .resolve_effective_runtime_slot_id(id as u32)
                         })
                         .map(|_| id as u32),
                 }
@@ -1421,13 +1420,14 @@ fn log_tex_land_ec_resolver_dry_run(
                 .and_then(|packed| ((*packed & 0xF) == 2).then(|| ec.resolve_runtime_slot_id(cell.id as u32)))
                 .flatten();
             let decision = ec.resolve_material_decision(cell.id as u32);
+            let effective_runtime_slot = ec.resolve_effective_runtime_slot_id(cell.id as u32);
             if decision.override_actions.is_some() {
                 override_action_visible_count += 1;
             }
             if current_runtime_slot.is_none() {
                 missing_lookup_count += 1;
             }
-            if current_runtime_slot != decision.runtime_slot_id {
+            if current_runtime_slot != effective_runtime_slot {
                 resolver_mismatch_count += 1;
                 if logged_mismatches < EC_DIAG_RESOLVER_DRY_RUN_SAMPLE_LIMIT {
                     logged_mismatches += 1;
@@ -1439,12 +1439,13 @@ fn log_tex_land_ec_resolver_dry_run(
                         LogSev::Info,
                         LogAbout::General,
                         &format!(
-                            "[EC-DIAG] resolver-dry-run mismatch world=({world_x},{world_y}) cell_id={} z={} shader_payload={} current_slot={} resolver_slot={} material_id={} primary_texture={} primary_layer={} override_actions={} source={}",
+                            "[EC-DIAG] resolver-dry-run mismatch world=({world_x},{world_y}) cell_id={} z={} shader_payload={} current_slot={} resolver_slot={} effective_slot={} material_id={} primary_texture={} primary_layer={} override_actions={} source={}",
                             cell.id,
                             cell.z,
                             optional_u32_log(shader_lookup_payload),
                             optional_u32_log(current_runtime_slot),
                             optional_u32_log(decision.runtime_slot_id),
+                            optional_u32_log(effective_runtime_slot),
                             optional_u32_log(decision.material_id),
                             optional_u32_log(decision.primary_texture_id),
                             optional_u32_log(decision.primary_layer_index),

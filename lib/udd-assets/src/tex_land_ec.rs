@@ -493,6 +493,27 @@ impl TexLandEcPackage {
         }
     }
 
+    pub fn resolve_effective_runtime_slot_id(&self, cc_tile_id: u32) -> Option<u32> {
+        let decision = self.resolve_material_decision(cc_tile_id);
+        if let Some(material_id) = decision.material_id {
+            if let Some(slot_id) = self
+                .resolve_override_texture_slots(material_id)
+                .into_iter()
+                .find(|texture| {
+                    matches!(
+                        texture.role.as_str(),
+                        "base" | "t0" | "diffuse" | "albedo"
+                    )
+                })
+                .and_then(|texture| texture.runtime_slot_id)
+            {
+                return Some(slot_id);
+            }
+        }
+
+        decision.runtime_slot_id
+    }
+
     fn resolve_provenance_record_slot(
         &self,
         record: &TexLandEcTerrainProvenanceRecord,
@@ -908,10 +929,10 @@ mod tests {
         bytes.write_u32::<LittleEndian>(64).unwrap();
         bytes.write_u32::<LittleEndian>(1).unwrap();
         bytes.write_u8(AtlasPackingMode::MaximumPacking as u8).unwrap();
-        bytes.write_u32::<LittleEndian>(101).unwrap();
-        for art_id in 0..=100u32 {
+        bytes.write_u32::<LittleEndian>(102).unwrap();
+        for art_id in 0..=101u32 {
             bytes.write_u32::<LittleEndian>(art_id).unwrap();
-            if art_id == 77 || art_id == 100 {
+            if art_id == 77 || art_id == 100 || art_id == 101 {
                 bytes.write_u32::<LittleEndian>(0).unwrap();
                 bytes.write_u16::<LittleEndian>(0).unwrap();
                 bytes.write_u16::<LittleEndian>(SLOT_FLAG_PRESENT | SLOT_FLAG_LAND).unwrap();
@@ -938,13 +959,14 @@ mod tests {
         bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).unwrap();
         bytes.write_u32::<LittleEndian>(2).unwrap();
         for texture_id in [2000520, 2000510] {
+            let canonical_slot_id = if texture_id == 2000510 { 101 } else { 100 };
             bytes.write_u32::<LittleEndian>(52).unwrap();
             bytes.write_i32::<LittleEndian>(0).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
             bytes.write_u32::<LittleEndian>(77).unwrap();
             bytes.write_u64::<LittleEndian>(0).unwrap();
             bytes.write_u32::<LittleEndian>(texture_id).unwrap();
-            bytes.write_u32::<LittleEndian>(100).unwrap();
+            bytes.write_u32::<LittleEndian>(canonical_slot_id).unwrap();
             bytes.write_u32::<LittleEndian>(2000520).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
             bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();
@@ -1047,6 +1069,7 @@ mod tests {
         assert_eq!(override_slots.len(), 1);
         assert_eq!(override_slots[0].role, "t0");
         assert_eq!(override_slots[0].texture_id, 2000510);
-        assert_eq!(override_slots[0].runtime_slot_id, Some(100));
+        assert_eq!(override_slots[0].runtime_slot_id, Some(101));
+        assert_eq!(package.resolve_effective_runtime_slot_id(77), Some(101));
     }
 }
