@@ -7,6 +7,7 @@
 //
 // G channel high-byte bit layout (set by Rg16u::pack on the Rust side):
 //   bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
+//   bits 4-6: reviewed EC terrain flags
 //   bit  7:   is_wet flag (tile has IsWet in tiledata.mul)
 // ============================================================================
 
@@ -56,11 +57,13 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
   let z_i32 = i32(height_biased) - 128;
   let tile_height = f32(z_i32) * 0.1;
 
-  // G channel high byte: terrain texture source/mode and water flag.
+  // G channel high byte: terrain texture source/mode, reviewed EC flags, and water flag.
   // Bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas).
+  // Bits 4-6: reviewed EC terrain flags (bit 0=smooth, bit 1=follow-center, bit 2=liquid).
   // Bit 7:    is_wet flag (tile has IsWet in tiledata.mul).
   let g_high  = (g >> 8u) & 0xFFu;
   let tex_size = g_high & 0x0Fu;          // lower nibble = source mode
+  let terrain_flags = (g_high >> 4u) & 0x7u;
   let is_wet   = (g_high >> 7u) & 0x1u;  // bit 7 = animated water flag
 
   if (tex_size == 2u || tex_size == 4u) {
@@ -75,7 +78,7 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
     let h = packed_wh >> 16u;
 
     if (w == 0u && h == 0u) {
-      return TileUniform(tile_height, 3u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), is_wet, 0u);
+      return TileUniform(tile_height, 3u, 0u, 0u, vec2<u32>(0u, 0u), vec2<u32>(0u, 0u), is_wet, terrain_flags);
     }
 
     return TileUniform(
@@ -86,11 +89,11 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
       vec2<u32>(slot.y, slot.z),
       vec2<u32>(w, h),
       is_wet,
-      0u,
+      terrain_flags,
     );
   }
 
-  return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u), is_wet, 0u);
+  return TileUniform(tile_height, tex_size, texture_payload, 0u, vec2<u32>(0u), vec2<u32>(0u), is_wet, terrain_flags);
 }
 
 // Convenience wrapper: just return the world-space Y height for a tile.

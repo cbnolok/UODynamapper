@@ -200,7 +200,10 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
     }
 }
 
-use crate::core::render::scene::world::land::tile_atlas::{Rg16u, TileAtlas};
+use crate::core::render::scene::world::land::tile_atlas::{
+    Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_FOLLOW_CENTER, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
+    TERRAIN_SHADER_FLAG_SMOOTH,
+};
 
 #[derive(Component)]
 pub struct PendingTextureBake;
@@ -216,6 +219,7 @@ pub struct LandMeshScratch {
     missing_tile_bits: [u64; LandTextureCache::TILE_BITSET_SIZE],
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
+    terrain_shader_flags_cache: Vec<u16>,
     /// Reusable bitmask for deduplicating uncached block coordinates.
     dedup_bits: Vec<u64>,
 }
@@ -227,6 +231,7 @@ impl Default for LandMeshScratch {
             missing_tile_bits: [0u64; LandTextureCache::TILE_BITSET_SIZE],
             ids: Vec::new(),
             texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
+            terrain_shader_flags_cache: vec![0; LandTextureCache::MAX_TILE_ID],
             dedup_bits: Vec::new(),
         }
     }
@@ -406,6 +411,7 @@ pub fn sys_draw_spawned_land_chunks(
         let _span = crate::tracy_span!("worldmap::chunk_draw_collect_targets");
         scratch.blocks_to_draw.clear();
         scratch.texture_lookup_cache.fill(u32::MAX);
+        scratch.terrain_shader_flags_cache.fill(0);
         scratch.missing_tile_bits.fill(0);
         scratch.ids.clear();
 
@@ -689,6 +695,7 @@ pub fn sys_draw_spawned_land_chunks(
     let LandMeshScratch {
         missing_tile_bits,
         texture_lookup_cache,
+        terrain_shader_flags_cache,
         ids,
         ..
     } = &mut *scratch;
@@ -807,6 +814,15 @@ pub fn sys_draw_spawned_land_chunks(
                 };
                 texture_lookup_cache[id as usize] = (layer << 4) | mode;
             }
+
+            terrain_shader_flags_cache[id as usize] = match frame_pacing.settings.graphics.land_texture_source {
+                crate::configs::settings::ClientTextureSource::Ec => cache_r
+                    .tex_land_ec
+                    .as_ref()
+                    .map(|package| ec_terrain_shader_flags(package, id as u32))
+                    .unwrap_or(0),
+                crate::configs::settings::ClientTextureSource::Cc => 0,
+            };
         }
 
         // ── EC land diagnostics (one-shot per launch) ────────────────────────
@@ -883,9 +899,10 @@ pub fn sys_draw_spawned_land_chunks(
         let _span = crate::tracy_span!("worldmap::chunk_draw_build_chunk_payloads");
         pool.scope(|s| {
             for (target_idx, chunk_data) in ready_targets.iter().enumerate() {
-                // Because texture_lookup_cache and wet_bits are populated and read-only, we
-                // can share raw pointers to their data safely across async tasks.
+                // Because the lookup caches are populated and read-only, we can share raw
+                // pointers to their data safely across async tasks.
                 let lookup_ptr = texture_lookup_cache.as_ptr() as usize;
+                let terrain_flags_ptr = terrain_shader_flags_cache.as_ptr() as usize;
                 let wet_ptr = wet_bits.as_ptr() as usize;
 
                 s.spawn(async move {
@@ -904,6 +921,12 @@ pub fn sys_draw_spawned_land_chunks(
                     let lookup_slice = unsafe {
                         std::slice::from_raw_parts(
                             lookup_ptr as *const u32,
+                            LandTextureCache::MAX_TILE_ID,
+                        )
+                    };
+                    let terrain_flags_slice = unsafe {
+                        std::slice::from_raw_parts(
+                            terrain_flags_ptr as *const u16,
                             LandTextureCache::MAX_TILE_ID,
                         )
                     };
@@ -953,8 +976,17 @@ pub fn sys_draw_spawned_land_chunks(
                                 // Look up whether this land tile has the IsWet flag.
                                 let is_wet =
                                     wet_slice.get(cell.id as usize).copied().unwrap_or(0) != 0;
-                                texels_local[texel_count] =
-                                    Rg16u::pack(payload as u16, cell.z, mode as u16, is_wet);
+                                let terrain_flags = terrain_flags_slice
+                                    .get(cell.id as usize)
+                                    .copied()
+                                    .unwrap_or(0);
+                                texels_local[texel_count] = Rg16u::pack(
+                                    payload as u16,
+                                    cell.z,
+                                    mode as u16,
+                                    is_wet,
+                                    terrain_flags,
+                                );
                                 texel_count += 1;
                             }
 
@@ -1280,7 +1312,8 @@ fn log_tex_land_ec_diagnostics(
 
                         let mode = packed & 0xF;
                         let payload = packed >> 4;
-                        let meta_texel = Rg16u::pack(payload as u16, cell.z, mode as u16, false);
+                        let meta_texel =
+                            Rg16u::pack(payload as u16, cell.z, mode as u16, false, 0);
                         let (source, normalized_id, resolved_slot) = resolve_source(cell.id as u32);
                         let authoritative_slot = match mode {
                             2 | 4 => Some(payload),
@@ -1483,6 +1516,31 @@ fn current_ec_lookup_payload(packed: u32) -> Option<u32> {
         2 | 4 => Some(packed >> 4),
         _ => None,
     }
+}
+
+fn ec_terrain_shader_flags(
+    package: &udd_assets::tex_land_ec::TexLandEcPackage,
+    tile_id: u32,
+) -> u16 {
+    let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
+        return 0;
+    };
+    let Some(details) = package.terrain_override_details_for(material_id) else {
+        return 0;
+    };
+
+    let mut flags = 0u16;
+    for policy in &details.policies {
+        match policy.policy.as_str() {
+            "smooth" => flags |= TERRAIN_SHADER_FLAG_SMOOTH,
+            "follow-center" => flags |= TERRAIN_SHADER_FLAG_FOLLOW_CENTER,
+            _ => {}
+        }
+    }
+    if details.liquid.is_some() {
+        flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
+    }
+    flags
 }
 
 fn optional_u32_log(value: Option<u32>) -> String {

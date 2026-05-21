@@ -52,6 +52,8 @@
 //  - For Classic mode (0) pre-bakes the Lambert term into uv_b.x (Gouraud).
 // ============================================================================
 
+const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
+
 @vertex
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
   var out: VertexOutput;
@@ -177,7 +179,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // The distortion breathes the sampled UV region slightly larger than 1.0,
   // creating a gentle wavy appearance (faithful port of ClassicUO's formula).
   // Skipped at high zoom where individual tiles are sub-pixel (already gated above).
-  if (enable_water == 1u && tile.is_wet == 1u) {
+  let reviewed_liquid = (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  if (enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid)) {
     uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
   }
 

@@ -15,7 +15,8 @@ struct TileUniform {
   texture_extent: vec2<u32>,
   // 1 when the tile has the IsWet tiledata flag set (animated water effect).
   is_wet: u32,
-  _pad_tu: u32,
+  // Reviewed EC terrain hints packed by the CPU: bit 0=smooth, bit 1=follow-center, bit 2=liquid.
+  terrain_flags: u32,
 };
 
 // Parameters for the LRU paged tile metadata atlas.
