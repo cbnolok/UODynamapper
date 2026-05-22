@@ -95,7 +95,7 @@ fn ec_slot_world_uv(world_xz: vec2<f32>, slot: LandLookupSlot) -> vec2<f32> {
   return fract(world_xz / stretch);
 }
 
-fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
+fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> {
   let layer: i32 = i32(slot.texture_layer);
   let tile_dims = max(vec2<f32>(slot.texture_extent), vec2<f32>(1.0));
   let use_linear = effects.enable_linear_filtering == 1u;
@@ -104,12 +104,22 @@ fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
     let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
     let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
-    return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
+    return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer);
   }
 
   let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(slot.texture_extent) - 1);
   let atlas_iuv = vec2<i32>(slot.texture_origin) + local_iuv;
-  return textureLoad(land_page_atlas, atlas_iuv, layer, 0).rgb;
+  return textureLoad(land_page_atlas, atlas_iuv, layer, 0);
+}
+
+fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
+  return sample_ec_lookup_slot_rgba(uv, slot).rgb;
+}
+
+fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
+  let rgb_luma = dot(mask_sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let alpha_has_signal = abs(mask_sample.a - 1.0) > 0.001;
+  return clamp(select(rgb_luma, mask_sample.a, alpha_has_signal), 0.0, 1.0);
 }
 
 fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
@@ -123,8 +133,12 @@ fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Tile
   let detail_uv = ec_slot_world_uv(world_xz, detail);
   let mask_uv = ec_slot_world_uv(world_xz, mask);
   let detail_color = sample_ec_lookup_slot(detail_uv, detail);
-  let mask_value = sample_ec_lookup_slot(mask_uv, mask).r;
-  return mix(base, detail_color, clamp(mask_value, 0.0, 1.0));
+  let mask_value = ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask));
+  return mix(base, detail_color, mask_value);
+}
+
+fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+  return sample_ec_material_albedo(world_xz, ec_world_uv(world_xz, tile), tile);
 }
 
 // ============================================================================

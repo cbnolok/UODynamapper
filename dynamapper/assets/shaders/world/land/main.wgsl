@@ -37,6 +37,7 @@
   ec_world_uv,
   sample_tile_albedo,
   sample_ec_material_albedo,
+  sample_ec_material_albedo_at_world,
   apply_sharpening, blurred_albedo,
 }
 #import "shaders/world/land/shading.wgsl"::{
@@ -54,6 +55,117 @@
 // ============================================================================
 
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
+const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.34;
+
+fn ec_transition_edge_weight(edge_distance: f32) -> f32 {
+  return 1.0 - smoothstep(0.0, EC_TERRAIN_TRANSITION_WIDTH, edge_distance);
+}
+
+fn ec_transition_neighbor_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f32 {
+  var weight = 0.0;
+
+  if (offset.x < 0) {
+    weight = max(weight, ec_transition_edge_weight(uv_in_tile.x));
+  } else if (offset.x > 0) {
+    weight = max(weight, ec_transition_edge_weight(1.0 - uv_in_tile.x));
+  }
+
+  if (offset.y < 0) {
+    weight = max(weight, ec_transition_edge_weight(uv_in_tile.y));
+  } else if (offset.y > 0) {
+    weight = max(weight, ec_transition_edge_weight(1.0 - uv_in_tile.y));
+  }
+
+  return weight;
+}
+
+fn ec_transition_neighbor_color(
+  current_tile: TileUniform,
+  neighbor_tile: TileUniform,
+  world_xz: vec2<f32>,
+  base_color: vec3<f32>,
+  weight: f32,
+) -> vec4<f32> {
+  if (weight <= 0.0 || neighbor_tile.texture_size != 2u) {
+    return vec4<f32>(base_color, 0.0);
+  }
+
+  if (neighbor_tile.texture_payload == current_tile.texture_payload) {
+    return vec4<f32>(base_color, 0.0);
+  }
+
+  if (neighbor_tile.texture_extent.x == 0u || neighbor_tile.texture_extent.y == 0u) {
+    return vec4<f32>(base_color, 0.0);
+  }
+
+  return vec4<f32>(sample_ec_material_albedo_at_world(world_xz, neighbor_tile), weight);
+}
+
+fn blend_ec_terrain_transitions(
+  base_color: vec3<f32>,
+  current_tile: TileUniform,
+  world_tile: vec2<i32>,
+  world_xz: vec2<f32>,
+  uv_in_tile: vec2<f32>,
+) -> vec3<f32> {
+  if (current_tile.texture_size != 2u || current_tile.is_wet == 1u) {
+    return base_color;
+  }
+
+  if ((current_tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u) {
+    return base_color;
+  }
+
+  var accum = base_color;
+  var total_weight = 1.0;
+
+  let west_offset = vec2<i32>(-1, 0);
+  let east_offset = vec2<i32>(1, 0);
+  let north_offset = vec2<i32>(0, -1);
+  let south_offset = vec2<i32>(0, 1);
+
+  let west = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x - 1, world_tile.y),
+    world_xz,
+    base_color,
+    ec_transition_neighbor_weight(west_offset, uv_in_tile),
+  );
+  accum += west.rgb * west.a;
+  total_weight += west.a;
+
+  let east = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x + 1, world_tile.y),
+    world_xz,
+    base_color,
+    ec_transition_neighbor_weight(east_offset, uv_in_tile),
+  );
+  accum += east.rgb * east.a;
+  total_weight += east.a;
+
+  let north = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x, world_tile.y - 1),
+    world_xz,
+    base_color,
+    ec_transition_neighbor_weight(north_offset, uv_in_tile),
+  );
+  accum += north.rgb * north.a;
+  total_weight += north.a;
+
+  let south = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x, world_tile.y + 1),
+    world_xz,
+    base_color,
+    ec_transition_neighbor_weight(south_offset, uv_in_tile),
+  );
+  accum += south.rgb * south.a;
+  total_weight += south.a;
+
+  return accum / max(total_weight, 0.0001);
+}
 
 @vertex
 fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -173,7 +285,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   // Local UV (fractional position within the current tile, in [0,1))
   var uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
-  let tile = atlas_read_meta(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
+  let world_tile = vec2<i32>(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
+  let tile = atlas_read_meta(world_tile.x, world_tile.y);
 
   // ---- Animated water ----
   // Apply sin/cos UV distortion to tiles with the IsWet tiledata flag.
@@ -246,6 +359,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (tile.texture_size == 2u) {
       let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
       base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile);
+      base_albedo = blend_ec_terrain_transitions(
+        base_albedo,
+        tile,
+        world_tile,
+        world_xz,
+        uv_in_tile,
+      );
     } else {
       base_albedo = sample_tile_albedo(sample_uv, tile);
     }
