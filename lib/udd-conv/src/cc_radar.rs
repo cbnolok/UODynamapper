@@ -12,6 +12,10 @@ use crate::bc7::{
     encode_to_bc7, preferred_bc7_encoder_backend, Bc7EncoderBackend, Bc7TextureData, ImageExtent,
     RawImageFormat,
 };
+use crate::classic_patches::{
+    load_map_diff_if_enabled, load_static_diff_if_enabled, load_verdata_if_enabled,
+    ClassicPatchOptions,
+};
 use crate::source_paths::find_first_existing_file;
 use udd_assets::TileMetaPackage;
 use uocf::classic::hues::load_hues;
@@ -48,12 +52,14 @@ impl RadarFormat {
 pub struct RadarBuildOptions {
     pub format: RadarFormat,
     pub zstd_level: i32,
+    pub classic_patches: ClassicPatchOptions,
 }
 
 fn build_radar_rgba_pixels(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
     map_id: u32,
+    patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<(u32, u32, Vec<u8>)> {
     // 1. Locate source files
     let map_file_name = format!("map{}.mul", map_id);
@@ -78,13 +84,26 @@ fn build_radar_rgba_pixels(
     let hues = load_hues(&hues_path)?;
 
     println!("Initializing MapPlane...");
-    let mut plane = MapPlane::init(map_path, map_id)?;
+    let mut plane = if let Some(map_diff) = load_map_diff_if_enabled(source_dirs, map_id, patch_options)? {
+        MapPlane::init_with_diff(map_path, map_id, map_diff)?
+    } else {
+        MapPlane::init(map_path, map_id)?
+    };
+    if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+        plane = plane.with_verdata(verdata);
+    }
     let width_tiles = plane.size_cells().width;
     let height_tiles = plane.size_cells().height;
 
     println!("Loading all statics into memory...");
-    let statics_reader =
-        StaticsReader::new(&staidx_path, &statics_path, width_tiles, height_tiles)?;
+    let statics_reader = StaticsReader::new_with_patches(
+        &staidx_path,
+        &statics_path,
+        width_tiles,
+        height_tiles,
+        load_static_diff_if_enabled(source_dirs, map_id, patch_options)?,
+        load_verdata_if_enabled(source_dirs, patch_options)?,
+    )?;
     let statics_store = statics_reader.load_all()?;
 
     println!(
@@ -196,8 +215,22 @@ pub fn build_facet_radar_bc7(
     tilemeta_path: &Path,
     map_id: u32,
 ) -> eyre::Result<Bc7TextureData> {
+    build_facet_radar_bc7_with_patches(
+        source_dirs,
+        tilemeta_path,
+        map_id,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn build_facet_radar_bc7_with_patches(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<Bc7TextureData> {
     let (width_tiles, height_tiles, rgba_pixels) =
-        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id)?;
+        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id, patch_options)?;
     build_radar_bc7_from_rgba(width_tiles, height_tiles, &rgba_pixels)
 }
 
@@ -228,7 +261,7 @@ pub fn build_facet_radar_dds(
     options: &RadarBuildOptions,
 ) -> eyre::Result<()> {
     let (width_tiles, height_tiles, rgba_pixels) =
-        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id)?;
+        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id, &options.classic_patches)?;
 
     match options.format {
         RadarFormat::Bc7 => {

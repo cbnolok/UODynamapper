@@ -9,12 +9,13 @@ use crate::ec_material_audit::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
 use udd_conv::{
-    cc_map::{convert_map_mul_to_uddp_from_sources, CcMapSourcePreference},
-    cc_statics::convert_statics_mul_to_uddp_from_sources,
+    classic_patches::ClassicPatchOptions,
+    cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
+    cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
     hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
     source_paths::{gather_source_dirs, resolve_output_path},
     tex_art_cc::{
-        convert_art_mul_to_tex_art_cc_uddp_from_sources, TexArtCcAtlasOptions,
+        convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, TexArtCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_DEFAULT_ATLAS_PAGE_WIDTH,
@@ -26,7 +27,7 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_WIDTH as EC_ART_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     tex_land_cc::{
-        convert_texmaps_mul_to_tex_land_cc_uddp, TexLandCcAtlasOptions,
+        convert_texmaps_mul_to_tex_land_cc_uddp_with_patches, TexLandCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_TEXMAPS_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH,
@@ -60,6 +61,26 @@ struct SourceDirArgs {
     ccdir: Option<PathBuf>,
     #[arg(long)]
     ecdir: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Copy, Debug, Default)]
+struct ClassicPatchArgs {
+    #[arg(long = "include-verdata", default_value_t = false, help = "Include verdata.mul patches when present.")]
+    include_verdata: bool,
+    #[arg(long = "include-map-difs", default_value_t = false, help = "Include mapdif/mapdifl patch files when present.")]
+    include_map_difs: bool,
+    #[arg(long = "include-static-difs", default_value_t = false, help = "Include stadif/stadifi/stadifl patch files when present.")]
+    include_static_difs: bool,
+}
+
+impl From<ClassicPatchArgs> for ClassicPatchOptions {
+    fn from(value: ClassicPatchArgs) -> Self {
+        Self {
+            verdata: value.include_verdata,
+            map_difs: value.include_map_difs,
+            static_difs: value.include_static_difs,
+        }
+    }
 }
 
 fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
@@ -200,6 +221,8 @@ enum Commands {
     PackArt {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tex_art_cc.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_PAGE_WIDTH)]
@@ -235,6 +258,8 @@ enum Commands {
     PackTexmaps {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tex_land_cc.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = CC_TEXMAPS_DEFAULT_ATLAS_PAGE_WIDTH)]
@@ -418,6 +443,8 @@ enum Commands {
     PackTilemeta {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tilemeta.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = false)]
@@ -429,6 +456,8 @@ enum Commands {
     PackRadar {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long)]
         map_id: u32,
         #[arg(long = "uddpdir")]
@@ -448,6 +477,8 @@ enum Commands {
     PackMap {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long)]
         map_id: u32,
         #[arg(long)]
@@ -459,6 +490,8 @@ enum Commands {
     PackStatics {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long)]
         map_id: u32,
         #[arg(long)]
@@ -468,6 +501,8 @@ enum Commands {
     PackLights {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "world_lights.uddp")]
         output: PathBuf,
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
@@ -491,6 +526,7 @@ pub fn run() -> eyre::Result<()> {
     match Cli::parse().command {
         Commands::PackArt {
             source_dirs: source_dir_args,
+            classic_patches,
             output,
             atlas_width,
             atlas_height,
@@ -512,7 +548,7 @@ pub fn run() -> eyre::Result<()> {
             } else {
                 CompressionFlag::ZstdNoDict
             };
-            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources(
+            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
                 &TexArtCcAtlasOptions {
@@ -528,6 +564,7 @@ pub fn run() -> eyre::Result<()> {
                     },
                     packing_mode: packing_mode.into(),
                 },
+                &classic_patches.into(),
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
@@ -540,6 +577,7 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackTexmaps {
             source_dirs: source_dir_args,
+            classic_patches,
             output,
             atlas_width,
             atlas_height,
@@ -555,7 +593,7 @@ pub fn run() -> eyre::Result<()> {
             } else {
                 CompressionFlag::ZstdNoDict
             };
-            let summary = convert_texmaps_mul_to_tex_land_cc_uddp(
+            let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
                 &TexLandCcAtlasOptions {
@@ -578,6 +616,7 @@ pub fn run() -> eyre::Result<()> {
                     },
                     packing_mode: packing_mode.into(),
                 },
+                &classic_patches.into(),
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
@@ -820,6 +859,7 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
+            classic_patches,
             output,
             ec_art_cropped,
             use_ec_radarcol,
@@ -829,6 +869,7 @@ pub fn run() -> eyre::Result<()> {
             let options = TileMetaBuildOptions {
                 adjust_tex_art_ec_sampling: ec_art_cropped,
                 use_ec_radarcol,
+                classic_patches: classic_patches.into(),
             };
             match (source_dir_args.ccdir.as_ref(), source_dir_args.ecdir.as_ref()) {
                 (Some(ccdir), Some(ecdir)) => {
@@ -842,6 +883,7 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackMap {
             source_dirs: source_dir_args,
+            classic_patches,
             map_id,
             output,
             uop,
@@ -849,7 +891,7 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("map{}.uddp", map_id));
             let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
-            let summary = convert_map_mul_to_uddp_from_sources(
+            let summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
                 map_id,
@@ -858,6 +900,7 @@ pub fn run() -> eyre::Result<()> {
                 } else {
                     CcMapSourcePreference::Mul
                 },
+                &classic_patches.into(),
             )?;
             println!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
@@ -870,13 +913,19 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackStatics {
             source_dirs: source_dir_args,
+            classic_patches,
             map_id,
             output,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
             let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
-            let summary = convert_statics_mul_to_uddp_from_sources(&paths, &out_file, map_id)?;
+            let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
+                &paths,
+                &out_file,
+                map_id,
+                &classic_patches.into(),
+            )?;
             println!(
                 "Wrote {} chunks with {} total statics for map {} to '{}'.",
                 summary.chunk_count,
@@ -887,6 +936,7 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackRadar {
             source_dirs: source_dir_args,
+            classic_patches,
             map_id,
             uddp_dir,
             outdir,
@@ -917,12 +967,13 @@ pub fn run() -> eyre::Result<()> {
             let tilemeta_path = find_raw_tilemeta_package(&uddp_dir)?;
 
             if radar_format == udd_conv::cc_radar::RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2(
+                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
                     &paths,
                     &tilemeta_path,
                     &out_file,
                     map_id,
                     zstd_level,
+                    &classic_patches.into(),
                 )?;
             } else {
                 udd_conv::cc_radar::build_facet_radar_dds(
@@ -933,12 +984,14 @@ pub fn run() -> eyre::Result<()> {
                     &udd_conv::cc_radar::RadarBuildOptions {
                         format: radar_format,
                         zstd_level,
+                        classic_patches: classic_patches.into(),
                     },
                 )?;
             }
         }
         Commands::PackLights {
             source_dirs: source_dir_args,
+            classic_patches,
             output,
             no_compression,
         } => {
@@ -953,7 +1006,10 @@ pub fn run() -> eyre::Result<()> {
                 source_dir_args.ccdir.as_deref(),
                 source_dir_args.ecdir.as_deref(),
                 &out_file,
-                &WorldLightsOptions { compression },
+                &WorldLightsOptions {
+                    compression,
+                    classic_patches: classic_patches.into(),
+                },
             )?;
             println!("Wrote world_lights.uddp to '{}'.", out_file.display());
         }

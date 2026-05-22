@@ -5,6 +5,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, Context};
 use log::info;
 
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use uocf::classic::light::LightMap;
 use udd_assets::world_lights::{
     light_entry_path, WorldLightSlotRecord, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH,
@@ -15,12 +16,14 @@ use crate::package_progress::build_and_write_package;
 
 pub struct WorldLightsOptions {
     pub compression: CompressionFlag,
+    pub classic_patches: ClassicPatchOptions,
 }
 
 impl Default for WorldLightsOptions {
     fn default() -> Self {
         Self {
             compression: CompressionFlag::ZstdNoDict,
+            classic_patches: ClassicPatchOptions::NONE,
         }
     }
 }
@@ -33,7 +36,15 @@ pub fn convert_client_lights_to_world_lights_uddp(
 ) -> eyre::Result<()> {
     info!("Converting World Lights to {}", out_file.display());
 
-    let light_map = LightMap::load(cc_path, ec_path).wrap_err("Failed to load client lights")?;
+    let cc_source_dirs: Vec<_> = cc_path.iter().map(|path| path.to_path_buf()).collect();
+    let light_map = if let Some(verdata) =
+        load_verdata_if_enabled(&cc_source_dirs, &options.classic_patches)?
+    {
+        LightMap::load_with_verdata(cc_path, ec_path, verdata)
+    } else {
+        LightMap::load(cc_path, ec_path)
+    }
+    .wrap_err("Failed to load client lights")?;
 
     let mut slots = Vec::new();
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);

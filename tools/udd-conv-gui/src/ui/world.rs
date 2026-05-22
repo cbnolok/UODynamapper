@@ -35,6 +35,12 @@ impl UddConvApp {
                             );
                         });
                 });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Classic patch files:");
+                    ui.checkbox(&mut self.settings.include_verdata, "verdata.mul");
+                    ui.checkbox(&mut self.settings.include_map_difs, "map difs");
+                    ui.checkbox(&mut self.settings.include_static_difs, "static difs");
+                });
             });
 
             ui.add_space(10.0);

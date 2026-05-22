@@ -45,6 +45,20 @@ impl UddConvApp {
             });
             ui.add_space(10.0);
 
+            ui.group(|ui| {
+                ui.label(
+                    egui::RichText::new("Classic patch files")
+                        .strong()
+                        .color(egui::Color32::from_rgb(255, 210, 120)),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.settings.include_verdata, "verdata.mul");
+                    ui.checkbox(&mut self.settings.include_map_difs, "map difs");
+                    ui.checkbox(&mut self.settings.include_static_difs, "static difs");
+                });
+            });
+            ui.add_space(10.0);
+
             let is_busy = *self.is_converting.lock().unwrap();
 
             ui.add_enabled_ui(!is_busy, |ui| {

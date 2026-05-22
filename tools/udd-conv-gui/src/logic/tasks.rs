@@ -1,13 +1,14 @@
 use color_eyre::eyre;
 use udd_conv::{
     AtlasPackingMode,
-    tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
+    classic_patches::ClassicPatchOptions,
+    tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources},
-    cc_map::convert_map_mul_to_uddp_from_sources,
-    cc_statics::convert_statics_mul_to_uddp_from_sources,
-    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp},
+    cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
+    cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
+    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
     CompressionFlag,
@@ -25,6 +26,14 @@ fn atlas_packing_mode(setting: AtlasPackingModeSetting) -> AtlasPackingMode {
     match setting {
         AtlasPackingModeSetting::MaximumPacking => AtlasPackingMode::MaximumPacking,
         AtlasPackingModeSetting::Bc7Oriented => AtlasPackingMode::Bc7Oriented,
+    }
+}
+
+fn classic_patch_options(settings: &crate::models::AppSettings) -> ClassicPatchOptions {
+    ClassicPatchOptions {
+        verdata: settings.include_verdata,
+        map_difs: settings.include_map_difs,
+        static_difs: settings.include_static_difs,
     }
 }
 
@@ -97,7 +106,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources(
+            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &sources, &output,
                 &TexArtCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -111,6 +120,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_art_cc),
                 },
+                &classic_patch_options(&settings),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -130,7 +140,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_texmaps_mul_to_tex_land_cc_uddp(
+            let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &sources[0], &output,
                 &TexLandCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -145,6 +155,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_cc),
                 },
+                &classic_patch_options(&settings),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -233,6 +244,7 @@ impl UddConvApp {
                         &TileMetaBuildOptions {
                             adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
+                            classic_patches: classic_patch_options(&settings),
                         },
                     )?;
                 }
@@ -245,6 +257,7 @@ impl UddConvApp {
                         &TileMetaBuildOptions {
                             adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
+                            classic_patches: classic_patch_options(&settings),
                         },
                     )?;
                 }
@@ -259,11 +272,12 @@ impl UddConvApp {
         self.spawn_task(format!("Map {} Packing", map_id), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
-            let summary = convert_map_mul_to_uddp_from_sources(
+            let summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &output,
                 map_id,
                 settings.map_preferences[map_id as usize],
+                &classic_patch_options(&settings),
             )?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
@@ -275,7 +289,12 @@ impl UddConvApp {
         self.spawn_task(format!("Statics {} Packing", map_id), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
-            let summary = convert_statics_mul_to_uddp_from_sources(&sources, &output, map_id)?;
+            let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
+                &sources,
+                &output,
+                map_id,
+                &classic_patch_options(&settings),
+            )?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
     }
@@ -296,12 +315,13 @@ impl UddConvApp {
             }
 
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2(
+                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
                     &sources,
                     &tilemeta_path,
                     &output,
                     map_id,
                     settings.radar_zstd,
+                    &classic_patch_options(&settings),
                 )?;
             } else {
                 build_facet_radar_dds(
@@ -312,6 +332,7 @@ impl UddConvApp {
                     &RadarBuildOptions {
                         format: settings.radar_format,
                         zstd_level: settings.radar_zstd,
+                        classic_patches: classic_patch_options(&settings),
                     },
                 )?;
             }
@@ -329,18 +350,24 @@ impl UddConvApp {
 
             // 1. Map
             let map_output = settings.output_uddp_dir.join(format!("map{}.uddp", map_id));
-            convert_map_mul_to_uddp_from_sources(
+            convert_map_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &map_output,
                 map_id,
                 settings.map_preferences[map_id as usize],
+                &classic_patch_options(&settings),
             )?;
 
             // 2. Statics
             let statics_output = settings
                 .output_uddp_dir
                 .join(format!("statics{}.uddp", map_id));
-            convert_statics_mul_to_uddp_from_sources(&sources, &statics_output, map_id)?;
+            convert_statics_mul_to_uddp_from_sources_with_patches(
+                &sources,
+                &statics_output,
+                map_id,
+                &classic_patch_options(&settings),
+            )?;
 
             // 3. Radar
             if !tilemeta_path.exists() {
@@ -353,12 +380,13 @@ impl UddConvApp {
                 settings.radar_format.extension()
             ));
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2(
+                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
                     &sources,
                     &tilemeta_path,
                     &radar_output,
                     map_id,
                     settings.radar_zstd,
+                    &classic_patch_options(&settings),
                 )?;
             } else {
                 build_facet_radar_dds(
@@ -369,6 +397,7 @@ impl UddConvApp {
                     &RadarBuildOptions {
                         format: settings.radar_format,
                         zstd_level: settings.radar_zstd,
+                        classic_patches: classic_patch_options(&settings),
                     },
                 )?;
             }

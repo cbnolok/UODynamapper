@@ -45,6 +45,12 @@ pub struct AppSettings {
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
     pub map_preferences: [CcMapSourcePreference; 6],
+    #[serde(default)]
+    pub include_verdata: bool,
+    #[serde(default)]
+    pub include_map_difs: bool,
+    #[serde(default)]
+    pub include_static_difs: bool,
 }
 
 impl Default for AppSettings {
@@ -74,6 +80,9 @@ impl Default for AppSettings {
             radar_format: RadarFormat::Bc7,
             radar_zstd: 3,
             map_preferences: [CcMapSourcePreference::Mul; 6],
+            include_verdata: false,
+            include_map_difs: false,
+            include_static_difs: false,
         }
     }
 }

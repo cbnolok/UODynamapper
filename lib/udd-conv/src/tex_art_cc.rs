@@ -36,6 +36,7 @@ use crate::bc7::{
     VramTextureEncoding,
 };
 use crate::{AtlasPackingMode, merge_unplaced_tiles, resolve_packing_axis};
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
 use udd_container::xxh64_virtual_path;
@@ -157,6 +158,20 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources(
     out_file: &Path,
     options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<TexArtCcBuildSummary> {
+    convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
+        source_dirs,
+        out_file,
+        options,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TexArtCcAtlasOptions,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<TexArtCcBuildSummary> {
     validate_options(options)?;
 
     let client_dir = find_first_dir_matching(source_dirs, &[&["artlegacymul.uop"], &["artLegacyMUL.uop"], &["artidx.mul", "art.mul"]])
@@ -181,8 +196,13 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources(
     }
     println!("Using CC art source dir: {}", client_dir.display());
 
-    let art_map = ArtMap::load(&client_dir)
+    let mut art_map = ArtMap::load(&client_dir)
         .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
+    if !has_uop {
+        if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+            art_map = art_map.with_verdata(verdata);
+        }
+    }
 
     let slot_count = art_map.max_id();
     let decoded_tiles = decode_present_tiles(&art_map, options)?;

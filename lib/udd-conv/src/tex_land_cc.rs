@@ -24,6 +24,7 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::{AtlasPackingMode, merge_unplaced_tiles, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
@@ -118,6 +119,20 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp(
     out_file: &Path,
     options: &TexLandCcAtlasOptions,
 ) -> eyre::Result<TexLandCcBuildSummary> {
+    convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
+        client_dir,
+        out_file,
+        options,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
+    client_dir: &Path,
+    out_file: &Path,
+    options: &TexLandCcAtlasOptions,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<TexLandCcBuildSummary> {
     let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
         .ok_or_else(|| eyre::eyre!("missing texmaps.mul in {}", client_dir.display()))?;
     let texidx_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texidx.mul"])
@@ -125,7 +140,11 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp(
 
     info!("Converting CC TexMaps to {}", out_file.display());
 
-    let texmap_source = TexMap::load(texmaps_path, texidx_path)
+    let texmap_source = TexMap::load_with_verdata(
+        texmaps_path,
+        texidx_path,
+        load_verdata_if_enabled(&[client_dir.to_path_buf()], patch_options)?,
+    )
         .wrap_err_with(|| format!("load texmaps from {}", client_dir.display()))?;
 
     let slot_count = texmap_source.len() as u32;

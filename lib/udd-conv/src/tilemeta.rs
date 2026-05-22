@@ -20,6 +20,7 @@ use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use crate::tex_art_ec::compute_tex_art_ec_crop_adjustments_from_sources;
@@ -46,6 +47,7 @@ pub struct TileMetaBuildOptions {
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
+    pub classic_patches: ClassicPatchOptions,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -265,6 +267,7 @@ fn build_tilemeta_tables_from_sources(
         stringdict_path,
         radarcol_path,
         source_dirs,
+        source_dirs,
         options,
         progress_label,
     )
@@ -291,6 +294,7 @@ fn build_tilemeta_tables_from_split_sources(
         tileart_path,
         stringdict_path,
         radarcol_path,
+        &cc_source_dirs,
         &ec_source_dirs,
         options,
         progress_label,
@@ -302,6 +306,7 @@ fn build_tilemeta_tables_from_resolved_paths(
     tileart_path: PathBuf,
     stringdict_path: PathBuf,
     radarcol_path: Option<PathBuf>,
+    cc_source_dirs: &[PathBuf],
     ec_source_dirs: &[PathBuf],
     options: &TileMetaBuildOptions,
     progress_label: &str,
@@ -315,7 +320,10 @@ fn build_tilemeta_tables_from_resolved_paths(
 
     info!("Converting Tile Metadata tables from MUL/UOP sources");
 
-    let cc_tiledata = TileData::load(tiledata_path.clone())?;
+    let cc_tiledata = TileData::load_with_verdata(
+        tiledata_path.clone(),
+        load_verdata_if_enabled(cc_source_dirs, &options.classic_patches)?,
+    )?;
     let tex_art_ec = ArtDefinition::load(&tileart_path, &stringdict_path)?;
     let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
         compute_tex_art_ec_crop_adjustments_from_sources(ec_source_dirs)?

@@ -36,6 +36,9 @@ use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
+use crate::classic_patches::{
+    load_map_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use log::{info, warn};
@@ -94,6 +97,22 @@ pub fn convert_map_mul_to_uddp_from_sources(
     map_id: u32,
     preference: CcMapSourcePreference,
 ) -> eyre::Result<CcMapBuildSummary> {
+    convert_map_mul_to_uddp_from_sources_with_patches(
+        source_dirs,
+        output_path,
+        map_id,
+        preference,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn convert_map_mul_to_uddp_from_sources_with_patches(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    map_id: u32,
+    preference: CcMapSourcePreference,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<CcMapBuildSummary> {
     let mul_name = format!("map{}.mul", map_id);
     let uop_names = [
         format!("map{}LegacyMUL.uop", map_id),
@@ -138,9 +157,18 @@ pub fn convert_map_mul_to_uddp_from_sources(
 
     let mut plane = if is_uop {
         MapPlane::init_uop(map_path, map_id)?
+    } else if let Some(map_diff) = load_map_diff_if_enabled(source_dirs, map_id, patch_options)? {
+        MapPlane::init_with_diff(map_path, map_id, map_diff)?
     } else {
         MapPlane::init(map_path, map_id)?
     };
+    if !is_uop {
+        if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+            plane = plane.with_verdata(verdata);
+        }
+    } else if patch_options.any() {
+        warn!("Classic map patch files are ignored when converting map{} from UOP.", map_id);
+    }
 
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;

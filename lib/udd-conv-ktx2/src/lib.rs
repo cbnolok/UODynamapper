@@ -88,7 +88,30 @@ pub fn build_facet_radar_ktx2(
     map_id: u32,
     zstd_level: i32,
 ) -> eyre::Result<()> {
-    let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7(source_dirs, tilemeta_path, map_id)?;
+    build_facet_radar_ktx2_with_patches(
+        source_dirs,
+        tilemeta_path,
+        output_path,
+        map_id,
+        zstd_level,
+        &udd_conv::classic_patches::ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn build_facet_radar_ktx2_with_patches(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    output_path: &Path,
+    map_id: u32,
+    zstd_level: i32,
+    patch_options: &udd_conv::classic_patches::ClassicPatchOptions,
+) -> eyre::Result<()> {
+    let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
+        source_dirs,
+        tilemeta_path,
+        map_id,
+        patch_options,
+    )?;
     write_ktx2_bc7_zstd(bc7_data, output_path, zstd_level)?;
     println!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
     Ok(())

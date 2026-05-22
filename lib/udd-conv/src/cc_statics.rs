@@ -13,6 +13,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 use std::path::{Path, PathBuf};
 
+use crate::classic_patches::{
+    load_static_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use uocf::classic::map::MapPlane;
@@ -31,6 +34,20 @@ pub fn convert_statics_mul_to_uddp_from_sources(
     source_dirs: &[PathBuf],
     output_path: &Path,
     map_id: u32,
+) -> eyre::Result<CcStaticsBuildSummary> {
+    convert_statics_mul_to_uddp_from_sources_with_patches(
+        source_dirs,
+        output_path,
+        map_id,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    map_id: u32,
+    patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcStaticsBuildSummary> {
     let map_file_name = format!("map{}.mul", map_id);
     let idx_file_name = format!("staidx{}.mul", map_id);
@@ -57,7 +74,14 @@ pub fn convert_statics_mul_to_uddp_from_sources(
     let height_chunks = height_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
     let total_chunks = width_chunks * height_chunks;
 
-    let reader = StaticsReader::new(&idx_path, &mul_path, width_blocks * 8, height_blocks * 8)?;
+    let reader = StaticsReader::new_with_patches(
+        &idx_path,
+        &mul_path,
+        width_blocks * 8,
+        height_blocks * 8,
+        load_static_diff_if_enabled(source_dirs, map_id, patch_options)?,
+        load_verdata_if_enabled(source_dirs, patch_options)?,
+    )?;
     info!("Loading statics into memory...");
     let store = reader.load_all()?;
 
