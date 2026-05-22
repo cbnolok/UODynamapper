@@ -245,6 +245,69 @@ Runtime flow for EC surface-like statics:
 This is why flat tileart entries such as marble floor corners can correctly use
 the land-style texture from `Data\WorldArt\...` without hardcoding their ids.
 
+### Static Water Rendering as a Normal Map
+
+Known current failure: some surface-like static water tiles route to an EC
+normal/displacement-looking texture instead of the visible water albedo. This
+is separate from regular map water and from regular static art. The affected
+path is the surface-like static land-atlas path:
+
+- `statics_collect.rs::resolve_static_visual_kind`
+- `resolve_surface_like_tex_land_ec_slot_id`
+- `StaticVisualKind::TexLandEcArt`
+- `ground_atlas.resolve_tex_land_ec`
+- `assets/shaders/world/art/ground.wgsl`
+
+Do not fix this by special-casing water ids in the shader. The wrong texture is
+already selected before the shader samples it. The shader only receives the
+resolved atlas layer and UVs.
+
+What to verify first:
+
+- Inspect the tileart entry for the affected static id in `tileart.uop`.
+- List all texture refs in its texture blocks, including `shader_name`,
+  `texture_stretch`, path, extracted `texture_id`, stable role, block index,
+  item index, and primary/auxiliary flags.
+- Confirm whether the visible water texture and the normal/displacement texture
+  are both present in tileart metadata. If only the support texture is present,
+  the missing albedo may have to be resolved through TerrainDefinition
+  provenance or a reviewed override.
+- Check whether the current `tilemeta.main_ec_texture_id` points at a ref whose
+  stable role is `normal`, `mask`, `noise`, `alpha`, `ripple`, `flow`, or
+  `distort`. If yes, the bug is in tileart main-texture selection.
+- Check whether `resolve_surface_like_tex_land_ec_slot_id` reroutes a correct
+  tileart texture id to a terrain provenance slot whose selected primary layer
+  is support-like. If yes, the bug is in terrain primary selection or in the
+  surface-like redirection resolver.
+- Preserve `is_wet_flags`: the flag is for water animation and should not
+  decide the visible albedo by itself.
+
+Likely correct policy:
+
+- For liquid surface-like statics, prefer tileart refs classified as visible
+  albedo/base over support refs, exactly as terrain primary selection does.
+- Treat names containing `normal`, `bump`, `mask`, `_alpha`, `noise`, `ripple`,
+  `flow`, or `distort` as support for visible-primary selection unless a manual
+  review proves otherwise.
+- Keep `texture_stretch` from the selected visible ref or resolved terrain
+  provenance slot; otherwise water scale and motion will look wrong even after
+  the texture id is fixed.
+- If the source data does not expose a visible albedo automatically, add a KDL
+  override entry for that tile id rather than weakening the global heuristic.
+
+Useful diagnostics to add before changing policy:
+
+- Extend `audit-ec-surface-redirection` or add a targeted report for liquid
+  surface-like statics that writes one row per candidate texture ref and marks
+  the selected runtime slot.
+- Include: `tile_id`, tile type, `is_wet`, shader name, ref path, role,
+  support-like reason, texture id, physical package, block/item index,
+  stretch/repetition, selected/unselected reason, resolved runtime slot, and
+  whether the final slot came from direct land presence, canonical terrain
+  provenance, alias terrain provenance, or fallback slot resolution.
+- Test against the current failing water tiles and at least one known-good
+  surface-like non-water tile, so the fix does not regress marble/floor routing.
+
 ## 7. Classic Id Ranges
 
 Classic art ids below `0x4000` are land diamonds in classic art data. Classic
