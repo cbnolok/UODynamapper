@@ -1,25 +1,92 @@
-// Manual routing table for EC surface-like art tiles that cannot be resolved
-// automatically from tileart.uop, TerrainDefinition.uop, and packed EC material
-// provenance.
+// EcSurfaceOverrides.kdl
+//
+// Purpose:
+// - Loose, user-editable routing table for EC surface-like item/static art
+//   tiles that cannot be resolved automatically from `tileart.uop`,
+//   `TerrainDefinition.uop`, and packed EC material provenance.
+// - This file is about placed statics/items whose tileart metadata says they
+//   should render like flat terrain/surface art.
+// - It is not used for normal map land tiles. Use `TerrainTranscode.kdl` or
+//   `EcTerrainOverrides.kdl` for map land/material behavior.
+//
+// Source-of-truth rule:
+// - Prefer automatic routing from tileart texture refs and terrain provenance.
+// - Add entries here only after manual review of unresolved, incorrectly
+//   routed, or intentionally hidden surface-like static tiles.
+// - This file may intentionally route EC mode back to a CC art texture when the
+//   EC client has no matching material or the port is visibly incomplete.
+//
+// One action per CC id:
+// - The parser accepts multiple action types for the same CC id, but runtime
+//   priority is `cc_art`, then `ec_material`, then `ignore`.
+// - Keep one active action per CC id to avoid ambiguous review state.
 //
 // Supported actions:
-// - cc_art CC_ID TARGET mode="raw-cc" code="reviewed_raw_cc"
-//   Render TARGET as Classic art even while running in EC mode.
-// - cc_art CC_ID TARGET mode="resolve-ec" code="reviewed_cc_alias"
-//   Restart EC surface resolution from TARGET. The resolver must reject cycles.
-// - ec_material CC_ID TARGET package="Texture.uop" code="reviewed_direct_ec_material"
-//   Route directly to a known EC material id.
-// - ignore CC_ID code="not_ported_to_ec"
-//   Treat the tile as transparent/no-render.
 //
-// Keep code values short and enumerable. The audit emits this as reason_code.
-// Suggested initial codes:
-// - unmatched_ec_port
-// - reviewed_cc_alias
-// - reviewed_raw_cc
-// - reviewed_direct_ec_material
-// - intentionally_hidden
-// - not_ported_to_ec
+// 1. `cc_art` with `mode="raw-cc"`
+//
+//     cc_art CC_ID TARGET_CC_ID mode="raw-cc" code="reviewed_raw_cc"
+//
+// - Render `TARGET_CC_ID` as Classic art even while running in EC mode.
+// - Use this when a tile has no acceptable EC material and the correct visual is
+//   a known CC art texture.
+// - `CC_ID`: source surface-like item/static id being overridden.
+// - `TARGET_CC_ID`: CC art/static id to render instead.
+// - `code`: optional short reason code.
+//
+// 2. `cc_art` with `mode="resolve-ec"`
+//
+//     cc_art CC_ID TARGET_CC_ID mode="resolve-ec" code="reviewed_cc_alias"
+//
+// - Restart EC surface resolution from `TARGET_CC_ID`.
+// - Use this when the source CC id should behave like another reviewed CC tile,
+//   but should still resolve to that target tile's EC material if available.
+// - The resolver must reject cycles. Do not create chains such as A -> B and
+//   B -> A.
+//
+// 3. `ec_material`
+//
+//     ec_material CC_ID MATERIAL_ID package="Texture.uop" code="reviewed_direct_ec_material"
+//
+// - Route directly to a known EC material/texture id.
+// - `MATERIAL_ID`: EC material or texture id to use for this surface-like tile.
+// - `package`: optional package hint. Common values:
+//   - `"Texture.uop"`: normal EC WorldArt/terrain texture pool.
+//   - `"LegacyTexture.uop"`: EC legacy tileart texture pool.
+//   - `"TerrainTexture.uop"`: support texture pool. Do not use as visible
+//     albedo unless manual review proves that specific texture is visible art.
+// - `code`: optional short reason code.
+//
+// 4. `ignore`
+//
+//     ignore CC_ID code="not_ported_to_ec"
+//
+// - Treat the tile as transparent/no-render.
+// - Use this for reviewed not-ported, intentionally hidden, or placeholder
+//   cases. Do not use it to mask parser bugs.
+//
+// Supported `mode` keywords:
+// - `"raw-cc"`: render the target as CC art.
+// - `"resolve-ec"`: use the target id as an alias and run EC resolution.
+// - Any other string parses as unknown and should be treated as invalid by
+//   audit/runtime policy.
+//
+// Reason code guidance:
+// - Keep `code` values short and enumerable. Audits emit this as `reason_code`.
+// - Suggested initial codes:
+//   - `unmatched_ec_port`
+//   - `reviewed_cc_alias`
+//   - `reviewed_raw_cc`
+//   - `reviewed_direct_ec_material`
+//   - `intentionally_hidden`
+//   - `not_ported_to_ec`
+//   - `manual_visual_match`
+//   - `source_material_missing`
+//
+// Relationship to other KDL files:
+// - `TerrainTranscode.kdl` maps CC land ids to EC terrain/runtime slots.
+// - `EcTerrainOverrides.kdl` modifies/integrates EC terrain material behavior.
+// - `EcSurfaceOverrides.kdl` handles item/static surface-like art routing.
 //
 // Unmatched candidates from the 2026-05-19 FP audit. Uncomment and choose an
 // action only after manual visual review.

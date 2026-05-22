@@ -1,12 +1,112 @@
-// Narrow manual EC terrain integration table.
-// TerrainDefinition.uop and packed provenance remain authoritative; add entries
-// here only for reviewed facts that are not currently derivable from source UOP
-// data. A pre-blending snapshot of this file lives under legacy/.
-
-// Reason codes currently used:
-// - reviewed_runtime_policy
-// - reviewed_liquid_motion
-// - reviewed_layer_texture
+// EcTerrainOverrides.kdl
+//
+// Purpose:
+// - Loose, user-editable integration/override table for EC terrain materials.
+// - Loaded by the app from `assets/cc_ec_convtables/EcTerrainOverrides.kdl`
+//   after `tex_land_ec.uddp` is loaded.
+// - Can replace embedded terrain override metadata without repacking UDDP files.
+// - Use this only for reviewed facts or user policy choices that are not
+//   currently derivable from original EC source files.
+//
+// Source-of-truth rule:
+// - `TerrainDefinition.uop` and packed terrain provenance remain authoritative
+//   for source-derived aliases, layers, selected primary textures, and stretch.
+// - This file integrates or overrides that data. It must not become a duplicate
+//   handwritten copy of everything that the packer already derives.
+//
+// Top-level syntax:
+//
+//     terrain MATERIAL_ID {
+//         ...
+//     }
+//
+// - `MATERIAL_ID`: unsigned integer. EC terrain material/runtime slot id.
+// - Multiple `terrain MATERIAL_ID` blocks are allowed. Their children merge in
+//   file order for the same id.
+//
+// Supported child nodes:
+//
+// 1. `policy`
+//
+//     policy "smooth" code="reviewed_runtime_policy"
+//     policy "follow-center" code="reviewed_runtime_policy"
+//
+// - Argument: policy keyword string.
+// - Known policy keywords currently used:
+//   - `"smooth"`: request smooth terrain treatment for this material.
+//   - `"follow-center"`: request center/follow-center behavior for this
+//     material where runtime blending/selection supports it.
+// - `code`: optional short reason code emitted into metadata/audits.
+// - Unknown policy strings still parse and are preserved. They only do
+//   something if runtime code recognizes them.
+//
+// 2. `liquid`
+//
+//     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
+//
+// - Properties:
+//   - `speed`: optional float. Liquid animation speed.
+//   - `waveheight`: optional float. Liquid wave/displacement amplitude.
+//   - `code`: optional short reason code.
+// - Omitted numeric properties leave that part unspecified.
+//
+// 3. `layer`
+//
+//     layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
+//
+// - Argument: role string.
+// - Known role strings used by the current material model:
+//   - `"t0"`: base/albedo layer.
+//   - `"t1"`: detail/secondary albedo layer.
+//   - `"m"`: mask/alpha blend-control layer.
+//   - `"s"`: support/specular-like or future support role.
+//   - `"n"`: normal-map-like support role.
+// - Properties:
+//   - `tex`: required unsigned integer EC texture id.
+//   - `stretch`: optional float. Authored repetition/stretch. Preserve source
+//     values when known; wrong stretch makes large textures shrink into one tile.
+//   - `code`: optional short reason code.
+//
+// 4. `texture`
+//
+//     texture 1269 role="base" code="reviewed_textureid"
+//
+// - Argument: unsigned integer EC texture id.
+// - Properties:
+//   - `role`: optional free-form role string, useful for metadata and future
+//     diagnostics. Common values are `"base"`, `"detail"`, `"mask"`,
+//     `"normal"`, `"support"`.
+//   - `code`: optional short reason code.
+// - Use `texture` when a reviewed texture relationship must be preserved but it
+//   is not yet tied to a concrete runtime layer override.
+//
+// 5. `ignore`
+//
+//     ignore code="intentionally_hidden"
+//
+// - Marks this material as intentionally hidden/ignored by policy.
+// - Use sparingly. This should be reserved for reviewed no-render cases, not for
+//   unresolved parser bugs.
+// - `code`: optional short reason code.
+//
+// Reason code guidance:
+// - Keep `code` values short, enumerable, and machine-greppable.
+// - Current codes in use:
+//   - `reviewed_runtime_policy`
+//   - `reviewed_liquid_motion`
+//   - `reviewed_layer_texture`
+// - Suggested additional codes when needed:
+//   - `reviewed_textureid`
+//   - `intentionally_hidden`
+//   - `not_derivable_from_source`
+//   - `manual_visual_match`
+//
+// Relationship to other KDL files:
+// - `TerrainTranscode.kdl` maps CC land ids to EC terrain/runtime slots.
+// - `EcTerrainOverrides.kdl` modifies/integrates EC terrain material behavior.
+// - `EcSurfaceOverrides.kdl` handles surface-like item/static art routing.
+//
+// A pre-blending snapshot of this file lives under `legacy/`.
 
 terrain 5 {
     policy "smooth" code="reviewed_runtime_policy"

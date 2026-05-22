@@ -1,3 +1,51 @@
+// TerrainTranscode.kdl
+//
+// Purpose:
+// - Loose, user-editable Classic Client -> Enhanced Client terrain slot map.
+// - Loaded by the app from `assets/cc_ec_convtables/TerrainTranscode.kdl`.
+// - When `tex_land_ec.uddp` is loaded, this loose file can override the
+//   embedded transcode map without repacking UDDP files.
+//
+// Data model:
+// - Each `t` node maps one EC terrain/runtime slot id to one or more CC terrain
+//   tile ids.
+// - Syntax:
+//
+//     t EC_ID CC_ID...
+//
+// - `EC_ID`: unsigned integer. Runtime EC land/material slot to use.
+// - `CC_ID...`: one or more unsigned integers. Classic land tile ids that
+//   should resolve to `EC_ID`.
+//
+// Example:
+//
+//     // Water
+//     t 5 168 169 170 171
+//
+//   This means CC land tiles 168, 169, 170, and 171 all use EC runtime slot 5.
+//
+// Conflict behavior:
+// - If the same CC id appears in multiple `t` rows, the later row wins because
+//   the loader builds a `HashMap<cc_id, ec_id>` by inserting rows in file order.
+// - Avoid intentional duplicates unless the point is to override an earlier
+//   broad grouping.
+//
+// Relationship to other files:
+// - `TerrainDefinition.uop` and packed `tex_land_ec.uddp` provenance remain the
+//   source-derived material evidence.
+// - `TerrainTranscode.kdl` is a practical runtime routing map, mainly for
+//   grouping many CC land ids onto one EC terrain slot.
+// - `EcTerrainOverrides.kdl` is for reviewed material integration details
+//   attached to an EC material/slot, such as policies, liquid motion, or layer
+//   texture overrides.
+// - `EcSurfaceOverrides.kdl` is for item/static surface-like art routing, not
+//   map land tile routing.
+//
+// Comments:
+// - `// line comments` and `/* block comments */` are stripped before parsing
+//   by this loader.
+// - The category comments below are human labels only; they are not parsed.
+//
 // Void / No-Draw
 t 0 1 2 127 129 132 328 329 331 431 432 433 434 435 436 437 1006 1007 1008 1010 1011 1012 1229 12519
 
@@ -581,4 +629,3 @@ t 200 16113
 
 // Embank Snow  (NE-SO)
 t 201 774
-
