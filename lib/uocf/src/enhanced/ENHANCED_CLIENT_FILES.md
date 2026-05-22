@@ -40,6 +40,10 @@ unless the data becomes a stable package contract.
   records. Static records store graphic id, z, and hue.
 - The decoder converts this to classic-style 8x8 map blocks plus statics. The
   land graphic id from the facet/map is the terrain query id used by runtime.
+- Runtime static art collection preserves placed static hue ids and applies a
+  representative `hues.mul` tint to regular art statics, surface-like ground
+  statics, and dot-mode map/static colors. Full per-pixel hue lookup remains a
+  shader/material feature, not an atlas-duplication policy.
 
 `TerrainDefinition.uop`:
 
@@ -245,11 +249,11 @@ Runtime flow for EC surface-like statics:
 This is why flat tileart entries such as marble floor corners can correctly use
 the land-style texture from `Data\WorldArt\...` without hardcoding their ids.
 
-### Static Water Selects Normal Maps Instead of Base Texture
+### Static Water Base Texture Selection
 
-Known current failure: some surface-like static water tiles route to an EC
+Previously, some surface-like static water tiles routed to an EC
 normal/displacement-looking texture instead of the real visible water
-base/albedo texture. In these cases the chosen texture refs are support normal
+base/albedo texture. In those cases the chosen texture refs were support normal
 maps, not the water base texture that should be rendered. This is separate from
 regular map water and from regular static art. The affected path is the
 surface-like static land-atlas path:
@@ -260,9 +264,19 @@ surface-like static land-atlas path:
 - `ground_atlas.resolve_tex_land_ec`
 - `assets/shaders/world/art/ground.wgsl`
 
-Do not fix this by special-casing water ids in the shader. The wrong texture is
-already selected before the shader samples it. The shader only receives the
-resolved atlas layer and UVs.
+Do not fix this by special-casing water ids in the shader. Texture identity is
+selected before the shader samples it. The shader only receives the resolved
+atlas layer and UVs.
+
+Current runtime policy:
+
+- Wet/liquid surface-like statics must choose explicit visible roles
+  (`Base`/`SecondaryBase`) from tileart texture refs.
+- Normal maps, masks, noise, alpha, ripple, flow, distortion, auxiliary refs,
+  and unknown support refs cannot become the selected water base texture.
+- If no explicit visible ref exists, the resolver falls back through the
+  existing terrain/static fallback path rather than rendering a support normal
+  map as albedo.
 
 What to verify first:
 

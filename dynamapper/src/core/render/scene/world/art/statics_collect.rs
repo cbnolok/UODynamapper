@@ -12,7 +12,8 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::core::uo_files_loader::{
-    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
+    ClassicHuesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
+    TileMetaPackageRes,
 };
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -130,6 +131,7 @@ struct StaticRenderTile {
     world_x: f32,
     world_z: f32,
     z: i8,
+    hue: u16,
 }
 
 fn collect_static_render_tiles(
@@ -154,6 +156,7 @@ fn collect_static_render_tiles(
             world_x: base_world_x as f32,
             world_z: base_world_z as f32,
             z: source_tile.z,
+            hue: source_tile.hue,
         });
         return;
     };
@@ -164,6 +167,7 @@ fn collect_static_render_tiles(
             world_x: (base_world_x + part.x as i32) as f32,
             world_z: (base_world_z + part.y as i32) as f32,
             z: expanded_multi_part_z(source_tile.z, part.z),
+            hue: source_tile.hue,
         });
     }
 }
@@ -399,7 +403,7 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     };
 
     let main_ec_texture_id = tilemeta_package
-        .and_then(|package| package.main_ec_texture_ref(tile_id))
+        .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
         .map(|texture_ref| texture_ref.texture_id)
         .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
     let Some(main_ec_texture_id) = main_ec_texture_id else {
@@ -457,6 +461,42 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         .map(|runtime_slot_id| {
             surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
         })
+}
+
+fn surface_like_visible_ec_texture_ref<'a>(
+    tile_id: u32,
+    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+    package: &'a udd_assets::tilemeta::TileMetaPackage,
+) -> Option<&'a udd_assets::tilemeta::TileMetaItemTextureRef> {
+    if tilemeta.flags & TILE_FLAG_WET == 0 {
+        return package.main_ec_texture_ref(tile_id);
+    }
+
+    choose_visible_surface_texture_ref(package.item_texture_refs(tile_id), tile_id)
+}
+
+fn choose_visible_surface_texture_ref(
+    refs: &[udd_assets::tilemeta::TileMetaItemTextureRef],
+    tile_id: u32,
+) -> Option<&udd_assets::tilemeta::TileMetaItemTextureRef> {
+    visible_surface_texture_ref_candidates(refs, tile_id)
+        .find(|texture_ref| texture_ref.is_primary_selected())
+        .or_else(|| visible_surface_texture_ref_candidates(refs, tile_id).next())
+}
+
+fn visible_surface_texture_ref_candidates<'a>(
+    refs: &'a [udd_assets::tilemeta::TileMetaItemTextureRef],
+    tile_id: u32,
+) -> impl Iterator<Item = &'a udd_assets::tilemeta::TileMetaItemTextureRef> {
+    refs.iter().filter(move |texture_ref| {
+        !texture_ref.is_auxiliary()
+            && texture_ref.texture_id != tile_id
+            && matches!(
+                texture_ref.stable_role(),
+                udd_assets::tilemeta::EcMaterialStableRole::Base
+                    | udd_assets::tilemeta::EcMaterialStableRole::SecondaryBase
+            )
+    })
 }
 
 fn surface_like_legacy_ec_texture_id_fallback(
@@ -577,6 +617,58 @@ fn resolve_ec_static_visual_kind(
             art_id: tile_graphic as u32,
         }
     }
+}
+
+fn static_hue_rgba(
+    hues: Option<&[uocf::classic::hues::HueEntry]>,
+    hue_id: u16,
+) -> [f32; 4] {
+    let Some(hue) = hues.and_then(|hues| classic_hue_entry(hues, hue_id)) else {
+        return [1.0, 1.0, 1.0, 1.0];
+    };
+
+    let color = hue.color_table[24.min(hue.color_table.len() - 1)];
+    hue_color16_to_rgba(color)
+}
+
+fn static_hued_radar_rgba(
+    color: [u8; 4],
+    hues: Option<&[uocf::classic::hues::HueEntry]>,
+    hue_id: u16,
+) -> [f32; 4] {
+    let base = [
+        color[2] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[0] as f32 / 255.0,
+        1.0,
+    ];
+    let Some(hue) = hues.and_then(|hues| classic_hue_entry(hues, hue_id)) else {
+        return base;
+    };
+
+    let intensity = (((base[0] + base[1] + base[2]) / 3.0) * 31.0).round() as usize;
+    hue_color16_to_rgba(hue.color_table[intensity.min(31)])
+}
+
+fn classic_hue_entry(
+    hues: &[uocf::classic::hues::HueEntry],
+    hue_id: u16,
+) -> Option<&uocf::classic::hues::HueEntry> {
+    if hue_id == 0 {
+        return None;
+    }
+
+    let expected_id = u32::from(hue_id);
+    hues.get(hue_id as usize - 1)
+        .filter(|hue| hue.id == expected_id)
+        .or_else(|| hues.iter().find(|hue| hue.id == expected_id))
+}
+
+fn hue_color16_to_rgba(color: u16) -> [f32; 4] {
+    let r = ((color >> 10) & 0x1F) as f32 / 31.0;
+    let g = ((color >> 5) & 0x1F) as f32 / 31.0;
+    let b = (color & 0x1F) as f32 / 31.0;
+    [r, g, b, 1.0]
 }
 
 #[repr(C)]
@@ -924,6 +1016,7 @@ pub fn sys_collect_visible_statics(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    classic_hues_res: Option<Res<ClassicHuesRes>>,
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
@@ -1124,6 +1217,10 @@ pub fn sys_collect_visible_statics(
 
                             let world_x = render_tile.world_x;
                             let world_z = render_tile.world_z;
+                            let hue_rgba = static_hue_rgba(
+                                classic_hues_res.as_ref().map(|hues| hues.0.as_slice()),
+                                render_tile.hue,
+                            );
                             let depth_class = resolve_static_depth_class(tilemeta);
                             let is_wet_flags = tilemeta.map_or(0, |m| {
                                 if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
@@ -1156,12 +1253,11 @@ pub fn sys_collect_visible_statics(
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
                                         _pad_inst: 0,
-                                        color_rgba: [
-                                            color[2] as f32 / 255.0,
-                                            color[1] as f32 / 255.0,
-                                            color[0] as f32 / 255.0,
-                                            1.0,
-                                        ],
+                                        color_rgba: static_hued_radar_rgba(
+                                            color,
+                                            classic_hues_res.as_ref().map(|hues| hues.0.as_slice()),
+                                            render_tile.hue,
+                                        ),
                                     });
                                 }
                                 continue;
@@ -1312,7 +1408,7 @@ pub fn sys_collect_visible_statics(
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
                                         texture_stretch,
-                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
+                                        color_rgba: hue_rgba,
                                     });
                                 } else {
                                     let bounds = resolve_static_billboard_bounds(
@@ -1340,7 +1436,7 @@ pub fn sys_collect_visible_statics(
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
                                         _pad_inst: 0,
-                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
+                                        color_rgba: hue_rgba,
                                     });
                                 }
                             } else {
@@ -1495,6 +1591,30 @@ mod tests {
         tile
     }
 
+    fn texture_ref_with_role(
+        texture_id: u32,
+        role: udd_assets::tilemeta::EcMaterialStableRole,
+        flags: u8,
+    ) -> udd_assets::tilemeta::TileMetaItemTextureRef {
+        udd_assets::tilemeta::TileMetaItemTextureRef {
+            texture_id,
+            texture_type: udd_assets::tilemeta::EcMaterialLogicalFamily::WorldArt as u8,
+            stable_role: role as u8,
+            flags,
+            ..udd_assets::tilemeta::TileMetaItemTextureRef::zeroed()
+        }
+    }
+
+    fn hue_entry(id: u32, color: u16) -> uocf::classic::hues::HueEntry {
+        uocf::classic::hues::HueEntry {
+            id,
+            color_table: [color; 32],
+            table_start: color,
+            table_end: color,
+            name: [0; 20],
+        }
+    }
+
     #[test]
     fn classic_billboard_bounds_keep_existing_scale() {
         let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44, 88);
@@ -1590,6 +1710,57 @@ mod tests {
     }
 
     #[test]
+    fn wet_surface_like_visible_ref_rejects_normal_maps() {
+        let refs = [
+            texture_ref_with_role(
+                200,
+                udd_assets::tilemeta::EcMaterialStableRole::NormalLike,
+                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+            texture_ref_with_role(201, udd_assets::tilemeta::EcMaterialStableRole::Base, 0),
+        ];
+
+        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
+
+        assert_eq!(chosen.texture_id, 201);
+    }
+
+    #[test]
+    fn wet_surface_like_visible_ref_prefers_primary_base() {
+        let refs = [
+            texture_ref_with_role(200, udd_assets::tilemeta::EcMaterialStableRole::Base, 0),
+            texture_ref_with_role(
+                201,
+                udd_assets::tilemeta::EcMaterialStableRole::Base,
+                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+        ];
+
+        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
+
+        assert_eq!(chosen.texture_id, 201);
+    }
+
+    #[test]
+    fn wet_surface_like_visible_ref_rejects_exact_tile_id_support_fallback() {
+        let refs = [texture_ref_with_role(
+            42,
+            udd_assets::tilemeta::EcMaterialStableRole::Base,
+            udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+        )];
+
+        assert!(choose_visible_surface_texture_ref(&refs, 42).is_none());
+    }
+
+    #[test]
+    fn static_hue_rgba_uses_one_based_hue_ids() {
+        let hues = [hue_entry(1, 0x7C00)];
+
+        assert_eq!(static_hue_rgba(Some(&hues), 1), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(static_hue_rgba(Some(&hues), 0), [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, false);
 
@@ -1615,6 +1786,7 @@ mod tests {
                 world_x: 19.0,
                 world_z: 28.0,
                 z: 5,
+                hue: 0,
             }],
         );
     }
@@ -1641,7 +1813,7 @@ mod tests {
             graphic: crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET,
             xy_packed: 3 | (4 << 3),
             z: 5,
-            hue: 0,
+            hue: 9,
         };
         let mut output = Vec::new();
 
@@ -1655,12 +1827,14 @@ mod tests {
                     world_x: 18.0,
                     world_z: 30.0,
                     z: 8,
+                    hue: 9,
                 },
                 StaticRenderTile {
                     graphic: 11,
                     world_x: 28.0,
                     world_z: 24.0,
                     z: 3,
+                    hue: 9,
                 },
             ],
         );
