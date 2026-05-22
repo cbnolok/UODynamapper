@@ -16,7 +16,7 @@ const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
 const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
-const STATIC_LIGHT_COLOR: Color = Color::srgba(1.0, 0.82, 0.48, STATIC_LIGHT_ALPHA);
+const STATIC_LIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, STATIC_LIGHT_ALPHA);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticLightInstance {
