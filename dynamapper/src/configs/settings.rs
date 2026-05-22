@@ -787,6 +787,71 @@ pub fn save_maps_settings(settings: &Settings) {
 
 // ----
 
+#[derive(Clone, PartialEq)]
+struct SettingsSaveSnapshot {
+    app: SectApp,
+    graphics: SectGraphics,
+    keybindings: SectKeybindings,
+    core: SectCore,
+    logging: SectLogging,
+    uo_files: SectUoFiles,
+    maps: SectMaps,
+    worldmap_rendering: SectWorldMapRendering,
+}
+
+impl SettingsSaveSnapshot {
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            app: settings.app.clone(),
+            graphics: settings.graphics.clone(),
+            keybindings: settings.keybindings.clone(),
+            core: settings.core.clone(),
+            logging: settings.logging.clone(),
+            uo_files: settings.uo_files.clone(),
+            maps: settings.maps.clone(),
+            worldmap_rendering: settings.worldmap_rendering.clone(),
+        }
+    }
+
+    fn changes_from(&self, other: &Self) -> SettingsChangeSet {
+        SettingsChangeSet {
+            app: self.app != other.app,
+            graphics: self.graphics != other.graphics,
+            keybindings: self.keybindings != other.keybindings,
+            core: self.core != other.core,
+            logging: self.logging != other.logging,
+            uo_files: self.uo_files != other.uo_files,
+            maps: self.maps != other.maps,
+            worldmap_rendering: self.worldmap_rendering != other.worldmap_rendering,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SettingsChangeSet {
+    app: bool,
+    graphics: bool,
+    keybindings: bool,
+    core: bool,
+    logging: bool,
+    uo_files: bool,
+    maps: bool,
+    worldmap_rendering: bool,
+}
+
+impl SettingsChangeSet {
+    fn any(&self) -> bool {
+        self.app
+            || self.graphics
+            || self.keybindings
+            || self.core
+            || self.logging
+            || self.uo_files
+            || self.maps
+            || self.worldmap_rendering
+    }
+}
+
 pub struct SettingsPlugin {
     pub registered_by: &'static str,
 }
@@ -1001,121 +1066,91 @@ fn sys_debounced_save(
     time: Res<Time>,
     settings: Res<Settings>,
     mut save_timer: ResMut<SettingsSaveTimer>,
-    mut last_saved_app: Local<Option<SectApp>>,
-    mut last_saved_graphics: Local<Option<SectGraphics>>,
-    mut last_saved_keybindings: Local<Option<SectKeybindings>>,
-    mut last_saved_core: Local<Option<SectCore>>,
-    mut last_saved_logging: Local<Option<SectLogging>>,
-    mut last_saved_uo_files: Local<Option<SectUoFiles>>,
-    mut last_saved_maps: Local<Option<SectMaps>>,
-    mut last_saved_worldmap_rendering: Local<Option<SectWorldMapRendering>>,
+    mut last_saved: Local<Option<SettingsSaveSnapshot>>,
+    mut pending_save: Local<Option<SettingsSaveSnapshot>>,
 ) {
+    let current = SettingsSaveSnapshot::from_settings(&settings);
+
     if settings.is_added() {
-        *last_saved_app = Some(settings.app.clone());
-        *last_saved_graphics = Some(settings.graphics.clone());
-        *last_saved_keybindings = Some(settings.keybindings.clone());
-        *last_saved_core = Some(settings.core.clone());
-        *last_saved_logging = Some(settings.logging.clone());
-        *last_saved_uo_files = Some(settings.uo_files.clone());
-        *last_saved_maps = Some(settings.maps.clone());
-        *last_saved_worldmap_rendering = Some(settings.worldmap_rendering.clone());
+        *last_saved = Some(current);
+        pending_save.take();
         return;
     }
 
-    let app_changed = last_saved_app
-        .as_ref()
-        .map_or(true, |last| last != &settings.app);
-    let kb_changed = last_saved_keybindings
-        .as_ref()
-        .map_or(true, |last| last != &settings.keybindings);
-    let graphics_changed = last_saved_graphics
-        .as_ref()
-        .map_or(true, |last| last != &settings.graphics);
-    let core_changed = last_saved_core
-        .as_ref()
-        .map_or(true, |last| last != &settings.core);
-    let logging_changed = last_saved_logging
-        .as_ref()
-        .map_or(true, |last| last != &settings.logging);
-    let uo_files_changed = last_saved_uo_files
-        .as_ref()
-        .map_or(true, |last| last != &settings.uo_files);
-    let maps_changed = last_saved_maps
-        .as_ref()
-        .map_or(true, |last| last != &settings.maps);
-    let worldmap_rendering_changed = last_saved_worldmap_rendering
-        .as_ref()
-        .map_or(true, |last| last != &settings.worldmap_rendering);
+    if last_saved.is_none() {
+        *last_saved = Some(current.clone());
+    }
 
-    if app_changed
-        || graphics_changed
-        || kb_changed
-        || core_changed
-        || logging_changed
-        || uo_files_changed
-        || maps_changed
-        || worldmap_rendering_changed
-    {
-        // Debounce: reset the timer every time a change is detected.
-        // This ensures we only save after the user has stopped moving/changing things
-        // for the duration of the timer (1.0s).
-        if save_timer.0.is_paused() {
-            if app_changed {
+    let changes = current.changes_from(last_saved.as_ref().unwrap());
+
+    if changes.any() {
+        // Debounce: reset only when the pending settings snapshot changes.
+        // If the snapshot stays stable, the timer is allowed to finish and persist it.
+        if pending_save.as_ref() != Some(&current) {
+            if changes.app {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
             }
-            if graphics_changed {
+            if changes.graphics {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
             }
-            if kb_changed {
+            if changes.keybindings {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Keybindings changed");
             }
-            if core_changed {
+            if changes.core {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Core settings changed");
             }
+            if changes.worldmap_rendering {
+                console_logger::one(
+                    LogSev::Debug,
+                    LogAbout::Settings,
+                    "Worldmap rendering settings changed",
+                );
+            }
+            *pending_save = Some(current.clone());
+            save_timer.0.reset();
             save_timer.0.unpause();
         }
-        save_timer.0.reset();
+    } else {
+        pending_save.take();
+        save_timer.0.pause();
     }
 
     if !save_timer.0.is_paused() {
         save_timer.0.tick(time.delta());
         if save_timer.0.just_finished() {
-            if app_changed {
+            let pending = pending_save.as_ref().unwrap_or(&current);
+            let changes = pending.changes_from(last_saved.as_ref().unwrap());
+
+            if changes.app {
                 save_app_settings(&settings);
-                *last_saved_app = Some(settings.app.clone());
             }
 
-            if graphics_changed {
+            if changes.graphics {
                 save_graphics_settings(&settings);
-                *last_saved_graphics = Some(settings.graphics.clone());
             }
 
-            if kb_changed {
+            if changes.keybindings {
                 save_keybindings(&settings);
-                *last_saved_keybindings = Some(settings.keybindings.clone());
             }
 
-            if core_changed || logging_changed {
+            if changes.core || changes.logging {
                 save_core_settings(&settings);
-                *last_saved_core = Some(settings.core.clone());
-                *last_saved_logging = Some(settings.logging.clone());
             }
 
-            if uo_files_changed {
+            if changes.uo_files {
                 save_uo_files_settings(&settings);
-                *last_saved_uo_files = Some(settings.uo_files.clone());
             }
 
-            if maps_changed {
+            if changes.maps {
                 save_maps_settings(&settings);
-                *last_saved_maps = Some(settings.maps.clone());
             }
 
-            if worldmap_rendering_changed {
+            if changes.worldmap_rendering {
                 save_worldmap_rendering_settings(&settings);
-                *last_saved_worldmap_rendering = Some(settings.worldmap_rendering.clone());
             }
 
+            *last_saved = Some(pending.clone());
+            pending_save.take();
             save_timer.0.pause();
         }
     }
