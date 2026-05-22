@@ -245,12 +245,14 @@ Runtime flow for EC surface-like statics:
 This is why flat tileart entries such as marble floor corners can correctly use
 the land-style texture from `Data\WorldArt\...` without hardcoding their ids.
 
-### Static Water Rendering as a Normal Map
+### Static Water Selects Normal Maps Instead of Base Texture
 
 Known current failure: some surface-like static water tiles route to an EC
-normal/displacement-looking texture instead of the visible water albedo. This
-is separate from regular map water and from regular static art. The affected
-path is the surface-like static land-atlas path:
+normal/displacement-looking texture instead of the real visible water
+base/albedo texture. In these cases the chosen texture refs are support normal
+maps, not the water base texture that should be rendered. This is separate from
+regular map water and from regular static art. The affected path is the
+surface-like static land-atlas path:
 
 - `statics_collect.rs::resolve_static_visual_kind`
 - `resolve_surface_like_tex_land_ec_slot_id`
