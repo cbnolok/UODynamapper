@@ -1,171 +1,406 @@
 # Enhanced Client Asset Reference
 
-This document explains how UODynamapper reads Enhanced Client (EC) map/static
-data, packages it into UDDP files, and applies manual KDL overrides. It is meant
-for first-time contributors and coding agents: keep source evidence separate
-from convenience data, and do not treat a texture id or file path as ownership
-proof by itself.
+This document explains the EC map/static material pipeline as implemented in
+this repo. It is written for contributors and agents who need to change the
+pipeline without reintroducing the earlier texture-selection bugs.
+
+The main rule is: keep source facts, derived metadata, runtime policy, and
+manual overrides separate. A numeric texture id, file path, or UOP package name
+is evidence, not by itself a rendering decision.
 
 ## 1. Evidence Order
 
-Use this priority order when deciding how EC terrain or statics should behave:
+Use this order when deciding how EC terrain or statics should behave:
 
-1. EC UOP source files are primary evidence.
-2. Packed UDDP metadata is derived evidence used by runtime.
-3. Active KDL files are narrow manual integration/override data.
-4. Legacy KDL files are historical review material only.
+1. Original EC UOP files are primary evidence.
+2. Packed UDDP metadata is derived runtime evidence.
+3. Active KDL files are reviewed integration or override data.
+4. Legacy KDL files are review history only.
 5. Current Rust/WGSL behavior is implementation, not source truth.
 
-## 2. Raw Data Decoding
+Exploration and audit outputs belong in tooling paths, not in normal pack code,
+unless the data becomes a stable package contract.
 
-These modules decode raw EC files into internal structs. Parsers should preserve
-unknown fields when they affect alignment or future auditability, but higher
-layers should avoid assigning meaning to unknown fields without evidence.
+## 2. EC Source Files
 
-| Rust Module | Target UOP File | Content Description |
-|:---|:---|:---|
-| `string_dictionary.rs` | `string_dictionary.uop` | A dictionary of virtual paths (e.g., `build/tileart/00000001.dat`) indexed by an internal ID. Crucial for mapping IDs to binary blocks. |
-| `tileart.rs` | `tileart.uop` | Detailed metadata for "Art Tiles" (statics). Contains flags, heights, radar colors, and pointers to textures. |
-| `textures.rs` | `Texture.uop`, `LegacyTexture.uop` | The actual image payloads. Stores metadata headers followed by raw DDS (BC1/BC3) or TGA blobs. |
-| `terrain_definition.rs` | `TerrainDefinition.uop` | EC land material definitions: aliases, shader names, layered texture refs, repetition/stretch, and selected primary texture evidence. |
-| `animationframe.rs` | `animationframe.uop` | Frame-by-frame metadata for animations, including coordinates and RLE encoding info. |
-| `mobile_animation.rs` | `mobileanimation*.uop` | Metadata and sequences for character and creature animations. |
-| `multis.rs` | `multi.uop` | Multi-part structures (houses, ships) and their components. |
-| `facet.rs` | `facet*.uop` | EC map data. Stores terrain IDs and height information in a paged block format. |
-| `waypoints.rs` | `waypoints.uop` | Raw waypoint section decoder for `build/sectors/waypoint.bin`; field semantics are still intentionally unresolved. |
+`string_dictionary.uop`:
 
-## 3. Abstractions And Aggregates
+- Stores strings used by many EC records.
+- Most source records store 1-based string offsets. The parser resolves offset
+  `n` through dictionary index `n - 1`.
+- Typical values are virtual paths such as `Data\WorldArt\02000130_...tga`,
+  shader names such as `UOStaticTerrainShader`, or material names.
 
-These modules do not mirror a single file format but instead provide convenience layers or aggregate data from multiple sources.
+`facet*.uop`:
 
-| Rust Module | Purpose |
-|:---|:---|
-| `tile_database.rs` | **High-level Facade**. The primary interface for the engine. It orchestrates `TerrainDefinition`, `ArtDefinition`, and `ClassicTileMapper` to provide a single point of lookup. |
-| `terrain_definition.rs` | **Terrain Material Decoder**. Parses `TerrainDefinition.uop`, which carries EC land-material semantics, selected textures, aliases, and runtime/provenance relationships. |
-| `classic_tile_mapper.rs` | **ID Translation**. Maps multiple classic 2D client tile IDs (which are sparse and duplicated) to their unified Enhanced Client **"Base ID"** equivalents. |
-| `facet_encoder.rs` | **Processing Utility**. Contains logic for re-encoding or optimizing facet data for runtime consumption. |
+- Stores EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.
+- Each decompressed `.bin` is a 64x64 tile chunk in column-major order.
+- Header: facet id byte and file id word.
+- Each cell stores land z, land graphic id, delimiter records, and static
+  records. Static records store graphic id, z, and hue.
+- The decoder converts this to classic-style 8x8 map blocks plus statics. The
+  land graphic id from the facet/map is the terrain query id used by runtime.
 
-## 4. Ownership Model
+`TerrainDefinition.uop`:
 
-EC texture ownership and render role are separate questions.
+- Owns EC terrain/material semantics.
+- Each entry currently decodes:
+  - `name_id`
+  - `id` material id
+  - `unk`, `unk2`, `unk3` floats, preserved but not interpreted
+  - alias records: `count_index`, `alias`, `tile_flags`
+  - optional texture block
+- Alias records are the bridge from map/facet terrain ids to EC material ids.
+  Non-zero aliases are runtime terrain slot ids. If an entry has no concrete
+  aliases, the material id itself is used as a fallback runtime slot id.
+- The optional texture block is the same general shape as `TextureItem`:
+  - `unk1`, preserved but not currently used as policy
+  - `shader_name_id` / resolved `shader_name`
+  - layered image refs, each with `name_string_off`, resolved path,
+    extracted `texture_id`, logical family, `unk4`, `texture_repetition`,
+    `unk6`, and `unk7`
+  - trailing `unk8` integer vector and `unk9` float vector
+- `texture_repetition` is the authored stretch/repetition factor. Runtime uses
+  it for EC terrain layer sampling; losing it shrinks large authored textures
+  into a tiny tile.
 
-Owners:
+`tileart.uop`:
+
+- Owns EC item/static semantics, including flat surface-like statics.
+- Raw records include tile id, two boolean fields, several unknown numeric
+  fields, old id, `type_val`, lighting fields, two 64-bit flag fields, facing,
+  EC and CC image windows/offsets, property vectors, stack aliases, appearance
+  metadata, optional sitting metadata, radar color, and four texture blocks.
+- Texture block 0 is used as the primary EC visual block. Texture block 1 is
+  used as the preferred classic/legacy visual block. Blocks 2 and 3 are
+  preserved as referenced texture data when present.
+- Each texture item stores string offset, `texture_stretch`, `unk4`, `unk6`,
+  and `unk7`. These are copied into `tilemeta.uddp` texture-ref metadata.
+- Current tile type classification is render-oriented:
+  - `UOWaterShader` -> liquid
+  - `UOStaticTerrainShader` -> solid/surface-like
+  - `UOSpriteShader` + `Unused1` flag -> solid/surface-like
+  - `UOSpriteShader` + first texture stretch not equal to `1.0` ->
+    solid/surface-like
+  - otherwise regular static art
+- Important: current code does not use texture-block `unk1` as the switch for
+  land-style rendering. If `unk1` proves to encode that behavior, promote it
+  only after an audit makes the rule defensible.
+
+`Texture.uop` and `LegacyTexture.uop`:
+
+- Shared image pools, not ownership boundaries.
+- `Texture.uop` usually resolves `build/worldart/{:08}.dds`.
+- `LegacyTexture.uop` usually resolves `build/tileartlegacy/{:08}.dds`.
+- Payloads are raw DDS or TGA image data. Tooling decodes them for packing, but
+  the original payload is the source evidence.
+
+## 3. Ownership Model
+
+Ownership and render role are separate axes.
 
 - `TerrainDefinition.uop` owns terrain/material semantics.
-- `tileart.uop` owns item/static semantics, including surface-like flat statics.
-- `facet*.uop` owns map cell terrain ids and heights.
-- `Texture.uop` and `LegacyTexture.uop` are shared image pools, not ownership boundaries.
+- `tileart.uop` owns item/static semantics.
+- `facet*.uop` owns placed map terrain ids, heights, statics, and static hues.
+- `Texture.uop`, `LegacyTexture.uop`, `TerrainTexture.uop`, and
+  `EffectTexture.uop` are physical package pools, not semantic owners.
 
 Consequences:
 
-- A low numeric texture id does not prove land ownership.
-- A `build/worldart/...` path does not prove terrain ownership.
-- The same raw texture id may appear in both art and land outputs when different semantic owners need it.
-- `TerrainTexture.uop` / `EffectTexture.uop` style package names should not be collapsed into terrain/particle policy without direct owner evidence.
+- A low texture id does not prove terrain ownership.
+- A `Data\WorldArt\...` path does not prove terrain ownership.
+- A `Data\Textures\...` path can be an art-owned support reference.
+- The same decoded texture id can appear in both art and land packages when
+  different semantic owners need it.
 
-## 5. Map, Terrain, And Static Workflow
+## 4. Terrain Texture Selection
 
-Terrain:
+Terrain packing starts from `TerrainDefinition.uop`, not from classic tile ids
+or raw texture package membership.
 
-- Read terrain ids and heights from map/facet data.
-- Use `TerrainDefinition.uop` aliases and material entries to map those ids to EC material ids.
-- Preserve all referenced material layers: visible bases, detail textures, masks, normals, and other support textures.
-- Pick a conservative primary visible texture for baseline rendering, but keep the full layer graph for blending and future shaders.
+The current primary visible texture selector ranks layers in this order:
 
-Statics:
+1. Layers with a resolved texture id.
+2. Non-support names before support names.
+3. Preferred repetition before non-preferred repetition.
+4. Lower `unk6`.
+5. Lower `name_string_off`.
 
-- Read item/static metadata from `tileart.uop`.
-- Use tileart shader names, flags, clip windows, and texture refs to decide how a static should render.
-- Surface-like statics remain tileart-owned even when they look like terrain. They should not be moved into terrain ownership just because they are flat.
+Current support-name heuristic:
 
-Problematic tiles:
+- Support for primary exclusion: path contains `noise`, `normal`, `mask`, or
+  `_alpha`.
+- Wider support-like diagnostic clue: path contains `alpha`, `mask`, `noise`,
+  `normal`, `bump`, `ripple`, `flow`, or `distort`.
 
-- Prefer source-derived mappings first.
-- If the source-derived primary texture is wrong, record why and fix the narrow case in `EcTerrainOverrides.kdl`.
-- If a classic id needs routing to an EC material id, use `TerrainTranscode.kdl` until that mapping can be derived or replaced by a better source.
-- Do not use opaque fields such as `unk6` as policy unless an audit proves they are reliable.
+Preferred repetition is `4.0..=8.0`. This matches the observed EC terrain
+albedo/detail layers better than choosing the first layer blindly. It prevents
+the old failures where an alpha mask, normal map, displacement-like texture, or
+red diagnostic-looking support texture became the visible terrain base.
 
-## 6. UDDP Texture Atlases And Metadata
+`unk6` is only a deterministic final tie-breaker after the support and
+repetition rules. It is not treated as semantic policy. The packer marks
+`TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER` when multiple layers have the
+same current rank, so those cases stay visible for audit. Do not promote `unk6`
+unless an audit proves it works in at least 3/4 of reviewed cases.
+
+Reason codes written to metadata:
+
+- `non_support_preferred_repetition`
+- `non_support_repetition_fallback`
+- `support_preferred_repetition_fallback`
+- `support_repetition_fallback`
+
+Diagnostic flags written to metadata include:
+
+- selected current support layer
+- selected support-like layer
+- selected preferred repetition
+- fallback reason
+- multiple preferred non-support layers
+- support-like clue outside current heuristic
+- opaque `unk6` tie-breaker
+
+## 5. Layer Roles
+
+For EC terrain runtime blending, layer index currently matters:
+
+- Layer 0 is treated as base/albedo.
+- Layer 1 is treated as detail/grunge/secondary albedo.
+- Layer 2 is treated as mask/alpha blend control.
+
+This is a runtime interpretation of the layer graph preserved from
+`TerrainDefinition.uop`. The packer does not flatten layers into one image. It
+packs all source texture ids it can decode, then writes provenance so runtime
+can sample base/detail/mask with the authored stretch.
+
+Normals, noise, masks, ripple/flow/distortion clues, and other support textures
+are preserved as metadata and packed texture refs when available. They are not
+all active shader inputs yet. Do not discard them just because the current
+shader only uses base/detail/mask.
+
+For EC tileart texture refs, stable roles are inferred from paths and selection
+state:
+
+- `normal` or `_n` -> normal-like
+- `alpha` -> alpha mask
+- `mask` -> generic mask
+- `noise` -> noise
+- `detail` -> detail
+- `light` or `glow` -> overlay
+- primary selected ref -> base
+- auxiliary ref or `Data\Textures\...` -> image support
+- otherwise unknown support
+
+Tileart auxiliary detection currently treats names containing `noise`,
+`normal`, or token segments `n`, `nm`, `nrm`, `norm` as auxiliary.
+
+## 6. Surface-Like Statics
+
+Surface-like statics are still tileart-owned. They render on the ground, but
+that does not make them terrain materials.
+
+Build-time flow:
+
+- `tileart.rs` classifies EC tileart entries into regular static, solid
+  surface-like, or liquid-like.
+- `tilemeta.uddp` stores `TileMetaItemVisualKind::SurfaceLike` for non-static
+  tileart classifications.
+- It also stores all tileart texture refs, including logical family, physical
+  package, stable role, speculative role, `texture_stretch`, `unk4`, `unk6`,
+  `unk7`, block index, item index, and primary/auxiliary flags.
+
+Runtime flow for EC surface-like statics:
+
+- Prefer a land-atlas path over the regular EC art-atlas path.
+- Ask `tilemeta` for the main EC texture id.
+- For surface-like tiles, exact `texture_id == tile_id` matches are disabled
+  during main texture selection. This avoids treating a CC art id as if it were
+  an EC WorldArt texture id.
+- If the selected texture id is directly present in `tex_land_ec.uddp`, use it.
+- Otherwise, search terrain provenance for records with that selected texture
+  id. If there is exactly one canonical slot, use it. If there is no canonical
+  slot and exactly one alias slot, use that. Otherwise fall back through
+  `resolve_runtime_slot_id(meta.cc_texture_id)`.
+- If nothing resolves, skip the surface-like static and log samples.
+
+This is why flat tileart entries such as marble floor corners can correctly use
+the land-style texture from `Data\WorldArt\...` without hardcoding their ids.
+
+## 7. Classic Id Ranges
+
+Classic art ids below `0x4000` are land diamonds in classic art data. Classic
+static art ids are stored at `item_id + 0x4000`.
+
+Current handling:
+
+- `tex_art_cc.uddp` decodes art ids `< 0x4000` as 44x44 land diamonds and ids
+  `>= 0x4000` as statics.
+- Runtime CC static rendering adds `0x4000` to the item graphic id before
+  looking up the static art atlas.
+- `tilemeta` radar color lookup also uses `id + 0x4000` for item/static radar
+  entries.
+- EC standard static art often keeps the same id as the CC item slot. Surface
+  land-like art is the exception: it often points through tileart metadata to a
+  separate EC WorldArt texture id.
+
+Do not assume that a CC item id directly equals an EC terrain material id.
+For regular static art it can often match the EC tileart id. For surface-like
+art, use the tileart texture refs and terrain provenance resolver.
+
+## 8. End-To-End Workflow
+
+Terrain package build:
+
+1. Load `TerrainDefinition.uop` and neighboring `string_dictionary.uop`.
+2. Resolve material aliases, shader names, layer paths, texture ids, layer
+   repetition, and preserved unknown fields.
+3. Load `Texture.uop` and `LegacyTexture.uop`.
+4. Collect every terrain source texture id, plus texture ids referenced by
+   `EcTerrainOverrides.kdl`.
+5. Decode those texture ids from the EC texture pools.
+6. Pack decoded textures into atlas pages.
+7. Build sparse slot records and alias records.
+8. Write terrain provenance for every material alias and selected/available
+   layer.
+9. Embed KDL-derived override metadata and transcode metadata when present.
+
+Tile metadata build:
+
+1. Load classic `tiledata.mul` and optional classic radar colors.
+2. Load EC `tileart.uop` definitions.
+3. Build dense land metadata from classic land records.
+4. Build dense item metadata from classic item records plus EC tileart records.
+5. Store EC/CC texture ids, crop starts, offsets, visual kind, radar color,
+   flags, and full EC texture-ref side tables.
+6. Compute tileart texture roles from path names, selected primary refs,
+   auxiliary clues, and package/family classification.
+
+Runtime:
+
+1. Load UDDP map/statics, `tilemeta.uddp`, `tex_art_cc.uddp`,
+   `tex_art_ec.uddp`, and `tex_land_ec.uddp`.
+2. Load loose `TerrainTranscode.kdl` and apply it over embedded transcode data.
+3. Load loose `EcTerrainOverrides.kdl` and apply it over embedded terrain
+   override defaults.
+4. Build land shader lookup entries from terrain provenance and override refs.
+5. For statics, choose regular art, CC art, or EC land-atlas rendering from
+   source mode and `tilemeta` visual kind.
+
+## 9. UDDP Packages
+
+`tilemeta.uddp`:
+
+- `metadata/land.bin`: dense `TileMetaLandTile` table from classic land
+  metadata, mapped into EC-compatible flags.
+- `metadata/items.bin`: dense `TileMetaItemTile` table from classic item
+  metadata plus EC tileart facts.
+- `metadata/item_texture_refs_index.bin`: per-item span table into refs.
+- `metadata/item_texture_refs.bin`: all EC tileart texture refs.
+- Item records store EC and CC texture ids, crop starts, offsets, radar color,
+  flags, height, visual kind, and names.
+- Texture refs store texture id, logical family, physical package, stable role,
+  speculative role, block/item index, primary/auxiliary flags, stretch, `unk4`,
+  `unk6`, and `unk7`.
 
 `tex_art_ec.uddp`:
 
 - Contains tileart-owned EC static/art images.
-- Keyed by art id / tileart semantics.
-- Uses atlas pages plus sparse slot metadata for page, rectangle, and dimensions.
+- It must not drop a tileart-owned surface entry just because its visual role is
+  land-like. Runtime may choose the land path for that tile, but tileart remains
+  the semantic owner.
 
 `tex_land_ec.uddp`:
 
-- Contains `TerrainDefinition.uop`-owned terrain material textures.
-- Packs all required material layers when possible, not only the current primary texture.
-- Stores `metadata/terrain_provenance.bin`, which links:
+- Contains terrain material images derived from `TerrainDefinition.uop` plus
+  reviewed override texture refs.
+- Package layout:
+  - `pages/*`: atlas page payloads
+  - `metadata/pages.bin`: page dimensions, count, pixel format, used extents
+  - `metadata/slots.bin`: sparse slot table keyed by runtime land/art slot id
+  - `metadata/terrain_provenance.bin`: material-to-texture provenance
+  - optional `metadata/terrain_overrides.json`: embedded KDL-derived defaults
+  - optional `metadata/transcode.bin`: embedded transcode table
+- `terrain_provenance.bin` v3 stores:
   - material id
-  - alias/classic terrain id
+  - material name id
+  - alias count index
+  - alias slot id
+  - alias tile flags
   - selected texture id
   - canonical packed slot id
   - selected layer index
-  - authored texture repetition/stretch
-  - primary texture decision and reason flags
-- The renderer uses this provenance to avoid selecting masks/normals as visible bases and to blend base/detail/mask layers with the correct stretch.
-
-`tilemeta.uddp`:
-
-- Stores dense land/item metadata used by runtime routing.
-- Merges classic tiledata with EC tileart-derived sidecars where needed.
+  - selected texture repetition/stretch
+  - primary texture id
+  - primary layer index
+  - primary selection reason
+  - primary selection flags
+- Runtime uses provenance to resolve direct terrain, transcoded terrain, and
+  surface-like static texture refs, and to fill base/detail/mask lookup entries
+  for the land shader.
 
 `tex_art_cc.uddp`:
 
-- Contains Classic Client art/land atlas data for classic rendering paths.
+- Contains Classic Client land and static art.
+- Land diamonds and static art live in the classic `0x4000` split described
+  above.
 
-## 7. KDL Files
+## 10. KDL Files
 
 Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 
 `EcTerrainOverrides.kdl`:
 
-- Narrow manual integration table for terrain facts not currently derivable from UOP data.
-- Use it for reviewed policy/liquid facts, explicit layer texture substitutions, seasonal/material reroutes, and ignore/transparent decisions.
-- It may be embedded into `tex_land_ec.uddp` as packaged default/provenance, and may also be loaded loose at runtime to override the embedded copy.
-- Loose overrides are useful for fast experiments: light/dark mountains, snowy map variants, or one-off problematic tiles. If a loose override references a texture that was not packed, the runtime should warn and fall back.
+- Reviewed manual integration table for facts not currently derivable from UOP
+  data.
+- Supported actions:
+  - `policy`: shader/runtime policy such as smoothing or follow-center
+  - `liquid`: reviewed liquid speed/wave parameters
+  - `layer`: ordered texture layer substitution with optional stretch
+  - `texture`: extra texture id reference with role
+  - `ignore`: intentionally hidden/transparent terrain
+- The packer embeds it into `tex_land_ec.uddp` as
+  `metadata/terrain_overrides.json` and also packs referenced override textures.
+- Runtime also loads the loose file and applies it over the embedded defaults.
+  Loose overrides are fast for local experiments such as dark/light mountains
+  or snow variants. A loose override can only use texture pixels already packed
+  into `tex_land_ec.uddp`; missing refs are warned and fall back.
+- Prefer reason-code values over prose in machine-readable fields.
 
 `TerrainTranscode.kdl`:
 
-- Active loose fallback table mapping CC land ids to EC material ids.
-- It is legacy-shaped but still useful for ids not fully covered by direct `TerrainDefinition.uop` aliases.
-- Do not add visual policy here; keep it to id routing.
+- Loose fallback table mapping CC land ids to EC material ids.
+- Keep it to id routing. Do not add visual policy here.
+- It remains active for ids not fully resolved through direct
+  `TerrainDefinition.uop` aliases.
 
 Legacy KDL files:
 
-- Stored under `dynamapper/assets/cc_ec_convtables/legacy/`.
-- Kept for review history and migration reference.
-- Do not load them in runtime paths.
+- Live under `dynamapper/assets/cc_ec_convtables/legacy/`.
+- They are review history and migration reference.
+- Runtime paths must not load them.
 
-When to modify KDL:
+Modify active KDL only when the source-derived pipeline is wrong or incomplete
+and the reason has been inspected. If a rule can be derived from UOP data, fix
+the parser or metadata builder instead of adding a broad manual table.
 
-- Modify active KDL only after source-derived data has been inspected and the missing/wrong fact is clear.
-- Prefer reason-code values over free-form prose in machine-readable fields.
-- Keep comments short and evidence-oriented.
+## 11. Conflict Handling
 
-## 8. `tileart.rs` Parser Rules
+When a case is unclear:
 
-`tileart.rs` converts raw `TileArtEntry` records into `ArtData`.
-The current `TileType` mapping is intentionally render-oriented:
+1. Preserve every source reference first.
+2. Record the current automatic decision and reason flags.
+3. Prefer narrow source-derived criteria over id hardcoding.
+4. Use `EcTerrainOverrides.kdl` for reviewed exceptions.
+5. Warn and fall back when loose overrides point to unpacked texture ids.
+6. Do not change runtime rendering policy until the metadata phase supports the
+   decision.
 
-- `UOWaterShader` -> `TileType::Liquid`
-- `UOStaticTerrainShader` -> `TileType::Solid`
-- `UOSpriteShader` with `TaeFlag::Unused1` -> `TileType::Solid`
-- `UOSpriteShader` with primary texture `texture_stretch != 1.0` -> `TileType::Solid`
-- otherwise -> `TileType::Static`
+Known weak signals:
 
-The `Unused1` rule is important. Real EC tileart entries such as flat wooden boards, sandstone floor tiles, and palm-frond roof tiles use `UOSpriteShader` but still need surface-like flat rendering rather than billboard/static rendering. In other words, `Unused1` is a verified flat-render hint inside `tileart.uop`, not proof of terrain ownership.
-
-## 9. Practical Rules For Other Crates
-
-For downstream crates such as `uddconv` and `dynamapper`:
-
-- use `TerrainDefinition.uop` to decide land ownership
-- use `tileart.uop` to decide static/item ownership
-- use `ArtData::tile_type` plus flags to decide whether an art-owned entry should render as regular art, liquid-like art, or surface-like art
-- keep exploration/audit output out of normal pack paths unless the data becomes a stable package contract
-- keep loose KDL overrides separate from embedded package defaults so contributors can iterate without repacking
-
-This avoids an earlier class of mistakes where floor-like EC statics were treated either as ordinary billboards or as terrain materials simply because they looked flat or shared numeric ids with classic assets.
+- `unk6` is only a tie-breaker and audit flag today.
+- `unk1` is preserved but not policy today.
+- Physical package names are not semantic ownership.
+- `EffectTexture.uop` evidence is metadata/support evidence unless linked by a
+  real owner; do not infer particle-only or terrain-only behavior from the file
+  name alone.
