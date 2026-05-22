@@ -58,6 +58,10 @@ pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPa
 #[derive(Resource)]
 pub struct GumpMapRes(pub Arc<uocf::classic::gump::GumpMap>);
 
+/// Optional Classic Client hues.
+#[derive(Resource)]
+pub struct ClassicHuesRes(pub Arc<Vec<uocf::classic::hues::HueEntry>>);
+
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
@@ -362,6 +366,23 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         }
     };
 
+    let hues_path = resolve_optional_uddp_path(&udd_path, "hues.mul");
+    let classic_hues = if let Some(hues_path) = hues_path {
+        match uocf::classic::hues::load_hues(&hues_path) {
+            Ok(hues) => {
+                lg(&format!("Loaded Classic Client hues from {}.", hues_path.display()));
+                Some(hues)
+            }
+            Err(error) => {
+                lg_err(&format!("Failed to load Classic Client hues: {error}"));
+                None
+            }
+        }
+    } else {
+        lg("No Classic Client hues source selected: hues.mul not found in udd_path.");
+        None
+    };
+
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
@@ -473,6 +494,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(gump_map) = gump_map {
         commands.insert_resource(GumpMapRes(Arc::new(gump_map)));
+    }
+    if let Some(classic_hues) = classic_hues {
+        commands.insert_resource(ClassicHuesRes(Arc::new(classic_hues)));
     }
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);
