@@ -101,6 +101,19 @@ fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f3
     )
 }
 
+fn surface_like_static_world_anchor(
+    visual_kind: StaticVisualKind,
+    world_x: f32,
+    world_z: f32,
+) -> (f32, f32) {
+    match visual_kind {
+        StaticVisualKind::TexLandEcArt { .. } => (world_x, world_z),
+        StaticVisualKind::CcRegularArt { .. } | StaticVisualKind::EcRegularArt { .. } => {
+            apply_static_world_anchor_translation(world_x, world_z)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticVisualKind {
     CcRegularArt { art_id: u16 },
@@ -338,10 +351,11 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return None;
     };
 
-    let Some(main_ec_texture_id) = tilemeta_package
-        .and_then(|package| package.main_ec_texture_id(tile_id))
-        .or_else(|| (meta.ec_texture_id != 0).then_some(meta.ec_texture_id))
-    else {
+    let main_ec_texture_id = tilemeta_package
+        .and_then(|package| package.main_ec_texture_ref(tile_id))
+        .map(|texture_ref| texture_ref.texture_id)
+        .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
+    let Some(main_ec_texture_id) = main_ec_texture_id else {
         return package
             .resolve_runtime_slot_id(meta.cc_texture_id)
             .map(|runtime_slot_id| {
@@ -396,6 +410,16 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         .map(|runtime_slot_id| {
             surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
         })
+}
+
+fn surface_like_legacy_ec_texture_id_fallback(
+    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+) -> Option<u32> {
+    if tilemeta.ec_texture_id == 0 || tilemeta.flags & TILE_FLAG_WET != 0 {
+        return None;
+    }
+
+    Some(tilemeta.ec_texture_id)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1197,7 +1221,7 @@ pub fn sys_collect_visible_statics(
                             };
 
                         let (anchored_world_x, anchored_world_z) =
-                            apply_static_world_anchor_translation(world_x, world_z);
+                            surface_like_static_world_anchor(visual_kind, world_x, world_z);
 
                         if let Some(resolved) = resolved_sprite {
                             chunk_stats.atlas_hits += 1;
@@ -1444,6 +1468,50 @@ mod tests {
         approx_eq(bounds.local_max_x, 1.0);
         approx_eq(bounds.local_min_z, 0.0);
         approx_eq(bounds.local_max_z, 1.0);
+    }
+
+    #[test]
+    fn surface_like_land_art_keeps_raw_world_anchor() {
+        let anchor = surface_like_static_world_anchor(
+            StaticVisualKind::TexLandEcArt { art_id: 42 },
+            10.0,
+            20.0,
+        );
+
+        approx_eq(anchor.0, 10.0);
+        approx_eq(anchor.1, 20.0);
+    }
+
+    #[test]
+    fn regular_static_art_keeps_sprite_world_anchor() {
+        let anchor = surface_like_static_world_anchor(
+            StaticVisualKind::EcRegularArt { art_id: 42 },
+            10.0,
+            20.0,
+        );
+
+        approx_eq(anchor.0, 10.0 + EC_STATIC_TILE_TRANSLATION_X);
+        approx_eq(anchor.1, 20.0 + EC_STATIC_TILE_TRANSLATION_Z);
+    }
+
+    #[test]
+    fn wet_surface_like_tiles_do_not_use_legacy_ec_texture_fallback() {
+        let mut tile = item_tile_with_flags(
+            TILE_FLAG_WET,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+        tile.ec_texture_id = 12_345;
+
+        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile), None);
+    }
+
+    #[test]
+    fn non_wet_surface_like_tiles_can_use_legacy_ec_texture_fallback() {
+        let mut tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        tile.ec_texture_id = 12_345;
+
+        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile), Some(12_345));
     }
 
     #[test]
