@@ -8,6 +8,7 @@ use crate::util_lib::tracked_plugin::TrackedPlugin;
 
 pub mod statics_collect;
 pub mod statics_draw;
+pub mod static_lights;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,
@@ -25,6 +26,9 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();
+        app.init_resource::<static_lights::RenderStaticLightInstances>();
+        app.init_resource::<static_lights::StaticLightDrawDebugState>();
+        app.init_resource::<static_lights::StaticLightMaterialCache>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             crate::core::texture_cache::art::SpriteArtPageAtlasHandle,
         >::default());
@@ -48,6 +52,8 @@ impl Plugin for DrawStaticSpritesPlugin {
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
                    .after(SceneRenderLandSysSet::RenderLandChunks),
+               static_lights::sys_collect_visible_static_lights
+                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_transparent_entities
@@ -56,6 +62,8 @@ impl Plugin for DrawStaticSpritesPlugin {
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_ground_transparent_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
+               static_lights::sys_sync_static_light_entities
+                   .after(static_lights::sys_collect_visible_static_lights),
                statics_draw::sys_update_sprite_instance_buffer
                    .in_set(SceneRenderArtSysSet::RenderStaticSprites)
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),

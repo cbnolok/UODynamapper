@@ -49,6 +49,10 @@ pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 #[derive(Resource)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
+/// Optional prepacked world light mask package from light.mul/lightidx.mul.
+#[derive(Resource)]
+pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
+
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
@@ -322,6 +326,23 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let world_lights_path = resolve_optional_uddp_path(&udd_path, "world_lights.uddp");
+    let world_lights_package = if let Some(world_lights_path) = world_lights_path {
+        log_source_choice(
+            &lg,
+            "world light masks",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&world_lights_path),
+        );
+        Some(
+            udd_assets::world_lights::WorldLightsPackage::load(&world_lights_path)
+                .unwrap_or_else(|_| panic!("Error loading {}", world_lights_path.display())),
+        )
+    } else {
+        lg("No world light mask package selected: world_lights.uddp not found in udd_path.");
+        None
+    };
+
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
@@ -425,6 +446,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(tex_land_ec_package) = tex_land_ec_package {
         commands.insert_resource(TexLandEcPackageRes(Arc::new(tex_land_ec_package)));
+    }
+    if let Some(world_lights_package) = world_lights_package {
+        commands.insert_resource(WorldLightsPackageRes(Arc::new(world_lights_package)));
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
 }

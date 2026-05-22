@@ -75,6 +75,8 @@ When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
 
+Runtime static lights use this item metadata: `flags & 0x00800000` marks a light-source static, and `quality` is interpreted as the world light id for those records.
+
 ---
 
 ## 2. `tex_art_cc.uddp`, `tex_art_ec.uddp`, `tex_land_ec.uddp`, and related EC texture packages
@@ -141,3 +143,23 @@ Storing the converted textures as BC7 within the UDDP package creates a file tha
 3. **Texture Array Uniformity**: Modern GPU renderers use `Texture2DArray` to pack multiple pages into a single draw-call pipeline. All layers in a texture array must share the exact same format. BC7 provides the best "highest common denominator" for mixing opaque and translucent terrain tiles.
 
 To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses a **Supercompression** pass (applying `ZstdNoDict` compression on top of the BC7 payload). Even though BC7 is a fixed-rate GPU format, Zstd is highly effective at compressing the repeating, identical BC7 16-byte blocks that are generated for transparent or flat-color "empty space" regions within the atlas pages.
+
+---
+
+## 3. `world_lights.uddp`
+
+This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals.
+
+**Virtual Files:**
+
+- `metadata/slots.bin`: Dense slot manifest indexed by light id.
+- `lights/{light_id:08}.rgba8888`: Raw RGBA8888 light-mask payload for present slots.
+
+### 3.1 `WorldLightSlotRecord` Struct (10 Bytes)
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `light_id` | Dense light id. |
+| 0x04 | `u16` | `flags` | Bit 0 means the light payload is present. |
+| 0x06 | `u16` | `width` | Light mask width in pixels. |
+| 0x08 | `u16` | `height` | Light mask height in pixels. |
