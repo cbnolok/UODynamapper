@@ -5,3 +5,4 @@ ClassicUO/
 compare_impl/
 old/
 target/
+*__pycache__/
