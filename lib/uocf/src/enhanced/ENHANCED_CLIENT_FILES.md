@@ -63,6 +63,13 @@ unless the data becomes a stable package contract.
 - `texture_repetition` is the authored stretch/repetition factor. Runtime uses
   it for EC terrain layer sampling; losing it shrinks large authored textures
   into a tiny tile.
+- Current interpretation of terrain texture unknowns:
+  - `unk1` appears to be texture-block mode/class metadata, but it is not
+    needed for the current material routing.
+  - `unk4` is preserved per image ref; no rendering meaning is assigned yet.
+  - `unk6` has ordering correlation inside otherwise equivalent layer choices,
+    so it is used only as a deterministic final tie-breaker and audit signal.
+  - `unk7`, `unk8`, and `unk9` are preserved for future audits.
 
 `tileart.uop`:
 
@@ -84,8 +91,19 @@ unless the data becomes a stable package contract.
     solid/surface-like
   - otherwise regular static art
 - Important: current code does not use texture-block `unk1` as the switch for
-  land-style rendering. If `unk1` proves to encode that behavior, promote it
-  only after an audit makes the rule defensible.
+  land-style rendering. Prior diagnostics showed this signal is fairly
+  consistent for surface-like/static terrain-style tileart, but the current
+  pipeline already resolves those cases through shader/flag/stretch
+  classification plus texture provenance. Keep `unk1` documented and preserved;
+  do not add it to routing unless the current evidence path stops covering a
+  real case.
+- Current interpretation of tileart texture unknowns:
+  - texture-block `unk1` likely encodes a block mode/class. It is useful audit
+    evidence, not active policy.
+  - item `unk4` is preserved per texture ref; no rendering meaning is assigned.
+  - item `unk6` and `unk7` are preserved in `tilemeta.uddp`. They may encode
+    sampler/channel/blend parameters, but current routing does not depend on
+    them.
 
 `Texture.uop` and `LegacyTexture.uop`:
 
@@ -386,6 +404,11 @@ the parser or metadata builder instead of adding a broad manual table.
 
 ## 11. Conflict Handling
 
+Diagnostics are not a goal by themselves. Add or run them only for targeted
+questions: a suspicious tile, a candidate weak signal, an override review, or a
+regression in the rendered map. If routing is visually correct and metadata
+contains the decision reasons, prefer keeping the runtime path simple.
+
 When a case is unclear:
 
 1. Preserve every source reference first.
@@ -399,7 +422,9 @@ When a case is unclear:
 Known weak signals:
 
 - `unk6` is only a tie-breaker and audit flag today.
-- `unk1` is preserved but not policy today.
+- `unk1` has prior diagnostic support for surface-like tileart mode, but it is
+  preserved rather than used because shader/flag/stretch plus provenance
+  currently solves the routing.
 - Physical package names are not semantic ownership.
 - `EffectTexture.uop` evidence is metadata/support evidence unless linked by a
   real owner; do not infer particle-only or terrain-only behavior from the file
