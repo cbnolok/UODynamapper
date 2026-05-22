@@ -8,7 +8,6 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -32,16 +31,14 @@ light_color = [
     0.92,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
 _pad1_ = 0.0
 exposure = 1.05
-gamma = 2.2
 ambient_strength = 0.18
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -137,7 +134,6 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -161,16 +157,14 @@ light_color = [
     0.9,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
 _pad1_ = 0.0
 exposure = 1.1
-gamma = 2.2
 ambient_strength = 0.18
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -266,7 +260,6 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -290,16 +283,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
 _pad1_ = 0.0
 exposure = 1.2
-gamma = 2.2
 ambient_strength = 0.1
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -395,7 +386,6 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -419,16 +409,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
 _pad1_ = 0.0
 exposure = 0.95
-gamma = 2.2
 ambient_strength = 0.06
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -524,7 +512,6 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -548,16 +535,14 @@ light_color = [
     0.92,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
 _pad1_ = 0.0
 exposure = 1.05
-gamma = 2.2
 ambient_strength = 0.18
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -653,7 +638,6 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -677,16 +661,14 @@ light_color = [
     0.9,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
 _pad1_ = 0.0
 exposure = 1.1
-gamma = 2.2
 ambient_strength = 0.18
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -782,7 +764,6 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -806,16 +787,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
 _pad1_ = 0.0
 exposure = 1.0
-gamma = 2.2
 ambient_strength = 0.08
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -911,7 +890,6 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -935,16 +913,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
 _pad1_ = 0.0
 exposure = 0.85
-gamma = 2.2
 ambient_strength = 0.04
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -1040,7 +1016,6 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1064,16 +1039,14 @@ light_color = [
     0.92,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
 _pad1_ = 0.0
 exposure = 1.05
-gamma = 2.2
 ambient_strength = 0.22
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -1169,7 +1142,6 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.27
 blur_radius = 3.7
@@ -1193,16 +1165,14 @@ light_color = [
     0.9,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
 _pad1_ = 0.0
 exposure = 1.48
-gamma = 2.2
 ambient_strength = 1.38
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -1298,7 +1268,6 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1322,16 +1291,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
 _pad1_ = 0.0
 exposure = 1.0
-gamma = 2.2
 ambient_strength = 0.1
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,
@@ -1427,7 +1394,6 @@ shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
-reconstruction_mode = 0
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1451,16 +1417,14 @@ light_color = [
     1.05,
 ]
 _pad0_ = 0.0
-ambient_color = [
+atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
 _pad1_ = 0.0
 exposure = 0.8
-gamma = 2.2
 ambient_strength = 0.05
-_pad2_ = 0.0
 grade_warm_color = [
     1.08,
     0.98,

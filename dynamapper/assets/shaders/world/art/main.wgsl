@@ -72,6 +72,24 @@ fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
     return clamp(depth - f32(sort_bias_ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
 }
 
+fn apply_art_surface_shading(rgb: vec3<f32>, uv_in_tile: vec2<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let shadow_strength = clamp(effects.art_shadow_strength, 0.0, 1.0);
+    let highlight_strength = clamp(effects.art_highlight_strength, 0.0, 1.0);
+    let tint_strength = clamp(effects.art_depth_tint_strength, 0.0, 1.0);
+    let light_static = clamp(effects.light_decal_intensity, 0.0, 2.0);
+
+    let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
+    let lower_occlusion = smoothstep(0.18, 1.0, uv_in_tile.y);
+    let side_contact = 1.0 - smoothstep(0.0, 0.18, min(uv_in_tile.x, 1.0 - uv_in_tile.x));
+    let contact_noise = 0.85 + 0.15 * hash(floor(world_pos.xz * 0.25));
+
+    var out_rgb = rgb;
+    out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
+    out_rgb += rgb * global_light.light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
+    out_rgb = mix(out_rgb, out_rgb * global_light.atmosphere_tint, tint_strength * lower_occlusion);
+    return max(out_rgb, vec3<f32>(0.0));
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> ArtVertexOutput {
     let inst = instances[u32(vertex.uv_b.x + 0.5)];
@@ -111,11 +129,14 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
 
     let layer = u32(in.uv_b.x);
+    let inst = instances[in.instance_index];
     var uv = in.uv;
+    let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
-        let uv_in_tile = (uv - instances[in.instance_index].uv_min) / (instances[in.instance_index].uv_max - instances[in.instance_index].uv_min);
-        uv = instances[in.instance_index].uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * (instances[in.instance_index].uv_max - instances[in.instance_index].uv_min);
+        let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
+        uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
+    let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
     let color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
@@ -131,6 +152,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
+    shaded = vec4<f32>(apply_art_surface_shading(shaded.rgb, uv_in_tile_for_shading, in.world_pos), shaded.a);
     if (effects.enable_grunge == 1u) {
         shaded = vec4<f32>(apply_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile), shaded.a);
     }

@@ -226,7 +226,6 @@ fn sys_apply_land_shader_simplification_override(
         mat.extension.effects_uniform.normal_mode = 0;
         mat.extension.effects_uniform.enable_blur = 0;
         mat.extension.effects_uniform.enable_linear_filtering = 0;
-        mat.extension.effects_uniform.reconstruction_mode = 0;
         mat.extension.effects_uniform.sharpening_amount = 0.0;
         mat.extension.effects_uniform.blur_strength = 0.0;
         mat.extension.effects_uniform.blur_radius = 0.0;

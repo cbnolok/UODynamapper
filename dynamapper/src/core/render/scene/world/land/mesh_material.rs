@@ -132,8 +132,9 @@ pub struct LandEffectsUniform {
     pub enable_linear_filtering: u32,
 
     // --- Graphics controls (vec4 slot 1) ---
-    /// Reserved for layout compatibility; shader upscaling/reconstruction is disabled.
-    pub reconstruction_mode: u32,
+    /// Fake per-art vertical/occlusion shading strength.
+    #[serde(default = "default_art_shadow_strength")]
+    pub art_shadow_strength: f32,
     pub sharpening_amount: f32,
     /// Mix factor (0..1) with blurred albedo.
     pub blur_strength: f32,
@@ -160,11 +161,39 @@ pub struct LandEffectsUniform {
     /// Reserved for future additive light decals.
     #[serde(default)]
     pub light_decal_intensity: f32,
+    /// Fake per-art light catch strength.
+    #[serde(default = "default_art_highlight_strength")]
+    pub art_highlight_strength: f32,
+    /// Fake atmosphere/depth tint on art sprites and ground statics.
+    #[serde(default = "default_art_depth_tint_strength")]
+    pub art_depth_tint_strength: f32,
+
+    // --- Reserved future controls (vec4 slot 4) ---
     /// Reserved for future texture normal-map atlas sampling.
     #[serde(default)]
     pub enable_normal_maps: u32,
     #[serde(default)]
     pub _pad_eff1: u32,
+    #[serde(default)]
+    pub _pad_eff2: u32,
+    #[serde(default)]
+    pub _pad_eff3: u32,
+}
+
+fn default_art_shadow_strength() -> f32 {
+    0.12
+}
+
+fn default_art_highlight_strength() -> f32 {
+    0.08
+}
+
+fn default_art_depth_tint_strength() -> f32 {
+    0.10
+}
+
+fn default_atmosphere_tint() -> Vec3 {
+    Vec3::new(0.17, 0.22, 0.29)
 }
 
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).
@@ -185,16 +214,16 @@ pub struct GlobalLightingUniforms {
     pub light_color: Vec3,
     #[serde(default)]
     pub _pad0_: f32,
-    pub ambient_color: Vec3,
+    #[serde(default = "default_atmosphere_tint")]
+    pub atmosphere_tint: Vec3,
     #[serde(default)]
     pub _pad1_: f32,
 
-    // --- Exposure / gamma ---
+    // --- Exposure / ambient ---
     pub exposure: f32,
-    pub gamma: f32,
     pub ambient_strength: f32,
     #[serde(default)]
-    pub _pad2_: f32,
+    pub _pad2_: Vec2,
 
     // --- Grading ---
     pub grade_warm_color: Vec4,

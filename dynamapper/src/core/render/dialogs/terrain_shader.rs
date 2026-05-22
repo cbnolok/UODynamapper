@@ -24,6 +24,7 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 #[derive(Resource, Default)]
 pub struct TerrainShaderUiState {
     pub open: bool,
+    pub advanced_open: bool,
 }
 
 // Plugin that draws the UI and applies changes to materials.
@@ -77,11 +78,13 @@ pub fn terrain_ui_system(
         "Terrain Shader Controls [{:?}]",
         settings.keybindings.shader_settings
     );
+    let mut window_open = ui_state.open;
+    let mut advanced_open = ui_state.advanced_open;
 
     // `open_mut()` lets the egui title-bar close button sync back to our resource.
     egui::Window::new(title)
         .default_pos([16.0, 80.0])
-        .open(&mut ui_state.open)
+        .open(&mut window_open)
         .resizable(true)
         .show(ctx, |ui| {
             ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");
@@ -89,6 +92,87 @@ pub fn terrain_ui_system(
                 "Classic aims for original fidelity. Enhanced is subtle. KR is vibrant/painterly.",
             );
             ui.add_space(6.0);
+
+            ui.collapsing("Basic Controls", |ui| {
+                let mut changed = false;
+
+                ui.horizontal(|ui| {
+                    ui.strong("Render Style:");
+                    let mut mode = u.effects.shading_mode;
+                    for (label, val) in [("Classic", 0u32), ("Enhanced", 1u32), ("KR", 2u32)] {
+                        if ui.selectable_label(mode == val, label).clicked() {
+                            mode = val;
+                        }
+                    }
+                    if mode != u.effects.shading_mode {
+                        u.effects.shading_mode = mode;
+                        changed = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Output:");
+                    changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+                    changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
+                    changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+                });
+
+                changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+                changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+                changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
+
+                ui.separator();
+
+                let mut terrain_relief = if u.effects.normal_mode == 0 {
+                    0.0
+                } else {
+                    0.5 + 0.5 * u.land_lighting.sharpness_mix.clamp(0.0, 1.0)
+                };
+                if slider_s(ui, "Terrain Relief", &mut terrain_relief, 0.0..=1.0) {
+                    u.effects.normal_mode = if terrain_relief > 0.15 { 1 } else { 0 };
+                    u.land_lighting.enable_bent = if terrain_relief > 0.55 { 1 } else { 0 };
+                    u.land_lighting.sharpness_mix = (terrain_relief * 0.55).clamp(0.0, 0.55);
+                    u.land_lighting.sharpness_factor = (1.0 + terrain_relief * 1.5).clamp(1.0, 3.0);
+                    changed = true;
+                }
+
+                let mut soft_lighting = (u.land_lighting.fill_strength + u.land_lighting.diffuse_wrap * 2.0) * 0.5;
+                if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+                    u.land_lighting.fill_strength = soft_lighting;
+                    u.land_lighting.diffuse_wrap = (soft_lighting * 0.35).clamp(0.0, 0.5);
+                    changed = true;
+                }
+
+                let mut highlights = (u.land_lighting.rim_strength + u.land_lighting.specular_strength) * 0.5;
+                if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
+                    u.land_lighting.rim_strength = highlights * 0.45;
+                    u.land_lighting.specular_strength = highlights * 0.25;
+                    changed = true;
+                }
+
+                ui.separator();
+
+                changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
+
+                ui.horizontal(|ui| {
+                    changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
+                    changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+                    changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+                    changed |= toggle_u32(ui, "Normal Maps", &mut u.effects.enable_normal_maps);
+                });
+
+                changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+
+                if changed {
+                    u.dirty = true;
+                }
+            });
+
+            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs");
+            if advanced_open {
  
             // ------------------------- Effects -------------------------
             ui.collapsing("Effects", |ui| {
@@ -307,9 +391,9 @@ pub fn terrain_ui_system(
                     }
                 }
                 {
-                    let mut v = u.lighting.ambient_color;
-                    if color3(ui, "Ambient Color", &mut v) {
-                        u.lighting.ambient_color = v;
+                    let mut v = u.lighting.atmosphere_tint;
+                    if color3(ui, "Atmosphere Tint", &mut v) {
+                        u.lighting.atmosphere_tint = v;
                         changed = true;
                     }
                 }
@@ -465,15 +549,12 @@ pub fn terrain_ui_system(
                 let mut changed = false;
 
                 changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
-
-                if u.effects.reconstruction_mode != 0 {
-                    u.effects.reconstruction_mode = 0;
-                    changed = true;
-                }
-
                 changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
-
-                ui.add_enabled(false, egui::Label::new("Light decals and texture normal maps need dedicated asset/draw bindings."));
+                changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps);
+                changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+                changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
 
                 if changed {
                     u.dirty = true;
@@ -528,6 +609,7 @@ pub fn terrain_ui_system(
             });
 
             ui.separator();
+            }
 
             // ------------------------ Presets -------------------------
             ui.horizontal(|ui| {
@@ -578,6 +660,9 @@ pub fn terrain_ui_system(
                 ui.label(format!("Active: {}", u.active_preset));
             });
         });
+
+    ui_state.open = window_open;
+    ui_state.advanced_open = advanced_open;
 
     // Detect close transition: save shader settings to land.toml,
     // but only if values actually changed from the last saved snapshot.
