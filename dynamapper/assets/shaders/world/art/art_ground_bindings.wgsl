@@ -21,7 +21,7 @@ struct GroundTileInstance {
     priority_z_units: f32,
     sort_bias_ordinal: u32,
     is_wet_flags: u32,
-    _pad_inst: u32,
+    texture_stretch: f32,
     color_rgba: vec4<f32>,
 }
 

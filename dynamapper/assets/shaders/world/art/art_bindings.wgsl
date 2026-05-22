@@ -43,7 +43,7 @@ struct GroundTileInstance {
     sort_bias_ordinal: u32,
     // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
     is_wet_flags: u32,
-    _pad_inst: u32,
+    texture_stretch: f32,
     color_rgba: vec4<f32>,
 }
 

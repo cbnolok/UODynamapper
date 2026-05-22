@@ -103,12 +103,16 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     out.depth = in.logical_depth;
 
     let layer = u32(in.uv_b.x);
-    var uv = in.uv;
-    if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
-        let inst = instances[in.instance_index];
-        let uv_in_tile = (uv - inst.uv_min) / (inst.uv_max - inst.uv_min);
-        uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * (inst.uv_max - inst.uv_min);
+    let inst = instances[in.instance_index];
+    let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
+    var uv_in_tile = (in.uv - inst.uv_min) / atlas_extent;
+    if (inst.texture_stretch > 0.0) {
+        uv_in_tile = fract(in.world_pos.xz / inst.texture_stretch);
     }
+    if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
+        uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
+    }
+    let uv = inst.uv_min + uv_in_tile * atlas_extent;
     let color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {

@@ -326,7 +326,7 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
-) -> Option<u32> {
+) -> Option<SurfaceLikeTexLandEcResolution> {
     let Some(meta) = tilemeta else {
         return None;
     };
@@ -342,11 +342,19 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         .and_then(|package| package.main_ec_texture_id(tile_id))
         .or_else(|| (meta.ec_texture_id != 0).then_some(meta.ec_texture_id))
     else {
-        return package.resolve_runtime_slot_id(meta.cc_texture_id);
+        return package
+            .resolve_runtime_slot_id(meta.cc_texture_id)
+            .map(|runtime_slot_id| {
+                surface_like_tex_land_ec_resolution(package, runtime_slot_id, None)
+            });
     };
 
     if package.present_slot(main_ec_texture_id).is_some() {
-        return Some(main_ec_texture_id);
+        return Some(surface_like_tex_land_ec_resolution(
+            package,
+            main_ec_texture_id,
+            Some(main_ec_texture_id),
+        ));
     }
 
     let mut canonical_slots = BTreeSet::new();
@@ -372,14 +380,81 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     }
 
     if canonical_slots.len() == 1 {
-        return canonical_slots.into_iter().next();
+        return canonical_slots.into_iter().next().map(|runtime_slot_id| {
+            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
+        });
     }
 
     if canonical_slots.is_empty() && alias_slots.len() == 1 {
-        return alias_slots.into_iter().next();
+        return alias_slots.into_iter().next().map(|runtime_slot_id| {
+            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
+        });
     }
 
-    package.resolve_runtime_slot_id(meta.cc_texture_id)
+    package
+        .resolve_runtime_slot_id(meta.cc_texture_id)
+        .map(|runtime_slot_id| {
+            surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
+        })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SurfaceLikeTexLandEcResolution {
+    runtime_slot_id: u32,
+    texture_repetition: f32,
+}
+
+fn surface_like_tex_land_ec_resolution(
+    package: &udd_assets::tex_land_ec::TexLandEcPackage,
+    runtime_slot_id: u32,
+    selected_texture_id: Option<u32>,
+) -> SurfaceLikeTexLandEcResolution {
+    let texture_repetition = selected_texture_id
+        .and_then(|texture_id| {
+            package
+                .terrain_provenance()
+                .iter()
+                .filter(|record| record.selected_texture_id == texture_id)
+                .find(|record| {
+                    provenance_record_matches_runtime_slot(package, record, runtime_slot_id)
+                })
+                .map(|record| record.selected_texture_repetition)
+        })
+        .filter(|repetition| repetition.is_finite() && *repetition > 0.0)
+        .or_else(|| {
+            package.present_slot(runtime_slot_id).map(|slot| {
+                let width = f32::from(slot.width).max(1.0);
+                width / CC_TILE_PIXEL_WIDTH
+            })
+        })
+        .unwrap_or(1.0);
+
+    SurfaceLikeTexLandEcResolution {
+        runtime_slot_id,
+        texture_repetition,
+    }
+}
+
+fn provenance_record_matches_runtime_slot(
+    package: &udd_assets::tex_land_ec::TexLandEcPackage,
+    record: &udd_assets::tex_land_ec::TexLandEcTerrainProvenanceRecord,
+    runtime_slot_id: u32,
+) -> bool {
+    if record.canonical_slot_id != 0
+        && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
+        && package.present_slot(record.canonical_slot_id).is_some()
+    {
+        return record.canonical_slot_id == runtime_slot_id;
+    }
+
+    if record.alias_slot_id != 0
+        && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
+        && package.present_slot(record.alias_slot_id).is_some()
+    {
+        return record.alias_slot_id == runtime_slot_id;
+    }
+
+    false
 }
 
 fn resolve_static_visual_kind(
@@ -477,7 +552,7 @@ pub struct GroundTileInstance {
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in ground shader).
     pub is_wet_flags: u32,
-    pub _pad_inst: u32,
+    pub texture_stretch: f32,
     pub color_rgba: [f32; 4],
 }
 
@@ -1032,7 +1107,13 @@ pub fn sys_collect_visible_statics(
                         let base_world_y = (tile.z as f32) * height_scale;
                         let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
                         let world_y = base_world_y + bias;
-                        let (billboard_source, offset_x_pixels, offset_y_pixels, resolved_sprite) =
+                        let (
+                            billboard_source,
+                            offset_x_pixels,
+                            offset_y_pixels,
+                            resolved_sprite,
+                            texture_stretch,
+                        ) =
                             match visual_kind {
                                 StaticVisualKind::CcRegularArt { art_id } => {
                                     let Some(tex_art_cc) = tex_art_cc_res.as_ref().map(|x| &x.0)
@@ -1053,6 +1134,7 @@ pub fn sys_collect_visible_statics(
                                         offset_x_pixels,
                                         offset_y_pixels,
                                         sprite_atlas.resolve_cc(tex_art_cc, art_id),
+                                        0.0,
                                     )
                                 }
                                 StaticVisualKind::TexLandEcArt { .. } => {
@@ -1060,7 +1142,7 @@ pub fn sys_collect_visible_statics(
                                     else {
                                         continue;
                                     };
-                                    let Some(runtime_slot_id) = resolve_surface_like_tex_land_ec_slot_id(
+                                    let Some(resolution) = resolve_surface_like_tex_land_ec_slot_id(
                                         tile.graphic as u32,
                                         tilemeta_res.as_ref().map(|res| &*res.0),
                                         tilemeta,
@@ -1075,7 +1157,7 @@ pub fn sys_collect_visible_statics(
                                         continue;
                                     };
 
-                                    if let Some(slot) = tex_land_ec.present_slot(runtime_slot_id) {
+                                    if let Some(slot) = tex_land_ec.present_slot(resolution.runtime_slot_id) {
                                         chunk_requested_pages.insert((1u64 << 63) | slot.page_index as u64);
                                     }
 
@@ -1083,7 +1165,11 @@ pub fn sys_collect_visible_statics(
                                         ClientTextureSource::Ec,
                                         0,
                                         0,
-                                        ground_atlas.resolve_tex_land_ec(tex_land_ec, runtime_slot_id),
+                                        ground_atlas.resolve_tex_land_ec(
+                                            tex_land_ec,
+                                            resolution.runtime_slot_id,
+                                        ),
+                                        resolution.texture_repetition,
                                     )
                                 }
                                 StaticVisualKind::EcRegularArt { art_id } => {
@@ -1105,6 +1191,7 @@ pub fn sys_collect_visible_statics(
                                         offset_x_pixels,
                                         offset_y_pixels,
                                         sprite_atlas.resolve_ec(tex_art_ec, art_id),
+                                        0.0,
                                     )
                                 }
                             };
@@ -1133,7 +1220,7 @@ pub fn sys_collect_visible_statics(
                                     priority_z_units,
                                     sort_bias_ordinal: 0,
                                     is_wet_flags,
-                                    _pad_inst: 0,
+                                    texture_stretch,
                                     color_rgba: [1.0, 1.0, 1.0, 1.0],
                                 });
                             } else {

@@ -672,7 +672,7 @@ pub fn sys_setup_art_page_atlas(
         priority_z_units: 0.0,
         sort_bias_ordinal: 0,
         is_wet_flags: 0,
-        _pad_inst: 0,
+        texture_stretch: 0.0,
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
