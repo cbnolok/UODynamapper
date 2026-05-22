@@ -21,8 +21,10 @@ use nohash_hasher::BuildNoHashHasher;
 use std::fs::File;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::classic::generic_index;
+use crate::classic::verdata::{VerFileId, Verdata};
 use crate::utils::math::*;
 use bytemuck;
 use std::io::{prelude::*, BufReader, SeekFrom};
@@ -63,6 +65,7 @@ pub struct TexMapElement {
     #[get = "pub"]
     size: LandTextureSize,
     file_offset: u64,
+    patch_data: Option<Arc<[u8]>>,
     #[get = "pub"]
     pixel_qty: usize,
 }
@@ -74,6 +77,7 @@ impl Clone for TexMapElement {
             id: self.id,
             size: self.size,
             file_offset: self.file_offset,
+            patch_data: self.patch_data.clone(),
             pixel_qty: self.pixel_qty,
         }
     }
@@ -146,6 +150,14 @@ impl TexMap {
     }
 
     pub fn load(texmap_file_path: PathBuf, texmap_idx_file_path: PathBuf) -> eyre::Result<TexMap> {
+        Self::load_with_verdata(texmap_file_path, texmap_idx_file_path, None)
+    }
+
+    pub fn load_with_verdata(
+        texmap_file_path: PathBuf,
+        texmap_idx_file_path: PathBuf,
+        verdata: Option<Arc<Verdata>>,
+    ) -> eyre::Result<TexMap> {
         /* Open texmap.mul */
         let texmap_file_name = texmap_file_path
             .file_name()
@@ -201,19 +213,28 @@ impl TexMap {
                 .element(i_idx_raw as usize)
                 .expect(format!("Reading lookup value for element {i_idx_raw}").as_str());
 
-            let tex_lookup = match cur_idx_elem.lookup() {
-                None => continue,
-                Some(val) => {
-                    if val as usize >= texmap_file_size {
-                        continue;
-                    }
-                    val
-                }
-            };
+            let patch_data = verdata
+                .as_ref()
+                .and_then(|verdata| verdata.read_patch(VerFileId::Texmaps, i_idx_raw as i32).ok())
+                .flatten()
+                .map(Arc::<[u8]>::from);
 
-            let tex_len = match cur_idx_elem.len() {
-                None => continue,
-                Some(val) => val,
+            let (tex_lookup, tex_len) = if let Some(patch_data) = &patch_data {
+                (0, patch_data.len() as u32)
+            } else {
+                let index_patch = verdata
+                    .as_ref()
+                    .and_then(|verdata| verdata.index_patch(VerFileId::TexIdx, i_idx_raw as i32));
+                let index_values = index_patch.or_else(|| {
+                    Some((cur_idx_elem.lookup()?, cur_idx_elem.len()?, cur_idx_elem.extra().unwrap_or(0)))
+                });
+                let Some((lookup, len, _extra)) = index_values else {
+                    continue;
+                };
+                if lookup as usize >= texmap_file_size {
+                    continue;
+                }
+                (lookup, len)
             };
 
             let tex_size_type: LandTextureSize = match tex_len {
@@ -238,6 +259,7 @@ impl TexMap {
             let cur_texture: &mut TexMapElement = &mut texmap.file_data[i_idx_raw as usize];
             cur_texture.id = i_idx_raw; //i_idx_valid as u32;
             cur_texture.size = tex_size_type;
+            cur_texture.patch_data = patch_data;
 
             let pixel_qty = match tex_size_type {
                 LandTextureSize::Small => {
@@ -274,6 +296,14 @@ impl TexMap {
         let element: &TexMapElement = self.element(element_index)?;
         let mut shared = self.shared_data.lock().unwrap();
 
+        if let Some(patch_data) = &element.patch_data {
+            shared.cache.insert(
+                element_index,
+                (Arc::clone(patch_data), std::time::Instant::now()),
+            );
+            return Some(());
+        }
+
         if let Some((_, time)) = shared.cache.get_mut(&element_index) {
             *time = std::time::Instant::now();
             return Some(());
@@ -308,8 +338,10 @@ impl TexMap {
         let raw_bgra5551: std::sync::Arc<[u8]> = {
             let mut shared = self.shared_data.lock().unwrap();
 
+            if let Some(patch_data) = &element.patch_data {
+                Arc::clone(patch_data)
             // Check if the raw BGRA5551 data is already cached.
-            if let Some((data, time)) = shared.cache.get_mut(&element_index) {
+            } else if let Some((data, time)) = shared.cache.get_mut(&element_index) {
                 *time = now;
                 std::sync::Arc::clone(data)
             } else {

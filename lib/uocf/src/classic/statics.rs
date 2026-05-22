@@ -276,22 +276,10 @@ impl StaticsReader {
 
         let mut lookup_size = None;
         if let Some(verdata) = &self.verdata {
-            if let Some(index_bytes) = verdata.read_patch(VerFileId::StaIdx, block_id as i32)? {
-                if index_bytes.len() >= 8 {
-                    let lookup = u32::from_le_bytes([
-                        index_bytes[0],
-                        index_bytes[1],
-                        index_bytes[2],
-                        index_bytes[3],
-                    ]);
-                    let size = u32::from_le_bytes([
-                        index_bytes[4],
-                        index_bytes[5],
-                        index_bytes[6],
-                        index_bytes[7],
-                    ]);
-                    lookup_size = Some((lookup, size));
-                }
+            if let Some((lookup, size, _extra)) =
+                verdata.index_patch(VerFileId::StaIdx, block_id as i32)
+            {
+                lookup_size = Some((lookup, size));
             }
         }
 

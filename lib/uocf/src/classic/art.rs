@@ -47,6 +47,7 @@ use std::sync::Arc;
 use bytemuck::cast_slice_mut;
 
 use crate::classic::generic_index::IndexFile;
+use crate::classic::verdata::{VerFileId, Verdata};
 use crate::uop_container::package::UopPackage;
 use crate::utils::color::color_lut;
 
@@ -252,6 +253,7 @@ pub struct ArtMap {
     idx_file: Option<IndexFile>,
     art_mmap: Option<Arc<Mmap>>,
     uop_package: Option<UopPackage>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +286,7 @@ impl ArtMap {
             idx_file: None,
             art_mmap: None,
             uop_package: Some(uop),
+            verdata: None,
         }
     }
 
@@ -333,6 +336,7 @@ impl ArtMap {
             idx_file,
             art_mmap,
             uop_package,
+            verdata: None,
         })
     }
 
@@ -340,6 +344,12 @@ impl ArtMap {
         self.uop_package = Some(uop);
         self
     }
+
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
+        self
+    }
+
     /// Fetches the raw compressed bytes for a given `art_id` from a specific source.
     pub fn get_raw_art_data_from_source(
         &self,
@@ -350,9 +360,25 @@ impl ArtMap {
         scratch_buffer.clear();
 
         if source == ArtSource::Mul || source == ArtSource::Any {
+            if let Some(verdata) = &self.verdata {
+                if let Some(bytes) = verdata.read_patch(VerFileId::Art, art_id as i32)? {
+                    if classic_art_payload_is_structurally_valid(art_id, bytes.len() as u32) {
+                        scratch_buffer.extend_from_slice(&bytes);
+                        return Ok(());
+                    }
+                }
+            }
+
             if let (Some(idx), Some(art_mmap)) = (&self.idx_file, &self.art_mmap) {
                 if let Ok(entry) = idx.element(art_id as usize) {
-                    if let (Some(lookup), Some(size)) = (entry.lookup(), entry.len()) {
+                    let index_patch = self
+                        .verdata
+                        .as_ref()
+                        .and_then(|verdata| verdata.index_patch(VerFileId::ArtIdx, art_id as i32));
+                    let index_values = index_patch.or_else(|| {
+                        Some((entry.lookup()?, entry.len()?, entry.extra().unwrap_or(0)))
+                    });
+                    if let Some((lookup, size, _extra)) = index_values {
                         if classic_art_payload_is_structurally_valid(art_id, size) {
                             let lookup = lookup as usize;
                             let size = size as usize;
@@ -468,12 +494,27 @@ impl ArtMap {
     }
 
     pub fn has_id(&self, art_id: u32) -> bool {
+        if let Some(verdata) = &self.verdata {
+            if let Some(entry) = verdata.entry(VerFileId::Art, art_id as i32) {
+                if classic_art_payload_is_structurally_valid(art_id, entry.length as u32) {
+                    return true;
+                }
+            }
+        }
+
         if let Some(idx) = &self.idx_file {
             if let Ok(entry) = idx.element(art_id as usize) {
-                if entry.lookup().is_some()
-                    && classic_art_payload_is_structurally_valid(art_id, entry.len().unwrap_or(0))
-                {
-                    return true;
+                let index_patch = self
+                    .verdata
+                    .as_ref()
+                    .and_then(|verdata| verdata.index_patch(VerFileId::ArtIdx, art_id as i32));
+                let index_values = index_patch.or_else(|| {
+                    Some((entry.lookup()?, entry.len()?, entry.extra().unwrap_or(0)))
+                });
+                if let Some((_lookup, size, _extra)) = index_values {
+                    if classic_art_payload_is_structurally_valid(art_id, size) {
+                        return true;
+                    }
                 }
             }
         }

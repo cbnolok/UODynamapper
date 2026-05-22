@@ -7,8 +7,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::classic::generic_index::IndexFile;
+use crate::classic::verdata::{VerFileId, Verdata};
 
 pub const SOUND_NAME_BYTES: usize = 32;
 pub const WAV_HEADER_BYTES: usize = 44;
@@ -47,6 +49,7 @@ pub struct SoundMap {
     idx_file: IndexFile,
     mul_data: Vec<u8>,
     translations: HashMap<u32, u32>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 impl SoundMap {
@@ -71,7 +74,13 @@ impl SoundMap {
             idx_file,
             mul_data,
             translations,
+            verdata: None,
         })
+    }
+
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
+        self
     }
 
     pub fn slot_count(&self) -> usize {
@@ -83,12 +92,25 @@ impl SoundMap {
     }
 
     pub fn read_slot(&self, slot_id: u32) -> eyre::Result<Option<ClassicSound>> {
+        if let Some(verdata) = &self.verdata {
+            if let Some(bytes) = verdata.read_patch(VerFileId::Sound, slot_id as i32)? {
+                return Ok(parse_sound_slot(slot_id, &bytes));
+            }
+        }
+
         let entry = match self.idx_file.element(slot_id as usize) {
             Ok(entry) => entry,
             Err(_) => return Ok(None),
         };
 
-        let (Some(lookup), Some(length)) = (entry.lookup(), entry.len()) else {
+        let index_patch = self
+            .verdata
+            .as_ref()
+            .and_then(|verdata| verdata.index_patch(VerFileId::SoundIdx, slot_id as i32));
+        let index_values = index_patch.or_else(|| {
+            Some((entry.lookup()?, entry.len()?, entry.extra().unwrap_or(0)))
+        });
+        let Some((lookup, length, _extra)) = index_values else {
             return Ok(None);
         };
 
@@ -112,14 +134,7 @@ impl SoundMap {
             );
         }
 
-        let name = decode_sound_name(&self.mul_data[lookup..lookup + SOUND_NAME_BYTES]);
-        let pcm_data = self.mul_data[lookup + SOUND_NAME_BYTES..end].to_vec();
-
-        Ok(Some(ClassicSound {
-            slot_id,
-            name,
-            pcm_data,
-        }))
+        Ok(parse_sound_slot(slot_id, &self.mul_data[lookup..end]))
     }
 
     pub fn read_id(&self, sound_id: u32) -> eyre::Result<Option<SoundLookup>> {
@@ -170,6 +185,18 @@ pub fn encode_wav(pcm_data: &[u8]) -> Vec<u8> {
 fn decode_sound_name(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).trim_end().to_string()
+}
+
+fn parse_sound_slot(slot_id: u32, bytes: &[u8]) -> Option<ClassicSound> {
+    if bytes.len() <= SOUND_NAME_BYTES {
+        return None;
+    }
+
+    Some(ClassicSound {
+        slot_id,
+        name: decode_sound_name(&bytes[..SOUND_NAME_BYTES]),
+        pcm_data: bytes[SOUND_NAME_BYTES..].to_vec(),
+    })
 }
 
 fn load_sound_def_translations(path: &Path) -> eyre::Result<HashMap<u32, u32>> {

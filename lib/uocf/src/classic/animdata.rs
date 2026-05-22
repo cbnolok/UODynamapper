@@ -1,8 +1,11 @@
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
+
+use crate::classic::verdata::{VerFileId, Verdata};
 
 pub const ANIMDATA_RECORDS_PER_CHUNK: usize = 8;
 pub const ANIMDATA_FRAME_COUNT: usize = 64;
@@ -49,6 +52,13 @@ impl AnimData {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let bytes = fs::read(path.as_ref())
             .wrap_err_with(|| format!("failed to read {}", path.as_ref().display()))?;
+        Self::from_bytes(&bytes)
+    }
+
+    pub fn load_with_verdata(path: impl AsRef<Path>, verdata: Arc<Verdata>) -> eyre::Result<Self> {
+        let mut bytes = fs::read(path.as_ref())
+            .wrap_err_with(|| format!("failed to read {}", path.as_ref().display()))?;
+        apply_animdata_verdata_patches(&mut bytes, &verdata)?;
         Self::from_bytes(&bytes)
     }
 
@@ -101,6 +111,29 @@ impl AnimData {
     pub fn active_count(&self) -> usize {
         self.active_entries().count()
     }
+}
+
+fn apply_animdata_verdata_patches(bytes: &mut [u8], verdata: &Verdata) -> eyre::Result<()> {
+    let record_count = (bytes.len() / ANIMDATA_CHUNK_SIZE) * ANIMDATA_RECORDS_PER_CHUNK;
+    for (id, entry) in verdata.entries_for(VerFileId::Animdata) {
+        if *id < 0 || *id as usize >= record_count {
+            continue;
+        }
+        let id = *id as usize;
+        let patch = verdata.read_patch_data(entry)?;
+        if patch.len() < ANIMDATA_RECORD_SIZE {
+            continue;
+        }
+
+        let chunk = id / ANIMDATA_RECORDS_PER_CHUNK;
+        let record = id % ANIMDATA_RECORDS_PER_CHUNK;
+        let offset = chunk * ANIMDATA_CHUNK_SIZE + 4 + record * ANIMDATA_RECORD_SIZE;
+        if offset + ANIMDATA_RECORD_SIZE <= bytes.len() {
+            bytes[offset..offset + ANIMDATA_RECORD_SIZE]
+                .copy_from_slice(&patch[..ANIMDATA_RECORD_SIZE]);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

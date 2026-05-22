@@ -6,6 +6,9 @@ use derive_new::new;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::classic::verdata::{VerFileId, Verdata};
 
 /* Struct to manage Flags for LandTile and ItemTile */
 
@@ -459,6 +462,13 @@ impl TileData {
     }
 
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
+        Self::load_with_verdata(file_path, None)
+    }
+
+    pub fn load_with_verdata(
+        file_path: PathBuf,
+        verdata: Option<Arc<Verdata>>,
+    ) -> eyre::Result<TileData> {
         let file_path = file_path
             .canonicalize()
             .wrap_err("Check tiledata.mul path")?;
@@ -566,13 +576,23 @@ impl TileData {
             tiledata.max_item_rev as u32
         );
 
-        let tiledata_file_bytes = {
+        let mut tiledata_file_bytes = {
             let mut buf = vec![0; file_size as usize];
             file_handle
                 .read_exact(buf.as_mut())
                 .wrap_err("Read tiledata.mul")?;
             buf
         };
+
+        if let Some(verdata) = &verdata {
+            apply_tiledata_verdata_patches(
+                &mut tiledata_file_bytes,
+                verdata,
+                tiledata.land_tile_binary_size as usize,
+                tiledata.item_tile_binary_size as usize,
+                tiledata.max_item_rev as usize,
+            )?;
+        }
 
         // Read LandTiles
         // Optimization: We use bulk parsing to avoid thousands of individual I/O reads.
@@ -666,3 +686,51 @@ impl TileData {
 }
 
 /* End of Tiledata struct */
+
+fn apply_tiledata_verdata_patches(
+    tiledata_file_bytes: &mut [u8],
+    verdata: &Verdata,
+    land_tile_size: usize,
+    item_tile_size: usize,
+    max_item_id: usize,
+) -> eyre::Result<()> {
+    let land_block_size = 4 + land_tile_size * LandTile::TILES_PER_BLOCK;
+    let land_section_len = LandTile::BLOCK_QTY * land_block_size;
+    let item_block_size = 4 + item_tile_size * ItemTile::TILES_PER_BLOCK;
+
+    for (tile_id, entry) in verdata.entries_for(VerFileId::Tiledata) {
+        if *tile_id < 0 {
+            continue;
+        }
+        let tile_id = *tile_id as usize;
+        if tile_id > max_item_id + TileData::LAND_TILE_MAX {
+            continue;
+        }
+        let patch = verdata.read_patch_data(entry)?;
+
+        let (offset, expected_len) = if tile_id < TileData::LAND_TILE_MAX {
+            let block = tile_id / LandTile::TILES_PER_BLOCK;
+            let tile_in_block = tile_id % LandTile::TILES_PER_BLOCK;
+            (
+                block * land_block_size + 4 + tile_in_block * land_tile_size,
+                land_tile_size,
+            )
+        } else {
+            let item_id = tile_id - TileData::LAND_TILE_MAX;
+            let block = item_id / ItemTile::TILES_PER_BLOCK;
+            let tile_in_block = item_id % ItemTile::TILES_PER_BLOCK;
+            (
+                land_section_len + block * item_block_size + 4 + tile_in_block * item_tile_size,
+                item_tile_size,
+            )
+        };
+
+        if patch.len() < expected_len || offset + expected_len > tiledata_file_bytes.len() {
+            continue;
+        }
+        tiledata_file_bytes[offset..offset + expected_len]
+            .copy_from_slice(&patch[..expected_len]);
+    }
+
+    Ok(())
+}

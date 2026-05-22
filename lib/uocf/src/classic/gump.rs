@@ -20,6 +20,7 @@ use bytemuck::cast_slice_mut;
 use memmap2::Mmap;
 
 use crate::classic::generic_index::IndexFile;
+use crate::classic::verdata::{VerFileId, Verdata};
 use crate::uop_container::package::UopPackage;
 use crate::utils::color::color_lut;
 
@@ -155,6 +156,7 @@ pub struct GumpMap {
     idx_file: Option<IndexFile>,
     gump_mmap: Option<Arc<Mmap>>,
     uop_package: Option<UopPackage>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 fn first_existing(client_path: &Path, candidates: &[&str]) -> Option<PathBuf> {
@@ -202,6 +204,7 @@ impl GumpMap {
             idx_file: None,
             gump_mmap: None,
             uop_package: Some(uop),
+            verdata: None,
         }
     }
 
@@ -248,11 +251,17 @@ impl GumpMap {
             idx_file,
             gump_mmap,
             uop_package,
+            verdata: None,
         })
     }
 
     pub fn with_uop(mut self, uop: UopPackage) -> Self {
         self.uop_package = Some(uop);
+        self
+    }
+
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
         self
     }
 
@@ -263,11 +272,27 @@ impl GumpMap {
     ) -> eyre::Result<GumpDimensions> {
         scratch_buffer.clear();
 
+        if let Some(verdata) = &self.verdata {
+            if let Some(entry) = verdata.entry(VerFileId::Gumpart, gump_id as i32) {
+                let dimensions = dimensions_from_extra(entry.extra as u32)?;
+                if classic_gump_payload_is_structurally_valid(entry.length as u32, dimensions) {
+                    let bytes = verdata.read_patch_data(entry)?;
+                    scratch_buffer.extend_from_slice(&bytes);
+                    return Ok(dimensions);
+                }
+            }
+        }
+
         if let (Some(idx), Some(gump_mmap)) = (&self.idx_file, &self.gump_mmap) {
             if let Ok(entry) = idx.element(gump_id as usize) {
-                if let (Some(lookup), Some(size), Some(extra)) =
-                    (entry.lookup(), entry.len(), entry.extra())
-                {
+                let index_patch = self
+                    .verdata
+                    .as_ref()
+                    .and_then(|verdata| verdata.index_patch(VerFileId::GumpIdx, gump_id as i32));
+                let index_values = index_patch.or_else(|| {
+                    Some((entry.lookup()?, entry.len()?, entry.extra()?))
+                });
+                if let Some((lookup, size, extra)) = index_values {
                     let dimensions = dimensions_from_extra(extra)?;
                     if classic_gump_payload_is_structurally_valid(size, dimensions) {
                         let lookup = lookup as usize;
@@ -324,9 +349,26 @@ impl GumpMap {
     }
 
     pub fn has_id(&self, gump_id: u32) -> bool {
+        if let Some(verdata) = &self.verdata {
+            if let Some(entry) = verdata.entry(VerFileId::Gumpart, gump_id as i32) {
+                if let Ok(dimensions) = dimensions_from_extra(entry.extra as u32) {
+                    if classic_gump_payload_is_structurally_valid(entry.length as u32, dimensions) {
+                        return true;
+                    }
+                }
+            }
+        }
+
         if let Some(idx) = &self.idx_file {
             if let Ok(entry) = idx.element(gump_id as usize) {
-                if let (Some(size), Some(extra)) = (entry.len(), entry.extra()) {
+                let index_patch = self
+                    .verdata
+                    .as_ref()
+                    .and_then(|verdata| verdata.index_patch(VerFileId::GumpIdx, gump_id as i32));
+                let index_values = index_patch.or_else(|| {
+                    Some((entry.lookup()?, entry.len()?, entry.extra()?))
+                });
+                if let Some((_lookup, size, extra)) = index_values {
                     if let Ok(dimensions) = dimensions_from_extra(extra) {
                         if classic_gump_payload_is_structurally_valid(size, dimensions) {
                             return true;

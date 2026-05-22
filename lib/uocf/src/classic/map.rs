@@ -36,6 +36,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::classic::map_statics_diff::MapDiff;
+use crate::classic::verdata::{VerFileId, Verdata};
 use crate::uop_container::package::LoadMode;
 
 /// Represents a single cell (or tile) in the map.
@@ -240,6 +241,7 @@ pub struct MapPlane {
     pub blocks_loaded_version: u64,
     pub source: MapSource,
     map_diff: Option<MapDiff>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 pub enum MapSource {
@@ -489,6 +491,11 @@ impl MapPlane {
         Ok(plane)
     }
 
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
+        self
+    }
+
     pub fn init_with_size_and_diff(
         map_file_mul_path: PathBuf,
         map_index: u32,
@@ -606,6 +613,7 @@ impl MapPlane {
             blocks_loaded_version: 0,
             source: MapSource::Mul(map_mmap),
             map_diff: None,
+            verdata: None,
         };
         Ok(map_plane)
     }
@@ -687,6 +695,7 @@ impl MapPlane {
             read_buffer: Vec::new(),
             blocks_loaded_version: 0,
             map_diff: None,
+            verdata: None,
         };
         Ok(map_plane)
     }
@@ -814,6 +823,14 @@ impl MapPlane {
                         .flatten()
                     {
                         MapBlock::from_packed_bytes(diff_bytes, &mut new_block)?;
+                    } else if let Some(verdata_bytes) = self
+                        .verdata
+                        .as_ref()
+                        .map(|verdata| verdata.read_patch(VerFileId::Map, block_idx as i32))
+                        .transpose()?
+                        .flatten()
+                    {
+                        MapBlock::from_packed_bytes(&verdata_bytes, &mut new_block)?;
                     } else {
                         MapBlock::from_raw_block(raw_block, &mut new_block)?;
                     }

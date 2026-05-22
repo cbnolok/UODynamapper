@@ -8,8 +8,10 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::classic::generic_index::IndexFile;
+use crate::classic::verdata::{VerFileId, Verdata};
 
 pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
 
@@ -26,6 +28,7 @@ pub struct AnimFrame {
 /// Manages multiple animation MUL sources.
 pub struct AnimMap {
     sources: Vec<Option<AnimSource>>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 struct AnimSource {
@@ -61,10 +64,28 @@ impl AnimMap {
             }
         }
 
-        Ok(Self { sources })
+        Ok(Self {
+            sources,
+            verdata: None,
+        })
+    }
+
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
+        self
     }
 
     pub fn has_anim(&self, file_idx: u8, anim_id: u32) -> bool {
+        if file_idx == 0 {
+            if let Some(verdata) = &self.verdata {
+                if verdata.entry(VerFileId::Anim, anim_id as i32).is_some()
+                    || verdata.index_patch(VerFileId::AnimIdx, anim_id as i32).is_some()
+                {
+                    return true;
+                }
+            }
+        }
+
         if let Some(Some(source)) = self.sources.get(file_idx as usize) {
             if let Ok(entry) = source.idx.element(anim_id as usize) {
                 return entry.lookup().is_some();
@@ -82,9 +103,25 @@ impl AnimMap {
             .and_then(|s| s.as_ref())
             .ok_or_else(|| eyre!("Animation source {} not loaded", file_idx))?;
 
+        if file_idx == 0 {
+            if let Some(verdata) = &self.verdata {
+                if let Some(bytes) = verdata.read_patch(VerFileId::Anim, anim_id as i32)? {
+                    return decode_animation_payload(&bytes, 0);
+                }
+            }
+        }
+
         let entry = source.idx.element(anim_id as usize)?;
-        let lookup = entry
-            .lookup()
+        let index_patch = if file_idx == 0 {
+            self.verdata
+                .as_ref()
+                .and_then(|verdata| verdata.index_patch(VerFileId::AnimIdx, anim_id as i32))
+        } else {
+            None
+        };
+        let lookup = index_patch
+            .map(|(lookup, _size, _extra)| lookup)
+            .or_else(|| entry.lookup())
             .ok_or_else(|| eyre!("Animation {} not found in source {}", anim_id, file_idx))?
             as usize;
 
@@ -92,7 +129,12 @@ impl AnimMap {
             eyre::bail!("Animation offset {} out of bounds", lookup);
         }
 
-        let mut mul_ptr = &source.mul[lookup..];
+        decode_animation_payload(&source.mul, lookup)
+    }
+}
+
+fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<AnimFrame>> {
+        let mut mul_ptr = &data[lookup..];
 
         // Read Palette (256 colors, RGB555)
         let mut palette = [0u16; 256];
@@ -126,11 +168,11 @@ impl AnimMap {
         for i in 0..frame_count {
             let offset = frame_offsets[i as usize] as usize;
             let frame_start = lookup + offset;
-            if frame_start >= source.mul.len() {
+            if frame_start >= data.len() {
                 eyre::bail!("Frame offset {} out of bounds", frame_start);
             }
 
-            let mut frame_ptr = &source.mul[frame_start..];
+            let mut frame_ptr = &data[frame_start..];
 
             let center_x = frame_ptr.read_i16::<LittleEndian>()?;
             let center_y = frame_ptr.read_i16::<LittleEndian>()?;
@@ -207,7 +249,6 @@ impl AnimMap {
         }
 
         Ok(frames)
-    }
 }
 
 /// Handles AnimationDefinition.uop parsing for Body ID redirects (aliasing).

@@ -123,6 +123,21 @@ impl Verdata {
         self.entries.get(&(file_id, index))
     }
 
+    pub fn entries_for(
+        &self,
+        file_id: VerFileId,
+    ) -> impl Iterator<Item = (&i32, &VerdataEntry)> {
+        self.entries
+            .iter()
+            .filter_map(move |((entry_file_id, index), entry)| {
+                if *entry_file_id == file_id {
+                    Some((index, entry))
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn read_patch_data(&self, entry: &VerdataEntry) -> eyre::Result<Vec<u8>> {
         let mut file = File::open(&self.path)?;
         file.seek(SeekFrom::Start(entry.lookup as u64))?;
@@ -136,6 +151,14 @@ impl Verdata {
             Some(entry) => Ok(Some(self.read_patch_data(entry)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn index_patch(&self, file_id: VerFileId, index: i32) -> Option<(u32, u32, u32)> {
+        let entry = self.entry(file_id, index)?;
+        if entry.lookup < 0 || entry.length < 0 || entry.extra < 0 {
+            return None;
+        }
+        Some((entry.lookup as u32, entry.length as u32, entry.extra as u32))
     }
 
     pub fn len(&self) -> usize {

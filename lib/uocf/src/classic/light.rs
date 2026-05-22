@@ -9,8 +9,10 @@ crate::eyre_imports!();
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::classic::generic_index::IndexFile;
+use crate::classic::verdata::{VerFileId, Verdata};
 use crate::enhanced::textures::Textures;
 
 #[derive(Clone)]
@@ -24,6 +26,22 @@ pub struct LightMap {
 
 impl LightMap {
     pub fn load(cc_path: Option<impl AsRef<Path>>, ec_path: Option<impl AsRef<Path>>) -> eyre::Result<Self> {
+        Self::load_inner(cc_path, ec_path, None)
+    }
+
+    pub fn load_with_verdata(
+        cc_path: Option<impl AsRef<Path>>,
+        ec_path: Option<impl AsRef<Path>>,
+        verdata: Arc<Verdata>,
+    ) -> eyre::Result<Self> {
+        Self::load_inner(cc_path, ec_path, Some(verdata))
+    }
+
+    fn load_inner(
+        cc_path: Option<impl AsRef<Path>>,
+        ec_path: Option<impl AsRef<Path>>,
+        verdata: Option<Arc<Verdata>>,
+    ) -> eyre::Result<Self> {
         let mut decoded_lights = Vec::new();
         
         if let Some(cc_path) = cc_path {
@@ -42,7 +60,34 @@ impl LightMap {
 
                 for i in 0..count {
                     let entry = idx_file.element(i)?;
-                    if let (Some(lookup), Some(size), Some(extra)) = (entry.lookup(), entry.len(), entry.extra()) {
+                    if let Some(verdata) = &verdata {
+                        if let Some(patch) = verdata.entry(VerFileId::Light, i as i32) {
+                            let width = (patch.extra as u32 & 0xFFFF) as u16;
+                            let height = ((patch.extra as u32 >> 16) & 0xFFFF) as u16;
+                            match verdata
+                                .read_patch_data(patch)
+                                .and_then(|raw| decode_light_from_raw(&raw, width, height))
+                            {
+                                Ok(decoded) => {
+                                    decoded_lights.push(Some((width, height, decoded)));
+                                    continue;
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to decode verdata light {}: {}", i, e);
+                                    decoded_lights.push(None);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    let index_patch = verdata
+                        .as_ref()
+                        .and_then(|verdata| verdata.index_patch(VerFileId::LightIdx, i as i32));
+                    let index_values = index_patch.or_else(|| {
+                        Some((entry.lookup()?, entry.len()?, entry.extra()?))
+                    });
+                    if let Some((lookup, size, extra)) = index_values {
                         let width = (extra & 0xFFFF) as u16;
                         let height = ((extra >> 16) & 0xFFFF) as u16;
 
