@@ -35,6 +35,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::classic::map_statics_diff::MapDiff;
 use crate::uop_container::package::LoadMode;
 
 /// Represents a single cell (or tile) in the map.
@@ -214,6 +215,14 @@ impl MapBlock {
 
         Ok(())
     }
+
+    fn from_packed_bytes(bytes: &[u8], new_block: &mut MapBlock) -> eyre::Result<()> {
+        if bytes.len() != Self::PACKED_SIZE {
+            eyre::bail!("Invalid map block byte length {}", bytes.len());
+        }
+        let raw_block: &RawMapBlock = &cast_slice(bytes)[0];
+        Self::from_raw_block(raw_block, new_block)
+    }
 }
 
 
@@ -230,6 +239,7 @@ pub struct MapPlane {
     read_buffer: Vec<u8>,
     pub blocks_loaded_version: u64,
     pub source: MapSource,
+    map_diff: Option<MapDiff>,
 }
 
 pub enum MapSource {
@@ -469,6 +479,31 @@ impl MapPlane {
         Self::init_with_size(map_file_mul_path, map_index, None)
     }
 
+    pub fn init_with_diff(
+        map_file_mul_path: PathBuf,
+        map_index: u32,
+        map_diff: MapDiff,
+    ) -> eyre::Result<MapPlane> {
+        let mut plane = Self::init_with_size(map_file_mul_path, map_index, None)?;
+        plane.map_diff = Some(map_diff);
+        Ok(plane)
+    }
+
+    pub fn init_with_size_and_diff(
+        map_file_mul_path: PathBuf,
+        map_index: u32,
+        map_size_tiles_override: Option<MapSizeCells>,
+        map_diff: MapDiff,
+    ) -> eyre::Result<MapPlane> {
+        let mut plane = Self::init_with_size(
+            map_file_mul_path,
+            map_index,
+            map_size_tiles_override,
+        )?;
+        plane.map_diff = Some(map_diff);
+        Ok(plane)
+    }
+
     pub fn init_with_size(
         map_file_mul_path: PathBuf,
         map_index: u32,
@@ -570,6 +605,7 @@ impl MapPlane {
             read_buffer: Vec::new(),
             blocks_loaded_version: 0,
             source: MapSource::Mul(map_mmap),
+            map_diff: None,
         };
         Ok(map_plane)
     }
@@ -650,6 +686,7 @@ impl MapPlane {
             ],
             read_buffer: Vec::new(),
             blocks_loaded_version: 0,
+            map_diff: None,
         };
         Ok(map_plane)
     }
@@ -768,7 +805,18 @@ impl MapPlane {
                 let arena_idx = self.cached_block_indices[idx as usize];
                 if arena_idx == u32::MAX {
                     let mut new_block = MapBlock::default();
-                    MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                    let block_idx = indexed_blocks[range_start + i].idx;
+                    if let Some(diff_bytes) = self
+                        .map_diff
+                        .as_ref()
+                        .map(|diff| diff.raw_block(block_idx))
+                        .transpose()?
+                        .flatten()
+                    {
+                        MapBlock::from_packed_bytes(diff_bytes, &mut new_block)?;
+                    } else {
+                        MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                    }
                     new_block.internal_coords = block_pos;
 
                     let new_arena_idx = if let Some(free_idx) = self.cached_blocks_free_list.pop() {

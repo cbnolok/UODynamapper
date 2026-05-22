@@ -4,10 +4,13 @@
 
 crate::eyre_imports!();
 use crate::classic::generic_index::IndexFile;
+use crate::classic::map_statics_diff::StaticDiff;
+use crate::classic::verdata::{VerFileId, Verdata};
 use bytemuck::{Pod, Zeroable};
 use rayon::prelude::*;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 pub const UO_BLOCK_DIM: u32 = 8;
 
@@ -104,6 +107,8 @@ pub struct StaticsReader {
     pub mul_mmap: Mmap,
     pub block_width: u32,
     pub block_height: u32,
+    static_diff: Option<StaticDiff>,
+    verdata: Option<Arc<Verdata>>,
 }
 
 impl StaticsReader {
@@ -118,7 +123,33 @@ impl StaticsReader {
             mul_mmap,
             block_width: width / UO_BLOCK_DIM,
             block_height: height / UO_BLOCK_DIM,
+            static_diff: None,
+            verdata: None,
         })
+    }
+
+    pub fn with_static_diff(mut self, static_diff: StaticDiff) -> Self {
+        self.static_diff = Some(static_diff);
+        self
+    }
+
+    pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
+        self.verdata = Some(verdata);
+        self
+    }
+
+    pub fn new_with_patches(
+        index_path: &Path,
+        mul_path: &Path,
+        width: u32,
+        height: u32,
+        static_diff: Option<StaticDiff>,
+        verdata: Option<Arc<Verdata>>,
+    ) -> eyre::Result<Self> {
+        let mut reader = Self::new(index_path, mul_path, width, height)?;
+        reader.static_diff = static_diff;
+        reader.verdata = verdata;
+        Ok(reader)
     }
 
     /// Reads the static tiles for a given map block.
@@ -128,45 +159,16 @@ impl StaticsReader {
         }
 
         let block_id = block_x * self.block_height + block_y;
-        let index_element = self.index.element(block_id as usize)?;
-
-        if let (Some(lookup), Some(size)) = (index_element.lookup(), index_element.len()) {
-            if size == 0 {
-                return Ok(Vec::new());
-            }
-
-            let lookup = lookup as usize;
-            let size = size as usize;
-            let end = lookup + size;
-
-            if end > self.mul_mmap.len() {
-                eyre::bail!("Statics index points outside mul_mmap range");
-            }
-
-            let raw_bytes = &self.mul_mmap[lookup..end];
-            let count = size / StaticTile::RAW_SIZE;
-
-            let mut tiles = Vec::with_capacity(count);
-            for i in 0..count {
-                let base = i * StaticTile::RAW_SIZE;
-                tiles.push(StaticTile {
-                    graphic: u16::from_le_bytes([raw_bytes[base], raw_bytes[base + 1]]),
-                    x_offset: raw_bytes[base + 2],
-                    y_offset: raw_bytes[base + 3],
-                    z: raw_bytes[base + 4] as i8,
-                    _pad: 0,
-                    hue: u16::from_le_bytes([raw_bytes[base + 5], raw_bytes[base + 6]]),
-                });
-            }
-
-            Ok(tiles)
-        } else {
-            Ok(Vec::new())
-        }
+        let raw_bytes = self.raw_block_bytes(block_id)?;
+        Ok(parse_static_tiles(raw_bytes.as_deref()))
     }
 
     /// Reads every block from statics.mul into a compact in-memory store.
     pub fn load_all(&self) -> eyre::Result<StaticsStore> {
+        if self.static_diff.is_some() || self.verdata.is_some() {
+            return self.load_all_with_patches();
+        }
+
         let num_blocks = self.block_width * self.block_height;
 
         // Step 1: Pre-calculate offsets and total count in a single fast pass over the index.
@@ -228,4 +230,113 @@ impl StaticsReader {
             tiles,
         })
     }
+
+    fn load_all_with_patches(&self) -> eyre::Result<StaticsStore> {
+        let num_blocks = self.block_width * self.block_height;
+        let mut offsets = Vec::with_capacity(num_blocks as usize + 1);
+        let mut tiles = Vec::new();
+        offsets.push(0);
+
+        for block_id in 0..num_blocks {
+            let block_tiles = parse_static_tiles(self.raw_block_bytes(block_id)?.as_deref());
+            tiles.reserve(block_tiles.len());
+            for tile in block_tiles {
+                tiles.push(PackedStaticTile {
+                    graphic: tile.graphic,
+                    xy_packed: (tile.x_offset & 0x07) | ((tile.y_offset & 0x07) << 3),
+                    z: tile.z,
+                    hue: tile.hue,
+                });
+            }
+            offsets.push(tiles.len() as u32);
+        }
+
+        Ok(StaticsStore {
+            block_width: self.block_width,
+            block_height: self.block_height,
+            offsets,
+            tiles,
+        })
+    }
+}
+
+impl StaticsReader {
+    fn raw_block_bytes(&self, block_id: u32) -> eyre::Result<Option<Vec<u8>>> {
+        if let Some(diff) = &self.static_diff {
+            if let Some(bytes) = diff.raw_block(block_id)? {
+                return Ok(Some(bytes.to_vec()));
+            }
+        }
+
+        if let Some(verdata) = &self.verdata {
+            if let Some(bytes) = verdata.read_patch(VerFileId::Statics, block_id as i32)? {
+                return Ok(Some(bytes));
+            }
+        }
+
+        let mut lookup_size = None;
+        if let Some(verdata) = &self.verdata {
+            if let Some(index_bytes) = verdata.read_patch(VerFileId::StaIdx, block_id as i32)? {
+                if index_bytes.len() >= 8 {
+                    let lookup = u32::from_le_bytes([
+                        index_bytes[0],
+                        index_bytes[1],
+                        index_bytes[2],
+                        index_bytes[3],
+                    ]);
+                    let size = u32::from_le_bytes([
+                        index_bytes[4],
+                        index_bytes[5],
+                        index_bytes[6],
+                        index_bytes[7],
+                    ]);
+                    lookup_size = Some((lookup, size));
+                }
+            }
+        }
+
+        let (lookup, size) = match lookup_size {
+            Some(values) => values,
+            None => {
+                let index_element = self.index.element(block_id as usize)?;
+                let (Some(lookup), Some(size)) = (index_element.lookup(), index_element.len()) else {
+                    return Ok(None);
+                };
+                (lookup, size)
+            }
+        };
+
+        if size == 0 {
+            return Ok(None);
+        }
+
+        let start = lookup as usize;
+        let end = start + size as usize;
+        if end > self.mul_mmap.len() {
+            eyre::bail!("Statics index points outside mul_mmap range");
+        }
+
+        Ok(Some(self.mul_mmap[start..end].to_vec()))
+    }
+}
+
+fn parse_static_tiles(raw_bytes: Option<&[u8]>) -> Vec<StaticTile> {
+    let Some(raw_bytes) = raw_bytes else {
+        return Vec::new();
+    };
+
+    let count = raw_bytes.len() / StaticTile::RAW_SIZE;
+    let mut tiles = Vec::with_capacity(count);
+    for i in 0..count {
+        let base = i * StaticTile::RAW_SIZE;
+        tiles.push(StaticTile {
+            graphic: u16::from_le_bytes([raw_bytes[base], raw_bytes[base + 1]]),
+            x_offset: raw_bytes[base + 2],
+            y_offset: raw_bytes[base + 3],
+            z: raw_bytes[base + 4] as i8,
+            _pad: 0,
+            hue: u16::from_le_bytes([raw_bytes[base + 5], raw_bytes[base + 6]]),
+        });
+    }
+    tiles
 }
