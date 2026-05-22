@@ -128,6 +128,10 @@ pub fn sys_render_keybindings_help(
                     ui.label("Teleport Dialog");
                     ui.label("Ctrl + G");
                     ui.end_row();
+
+                    ui.label("Gump Dialog");
+                    ui.label("Ctrl + U");
+                    ui.end_row();
                 });
 
             ui.add_space(8.0);

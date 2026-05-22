@@ -1,4 +1,5 @@
 pub mod keybindings_help;
+pub mod gump;
 pub mod preferences;
 pub mod teleport;
 pub mod terrain_shader;
@@ -9,6 +10,7 @@ use crate::prelude::*;
 use crate::util_lib::tracked_plugin::*;
 use bevy::prelude::*;
 use bevy_egui::{EguiContextSettings, EguiContexts};
+use gump::GumpDialogPlugin;
 use keybindings_help::KeybindingsHelpPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
@@ -30,6 +32,9 @@ impl Plugin for DialogsPlugin {
                 registered_by: "DialogsPlugin",
             },
             KeybindingsHelpPlugin {
+                registered_by: "DialogsPlugin",
+            },
+            GumpDialogPlugin {
                 registered_by: "DialogsPlugin",
             },
             TeleportPlugin {

@@ -54,6 +54,10 @@ pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
+/// Optional Classic Client gump art source.
+#[derive(Resource)]
+pub struct GumpMapRes(pub Arc<uocf::classic::gump::GumpMap>);
+
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
@@ -344,6 +348,20 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let gump_map = match uocf::classic::gump::GumpMap::load(&udd_path) {
+        Ok(gump_map) => {
+            lg("Loaded Classic Client gump art source.");
+            Some(gump_map)
+        }
+        Err(error) => {
+            lg_err(&format!(
+                "No Classic Client gump source selected from {}: {error}",
+                udd_path.display()
+            ));
+            None
+        }
+    };
+
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
@@ -452,6 +470,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(world_lights_package) = world_lights_package {
         commands.insert_resource(WorldLightsPackageRes(Arc::new(world_lights_package)));
+    }
+    if let Some(gump_map) = gump_map {
+        commands.insert_resource(GumpMapRes(Arc::new(gump_map)));
     }
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);

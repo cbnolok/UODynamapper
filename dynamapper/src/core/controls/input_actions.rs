@@ -20,6 +20,10 @@ pub struct ActionToggleFullscreen;
 #[derive(Event)]
 pub struct ActionToggleTeleportDialog;
 
+/// Action to toggle the gump art dialog (Ctrl + U)
+#[derive(Event)]
+pub struct ActionToggleGumpDialog;
+
 /// Action to toggle the cursor teleport mode (Ctrl + T)
 #[derive(Event)]
 pub struct ActionToggleCursorTeleportMode;
