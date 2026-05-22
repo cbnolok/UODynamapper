@@ -357,6 +357,60 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         ));
     }
 
+    let terrain_overrides_path = asset_root.join("cc_ec_convtables/EcTerrainOverrides.kdl");
+    if terrain_overrides_path.is_file() {
+        lg(&format!(
+            "Loading EcTerrainOverrides.kdl from: {}",
+            terrain_overrides_path.display()
+        ));
+        if let Some(tex_land_ec) = tex_land_ec_package.as_mut() {
+            match tex_land_ec.set_terrain_overrides_from_kdl(&terrain_overrides_path) {
+                Ok(summary) => {
+                    lg(&format!(
+                        "Applied loose EcTerrainOverrides.kdl to EC land package: entries={} actions={} texture_refs={} resolved={}.",
+                        summary.entry_count,
+                        summary.action_count,
+                        summary.texture_ref_count,
+                        summary.resolved_texture_ref_count,
+                    ));
+                    if !summary.unresolved_texture_refs.is_empty() {
+                        let sample = summary
+                            .unresolved_texture_refs
+                            .iter()
+                            .take(8)
+                            .map(|texture_ref| {
+                                format!(
+                                    "{}:{}:{}",
+                                    texture_ref.material_id,
+                                    texture_ref.role,
+                                    texture_ref.texture_id
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        bevy::log::warn!(
+                            "Loose EcTerrainOverrides.kdl references {} texture(s) that are not packed in tex_land_ec.uddp. Falling back where needed. Sample: {}",
+                            summary.unresolved_texture_refs.len(),
+                            sample
+                        );
+                    }
+                }
+                Err(e) => {
+                    bevy::log::error!("Failed to load EcTerrainOverrides.kdl: {e}");
+                }
+            }
+        } else {
+            bevy::log::warn!(
+                "EcTerrainOverrides.kdl exists, but tex_land_ec.uddp is not loaded; loose terrain overrides were ignored."
+            );
+        }
+    } else {
+        lg(&format!(
+            "EcTerrainOverrides.kdl not found at {}",
+            terrain_overrides_path.display()
+        ));
+    }
+
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
         udd_folder: udd_path,
     })));
