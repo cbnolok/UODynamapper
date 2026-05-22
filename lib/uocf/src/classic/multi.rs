@@ -4,7 +4,7 @@ crate::eyre_imports!();
 use crate::classic::generic_index::IndexFile;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MultiPart {
@@ -22,14 +22,17 @@ pub struct MultiMap {
 
 impl MultiMap {
     pub fn load(client_path: &Path) -> eyre::Result<Self> {
-        let idx_path = client_path.join("multi.idx");
+        let idx_path = find_multi_index_path(client_path);
         let mul_path = client_path.join("multi.mul");
 
-        if !idx_path.exists() || !mul_path.exists() {
+        let Some(idx_path) = idx_path else {
             eyre::bail!(
-                "multi.idx or multi.mul not found in {}",
+                "multi.idx/multiidx.mul or multi.mul not found in {}",
                 client_path.display()
             );
+        };
+        if !mul_path.exists() {
+            eyre::bail!("multi.mul not found in {}", client_path.display());
         }
 
         let index = IndexFile::load(idx_path)?;
@@ -37,6 +40,32 @@ impl MultiMap {
     }
 
     pub fn get_parts(&self, multi_id: u32) -> eyre::Result<Vec<MultiPart>> {
+        let file = File::open(&self.mul_path)?;
+        let mut reader = BufReader::new(file);
+        self.read_parts_from_reader(multi_id, &mut reader)
+    }
+
+    pub fn load_all_parts(&self) -> eyre::Result<Vec<Vec<MultiPart>>> {
+        let file = File::open(&self.mul_path)?;
+        let mut reader = BufReader::new(file);
+        let mut definitions = Vec::with_capacity(self.index.element_count());
+
+        for multi_id in 0..self.index.element_count() {
+            definitions.push(self.read_parts_from_reader(multi_id as u32, &mut reader)?);
+        }
+
+        Ok(definitions)
+    }
+
+    pub fn max_id(&self) -> u32 {
+        self.index.element_count() as u32
+    }
+
+    fn read_parts_from_reader(
+        &self,
+        multi_id: u32,
+        reader: &mut BufReader<File>,
+    ) -> eyre::Result<Vec<MultiPart>> {
         let entry = self
             .index
             .element(multi_id as usize)
@@ -51,11 +80,9 @@ impl MultiMap {
             None => return Ok(Vec::new()),
         };
 
-        let file = File::open(&self.mul_path)?;
-        let mut reader = BufReader::new(file);
         reader.seek(SeekFrom::Start(lookup as u64))?;
 
-        let count = length as usize / 12; // Each part is 12 bytes
+        let count = length as usize / 12;
         let mut parts = Vec::with_capacity(count);
 
         for _ in 0..count {
@@ -73,8 +100,11 @@ impl MultiMap {
 
         Ok(parts)
     }
+}
 
-    pub fn max_id(&self) -> u32 {
-        self.index.element_count() as u32
-    }
+fn find_multi_index_path(client_path: &Path) -> Option<PathBuf> {
+    ["multi.idx", "multiidx.mul"]
+        .iter()
+        .map(|file_name| client_path.join(file_name))
+        .find(|path| path.exists())
 }

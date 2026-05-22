@@ -2,6 +2,7 @@
 
 use crate::configs::settings::Settings;
 use crate::core::maps::MapPlane;
+use crate::core::multis::MultiDefinitionsRes;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::system_sets::StartupSysSet;
 use crate::prelude::*;
@@ -432,6 +433,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         ));
     }
 
+    let multi_definitions = load_multi_definitions(&udd_path, &lg, &lg_err);
+
     commands.insert_resource(UoFilesSettingsRes(Arc::new(UoFilesSettings {
         udd_folder: udd_path,
     })));
@@ -450,5 +453,65 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     if let Some(world_lights_package) = world_lights_package {
         commands.insert_resource(WorldLightsPackageRes(Arc::new(world_lights_package)));
     }
+    if let Some(multis) = multi_definitions {
+        commands.insert_resource(multis);
+    }
     commands.insert_resource(StaticsStoreRes(statics_stores));
+}
+
+fn load_multi_definitions(
+    source_root: &Path,
+    lg: &impl Fn(&str),
+    lg_err: &impl Fn(&str),
+) -> Option<MultiDefinitionsRes> {
+    if source_root.join("multi.mul").is_file()
+        && (source_root.join("multi.idx").is_file() || source_root.join("multiidx.mul").is_file())
+    {
+        match uocf::classic::multi::MultiMap::load(source_root)
+            .and_then(|multis| multis.load_all_parts())
+        {
+            Ok(parts) => {
+                let definitions = MultiDefinitionsRes::from_classic_parts(parts);
+                lg(&format!(
+                    "Loaded classic multi definitions: {} visible definitions.",
+                    definitions.definition_count()
+                ));
+                return Some(definitions);
+            }
+            Err(error) => {
+                lg_err(&format!(
+                    "Failed to load classic multi definitions from {}: {error}",
+                    source_root.display()
+                ));
+            }
+        }
+    }
+
+    for file_name in ["MultiCollection.uop", "multicollection.uop"] {
+        let path = source_root.join(file_name);
+        if !path.is_file() {
+            continue;
+        }
+
+        match uocf::enhanced::multis::MultiCollection::load(&path) {
+            Ok(collection) => {
+                let definitions = MultiDefinitionsRes::from_ec_collection(&collection);
+                lg(&format!(
+                    "Loaded EC multi definitions: {} visible definitions from {}.",
+                    definitions.definition_count(),
+                    path.display()
+                ));
+                return Some(definitions);
+            }
+            Err(error) => {
+                lg_err(&format!(
+                    "Failed to load EC multi definitions from {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    lg("No multi definition source selected: multi.mul/multi.idx or MultiCollection.uop not found in udd_path.");
+    None
 }

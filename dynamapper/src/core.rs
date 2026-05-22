@@ -4,6 +4,7 @@ pub mod constants;
 pub mod controls;
 mod diagnostics;
 pub mod maps;
+pub mod multis;
 pub mod render;
 pub mod statics;
 pub mod system_sets;

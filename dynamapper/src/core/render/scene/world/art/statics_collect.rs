@@ -5,6 +5,9 @@ use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
+use crate::core::multis::{
+    expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes,
+};
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
@@ -119,6 +122,50 @@ enum StaticVisualKind {
     CcRegularArt { art_id: u16 },
     EcRegularArt { art_id: u32 },
     TexLandEcArt { art_id: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StaticRenderTile {
+    graphic: u16,
+    world_x: f32,
+    world_z: f32,
+    z: i8,
+}
+
+fn collect_static_render_tiles(
+    source_tile: uocf::classic::statics::PackedStaticTile,
+    block_x: u32,
+    block_y: u32,
+    multis: Option<&MultiDefinitionsRes>,
+    output: &mut Vec<StaticRenderTile>,
+) {
+    output.clear();
+
+    let base_world_x =
+        (block_x * MAP_STORAGE_BLOCK_TILE_DIM) as i32 + source_tile.x_offset() as i32;
+    let base_world_z =
+        (block_y * MAP_STORAGE_BLOCK_TILE_DIM) as i32 + source_tile.y_offset() as i32;
+    let parts = multi_id_from_static_graphic(source_tile.graphic)
+        .and_then(|multi_id| multis.and_then(|multis| multis.parts(multi_id)));
+
+    let Some(parts) = parts else {
+        output.push(StaticRenderTile {
+            graphic: source_tile.graphic,
+            world_x: base_world_x as f32,
+            world_z: base_world_z as f32,
+            z: source_tile.z,
+        });
+        return;
+    };
+
+    for part in parts {
+        output.push(StaticRenderTile {
+            graphic: part.item_id,
+            world_x: (base_world_x + part.x as i32) as f32,
+            world_z: (base_world_z + part.y as i32) as f32,
+            z: expanded_multi_part_z(source_tile.z, part.z),
+        });
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -882,6 +929,7 @@ pub fn sys_collect_visible_statics(
     settings: Res<crate::configs::settings::Settings>,
     scene_state: Res<SceneStateData>,
     zoom: Res<RenderZoom>,
+    multis_res: Option<Res<MultiDefinitionsRes>>,
     mut outputs: (
         ResMut<RenderStaticInstances>,
         ResMut<RenderStaticLandInstances>,
@@ -1040,6 +1088,7 @@ pub fn sys_collect_visible_statics(
             let mut chunk_ground_instances = Vec::new();
             let mut chunk_requested_pages = HashSet::new();
             let mut chunk_stats = CachedStaticChunkStats::default();
+            let mut render_tiles = Vec::new();
 
             let start_gx = chunk_key.gx * CHUNK_STORAGE_BLOCKS_DIM;
             let start_gy = chunk_key.gy * CHUNK_STORAGE_BLOCKS_DIM;
@@ -1056,228 +1105,247 @@ pub fn sys_collect_visible_statics(
                     chunk_stats.source_tiles += tiles.len();
 
                     for tile in tiles {
-                        if is_dot_mode && tile.z < 10 {
-                            continue;
-                        }
-
-                        let tilemeta = tilemeta_res
-                            .as_ref()
-                            .and_then(|meta| meta.0.item_tile(tile.graphic as u32));
-
-                        let world_x =
-                            (gx * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.x_offset() as f32;
-                        let world_z =
-                            (gy * MAP_STORAGE_BLOCK_TILE_DIM) as f32 + tile.y_offset() as f32;
-                        let depth_class = resolve_static_depth_class(tilemeta);
-                        let is_wet_flags =
-                            tilemeta.map_or(0, |m| if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 });
-
-                        if is_dot_mode {
-                            let base_world_y = (tile.z as f32) * height_scale;
-                            let priority_z_units =
-                                resolve_priority_z_units(tile.z, tilemeta, depth_class);
-                            let bias = depth_class_y_bias(depth_class);
-                            let encoded_depth_class = depth_class.encoded();
-                            let world_y = base_world_y + bias;
-
-                            if let Some(meta) = tilemeta {
-                                let color = meta.radar_color;
-                                chunk_sprite_instances.push(SpriteInstance {
-                                    world_x,
-                                    world_z,
-                                    world_y,
-                                    layer: 0,
-                                    depth_class: encoded_depth_class,
-                                    base_world_y,
-                                    uv_min: [0.0, 0.0],
-                                    uv_max: [0.0, 0.0],
-                                    local_min: [0.0, 0.0],
-                                    local_max: [1.0, 1.0],
-                                    tile_x: world_x,
-                                    tile_y: world_z,
-                                    priority_z_units,
-                                    sort_bias_ordinal: 0,
-                                    is_wet_flags,
-                                    _pad_inst: 0,
-                                    color_rgba: [
-                                        color[2] as f32 / 255.0,
-                                        color[1] as f32 / 255.0,
-                                        color[0] as f32 / 255.0,
-                                        1.0,
-                                    ],
-                                });
-                            }
-                            continue;
-                        }
-
-                        let Some(art_source) = art_source else {
-                            continue;
-                        };
-                        let visual_kind = resolve_static_visual_kind(
-                            art_source,
-                            tile.graphic,
-                            tilemeta_res.as_ref().map(|res| &*res.0),
-                            tilemeta,
-                            tex_art_ec_res.as_ref().map(|package| &*package.0),
-                            tex_land_ec_res.as_ref().map(|package| &*package.0),
+                        collect_static_render_tiles(
+                            *tile,
+                            gx,
+                            gy,
+                            multis_res.as_deref(),
+                            &mut render_tiles,
                         );
 
-                        let bias = if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
-                            GROUND_ART_Y_BIAS
-                        } else {
-                            depth_class_y_bias(depth_class)
-                        };
-                        let encoded_depth_class = depth_class.encoded();
-                        let base_world_y = (tile.z as f32) * height_scale;
-                        let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
-                        let world_y = base_world_y + bias;
-                        let (
-                            billboard_source,
-                            offset_x_pixels,
-                            offset_y_pixels,
-                            resolved_sprite,
-                            texture_stretch,
-                        ) =
-                            match visual_kind {
-                                StaticVisualKind::CcRegularArt { art_id } => {
-                                    let Some(tex_art_cc) = tex_art_cc_res.as_ref().map(|x| &x.0)
-                                    else {
-                                        continue;
-                                    };
-                                    let offset_x_pixels =
-                                        tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
-                                    let offset_y_pixels =
-                                        tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
-
-                                    if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
-                                        chunk_requested_pages.insert(slot.page_index as u64);
-                                    }
-
-                                    (
-                                        ClientTextureSource::Cc,
-                                        offset_x_pixels,
-                                        offset_y_pixels,
-                                        sprite_atlas.resolve_cc(tex_art_cc, art_id),
-                                        0.0,
-                                    )
-                                }
-                                StaticVisualKind::TexLandEcArt { .. } => {
-                                    let Some(tex_land_ec) = tex_land_ec_res.as_ref().map(|x| &x.0)
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(resolution) = resolve_surface_like_tex_land_ec_slot_id(
-                                        tile.graphic as u32,
-                                        tilemeta_res.as_ref().map(|res| &*res.0),
-                                        tilemeta,
-                                        Some(tex_land_ec),
-                                    ) else {
-                                        chunk_stats.unresolved_surface_like_tiles += 1;
-                                        push_sample_tile_id(
-                                            &mut chunk_stats.unresolved_surface_like_sample,
-                                            &mut chunk_stats.unresolved_surface_like_sample_len,
-                                            tile.graphic,
-                                        );
-                                        continue;
-                                    };
-
-                                    if let Some(slot) = tex_land_ec.present_slot(resolution.runtime_slot_id) {
-                                        chunk_requested_pages.insert((1u64 << 63) | slot.page_index as u64);
-                                    }
-
-                                    (
-                                        ClientTextureSource::Ec,
-                                        0,
-                                        0,
-                                        ground_atlas.resolve_tex_land_ec(
-                                            tex_land_ec,
-                                            resolution.runtime_slot_id,
-                                        ),
-                                        resolution.texture_repetition,
-                                    )
-                                }
-                                StaticVisualKind::EcRegularArt { art_id } => {
-                                    let Some(tex_art_ec) = tex_art_ec_res.as_ref().map(|x| &x.0)
-                                    else {
-                                        continue;
-                                    };
-                                    let offset_x_pixels =
-                                        tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
-                                    let offset_y_pixels =
-                                        tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
-
-                                    if let Some(slot) = tex_art_ec.present_slot(art_id) {
-                                        chunk_requested_pages.insert(slot.page_index as u64);
-                                    }
-
-                                    (
-                                        ClientTextureSource::Ec,
-                                        offset_x_pixels,
-                                        offset_y_pixels,
-                                        sprite_atlas.resolve_ec(tex_art_ec, art_id),
-                                        0.0,
-                                    )
-                                }
-                            };
-
-                        let (anchored_world_x, anchored_world_z) =
-                            surface_like_static_world_anchor(visual_kind, world_x, world_z);
-
-                        if let Some(resolved) = resolved_sprite {
-                            chunk_stats.atlas_hits += 1;
-                            if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
-                                chunk_stats.ground_land_tiles += 1;
-                                let bounds = resolve_surface_like_ground_quad_bounds();
-                                chunk_ground_instances.push(GroundTileInstance {
-                                    world_x: anchored_world_x,
-                                    world_z: anchored_world_z,
-                                    world_y,
-                                    layer: resolved.layer,
-                                    depth_class: encoded_depth_class,
-                                    base_world_y,
-                                    uv_min: [resolved.uv_min.x, resolved.uv_min.y],
-                                    uv_max: [resolved.uv_max.x, resolved.uv_max.y],
-                                    local_min: [bounds.local_min_x, bounds.local_min_z],
-                                    local_max: [bounds.local_max_x, bounds.local_max_z],
-                                    tile_x: anchored_world_x,
-                                    tile_y: anchored_world_z,
-                                    priority_z_units,
-                                    sort_bias_ordinal: 0,
-                                    is_wet_flags,
-                                    texture_stretch,
-                                    color_rgba: [1.0, 1.0, 1.0, 1.0],
-                                });
-                            } else {
-                                let bounds = resolve_static_billboard_bounds(
-                                    billboard_source,
-                                    offset_x_pixels,
-                                    offset_y_pixels,
-                                    resolved.pixel_width,
-                                    resolved.pixel_height,
-                                );
-
-                                chunk_sprite_instances.push(SpriteInstance {
-                                    world_x: anchored_world_x,
-                                    world_z: anchored_world_z,
-                                    world_y,
-                                    layer: resolved.layer,
-                                    depth_class: encoded_depth_class,
-                                    base_world_y,
-                                    uv_min: [resolved.uv_min.x, resolved.uv_min.y],
-                                    uv_max: [resolved.uv_max.x, resolved.uv_max.y],
-                                    local_min: [bounds.local_min_x, bounds.local_min_y],
-                                    local_max: [bounds.local_max_x, bounds.local_max_y],
-                                    tile_x: anchored_world_x,
-                                    tile_y: anchored_world_z,
-                                    priority_z_units,
-                                    sort_bias_ordinal: 0,
-                                    is_wet_flags,
-                                    _pad_inst: 0,
-                                    color_rgba: [1.0, 1.0, 1.0, 1.0],
-                                });
+                        for render_tile in &render_tiles {
+                            if is_dot_mode && render_tile.z < 10 {
+                                continue;
                             }
-                        } else {
-                            chunk_stats.atlas_misses += 1;
+
+                            let tilemeta = tilemeta_res
+                                .as_ref()
+                                .and_then(|meta| meta.0.item_tile(render_tile.graphic as u32));
+
+                            let world_x = render_tile.world_x;
+                            let world_z = render_tile.world_z;
+                            let depth_class = resolve_static_depth_class(tilemeta);
+                            let is_wet_flags = tilemeta.map_or(0, |m| {
+                                if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
+                            });
+
+                            if is_dot_mode {
+                                let base_world_y = (render_tile.z as f32) * height_scale;
+                                let priority_z_units =
+                                    resolve_priority_z_units(render_tile.z, tilemeta, depth_class);
+                                let bias = depth_class_y_bias(depth_class);
+                                let encoded_depth_class = depth_class.encoded();
+                                let world_y = base_world_y + bias;
+
+                                if let Some(meta) = tilemeta {
+                                    let color = meta.radar_color;
+                                    chunk_sprite_instances.push(SpriteInstance {
+                                        world_x,
+                                        world_z,
+                                        world_y,
+                                        layer: 0,
+                                        depth_class: encoded_depth_class,
+                                        base_world_y,
+                                        uv_min: [0.0, 0.0],
+                                        uv_max: [0.0, 0.0],
+                                        local_min: [0.0, 0.0],
+                                        local_max: [1.0, 1.0],
+                                        tile_x: world_x,
+                                        tile_y: world_z,
+                                        priority_z_units,
+                                        sort_bias_ordinal: 0,
+                                        is_wet_flags,
+                                        _pad_inst: 0,
+                                        color_rgba: [
+                                            color[2] as f32 / 255.0,
+                                            color[1] as f32 / 255.0,
+                                            color[0] as f32 / 255.0,
+                                            1.0,
+                                        ],
+                                    });
+                                }
+                                continue;
+                            }
+
+                            let Some(art_source) = art_source else {
+                                continue;
+                            };
+                            let visual_kind = resolve_static_visual_kind(
+                                art_source,
+                                render_tile.graphic,
+                                tilemeta_res.as_ref().map(|res| &*res.0),
+                                tilemeta,
+                                tex_art_ec_res.as_ref().map(|package| &*package.0),
+                                tex_land_ec_res.as_ref().map(|package| &*package.0),
+                            );
+
+                            let bias =
+                                if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
+                                    GROUND_ART_Y_BIAS
+                                } else {
+                                    depth_class_y_bias(depth_class)
+                                };
+                            let encoded_depth_class = depth_class.encoded();
+                            let base_world_y = (render_tile.z as f32) * height_scale;
+                            let priority_z_units =
+                                resolve_priority_z_units(render_tile.z, tilemeta, depth_class);
+                            let world_y = base_world_y + bias;
+                            let (
+                                billboard_source,
+                                offset_x_pixels,
+                                offset_y_pixels,
+                                resolved_sprite,
+                                texture_stretch,
+                            ) =
+                                match visual_kind {
+                                    StaticVisualKind::CcRegularArt { art_id } => {
+                                        let Some(tex_art_cc) =
+                                            tex_art_cc_res.as_ref().map(|x| &x.0)
+                                        else {
+                                            continue;
+                                        };
+                                        let offset_x_pixels =
+                                            tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
+                                        let offset_y_pixels =
+                                            tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
+
+                                        if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
+                                            chunk_requested_pages.insert(slot.page_index as u64);
+                                        }
+
+                                        (
+                                            ClientTextureSource::Cc,
+                                            offset_x_pixels,
+                                            offset_y_pixels,
+                                            sprite_atlas.resolve_cc(tex_art_cc, art_id),
+                                            0.0,
+                                        )
+                                    }
+                                    StaticVisualKind::TexLandEcArt { .. } => {
+                                        let Some(tex_land_ec) =
+                                            tex_land_ec_res.as_ref().map(|x| &x.0)
+                                        else {
+                                            continue;
+                                        };
+                                        let Some(resolution) =
+                                            resolve_surface_like_tex_land_ec_slot_id(
+                                                render_tile.graphic as u32,
+                                                tilemeta_res.as_ref().map(|res| &*res.0),
+                                                tilemeta,
+                                                Some(tex_land_ec),
+                                            )
+                                        else {
+                                            chunk_stats.unresolved_surface_like_tiles += 1;
+                                            push_sample_tile_id(
+                                                &mut chunk_stats.unresolved_surface_like_sample,
+                                                &mut chunk_stats.unresolved_surface_like_sample_len,
+                                                render_tile.graphic,
+                                            );
+                                            continue;
+                                        };
+
+                                        if let Some(slot) =
+                                            tex_land_ec.present_slot(resolution.runtime_slot_id)
+                                        {
+                                            chunk_requested_pages
+                                                .insert((1u64 << 63) | slot.page_index as u64);
+                                        }
+
+                                        (
+                                            ClientTextureSource::Ec,
+                                            0,
+                                            0,
+                                            ground_atlas.resolve_tex_land_ec(
+                                                tex_land_ec,
+                                                resolution.runtime_slot_id,
+                                            ),
+                                            resolution.texture_repetition,
+                                        )
+                                    }
+                                    StaticVisualKind::EcRegularArt { art_id } => {
+                                        let Some(tex_art_ec) =
+                                            tex_art_ec_res.as_ref().map(|x| &x.0)
+                                        else {
+                                            continue;
+                                        };
+                                        let offset_x_pixels =
+                                            tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
+                                        let offset_y_pixels =
+                                            tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
+
+                                        if let Some(slot) = tex_art_ec.present_slot(art_id) {
+                                            chunk_requested_pages.insert(slot.page_index as u64);
+                                        }
+
+                                        (
+                                            ClientTextureSource::Ec,
+                                            offset_x_pixels,
+                                            offset_y_pixels,
+                                            sprite_atlas.resolve_ec(tex_art_ec, art_id),
+                                            0.0,
+                                        )
+                                    }
+                                };
+
+                            let (anchored_world_x, anchored_world_z) =
+                                surface_like_static_world_anchor(visual_kind, world_x, world_z);
+
+                            if let Some(resolved) = resolved_sprite {
+                                chunk_stats.atlas_hits += 1;
+                                if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
+                                    chunk_stats.ground_land_tiles += 1;
+                                    let bounds = resolve_surface_like_ground_quad_bounds();
+                                    chunk_ground_instances.push(GroundTileInstance {
+                                        world_x: anchored_world_x,
+                                        world_z: anchored_world_z,
+                                        world_y,
+                                        layer: resolved.layer,
+                                        depth_class: encoded_depth_class,
+                                        base_world_y,
+                                        uv_min: [resolved.uv_min.x, resolved.uv_min.y],
+                                        uv_max: [resolved.uv_max.x, resolved.uv_max.y],
+                                        local_min: [bounds.local_min_x, bounds.local_min_z],
+                                        local_max: [bounds.local_max_x, bounds.local_max_z],
+                                        tile_x: anchored_world_x,
+                                        tile_y: anchored_world_z,
+                                        priority_z_units,
+                                        sort_bias_ordinal: 0,
+                                        is_wet_flags,
+                                        texture_stretch,
+                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
+                                    });
+                                } else {
+                                    let bounds = resolve_static_billboard_bounds(
+                                        billboard_source,
+                                        offset_x_pixels,
+                                        offset_y_pixels,
+                                        resolved.pixel_width,
+                                        resolved.pixel_height,
+                                    );
+
+                                    chunk_sprite_instances.push(SpriteInstance {
+                                        world_x: anchored_world_x,
+                                        world_z: anchored_world_z,
+                                        world_y,
+                                        layer: resolved.layer,
+                                        depth_class: encoded_depth_class,
+                                        base_world_y,
+                                        uv_min: [resolved.uv_min.x, resolved.uv_min.y],
+                                        uv_max: [resolved.uv_max.x, resolved.uv_max.y],
+                                        local_min: [bounds.local_min_x, bounds.local_min_y],
+                                        local_max: [bounds.local_max_x, bounds.local_max_y],
+                                        tile_x: anchored_world_x,
+                                        tile_y: anchored_world_z,
+                                        priority_z_units,
+                                        sort_bias_ordinal: 0,
+                                        is_wet_flags,
+                                        _pad_inst: 0,
+                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
+                                    });
+                                }
+                            } else {
+                                chunk_stats.atlas_misses += 1;
+                            }
                         }
                     }
                 }
@@ -1526,6 +1594,76 @@ mod tests {
         let visual_kind = resolve_ec_static_visual_kind(196, true, false);
 
         assert_eq!(visual_kind, StaticVisualKind::EcRegularArt { art_id: 196 },);
+    }
+
+    #[test]
+    fn regular_static_tile_collects_without_multi_expansion() {
+        let source_tile = uocf::classic::statics::PackedStaticTile {
+            graphic: 7,
+            xy_packed: 3 | (4 << 3),
+            z: 5,
+            hue: 0,
+        };
+        let mut output = Vec::new();
+
+        collect_static_render_tiles(source_tile, 2, 3, None, &mut output);
+
+        assert_eq!(
+            output,
+            vec![StaticRenderTile {
+                graphic: 7,
+                world_x: 19.0,
+                world_z: 28.0,
+                z: 5,
+            }],
+        );
+    }
+
+    #[test]
+    fn multi_static_tile_expands_visible_parts_at_world_offsets() {
+        let definitions = MultiDefinitionsRes::from_classic_parts(vec![vec![
+            uocf::classic::multi::MultiPart {
+                item_id: 10,
+                x: -1,
+                y: 2,
+                z: 3,
+                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+            },
+            uocf::classic::multi::MultiPart {
+                item_id: 11,
+                x: 9,
+                y: -4,
+                z: -2,
+                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+            },
+        ]]);
+        let source_tile = uocf::classic::statics::PackedStaticTile {
+            graphic: crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET,
+            xy_packed: 3 | (4 << 3),
+            z: 5,
+            hue: 0,
+        };
+        let mut output = Vec::new();
+
+        collect_static_render_tiles(source_tile, 2, 3, Some(&definitions), &mut output);
+
+        assert_eq!(
+            output,
+            vec![
+                StaticRenderTile {
+                    graphic: 10,
+                    world_x: 18.0,
+                    world_z: 30.0,
+                    z: 8,
+                },
+                StaticRenderTile {
+                    graphic: 11,
+                    world_x: 28.0,
+                    world_z: 24.0,
+                    z: 3,
+                },
+            ],
+        );
     }
 
     #[test]

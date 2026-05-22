@@ -61,9 +61,10 @@ Current runtime note:
 
 ### 3.1 Collection
 1. **Statics Fetch**: `statics_collect.rs` queries `uocf` for static objects belonging to active map blocks.
-2. **Metadata Lookup**: collection can consult `tilemeta` and EC package state to distinguish ordinary art from surface-like EC statics.
-3. **Filtering**: objects are filtered by visibility, routing, and depth-ordering requirements.
-4. **Batching**: statics are grouped by material and atlas residency to minimize draw calls.
+2. **Multi Expansion**: optional `multi.mul`/`multi.idx` or `MultiCollection.uop` definitions expand multi placement statics into normal static-art parts before routing.
+3. **Metadata Lookup**: collection can consult `tilemeta` and EC package state to distinguish ordinary art from surface-like EC statics.
+4. **Filtering**: objects are filtered by visibility, routing, and depth-ordering requirements.
+5. **Batching**: statics are grouped by material and atlas residency to minimize draw calls.
 
 ### 3.2 Drawing
 1. **Instance Data**: `statics_draw.rs` prepares per-instance data (position, UVs, color) for GPU submission.
