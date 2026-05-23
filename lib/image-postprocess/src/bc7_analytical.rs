@@ -328,6 +328,66 @@ unsafe fn eval_m6_rgb_sse41(
     sse
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn eval_m6_rgb_avx2(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    f: f32,
+) -> u32 {
+    let zero128 = _mm_setzero_si128();
+    let fifteen256 = _mm256_set1_epi32(15);
+    let f = _mm_set1_ps(f);
+    let half = _mm_set1_ps(0.5);
+    let ep = _mm256_setr_epi16(
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+    );
+    let coef = _mm256_setr_epi16(
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+    );
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(8) {
+        let px0 = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let px1 = _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i);
+        let adj0 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px0), ep);
+        let adj1 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px1), ep);
+        let pairs0 = _mm256_madd_epi16(adj0, coef);
+        let pairs1 = _mm256_madd_epi16(adj1, coef);
+        let sums0 = _mm256_hadd_epi32(pairs0, pairs0);
+        let sums1 = _mm256_hadd_epi32(pairs1, pairs1);
+        let dots0 = _mm_unpacklo_epi64(_mm256_castsi256_si128(sums0), _mm256_extracti128_si256::<1>(sums0));
+        let dots1 = _mm_unpacklo_epi64(_mm256_castsi256_si128(sums1), _mm256_extracti128_si256::<1>(sums1));
+        let dots = _mm256_set_m128i(dots1, dots0);
+        let y = _mm256_add_ps(_mm256_mul_ps(_mm256_cvtepi32_ps(dots), _mm256_set_m128(f, f)), _mm256_set_m128(half, half));
+        let sel32 = _mm256_min_epi32(_mm256_max_epi32(_mm256_cvttps_epi32(y), _mm256_setzero_si256()), fifteen256);
+        let sel16 = _mm_packus_epi32(_mm256_castsi256_si128(sel32), _mm256_extracti128_si256::<1>(sel32));
+        let sel8 = _mm_packus_epi16(sel16, zero128);
+        let mut packed = [0u8; 8];
+        _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
+
+        for lane in 0..8 {
+            let sel = packed[lane] as usize;
+            weights[i + lane] = sel as u8;
+            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+        }
+    }
+
+    sse
+}
+
 #[inline(always)]
 fn eval_rgba_weights4(
     pixels: &[Pixel; 16],
@@ -391,6 +451,10 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
     let(lr,lg,lb)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32);
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
     let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("avx2") {
+        return unsafe { eval_m6_rgb_avx2(pixels, weights, lr, lg, lb, dr, dg, db, f) };
+    }
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if std::is_x86_feature_detected!("sse4.1") {
         return unsafe { eval_m6_rgb_sse41(pixels, weights, lr, lg, lb, dr, dg, db, f) };
