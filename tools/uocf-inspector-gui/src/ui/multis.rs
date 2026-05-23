@@ -27,11 +27,16 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .and_then(|client| client.multis.as_ref())
         .is_some();
     let has_uop = app.multi_collection.is_some();
+    let has_multimap = app.cc_multimap.is_some();
 
-    if app.multis_source == MultisSource::ClassicMul && !has_classic && has_uop {
-        app.multis_source = MultisSource::Uop;
-    } else if app.multis_source == MultisSource::Uop && !has_uop && has_classic {
-        app.multis_source = MultisSource::ClassicMul;
+    if !source_available(app.multis_source, has_classic, has_uop, has_multimap) {
+        app.multis_source = if has_classic {
+            MultisSource::ClassicMul
+        } else if has_uop {
+            MultisSource::Uop
+        } else {
+            MultisSource::Multimap
+        };
     }
 
     egui::TopBottomPanel::top("multis_source_tabs").show(ctx, |ui| {
@@ -42,12 +47,24 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if has_uop {
                 ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "MultiCollection.uop");
             }
+            if has_multimap {
+                ui.selectable_value(&mut app.multis_source, MultisSource::Multimap, "multimap.rle");
+            }
         });
     });
 
     match app.multis_source {
         MultisSource::ClassicMul => ui_classic_multis(app, ctx),
         MultisSource::Uop => ui_uop_multis(app, ctx),
+        MultisSource::Multimap => ui_multimap(app, ctx),
+    }
+}
+
+fn source_available(source: MultisSource, has_classic: bool, has_uop: bool, has_multimap: bool) -> bool {
+    match source {
+        MultisSource::ClassicMul => has_classic,
+        MultisSource::Uop => has_uop,
+        MultisSource::Multimap => has_multimap,
     }
 }
 
@@ -178,6 +195,80 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label("Select a MultiCollection.uop entry from the left panel.");
+            });
+        }
+    });
+}
+
+fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
+    let Some(multimap) = app.cc_multimap.clone() else {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.centered_and_justified(|ui| {
+                ui.label("multimap.rle is not loaded.");
+            });
+        });
+        return;
+    };
+
+    let black_pixels = multimap
+        .pixels
+        .iter()
+        .filter(|&&pixel| pixel == uocf::classic::multimap_rle::BLACK_PIXEL)
+        .count();
+    let total_pixels = multimap.pixels.len();
+    let white_pixels = total_pixels.saturating_sub(black_pixels);
+
+    egui::SidePanel::left("multimap_sidebar")
+        .resizable(true)
+        .default_width(260.0)
+        .show(ctx, |ui| {
+            ui.heading("multimap.rle");
+            ui.separator();
+            egui::Grid::new("multimap_details").striped(true).show(ui, |ui| {
+                ui.label("Dimensions");
+                ui.label(format!("{} x {}", multimap.width, multimap.height));
+                ui.end_row();
+
+                ui.label("Pixels");
+                ui.label(total_pixels.to_string());
+                ui.end_row();
+
+                ui.label("Black");
+                ui.label(black_pixels.to_string());
+                ui.end_row();
+
+                ui.label("White");
+                ui.label(white_pixels.to_string());
+                ui.end_row();
+
+                ui.label("Source");
+                if let Some(path) = &app.cc_multimap_path {
+                    ui.label(path.display().to_string());
+                } else {
+                    ui.label("Loaded from Classic Client path");
+                }
+                ui.end_row();
+            });
+            ui.separator();
+            ui.add(
+                egui::Slider::new(&mut app.multimap_zoom, 0.05..=1.0)
+                    .logarithmic(true)
+                    .text("Zoom"),
+            );
+        });
+
+    egui::CentralPanel::default().show(ctx, |ui| {
+        if let Some(handle) = app.get_multimap_texture(ctx) {
+            let size = egui::vec2(
+                multimap.width as f32 * app.multimap_zoom,
+                multimap.height as f32 * app.multimap_zoom,
+            );
+            egui::ScrollArea::both().show(ui, |ui| {
+                ui.add(egui::Image::new(&handle).fit_to_exact_size(size));
+            });
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label("Failed to build multimap texture.");
             });
         }
     });

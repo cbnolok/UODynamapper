@@ -39,6 +39,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
             if app.client_data.as_ref().and_then(|client| client.multis.as_ref()).is_some()
                 || app.multi_collection.is_some()
+                || app.cc_multimap.is_some()
             {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }

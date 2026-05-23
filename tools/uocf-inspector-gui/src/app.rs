@@ -5,6 +5,7 @@ use std::sync::Arc;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
+use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
 use uocf::enhanced::localized_strings::LocalizedStringsPackage;
@@ -52,6 +53,7 @@ pub enum HuesSource {
 pub enum MultisSource {
     ClassicMul,
     Uop,
+    Multimap,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -166,6 +168,8 @@ pub struct UopInspectorApp {
     pub cc_tiledata: Option<Arc<TileData>>,
     pub cc_sounds: Option<Arc<SoundMap>>,
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
+    pub cc_multimap: Option<Arc<MultimapRleImage>>,
+    pub cc_multimap_path: Option<PathBuf>,
     pub sound_player: Option<SoundPlayer>,
 
     pub selected_uop_idx: Option<usize>,
@@ -190,6 +194,7 @@ pub struct UopInspectorApp {
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
+    pub multimap_texture: Option<egui::TextureHandle>,
 
     // Animations
     pub selected_anim_id: u32,
@@ -214,6 +219,7 @@ pub struct UopInspectorApp {
     pub selected_hue_id: u16,
     pub selected_ec_hue_id: u16,
     pub selected_cliloc_number: i32,
+    pub multimap_zoom: f32,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
@@ -246,6 +252,8 @@ impl UopInspectorApp {
             cc_tiledata: None,
             cc_sounds: None,
             cc_sound_entries: None,
+            cc_multimap: None,
+            cc_multimap_path: None,
             sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
@@ -272,6 +280,7 @@ impl UopInspectorApp {
             multi_collection: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
+            multimap_texture: None,
 
             selected_anim_id: 0,
             selected_animdata_id: 0,
@@ -293,6 +302,7 @@ impl UopInspectorApp {
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
             selected_cliloc_number: 0,
+            multimap_zoom: 0.25,
         };
 
         app.log("UOCF Inspector starting...");
@@ -319,6 +329,9 @@ impl UopInspectorApp {
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
         self.cc_sound_entries = None;
+        self.cc_multimap = None;
+        self.cc_multimap_path = None;
+        self.multimap_texture = None;
         if let Some(player) = &mut self.sound_player {
             player.stop();
         }
@@ -334,6 +347,19 @@ impl UopInspectorApp {
                 .map(|sounds| Arc::new(collect_sound_entries(sounds)));
             self.cc_sounds = loaded_sounds.clone();
             self.cc_sound_entries = loaded_sound_entries.clone();
+            let multimap_path = path.join("multimap.rle");
+            if multimap_path.exists() {
+                match uocf::classic::multimap_rle::load_rle(&multimap_path) {
+                    Ok(multimap) => {
+                        self.cc_multimap = Some(Arc::new(multimap));
+                        self.cc_multimap_path = Some(multimap_path.clone());
+                        self.log(format!("Loaded multimap.rle from {}", multimap_path.display()));
+                    }
+                    Err(e) => {
+                        self.log(format!("Failed to load multimap.rle: {}", e));
+                    }
+                }
+            }
             let loaded_tiledata = match td_res {
                 Ok(td) => {
                     let td = Arc::new(td);
@@ -1023,6 +1049,22 @@ impl UopInspectorApp {
         self.get_tex_art_cc_texture_from_source(ctx, art_id, source)
     }
 
+    pub fn get_multimap_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        if let Some(handle) = &self.multimap_texture {
+            return Some(handle.clone());
+        }
+
+        let multimap = self.cc_multimap.as_ref()?;
+        let rgba = multimap.to_rgba8();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [multimap.width as usize, multimap.height as usize],
+            &rgba,
+        );
+        let handle = ctx.load_texture("cc_multimap_rle", image, Default::default());
+        self.multimap_texture = Some(handle.clone());
+        Some(handle)
+    }
+
     pub fn select_raw_uop_entry(&mut self, package_name: &str, file_hash: u64) -> bool {
         let package_name = package_name.to_ascii_lowercase();
         let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
@@ -1192,6 +1234,8 @@ mod tests {
             cc_tiledata: None,
             cc_sounds: None,
             cc_sound_entries: None,
+            cc_multimap: None,
+            cc_multimap_path: None,
             sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
@@ -1212,6 +1256,7 @@ mod tests {
             localized_strings_source: LocalizedStringsSource::Cliloc,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
+            multimap_texture: None,
             selected_anim_id: 0,
             selected_animdata_id: 0,
             selected_animdata_art_source: ArtSource::CcUop,
@@ -1232,6 +1277,7 @@ mod tests {
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
             selected_cliloc_number: 0,
+            multimap_zoom: 0.25,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
