@@ -1,5 +1,9 @@
 use bcdec_rs;
 use std::cmp::max;
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
@@ -336,6 +340,31 @@ fn block_error_bounded(
     decoded: &[[u8; 4]; 16],
     max_error: u64,
 ) -> Option<u64> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe { block_error_bounded_sse2(source, decoded, max_error) }
+    }
+    #[cfg(target_arch = "x86")]
+    {
+        if std::is_x86_feature_detected!("sse2") {
+            unsafe { block_error_bounded_sse2(source, decoded, max_error) }
+        } else {
+            block_error_bounded_scalar(source, decoded, max_error)
+        }
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        block_error_bounded_scalar(source, decoded, max_error)
+    }
+}
+
+#[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+fn block_error_bounded_scalar(
+    source: &[[u8; 4]],
+    decoded: &[[u8; 4]; 16],
+    max_error: u64,
+) -> Option<u64> {
     let mut err = 0u64;
     for i in 0..16 {
         for c in 0..4 {
@@ -347,6 +376,52 @@ fn block_error_bounded(
         }
     }
     Some(err)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+unsafe fn block_error_bounded_sse2(
+    source: &[[u8; 4]],
+    decoded: &[[u8; 4]; 16],
+    max_error: u64,
+) -> Option<u64> {
+    let zero = _mm_setzero_si128();
+    let mut sum = _mm_setzero_si128();
+    let source_ptr = source.as_ptr() as *const __m128i;
+    let decoded_ptr = decoded.as_ptr() as *const __m128i;
+    let mut err = 0u64;
+
+    for i in 0..4 {
+        let src = _mm_loadu_si128(source_ptr.add(i));
+        let dec = _mm_loadu_si128(decoded_ptr.add(i));
+        let src_lo = _mm_unpacklo_epi8(src, zero);
+        let src_hi = _mm_unpackhi_epi8(src, zero);
+        let dec_lo = _mm_unpacklo_epi8(dec, zero);
+        let dec_hi = _mm_unpackhi_epi8(dec, zero);
+        let diff_lo = _mm_sub_epi16(src_lo, dec_lo);
+        let diff_hi = _mm_sub_epi16(src_hi, dec_hi);
+        sum = _mm_add_epi32(sum, _mm_madd_epi16(diff_lo, diff_lo));
+        sum = _mm_add_epi32(sum, _mm_madd_epi16(diff_hi, diff_hi));
+
+        if i == 1 || i == 3 {
+            err += hsum_epi32_sse2(sum) as u64;
+            if err >= max_error {
+                return None;
+            }
+            sum = _mm_setzero_si128();
+        }
+    }
+
+    Some(err)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+unsafe fn hsum_epi32_sse2(v: __m128i) -> u32 {
+    let hi64 = _mm_srli_si128::<8>(v);
+    let sum64 = _mm_add_epi32(v, hi64);
+    let hi32 = _mm_srli_si128::<4>(sum64);
+    _mm_cvtsi128_si32(_mm_add_epi32(sum64, hi32)) as u32
 }
 
 fn hash_hsieh(buf: &[u8], salt: u32) -> u32 {
