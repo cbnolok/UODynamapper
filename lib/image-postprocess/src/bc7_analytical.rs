@@ -465,6 +465,49 @@ unsafe fn sse_m6_rgb4_sse41(
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "sse4.1,ssse3")]
+unsafe fn sse_m6_rgba4_sse41(
+    px: __m128i,
+    packed_sel: u32,
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    la: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    da: i32,
+) -> u32 {
+    let r_mask = _mm_setr_epi8(0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let g_mask = _mm_setr_epi8(1, 5, 9, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let b_mask = _mm_setr_epi8(2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let a_mask = _mm_setr_epi8(3, 7, 11, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let pr = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, r_mask));
+    let pg = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, g_mask));
+    let pb = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, b_mask));
+    let pa = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, a_mask));
+    let w = _mm_setr_epi32(
+        BC7_WEIGHTS4[(packed_sel & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 8) & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 16) & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 24) & 0xff) as usize] as i32,
+    );
+    let half = _mm_set1_epi32(32);
+    let recon_r = _mm_add_epi32(_mm_set1_epi32(lr), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(dr), w), half), 6));
+    let recon_g = _mm_add_epi32(_mm_set1_epi32(lg), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(dg), w), half), 6));
+    let recon_b = _mm_add_epi32(_mm_set1_epi32(lb), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(db), w), half), 6));
+    let recon_a = _mm_add_epi32(_mm_set1_epi32(la), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(da), w), half), 6));
+    let er = _mm_sub_epi32(pr, recon_r);
+    let eg = _mm_sub_epi32(pg, recon_g);
+    let eb = _mm_sub_epi32(pb, recon_b);
+    let ea = _mm_sub_epi32(pa, recon_a);
+    let err = _mm_add_epi32(_mm_add_epi32(_mm_mullo_epi32(er, er), _mm_mullo_epi32(eg, eg)), _mm_add_epi32(_mm_mullo_epi32(eb, eb), _mm_mullo_epi32(ea, ea)));
+    let sum2 = _mm_add_epi32(err, _mm_shuffle_epi32(err, 0b10_11_00_01));
+    let sum4 = _mm_add_epi32(sum2, _mm_shuffle_epi32(sum2, 0b01_00_11_10));
+    _mm_cvtsi128_si32(sum4) as u32
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1,ssse3")]
 unsafe fn eval_m6_rgb_sse41(
     pixels: &[Pixel; 16],
     weights: &mut [u8; 16],
@@ -507,6 +550,57 @@ unsafe fn eval_m6_rgb_sse41(
             weights[i + lane] = ((packed >> (lane * 8)) & 0xff) as u8;
         }
         sse += sse_m6_rgb4_sse41(px, packed, lr, lg, lb, dr, dg, db);
+    }
+
+    sse
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1,ssse3")]
+unsafe fn eval_m6_rgba_sse41(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    la: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    da: i32,
+    f: f32,
+) -> u32 {
+    let zero = _mm_setzero_si128();
+    let fifteen = _mm_set1_epi32(15);
+    let f = _mm_set1_ps(f);
+    let half = _mm_set1_ps(0.5);
+    let ep = _mm_setr_epi16(lr as i16, lg as i16, lb as i16, la as i16, lr as i16, lg as i16, lb as i16, la as i16);
+    let coef = _mm_setr_epi16(dr as i16, dg as i16, db as i16, da as i16, dr as i16, dg as i16, db as i16, da as i16);
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(4) {
+        let px = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let lo16 = _mm_unpacklo_epi8(px, zero);
+        let hi16 = _mm_unpackhi_epi8(px, zero);
+        let lo_adj = _mm_sub_epi16(lo16, ep);
+        let hi_adj = _mm_sub_epi16(hi16, ep);
+        let lo32p = _mm_madd_epi16(lo_adj, coef);
+        let hi32p = _mm_madd_epi16(hi_adj, coef);
+        let lo_sum = _mm_add_epi32(lo32p, _mm_shuffle_epi32(lo32p, 0b10_11_00_01));
+        let hi_sum = _mm_add_epi32(hi32p, _mm_shuffle_epi32(hi32p, 0b10_11_00_01));
+        let pair01 = _mm_shuffle_epi32(lo_sum, 0b10_00_10_00);
+        let pair23 = _mm_shuffle_epi32(hi_sum, 0b10_00_10_00);
+        let dot32 = _mm_unpacklo_epi64(pair01, pair23);
+        let y = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(dot32), f), half);
+        let sel32 = _mm_min_epi32(_mm_max_epi32(_mm_cvttps_epi32(y), zero), fifteen);
+        let sel16 = _mm_packs_epi32(sel32, zero);
+        let sel8 = _mm_packus_epi16(sel16, zero);
+        let packed = _mm_cvtsi128_si32(sel8) as u32;
+
+        for lane in 0..4 {
+            weights[i + lane] = ((packed >> (lane * 8)) & 0xff) as u8;
+        }
+        sse += sse_m6_rgba4_sse41(px, packed, lr, lg, lb, la, dr, dg, db, da);
     }
 
     sse
@@ -561,6 +655,72 @@ unsafe fn eval_m6_rgb_neon(
             weights[i + lane] = sel as u8;
             sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
         }
+    }
+
+    sse
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn eval_m6_rgba_avx512(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    la: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    da: i32,
+    f: f32,
+) -> u32 {
+    let ep_lanes = [
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+    ];
+    let coef_lanes = [
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+    ];
+    let ep = _mm512_loadu_si512(ep_lanes.as_ptr() as *const _);
+    let coef = _mm512_loadu_si512(coef_lanes.as_ptr() as *const _);
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(8) {
+        let px = _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i);
+        let px16 = _mm512_cvtepu8_epi16(px);
+        let adj = _mm512_sub_epi16(px16, ep);
+        let pairs = _mm512_madd_epi16(adj, coef);
+        let mut pair_sums = [0i32; 16];
+        _mm512_storeu_si512(pair_sums.as_mut_ptr() as *mut _, pairs);
+
+        let mut packed0 = 0u32;
+        let mut packed1 = 0u32;
+        for lane in 0..8 {
+            let dot = pair_sums[lane * 2] + pair_sums[lane * 2 + 1];
+            let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
+            weights[i + lane] = sel as u8;
+            if lane < 4 {
+                packed0 |= (sel as u32) << (lane * 8);
+            } else {
+                packed1 |= (sel as u32) << ((lane - 4) * 8);
+            }
+        }
+        sse += sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da);
+        sse += sse_m6_rgba4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, la, dr, dg, db, da);
     }
 
     sse
@@ -625,6 +785,75 @@ unsafe fn eval_m6_rgb_avx512(
         }
         sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
         sse += sse_m6_rgb4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, dr, dg, db);
+    }
+
+    sse
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn eval_m6_rgba_avx2(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    la: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    da: i32,
+    f: f32,
+) -> u32 {
+    let zero128 = _mm_setzero_si128();
+    let fifteen256 = _mm256_set1_epi32(15);
+    let f = _mm_set1_ps(f);
+    let half = _mm_set1_ps(0.5);
+    let ep = _mm256_setr_epi16(
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+        lr as i16, lg as i16, lb as i16, la as i16,
+    );
+    let coef = _mm256_setr_epi16(
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+        dr as i16, dg as i16, db as i16, da as i16,
+    );
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(8) {
+        let px0 = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let px1 = _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i);
+        let adj0 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px0), ep);
+        let adj1 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px1), ep);
+        let pairs0 = _mm256_madd_epi16(adj0, coef);
+        let pairs1 = _mm256_madd_epi16(adj1, coef);
+        let sums0 = _mm256_hadd_epi32(pairs0, pairs0);
+        let sums1 = _mm256_hadd_epi32(pairs1, pairs1);
+        let dots0 = _mm_unpacklo_epi64(_mm256_castsi256_si128(sums0), _mm256_extracti128_si256::<1>(sums0));
+        let dots1 = _mm_unpacklo_epi64(_mm256_castsi256_si128(sums1), _mm256_extracti128_si256::<1>(sums1));
+        let dots = _mm256_set_m128i(dots1, dots0);
+        let y = _mm256_add_ps(_mm256_mul_ps(_mm256_cvtepi32_ps(dots), _mm256_set_m128(f, f)), _mm256_set_m128(half, half));
+        let sel32 = _mm256_min_epi32(_mm256_max_epi32(_mm256_cvttps_epi32(y), _mm256_setzero_si256()), fifteen256);
+        let sel16 = _mm_packus_epi32(_mm256_castsi256_si128(sel32), _mm256_extracti128_si256::<1>(sel32));
+        let sel8 = _mm_packus_epi16(sel16, zero128);
+        let mut packed = [0u8; 8];
+        _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
+
+        let mut packed0 = 0u32;
+        let mut packed1 = 0u32;
+        for lane in 0..8 {
+            weights[i + lane] = packed[lane];
+            if lane < 4 {
+                packed0 |= (packed[lane] as u32) << (lane * 8);
+            } else {
+                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+            }
+        }
+        sse += sse_m6_rgba4_sse41(px0, packed0, lr, lg, lb, la, dr, dg, db, da);
+        sse += sse_m6_rgba4_sse41(px1, packed1, lr, lg, lb, la, dr, dg, db, da);
     }
 
     sse
@@ -785,7 +1014,20 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
 pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,la:i32,p0:u32,hr:i32,hg:i32,hb:i32,ha:i32,p1:u32)->u32{
     let(lr,lg,lb,la)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32,from_7(la as u32,p0)as i32);
     let(hr,hg,hb,ha)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32,from_7(ha as u32,p1)as i32);
-    let(dr,dg,db,da)=(hr-lr,hg-lg,hb-lb,ha-la);let f=15.0/((dr*dr+dg*dg+db*db+da*da)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db+la*da);
+    let(dr,dg,db,da)=(hr-lr,hg-lg,hb-lb,ha-la);let f=15.0/((dr*dr+dg*dg+db*db+da*da)as f32+1.25e-7);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
+        return unsafe { eval_m6_rgba_avx512(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("avx2") {
+        return unsafe { eval_m6_rgba_avx2(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("sse4.1") {
+        return unsafe { eval_m6_rgba_sse41(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
+    }
+    let sofs=-(lr*dr+lg*dg+lb*db+la*da);
     let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgba_weights4(pixels,weights,i,lr,lg,lb,la,dr,dg,db,da,sofs,f,15,&BC7_WEIGHTS4);}sse}
 
 pub fn eval_m1(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;2],lg:&[u32;2],lb:&[u32;2],hr:&[u32;2],hg:&[u32;2],hb:&[u32;2],pbits:&[u32;2],bmask:u16)->u32{
