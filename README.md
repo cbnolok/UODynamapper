@@ -1,6 +1,6 @@
 # UODynamapper
 
-UODynamapper is a Rust and Bevy renderer for Ultima Online maps.
+UODynamapper is a renderer for Ultima Online maps written in Rust and using the Bevy engine.
 
 The main application is `dynamapper`: an interactive map viewer that reads converted Ultima Online data, streams terrain and static-art assets, and renders the world with Classic, Enhanced Client, and Kingdom Reborn inspired visual modes. The broader workspace contains conversion tools, package readers, inspectors, and format libraries that support that renderer.
 
@@ -20,6 +20,7 @@ Implemented:
 - Land tile rendering with a paged GPU metadata atlas.
 - Multi-map discovery for the standard map set.
 - Free camera movement, zoom, rotation, and teleport controls.
+- Experimental land-only perspective and isometric free camera modes (without statics, which are rendered via billboarding).
 - Modular TOML configuration under `dynamapper/assets/settings/`.
 - Shader hot reload for terrain work.
 - Conversion tooling for Classic and Enhanced Client source assets.
@@ -38,14 +39,14 @@ See [docs/TODO.md](docs/TODO.md) for the working roadmap.
 ## Requirements
 
 - A valid Ultima Online Classic Client (both mul and uop formats) or Enhanced Client installation for the client data you want to convert or render.
-- Converted `.uddp` packages for runtime use. These are built from local client files via `udd-conv-gui` or `udd-conv-cli`; source game assets are not included in this repository.
+- Converted `.uddp` packages for runtime use. These are built from local client files via the provided `udd-conv-gui` or `udd-conv-cli`; source game assets are not included in this repository.
 - Rust toolchain compatible with the workspace edition only if you are building from source.
-
-The main app expects shared assets, shaders, fonts, settings, and runtime data under `assets/`.
 
 Most users are expected to use distributed binaries rather than compile the workspace themselves. Release packages are expected to include `dynamapper` and the individual tool binaries. Source builds are mainly for contributors, toolchain work, and renderer development.
 
 ## Basic Setup
+
+The main app expects shared assets, shaders, fonts, settings under `assets/` (already provided).
 
 Configure the runtime UDDP package path in `assets/settings/runtime_assets.toml`.
 
@@ -55,21 +56,9 @@ Runtime packages are produced with the conversion tools and then placed in, or l
 - `tex_art_cc.uddp`
 - `tex_art_ec.uddp`
 - `tex_land_ec.uddp`
-- map and statics packages for the facets you want to inspect
+- map and statics packages for the facets you want to inspect (i.e.: `map0.uddp`, `statics0.uddp`).
 
 For conversion commands and package details, see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md).
-
-## Running
-
-With a distributed build, run the provided `dynamapper` binary from its release folder after configuring the runtime package path.
-
-From the workspace root:
-
-```text
-cargo run -p dynamapper
-```
-
-The exact result depends on the configured runtime package path, the converted packages available there, and the current state of the renderer.
 
 ## Controls
 
@@ -92,7 +81,7 @@ Keybindings are configurable. See [docs/keybindings.md](docs/keybindings.md) for
 Release builds should expose these binaries as separate executables.
 
 - Standalone renderer
-  - `dynamapper`: interactive Bevy map renderer and viewer.
+  - `dynamapper`: interactive map renderer.
 - UDD package management
   - `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
   - `udd-conv-cli`: CLI crate; generated executables are `udd-pack` for building `.uddp` packages and `udd-tool` for inspecting, extracting, diffing, editing, and rebuilding them.
@@ -112,15 +101,16 @@ Release builds should expose these binaries as separate executables.
 - UOCF (UO Client Files) library
   - Shared package support:
     - `.uop` package reading, writing, compression handling, path hashing, hash dictionaries, and brute-force path discovery.
+    - `tools/_shared_assets/Dictionary.dic` is a MPE (Mythic Package Editor)-compatible UOP virtual path string/hash dictionary used to map 64-bit UOP path hashes back to probable virtual file names. The UOCF inspector can load `.dic` files for its UOP browser, `uop-dict-populator-cli` / `uop-dict-populator-gui` expand them from templates or brute-force searches, and `uop-tool merge-dic` can merge multiple `.dic` files.
   - Classic Client support:
     - map and statics files, art and land textures, tiledata, hues, lights, gumps, fonts, sounds, multis, radar colors, animation metadata, `body.def` / `bodyconv.def`, `verdata.mul`, map/statics DIFs, `multimap.rle`, and related `.mul` / `.idx` layouts.
   - Kingdom Reborn support:
-    - KR world maps are stored as compressed facet sectors inside `facet*.uop` packages, not as Classic `map*.mul` / `statics*.mul` files.
-    - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR terrain/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known.
+    - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
+    - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR terrain/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
     - This is format support for conversion, inspection, and evidence gathering. It does not mean the Dynamapper runtime already renders every KR-only material or visual rule as the original KR client did.
   - Enhanced Client support:
-    - EC world maps are also stored as compressed facet sectors inside `facet*.uop`; UOCF decodes those sectors into terrain cells and placed statics with ids, z values, and hues.
-    - `TerrainDefinition.uop` is parsed as the terrain/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields.
+    - EC world maps and statics are also stored as compressed facet sectors inside `facet*.uop`, but with a slightly different format than KR one.
+    - `TerrainDefinition.uop` is parsed as the terrain/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields. In this context, a material is a semantic terrain definition, not just an image: it groups terrain ids or aliases with the texture references, shader hints, repetition/stretch values, and other metadata the client uses to render that terrain family.
     - `tileart.uop` is parsed as the item/static ownership source: tile records, art windows, offsets, flags, shader/type hints, lighting fields, surface-like/liquid-like classification evidence, and linked texture refs.
     - Supporting EC data includes texture package access, string dictionaries, localized strings, hues, multis, terrain config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
     - As with KR, this is parser and conversion support. Dynamapper currently uses only the converted runtime packages and still has open work for full EC material routing, support textures, and static-art behavior.
