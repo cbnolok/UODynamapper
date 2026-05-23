@@ -777,8 +777,8 @@ pub fn pack_bc7_rgb(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
         let hb = to_7f(pixels[hi_c][2] as f32) as u32;
         let la = 127u32; let ha = 127u32;
         let mut w = [0u8; 16];
-        eval_m6_rgb(pixels, &mut w, lr as i32, lg as i32, lb as i32, hr as i32, hg as i32, hb as i32, 0, 0);
-        encode_mode6(block, lr, lg, lb, la, 0, hr, hg, hb, ha, 0, &w);
+        eval_m6_rgb(pixels, &mut w, lr as i32, lg as i32, lb as i32, hr as i32, hg as i32, hb as i32, 1, 1);
+        encode_mode6(block, lr, lg, lb, la, 1, hr, hg, hb, ha, 1, &w);
         return;
     }
 
@@ -1037,7 +1037,7 @@ fn pack_bc7_rgb_mode6_sse(
     let mut hr = to_7f(pixels[hi_c][0] as f32) as i32;
     let mut hg = to_7f(pixels[hi_c][1] as f32) as i32;
     let mut hb = to_7f(pixels[hi_c][2] as f32) as i32;
-    let (p0, p1) = (0u32, 0u32);
+    let (p0, p1) = (1u32, 1u32);
     let mut w = [0u8; 16];
     eval_m6_rgb(pixels, &mut w, lr, lg, lb, hr, hg, hb, p0, p1);
     // LS refinement
@@ -1058,6 +1058,11 @@ fn pack_bc7_rgb_mode6_sse(
 /// Main entry for RGBA blocks. Selects between Mode 4/5 (dual-plane), Mode 6 (1-subset RGBA),
 /// and Mode 7 (2-subset RGBA) depending on block statistics and flags.
 pub fn pack_bc7_rgba(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
+    if pixels.iter().all(|p| p[3] == 255) {
+        pack_bc7_rgb(block, pixels, flags);
+        return;
+    }
+
     // ── Solid block fast-path ──
     if pixels.iter().all(|p| p == &pixels[0]) {
         encode_solid_block(block, &pixels[0]);

@@ -51,7 +51,7 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
 }
 
 pub const fn preferred_bc7_encoder_backend() -> Bc7EncoderBackend {
-    Bc7EncoderBackend::AnalyticalPulp
+    Bc7EncoderBackend::AnalyticalWide
 }
 
 pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
@@ -593,14 +593,14 @@ fn bc7_block_byte_len(width: u32, height: u32) -> usize {
 
 fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
     use image_postprocess::bc7_analytical::{
-        pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE,
+        pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
     };
 
     let blocks_x = extent.blocks_wide() as usize;
     let blocks_y = extent.blocks_high() as usize;
     let mut blocks = vec![0u8; blocks_x * blocks_y * 16];
     let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
-    let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE;
+    let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6;
 
     for block_index in 0..blocks_x * blocks_y {
         let pixels: &[Pixel; 16] = rgba_blocks[block_index * 16..(block_index + 1) * 16]
@@ -617,7 +617,7 @@ fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
 }
 
 fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
-    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
+    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
 
     let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
     image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
@@ -625,13 +625,13 @@ fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u
         rgba_pixels,
         extent.width(),
         extent.height(),
-        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE,
+        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6,
     );
     blocks
 }
 
 fn encode_with_analytical_pulp(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
-    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
+    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
 
     let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
     image_postprocess::bc7_analytical_pulp::pack_bc7_rgba_blocks_pulp(
@@ -639,7 +639,7 @@ fn encode_with_analytical_pulp(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u
         rgba_pixels,
         extent.width(),
         extent.height(),
-        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE,
+        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6,
     );
     blocks
 }

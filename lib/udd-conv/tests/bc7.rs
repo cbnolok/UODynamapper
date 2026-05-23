@@ -91,6 +91,25 @@ fn rgba8888_roundtrip_preserves_sizes() {
 }
 
 #[test]
+fn opaque_rgba_bc7_fast_path_decodes_opaque_alpha() {
+    let extent = ImageExtent::new(8, 8).unwrap();
+    let rgba = patterned_rgba(extent)
+        .chunks_exact(4)
+        .flat_map(|px| [px[0], px[1], px[2], 255])
+        .collect::<Vec<_>>();
+    let bc7 = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::AnalyticalWide,
+    )
+    .unwrap();
+    let decoded = decode_bc7_to_rgba8888(bc7.blocks(), extent).unwrap();
+
+    assert!(decoded.chunks_exact(4).all(|px| px[3] == 255));
+}
+
+#[test]
 fn vram_texture_container_roundtrip_preserves_bc7_metadata() {
     let extent = ImageExtent::new(8, 4).unwrap();
     let rgba = vec![128u8; extent.byte_len(RawImageFormat::Rgba8888)];
@@ -248,7 +267,7 @@ fn project_bc7_backend_is_available() {
         resolve_bc7_encoder_backend(Bc7EncoderBackend::AnalyticalPulp),
         Bc7EncoderBackend::AnalyticalPulp
     );
-    assert_eq!(preferred_bc7_encoder_backend(), Bc7EncoderBackend::AnalyticalPulp);
+    assert_eq!(preferred_bc7_encoder_backend(), Bc7EncoderBackend::AnalyticalWide);
 }
 
 #[test]
