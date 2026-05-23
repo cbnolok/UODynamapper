@@ -13,7 +13,8 @@ use crate::core::texture_cache::art::{
     SpriteArtPageAtlasHandle,
 };
 use crate::core::uo_files_loader::{
-    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
+    HuesPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
+    TileMetaPackageRes,
 };
 use crate::prelude::*;
 use bevy::camera::visibility::NoFrustumCulling;
@@ -31,7 +32,7 @@ pub struct SpriteParams {
     pub render_mode: u32,
     pub alpha_cutoff: f32,
     pub pass_mode: u32,
-    pub _pad: u32,
+    pub hue_enabled: u32,
     pub map_width_tiles: f32,
     pub map_height_tiles: f32,
     pub _pad_sp: UVec2,
@@ -58,6 +59,9 @@ pub struct ArtSpriteMaterialExtension {
     pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
     #[uniform(107, visibility(vertex, fragment))]
     pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
+    #[texture(109, visibility(fragment))]
+    #[sampler(108, visibility(fragment))]
+    pub hues: Handle<Image>,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -75,6 +79,9 @@ pub struct ArtGroundMaterialExtension {
     pub effects_uniform: world::land::mesh_material::LandEffectsUniform,
     #[uniform(107, visibility(vertex, fragment))]
     pub global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms,
+    #[texture(109, visibility(fragment))]
+    #[sampler(108, visibility(fragment))]
+    pub hues: Handle<Image>,
 }
 
 #[derive(Resource, Clone)]
@@ -358,6 +365,44 @@ fn create_art_atlas_image(
     images.add(image)
 }
 
+fn create_hue_lookup_image(
+    images: &mut Assets<Image>,
+    hues_package: Option<&HuesPackageRes>,
+) -> (Handle<Image>, u32) {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
+
+    let texture_bytes = hues_package.and_then(|package| match package.0.read_texture_bytes() {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            bevy::log::warn!("Failed to read hues.uddp lookup texture: {error}");
+            None
+        }
+    });
+    let hue_enabled = texture_bytes.is_some() as u32;
+    let data = texture_bytes.unwrap_or_else(|| {
+        vec![
+            255;
+            udd_assets::hues::HUES_TEXTURE_WIDTH as usize
+                * udd_assets::hues::HUES_TEXTURE_HEIGHT as usize
+                * 4
+        ]
+    });
+
+    let mut image = Image::new(
+        Extent3d {
+            width: udd_assets::hues::HUES_TEXTURE_WIDTH,
+            height: udd_assets::hues::HUES_TEXTURE_HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST;
+    (images.add(image), hue_enabled)
+}
+
 fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> ArtPageAtlas {
     let handle = create_art_atlas_image(
         images,
@@ -560,6 +605,7 @@ pub fn sys_setup_art_page_atlas(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    hues_package_res: Option<Res<HuesPackageRes>>,
 ) {
     log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
@@ -581,6 +627,8 @@ pub fn sys_setup_art_page_atlas(
     let sprite_atlas_handle = sprite_atlas.gpu_handle.clone();
     let ground_atlas = build_art_atlas(&mut images, ground_spec);
     let ground_atlas_handle = ground_atlas.gpu_handle.clone();
+    let (hue_lookup_handle, hue_enabled) =
+        create_hue_lookup_image(&mut images, hues_package_res.as_deref());
 
     let initial_buffer = ShaderStorageBuffer::from(vec![SpriteInstance {
         world_x: 0.0,
@@ -598,7 +646,10 @@ pub fn sys_setup_art_page_atlas(
         priority_z_units: 0.0,
         sort_bias_ordinal: 0,
         is_wet_flags: 0,
+        hue_id: 0,
+        hue_flags: 0,
         _pad_inst: 0,
+        _pad_hue: [0; 2],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
@@ -620,7 +671,7 @@ pub fn sys_setup_art_page_atlas(
                 render_mode: 0,
                 alpha_cutoff: 0.5,
                 pass_mode: PASS_MODE_OPAQUE,
-                _pad: 0,
+                hue_enabled,
                 map_width_tiles: 1.0,
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
@@ -628,6 +679,7 @@ pub fn sys_setup_art_page_atlas(
             scene_uniform: world::land::mesh_material::SceneUniform::default(),
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            hues: hue_lookup_handle.clone(),
         },
     });
 
@@ -645,7 +697,7 @@ pub fn sys_setup_art_page_atlas(
                 render_mode: 0,
                 alpha_cutoff: 0.5,
                 pass_mode: PASS_MODE_TRANSPARENT,
-                _pad: 0,
+                hue_enabled,
                 map_width_tiles: 1.0,
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
@@ -653,6 +705,7 @@ pub fn sys_setup_art_page_atlas(
             scene_uniform: world::land::mesh_material::SceneUniform::default(),
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            hues: hue_lookup_handle.clone(),
         },
     });
 
@@ -673,6 +726,9 @@ pub fn sys_setup_art_page_atlas(
         sort_bias_ordinal: 0,
         is_wet_flags: 0,
         texture_stretch: 0.0,
+        hue_id: 0,
+        hue_flags: 0,
+        _pad_hue: [0; 2],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
@@ -693,7 +749,7 @@ pub fn sys_setup_art_page_atlas(
                 render_mode: 0,
                 alpha_cutoff: 0.5,
                 pass_mode: PASS_MODE_OPAQUE,
-                _pad: 0,
+                hue_enabled,
                 map_width_tiles: 1.0,
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
@@ -701,6 +757,7 @@ pub fn sys_setup_art_page_atlas(
             scene_uniform: world::land::mesh_material::SceneUniform::default(),
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            hues: hue_lookup_handle.clone(),
         },
     });
 
@@ -718,7 +775,7 @@ pub fn sys_setup_art_page_atlas(
                 render_mode: 0,
                 alpha_cutoff: 0.5,
                 pass_mode: PASS_MODE_TRANSPARENT,
-                _pad: 0,
+                hue_enabled,
                 map_width_tiles: 1.0,
                 map_height_tiles: 1.0,
                 _pad_sp: UVec2::ZERO,
@@ -726,6 +783,7 @@ pub fn sys_setup_art_page_atlas(
             scene_uniform: world::land::mesh_material::SceneUniform::default(),
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            hues: hue_lookup_handle,
         },
     });
 

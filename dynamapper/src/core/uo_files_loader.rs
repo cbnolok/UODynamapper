@@ -62,6 +62,10 @@ pub struct GumpMapRes(pub Arc<uocf::classic::gump::GumpMap>);
 #[derive(Resource)]
 pub struct ClassicHuesRes(pub Arc<Vec<uocf::classic::hues::HueEntry>>);
 
+/// Optional packed hue lookup texture and metadata.
+#[derive(Resource)]
+pub struct HuesPackageRes(pub Arc<udd_assets::HuesPackage>);
+
 /// Transcode table for Classic to Enhanced terrain IDs.
 #[derive(Resource)]
 pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
@@ -383,6 +387,26 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let hues_package_path = resolve_optional_uddp_path(&udd_path, "hues.uddp");
+    let hues_package = if let Some(hues_package_path) = hues_package_path {
+        log_source_choice(
+            &lg,
+            "hue lookup package",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&hues_package_path),
+        );
+        match udd_assets::HuesPackage::load(&hues_package_path) {
+            Ok(package) => Some(package),
+            Err(error) => {
+                lg_err(&format!("Failed to load hues.uddp: {error}"));
+                None
+            }
+        }
+    } else {
+        lg("No hue lookup package selected: hues.uddp not found in udd_path.");
+        None
+    };
+
     lg("Done loading UO Data.");
 
     // Load CC-EC conversion tables from KDL
@@ -497,6 +521,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(classic_hues) = classic_hues {
         commands.insert_resource(ClassicHuesRes(Arc::new(classic_hues)));
+    }
+    if let Some(hues_package) = hues_package {
+        commands.insert_resource(HuesPackageRes(Arc::new(hues_package)));
     }
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);

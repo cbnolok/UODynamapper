@@ -22,7 +22,10 @@ struct SpriteInstance {
     sort_bias_ordinal: u32,
     // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
     is_wet_flags: u32,
+    hue_id: u32,
+    hue_flags: u32,
     _pad_inst: u32,
+    _pad_hue: vec2<u32>,
     color_rgba: vec4<f32>,
 }
 
@@ -44,6 +47,9 @@ struct GroundTileInstance {
     // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
     is_wet_flags: u32,
     texture_stretch: f32,
+    hue_id: u32,
+    hue_flags: u32,
+    _pad_hue: vec2<u32>,
     color_rgba: vec4<f32>,
 }
 
@@ -51,7 +57,7 @@ struct SpriteParams {
     render_mode: u32,
     alpha_cutoff: f32,
     pass_mode: u32,
-    _pad: u32,
+    hue_enabled: u32,
     map_width_tiles: f32,
     map_height_tiles: f32,
     _pad_sp: vec2<u32>,
@@ -64,6 +70,8 @@ struct SpriteParams {
 @group(3) @binding(105) var<uniform> scene: SceneUniform;
 @group(3) @binding(106) var<uniform> effects: LandEffectsUniform;
 @group(3) @binding(107) var<uniform> global_light: GlobalLightingUniforms;
+@group(3) @binding(108) var hue_sampler: sampler;
+@group(3) @binding(109) var hue_texture: texture_2d<f32>;
 
 // Constants
 const INV_SQRT_2: f32 = 0.70710678118;

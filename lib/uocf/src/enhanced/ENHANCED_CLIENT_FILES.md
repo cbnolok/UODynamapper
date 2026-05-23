@@ -40,10 +40,10 @@ unless the data becomes a stable package contract.
   records. Static records store graphic id, z, and hue.
 - The decoder converts this to classic-style 8x8 map blocks plus statics. The
   land graphic id from the facet/map is the terrain query id used by runtime.
-- Runtime static art collection preserves placed static hue ids and applies a
-  representative `hues.mul` tint to regular art statics, surface-like ground
-  statics, and dot-mode map/static colors. Full per-pixel hue lookup remains a
-  shader/material feature, not an atlas-duplication policy.
+- Runtime static art collection preserves placed static hue ids. Art shaders
+  apply those ids through the preconverted `hues.uddp` lookup texture
+  (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
+  containing the 32 classic hue entries expanded to 8 pixels each.
 
 `TerrainDefinition.uop`:
 

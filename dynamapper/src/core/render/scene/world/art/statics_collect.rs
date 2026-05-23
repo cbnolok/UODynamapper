@@ -12,8 +12,7 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::texture_cache::art::{GroundArtPageAtlas, SpriteArtPageAtlas};
 use crate::core::uo_files_loader::{
-    ClassicHuesRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
-    TileMetaPackageRes,
+    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
 };
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -201,6 +200,7 @@ const TILE_FLAG_ROOF: u64 = 0x1000_0000;
 /// IsWet flag — tile has tidal/water properties (matches tiledata.mul bit 0x80).
 /// When set, the art shader applies the animated sin/cos UV distortion.
 const TILE_FLAG_WET: u64 = 0x80;
+const STATIC_HUE_FLAG_APPLY: u32 = 1;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
@@ -619,56 +619,12 @@ fn resolve_ec_static_visual_kind(
     }
 }
 
-fn static_hue_rgba(
-    hues: Option<&[uocf::classic::hues::HueEntry]>,
-    hue_id: u16,
-) -> [f32; 4] {
-    let Some(hue) = hues.and_then(|hues| classic_hue_entry(hues, hue_id)) else {
-        return [1.0, 1.0, 1.0, 1.0];
-    };
-
-    let color = hue.color_table[24.min(hue.color_table.len() - 1)];
-    hue_color16_to_rgba(color)
-}
-
-fn static_hued_radar_rgba(
-    color: [u8; 4],
-    hues: Option<&[uocf::classic::hues::HueEntry]>,
-    hue_id: u16,
-) -> [f32; 4] {
-    let base = [
-        color[2] as f32 / 255.0,
-        color[1] as f32 / 255.0,
-        color[0] as f32 / 255.0,
-        1.0,
-    ];
-    let Some(hue) = hues.and_then(|hues| classic_hue_entry(hues, hue_id)) else {
-        return base;
-    };
-
-    let intensity = (((base[0] + base[1] + base[2]) / 3.0) * 31.0).round() as usize;
-    hue_color16_to_rgba(hue.color_table[intensity.min(31)])
-}
-
-fn classic_hue_entry(
-    hues: &[uocf::classic::hues::HueEntry],
-    hue_id: u16,
-) -> Option<&uocf::classic::hues::HueEntry> {
+fn static_hue_payload(hue_id: u16) -> (u32, u32) {
     if hue_id == 0 {
-        return None;
+        (0, 0)
+    } else {
+        (u32::from(hue_id), STATIC_HUE_FLAG_APPLY)
     }
-
-    let expected_id = u32::from(hue_id);
-    hues.get(hue_id as usize - 1)
-        .filter(|hue| hue.id == expected_id)
-        .or_else(|| hues.iter().find(|hue| hue.id == expected_id))
-}
-
-fn hue_color16_to_rgba(color: u16) -> [f32; 4] {
-    let r = ((color >> 10) & 0x1F) as f32 / 31.0;
-    let g = ((color >> 5) & 0x1F) as f32 / 31.0;
-    let b = (color & 0x1F) as f32 / 31.0;
-    [r, g, b, 1.0]
 }
 
 #[repr(C)]
@@ -691,7 +647,10 @@ pub struct SpriteInstance {
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in sprite shader).
     pub is_wet_flags: u32,
+    pub hue_id: u32,
+    pub hue_flags: u32,
     pub _pad_inst: u32,
+    pub _pad_hue: [u32; 2],
     pub color_rgba: [f32; 4], // for dot mode
 }
 
@@ -716,6 +675,9 @@ pub struct GroundTileInstance {
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in ground shader).
     pub is_wet_flags: u32,
     pub texture_stretch: f32,
+    pub hue_id: u32,
+    pub hue_flags: u32,
+    pub _pad_hue: [u32; 2],
     pub color_rgba: [f32; 4],
 }
 
@@ -1016,7 +978,6 @@ pub fn sys_collect_visible_statics(
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
-    classic_hues_res: Option<Res<ClassicHuesRes>>,
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
@@ -1217,10 +1178,7 @@ pub fn sys_collect_visible_statics(
 
                             let world_x = render_tile.world_x;
                             let world_z = render_tile.world_z;
-                            let hue_rgba = static_hue_rgba(
-                                classic_hues_res.as_ref().map(|hues| hues.0.as_slice()),
-                                render_tile.hue,
-                            );
+                            let (hue_id, hue_flags) = static_hue_payload(render_tile.hue);
                             let depth_class = resolve_static_depth_class(tilemeta);
                             let is_wet_flags = tilemeta.map_or(0, |m| {
                                 if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
@@ -1252,12 +1210,16 @@ pub fn sys_collect_visible_statics(
                                         priority_z_units,
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
+                                        hue_id: 0,
+                                        hue_flags: 0,
                                         _pad_inst: 0,
-                                        color_rgba: static_hued_radar_rgba(
-                                            color,
-                                            classic_hues_res.as_ref().map(|hues| hues.0.as_slice()),
-                                            render_tile.hue,
-                                        ),
+                                        _pad_hue: [0; 2],
+                                        color_rgba: [
+                                            color[2] as f32 / 255.0,
+                                            color[1] as f32 / 255.0,
+                                            color[0] as f32 / 255.0,
+                                            1.0,
+                                        ],
                                     });
                                 }
                                 continue;
@@ -1408,7 +1370,10 @@ pub fn sys_collect_visible_statics(
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
                                         texture_stretch,
-                                        color_rgba: hue_rgba,
+                                        hue_id,
+                                        hue_flags,
+                                        _pad_hue: [0; 2],
+                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
                                     });
                                 } else {
                                     let bounds = resolve_static_billboard_bounds(
@@ -1435,8 +1400,11 @@ pub fn sys_collect_visible_statics(
                                         priority_z_units,
                                         sort_bias_ordinal: 0,
                                         is_wet_flags,
+                                        hue_id,
+                                        hue_flags,
                                         _pad_inst: 0,
-                                        color_rgba: hue_rgba,
+                                        _pad_hue: [0; 2],
+                                        color_rgba: [1.0, 1.0, 1.0, 1.0],
                                     });
                                 }
                             } else {
@@ -1605,16 +1573,6 @@ mod tests {
         }
     }
 
-    fn hue_entry(id: u32, color: u16) -> uocf::classic::hues::HueEntry {
-        uocf::classic::hues::HueEntry {
-            id,
-            color_table: [color; 32],
-            table_start: color,
-            table_end: color,
-            name: [0; 20],
-        }
-    }
-
     #[test]
     fn classic_billboard_bounds_keep_existing_scale() {
         let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44, 88);
@@ -1753,11 +1711,9 @@ mod tests {
     }
 
     #[test]
-    fn static_hue_rgba_uses_one_based_hue_ids() {
-        let hues = [hue_entry(1, 0x7C00)];
-
-        assert_eq!(static_hue_rgba(Some(&hues), 1), [1.0, 0.0, 0.0, 1.0]);
-        assert_eq!(static_hue_rgba(Some(&hues), 0), [1.0, 1.0, 1.0, 1.0]);
+    fn static_hue_payload_encodes_nonzero_hues() {
+        assert_eq!(static_hue_payload(1), (1, STATIC_HUE_FLAG_APPLY));
+        assert_eq!(static_hue_payload(0), (0, 0));
     }
 
     #[test]
@@ -2035,7 +1991,10 @@ mod tests {
             priority_z_units: 15.0,
             sort_bias_ordinal: 0,
             is_wet_flags: 0,
+            hue_id: 0,
+            hue_flags: 0,
             _pad_inst: 0,
+            _pad_hue: [0; 2],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };
         let mut instances = vec![
@@ -2063,12 +2022,12 @@ mod tests {
 
     #[test]
     fn sprite_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<SpriteInstance>(), 96);
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), 112);
     }
 
     #[test]
     fn ground_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 96);
+        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 112);
     }
 
     #[test]

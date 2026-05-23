@@ -12,10 +12,12 @@
 #import "shaders/world/art/art_ground_bindings.wgsl"::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
+    hue_sampler, hue_texture,
     HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 }
+#import "shaders/world/art/hue.wgsl"::apply_static_hue
 #import "shaders/world/land/noise.wgsl"::hash
 
 struct GroundVertexOutput {
@@ -143,6 +145,14 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     }
 
     var shaded = color * in.color;
+    shaded = apply_static_hue(
+        shaded,
+        inst.hue_id,
+        inst.hue_flags,
+        sprite_params.hue_enabled,
+        hue_texture,
+        hue_sampler,
+    );
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
