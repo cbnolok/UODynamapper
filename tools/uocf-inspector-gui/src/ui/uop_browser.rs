@@ -157,7 +157,7 @@ fn ui_integrated_waypoints_view(
                         ui.label("facet");
                         ui.label("waypoint_type");
                         ui.label("value_6");
-                        ui.label("name_cliloc");
+                        ui.label("name_id");
                         ui.label("name");
                         ui.end_row();
 
@@ -170,7 +170,7 @@ fn ui_integrated_waypoints_view(
                             ui.label(waypoint_type_label(waypoint.waypoint_type));
                             ui.label(waypoint.value_6.to_string());
                             ui.label(waypoint.name_cliloc.to_string());
-                            ui.label(resolve_cliloc(app, waypoint.name_cliloc));
+                            ui.label(resolve_localized_string(app, waypoint.name_cliloc));
                             ui.end_row();
                         }
                     });
@@ -199,7 +199,7 @@ fn ui_integrated_waypoints_view(
                 .striped(true)
                 .show(ui, |ui| {
                     ui.label("#");
-                    ui.label("name_cliloc");
+                    ui.label("name_id");
                     ui.label("name");
                     ui.label("flags");
                     ui.label("links");
@@ -208,7 +208,7 @@ fn ui_integrated_waypoints_view(
                     for (index, definition) in package.type_definitions.iter().enumerate() {
                         ui.label(index.to_string());
                         ui.label(definition.name_cliloc.to_string());
-                        ui.label(resolve_cliloc(app, definition.name_cliloc));
+                        ui.label(resolve_localized_string(app, definition.name_cliloc));
                         ui.label(definition.flags.to_string());
                         ui.label(type_links_summary(definition));
                         ui.end_row();
@@ -230,7 +230,7 @@ fn draw_waypoint_cliloc_definitions(
             egui::Grid::new(grid_id).striped(true).show(ui, |ui| {
                 ui.label("#");
                 ui.label("id");
-                ui.label("name_cliloc");
+                ui.label("name_id");
                 ui.label("name");
                 ui.end_row();
 
@@ -238,7 +238,7 @@ fn draw_waypoint_cliloc_definitions(
                     ui.label(index.to_string());
                     ui.label(definition.id.to_string());
                     ui.label(definition.name_cliloc.to_string());
-                    ui.label(resolve_cliloc(app, definition.name_cliloc));
+                    ui.label(resolve_localized_string(app, definition.name_cliloc));
                     ui.end_row();
                 }
             });
@@ -274,10 +274,18 @@ fn waypoint_type_label(waypoint_type: u16) -> String {
     format!("{waypoint_type} ({label})")
 }
 
-fn resolve_cliloc(app: &UopInspectorApp, cliloc_id: u32) -> String {
+fn resolve_localized_string(app: &UopInspectorApp, string_id: u32) -> String {
+    if let Some(text) = app
+        .localized_strings
+        .as_ref()
+        .and_then(|package| package.files.iter().find_map(|file| file.strings.get(string_id)))
+    {
+        return text.to_string();
+    }
+
     app.cliloc
         .as_ref()
-        .and_then(|cliloc| cliloc.get(cliloc_id as i32))
+        .and_then(|cliloc| cliloc.get(string_id as i32))
         .map(str::to_string)
         .unwrap_or_default()
 }
