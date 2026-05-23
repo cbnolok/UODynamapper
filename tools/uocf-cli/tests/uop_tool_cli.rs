@@ -1,0 +1,135 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use uocf::uop_container::file::CompressionFlag;
+use uocf::uop_container::hash::hash_file_name_single;
+use uocf::uop_container::hash_dictionary::HashDictionary;
+use uocf::uop_container::package::UopPackage;
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "uocf-cli-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create temp dir");
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn uop_tool() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_uop-tool"))
+}
+
+#[test]
+fn hash_command_prints_expected_uop_hash() {
+    let output = uop_tool()
+        .args(["hash", "build/worldart/00000042.dds"])
+        .output()
+        .expect("run uop-tool hash");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("hash stdout is utf-8");
+    let expected_hash = hash_file_name_single("build/worldart/00000042.dds");
+    assert!(stdout.contains(&format!("0x{expected_hash:016x}")));
+}
+
+#[test]
+fn merge_dic_merges_input_dictionaries() {
+    let temp = TempDir::new("merge-dic");
+    let first_path = temp.path().join("first.dic");
+    let second_path = temp.path().join("second.dic");
+    let output_path = temp.path().join("merged.dic");
+
+    let mut first = HashDictionary::new();
+    first.set(0x10, "build/a.bin");
+    first.insert_unknown(0x20);
+    first.save(&first_path).expect("save first dictionary");
+
+    let mut second = HashDictionary::new();
+    second.set(0x20, "build/b.bin");
+    second.insert_unknown(0x30);
+    second.save(&second_path).expect("save second dictionary");
+
+    let output = uop_tool()
+        .arg("merge-dic")
+        .arg("--output")
+        .arg(&output_path)
+        .arg(&first_path)
+        .arg(&second_path)
+        .output()
+        .expect("run uop-tool merge-dic");
+
+    assert!(output.status.success());
+    let merged = HashDictionary::load(&output_path).expect("load merged dictionary");
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged.resolve(0x10), Some("build/a.bin"));
+    assert_eq!(merged.resolve(0x20), Some("build/b.bin"));
+    assert_eq!(merged.resolve(0x30), None);
+}
+
+#[test]
+fn extract_writes_known_worldart_path() {
+    let temp = TempDir::new("extract");
+    let uop_path = temp.path().join("Texture.uop");
+    let out_dir = temp.path().join("out");
+    let payload = b"DDS test payload";
+    let packed_name = "build/worldart/00000042.dds";
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(payload, packed_name, CompressionFlag::None)
+        .expect("add uop fixture file");
+    package.finalize_and_save(&uop_path).expect("save uop fixture");
+
+    let output = uop_tool()
+        .arg("extract")
+        .arg(&uop_path)
+        .arg(&out_dir)
+        .output()
+        .expect("run uop-tool extract");
+
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read(out_dir.join("build").join("worldart").join("00000042.dds"))
+            .expect("read extracted payload"),
+        payload
+    );
+}
+
+#[test]
+fn extract_rejects_malformed_uop() {
+    let temp = TempDir::new("extract-malformed");
+    let uop_path = temp.path().join("bad.uop");
+    let out_dir = temp.path().join("out");
+    fs::write(&uop_path, b"not a uop").expect("write malformed uop");
+
+    let output = uop_tool()
+        .arg("extract")
+        .arg(&uop_path)
+        .arg(&out_dir)
+        .output()
+        .expect("run uop-tool extract");
+
+    assert!(!output.status.success());
+}
