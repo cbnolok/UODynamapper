@@ -11,6 +11,7 @@
 
 use crate::bc7_tables::*;
 use std::cmp::min;
+use wide::f32x4;
 
 // ─── 1. TYPES ────────────────────────────────────────────────────────────────
 
@@ -218,17 +219,131 @@ pub fn ls_fit_4d(n:usize,weights:&[u8],ls_tab:&[[f32;4]],pixels:&[Pixel],tr:f32,
 #[inline] fn sse3(px:&Pixel,lr:i32,lg:i32,lb:i32,dr:i32,dg:i32,db:i32,w:u32)->u32{sse1(px[0]as i32,lr,dr,w)+sse1(px[1]as i32,lg,dg,w)+sse1(px[2]as i32,lb,db,w)}
 #[inline] fn sse4(px:&Pixel,lr:i32,lg:i32,lb:i32,la:i32,dr:i32,dg:i32,db:i32,da:i32,w:u32)->u32{sse1(px[0]as i32,lr,dr,w)+sse1(px[1]as i32,lg,dg,w)+sse1(px[2]as i32,lb,db,w)+sse1(px[3]as i32,la,da,w)}
 
+#[inline(always)]
+fn clamp_weight_sel(sel: i32, max_w: i32) -> i32 {
+    if sel as u32 > max_w as u32 { (!sel >> 31) & max_w } else { sel }
+}
+
+#[inline(always)]
+fn eval_rgb_weights4(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    start: usize,
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    sofs: i32,
+    f: f32,
+    max_w: i32,
+    weight_tab: &[u32],
+) -> u32 {
+    let pr = f32x4::from([
+        pixels[start][0] as f32,
+        pixels[start + 1][0] as f32,
+        pixels[start + 2][0] as f32,
+        pixels[start + 3][0] as f32,
+    ]);
+    let pg = f32x4::from([
+        pixels[start][1] as f32,
+        pixels[start + 1][1] as f32,
+        pixels[start + 2][1] as f32,
+        pixels[start + 3][1] as f32,
+    ]);
+    let pb = f32x4::from([
+        pixels[start][2] as f32,
+        pixels[start + 1][2] as f32,
+        pixels[start + 2][2] as f32,
+        pixels[start + 3][2] as f32,
+    ]);
+    let sel_f = (pr * f32x4::splat(dr as f32)
+        + pg * f32x4::splat(dg as f32)
+        + pb * f32x4::splat(db as f32)
+        + f32x4::splat(sofs as f32))
+        * f32x4::splat(f)
+        + f32x4::splat(0.5);
+    let sel_f = sel_f.to_array();
+    let mut sse = 0u32;
+    for lane in 0..4 {
+        let sel = clamp_weight_sel(sel_f[lane] as i32, max_w);
+        weights[start + lane] = sel as u8;
+        sse += sse3(&pixels[start + lane], lr, lg, lb, dr, dg, db, weight_tab[sel as usize]);
+    }
+    sse
+}
+
+#[inline(always)]
+fn eval_rgba_weights4(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    start: usize,
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    la: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    da: i32,
+    sofs: i32,
+    f: f32,
+    max_w: i32,
+    weight_tab: &[u32],
+) -> u32 {
+    let pr = f32x4::from([
+        pixels[start][0] as f32,
+        pixels[start + 1][0] as f32,
+        pixels[start + 2][0] as f32,
+        pixels[start + 3][0] as f32,
+    ]);
+    let pg = f32x4::from([
+        pixels[start][1] as f32,
+        pixels[start + 1][1] as f32,
+        pixels[start + 2][1] as f32,
+        pixels[start + 3][1] as f32,
+    ]);
+    let pb = f32x4::from([
+        pixels[start][2] as f32,
+        pixels[start + 1][2] as f32,
+        pixels[start + 2][2] as f32,
+        pixels[start + 3][2] as f32,
+    ]);
+    let pa = f32x4::from([
+        pixels[start][3] as f32,
+        pixels[start + 1][3] as f32,
+        pixels[start + 2][3] as f32,
+        pixels[start + 3][3] as f32,
+    ]);
+    let sel_f = (pr * f32x4::splat(dr as f32)
+        + pg * f32x4::splat(dg as f32)
+        + pb * f32x4::splat(db as f32)
+        + pa * f32x4::splat(da as f32)
+        + f32x4::splat(sofs as f32))
+        * f32x4::splat(f)
+        + f32x4::splat(0.5);
+    let sel_f = sel_f.to_array();
+    let mut sse = 0u32;
+    for lane in 0..4 {
+        let sel = clamp_weight_sel(sel_f[lane] as i32, max_w);
+        weights[start + lane] = sel as u8;
+        sse += sse4(&pixels[start + lane], lr, lg, lb, la, dr, dg, db, da, weight_tab[sel as usize]);
+    }
+    sse
+}
+
 pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,hr:i32,hg:i32,hb:i32,p0:u32,p1:u32)->u32{
     let(lr,lg,lb)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32);
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
     let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db);
-    let mut sse=0u32;for i in 0..16{let p=&pixels[i];let mut sel=((p[0]as i32*dr+p[1]as i32*dg+p[2]as i32*db+sofs)as f32*f+0.5)as i32;if sel as u32>15{sel=(!sel>>31)&15;}weights[i]=sel as u8;sse+=sse3(p,lr,lg,lb,dr,dg,db,BC7_WEIGHTS4[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_weights4(pixels,weights,i,lr,lg,lb,dr,dg,db,sofs,f,15,&BC7_WEIGHTS4);}sse}
 
 pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,la:i32,p0:u32,hr:i32,hg:i32,hb:i32,ha:i32,p1:u32)->u32{
     let(lr,lg,lb,la)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32,from_7(la as u32,p0)as i32);
     let(hr,hg,hb,ha)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32,from_7(ha as u32,p1)as i32);
     let(dr,dg,db,da)=(hr-lr,hg-lg,hb-lb,ha-la);let f=15.0/((dr*dr+dg*dg+db*db+da*da)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db+la*da);
-    let mut sse=0u32;for i in 0..16{let p=&pixels[i];let mut sel=((p[0]as i32*dr+p[1]as i32*dg+p[2]as i32*db+p[3]as i32*da+sofs)as f32*f+0.5)as i32;if sel as u32>15{sel=(!sel>>31)&15;}weights[i]=sel as u8;sse+=sse4(p,lr,lg,lb,la,dr,dg,db,da,BC7_WEIGHTS4[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgba_weights4(pixels,weights,i,lr,lg,lb,la,dr,dg,db,da,sofs,f,15,&BC7_WEIGHTS4);}sse}
 
 pub fn eval_m1(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;2],lg:&[u32;2],lb:&[u32;2],hr:&[u32;2],hg:&[u32;2],hb:&[u32;2],pbits:&[u32;2],bmask:u16)->u32{
     let mut el=[[0i32;3];2];let mut dlt=[[0i32;3];2];let mut f=[0.0f32;2];let mut sofs=[0i32;2];
@@ -1087,13 +1202,22 @@ fn eval_alpha_weights(
     let f = (max_w as f32) / (da as f32 + 1.25e-7);
     let tab = if max_w == 7 { &BC7_WEIGHTS3[..] } else { &BC7_WEIGHTS2[..] };
     let mut sse = 0u32;
-    for i in 0..16 {
-        let mut sel = ((pixels[i][3] as i32 - la) as f32 * f + 0.5) as i32;
-        if sel as u32 > max_w { sel = (!sel >> 31) & max_w as i32; }
-        weights[i] = sel as u8;
-        let recon = la + ((da * tab[sel as usize] as i32 + 32) >> 6);
-        let e = pixels[i][3] as i32 - recon;
-        sse += (e * e) as u32;
+    for i in (0..16).step_by(4) {
+        let pa = f32x4::from([
+            pixels[i][3] as f32,
+            pixels[i + 1][3] as f32,
+            pixels[i + 2][3] as f32,
+            pixels[i + 3][3] as f32,
+        ]);
+        let sel_f = (pa - f32x4::splat(la as f32)) * f32x4::splat(f) + f32x4::splat(0.5);
+        let sel_f = sel_f.to_array();
+        for lane in 0..4 {
+            let sel = clamp_weight_sel(sel_f[lane] as i32, max_w as i32);
+            weights[i + lane] = sel as u8;
+            let recon = la + ((da * tab[sel as usize] as i32 + 32) >> 6);
+            let e = pixels[i + lane][3] as i32 - recon;
+            sse += (e * e) as u32;
+        }
     }
     sse
 }
@@ -1112,13 +1236,7 @@ fn eval_m4_rgb3(pixels: &[Pixel; 16], weights: &mut [u8; 16],
     let f = 7.0 / ((dr*dr + dg*dg + db*db) as f32 + 1.25e-7);
     let sofs = -(lr8*dr + lg8*dg + lb8*db);
     let mut sse = 0u32;
-    for i in 0..16 {
-        let p = &pixels[i];
-        let mut sel = ((p[0] as i32*dr + p[1] as i32*dg + p[2] as i32*db + sofs) as f32 * f + 0.5) as i32;
-        if sel as u32 > 7 { sel = (!sel >> 31) & 7; }
-        weights[i] = sel as u8;
-        sse += sse3(p, lr8, lg8, lb8, dr, dg, db, BC7_WEIGHTS3[sel as usize]);
-    }
+    for i in (0..16).step_by(4) { sse += eval_rgb_weights4(pixels, weights, i, lr8, lg8, lb8, dr, dg, db, sofs, f, 7, &BC7_WEIGHTS3); }
     sse
 }
 
@@ -1132,13 +1250,7 @@ fn eval_m4_rgb2(pixels: &[Pixel; 16], weights: &mut [u8; 16],
     let f = 3.0 / ((dr*dr + dg*dg + db*db) as f32 + 1.25e-7);
     let sofs = -(lr8*dr + lg8*dg + lb8*db);
     let mut sse = 0u32;
-    for i in 0..16 {
-        let p = &pixels[i];
-        let mut sel = ((p[0] as i32*dr + p[1] as i32*dg + p[2] as i32*db + sofs) as f32 * f + 0.5) as i32;
-        if sel as u32 > 3 { sel = (!sel >> 31) & 3; }
-        weights[i] = sel as u8;
-        sse += sse3(p, lr8, lg8, lb8, dr, dg, db, BC7_WEIGHTS2[sel as usize]);
-    }
+    for i in (0..16).step_by(4) { sse += eval_rgb_weights4(pixels, weights, i, lr8, lg8, lb8, dr, dg, db, sofs, f, 3, &BC7_WEIGHTS2); }
     sse
 }
 
