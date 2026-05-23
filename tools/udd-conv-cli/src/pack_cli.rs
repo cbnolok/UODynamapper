@@ -1105,12 +1105,16 @@ mod tests {
         match cli.command {
             Commands::PackTilemeta {
                 source_dirs,
+                classic_patches,
                 output,
                 ec_art_cropped,
                 use_ec_radarcol,
             } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert!(!classic_patches.include_verdata);
+                assert!(!classic_patches.include_map_difs);
+                assert!(!classic_patches.include_static_difs);
                 assert_eq!(output, PathBuf::from("tilemeta.uddp"));
                 assert!(!ec_art_cropped);
                 assert!(!use_ec_radarcol);
@@ -1196,6 +1200,108 @@ mod tests {
             Commands::PackHues { source_dirs, output, .. } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(output, PathBuf::from("hues.uddp"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn classic_patch_args_convert_to_shared_options() {
+        let options: ClassicPatchOptions = ClassicPatchArgs {
+            include_verdata: true,
+            include_map_difs: false,
+            include_static_difs: true,
+        }
+        .into();
+
+        assert_eq!(
+            options,
+            ClassicPatchOptions {
+                verdata: true,
+                map_difs: false,
+                static_difs: true,
+            }
+        );
+    }
+
+    #[test]
+    fn cli_parses_pack_map_patch_flags() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-map",
+            "--ccdir",
+            "/cc",
+            "--map-id",
+            "2",
+            "--include-verdata",
+            "--include-map-difs",
+            "--include-static-difs",
+        ])
+        .expect("parse map patch args");
+
+        match cli.command {
+            Commands::PackMap {
+                classic_patches,
+                map_id,
+                ..
+            } => {
+                assert_eq!(map_id, 2);
+                assert!(classic_patches.include_verdata);
+                assert!(classic_patches.include_map_difs);
+                assert!(classic_patches.include_static_difs);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_radar_patch_flags_independently() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-radar",
+            "--ccdir",
+            "/cc",
+            "--map-id",
+            "1",
+            "--uddpdir",
+            "/packages",
+            "--include-map-difs",
+        ])
+        .expect("parse radar patch args");
+
+        match cli.command {
+            Commands::PackRadar {
+                classic_patches,
+                map_id,
+                ..
+            } => {
+                assert_eq!(map_id, 1);
+                assert!(!classic_patches.include_verdata);
+                assert!(classic_patches.include_map_difs);
+                assert!(!classic_patches.include_static_difs);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_lights_verdata_without_diff_flags() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-lights",
+            "--ccdir",
+            "/cc",
+            "--include-verdata",
+        ])
+        .expect("parse lights patch args");
+
+        match cli.command {
+            Commands::PackLights {
+                classic_patches, ..
+            } => {
+                assert!(classic_patches.include_verdata);
+                assert!(!classic_patches.include_map_difs);
+                assert!(!classic_patches.include_static_difs);
             }
             _ => panic!("unexpected command parsed"),
         }

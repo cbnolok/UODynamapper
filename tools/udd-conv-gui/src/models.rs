@@ -132,3 +132,48 @@ pub enum Tab {
     World,
     Tools,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_settings_default_disables_optional_classic_patches() {
+        let settings = AppSettings::default();
+
+        assert!(!settings.include_verdata);
+        assert!(!settings.include_map_difs);
+        assert!(!settings.include_static_difs);
+    }
+
+    #[test]
+    fn app_settings_deserializes_old_config_without_patch_fields() {
+        let serialized = toml::to_string(&AppSettings::default()).expect("serialize settings");
+        let old_config = serialized
+            .lines()
+            .filter(|line| !line.starts_with("include_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let settings: AppSettings = toml::from_str(&old_config).expect("deserialize old settings");
+
+        assert!(!settings.include_verdata);
+        assert!(!settings.include_map_difs);
+        assert!(!settings.include_static_difs);
+    }
+
+    #[test]
+    fn app_settings_roundtrips_enabled_patch_fields() {
+        let mut settings = AppSettings::default();
+        settings.include_verdata = true;
+        settings.include_map_difs = true;
+        settings.include_static_difs = true;
+
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+        let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
+
+        assert!(restored.include_verdata);
+        assert!(restored.include_map_difs);
+        assert!(restored.include_static_difs);
+    }
+}
