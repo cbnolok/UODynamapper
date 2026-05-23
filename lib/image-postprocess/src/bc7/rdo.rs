@@ -691,6 +691,65 @@ mod tests {
     use super::*;
     use crate::bc7::analytical::{pack_bc7_rgba, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
 
+    fn fixture_rgba_blocks(blocks_x: usize, blocks_y: usize) -> Vec<[u8; 4]> {
+        let num_blocks = blocks_x * blocks_y;
+        let mut rgba_blocks = vec![[0u8; 4]; num_blocks * 16];
+        for b in 0..num_blocks {
+            let bx = b % blocks_x;
+            let by = b / blocks_x;
+            let pattern = (bx * 3 + by * 5) as u8;
+            for i in 0..16 {
+                let x = (i % 4) as u8;
+                let y = (i / 4) as u8;
+                rgba_blocks[b * 16 + i] = [
+                    x.wrapping_mul(47).wrapping_add(pattern),
+                    y.wrapping_mul(53).wrapping_add(pattern.wrapping_mul(2)),
+                    (x ^ y).wrapping_mul(37).wrapping_add((b as u8).wrapping_mul(3)),
+                    255,
+                ];
+            }
+        }
+        rgba_blocks
+    }
+
+    fn encode_fixture_blocks(rgba_blocks: &[[u8; 4]]) -> Vec<[u8; 16]> {
+        let num_blocks = rgba_blocks.len() / 16;
+        let mut blocks = vec![[0u8; 16]; num_blocks];
+        for b in 0..num_blocks {
+            let pixels: &[crate::bc7::analytical::Pixel; 16] =
+                rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
+            pack_bc7_rgba(&mut blocks[b], pixels, FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE);
+        }
+        blocks
+    }
+
+    fn checksum_blocks(blocks: &[[u8; 16]]) -> u64 {
+        let mut h = 0xcbf29ce484222325u64;
+        for b in blocks.iter().flat_map(|block| block.iter()) {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    #[test]
+    fn rdo_default_fixture_output_is_stable() {
+        let blocks_x = 8;
+        let blocks_y = 6;
+        let rgba_blocks = fixture_rgba_blocks(blocks_x, blocks_y);
+        let mut blocks = encode_fixture_blocks(&rgba_blocks);
+        let params = Bc7RdoParams {
+            lambda: 0.5,
+            lookback_window_size: 1024,
+            ..Default::default()
+        };
+
+        let modified = reduce_entropy_bc7(&mut blocks, &rgba_blocks, blocks_x, blocks_y, &params);
+
+        assert_eq!(modified, 47);
+        assert_eq!(checksum_blocks(&blocks), 0xc97bdf2c143b665f);
+    }
+
     #[test]
     fn test_bc7_analytical_and_rdo_roundtrip_with_bcdec() {
         let blocks_x = 4;
