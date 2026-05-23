@@ -24,6 +24,8 @@ pub struct Bc7RdoParams {
     pub try_two_matches: bool,
     pub allow_relative_movement: bool,
     pub relative_movement_max_offset_delta: usize,
+    pub relative_movement_max_previous_blocks: usize,
+    pub relative_movement_min_match_len: usize,
     pub skip_zero_mse_blocks: bool,
     pub use_ultrasmooth_block_handling: bool,
     pub custom_smooth_block_error_scale: bool,
@@ -37,6 +39,8 @@ pub struct Bc7RdoStats {
     pub rate_skips: u64,
     pub hash_skips: u64,
     pub relative_offset_skips: u64,
+    pub relative_previous_block_limit_hits: u64,
+    pub relative_length_skips: u64,
     pub original_block_skips: u64,
     pub decode_trials: u64,
     pub bounded_error_exits: u64,
@@ -54,6 +58,8 @@ impl Default for Bc7RdoParams {
             try_two_matches: false,
             allow_relative_movement: false,
             relative_movement_max_offset_delta: 15,
+            relative_movement_max_previous_blocks: 0,
+            relative_movement_min_match_len: 3,
             skip_zero_mse_blocks: false,
             use_ultrasmooth_block_handling: true,
             custom_smooth_block_error_scale: false,
@@ -193,14 +199,31 @@ fn reduce_entropy_bc7_impl(
         if params.allow_relative_movement {
             // ── Main search window: full relative-offset search ──
             let max_relative_delta = params.relative_movement_max_offset_delta.min(15);
+            let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
+            let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
+            let mut relative_previous_blocks_checked = 0usize;
             for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
                 if prev_block_index < first_block_to_check {
                     break;
                 }
+                if max_relative_previous_blocks > 0
+                    && relative_previous_blocks_checked >= max_relative_previous_blocks
+                {
+                    if let Some(stats) = stats.as_deref_mut() {
+                        stats.relative_previous_block_limit_hits += 1;
+                    }
+                    break;
+                }
+                relative_previous_blocks_checked += 1;
                 let prev_blk = blocks[prev_block_index];
                 let base_dist = (block_index - prev_block_index) * 16;
                 let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
-                for len in (3..=16).rev() {
+                if let Some(stats) = stats.as_deref_mut() {
+                    for len in 3..min_relative_match_len {
+                        stats.relative_length_skips += relative_offset_candidate_count(len, max_relative_delta) as u64;
+                    }
+                }
+                for len in (min_relative_match_len..=16).rev() {
                     let len_bits = compute_match_len_cost(len as u32) as f32;
                     for src_ofs in 0usize..=(16 - len) {
                         let full_dst_count = 17 - len;
@@ -755,6 +778,16 @@ fn compute_relative_dist_costs(base_dist: u32) -> [u32; 31] {
         *cost = compute_dist_cost_estimate(dist);
     }
     costs
+}
+
+fn relative_offset_candidate_count(len: usize, max_relative_delta: usize) -> usize {
+    let mut count = 0usize;
+    for src_ofs in 0usize..=(16 - len) {
+        let dst_start = src_ofs.saturating_sub(max_relative_delta);
+        let dst_end = (src_ofs + max_relative_delta).min(16 - len);
+        count += dst_end - dst_start + 1;
+    }
+    count
 }
 
 const SMALL_DIST_EXTRA: [u8; 512] = [

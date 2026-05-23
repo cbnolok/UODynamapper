@@ -50,7 +50,7 @@ fn main() {
     }
 }
 
-fn rdo_cases() -> [RdoCase; 7] {
+fn rdo_cases() -> [RdoCase; 10] {
     [
         RdoCase {
             name: "rdo_default",
@@ -106,6 +106,35 @@ fn rdo_cases() -> [RdoCase; 7] {
                 ..Bc7RdoParams::default()
             },
         },
+        RdoCase {
+            name: "rdo_relative_b64",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_previous_blocks: 64,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_relative_l6",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_min_match_len: 6,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_relative_mix",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_offset_delta: 4,
+                relative_movement_max_previous_blocks: 64,
+                relative_movement_min_match_len: 6,
+                ..Bc7RdoParams::default()
+            },
+        },
     ]
 }
 
@@ -134,11 +163,13 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
                 stats.relative_offset_skips,
+                stats.relative_previous_block_limit_hits,
+                stats.relative_length_skips,
                 stats.original_block_skips,
                 stats.decode_trials,
                 stats.bounded_error_exits,
