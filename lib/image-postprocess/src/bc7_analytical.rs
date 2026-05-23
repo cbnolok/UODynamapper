@@ -608,6 +608,34 @@ unsafe fn eval_m6_rgba_sse41(
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+unsafe fn sse_m6_rgb4_neon(
+    px: uint8x16_t,
+    w: int32x4_t,
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+) -> u32 {
+    const R_MASK: [u8; 16] = [0, 4, 8, 12, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+    const G_MASK: [u8; 16] = [1, 5, 9, 13, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+    const B_MASK: [u8; 16] = [2, 6, 10, 14, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+    let pr = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(px, vld1q_u8(R_MASK.as_ptr())))))));
+    let pg = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(px, vld1q_u8(G_MASK.as_ptr())))))));
+    let pb = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(px, vld1q_u8(B_MASK.as_ptr())))))));
+    let half = vdupq_n_s32(32);
+    let recon_r = vaddq_s32(vdupq_n_s32(lr), vshrq_n_s32::<6>(vaddq_s32(vmulq_s32(vdupq_n_s32(dr), w), half)));
+    let recon_g = vaddq_s32(vdupq_n_s32(lg), vshrq_n_s32::<6>(vaddq_s32(vmulq_s32(vdupq_n_s32(dg), w), half)));
+    let recon_b = vaddq_s32(vdupq_n_s32(lb), vshrq_n_s32::<6>(vaddq_s32(vmulq_s32(vdupq_n_s32(db), w), half)));
+    let er = vsubq_s32(pr, recon_r);
+    let eg = vsubq_s32(pg, recon_g);
+    let eb = vsubq_s32(pb, recon_b);
+    vaddvq_s32(vaddq_s32(vaddq_s32(vmulq_s32(er, er), vmulq_s32(eg, eg)), vmulq_s32(eb, eb))) as u32
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
 unsafe fn eval_m6_rgb_neon(
     pixels: &[Pixel; 16],
     weights: &mut [u8; 16],
@@ -649,13 +677,20 @@ unsafe fn eval_m6_rgb_neon(
             vaddvq_s32(prod2),
             vaddvq_s32(prod3),
         ];
+        let mut w = vdupq_n_s32(0);
 
         for lane in 0..4 {
             let dot = dots[lane];
             let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
             weights[i + lane] = sel as u8;
-            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+            w = match lane {
+                0 => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 0),
+                1 => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 1),
+                2 => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 2),
+                _ => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 3),
+            };
         }
+        sse += sse_m6_rgb4_neon(px, w, lr, lg, lb, dr, dg, db);
     }
 
     sse
