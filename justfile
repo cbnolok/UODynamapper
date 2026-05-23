@@ -97,25 +97,25 @@ tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-
 default:
     @just --list
 
-# Build the workspace in debug mode
+# Build the workspace locally in debug mode
 # Purpose: Fast compilation for local development. Includes debug symbols.
-build-debug *args:
+build-local-workspace-debug *args:
     @echo "Running {{os}} debug build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     cargo build --workspace {{args}}
 
-# Build only dynamapper in debug mode
-build-dynamapper-debug *args:
+# Build only dynamapper locally in debug mode
+build-local-dynamapper-debug *args:
     cargo build -p dynamapper --bin dynamapper {{args}}
 
-# Build only the shipped tools in debug mode
-build-tools-debug *args:
+# Build only the shipped tools locally in debug mode
+build-local-tools-debug *args:
     cargo build {{tool_packages}} --bins {{args}}
 
-# Build the workspace in release mode (stable toolchain)
+# Build the workspace locally in release mode (stable toolchain)
 # Purpose: Production build using the stable toolchain. Includes LTO and basic stripping.
 # Linker: Uses mold/wild on Linux for speed, default on other platforms.
-build-release-stable *args:
+build-local-workspace-release *args:
     @echo "Running {{os}} stable release build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{args}}
@@ -148,29 +148,25 @@ build-ci-shipping *args:
     @just build-ci-dynamapper {{args}}
     @just build-ci-tools {{args}}
 
-# Build the workspace in profiling mode (stable toolchain)
+# Build the workspace locally in profiling mode (stable toolchain)
 # Purpose: Release-level optimizations but with frame pointers and symbols kept for profilers.
-build-profile-stable *args:
+build-local-workspace-profile *args:
     @echo "Running {{os}} stable profile build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{args}}
 
-# Build the workspace in profiling mode (nightly toolchain)
+# Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
-build-profile-nightly *args:
+build-local-workspace-profile-nightly *args:
     @echo "Running {{os}} nightly profile build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
-# Alias for stable profile build
-build-profile *args:
-    @just build-profile-stable {{args}}
-
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
-build-flamegraph *args:
-    @echo "Running {{os}} flamegraph build..."
+profile-dynamapper-flamegraph *args:
+    @echo "Running {{os}} dynamapper flamegraph profile..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
