@@ -1,7 +1,10 @@
 #![allow(unused)]
 pub mod bc7;
 pub mod tex_art_cc;
-pub mod cc_tex_land_ec_transcode;
+pub mod eckr_terrain_kdl;
+pub mod cc_tex_land_ec_transcode {
+    pub use crate::eckr_terrain_kdl::*;
+}
 pub mod cc_map;
 pub mod cc_radar;
 pub mod cc_statics;

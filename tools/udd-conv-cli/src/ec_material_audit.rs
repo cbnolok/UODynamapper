@@ -14,7 +14,7 @@ use csv::WriterBuilder;
 use log::info;
 use serde::Serialize;
 use udd_assets::{
-    cc_tex_land_ec_transcode::{LayerDef, TerrainDefEntry, TerrainDefinitionKdl},
+    eckr_terrain_kdl::{LayerDef, TerrainDefEntry, TerrainDefinitionKdl},
     ec_surface_overrides::{
         CcArtOverrideMode, EcSurfaceOverrideAction, EcSurfaceOverrideEntry, EcSurfaceOverrides,
     },

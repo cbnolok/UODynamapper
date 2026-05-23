@@ -150,7 +150,7 @@ fn audit_land_routing_kdl(
     tex_land_ec_path: &Path,
     output: &Path,
 ) -> eyre::Result<()> {
-    let routing = udd_assets::cc_tex_land_ec_transcode::TerrainTranscode::load(routing_path)?;
+    let routing = udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(routing_path)?;
     let route_count = routing
         .entries
         .iter()

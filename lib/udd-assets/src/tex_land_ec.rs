@@ -988,7 +988,7 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
 fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
     let bytes = read_path_entry(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
     let text = String::from_utf8(bytes).ok()?;
-    if let Ok(transcode) = crate::cc_tex_land_ec_transcode::TerrainTranscode::from_str(
+    if let Ok(transcode) = crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(
         UDDP_TRANSCODE_ENTRY_VPATH,
         &text,
     ) {

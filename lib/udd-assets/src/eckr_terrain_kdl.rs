@@ -4,7 +4,7 @@ use knuffel::Decode;
 use color_eyre::eyre::{self, Context};
 
 #[derive(Decode, Debug, Clone)]
-pub struct TranscodeEntry {
+pub struct EckrTerrainRouteEntry {
     #[knuffel(argument)]
     pub new_id: u32,
     #[knuffel(arguments)]
@@ -12,12 +12,12 @@ pub struct TranscodeEntry {
 }
 
 #[derive(Decode, Debug, Clone)]
-pub struct TerrainTranscode {
+pub struct EckrTerrainRouting {
     #[knuffel(children(name = "t"))]
-    pub entries: Vec<TranscodeEntry>,
+    pub entries: Vec<EckrTerrainRouteEntry>,
 }
 
-impl TerrainTranscode {
+impl EckrTerrainRouting {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .wrap_err_with(|| format!("Failed to read KDL file: {:?}", path.as_ref()))?;
@@ -27,8 +27,8 @@ impl TerrainTranscode {
     pub fn from_str(source_name: &str, content: &str) -> eyre::Result<Self> {
         let content = strip_c_style_block_comments(&content);
         let content = strip_cpp_style_line_comments(&content);
-        parse_terrain_transcode_kdl(source_name, &content)
-            .wrap_err("Failed to parse TerrainTranscode KDL")
+        parse_eckr_terrain_routing_kdl(source_name, &content)
+            .wrap_err("Failed to parse EC/KR terrain routing KDL")
     }
 
     pub fn to_map(&self) -> HashMap<u32, u32> {
@@ -42,7 +42,10 @@ impl TerrainTranscode {
     }
 }
 
-fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result<TerrainTranscode> {
+pub type TranscodeEntry = EckrTerrainRouteEntry;
+pub type TerrainTranscode = EckrTerrainRouting;
+
+fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Result<EckrTerrainRouting> {
     use knuffel::ast::{Literal, Node, Value};
     use knuffel::span::{Span, Spanned};
 
@@ -63,7 +66,7 @@ fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result
             .transpose()
     }
 
-    fn collect_t_nodes<'a, I>(nodes: I, entries: &mut Vec<TranscodeEntry>) -> eyre::Result<()>
+    fn collect_t_nodes<'a, I>(nodes: I, entries: &mut Vec<EckrTerrainRouteEntry>) -> eyre::Result<()>
     where
         I: IntoIterator<Item = &'a Spanned<Node<Span>, Span>>,
     {
@@ -74,7 +77,7 @@ fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result
                         .or(property_u32(node, "ec")?)
                         .or(property_u32(node, "target")?)
                         .ok_or_else(|| eyre::eyre!("t cc={cc_id}: missing kr/ec/target property"))?;
-                    entries.push(TranscodeEntry {
+                    entries.push(EckrTerrainRouteEntry {
                         new_id: target_id,
                         old_ids: vec![cc_id],
                     });
@@ -91,7 +94,7 @@ fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result
                 if old_ids.is_empty() {
                     eyre::bail!("t {}: missing source ids", value_u32(new_id, "target id")?);
                 }
-                entries.push(TranscodeEntry {
+                entries.push(EckrTerrainRouteEntry {
                     new_id: value_u32(new_id, "target id")?,
                     old_ids,
                 });
@@ -106,7 +109,7 @@ fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result
         .wrap_err_with(|| format!("parse {source_name} AST"))?;
     let mut entries = Vec::new();
     collect_t_nodes(document.nodes.iter(), &mut entries)?;
-    Ok(TerrainTranscode { entries })
+    Ok(EckrTerrainRouting { entries })
 }
 
 #[derive(Decode, Debug, Clone)]
@@ -300,7 +303,7 @@ mod tests {
         let content = include_str!(
             "../../../dynamapper/assets/cc_ec_convtables/TerrainTranscodeSnowOverrides.kdl"
         );
-        let parsed = TerrainTranscode::from_str("TerrainTranscodeSnowOverrides.kdl", content)
+        let parsed = EckrTerrainRouting::from_str("TerrainTranscodeSnowOverrides.kdl", content)
             .expect("parse snow terrain transcode overrides");
         let map = parsed.to_map();
 
@@ -315,8 +318,8 @@ mod tests {
     }
 
     #[test]
-    fn terrain_transcode_accepts_generated_property_rows() {
-        let parsed = TerrainTranscode::from_str(
+    fn eckr_terrain_routing_accepts_generated_property_rows() {
+        let parsed = EckrTerrainRouting::from_str(
             "KrFacetTranscode.generated.kdl",
             r#"
 source client="kr"
@@ -337,8 +340,8 @@ facet_transcodes {
     }
 
     #[test]
-    fn terrain_transcode_accepts_grouped_routing_rows() {
-        let parsed = TerrainTranscode::from_str(
+    fn eckr_terrain_routing_accepts_grouped_routing_rows() {
+        let parsed = EckrTerrainRouting::from_str(
             "KrTerrainRouting.generated.kdl",
             r#"
 route client="kr" source="manawydan-tile-dictionary"
@@ -360,7 +363,7 @@ t 6 170
         let content = include_str!(
             "../../../dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
         );
-        let parsed = TerrainTranscode::from_str("KrTerrainRouting.generated.kdl", content)
+        let parsed = EckrTerrainRouting::from_str("KrTerrainRouting.generated.kdl", content)
             .expect("parse generated KR routing");
         let map = parsed.to_map();
 

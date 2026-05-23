@@ -70,9 +70,9 @@ pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
 #[derive(Resource)]
 pub struct HuesPackageRes(pub Arc<udd_assets::HuesPackage>);
 
-/// Transcode table for Classic to Enhanced terrain IDs.
+/// Classic land-id routing table for Enhanced/KR terrain material ids.
 #[derive(Resource)]
-pub struct TerrainTranscodeRes(pub Arc<HashMap<u32, u32>>);
+pub struct EckrTerrainRoutingRes(pub Arc<HashMap<u32, u32>>);
 
 pub struct UoFilesSettings {
     pub udd_folder: PathBuf,
@@ -440,7 +440,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             terrain_routing.label(),
             transcode_path.display()
         ));
-        match udd_assets::cc_tex_land_ec_transcode::TerrainTranscode::load(&transcode_path) {
+        match udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&transcode_path) {
             Ok(transcode) => {
                 lg(&format!("Loaded {transcode_filename} (loose file)"));
                 let transcode_map = transcode.to_map();
@@ -453,7 +453,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                     tex_land_ec.set_transcode(transcode_map.clone());
                 }
 
-                commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode_map)));
+                commands.insert_resource(EckrTerrainRoutingRes(Arc::new(transcode_map)));
             }
             Err(e) => {
                 bevy::log::error!("Failed to load {transcode_filename}: {e}");
