@@ -6,12 +6,20 @@ use std::collections::HashMap;
 use eframe::egui;
 use rfd::FileDialog;
 use crossbeam_channel::{Sender, Receiver, unbounded};
-use crate::core::{PopulatorConfig, UopDictionary, PopulatorTask};
+use crate::core::{PopulatorConfig, TaskProgress, UopDictionary, PopulatorTask};
 
 enum Message {
     Log(String),
     Progress(f32, String),
-    Finished(HashMap<u64, String>),
+    Finished(RunSummary),
+}
+
+struct RunSummary {
+    found: HashMap<u64, String>,
+    processed: usize,
+    skipped: usize,
+    errors: usize,
+    stopped: bool,
 }
 
 pub struct UopPopulatorApp {
@@ -80,20 +88,30 @@ impl UopPopulatorApp {
 
         std::thread::spawn(move || {
             let mut total_found = HashMap::new();
-            let packages_count = config.packages.len() as f32;
+            let mut summary = RunSummary {
+                found: HashMap::new(),
+                processed: 0,
+                skipped: 0,
+                errors: 0,
+                stopped: false,
+            };
+            let packages_count = config.packages.len();
             
             for (i, (uop_name, pkg_config)) in config.packages.into_iter().enumerate() {
                 if stop_signal.load(Ordering::Relaxed) {
+                    summary.stopped = true;
+                    let _ = tx.send(Message::Log("Stop requested; ending after current package boundary.".to_string()));
                     break;
                 }
 
                 let uop_path = uop_dir.join(&uop_name);
                 if !uop_path.exists() {
-                    let _ = tx.send(Message::Log(format!("Warning: {} not found", uop_name)));
+                    summary.skipped += 1;
+                    let _ = tx.send(Message::Log(format!("Warning: {} not found; skipped.", uop_path.display())));
                     continue;
                 }
 
-                let progress = i as f32 / packages_count;
+                let progress = i as f32 / packages_count as f32;
                 let _ = tx.send(Message::Progress(progress, uop_name.clone()));
                 let _ = tx.send(Message::Log(format!("Processing {}...", uop_name)));
 
@@ -104,18 +122,38 @@ impl UopPopulatorApp {
                     stop_signal: stop_signal.clone(),
                 };
 
-                match task.run() {
+                let task_tx = tx.clone();
+                match task.run_with_progress(|event| match event {
+                    TaskProgress::MissingHashes(count) => {
+                        let _ = task_tx.send(Message::Log(format!("  Missing hashes: {}", count)));
+                    }
+                    TaskProgress::TryingTemplate(template) => {
+                        let _ = task_tx.send(Message::Log(format!("  Trying template: {}", template)));
+                    }
+                    TaskProgress::TemplateMatches { template, found } => {
+                        if found > 0 {
+                            let _ = task_tx.send(Message::Log(format!("    Found {} matches with {}", found, template)));
+                        }
+                    }
+                    TaskProgress::Stopped => {
+                        let _ = task_tx.send(Message::Log("  Stop requested; package scan interrupted.".to_string()));
+                    }
+                }) {
                     Ok(found) => {
+                        summary.processed += 1;
                         let _ = tx.send(Message::Log(format!("  Found {} new strings in {}", found.len(), uop_name)));
                         total_found.extend(found);
                     }
                     Err(e) => {
+                        summary.errors += 1;
                         let _ = tx.send(Message::Log(format!("  Error processing {}: {}", uop_name, e)));
                     }
                 }
             }
 
-            let _ = tx.send(Message::Finished(total_found));
+            summary.found = total_found;
+            let _ = tx.send(Message::Progress(1.0, String::new()));
+            let _ = tx.send(Message::Finished(summary));
         });
     }
 }
@@ -130,10 +168,18 @@ impl eframe::App for UopPopulatorApp {
                     self.progress = p;
                     self.current_uop = name;
                 }
-                Message::Finished(found) => {
+                Message::Finished(summary) => {
                     self.is_running = false;
-                    self.add_log(format!("Finished! Found {} total new strings.", found.len()));
-                    for (hash, name) in found {
+                    let status = if summary.stopped { "Stopped" } else { "Finished" };
+                    self.add_log(format!(
+                        "{}. Processed {}, skipped {}, errors {}, found {} total new strings.",
+                        status,
+                        summary.processed,
+                        summary.skipped,
+                        summary.errors,
+                        summary.found.len(),
+                    ));
+                    for (hash, name) in summary.found {
                         self.dictionary.set(hash, name);
                     }
                     if let Some(path) = &self.dictionary_path {
@@ -214,10 +260,16 @@ impl eframe::App for UopPopulatorApp {
                         } else {
                             match toml::from_str::<PopulatorConfig>(&self.config_text) {
                                 Ok(config) => {
-                                    self.is_running = true;
-                                    self.stop_signal.store(false, Ordering::Relaxed);
-                                    self.progress = 0.0;
-                                    self.start_cracking(config);
+                                    if let Err(e) = config.validate() {
+                                        self.add_log(format!("Config Error: {}", e));
+                                    } else {
+                                        self.is_running = true;
+                                        self.stop_signal.store(false, Ordering::Relaxed);
+                                        self.progress = 0.0;
+                                        self.current_uop.clear();
+                                        self.add_log("Starting dictionary population.");
+                                        self.start_cracking(config);
+                                    }
                                 }
                                 Err(e) => self.add_log(format!("Config Error: {}", e)),
                             }
@@ -228,6 +280,7 @@ impl eframe::App for UopPopulatorApp {
                 ui.add_enabled_ui(self.is_running, |ui| {
                     if ui.button("Stop").clicked() {
                         self.stop_signal.store(true, Ordering::Relaxed);
+                        self.add_log("Stop requested; waiting for the active template or package to observe it.");
                     }
                 });
             });

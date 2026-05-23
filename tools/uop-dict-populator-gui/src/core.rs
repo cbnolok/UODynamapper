@@ -14,6 +14,38 @@ pub struct PopulatorConfig {
     pub packages: HashMap<String, PackageConfig>,
 }
 
+impl PopulatorConfig {
+    pub fn validate(&self) -> color_eyre::eyre::Result<()> {
+        if self.packages.is_empty() {
+            color_eyre::eyre::bail!("configuration does not define any UOP packages");
+        }
+
+        for (package_name, package_config) in &self.packages {
+            if package_name.trim().is_empty() {
+                color_eyre::eyre::bail!("configuration contains an empty UOP package name");
+            }
+            if package_config.candidates.is_empty() {
+                color_eyre::eyre::bail!("{} has no candidate templates", package_name);
+            }
+            if package_config.candidates.iter().any(|candidate| candidate.trim().is_empty()) {
+                color_eyre::eyre::bail!("{} contains an empty candidate template", package_name);
+            }
+            if let Some([start, end]) = package_config.range {
+                if start > end {
+                    color_eyre::eyre::bail!(
+                        "{} has an invalid range: start {} is greater than end {}",
+                        package_name,
+                        start,
+                        end,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct PackageConfig {
     pub candidates: Vec<String>,
@@ -60,13 +92,27 @@ pub struct PopulatorTask {
     pub stop_signal: Arc<AtomicBool>,
 }
 
+pub enum TaskProgress {
+    MissingHashes(usize),
+    TryingTemplate(String),
+    TemplateMatches {
+        template: String,
+        found: usize,
+    },
+    Stopped,
+}
+
 impl PopulatorTask {
-    pub fn run(self) -> color_eyre::eyre::Result<HashMap<u64, String>> {
+    pub fn run_with_progress(
+        self,
+        mut progress: impl FnMut(TaskProgress),
+    ) -> color_eyre::eyre::Result<HashMap<u64, String>> {
         let package = UopPackage::load(&self.uop_path)?;
         let missing_hashes: HashSet<u64> = package.iter_files()
             .map(|f| f.filename_hash())
             .filter(|h| !self.dictionary.contains(*h))
             .collect();
+        progress(TaskProgress::MissingHashes(missing_hashes.len()));
 
         if missing_hashes.is_empty() {
             return Ok(HashMap::new());
@@ -75,12 +121,18 @@ impl PopulatorTask {
         let mut all_found = HashMap::new();
         for template_str in &self.config.candidates {
             if self.stop_signal.load(Ordering::Relaxed) {
+                progress(TaskProgress::Stopped);
                 break;
             }
 
+            progress(TaskProgress::TryingTemplate(template_str.clone()));
             let range = self.config.range.map(|r| r[0]..=r[1]);
             let template = UopTemplate::new(template_str, range);
             let found = template.crack(&missing_hashes, &self.stop_signal);
+            progress(TaskProgress::TemplateMatches {
+                template: template_str.clone(),
+                found: found.len(),
+            });
             all_found.extend(found);
         }
 
@@ -106,5 +158,35 @@ mod tests {
         let parsed = HashDictionary::from_bytes(&bytes).expect("parse dictionary");
 
         assert_eq!(parsed, source);
+    }
+
+    #[test]
+    fn populator_config_rejects_inverted_ranges() {
+        let config = PopulatorConfig {
+            packages: HashMap::from([(
+                "Texture.uop".to_string(),
+                PackageConfig {
+                    candidates: vec!["build/worldart/{:08}.dds".to_string()],
+                    range: Some([10, 1]),
+                },
+            )]),
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn populator_config_requires_candidate_templates() {
+        let config = PopulatorConfig {
+            packages: HashMap::from([(
+                "Texture.uop".to_string(),
+                PackageConfig {
+                    candidates: Vec::new(),
+                    range: Some([0, 10]),
+                },
+            )]),
+        };
+
+        assert!(config.validate().is_err());
     }
 }
