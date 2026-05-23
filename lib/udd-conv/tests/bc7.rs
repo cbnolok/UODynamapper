@@ -9,7 +9,7 @@ fn patterned_rgba(extent: ImageExtent) -> Vec<u8> {
             let block_index = (y / 4) * extent.blocks_wide() + (x / 4);
             let local_x = (x % 4) as u8 * 50;
             let local_y = (y % 4) as u8 * 50;
-            let offset = block_index as u8 * 2;
+            let offset = (block_index as u8).wrapping_mul(2);
             let pixel_offset = ((y * extent.width() + x) * 4) as usize;
             let rgba_px = if block_index % 2 == 0 {
                 [
@@ -148,6 +148,28 @@ fn analytical_bc7_with_rdo_lambda_preserves_block_layout() {
 #[test]
 fn analytical_wide_bc7_matches_scalar_for_edge_padded_blocks() {
     let extent = ImageExtent::new(7, 5).unwrap();
+    let rgba = patterned_rgba(extent);
+    let scalar = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::Analytical,
+    )
+    .unwrap();
+    let wide = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::AnalyticalWide,
+    )
+    .unwrap();
+
+    assert_eq!(wide.blocks(), scalar.blocks());
+}
+
+#[test]
+fn analytical_wide_bc7_parallel_path_matches_scalar() {
+    let extent = ImageExtent::new(64, 64).unwrap();
     let rgba = patterned_rgba(extent);
     let scalar = encode_to_bc7(
         &rgba,
