@@ -236,11 +236,14 @@ mod tests {
                 .expect("parse snow terrain transcode overrides");
         let map = parsed.to_map();
 
-        assert_eq!(parsed.entries.len(), 15);
+        assert_eq!(parsed.entries.len(), 10);
         assert_eq!(map.get(&3), Some(&8));
         assert_eq!(map.get(&196), Some(&8));
+        assert_eq!(map.get(&244), Some(&8));
+        assert_eq!(map.get(&361), Some(&8));
         assert_eq!(map.get(&36), Some(&63));
         assert_eq!(map.get(&742), Some(&61));
+        assert_eq!(map.get(&141), None);
     }
 
     #[test]

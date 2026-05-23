@@ -18,24 +18,22 @@
 // Caveats:
 // - EMC labels these as transition-table conversions, and the result is a
 //   broad winterization pass rather than a fully reviewed material model.
-// - A few EMC snow2dirt target CC ids currently resolve to generic dirt/rock
-//   material slots here. Those mappings are preserved as target-slot evidence
-//   instead of inventing unsupported snow transition material ids.
+// - Validation with extracted `tex_land_ec.uddp` metadata showed that EC has
+//   no dedicated snow2dirt/snow2rock terrain material for some EMC target
+//   ids. Those weak pairs are routed to the nearest packed snow material
+//   instead of preserving plain dirt/rock material ids.
+// - EMC identity/questionable grass-water-dark rows that resolve to non-snow
+//   dirt-cliff materials are intentionally omitted.
 
 // Grass / forest base -> snow base.
 t 8 3 4 5 6 196 197 198 199
 
 // Forest-rock transition sources whose EMC targets resolve to snow base.
-t 8 236 237 238 239 240 241 242 243
+t 8 236 237 238 239 240 241 242 243 244 245 246 247
 
-// Forest-dirt transition sources whose EMC targets resolve to snow base.
-t 8 353 354 355 356 357 358 359 360
-
-// Forest-dirt transition sources whose EMC targets currently resolve to dirt.
-t 2 361 362 363 364
-
-// Forest-rock transition sources whose EMC targets currently resolve to rock.
-t 6 244 245 246 247
+// Forest-dirt transition sources whose EMC targets resolve to snow base or to
+// target ids that are snow-labeled by EMC but lack a dedicated EC material.
+t 8 353 354 355 356 357 358 359 360 361 362 363 364
 
 // Grass/forest water and cliff transition sources -> snow cliff/embank slots.
 t 61 27 34 35 38 39 742 743 750 755 772
@@ -45,9 +43,3 @@ t 64 30 31 161 761 762
 t 65 142 143 150 151 155
 t 66 152 160
 t 67 146 153
-
-// EMC identity/questionable grass-water-dark rows retained as target-slot
-// evidence because the targets resolve to the original non-snow slots.
-t 58 141
-t 59 149
-t 60 145
