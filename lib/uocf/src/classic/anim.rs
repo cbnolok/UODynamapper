@@ -94,6 +94,17 @@ impl AnimMap {
         false
     }
 
+    pub fn source_index_count(&self, file_idx: u8) -> Option<usize> {
+        self.sources
+            .get(file_idx as usize)
+            .and_then(|source| source.as_ref())
+            .map(|source| source.idx.element_count())
+    }
+
+    pub fn decode_animation_index(&self, file_idx: u8, index: u32) -> eyre::Result<Vec<AnimFrame>> {
+        self.decode_animation(file_idx, index)
+    }
+
     /// Decodes an animation from a specific MUL file.
     /// Returns a list of frames.
     pub fn decode_animation(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<AnimFrame>> {

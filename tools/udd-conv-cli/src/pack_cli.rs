@@ -13,6 +13,12 @@ use udd_conv::{
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
     hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
+    mobile_anim_cc::{
+        convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
     source_paths::{gather_source_dirs, resolve_output_path},
     tex_art_cc::{
         convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, TexArtCcAtlasOptions,
@@ -278,6 +284,19 @@ enum Commands {
         packing_mode: CliAtlasPackingMode,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
+    },
+    /// Packs classic anim*.mul/anim*.idx mobile animations into mobile_anim_cc.uddp atlas pages.
+    PackMobileAnims {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "mobile_anim_cc.uddp")]
+        output: PathBuf,
+        #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH)]
+        atlas_width: u32,
+        #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT)]
+        atlas_height: u32,
+        #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
+        gutter: u16,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
     PackEcTextures {
@@ -624,6 +643,35 @@ pub fn run() -> eyre::Result<()> {
                 if bc7 { "BC7" } else { "RGBA8888" },
                 summary.populated_slot_count,
                 summary.slot_count,
+                out_file.display()
+            );
+        }
+        Commands::PackMobileAnims {
+            source_dirs: source_dir_args,
+            output,
+            atlas_width,
+            atlas_height,
+            gutter,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
+                &paths,
+                &out_file,
+                &MobileAnimCcAtlasOptions {
+                    atlas_width,
+                    atlas_height,
+                    gutter,
+                    compression: CompressionFlag::ZstdNoDict,
+                    pixel_format: PagePixelFormat::Rgba8888,
+                },
+            )?;
+            println!(
+                "Wrote {} pages (RGBA8888) for {} packed frames out of {} total frames across {} animations to '{}'.",
+                summary.page_count,
+                summary.packed_frame_count,
+                summary.frame_count,
+                summary.animation_count,
                 out_file.display()
             );
         }

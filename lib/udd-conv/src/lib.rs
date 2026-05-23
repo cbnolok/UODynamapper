@@ -15,6 +15,7 @@ pub mod tilemeta;
 pub use image_postprocess::upscaling;
 pub mod world_lights;
 pub mod hues;
+pub mod mobile_anim_cc;
 pub use upscaling as upscale;
 
 pub use udd_container::CompressionFlag as CompressionFlag;

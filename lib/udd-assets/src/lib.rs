@@ -10,6 +10,7 @@ pub mod ec_terrain_overrides;
 pub mod tilemeta;
 pub mod world_lights;
 pub mod hues;
+pub mod mobile_anim_cc;
 
 pub use common::AtlasCacheOptions;
 pub use tex_art_cc::TexArtCcPackage;
@@ -19,3 +20,4 @@ pub use tex_land_ec::TexLandEcPackage;
 pub use tilemeta::TileMetaPackage;
 pub use world_lights::WorldLightsPackage;
 pub use hues::HuesPackage;
+pub use mobile_anim_cc::MobileAnimCcPackage;
