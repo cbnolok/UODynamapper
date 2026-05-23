@@ -43,3 +43,7 @@ path = "src/bin/sound_tool.rs"
 [[bin]]
 name = "multimap-tool"
 path = "src/bin/multimap_tool.rs"
+
+[[bin]]
+name = "facet-evidence-tool"
+path = "src/bin/facet_evidence_tool.rs"

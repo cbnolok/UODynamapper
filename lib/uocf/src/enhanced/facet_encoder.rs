@@ -264,10 +264,10 @@ fn write_delimiters(
     };
     let mut delimiters: Vec<(u8, i8, u16)> = Vec::new();
 
-    let on_left_edge: bool = global_x % 8 == 0;
-    let on_top_edge: bool = global_y % 8 == 0;
-    let on_right_edge: bool = global_x % 8 == 7;
-    let on_bottom_edge: bool = global_y % 8 == 7;
+    let on_left_edge: bool = global_x % 64 == 0;
+    let on_top_edge: bool = global_y % 64 == 0;
+    let on_right_edge: bool = global_x % 64 == 63;
+    let on_bottom_edge: bool = global_y % 64 == 63;
 
     if !on_left_edge && !on_top_edge && !on_right_edge && !on_bottom_edge {
         cursor.write_u8(0)?;

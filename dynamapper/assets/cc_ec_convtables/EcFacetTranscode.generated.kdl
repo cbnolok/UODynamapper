@@ -1,0 +1,3439 @@
+// Generated facet terrain evidence. Do not hand-edit as authoritative data.
+source client="ec" map_index=0 facet="/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced fp/facet0.uop" width=7168 height=4096 cc_map="/mnt/dati/_proj_local/_uo_clients/_Ultima Online Classic fp/map0LegacyMUL.uop" terrain_definition="/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced fp/TerrainDefinition.uop"
+facet_transcodes {
+    transcode cc=1 ec=1 count=9
+    transcode cc=2 ec=2 count=727
+    transcode cc=3 ec=3 count=759177
+    transcode cc=4 ec=4 count=678499
+    transcode cc=5 ec=5 count=678082
+    transcode cc=6 ec=6 count=672210
+    transcode cc=9 ec=9 count=13350
+    transcode cc=10 ec=10 count=760
+    transcode cc=11 ec=11 count=627
+    transcode cc=12 ec=12 count=757
+    transcode cc=13 ec=13 count=632
+    transcode cc=14 ec=14 count=45
+    transcode cc=15 ec=15 count=62
+    transcode cc=16 ec=16 count=68
+    transcode cc=17 ec=17 count=72
+    transcode cc=18 ec=18 count=56
+    transcode cc=19 ec=19 count=34
+    transcode cc=20 ec=20 count=17
+    transcode cc=21 ec=21 count=17
+    transcode cc=22 ec=22 count=50262
+    transcode cc=23 ec=23 count=45282
+    transcode cc=24 ec=24 count=45635
+    transcode cc=25 ec=25 count=47037
+    transcode cc=26 ec=26 count=9332
+    transcode cc=27 ec=27 count=7886
+    transcode cc=28 ec=28 count=15396
+    transcode cc=29 ec=29 count=7153
+    transcode cc=30 ec=30 count=6447
+    transcode cc=31 ec=31 count=6274
+    transcode cc=32 ec=32 count=6065
+    transcode cc=33 ec=33 count=7195
+    transcode cc=34 ec=34 count=8904
+    transcode cc=35 ec=35 count=9283
+    transcode cc=36 ec=36 count=6687
+    transcode cc=37 ec=37 count=2294
+    transcode cc=38 ec=38 count=3126
+    transcode cc=39 ec=39 count=2876
+    transcode cc=40 ec=40 count=2026
+    transcode cc=41 ec=41 count=17
+    transcode cc=42 ec=42 count=30
+    transcode cc=43 ec=43 count=8
+    transcode cc=44 ec=44 count=1
+    transcode cc=45 ec=45 count=31
+    transcode cc=46 ec=46 count=14
+    transcode cc=47 ec=47 count=12
+    transcode cc=48 ec=48 count=39
+    transcode cc=49 ec=49 count=19
+    transcode cc=50 ec=50 count=134
+    transcode cc=51 ec=51 count=255
+    transcode cc=52 ec=52 count=272
+    transcode cc=53 ec=53 count=275
+    transcode cc=54 ec=54 count=232
+    transcode cc=55 ec=55 count=1015
+    transcode cc=56 ec=56 count=1220
+    transcode cc=57 ec=57 count=997
+    transcode cc=58 ec=58 count=971
+    transcode cc=59 ec=59 count=281
+    transcode cc=60 ec=60 count=242
+    transcode cc=61 ec=61 count=285
+    transcode cc=62 ec=62 count=268
+    transcode cc=68 ec=68 count=2
+    transcode cc=69 ec=69 count=4
+    transcode cc=70 ec=70 count=11
+    transcode cc=72 ec=72 count=4
+    transcode cc=73 ec=73 count=107
+    transcode cc=74 ec=74 count=14
+    transcode cc=75 ec=75 count=99
+    transcode cc=76 ec=76 count=13482
+    transcode cc=77 ec=77 count=8419
+    transcode cc=78 ec=78 count=8630
+    transcode cc=79 ec=79 count=8245
+    transcode cc=80 ec=80 count=12893
+    transcode cc=81 ec=81 count=16304
+    transcode cc=82 ec=82 count=12600
+    transcode cc=83 ec=83 count=16294
+    transcode cc=84 ec=84 count=9219
+    transcode cc=85 ec=85 count=8853
+    transcode cc=86 ec=86 count=8837
+    transcode cc=87 ec=87 count=8456
+    transcode cc=88 ec=88 count=9016
+    transcode cc=89 ec=89 count=8480
+    transcode cc=90 ec=90 count=8955
+    transcode cc=91 ec=91 count=8313
+    transcode cc=92 ec=92 count=12844
+    transcode cc=93 ec=93 count=16831
+    transcode cc=94 ec=94 count=12612
+    transcode cc=95 ec=95 count=16442
+    transcode cc=96 ec=96 count=9278
+    transcode cc=97 ec=97 count=8696
+    transcode cc=98 ec=98 count=8579
+    transcode cc=99 ec=99 count=8224
+    transcode cc=100 ec=100 count=564020
+    transcode cc=101 ec=101 count=5481
+    transcode cc=102 ec=102 count=690
+    transcode cc=113 ec=113 count=28843
+    transcode cc=114 ec=114 count=27804
+    transcode cc=115 ec=115 count=24455
+    transcode cc=116 ec=116 count=27510
+    transcode cc=117 ec=117 count=54800
+    transcode cc=118 ec=118 count=48467
+    transcode cc=119 ec=119 count=48700
+    transcode cc=120 ec=120 count=49347
+    transcode cc=121 ec=121 count=3005
+    transcode cc=122 ec=122 count=2661
+    transcode cc=123 ec=123 count=3015
+    transcode cc=124 ec=124 count=2916
+    transcode cc=125 ec=125 count=4993
+    transcode cc=126 ec=126 count=5464
+    transcode cc=127 ec=127 count=7
+    transcode cc=130 ec=130 count=5212
+    transcode cc=131 ec=131 count=5349
+    transcode cc=133 ec=133 count=6121
+    transcode cc=134 ec=134 count=4068
+    transcode cc=135 ec=135 count=6489
+    transcode cc=136 ec=136 count=4063
+    transcode cc=137 ec=137 count=5892
+    transcode cc=138 ec=138 count=4112
+    transcode cc=139 ec=139 count=5118
+    transcode cc=140 ec=140 count=4388
+    transcode cc=141 ec=141 count=2265
+    transcode cc=142 ec=142 count=1215
+    transcode cc=143 ec=143 count=1624
+    transcode cc=144 ec=144 count=1628
+    transcode cc=145 ec=145 count=2699
+    transcode cc=146 ec=146 count=1884
+    transcode cc=147 ec=147 count=1528
+    transcode cc=148 ec=148 count=1634
+    transcode cc=149 ec=149 count=3004
+    transcode cc=150 ec=150 count=278
+    transcode cc=151 ec=151 count=482
+    transcode cc=152 ec=152 count=852
+    transcode cc=153 ec=153 count=696
+    transcode cc=154 ec=154 count=609
+    transcode cc=155 ec=155 count=479
+    transcode cc=156 ec=156 count=935
+    transcode cc=157 ec=157 count=992
+    transcode cc=158 ec=158 count=1388
+    transcode cc=159 ec=159 count=869
+    transcode cc=160 ec=160 count=4491
+    transcode cc=161 ec=161 count=3668
+    transcode cc=162 ec=162 count=3687
+    transcode cc=163 ec=163 count=4450
+    transcode cc=164 ec=164 count=80
+    transcode cc=165 ec=165 count=98
+    transcode cc=166 ec=166 count=92
+    transcode cc=167 ec=167 count=92
+    transcode cc=168 ec=168 count=3843308
+    transcode cc=169 ec=169 count=3735423
+    transcode cc=170 ec=170 count=3737107
+    transcode cc=171 ec=171 count=3740464
+    transcode cc=172 ec=172 count=122470
+    transcode cc=173 ec=173 count=121426
+    transcode cc=174 ec=174 count=120797
+    transcode cc=175 ec=175 count=121674
+    transcode cc=176 ec=176 count=9147
+    transcode cc=177 ec=177 count=140
+    transcode cc=178 ec=178 count=234
+    transcode cc=179 ec=179 count=8999
+    transcode cc=182 ec=182 count=5769
+    transcode cc=185 ec=185 count=7498
+    transcode cc=188 ec=188 count=3586
+    transcode cc=189 ec=189 count=4628
+    transcode cc=190 ec=190 count=4592
+    transcode cc=191 ec=191 count=8121
+    transcode cc=192 ec=192 count=3936
+    transcode cc=193 ec=193 count=5890
+    transcode cc=194 ec=194 count=6838
+    transcode cc=195 ec=195 count=4484
+    transcode cc=196 ec=196 count=549285
+    transcode cc=197 ec=197 count=548897
+    transcode cc=198 ec=198 count=548895
+    transcode cc=199 ec=199 count=547293
+    transcode cc=200 ec=200 count=12909
+    transcode cc=201 ec=201 count=12205
+    transcode cc=202 ec=202 count=3247
+    transcode cc=203 ec=203 count=27179
+    transcode cc=204 ec=204 count=2905
+    transcode cc=205 ec=205 count=3118
+    transcode cc=206 ec=206 count=15067
+    transcode cc=207 ec=207 count=14860
+    transcode cc=208 ec=208 count=4653
+    transcode cc=209 ec=209 count=20922
+    transcode cc=210 ec=210 count=4610
+    transcode cc=211 ec=211 count=4316
+    transcode cc=212 ec=212 count=13716
+    transcode cc=213 ec=213 count=13302
+    transcode cc=214 ec=214 count=12818
+    transcode cc=215 ec=215 count=12698
+    transcode cc=216 ec=216 count=11223
+    transcode cc=217 ec=217 count=16837
+    transcode cc=218 ec=218 count=13564
+    transcode cc=219 ec=219 count=10472
+    transcode cc=220 ec=220 count=2741
+    transcode cc=221 ec=221 count=3061
+    transcode cc=222 ec=222 count=2527
+    transcode cc=223 ec=223 count=3099
+    transcode cc=224 ec=224 count=1264
+    transcode cc=225 ec=225 count=1325
+    transcode cc=226 ec=226 count=1198
+    transcode cc=227 ec=227 count=1350
+    transcode cc=228 ec=228 count=1446
+    transcode cc=229 ec=229 count=1116
+    transcode cc=230 ec=230 count=1275
+    transcode cc=231 ec=231 count=1070
+    transcode cc=232 ec=232 count=26
+    transcode cc=233 ec=233 count=17
+    transcode cc=234 ec=234 count=56
+    transcode cc=235 ec=235 count=11
+    transcode cc=236 ec=236 count=1284
+    transcode cc=237 ec=237 count=1436
+    transcode cc=238 ec=238 count=1126
+    transcode cc=239 ec=239 count=1324
+    transcode cc=240 ec=240 count=7868
+    transcode cc=241 ec=241 count=7664
+    transcode cc=242 ec=242 count=7850
+    transcode cc=243 ec=243 count=7744
+    transcode cc=244 ec=244 count=513
+    transcode cc=245 ec=245 count=619
+    transcode cc=246 ec=246 count=413
+    transcode cc=247 ec=247 count=571
+    transcode cc=248 ec=248 count=535
+    transcode cc=249 ec=249 count=75
+    transcode cc=250 ec=250 count=68
+    transcode cc=251 ec=251 count=81
+    transcode cc=252 ec=252 count=404
+    transcode cc=253 ec=253 count=357
+    transcode cc=254 ec=254 count=477
+    transcode cc=255 ec=255 count=353
+    transcode cc=256 ec=256 count=1541
+    transcode cc=257 ec=257 count=1555
+    transcode cc=258 ec=258 count=1542
+    transcode cc=259 ec=259 count=1596
+    transcode cc=260 ec=260 count=140
+    transcode cc=261 ec=261 count=151
+    transcode cc=262 ec=262 count=136
+    transcode cc=263 ec=263 count=186
+    transcode cc=264 ec=264 count=2
+    transcode cc=265 ec=265 count=3
+    transcode cc=266 ec=266 count=18
+    transcode cc=268 ec=268 count=916
+    transcode cc=269 ec=269 count=629
+    transcode cc=270 ec=270 count=545
+    transcode cc=271 ec=271 count=527
+    transcode cc=272 ec=272 count=370
+    transcode cc=273 ec=273 count=390
+    transcode cc=274 ec=274 count=391
+    transcode cc=275 ec=275 count=437
+    transcode cc=276 ec=276 count=3086
+    transcode cc=277 ec=277 count=1977
+    transcode cc=278 ec=278 count=3241
+    transcode cc=279 ec=279 count=1819
+    transcode cc=282 ec=282 count=32825
+    transcode cc=283 ec=283 count=32891
+    transcode cc=284 ec=284 count=33295
+    transcode cc=285 ec=285 count=32837
+    transcode cc=286 ec=286 count=39
+    transcode cc=287 ec=287 count=3
+    transcode cc=288 ec=288 count=1
+    transcode cc=289 ec=289 count=19
+    transcode cc=290 ec=290 count=1233
+    transcode cc=291 ec=291 count=1075
+    transcode cc=292 ec=292 count=1146
+    transcode cc=293 ec=293 count=1142
+    transcode cc=294 ec=294 count=2603
+    transcode cc=295 ec=295 count=2895
+    transcode cc=296 ec=296 count=2982
+    transcode cc=297 ec=297 count=3235
+    transcode cc=298 ec=298 count=4
+    transcode cc=299 ec=299 count=27
+    transcode cc=300 ec=300 count=19
+    transcode cc=301 ec=301 count=23
+    transcode cc=310 ec=310 count=48
+    transcode cc=311 ec=311 count=4
+    transcode cc=321 ec=321 count=23
+    transcode cc=322 ec=322 count=36
+    transcode cc=323 ec=323 count=2
+    transcode cc=324 ec=324 count=2
+    transcode cc=332 ec=332 count=112
+    transcode cc=333 ec=333 count=24
+    transcode cc=334 ec=334 count=26
+    transcode cc=335 ec=335 count=62
+    transcode cc=336 ec=336 count=298
+    transcode cc=337 ec=337 count=31
+    transcode cc=338 ec=338 count=27
+    transcode cc=339 ec=339 count=24
+    transcode cc=340 ec=340 count=25
+    transcode cc=341 ec=341 count=2
+    transcode cc=342 ec=342 count=6
+    transcode cc=343 ec=343 count=6
+    transcode cc=344 ec=344 count=4
+    transcode cc=345 ec=345 count=4
+    transcode cc=349 ec=349 count=61
+    transcode cc=350 ec=350 count=140
+    transcode cc=351 ec=351 count=209
+    transcode cc=352 ec=352 count=94
+    transcode cc=353 ec=353 count=1266
+    transcode cc=354 ec=354 count=1131
+    transcode cc=355 ec=355 count=1366
+    transcode cc=356 ec=356 count=1045
+    transcode cc=357 ec=357 count=2483
+    transcode cc=358 ec=358 count=2359
+    transcode cc=359 ec=359 count=2104
+    transcode cc=360 ec=360 count=2449
+    transcode cc=361 ec=361 count=1139
+    transcode cc=362 ec=362 count=1276
+    transcode cc=363 ec=363 count=1076
+    transcode cc=364 ec=364 count=1330
+    transcode cc=365 ec=365 count=712
+    transcode cc=366 ec=366 count=710
+    transcode cc=367 ec=367 count=775
+    transcode cc=368 ec=368 count=710
+    transcode cc=369 ec=369 count=283
+    transcode cc=370 ec=370 count=181
+    transcode cc=371 ec=371 count=264
+    transcode cc=372 ec=372 count=405
+    transcode cc=377 ec=377 count=188
+    transcode cc=378 ec=378 count=315
+    transcode cc=379 ec=379 count=236
+    transcode cc=380 ec=380 count=98
+    transcode cc=381 ec=381 count=249
+    transcode cc=382 ec=382 count=199
+    transcode cc=383 ec=383 count=125
+    transcode cc=384 ec=384 count=143
+    transcode cc=385 ec=385 count=215
+    transcode cc=386 ec=386 count=307
+    transcode cc=387 ec=387 count=44
+    transcode cc=388 ec=388 count=159
+    transcode cc=389 ec=389 count=171
+    transcode cc=390 ec=390 count=5
+    transcode cc=392 ec=392 count=89
+    transcode cc=393 ec=393 count=167
+    transcode cc=394 ec=394 count=83
+    transcode cc=420 ec=420 count=1
+    transcode cc=421 ec=421 count=1
+    transcode cc=423 ec=423 count=7
+    transcode cc=424 ec=424 count=1
+    transcode cc=425 ec=425 count=7
+    transcode cc=426 ec=426 count=23
+    transcode cc=427 ec=427 count=12
+    transcode cc=430 ec=430 count=181661
+    transcode cc=431 ec=431 count=166
+    transcode cc=432 ec=432 count=3
+    transcode cc=433 ec=433 count=12
+    transcode cc=441 ec=441 count=9
+    transcode cc=442 ec=442 count=47
+    transcode cc=443 ec=443 count=115
+    transcode cc=444 ec=444 count=66
+    transcode cc=445 ec=445 count=3
+    transcode cc=446 ec=446 count=32
+    transcode cc=447 ec=447 count=3
+    transcode cc=448 ec=448 count=37
+    transcode cc=450 ec=450 count=54
+    transcode cc=451 ec=451 count=48
+    transcode cc=452 ec=452 count=15
+    transcode cc=453 ec=453 count=3
+    transcode cc=454 ec=454 count=22
+    transcode cc=456 ec=456 count=15
+    transcode cc=457 ec=457 count=16
+    transcode cc=458 ec=458 count=20
+    transcode cc=460 ec=460 count=6
+    transcode cc=461 ec=461 count=3
+    transcode cc=462 ec=462 count=2
+    transcode cc=463 ec=463 count=3
+    transcode cc=465 ec=465 count=7
+    transcode cc=467 ec=467 count=61
+    transcode cc=468 ec=468 count=110
+    transcode cc=469 ec=469 count=32
+    transcode cc=470 ec=470 count=35
+    transcode cc=471 ec=471 count=9
+    transcode cc=472 ec=472 count=37
+    transcode cc=473 ec=473 count=32
+    transcode cc=474 ec=474 count=89
+    transcode cc=475 ec=475 count=1917
+    transcode cc=476 ec=476 count=545
+    transcode cc=477 ec=477 count=425
+    transcode cc=478 ec=478 count=506
+    transcode cc=479 ec=479 count=431
+    transcode cc=480 ec=480 count=1544
+    transcode cc=481 ec=481 count=1633
+    transcode cc=482 ec=482 count=1527
+    transcode cc=483 ec=483 count=1582
+    transcode cc=484 ec=484 count=730
+    transcode cc=485 ec=485 count=769
+    transcode cc=486 ec=486 count=717
+    transcode cc=487 ec=487 count=755
+    transcode cc=492 ec=492 count=1427
+    transcode cc=493 ec=493 count=1202
+    transcode cc=494 ec=494 count=1370
+    transcode cc=495 ec=495 count=1080
+    transcode cc=496 ec=496 count=3
+    transcode cc=497 ec=497 count=1
+    transcode cc=500 ec=500 count=2569
+    transcode cc=501 ec=501 count=1802
+    transcode cc=502 ec=502 count=1879
+    transcode cc=503 ec=503 count=1829
+    transcode cc=506 ec=506 count=15453
+    transcode cc=507 ec=507 count=14568
+    transcode cc=508 ec=508 count=14488
+    transcode cc=509 ec=509 count=14523
+    transcode cc=510 ec=510 count=14676
+    transcode cc=511 ec=511 count=14546
+    transcode cc=513 ec=513 count=246
+    transcode cc=514 ec=514 count=148
+    transcode cc=515 ec=515 count=105
+    transcode cc=516 ec=516 count=82
+    transcode cc=543 ec=543 count=14792
+    transcode cc=544 ec=544 count=11692
+    transcode cc=545 ec=545 count=10966
+    transcode cc=546 ec=546 count=10816
+    transcode cc=547 ec=547 count=17180
+    transcode cc=548 ec=548 count=17339
+    transcode cc=549 ec=549 count=17414
+    transcode cc=550 ec=550 count=10805
+    transcode cc=551 ec=551 count=31163
+    transcode cc=552 ec=552 count=162
+    transcode cc=553 ec=553 count=6518
+    transcode cc=554 ec=554 count=348
+    transcode cc=555 ec=555 count=17732
+    transcode cc=556 ec=556 count=219089
+    transcode cc=557 ec=557 count=210821
+    transcode cc=558 ec=558 count=208377
+    transcode cc=559 ec=559 count=235958
+    transcode cc=560 ec=560 count=223
+    transcode cc=561 ec=561 count=1924
+    transcode cc=562 ec=562 count=1695
+    transcode cc=563 ec=563 count=1727
+    transcode cc=564 ec=564 count=1696
+    transcode cc=565 ec=565 count=1318
+    transcode cc=566 ec=566 count=1134
+    transcode cc=567 ec=567 count=1694
+    transcode cc=568 ec=568 count=1342
+    transcode cc=569 ec=569 count=3984
+    transcode cc=570 ec=570 count=4348
+    transcode cc=571 ec=571 count=3742
+    transcode cc=572 ec=572 count=4514
+    transcode cc=573 ec=573 count=7
+    transcode cc=574 ec=574 count=10
+    transcode cc=575 ec=575 count=13
+    transcode cc=576 ec=576 count=1
+    transcode cc=577 ec=577 count=7
+    transcode cc=578 ec=578 count=4
+    transcode cc=579 ec=579 count=6
+    transcode cc=580 ec=580 count=4000831
+    transcode cc=581 ec=581 count=94002
+    transcode cc=582 ec=582 count=78878
+    transcode cc=583 ec=583 count=74829
+    transcode cc=584 ec=584 count=74940
+    transcode cc=585 ec=585 count=73874
+    transcode cc=586 ec=586 count=409
+    transcode cc=587 ec=587 count=329
+    transcode cc=588 ec=588 count=291
+    transcode cc=589 ec=589 count=280
+    transcode cc=590 ec=590 count=1367
+    transcode cc=591 ec=591 count=1340
+    transcode cc=592 ec=592 count=758
+    transcode cc=593 ec=593 count=692
+    transcode cc=594 ec=594 count=669
+    transcode cc=595 ec=595 count=1256
+    transcode cc=596 ec=596 count=1173
+    transcode cc=597 ec=597 count=1159
+    transcode cc=598 ec=598 count=1269
+    transcode cc=599 ec=599 count=640
+    transcode cc=600 ec=600 count=871
+    transcode cc=601 ec=601 count=655
+    transcode cc=602 ec=602 count=96791
+    transcode cc=603 ec=603 count=788
+    transcode cc=604 ec=604 count=589
+    transcode cc=605 ec=605 count=711
+    transcode cc=606 ec=606 count=1117
+    transcode cc=607 ec=607 count=1250
+    transcode cc=608 ec=608 count=1151
+    transcode cc=609 ec=609 count=1090
+    transcode cc=610 ec=610 count=30
+    transcode cc=611 ec=611 count=2
+    transcode cc=612 ec=612 count=5
+    transcode cc=613 ec=613 count=3
+    transcode cc=614 ec=614 count=107319
+    transcode cc=615 ec=615 count=735
+    transcode cc=616 ec=616 count=521
+    transcode cc=617 ec=617 count=1064
+    transcode cc=618 ec=618 count=150
+    transcode cc=619 ec=619 count=156
+    transcode cc=620 ec=620 count=305
+    transcode cc=621 ec=621 count=129
+    transcode cc=622 ec=622 count=129
+    transcode cc=623 ec=623 count=118
+    transcode cc=624 ec=624 count=200
+    transcode cc=625 ec=625 count=188
+    transcode cc=626 ec=626 count=38
+    transcode cc=627 ec=627 count=63
+    transcode cc=628 ec=628 count=53
+    transcode cc=629 ec=629 count=58
+    transcode cc=630 ec=630 count=40
+    transcode cc=631 ec=631 count=57
+    transcode cc=632 ec=632 count=51
+    transcode cc=633 ec=633 count=46
+    transcode cc=634 ec=634 count=33
+    transcode cc=635 ec=635 count=22
+    transcode cc=636 ec=636 count=7
+    transcode cc=637 ec=637 count=50
+    transcode cc=638 ec=638 count=1
+    transcode cc=639 ec=639 count=13
+    transcode cc=640 ec=640 count=6
+    transcode cc=641 ec=641 count=6
+    transcode cc=642 ec=642 count=22
+    transcode cc=643 ec=643 count=87
+    transcode cc=644 ec=644 count=29
+    transcode cc=645 ec=645 count=31
+    transcode cc=646 ec=646 count=9
+    transcode cc=647 ec=647 count=6
+    transcode cc=648 ec=648 count=5
+    transcode cc=649 ec=649 count=24
+    transcode cc=650 ec=650 count=9
+    transcode cc=651 ec=651 count=8
+    transcode cc=652 ec=652 count=31
+    transcode cc=653 ec=653 count=9
+    transcode cc=662 ec=662 count=947
+    transcode cc=663 ec=663 count=814
+    transcode cc=664 ec=664 count=8
+    transcode cc=665 ec=665 count=15
+    transcode cc=666 ec=666 count=17
+    transcode cc=667 ec=667 count=11
+    transcode cc=668 ec=668 count=198
+    transcode cc=669 ec=669 count=196
+    transcode cc=670 ec=670 count=163
+    transcode cc=671 ec=671 count=143
+    transcode cc=672 ec=672 count=12
+    transcode cc=673 ec=673 count=14
+    transcode cc=674 ec=674 count=22
+    transcode cc=675 ec=675 count=5
+    transcode cc=676 ec=676 count=18
+    transcode cc=677 ec=677 count=10
+    transcode cc=678 ec=678 count=25
+    transcode cc=679 ec=679 count=20
+    transcode cc=680 ec=680 count=2
+    transcode cc=681 ec=681 count=10
+    transcode cc=682 ec=682 count=9
+    transcode cc=683 ec=683 count=4
+    transcode cc=684 ec=684 count=9
+    transcode cc=685 ec=685 count=189
+    transcode cc=686 ec=686 count=168
+    transcode cc=687 ec=687 count=161
+    transcode cc=688 ec=688 count=141
+    transcode cc=689 ec=689 count=5
+    transcode cc=690 ec=690 count=6
+    transcode cc=691 ec=691 count=9
+    transcode cc=692 ec=692 count=11
+    transcode cc=693 ec=693 count=15
+    transcode cc=694 ec=694 count=5
+    transcode cc=695 ec=695 count=24
+    transcode cc=696 ec=696 count=23
+    transcode cc=697 ec=697 count=16
+    transcode cc=698 ec=698 count=21
+    transcode cc=699 ec=699 count=15
+    transcode cc=700 ec=700 count=4149
+    transcode cc=701 ec=701 count=1
+    transcode cc=702 ec=702 count=91
+    transcode cc=704 ec=704 count=3500
+    transcode cc=705 ec=705 count=4
+    transcode cc=708 ec=708 count=1
+    transcode cc=709 ec=709 count=1
+    transcode cc=711 ec=711 count=12
+    transcode cc=712 ec=712 count=1
+    transcode cc=714 ec=714 count=1
+    transcode cc=715 ec=715 count=1
+    transcode cc=720 ec=720 count=6
+    transcode cc=722 ec=722 count=1
+    transcode cc=724 ec=724 count=4
+    transcode cc=726 ec=726 count=4
+    transcode cc=741 ec=741 count=652
+    transcode cc=742 ec=742 count=834
+    transcode cc=743 ec=743 count=634
+    transcode cc=744 ec=744 count=1317
+    transcode cc=745 ec=745 count=539
+    transcode cc=746 ec=746 count=840
+    transcode cc=747 ec=747 count=790
+    transcode cc=748 ec=748 count=1453
+    transcode cc=749 ec=749 count=1088
+    transcode cc=750 ec=750 count=320
+    transcode cc=751 ec=751 count=2745
+    transcode cc=752 ec=752 count=2638
+    transcode cc=753 ec=753 count=386
+    transcode cc=754 ec=754 count=358
+    transcode cc=755 ec=755 count=308
+    transcode cc=756 ec=756 count=1451
+    transcode cc=757 ec=757 count=1482
+    transcode cc=758 ec=758 count=1356
+    transcode cc=759 ec=759 count=1339
+    transcode cc=760 ec=760 count=728
+    transcode cc=761 ec=761 count=2767
+    transcode cc=762 ec=762 count=2695
+    transcode cc=763 ec=763 count=739
+    transcode cc=764 ec=764 count=137
+    transcode cc=765 ec=765 count=191
+    transcode cc=766 ec=766 count=143
+    transcode cc=767 ec=767 count=166
+    transcode cc=771 ec=771 count=172
+    transcode cc=772 ec=772 count=77
+    transcode cc=773 ec=773 count=47
+    transcode cc=777 ec=777 count=3
+    transcode cc=778 ec=778 count=2
+    transcode cc=779 ec=779 count=4
+    transcode cc=786 ec=786 count=5
+    transcode cc=821 ec=821 count=2394
+    transcode cc=822 ec=822 count=2027
+    transcode cc=823 ec=823 count=1924
+    transcode cc=824 ec=824 count=2224
+    transcode cc=825 ec=825 count=824
+    transcode cc=826 ec=826 count=932
+    transcode cc=827 ec=827 count=869
+    transcode cc=828 ec=828 count=878
+    transcode cc=829 ec=829 count=981
+    transcode cc=830 ec=830 count=910
+    transcode cc=831 ec=831 count=957
+    transcode cc=832 ec=832 count=940
+    transcode cc=834 ec=834 count=3
+    transcode cc=835 ec=835 count=2
+    transcode cc=836 ec=836 count=1
+    transcode cc=837 ec=837 count=2
+    transcode cc=838 ec=838 count=2
+    transcode cc=839 ec=839 count=3
+    transcode cc=840 ec=840 count=1
+    transcode cc=841 ec=841 count=1
+    transcode cc=843 ec=843 count=2
+    transcode cc=844 ec=844 count=1
+    transcode cc=845 ec=845 count=2
+    transcode cc=847 ec=847 count=1
+    transcode cc=848 ec=848 count=1
+    transcode cc=849 ec=849 count=3
+    transcode cc=850 ec=850 count=1
+    transcode cc=851 ec=851 count=1
+    transcode cc=852 ec=852 count=1
+    transcode cc=854 ec=854 count=3
+    transcode cc=855 ec=855 count=7
+    transcode cc=856 ec=856 count=2
+    transcode cc=857 ec=857 count=9
+    transcode cc=858 ec=858 count=4
+    transcode cc=859 ec=859 count=8
+    transcode cc=860 ec=860 count=10
+    transcode cc=871 ec=871 count=150
+    transcode cc=872 ec=872 count=134
+    transcode cc=873 ec=873 count=150
+    transcode cc=874 ec=874 count=130
+    transcode cc=875 ec=875 count=133
+    transcode cc=876 ec=876 count=179
+    transcode cc=877 ec=877 count=133
+    transcode cc=878 ec=878 count=124
+    transcode cc=879 ec=879 count=124
+    transcode cc=880 ec=880 count=112
+    transcode cc=881 ec=881 count=121
+    transcode cc=882 ec=882 count=100
+    transcode cc=883 ec=883 count=113
+    transcode cc=884 ec=884 count=139
+    transcode cc=885 ec=885 count=137
+    transcode cc=886 ec=886 count=80
+    transcode cc=887 ec=887 count=264
+    transcode cc=888 ec=888 count=159
+    transcode cc=889 ec=889 count=211
+    transcode cc=890 ec=890 count=208
+    transcode cc=891 ec=891 count=402
+    transcode cc=892 ec=892 count=232
+    transcode cc=893 ec=893 count=418
+    transcode cc=894 ec=894 count=665
+    transcode cc=901 ec=901 count=528
+    transcode cc=902 ec=902 count=463
+    transcode cc=903 ec=903 count=379
+    transcode cc=904 ec=904 count=813
+    transcode cc=905 ec=905 count=249
+    transcode cc=906 ec=906 count=203
+    transcode cc=907 ec=907 count=305
+    transcode cc=908 ec=908 count=181
+    transcode cc=909 ec=909 count=240
+    transcode cc=910 ec=910 count=270
+    transcode cc=911 ec=911 count=229
+    transcode cc=912 ec=912 count=323
+    transcode cc=913 ec=913 count=1
+    transcode cc=914 ec=914 count=6
+    transcode cc=916 ec=916 count=1
+    transcode cc=918 ec=918 count=2
+    transcode cc=919 ec=919 count=1
+    transcode cc=920 ec=920 count=2
+    transcode cc=921 ec=921 count=2
+    transcode cc=922 ec=922 count=1
+    transcode cc=923 ec=923 count=1
+    transcode cc=924 ec=924 count=2
+    transcode cc=929 ec=929 count=1
+    transcode cc=930 ec=930 count=1
+    transcode cc=931 ec=931 count=1
+    transcode cc=933 ec=933 count=1
+    transcode cc=934 ec=934 count=11
+    transcode cc=935 ec=935 count=2
+    transcode cc=936 ec=936 count=1
+    transcode cc=937 ec=937 count=5
+    transcode cc=938 ec=938 count=5
+    transcode cc=939 ec=939 count=5
+    transcode cc=940 ec=940 count=32
+    transcode cc=953 ec=953 count=1
+    transcode cc=955 ec=955 count=5
+    transcode cc=956 ec=956 count=2
+    transcode cc=957 ec=957 count=2
+    transcode cc=958 ec=958 count=4
+    transcode cc=960 ec=960 count=1
+    transcode cc=961 ec=961 count=1
+    transcode cc=963 ec=963 count=6
+    transcode cc=964 ec=964 count=2
+    transcode cc=965 ec=965 count=1
+    transcode cc=966 ec=966 count=2
+    transcode cc=967 ec=967 count=13
+    transcode cc=968 ec=968 count=37
+    transcode cc=969 ec=969 count=5
+    transcode cc=970 ec=970 count=9
+    transcode cc=971 ec=971 count=29
+    transcode cc=972 ec=972 count=13
+    transcode cc=973 ec=973 count=9
+    transcode cc=974 ec=974 count=1
+    transcode cc=1001 ec=1001 count=15727
+    transcode cc=1002 ec=1002 count=14144
+    transcode cc=1003 ec=1003 count=13843
+    transcode cc=1004 ec=1004 count=14315
+    transcode cc=1006 ec=1006 count=16
+    transcode cc=1007 ec=1007 count=4
+    transcode cc=1008 ec=1008 count=12
+    transcode cc=1010 ec=1010 count=1
+    transcode cc=1011 ec=1011 count=2
+    transcode cc=1012 ec=1012 count=1
+    transcode cc=1014 ec=1014 count=13
+    transcode cc=1015 ec=1015 count=29
+    transcode cc=1016 ec=1016 count=7
+    transcode cc=1017 ec=1017 count=396
+    transcode cc=1018 ec=1018 count=738
+    transcode cc=1019 ec=1019 count=907
+    transcode cc=1020 ec=1020 count=816
+    transcode cc=1021 ec=1021 count=718
+    transcode cc=1022 ec=1022 count=1918
+    transcode cc=1023 ec=1023 count=1877
+    transcode cc=1024 ec=1024 count=1878
+    transcode cc=1025 ec=1025 count=1821
+    transcode cc=1026 ec=1026 count=682
+    transcode cc=1027 ec=1027 count=633
+    transcode cc=1028 ec=1028 count=560
+    transcode cc=1029 ec=1029 count=262
+    transcode cc=1030 ec=1030 count=13855
+    transcode cc=1031 ec=1031 count=14353
+    transcode cc=1032 ec=1032 count=14119
+    transcode cc=1033 ec=1033 count=14300
+    transcode cc=1034 ec=1034 count=7748
+    transcode cc=1035 ec=1035 count=7441
+    transcode cc=1036 ec=1036 count=7308
+    transcode cc=1037 ec=1037 count=7330
+    transcode cc=1038 ec=1038 count=268
+    transcode cc=1039 ec=1039 count=112
+    transcode cc=1040 ec=1040 count=130
+    transcode cc=1041 ec=1041 count=1066
+    transcode cc=1042 ec=1042 count=174
+    transcode cc=1043 ec=1043 count=125
+    transcode cc=1044 ec=1044 count=116
+    transcode cc=1045 ec=1045 count=539
+    transcode cc=1046 ec=1046 count=16
+    transcode cc=1047 ec=1047 count=19
+    transcode cc=1048 ec=1048 count=30
+    transcode cc=1049 ec=1049 count=14
+    transcode cc=1050 ec=1050 count=2
+    transcode cc=1052 ec=1052 count=1
+    transcode cc=1054 ec=1054 count=318
+    transcode cc=1055 ec=1055 count=347
+    transcode cc=1056 ec=1056 count=20
+    transcode cc=1057 ec=1057 count=16
+    transcode cc=1058 ec=1058 count=28
+    transcode cc=1059 ec=1059 count=32
+    transcode cc=1060 ec=1060 count=13
+    transcode cc=1061 ec=1061 count=15
+    transcode cc=1062 ec=1062 count=13
+    transcode cc=1063 ec=1063 count=13
+    transcode cc=1064 ec=1064 count=690
+    transcode cc=1071 ec=1071 count=481
+    transcode cc=1078 ec=1078 count=10978
+    transcode cc=1079 ec=1079 count=575
+    transcode cc=1080 ec=1080 count=633
+    transcode cc=1081 ec=1081 count=555
+    transcode cc=1082 ec=1082 count=3719
+    transcode cc=1083 ec=1083 count=2821
+    transcode cc=1084 ec=1084 count=2517
+    transcode cc=1085 ec=1085 count=2658
+    transcode cc=1086 ec=1086 count=18246
+    transcode cc=1087 ec=1087 count=8340
+    transcode cc=1088 ec=1088 count=8328
+    transcode cc=1089 ec=1089 count=11840
+    transcode cc=1090 ec=1090 count=2550
+    transcode cc=1091 ec=1091 count=2988
+    transcode cc=1092 ec=1092 count=5784
+    transcode cc=1093 ec=1093 count=5364
+    transcode cc=1094 ec=1094 count=1753
+    transcode cc=1095 ec=1095 count=1786
+    transcode cc=1096 ec=1096 count=1683
+    transcode cc=1097 ec=1097 count=1776
+    transcode cc=1098 ec=1098 count=939
+    transcode cc=1099 ec=1099 count=923
+    transcode cc=1100 ec=1100 count=957
+    transcode cc=1101 ec=1101 count=876
+    transcode cc=1102 ec=1102 count=23
+    transcode cc=1103 ec=1103 count=10
+    transcode cc=1104 ec=1104 count=6
+    transcode cc=1106 ec=1106 count=2
+    transcode cc=1108 ec=1108 count=54
+    transcode cc=1109 ec=1109 count=3
+    transcode cc=1110 ec=1110 count=108
+    transcode cc=1111 ec=1111 count=109
+    transcode cc=1112 ec=1112 count=125
+    transcode cc=1113 ec=1113 count=110
+    transcode cc=1114 ec=1114 count=151
+    transcode cc=1115 ec=1115 count=168
+    transcode cc=1116 ec=1116 count=152
+    transcode cc=1117 ec=1117 count=140
+    transcode cc=1118 ec=1118 count=120
+    transcode cc=1119 ec=1119 count=115
+    transcode cc=1120 ec=1120 count=166
+    transcode cc=1121 ec=1121 count=134
+    transcode cc=1122 ec=1122 count=149
+    transcode cc=1123 ec=1123 count=151
+    transcode cc=1124 ec=1124 count=155
+    transcode cc=1125 ec=1125 count=144
+    transcode cc=1126 ec=1126 count=4
+    transcode cc=1127 ec=1127 count=15
+    transcode cc=1128 ec=1128 count=17
+    transcode cc=1129 ec=1129 count=2
+    transcode cc=1130 ec=1130 count=1
+    transcode cc=1132 ec=1132 count=2
+    transcode cc=1133 ec=1133 count=3
+    transcode cc=1134 ec=1134 count=13
+    transcode cc=1135 ec=1135 count=7
+    transcode cc=1136 ec=1136 count=5
+    transcode cc=1137 ec=1137 count=4
+    transcode cc=1138 ec=1138 count=3
+    transcode cc=1139 ec=1139 count=2
+    transcode cc=1140 ec=1140 count=2
+    transcode cc=1141 ec=1141 count=2
+    transcode cc=1142 ec=1142 count=4
+    transcode cc=1143 ec=1143 count=10
+    transcode cc=1144 ec=1144 count=3
+    transcode cc=1145 ec=1145 count=8
+    transcode cc=1146 ec=1146 count=383
+    transcode cc=1147 ec=1147 count=451
+    transcode cc=1148 ec=1148 count=329
+    transcode cc=1149 ec=1149 count=359
+    transcode cc=1150 ec=1150 count=1564
+    transcode cc=1151 ec=1151 count=1391
+    transcode cc=1152 ec=1152 count=926
+    transcode cc=1153 ec=1153 count=837
+    transcode cc=1154 ec=1154 count=920
+    transcode cc=1155 ec=1155 count=845
+    transcode cc=1156 ec=1156 count=1161
+    transcode cc=1157 ec=1157 count=810
+    transcode cc=1158 ec=1158 count=1712
+    transcode cc=1159 ec=1159 count=1607
+    transcode cc=1160 ec=1160 count=1609
+    transcode cc=1161 ec=1161 count=1648
+    transcode cc=1162 ec=1162 count=46
+    transcode cc=1163 ec=1163 count=321
+    transcode cc=1164 ec=1164 count=81
+    transcode cc=1165 ec=1165 count=200
+    transcode cc=1166 ec=1166 count=196
+    transcode cc=1167 ec=1167 count=604
+    transcode cc=1168 ec=1168 count=25
+    transcode cc=1169 ec=1169 count=28
+    transcode cc=1170 ec=1170 count=38
+    transcode cc=1171 ec=1171 count=38
+    transcode cc=1172 ec=1172 count=29
+    transcode cc=1173 ec=1173 count=33
+    transcode cc=1174 ec=1174 count=41
+    transcode cc=1203 ec=1203 count=165
+    transcode cc=1204 ec=1204 count=111
+    transcode cc=1205 ec=1205 count=105
+    transcode cc=1206 ec=1206 count=163
+    transcode cc=1207 ec=1207 count=17
+    transcode cc=1208 ec=1208 count=18
+    transcode cc=1209 ec=1209 count=16
+    transcode cc=1210 ec=1210 count=22
+    transcode cc=1211 ec=1211 count=3
+    transcode cc=1212 ec=1212 count=139
+    transcode cc=1213 ec=1213 count=132
+    transcode cc=1214 ec=1214 count=133
+    transcode cc=1215 ec=1215 count=147
+    transcode cc=1216 ec=1216 count=19
+    transcode cc=1217 ec=1217 count=17
+    transcode cc=1218 ec=1218 count=16
+    transcode cc=1219 ec=1219 count=17
+    transcode cc=1220 ec=1220 count=1
+    transcode cc=1221 ec=1221 count=2
+    transcode cc=1222 ec=1222 count=3
+    transcode cc=1229 ec=1229 count=1
+    transcode cc=1257 ec=1257 count=720
+    transcode cc=1258 ec=1258 count=670
+    transcode cc=1259 ec=1259 count=190
+    transcode cc=1260 ec=1260 count=187
+    transcode cc=1261 ec=1261 count=167
+    transcode cc=1262 ec=1262 count=176
+    transcode cc=1263 ec=1263 count=1812
+    transcode cc=1264 ec=1264 count=1809
+    transcode cc=1265 ec=1265 count=1931
+    transcode cc=1266 ec=1266 count=1774
+    transcode cc=1293 ec=1293 count=6
+    transcode cc=1294 ec=1294 count=3
+    transcode cc=1295 ec=1295 count=5
+    transcode cc=1296 ec=1296 count=15
+    transcode cc=1351 ec=1351 count=91
+    transcode cc=1352 ec=1352 count=118
+    transcode cc=1353 ec=1353 count=72
+    transcode cc=1354 ec=1354 count=79
+    transcode cc=1355 ec=1355 count=102
+    transcode cc=1356 ec=1356 count=72
+    transcode cc=1357 ec=1357 count=13
+    transcode cc=1358 ec=1358 count=19
+    transcode cc=1359 ec=1359 count=36
+    transcode cc=1360 ec=1360 count=79
+    transcode cc=1361 ec=1361 count=49
+    transcode cc=1362 ec=1362 count=15
+    transcode cc=1363 ec=1363 count=124
+    transcode cc=1364 ec=1364 count=19
+    transcode cc=1365 ec=1365 count=38
+    transcode cc=1366 ec=1366 count=51
+    transcode cc=1402 ec=1402 count=2
+    transcode cc=1403 ec=1403 count=10
+    transcode cc=1405 ec=1405 count=8
+    transcode cc=1406 ec=1406 count=12
+    transcode cc=1407 ec=1407 count=1
+    transcode cc=1409 ec=1409 count=13
+    transcode cc=1410 ec=1410 count=2538
+    transcode cc=1411 ec=1411 count=355
+    transcode cc=1412 ec=1412 count=443
+    transcode cc=1413 ec=1413 count=512
+    transcode cc=1415 ec=1415 count=4
+    transcode cc=1416 ec=1416 count=7
+    transcode cc=1417 ec=1417 count=1
+    transcode cc=1418 ec=1418 count=1
+    transcode cc=1419 ec=1419 count=6
+    transcode cc=1420 ec=1420 count=9
+    transcode cc=1421 ec=1421 count=10
+    transcode cc=1422 ec=1422 count=6
+    transcode cc=1423 ec=1423 count=6
+    transcode cc=1424 ec=1424 count=85
+    transcode cc=1431 ec=1431 count=6
+    transcode cc=1433 ec=1433 count=15
+    transcode cc=1434 ec=1434 count=1
+    transcode cc=1435 ec=1435 count=12
+    transcode cc=1436 ec=1436 count=7
+    transcode cc=1438 ec=1438 count=1
+    transcode cc=1439 ec=1439 count=2
+    transcode cc=1441 ec=1441 count=1
+    transcode cc=1442 ec=1442 count=2
+    transcode cc=1446 ec=1446 count=5
+    transcode cc=1522 ec=1522 count=5
+    transcode cc=1523 ec=1523 count=12
+    transcode cc=1524 ec=1524 count=6
+    transcode cc=1525 ec=1525 count=2
+    transcode cc=1526 ec=1526 count=4
+    transcode cc=1527 ec=1527 count=5
+    transcode cc=1528 ec=1528 count=5
+    transcode cc=1530 ec=1530 count=8
+    transcode cc=1531 ec=1531 count=2
+    transcode cc=1539 ec=1539 count=1
+    transcode cc=1541 ec=1541 count=1
+    transcode cc=1546 ec=1546 count=5
+    transcode cc=1548 ec=1548 count=1
+    transcode cc=1549 ec=1549 count=8
+    transcode cc=1553 ec=1553 count=4
+    transcode cc=1557 ec=1557 count=9
+    transcode cc=1558 ec=1558 count=1
+    transcode cc=1560 ec=1560 count=3
+    transcode cc=1571 ec=1571 count=6
+    transcode cc=1572 ec=1572 count=1
+    transcode cc=1573 ec=1573 count=4
+    transcode cc=1574 ec=1574 count=3
+    transcode cc=1575 ec=1575 count=4
+    transcode cc=1577 ec=1577 count=2
+    transcode cc=1578 ec=1578 count=2
+    transcode cc=1579 ec=1579 count=5
+    transcode cc=1580 ec=1580 count=3
+    transcode cc=1581 ec=1581 count=1
+    transcode cc=1583 ec=1583 count=2
+    transcode cc=1584 ec=1584 count=1
+    transcode cc=1585 ec=1585 count=3
+    transcode cc=1587 ec=1587 count=2
+    transcode cc=1588 ec=1588 count=1
+    transcode cc=1589 ec=1589 count=2
+    transcode cc=1591 ec=1591 count=7
+    transcode cc=1592 ec=1592 count=6
+    transcode cc=1593 ec=1593 count=6
+    transcode cc=1594 ec=1594 count=7
+    transcode cc=1595 ec=1595 count=41
+    transcode cc=1596 ec=1596 count=23
+    transcode cc=1597 ec=1597 count=24
+    transcode cc=1598 ec=1598 count=29
+    transcode cc=1611 ec=1611 count=19
+    transcode cc=1612 ec=1612 count=1
+    transcode cc=1613 ec=1613 count=5
+    transcode cc=1616 ec=1616 count=5
+    transcode cc=1618 ec=1618 count=8
+    transcode cc=1619 ec=1619 count=4
+    transcode cc=1621 ec=1621 count=7
+    transcode cc=1625 ec=1625 count=3
+    transcode cc=1661 ec=1661 count=35
+    transcode cc=1662 ec=1662 count=18
+    transcode cc=1663 ec=1663 count=47
+    transcode cc=1664 ec=1664 count=48
+    transcode cc=1665 ec=1665 count=3
+    transcode cc=1666 ec=1666 count=6
+    transcode cc=1667 ec=1667 count=4
+    transcode cc=1668 ec=1668 count=2
+    transcode cc=1669 ec=1669 count=3
+    transcode cc=1670 ec=1670 count=3
+    transcode cc=1671 ec=1671 count=2
+    transcode cc=1672 ec=1672 count=3
+    transcode cc=1684 ec=1684 count=1
+    transcode cc=1711 ec=1711 count=47
+    transcode cc=1712 ec=1712 count=25
+    transcode cc=1713 ec=1713 count=146
+    transcode cc=1714 ec=1714 count=99
+    transcode cc=1715 ec=1715 count=54
+    transcode cc=1716 ec=1716 count=84
+    transcode cc=1717 ec=1717 count=31
+    transcode cc=1718 ec=1718 count=10
+    transcode cc=1719 ec=1719 count=14
+    transcode cc=1720 ec=1720 count=15
+    transcode cc=1721 ec=1721 count=61
+    transcode cc=1722 ec=1722 count=20
+    transcode cc=1723 ec=1723 count=68
+    transcode cc=1724 ec=1724 count=52
+    transcode cc=1725 ec=1725 count=112
+    transcode cc=1726 ec=1726 count=75
+    transcode cc=1727 ec=1727 count=36
+    transcode cc=1728 ec=1728 count=42
+    transcode cc=1729 ec=1729 count=85
+    transcode cc=1730 ec=1730 count=160
+    transcode cc=1741 ec=1741 count=5
+    transcode cc=1743 ec=1743 count=4
+    transcode cc=1744 ec=1744 count=3
+    transcode cc=1745 ec=1745 count=6
+    transcode cc=1746 ec=1746 count=10
+    transcode cc=1747 ec=1747 count=7
+    transcode cc=1748 ec=1748 count=6
+    transcode cc=1749 ec=1749 count=5
+    transcode cc=1750 ec=1750 count=6
+    transcode cc=1752 ec=1752 count=3
+    transcode cc=1753 ec=1753 count=1
+    transcode cc=1754 ec=1754 count=13
+    transcode cc=1755 ec=1755 count=21
+    transcode cc=1756 ec=1756 count=12
+    transcode cc=1757 ec=1757 count=7
+    transcode cc=1758 ec=1758 count=9
+    transcode cc=1759 ec=1759 count=4
+    transcode cc=1760 ec=1760 count=7
+    transcode cc=1761 ec=1761 count=13
+    transcode cc=1771 ec=1771 count=4
+    transcode cc=1772 ec=1772 count=1
+    transcode cc=1773 ec=1773 count=22
+    transcode cc=1774 ec=1774 count=5
+    transcode cc=1775 ec=1775 count=6
+    transcode cc=1777 ec=1777 count=26
+    transcode cc=1778 ec=1778 count=9
+    transcode cc=1779 ec=1779 count=2
+    transcode cc=1780 ec=1780 count=5
+    transcode cc=1781 ec=1781 count=3
+    transcode cc=1782 ec=1782 count=1
+    transcode cc=1783 ec=1783 count=12
+    transcode cc=1784 ec=1784 count=13
+    transcode cc=1785 ec=1785 count=1
+    transcode cc=1786 ec=1786 count=1
+    transcode cc=1787 ec=1787 count=150
+    transcode cc=1788 ec=1788 count=76
+    transcode cc=1789 ec=1789 count=26
+    transcode cc=1790 ec=1790 count=12
+    transcode cc=1801 ec=1801 count=2
+    transcode cc=1802 ec=1802 count=1
+    transcode cc=1803 ec=1803 count=2
+    transcode cc=1804 ec=1804 count=1
+    transcode cc=1807 ec=1807 count=1
+    transcode cc=1812 ec=1812 count=6
+    transcode cc=1813 ec=1813 count=1
+    transcode cc=1814 ec=1814 count=12
+    transcode cc=1815 ec=1815 count=8
+    transcode cc=1816 ec=1816 count=7
+    transcode cc=1817 ec=1817 count=11
+    transcode cc=1818 ec=1818 count=17
+    transcode cc=1819 ec=1819 count=5
+    transcode cc=1820 ec=1820 count=1
+    transcode cc=1821 ec=1821 count=5
+    transcode cc=1822 ec=1822 count=15
+    transcode cc=1823 ec=1823 count=22
+    transcode cc=1824 ec=1824 count=42
+    transcode cc=1851 ec=1851 count=3
+    transcode cc=1853 ec=1853 count=2
+    transcode cc=1854 ec=1854 count=2
+    transcode cc=1861 ec=1861 count=1
+    transcode cc=1863 ec=1863 count=1
+    transcode cc=1866 ec=1866 count=1
+    transcode cc=1873 ec=1873 count=1
+    transcode cc=1877 ec=1877 count=2
+    transcode cc=1879 ec=1879 count=1
+    transcode cc=1880 ec=1880 count=2
+    transcode cc=1883 ec=1883 count=7
+    transcode cc=1884 ec=1884 count=2
+    transcode cc=1885 ec=1885 count=1
+    transcode cc=1887 ec=1887 count=14
+    transcode cc=1888 ec=1888 count=1
+    transcode cc=1901 ec=1901 count=156
+    transcode cc=1902 ec=1902 count=2
+    transcode cc=1903 ec=1903 count=4
+    transcode cc=1904 ec=1904 count=64
+    transcode cc=1905 ec=1905 count=46
+    transcode cc=1906 ec=1906 count=195
+    transcode cc=1907 ec=1907 count=152
+    transcode cc=1911 ec=1911 count=783
+    transcode cc=1912 ec=1912 count=1104
+    transcode cc=1913 ec=1913 count=1263
+    transcode cc=1914 ec=1914 count=927
+    transcode cc=1915 ec=1915 count=740
+    transcode cc=1916 ec=1916 count=1345
+    transcode cc=1917 ec=1917 count=1344
+    transcode cc=1918 ec=1918 count=924
+    transcode cc=1919 ec=1919 count=1813
+    transcode cc=1920 ec=1920 count=624
+    transcode cc=1921 ec=1921 count=2237
+    transcode cc=1922 ec=1922 count=2119
+    transcode cc=1923 ec=1923 count=641
+    transcode cc=1924 ec=1924 count=557
+    transcode cc=1925 ec=1925 count=556
+    transcode cc=1926 ec=1926 count=897
+    transcode cc=1927 ec=1927 count=890
+    transcode cc=1928 ec=1928 count=961
+    transcode cc=1929 ec=1929 count=868
+    transcode cc=1930 ec=1930 count=513
+    transcode cc=1931 ec=1931 count=2232
+    transcode cc=1932 ec=1932 count=2282
+    transcode cc=1933 ec=1933 count=574
+    transcode cc=1934 ec=1934 count=62
+    transcode cc=1935 ec=1935 count=87
+    transcode cc=1936 ec=1936 count=76
+    transcode cc=1937 ec=1937 count=57
+    transcode cc=1946 ec=1946 count=1
+    transcode cc=1948 ec=1948 count=3
+    transcode cc=1949 ec=1949 count=7
+    transcode cc=1950 ec=1950 count=3
+    transcode cc=1951 ec=1951 count=5
+    transcode cc=1952 ec=1952 count=3
+    transcode cc=1954 ec=1954 count=3
+    transcode cc=1955 ec=1955 count=3
+    transcode cc=1956 ec=1956 count=11
+    transcode cc=1957 ec=1957 count=10
+    transcode cc=1959 ec=1959 count=2
+    transcode cc=1960 ec=1960 count=5
+    transcode cc=1961 ec=1961 count=5
+    transcode cc=1962 ec=1962 count=19
+    transcode cc=1963 ec=1963 count=2
+    transcode cc=1964 ec=1964 count=98
+    transcode cc=1965 ec=1965 count=1
+    transcode cc=1967 ec=1967 count=10
+    transcode cc=1968 ec=1968 count=5
+    transcode cc=1969 ec=1969 count=3
+    transcode cc=1981 ec=1981 count=1251
+    transcode cc=1982 ec=1982 count=1111
+    transcode cc=1983 ec=1983 count=1071
+    transcode cc=1984 ec=1984 count=1108
+    transcode cc=1985 ec=1985 count=2
+    transcode cc=1986 ec=1986 count=1
+    transcode cc=1987 ec=1987 count=2
+    transcode cc=1988 ec=1988 count=3
+    transcode cc=1991 ec=1991 count=8
+    transcode cc=1992 ec=1992 count=2
+    transcode cc=1993 ec=1993 count=2
+    transcode cc=1994 ec=1994 count=4
+    transcode cc=1995 ec=1995 count=5
+    transcode cc=1996 ec=1996 count=1
+    transcode cc=1997 ec=1997 count=5
+    transcode cc=1998 ec=1998 count=9
+    transcode cc=2000 ec=2000 count=1
+    transcode cc=2001 ec=2001 count=15
+    transcode cc=2002 ec=2002 count=65
+    transcode cc=2003 ec=2003 count=30
+    transcode cc=2004 ec=2004 count=12
+    transcode cc=2028 ec=2028 count=6
+    transcode cc=2029 ec=2029 count=6
+    transcode cc=2030 ec=2030 count=5
+    transcode cc=2031 ec=2031 count=6
+    transcode cc=2032 ec=2032 count=7
+    transcode cc=2033 ec=2033 count=5
+    transcode cc=2100 ec=2100 count=2
+    transcode cc=2101 ec=2101 count=3
+    transcode cc=2102 ec=2102 count=3
+    transcode cc=2103 ec=2103 count=2
+    transcode cc=2104 ec=2104 count=2
+    transcode cc=2105 ec=2105 count=3
+    transcode cc=2444 ec=2444 count=865
+    transcode cc=2445 ec=2445 count=846
+    transcode cc=2446 ec=2446 count=1006
+    transcode cc=2447 ec=2447 count=793
+    transcode cc=2448 ec=2448 count=936
+    transcode cc=2449 ec=2449 count=816
+    transcode cc=2450 ec=2450 count=816
+    transcode cc=2451 ec=2451 count=917
+    transcode cc=2452 ec=2452 count=878
+    transcode cc=2453 ec=2453 count=784
+    transcode cc=2454 ec=2454 count=774
+    transcode cc=2455 ec=2455 count=859
+    transcode cc=2456 ec=2456 count=117
+    transcode cc=2457 ec=2457 count=9
+    transcode cc=2458 ec=2458 count=1
+    transcode cc=2459 ec=2459 count=95
+    transcode cc=2460 ec=2460 count=114
+    transcode cc=2461 ec=2461 count=4
+    transcode cc=2462 ec=2462 count=2
+    transcode cc=2463 ec=2463 count=96
+    transcode cc=2476 ec=2476 count=1052
+    transcode cc=2477 ec=2477 count=1387
+    transcode cc=2478 ec=2478 count=1484
+    transcode cc=2479 ec=2479 count=1212
+    transcode cc=2480 ec=2480 count=1437
+    transcode cc=2481 ec=2481 count=1141
+    transcode cc=2482 ec=2482 count=1380
+    transcode cc=2483 ec=2483 count=1177
+    transcode cc=2484 ec=2484 count=1291
+    transcode cc=2485 ec=2485 count=1100
+    transcode cc=2486 ec=2486 count=1281
+    transcode cc=2487 ec=2487 count=1106
+    transcode cc=2488 ec=2488 count=19
+    transcode cc=2489 ec=2489 count=178
+    transcode cc=2490 ec=2490 count=132
+    transcode cc=2491 ec=2491 count=8
+    transcode cc=2492 ec=2492 count=18
+    transcode cc=2493 ec=2493 count=175
+    transcode cc=2494 ec=2494 count=3
+    transcode cc=2495 ec=2495 count=138
+    transcode cc=2500 ec=2500 count=3
+    transcode cc=2540 ec=2540 count=220
+    transcode cc=2541 ec=2541 count=59
+    transcode cc=2542 ec=2542 count=132
+    transcode cc=2543 ec=2543 count=133
+    transcode cc=2544 ec=2544 count=37
+    transcode cc=2545 ec=2545 count=50
+    transcode cc=2546 ec=2546 count=33
+    transcode cc=2547 ec=2547 count=37
+    transcode cc=2548 ec=2548 count=53
+    transcode cc=2549 ec=2549 count=33
+    transcode cc=2550 ec=2550 count=36
+    transcode cc=2551 ec=2551 count=33
+    transcode cc=10040 ec=10040 count=9
+    transcode cc=10053 ec=10053 count=140
+    transcode cc=11790 ec=11790 count=141
+    transcode cc=11791 ec=11791 count=3
+    transcode cc=11805 ec=11805 count=2
+    transcode cc=11806 ec=11806 count=14
+    transcode cc=11818 ec=11818 count=444
+    transcode cc=11819 ec=11819 count=436
+    transcode cc=11820 ec=11820 count=485
+    transcode cc=11821 ec=11821 count=446
+    transcode cc=11822 ec=11822 count=439
+    transcode cc=11823 ec=11823 count=466
+    transcode cc=11824 ec=11824 count=347
+    transcode cc=11825 ec=11825 count=492
+    transcode cc=11826 ec=11826 count=403
+    transcode cc=11827 ec=11827 count=430
+    transcode cc=11828 ec=11828 count=439
+    transcode cc=11829 ec=11829 count=506
+    transcode cc=11830 ec=11830 count=426
+    transcode cc=11831 ec=11831 count=448
+    transcode cc=11832 ec=11832 count=446
+    transcode cc=11833 ec=11833 count=323
+    transcode cc=11835 ec=11835 count=1
+    transcode cc=11881 ec=11881 count=1
+    transcode cc=11882 ec=11882 count=1
+    transcode cc=11883 ec=11883 count=2
+    transcode cc=11886 ec=11886 count=1
+    transcode cc=11887 ec=11887 count=1
+    transcode cc=11888 ec=11888 count=1
+    transcode cc=11889 ec=11889 count=1
+    transcode cc=11890 ec=11890 count=1
+    transcode cc=11891 ec=11891 count=74
+    transcode cc=11892 ec=11892 count=114
+    transcode cc=11893 ec=11893 count=55
+    transcode cc=11894 ec=11894 count=54
+    transcode cc=11895 ec=11895 count=1
+    transcode cc=11896 ec=11896 count=1
+    transcode cc=11897 ec=11897 count=5
+    transcode cc=11899 ec=11899 count=59
+    transcode cc=11900 ec=11900 count=1
+    transcode cc=11901 ec=11901 count=1
+    transcode cc=11902 ec=11902 count=1
+    transcode cc=11903 ec=11903 count=6
+    transcode cc=11905 ec=11905 count=12
+    transcode cc=11906 ec=11906 count=59
+    transcode cc=11907 ec=11907 count=2
+    transcode cc=11908 ec=11908 count=1
+    transcode cc=11909 ec=11909 count=19
+    transcode cc=11913 ec=11913 count=113
+    transcode cc=11914 ec=11914 count=1
+    transcode cc=11919 ec=11919 count=19
+    transcode cc=11920 ec=11920 count=592
+    transcode cc=11922 ec=11922 count=1
+    transcode cc=11924 ec=11924 count=59
+    transcode cc=11925 ec=11925 count=51
+    transcode cc=11927 ec=11927 count=1
+    transcode cc=11928 ec=11928 count=1
+    transcode cc=11930 ec=11930 count=46
+    transcode cc=11931 ec=11931 count=16
+    transcode cc=11932 ec=11932 count=57
+    transcode cc=11933 ec=11933 count=117
+    transcode cc=11934 ec=11934 count=118
+    transcode cc=11935 ec=11935 count=118
+    transcode cc=11936 ec=11936 count=16
+    transcode cc=11937 ec=11937 count=88
+    transcode cc=11938 ec=11938 count=1236
+    transcode cc=11939 ec=11939 count=59
+    transcode cc=11940 ec=11940 count=105
+    transcode cc=11941 ec=11941 count=118
+    transcode cc=11942 ec=11942 count=117
+    transcode cc=11943 ec=11943 count=1294
+    transcode cc=11944 ec=11944 count=8
+    transcode cc=11945 ec=11945 count=10
+    transcode cc=11946 ec=11946 count=860
+    transcode cc=11947 ec=11947 count=61
+    transcode cc=11948 ec=11948 count=111
+    transcode cc=11951 ec=11951 count=4
+    transcode cc=11953 ec=11953 count=2
+    transcode cc=11957 ec=11957 count=1
+    transcode cc=11958 ec=11958 count=2
+    transcode cc=11959 ec=11959 count=1
+    transcode cc=11960 ec=11960 count=1
+    transcode cc=11961 ec=11961 count=77
+    transcode cc=11962 ec=11962 count=32
+    transcode cc=11963 ec=11963 count=66
+    transcode cc=11964 ec=11964 count=80
+    transcode cc=11965 ec=11965 count=125
+    transcode cc=11967 ec=11967 count=71
+    transcode cc=11968 ec=11968 count=109
+    transcode cc=11969 ec=11969 count=123
+    transcode cc=11971 ec=11971 count=1
+    transcode cc=11972 ec=11972 count=36
+    transcode cc=11973 ec=11973 count=26
+    transcode cc=11974 ec=11974 count=4
+    transcode cc=11975 ec=11975 count=9
+    transcode cc=11976 ec=11976 count=1176
+    transcode cc=11977 ec=11977 count=12
+    transcode cc=11978 ec=11978 count=2
+    transcode cc=11979 ec=11979 count=1
+    transcode cc=11980 ec=11980 count=22
+    transcode cc=11982 ec=11982 count=25
+    transcode cc=11983 ec=11983 count=2
+    transcode cc=11984 ec=11984 count=2
+    transcode cc=11985 ec=11985 count=43
+    transcode cc=11986 ec=11986 count=50
+    transcode cc=11987 ec=11987 count=3
+    transcode cc=11988 ec=11988 count=12
+    transcode cc=11989 ec=11989 count=2
+    transcode cc=11990 ec=11990 count=2
+    transcode cc=11991 ec=11991 count=150
+    transcode cc=11992 ec=11992 count=162
+    transcode cc=11993 ec=11993 count=7
+    transcode cc=11994 ec=11994 count=16
+    transcode cc=11995 ec=11995 count=56
+    transcode cc=12003 ec=12003 count=22
+    transcode cc=12004 ec=12004 count=1
+    transcode cc=12005 ec=12005 count=10
+    transcode cc=12006 ec=12006 count=16
+    transcode cc=12007 ec=12007 count=3
+    transcode cc=12008 ec=12008 count=1
+    transcode cc=12011 ec=12011 count=825
+    transcode cc=12012 ec=12012 count=2
+    transcode cc=12013 ec=12013 count=30
+    transcode cc=12014 ec=12014 count=30
+    transcode cc=12015 ec=12015 count=1
+    transcode cc=12016 ec=12016 count=1
+    transcode cc=12017 ec=12017 count=1
+    transcode cc=12018 ec=12018 count=8
+    transcode cc=12019 ec=12019 count=3
+    transcode cc=12020 ec=12020 count=6
+    transcode cc=12023 ec=12023 count=1
+    transcode cc=12024 ec=12024 count=140
+    transcode cc=12025 ec=12025 count=48
+    transcode cc=12026 ec=12026 count=42
+    transcode cc=12027 ec=12027 count=16
+    transcode cc=12029 ec=12029 count=2
+    transcode cc=12030 ec=12030 count=5
+    transcode cc=12032 ec=12032 count=974
+    transcode cc=12034 ec=12034 count=86
+    transcode cc=12035 ec=12035 count=2
+    transcode cc=12038 ec=12038 count=4
+    transcode cc=12040 ec=12040 count=1
+    transcode cc=12041 ec=12041 count=48
+    transcode cc=12042 ec=12042 count=1
+    transcode cc=12043 ec=12043 count=2
+    transcode cc=12044 ec=12044 count=3
+    transcode cc=12045 ec=12045 count=1107
+    transcode cc=12046 ec=12046 count=657
+    transcode cc=15088 ec=15088 count=5127
+    transcode cc=15089 ec=15089 count=7376
+    transcode cc=15090 ec=15090 count=6648
+    transcode cc=15091 ec=15091 count=5984
+    transcode cc=15092 ec=15092 count=5738
+    transcode cc=15093 ec=15093 count=5313
+    transcode cc=15094 ec=15094 count=5577
+    transcode cc=15095 ec=15095 count=5228
+    transcode cc=15096 ec=15096 count=5216
+    transcode cc=15809 ec=15809 count=810
+    transcode cc=15810 ec=15810 count=1586
+    transcode cc=15811 ec=15811 count=1839
+    transcode cc=15812 ec=15812 count=184
+    transcode cc=15813 ec=15813 count=111
+    transcode cc=15814 ec=15814 count=130
+    transcode cc=15815 ec=15815 count=158
+    transcode cc=15816 ec=15816 count=156
+    transcode cc=15817 ec=15817 count=206
+    transcode cc=15818 ec=15818 count=197
+    transcode cc=15819 ec=15819 count=6
+    transcode cc=15821 ec=15821 count=2
+    transcode cc=15822 ec=15822 count=8
+    transcode cc=15823 ec=15823 count=268
+    transcode cc=15824 ec=15824 count=2
+    transcode cc=15825 ec=15825 count=207
+    transcode cc=15826 ec=15826 count=196
+    transcode cc=15827 ec=15827 count=171
+    transcode cc=15828 ec=15828 count=3
+    transcode cc=15829 ec=15829 count=191
+    transcode cc=15830 ec=15830 count=172
+    transcode cc=15831 ec=15831 count=184
+    transcode cc=15832 ec=15832 count=189
+    transcode cc=15833 ec=15833 count=31
+    transcode cc=15834 ec=15834 count=6
+    transcode cc=15835 ec=15835 count=2722
+    transcode cc=15836 ec=15836 count=1541
+    transcode cc=15837 ec=15837 count=751
+    transcode cc=15838 ec=15838 count=2719
+    transcode cc=15839 ec=15839 count=2883
+    transcode cc=15840 ec=15840 count=501
+    transcode cc=15841 ec=15841 count=554
+    transcode cc=15842 ec=15842 count=2487
+    transcode cc=15843 ec=15843 count=1648
+    transcode cc=15844 ec=15844 count=1685
+    transcode cc=15845 ec=15845 count=1780
+    transcode cc=15846 ec=15846 count=1758
+    transcode cc=15847 ec=15847 count=30
+    transcode cc=15848 ec=15848 count=1581
+    transcode cc=15849 ec=15849 count=19442
+    transcode cc=15850 ec=15850 count=18231
+    transcode cc=15851 ec=15851 count=18140
+    transcode cc=15852 ec=15852 count=18556
+    transcode cc=15853 ec=15853 count=10019
+    transcode cc=15854 ec=15854 count=10012
+    transcode cc=15855 ec=15855 count=9984
+    transcode cc=15856 ec=15856 count=9181
+    transcode cc=15857 ec=15857 count=24
+    transcode cc=15858 ec=15858 count=13
+    transcode cc=15859 ec=15859 count=1
+    transcode cc=15860 ec=15860 count=5
+    transcode cc=15861 ec=15861 count=7
+    transcode cc=15862 ec=15862 count=2
+    transcode cc=15863 ec=15863 count=12
+    transcode cc=15864 ec=15864 count=6
+    transcode cc=15865 ec=15865 count=8
+    transcode cc=15866 ec=15866 count=15
+    transcode cc=15867 ec=15867 count=21
+    transcode cc=15868 ec=15868 count=14
+    transcode cc=15869 ec=15869 count=22
+    transcode cc=15870 ec=15870 count=2
+    transcode cc=15874 ec=15874 count=2
+    transcode cc=15877 ec=15877 count=14
+    transcode cc=15879 ec=15879 count=1
+    transcode cc=15880 ec=15880 count=4
+    transcode cc=15940 ec=15940 count=5
+    transcode cc=16308 ec=16308 count=158
+    transcode cc=16309 ec=16309 count=278
+    transcode cc=16310 ec=16310 count=239
+    transcode cc=16311 ec=16311 count=100
+    transcode cc=16312 ec=16312 count=51
+    transcode cc=16313 ec=16313 count=83
+    transcode cc=16314 ec=16314 count=94
+    transcode cc=16315 ec=16315 count=73
+    transcode cc=16316 ec=16316 count=92
+    transcode cc=16317 ec=16317 count=64
+    transcode cc=16318 ec=16318 count=85
+    transcode cc=16319 ec=16319 count=103
+    transcode cc=16321 ec=16321 count=4
+    transcode cc=16322 ec=16322 count=3
+    transcode cc=16323 ec=16323 count=2
+    transcode cc=16325 ec=16325 count=3
+    transcode cc=16326 ec=16326 count=1
+    transcode cc=16327 ec=16327 count=1
+    transcode cc=16328 ec=16328 count=2
+    transcode cc=16332 ec=16332 count=1668
+    transcode cc=16333 ec=16333 count=1093
+    transcode cc=16334 ec=16334 count=1689
+    transcode cc=16335 ec=16335 count=1205
+    transcode cc=16337 ec=16337 count=644
+    transcode cc=16368 ec=16368 count=48
+    transcode cc=16376 ec=16376 count=46343
+    transcode cc=16377 ec=16377 count=4920
+    transcode cc=16378 ec=16378 count=5122
+    transcode cc=16379 ec=16379 count=5550
+}
+terrain_definition {
+    material id=0 name="void_no_draw" primary_texture_id=2000000 {
+        alias id=2 count_index=0 flags=8589934848
+        alias id=0 count_index=1 flags=8589934656
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000000 path="02000000_Black_Void_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000001 path="02000001_Black_Void_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=1 name="grass" primary_texture_id=2000011 {
+        alias id=3 count_index=0 flags=0
+        alias id=561 count_index=1 flags=64
+        alias id=433 count_index=2 flags=65536
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000010 path="02000010_Grass_C.tga" repetition=10.000000 type="Undefined"
+        layer texture_id=2000011 path="02000011_Grass_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=2 name="dirt" primary_texture_id=2000020 {
+        alias id=117 count_index=0 flags=4294967296
+        alias id=119 count_index=1 flags=64
+        alias id=0 count_index=2 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000020 path="02000020_Dirt_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000021 path="02000021_Dirt_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=3 name="jungle" primary_texture_id=2000030 {
+        alias id=172 count_index=0 flags=0
+        alias id=0 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000030 path="02000030_Jungle_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000031 path="02000031_Jungle_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=4 name="forest" primary_texture_id=2000040 {
+        alias id=196 count_index=0 flags=0
+        alias id=0 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000040 path="02000040_Forest_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000041 path="02000041_Forest_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=5 name="water" primary_texture_id=2000051 {
+        alias id=168 count_index=0 flags=192
+        alias id=16368 count_index=1 flags=0
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000013 path="01000013_water_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000051 path="02000051_water.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000017 path="01000017_cube3.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=6 name="rock" primary_texture_id=2000061 {
+        alias id=556 count_index=0 flags=64
+        alias id=431 count_index=1 flags=0
+        alias id=432 count_index=2 flags=65792
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000060 path="02000060_Rock_A.tga" repetition=9.000000 type="Undefined"
+        layer texture_id=2000061 path="02000061_Rock_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=24.000000 type="Undefined"
+    }
+    material id=7 name="sand" primary_texture_id=2000070 {
+        alias id=22 count_index=0 flags=0
+        alias id=25 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000070 path="02000070_Sand_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000071 path="02000071_Sand_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=8 name="snow" primary_texture_id=2000080 {
+        alias id=268 count_index=0 flags=64
+        alias id=282 count_index=1 flags=0
+        shader name="UOBumpMapTerrainLayer"
+        layer texture_id=2000080 path="02000080_Snow_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000081 path="02000081_Snow_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1000013 path="01000013_water_alpha.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=1000014 path="01000014_cube0.tga" repetition=2.000000 type="Undefined"
+    }
+    material id=9 name="cobblestone" primary_texture_id=2000090 {
+        alias id=1001 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000090 path="02000090_Cobblestone_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000091 path="02000091_Cobblestone_B.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=1000004 path="01000004_noise_alpha_sharp.tga" repetition=48.000000 type="Undefined"
+    }
+    material id=10 name="lava" primary_texture_id=2000100 {
+        alias id=500 count_index=0 flags=64
+        alias id=10010 count_index=1 flags=0
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000012 path="01000012_lava_normal.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000100 path="02000100_Lava_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000100 path="02000100_Lava_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000101 path="02000101_Lava_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=11 name="Woodenfloor (EW)" primary_texture_id=2000110 {
+        alias id=1030 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=12 name="Woodenfloor (NS)" primary_texture_id=2000120 {
+        alias id=1034 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=13 name="cave_floor" primary_texture_id=2000131 {
+        alias id=581 count_index=0 flags=0
+        alias id=0 count_index=1 flags=80
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=14 name="cave_wall_ns" primary_texture_id=2000140 {
+        alias id=614 count_index=0 flags=80
+        alias id=700 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000140 path="02000140_CaveWall_Slope_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000141 path="02000141_CaveWall_Slope_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=15 name="cave_wall_NW-SE" primary_texture_id=2000151 {
+        alias id=604 count_index=0 flags=80
+        alias id=702 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000151 path="02000151_CaveWall_Slope_NW-SE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000151 path="02000151_CaveWall_Slope_NW-SE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=16 name="cave_wall_ew" primary_texture_id=2000160 {
+        alias id=602 count_index=0 flags=80
+        alias id=704 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000160 path="02000160_CaveWall_Slope_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000161 path="02000161_CaveWall_Slope_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=17 name="cavewall_paintings (EW)" primary_texture_id=2000170 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000170 path="02000170_Cavewall_Paiting_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000171 path="02000171_Cavewall_Painting_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=18 name="cavewall_paintings (NS)" primary_texture_id=2000180 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000180 path="02000180_Cavewall_Paiting_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000181 path="02000181_Cavewall_Paiting_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=19 name="planks in sand (EW)" primary_texture_id=2000190 {
+        alias id=662 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000190 path="02000190_Plankwood_Sandy_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000191 path="02000191_Plankwood_Sandy_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=20 name="furrows (NS)" primary_texture_id=2000200 {
+        alias id=9 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000200 path="02000200_Furrow_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000201 path="02000201_Furrow_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=21 name="furrows (EW)" primary_texture_id=2000210 {
+        alias id=336 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000210 path="02000210_Furrow_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000211 path="02000211_Furrow_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=22 name="Wooden Planks (EW)" primary_texture_id=2000230 {
+        alias id=1038 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000230 path="02000230_Wood_Planks_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000231 path="02000231_Wood_Planks_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=23 name="Wooden Planks (NS)" primary_texture_id=2000220 {
+        alias id=1042 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000220 path="02000220_Wood_Planks_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000221 path="02000221_Wood_Planks_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=24 name="flagstone (tan)" primary_texture_id=2000240 {
+        alias id=513 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000240 path="02000240_Flagstone_Tan_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000241 path="02000241_Flagstone_Tan_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=25 name="stone (light) Pavers" primary_texture_id=2000250 {
+        alias id=1078 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000250 path="02000250_Stone_Light_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000251 path="02000251_Stone_Light_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=26 name="stone (medium) Pavers" primary_texture_id=2000260 {
+        alias id=1082 count_index=0 flags=0
+        alias id=10171 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000260 path="02000260_Stone_Medium_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000261 path="02000261_Stone_Medium_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=27 name="stone (darker) Pavers" primary_texture_id=2000270 {
+        alias id=1086 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000270 path="02000270_Stone_Dark_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000271 path="02000271_Stone_Dark_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=28 name="stone (light tan) Pavers" primary_texture_id=2000280 {
+        alias id=1090 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000280 path="02000280_Stone_Tan_Light_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000281 path="02000281_Stone_Tan_Light_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=29 name="stone (dark tan) Pavers" primary_texture_id=2000290 {
+        alias id=1092 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000290 path="02000290_Stone_Tan_Dark_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000291 path="02000291_Stone_Tan_Dark_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=30 name="light sand stone brick (EW)" primary_texture_id=2000300 {
+        alias id=1094 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000301 path="02000301_Brick_Sandstone_Light_16rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=31 name="light sand stone brick (NS)" primary_texture_id=2000310 {
+        alias id=1098 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000311 path="02000311_Brick_Sandstone_Light_16rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=32 name="dark sand stone brick  (EW)" primary_texture_id=2000320 {
+        alias id=1102 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000320 path="02000320_Brick_Sandstone_Dark_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000321 path="02000321_Brick_Sandstone_Dark_16rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=33 name="dark sand stone brick (NS)" primary_texture_id=2000330 {
+        alias id=1106 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000330 path="02000330_Brick_Sandstone_Dark_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000331 path="02000331_Brick_Sandstone_Dark_16rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=34 name="red brick3 (mixed direction)" primary_texture_id=2000340 {
+        alias id=1146 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000340 path="02000340_Brick_Red_12rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000341 path="02000341_Brick_Red_12rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=35 name="Red brick (EW)" primary_texture_id=2000350 {
+        alias id=1150 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000350 path="02000350_Brick_Red_12rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000351 path="02000351_Brick_Red_12rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=36 name="Red brick (NS)" primary_texture_id=2000360 {
+        alias id=1152 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000360 path="02000360_Brick_Red_12rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000361 path="02000361_Brick_Red_12rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=37 name="marble (grey)" primary_texture_id=1299 {
+        alias id=1158 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=1299 path="00001299_Floor_Marble_White.tga" repetition=2.500000 type="Undefined"
+        layer texture_id=1300 path="00001300_Floor_Marble_White.tga" repetition=2.500000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=38 name="brown brick4 (EW)" primary_texture_id=2000380 {
+        alias id=1167 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000381 path="02000381_Brick_Brown_16rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=39 name="Brown brick (NS)" primary_texture_id=2000390 {
+        alias id=1171 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000391 path="02000391_Brick_Brown_16rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=40 name="marble (teal)" primary_texture_id=2000400 {
+        alias id=10040 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000400 path="02000400_Tile_Marble_Teal_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000401 path="02000401_Tile_Marble_Teal_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=41 name="marble (white)" primary_texture_id=2000410 {
+        alias id=1257 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000410 path="02000410_Tile_Marble_White_A.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=2000411 path="02000411_Tile_Marble_White_B.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=42 name="flagstone (grey)" primary_texture_id=2000420 {
+        alias id=1259 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000420 path="02000420_Flagstone_Grey_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000421 path="02000421_Flagstone_Grey_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=43 name="marble (no tiles)" primary_texture_id=2000430 {
+        alias id=1263 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000430 path="02000430_Tile_Marble_NoTile_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000431 path="02000431_Tile_Marble_NoTile_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=44 name="cave exit 1" primary_texture_id=2000440 {
+        alias id=0 count_index=0 flags=64
+        alias id=10044 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000440 path="02000440_Cave_Exit.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000440 path="02000440_Cave_Exit.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=45 name="cave exit 2" primary_texture_id=2000450 {
+        alias id=2100 count_index=0 flags=64
+        alias id=2241 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000450 path="02000450_Cave_Exit_Teeth.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000450 path="02000450_Cave_Exit_Teeth.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=46 name="embank (EW)" primary_texture_id=2000580 {
+        alias id=2453 count_index=0 flags=64
+        alias id=10046 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000580 path="02000580_Dirt_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000581 path="02000581_Dirt_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=47 name="embank (NS)" primary_texture_id=2000600 {
+        alias id=0 count_index=0 flags=64
+        alias id=10047 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000600 path="02000600_Dirt_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000601 path="02000601_Dirt_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=48 name="swamp (Type 1 solid)" primary_texture_id=2000480 {
+        alias id=2023 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=49 name="acid (solid)" primary_texture_id=2000490 {
+        alias id=11790 count_index=0 flags=640
+        alias id=11860 count_index=1 flags=704
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000012 path="01000012_lava_normal.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=50 name="obsidian" primary_texture_id=2000500 {
+        alias id=16332 count_index=0 flags=64
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000500 path="02000500_Obsidian_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000501 path="02000501_Obsidian_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=51 name="obsidian_rev" primary_texture_id=2000510 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000510 path="02000510_Obsidian_Rev_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000511 path="02000511_Obsidian_Rev_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=52 name="tan no-name" primary_texture_id=2000520 {
+        alias id=76 count_index=0 flags=64
+        alias id=10052 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000520 path="02000520_Tan_No_Name.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000520 path="02000520_Tan_No_Name.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=53 name="stars" primary_texture_id=2000532 {
+        alias id=506 count_index=0 flags=64
+        alias id=10053 count_index=1 flags=0
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=2000532 path="02000532_Stars_C.tga" repetition=24.000000 type="Undefined"
+        layer texture_id=2000530 path="02000530_Stars_A.tga" repetition=0.500000 type="Undefined"
+        layer texture_id=2000530 path="02000530_Stars_A.tga" repetition=0.500000 type="Undefined"
+        layer texture_id=2000531 path="02000531_Stars_B.tga" repetition=24.000000 type="Undefined"
+    }
+    material id=54 name="Sand Cliff E-W" primary_texture_id=2000540 {
+        alias id=26 count_index=0 flags=64
+        alias id=10054 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000540 path="02000540_Sand_Cliff_EW_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000541 path="02000541_Sand_Cliff_EW_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=55 name="Sand Cliff NW-SE" primary_texture_id=2000550 {
+        alias id=28 count_index=0 flags=64
+        alias id=10055 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000550 path="02000550_Sand_Cliff_NWtoSE_A.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=2000551 path="02000551_Sand_Cliff_NWtoSE_B.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=56 name="Sand Cliff N-S" primary_texture_id=2000560 {
+        alias id=27 count_index=0 flags=64
+        alias id=10056 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000560 path="02000560_Sand_Cliff_NS_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000561 path="02000561_Sand_Cliff_NS_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=57 name="Sand Cliff NE-SW" primary_texture_id=2000570 {
+        alias id=30 count_index=0 flags=64
+        alias id=10057 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000570 path="02000570_Sand_Cliff_NEtoSW_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000571 path="02000571_Sand_Cliff_NEtoSW_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=58 name=" Dirt Cliff E-W" primary_texture_id=2000580 {
+        alias id=141 count_index=0 flags=64
+        alias id=10058 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000580 path="02000580_Dirt_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000581 path="02000581_Dirt_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=59 name=" Dirt Cliff NW-SE" primary_texture_id=2000590 {
+        alias id=149 count_index=0 flags=64
+        alias id=10059 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000590 path="02000590_Dirt_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000591 path="02000591_Dirt_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=60 name="Dirt Cliff N-S" primary_texture_id=2000600 {
+        alias id=145 count_index=0 flags=64
+        alias id=10060 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000600 path="02000600_Dirt_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000601 path="02000601_Dirt_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=61 name="Snow E-W" primary_texture_id=2000610 {
+        alias id=378 count_index=0 flags=0
+        alias id=385 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000610 path="02000610_Snow_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000611 path="02000611_Snow_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=62 name="Snow NW-SE" primary_texture_id=2000620 {
+        alias id=377 count_index=0 flags=0
+        alias id=380 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000620 path="02000620_Snow_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000621 path="02000621_Snow_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=63 name="Snow N-S" primary_texture_id=2000630 {
+        alias id=379 count_index=0 flags=0
+        alias id=384 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000630 path="02000630_Snow_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000631 path="02000631_Snow_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=64 name="Snow NE-SW" primary_texture_id=2000640 {
+        alias id=381 count_index=0 flags=64
+        alias id=10064 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000640 path="02000640_Snow_Cliff_NEtoSW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000641 path="02000641_Snow_Cliff_NEtoSW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=65 name="Embank Snow E-W" primary_texture_id=2000610 {
+        alias id=791 count_index=0 flags=64
+        alias id=10065 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000610 path="02000610_Snow_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000611 path="02000611_Snow_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=66 name="Embank Snow  NW-SE" primary_texture_id=2000620 {
+        alias id=775 count_index=0 flags=64
+        alias id=10066 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000620 path="02000620_Snow_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000621 path="02000621_Snow_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=67 name="Embank Snow N-S" primary_texture_id=2000630 {
+        alias id=790 count_index=0 flags=64
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000630 path="02000630_Snow_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000631 path="02000631_Snow_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=68 name="planks in sand (NS)" primary_texture_id=2000680 {
+        alias id=663 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000680 path="02000680_Plankwood_Sandy_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000681 path="02000681_Plankwood_Sandy_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=69 name="Swamp2" primary_texture_id=2000480 {
+        alias id=10069 count_index=0 flags=16
+        alias id=15811 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=70 name=" Swamp Water" primary_texture_id=2000700 {
+        alias id=15849 count_index=0 flags=0
+        alias id=15870 count_index=1 flags=64
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=2000703 path="02000703_Swamp_Water_D.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000700 path="02000700_Swamp_Water_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000702 path="02000702_Swamp_Water_C.tga" repetition=2.500000 type="Undefined"
+        layer texture_id=2000704 path="02000704_Swamp_Water_E.tga" repetition=10.000000 type="Undefined"
+    }
+    material id=71 name="Dark Grey Tiles" primary_texture_id=2000370 {
+        alias id=10071 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000370 path="02000370_Tile_Marble_Grey_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000371 path="02000371_Tile_Marble_Grey_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=72 name="tile (terra cotta) Plain" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=73 name="tile (terra cotta) Ornate" primary_texture_id=2000720 {
+        alias id=1071 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1267 path="00001267_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=74 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=75 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=76 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=77 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=78 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1269 path="00001269_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=79 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1270 path="00001270_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=80 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1271 path="00001271_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=81 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=82 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=83 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=84 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=85 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=86 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=87 name="tile (terra cotta)" primary_texture_id=2000720 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000720 path="02000720_Tile_TerraCotta_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000721 path="02000721_Tile_TerraCotta_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1268 path="00001268_red_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=88 name="tile (blue slate) Plain" primary_texture_id=2000880 {
+        alias id=1064 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=89 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=1054 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1266 path="00001266_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=90 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=91 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=92 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=93 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=94 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=95 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=96 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1261 path="00001261_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=97 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1258 path="00001258_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=98 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=99 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=100 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=101 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=102 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=103 name="Tile (blue slate) Ornate" primary_texture_id=2000880 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000880 path="02000880_Tile_Blue_Slate_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000881 path="02000881_Tile_Blue_Slate_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1260 path="00001260_blue_tiles.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=104 name="brown Deco Tile" primary_texture_id=2001040 {
+        alias id=1162 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001040 path="02001040_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001041 path="02001041_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=105 name="brown Deco Tile" primary_texture_id=2001050 {
+        alias id=1163 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001050 path="02001050_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001051 path="02001051_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=106 name="brown Deco Tile" primary_texture_id=2001060 {
+        alias id=1164 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001060 path="02001060_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001061 path="02001061_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=107 name="brown Deco Tile" primary_texture_id=2001070 {
+        alias id=1165 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001070 path="02001070_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001071 path="02001071_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=108 name="brown Deco Tile" primary_texture_id=2001080 {
+        alias id=1166 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001080 path="02001080_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001081 path="02001081_brown_deco_tile.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=109 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=110 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=111 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=112 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=113 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=114 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=115 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=116 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=117 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=118 name="DataWorldArt\\woodenfloor edges (EW)" primary_texture_id=2000110 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000110 path="02000110_Wood_Floor_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000111 path="02000111_Wood_Floor_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=119 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=120 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=121 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=122 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=123 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=124 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=125 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=126 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=127 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=128 name="woodenfloor edges (NS)" primary_texture_id=2000120 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000120 path="02000120_Wood_Floor_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000121 path="02000121_Wood_Floor_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=129 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15809 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12810 path="00012810_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=130 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15810 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12904 path="00012904_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=131 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15833 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12903 path="00012903_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=132 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15835 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12901 path="00012901_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=133 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15836 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12900 path="00012900_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=134 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15838 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12898 path="00012898_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=135 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15839 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12897 path="00012897_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=136 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15840 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12902 path="00012902_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=137 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15841 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12895 path="00012895_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=138 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15842 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12894 path="00012894_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=139 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15843 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12893 path="00012893_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=140 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15844 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12892 path="00012892_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=141 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15845 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12891 path="00012891_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=142 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15846 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12890 path="00012890_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=143 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15847 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12889 path="00012889_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=144 name="Swamp2 edges" primary_texture_id=2000480 {
+        alias id=15848 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000480 path="02000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000481 path="02000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=12888 path="00012888_Swamp.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=145 name="leaves" primary_texture_id=2001450 {
+        alias id=15088 count_index=0 flags=64
+        alias id=10145 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001450 path="02001450_BackGround_Forest_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001451 path="02001451_BackGround_Forest_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=146 name=" Dark Rock" primary_texture_id=2001460 {
+        alias id=543 count_index=0 flags=64
+        alias id=10146 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001460 path="02001460_Rock_Dark_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001461 path="02001461_Rock_Dark_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=147 name="tree_bark_EW" primary_texture_id=2001470 {
+        alias id=11881 count_index=0 flags=64
+        alias id=11884 count_index=1 flags=512
+        alias id=0 count_index=2 flags=128
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001470 path="02001470_Tree_Bark_Diag.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001471 path="02001471_Tree_Bark_Diag_Dark.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=148 name="tree_path_EW" primary_texture_id=2001480 {
+        alias id=11891 count_index=0 flags=512
+        alias id=12031 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001480 path="02001480_Tree_Path_Smooth.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001481 path="02001481_Tree_Path_Rough.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=149 name="tree_bark_horz" primary_texture_id=2001490 {
+        alias id=11906 count_index=0 flags=64
+        alias id=11885 count_index=1 flags=512
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001490 path="02001490_Tree_Bark_Horz.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001491 path="02001491_Tree_Bark_Dark_Horz.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=150 name="tree_path_horz" primary_texture_id=2001500 {
+        alias id=11920 count_index=0 flags=512
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001500 path="02001500_Tree_Path_Smooth_Horz.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001501 path="02001501_Tree_Path_Rough_Horz.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=151 name="tree_bark_vert" primary_texture_id=2001510 {
+        alias id=11972 count_index=0 flags=64
+        alias id=12006 count_index=1 flags=512
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001510 path="02001510_Tree_Bark_Vert.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001511 path="02001511_Tree_Bark_Dark_Vert.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=152 name="tree_path_vert" primary_texture_id=2001520 {
+        alias id=11975 count_index=0 flags=64
+        alias id=11976 count_index=1 flags=512
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001520 path="02001520_Tree_Path_Smooth_Vert.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001521 path="02001521_Tree_Path_Rough_Vert.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=153 name="tree_bark_NS" primary_texture_id=2001530 {
+        alias id=11983 count_index=0 flags=64
+        alias id=10153 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001530 path="02001530_Tree_Bark_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2001531 path="02001531_Tree_Bark_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=154 name="rock hole" primary_texture_id=2001550 {
+        alias id=0 count_index=0 flags=64
+        alias id=475 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001550 path="02001550_Rock_Hole_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2001550 path="02001550_Rock_Hole_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=155 name="Dirt with Large Rocks" primary_texture_id=2001540 {
+        alias id=113 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001540 path="02001540_Dirt_Rocks_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2001541 path="02001541_Dirt_Rocks_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=156 name="Light Sandstone corners" primary_texture_id=2000310 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=157 name="Light Sandstone corners" primary_texture_id=2000300 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=158 name="Light Sandstone corners" primary_texture_id=2000310 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=159 name="Light Sandstone corners" primary_texture_id=2000300 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=160 name="Dark Sandstone corners" primary_texture_id=2000330 {
+        alias id=1293 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000330 path="02000330_Brick_Sandstone_Dark_16rows_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000331 path="02000331_Brick_Sandstone_Dark_16rows_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=161 name="Dark Sandstone corners" primary_texture_id=2000320 {
+        alias id=1294 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000320 path="02000320_Brick_Sandstone_Dark_16rows_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000321 path="02000321_Brick_Sandstone_Dark_16rows_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=162 name="Dark Sandstone corners" primary_texture_id=2000330 {
+        alias id=1295 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000330 path="02000330_Brick_Sandstone_Dark_16rows_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000331 path="02000331_Brick_Sandstone_Dark_16rows_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=163 name="Dark Sandstone corners" primary_texture_id=2000320 {
+        alias id=1296 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000320 path="02000320_Brick_Sandstone_Dark_16rows_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000321 path="02000321_Brick_Sandstone_Dark_16rows_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=164 name="Brown Brick Corners" primary_texture_id=2000390 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=165 name="Brown Brick Corners" primary_texture_id=2000390 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000390 path="02000390_Brick_Brown_16rows_NS_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=166 name="Brown Brick Corners" primary_texture_id=2000380 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=167 name="Brown Brick Corners" primary_texture_id=2000380 {
+        alias id=0 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000380 path="02000380_Brick_Brown_16rows_EW_A.tga" repetition=1.000000 type="Undefined"
+    }
+    material id=168 name="acid with Branch" primary_texture_id=2000490 {
+        alias id=11834 count_index=0 flags=640
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000012 path="01000012_lava_normal.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=169 name="Acid with skull" primary_texture_id=2000490 {
+        alias id=11835 count_index=0 flags=640
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000012 path="01000012_lava_normal.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=170 name="Black" primary_texture_id=2001700 {
+        alias id=430 count_index=0 flags=256
+        alias id=580 count_index=1 flags=80
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001700 path="02001700_Black.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2001700 path="02001700_Black.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=171 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=586 count_index=0 flags=80
+        alias id=10171 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=172 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10172 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=173 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10173 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=174 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10174 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=175 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10175 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=176 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10176 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=177 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10177 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=178 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10178 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=179 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10179 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=180 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10180 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=181 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10181 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=182 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10182 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=183 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10183 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=184 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10184 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=185 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10185 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=186 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10186 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=187 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10187 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=188 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10188 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=189 name="Cave_Transition" primary_texture_id=2000131 {
+        alias id=0 count_index=0 flags=80
+        alias id=10189 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=190 name="Road" primary_texture_id=2001900 {
+        alias id=16376 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001900 path="02001900_Road.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000006 path="01000006_UO_dirt_02_256.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=191 name="stone (moss) Pavers" primary_texture_id=2000250 {
+        alias id=15942 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000250 path="02000250_Stone_Light_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=3000262 path="03000262_Stone_Moss_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=192 name="stone (mossDark) Pavers" primary_texture_id=2000271 {
+        alias id=15958 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000271 path="02000271_Stone_Dark_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000272 path="02000272_Stone_Dark_Moss.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=193 name="CoolLava" primary_texture_id=2000103 {
+        alias id=3 count_index=0 flags=0
+        alias id=561 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000103 path="02000103_Lava_Grey.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000103 path="02000103_Lava_Embers.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=194 name="Void_Destruction" primary_texture_id=2000103 {
+        alias id=1309 count_index=0 flags=4294967296
+        alias id=1325 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000103 path="02000103_Lava_Grey.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000104 path="02000104_Void_Embers.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=195 name="Void" primary_texture_id=2000531 {
+        alias id=12558 count_index=0 flags=64
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=2000531 path="02000531_Stars_B.tga" repetition=24.000000 type="Undefined"
+        layer texture_id=2000002 path="02000002_Black_Void_C.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000002 path="02000002_Black_Void_C.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000531 path="02000531_Stars_B.tga" repetition=24.000000 type="Undefined"
+    }
+    material id=196 name="rock hole blend" primary_texture_id=2001550 {
+        alias id=0 count_index=0 flags=0
+        alias id=504 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2001550 path="02001550_Rock_Hole_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2001550 path="02001550_Rock_Hole_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=197 name="eodon clouds" primary_texture_id=16109 {
+        alias id=0 count_index=0 flags=0
+        alias id=16109 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=16109 path="00016109_cloud_a.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=16109 path="00016109_cloud_a.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=198 name="eodon clouds" primary_texture_id=16110 {
+        alias id=0 count_index=0 flags=0
+        alias id=16110 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=16110 path="00016110_cloud_b.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=16110 path="00016110_cloud_b.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=199 name="eodon clouds" primary_texture_id=16111 {
+        alias id=0 count_index=0 flags=0
+        alias id=16111 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=16111 path="00016111_cloud_c.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=16111 path="00016111_cloud_c.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=200 name="eodon clouds" primary_texture_id=16113 {
+        alias id=0 count_index=0 flags=0
+        alias id=16113 count_index=1 flags=256
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=16113 path="00016113_cloud_d.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=16113 path="00016113_cloud_d.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=201 name="Stone_Pavers_Transition" primary_texture_id=2000260 {
+        alias id=1379 count_index=0 flags=80
+        alias id=10171 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000260 path="02000260_Stone_Medium_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000261 path="02000261_Stone_Medium_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=202 name="crystal" primary_texture_id=2000882 {
+        alias id=14439 count_index=0 flags=0
+        alias id=14442 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000882 path="02000882_Crystal_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000883 path="02000883_Crystal_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=203 name="Snow sand" primary_texture_id=3000080 {
+        alias id=14466 count_index=0 flags=0
+        alias id=14472 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=204 name="Snow Sand Cliff E-W" primary_texture_id=3000080 {
+        alias id=14449 count_index=0 flags=64
+        alias id=14450 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=205 name="Snow Sand Cliff NW-SE" primary_texture_id=3000080 {
+        alias id=14443 count_index=0 flags=64
+        alias id=14466 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=206 name="Snow Sand Cliff N-S" primary_texture_id=3000080 {
+        alias id=14443 count_index=0 flags=64
+        alias id=14466 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=207 name="Snow Sand Cliff NE-SW" primary_texture_id=3000080 {
+        alias id=14458 count_index=0 flags=64
+        alias id=14459 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=208 name="Snow Dirt Path NE-SW" primary_texture_id=3000080 {
+        alias id=14478 count_index=0 flags=64
+        alias id=14479 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=209 name="Snow Grass Path NE-SW" primary_texture_id=3000080 {
+        alias id=14480 count_index=0 flags=64
+        alias id=14481 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=210 name="Snow Stone Path NE-SW" primary_texture_id=3000080 {
+        alias id=14482 count_index=0 flags=64
+        alias id=14483 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=211 name="Snow Sand Path NE-SW" primary_texture_id=3000080 {
+        alias id=14484 count_index=0 flags=64
+        alias id=14485 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=3000080 path="03000080_Snow_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=3000081 path="03000081_Snow_B.tga.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000100 path="01000100_noise_alpha_B.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2001 name="decimated_grass" primary_texture_id=5000011 {
+        alias id=13000 count_index=0 flags=0
+        alias id=13026 count_index=1 flags=64
+        alias id=13024 count_index=2 flags=65536
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000010 path="05000010_Grass_C.tga" repetition=10.000000 type="Undefined"
+        layer texture_id=5000011 path="05000011_Grass_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=32.000000 type="Undefined"
+    }
+    material id=2002 name="decimated_dirt" primary_texture_id=5000020 {
+        alias id=13204 count_index=0 flags=4294967296
+        alias id=13206 count_index=1 flags=64
+        alias id=0 count_index=2 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000020 path="05000020_Dirt_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000021 path="05000021_Dirt_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2003 name="decimated_jungle" primary_texture_id=5000030 {
+        alias id=13397 count_index=0 flags=0
+        alias id=0 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000030 path="05000030_Jungle_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000031 path="05000031_Jungle_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2004 name="decimated_forest" primary_texture_id=5000040 {
+        alias id=13117 count_index=0 flags=0
+        alias id=0 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000040 path="05000040_Forest_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=5000041 path="05000041_Forest_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2006 name="decimated_rock" primary_texture_id=2000061 {
+        alias id=556 count_index=0 flags=64
+        alias id=431 count_index=1 flags=0
+        alias id=432 count_index=2 flags=65792
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000060 path="02000060_Rock_A.tga" repetition=9.000000 type="Undefined"
+        layer texture_id=2000061 path="02000061_Rock_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=24.000000 type="Undefined"
+    }
+    material id=2007 name="decimated_sand" primary_texture_id=2000070 {
+        alias id=22 count_index=0 flags=0
+        alias id=25 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000070 path="02000070_Sand_A.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=2000071 path="02000071_Sand_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2008 name="decimated_snow" primary_texture_id=5000080 {
+        alias id=13654 count_index=0 flags=64
+        alias id=13662 count_index=1 flags=0
+        shader name="UOBumpMapTerrainLayer"
+        layer texture_id=5000080 path="05000080_Snow_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000081 path="05000081_Snow_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=1000013 path="01000013_water_alpha.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=1000014 path="01000014_cube0.tga" repetition=2.000000 type="Undefined"
+    }
+    material id=2009 name="decimated_cobblestone" primary_texture_id=5000090 {
+        alias id=13731 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000090 path="05000090_Cobblestone_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=5000091 path="05000091_Cobblestone_B.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=1000004 path="01000004_noise_alpha_sharp.tga" repetition=48.000000 type="Undefined"
+    }
+    material id=2013 name="decimated_cave_floor" primary_texture_id=2000131 {
+        alias id=13788 count_index=0 flags=0
+        alias id=0 count_index=1 flags=80
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000130 path="02000130_Cave_Floor_A.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000131 path="02000131_Cave_Floor_B.tga" repetition=6.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2020 name="decimated_furrows (NS)" primary_texture_id=5000200 {
+        alias id=13802 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000200 path="05000200_Furrow_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000201 path="05000201_Furrow_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2021 name="decimated_furrows (EW)" primary_texture_id=5000210 {
+        alias id=13815 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000210 path="05000210_Furrow_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000211 path="05000211_Furrow_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2030 name="decimated_light sand stone brick (EW)" primary_texture_id=2000300 {
+        alias id=1094 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000300 path="02000300_Brick_Sandstone_Light_16rows_EW_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000301 path="02000301_Brick_Sandstone_Light_16rows_EW_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2031 name="decimated_light sand stone brick (NS)" primary_texture_id=2000310 {
+        alias id=1098 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000310 path="02000310_Brick_Sandstone_Light_16rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000311 path="02000311_Brick_Sandstone_Light_16rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2036 name="decimated_Red brick (NS)" primary_texture_id=5000360 {
+        alias id=1152 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000360 path="05000360_Brick_Red_12rows_NS_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=5000361 path="05000361_Brick_Red_12rows_NS_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2046 name="decimated_embank (EW)" primary_texture_id=5000580 {
+        alias id=13876 count_index=0 flags=64
+        alias id=10046 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000580 path="05000580_Dirt_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000581 path="05000581_Dirt_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2048 name="decimated_swamp (Type 1 solid)" primary_texture_id=5000480 {
+        alias id=14368 count_index=0 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000480 path="05000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000481 path="05000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2049 name="decimated_acid (solid)" primary_texture_id=2000490 {
+        alias id=11790 count_index=0 flags=640
+        alias id=14331 count_index=1 flags=704
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=1000012 path="01000012_lava_normal.tga" repetition=12.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+        layer texture_id=2000490 path="02000490_Acid_A.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2050 name="decimated_obsidian" primary_texture_id=2000500 {
+        alias id=16332 count_index=0 flags=64
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000500 path="02000500_Obsidian_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=2000501 path="02000501_Obsidian_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2054 name="decimated_Sand Cliff E-W" primary_texture_id=2000540 {
+        alias id=26 count_index=0 flags=64
+        alias id=10054 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000540 path="02000540_Sand_Cliff_EW_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000541 path="02000541_Sand_Cliff_EW_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2055 name="decimated_Sand Cliff NW-SE" primary_texture_id=2000550 {
+        alias id=13946 count_index=0 flags=64
+        alias id=10055 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000550 path="02000550_Sand_Cliff_NWtoSE_A.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=2000551 path="02000551_Sand_Cliff_NWtoSE_B.tga" repetition=2.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2056 name="decimated_Sand Cliff N-S" primary_texture_id=2000560 {
+        alias id=13954 count_index=0 flags=64
+        alias id=10056 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000560 path="02000560_Sand_Cliff_NS_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000561 path="02000561_Sand_Cliff_NS_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2057 name="decimated_Sand Cliff NE-SW" primary_texture_id=2000570 {
+        alias id=13968 count_index=0 flags=64
+        alias id=10057 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=2000570 path="02000570_Sand_Cliff_NEtoSW_A.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=2000571 path="02000571_Sand_Cliff_NEtoSW_B.tga" repetition=1.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=8.000000 type="Undefined"
+    }
+    material id=2058 name="decimated_Dirt Cliff E-W" primary_texture_id=5000580 {
+        alias id=13973 count_index=0 flags=64
+        alias id=10058 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000580 path="05000580_Dirt_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000581 path="05000581_Dirt_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2059 name="decimated_Dirt Cliff NW-SE" primary_texture_id=5000590 {
+        alias id=14030 count_index=0 flags=64
+        alias id=10059 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000590 path="05000590_Dirt_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000591 path="05000591_Dirt_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2060 name="decimated_Dirt Cliff N-S" primary_texture_id=5000600 {
+        alias id=14040 count_index=0 flags=64
+        alias id=10060 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000600 path="05000600_Dirt_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000601 path="05000601_Dirt_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2061 name="decimated_Snow E-W" primary_texture_id=5000610 {
+        alias id=14096 count_index=0 flags=0
+        alias id=14097 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000610 path="05000610_Snow_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000611 path="05000611_Snow_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2062 name="decimated_Snow NW-SE" primary_texture_id=5000620 {
+        alias id=14110 count_index=0 flags=0
+        alias id=14111 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000620 path="05000620_Snow_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000621 path="05000621_Snow_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2063 name="decimated_Snow N-S" primary_texture_id=5000630 {
+        alias id=14115 count_index=0 flags=0
+        alias id=14116 count_index=1 flags=64
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000630 path="05000630_Snow_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000631 path="05000631_Snow_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2064 name="decimated_Snow NE-SW" primary_texture_id=5000640 {
+        alias id=14130 count_index=0 flags=64
+        alias id=10064 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000640 path="05000640_Snow_Cliff_NEtoSW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000641 path="05000641_Snow_Cliff_NEtoSW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2065 name="decimated_Embank Snow E-W" primary_texture_id=5000610 {
+        alias id=14135 count_index=0 flags=64
+        alias id=10065 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000610 path="05000610_Snow_Cliff_EW_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000611 path="05000611_Snow_Cliff_EW_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2066 name="decimated_Embank Snow  NW-SE" primary_texture_id=5000620 {
+        alias id=14140 count_index=0 flags=64
+        alias id=10066 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000620 path="05000620_Snow_Cliff_NWtoSE_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000621 path="05000621_Snow_Cliff_NWtoSE_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2067 name="decimated_Embank Snow N-S" primary_texture_id=5000630 {
+        alias id=14142 count_index=0 flags=64
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000630 path="05000630_Snow_Cliff_NS_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000631 path="05000631_Snow_Cliff_NS_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2069 name="decimated_Swamp2" primary_texture_id=5000480 {
+        alias id=10069 count_index=0 flags=16
+        alias id=14195 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5000480 path="05000480_Swamp_Type1_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000481 path="05000481_Swamp_Type1_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2070 name="decimated_Swamp Water" primary_texture_id=2000700 {
+        alias id=15849 count_index=0 flags=0
+        alias id=15870 count_index=1 flags=64
+        shader name="UOWaterTerrainLayer"
+        layer texture_id=2000703 path="02000703_Swamp_Water_D.tga" repetition=16.000000 type="Undefined"
+        layer texture_id=2000700 path="02000700_Swamp_Water_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=2000702 path="02000702_Swamp_Water_C.tga" repetition=2.500000 type="Undefined"
+        layer texture_id=2000704 path="02000704_Swamp_Water_E.tga" repetition=10.000000 type="Undefined"
+    }
+    material id=2145 name="decimated_leaves" primary_texture_id=5001450 {
+        alias id=14298 count_index=0 flags=64
+        alias id=10145 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5001450 path="05001450_BackGround_Forest_A.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5001451 path="05001451_BackGround_Forest_B.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2155 name="decimated_Dirt with Large Rocks" primary_texture_id=5001540 {
+        alias id=13938 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5001540 path="05001540_Dirt_Rocks_A.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=5001541 path="05001541_Dirt_Rocks_B.tga" repetition=4.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+    material id=2190 name="decimated_Road" primary_texture_id=5001900 {
+        alias id=16376 count_index=0 flags=4294967296
+        alias id=0 count_index=1 flags=0
+        shader name="UODefaultTerrainLayer"
+        layer texture_id=5001900 path="05001900_Road.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=5000006 path="05000006_UO_dirt_02_256.tga" repetition=5.000000 type="Undefined"
+        layer texture_id=1000003 path="01000003_noise_alpha.tga" repetition=16.000000 type="Undefined"
+    }
+}

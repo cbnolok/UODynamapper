@@ -71,6 +71,28 @@ pub struct DecodedFacet {
     pub blocks: Vec<DecodedBlockClassic>,
 }
 
+#[derive(Debug, Clone)]
+pub struct EcFacetDelimiter {
+    pub direction: u8,
+    pub z: i8,
+    pub graphic_id: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct EcFacetTile {
+    pub z: i8,
+    pub land_graphic: u16,
+    pub delimiters: Vec<EcFacetDelimiter>,
+    pub statics: Vec<StaticTile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedEcFacet {
+    pub facet_id: u8,
+    pub file_id: u16,
+    pub tiles: Vec<EcFacetTile>,
+}
+
 /// Reads and decodes a single 64x64 block from a facet UOP file.
 ///
 /// # Arguments
@@ -82,6 +104,24 @@ pub fn read_facet_block(
     map_index: u8,
     block_id: u32,
 ) -> eyre::Result<DecodedFacet> {
+    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
+    decode_facet_bin(&decompressed_data)
+}
+
+pub fn read_facet_block_raw(
+    package: &UopPackage,
+    map_index: u8,
+    block_id: u32,
+) -> eyre::Result<DecodedEcFacet> {
+    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
+    decode_facet_bin_raw(&decompressed_data)
+}
+
+fn read_facet_block_bytes(
+    package: &UopPackage,
+    map_index: u8,
+    block_id: u32,
+) -> eyre::Result<Vec<u8>> {
     // Construct the internal path to the .bin file within the UOP package.
     use std::io::Write;
     let mut path_buf = [0u8; 64];
@@ -99,12 +139,64 @@ pub fn read_facet_block(
     // Iterate through the files in the package to find the correct entry.
     for file in package.iter_files() {
         if file.filename_hash() == target_hash {
-            let decompressed_data = file.unpack()?;
-            return decode_facet_bin(&decompressed_data);
+            return Ok(file.unpack()?);
         }
     }
 
     Err(eyre!("File not found in package: {}", target_path))
+}
+
+pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
+    let mut cursor: Cursor<&[u8]> = Cursor::new(data);
+
+    let facet_id: u8 = cursor.read_u8()?;
+    let file_id: u16 = cursor.read_u16::<LittleEndian>()?;
+    let mut tiles = Vec::with_capacity(64 * 64);
+
+    for x_64 in 0..64 {
+        for y_64 in 0..64 {
+            let z: i8 = cursor.read_i8()?;
+            let land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
+
+            let delimiter_count: u8 = cursor.read_u8()?;
+            let mut delimiters = Vec::with_capacity(delimiter_count as usize);
+            for _ in 0..delimiter_count {
+                let direction: u8 = cursor.read_u8()?;
+                if direction <= 7 {
+                    delimiters.push(EcFacetDelimiter {
+                        direction,
+                        z: cursor.read_i8()?,
+                        graphic_id: cursor.read_u32::<LittleEndian>()?,
+                    });
+                }
+            }
+
+            let statics_count: u8 = cursor.read_u8()?;
+            let mut statics = Vec::with_capacity(statics_count as usize);
+            for _ in 0..statics_count {
+                statics.push(StaticTile {
+                    graphic_id: cursor.read_u32::<LittleEndian>()?,
+                    x: x_64 as u8,
+                    y: y_64 as u8,
+                    z: cursor.read_i8()?,
+                    hue: cursor.read_u32::<LittleEndian>()?,
+                });
+            }
+
+            tiles.push(EcFacetTile {
+                z,
+                land_graphic,
+                delimiters,
+                statics,
+            });
+        }
+    }
+
+    Ok(DecodedEcFacet {
+        facet_id,
+        file_id,
+        tiles,
+    })
 }
 
 /// Decodes a single raw, decompressed .bin file from a facet.uop.

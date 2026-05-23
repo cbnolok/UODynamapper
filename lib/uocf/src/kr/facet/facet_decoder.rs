@@ -189,14 +189,7 @@ pub fn decode_facet_bin(
             }
 
             // --- Statics ---
-            let always_0_byte1: u8 = cursor.read_u8()?; // Always 0
-            let count_or_0_byte2: u8 = cursor.read_u8()?; // Count for first static, 0 for others
-
-            let static_count = if always_0_byte1 == 0 && count_or_0_byte2 > 0 {
-                count_or_0_byte2
-            } else {
-                0
-            };
+            let static_count: u8 = cursor.read_u8()?;
 
             for _ in 0..static_count {
                 let graphic: u16 = cursor.read_u16::<LittleEndian>()?;
@@ -223,6 +216,65 @@ pub fn decode_facet_bin(
     })
 }
 
+pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedKrFacet> {
+    let mut cursor: Cursor<&[u8]> = Cursor::new(data);
+
+    let facet_id: u8 = cursor.read_u8()?;
+    let file_id: u16 = cursor.read_u16::<LittleEndian>()?;
+    let mut tiles = Vec::with_capacity(64);
+
+    for _x_64 in 0..64_u32 {
+        let mut column = Vec::with_capacity(64);
+        for _y_64 in 0..64_u32 {
+            let z: i8 = cursor.read_i8()?;
+            let land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
+            let unknown_byte: u8 = cursor.read_u8()?;
+            let original_id_low: u8 = cursor.read_u8()?;
+            let original_id_high: u8 = cursor.read_u8()?;
+
+            let delimiter_count: u8 = cursor.read_u8()?;
+            let mut delimiters = Vec::with_capacity(delimiter_count as usize);
+            for _ in 0..delimiter_count {
+                delimiters.push(KrFacetDelimiter {
+                    direction: cursor.read_u8()?,
+                    z: cursor.read_i8()?,
+                    graphic: cursor.read_u16::<LittleEndian>()?,
+                    unknown: cursor.read_u8()?,
+                });
+            }
+
+            let static_count: u8 = cursor.read_u8()?;
+
+            let mut statics = Vec::with_capacity(static_count as usize);
+            for _ in 0..static_count {
+                statics.push(KrFacetStatic {
+                    graphic: cursor.read_u16::<LittleEndian>()?,
+                    unknown1: cursor.read_u16::<LittleEndian>()?,
+                    z: cursor.read_i8()?,
+                    hue: cursor.read_u16::<LittleEndian>()?,
+                });
+            }
+
+            column.push(KrFacetTile {
+                z,
+                land_graphic,
+                unknown_byte,
+                original_id_low,
+                original_id_high,
+                delimiters,
+                statics,
+            });
+        }
+        tiles.push(column);
+    }
+
+    Ok(DecodedKrFacet {
+        facet_id,
+        file_id,
+        tiles,
+    })
+}
+
 /// Reads and decodes a single 64x64 block from a KR facet UOP file.
 pub fn read_facet_block(
     package: &UopPackage,
@@ -231,6 +283,24 @@ pub fn read_facet_block(
     tile_dictionary: &HashMap<u16, (u16, u8)>,
     static_dictionary: &HashSet<u16>,
 ) -> eyre::Result<crate::enhanced::facet_decoder::DecodedFacet> {
+    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
+    decode_facet_bin(&decompressed_data, tile_dictionary, static_dictionary)
+}
+
+pub fn read_facet_block_raw(
+    package: &UopPackage,
+    map_index: u8,
+    block_id: u32,
+) -> eyre::Result<DecodedKrFacet> {
+    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
+    decode_facet_bin_raw(&decompressed_data)
+}
+
+fn read_facet_block_bytes(
+    package: &UopPackage,
+    map_index: u8,
+    block_id: u32,
+) -> eyre::Result<Vec<u8>> {
     use std::io::Write;
     let mut path_buf = [0u8; 64];
     let mut slice = &mut path_buf[..];
@@ -246,8 +316,7 @@ pub fn read_facet_block(
 
     for file in package.iter_files() {
         if file.filename_hash() == target_hash {
-            let decompressed_data = file.unpack()?;
-            return decode_facet_bin(&decompressed_data, tile_dictionary, static_dictionary);
+            return Ok(file.unpack()?);
         }
     }
     Err(eyre!("File not found in package: {}", target_path))

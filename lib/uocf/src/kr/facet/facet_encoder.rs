@@ -247,17 +247,8 @@ pub fn generate_kr_bin_data(
 
             // Statics
             if let Some(statics_on_tile) = statics_map.get(&(global_x, global_y)) {
-                // The C# code writes a byte 0, then a byte for count (only for the first static), then the static data.
-                // Subsequent statics on the same tile write byte 0, then byte 0, then static data.
-                // This is unusual, so we replicate it exactly.
-                for (i, static_item) in statics_on_tile.iter().enumerate() {
-                    cursor.write_u8(0)?; // Always 0
-                    if i == 0 {
-                        cursor.write_u8(statics_on_tile.len() as u8)?; // Count for the first static
-                    } else {
-                        cursor.write_u8(0)?; // 0 for subsequent statics
-                    }
-
+                cursor.write_u8(statics_on_tile.len() as u8)?;
+                for static_item in statics_on_tile {
                     // Only write if the static is in the whitelist
                     if static_dictionary.contains(&(static_item.graphic_id as u16)) {
                         cursor.write_u16::<LittleEndian>(static_item.graphic_id as u16)?;
@@ -279,8 +270,7 @@ pub fn generate_kr_bin_data(
                     }
                 }
             } else {
-                cursor.write_u8(0)?; // No statics, write 0 count
-                cursor.write_u8(0)?; // No statics, write 0 count
+                cursor.write_u8(0)?;
             }
         }
     }
