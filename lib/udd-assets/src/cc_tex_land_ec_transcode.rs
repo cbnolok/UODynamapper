@@ -21,9 +21,13 @@ impl TerrainTranscode {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .wrap_err_with(|| format!("Failed to read KDL file: {:?}", path.as_ref()))?;
+        Self::from_str(path.as_ref().to_str().unwrap_or("transcode.kdl"), &content)
+    }
+
+    pub fn from_str(source_name: &str, content: &str) -> eyre::Result<Self> {
         let content = strip_c_style_block_comments(&content);
         let content = strip_cpp_style_line_comments(&content);
-        knuffel::parse(path.as_ref().to_str().unwrap_or("transcode.kdl"), &content)
+        parse_terrain_transcode_kdl(source_name, &content)
             .wrap_err("Failed to parse TerrainTranscode KDL")
     }
 
@@ -36,6 +40,73 @@ impl TerrainTranscode {
         }
         map
     }
+}
+
+fn parse_terrain_transcode_kdl(source_name: &str, content: &str) -> eyre::Result<TerrainTranscode> {
+    use knuffel::ast::{Literal, Node, Value};
+    use knuffel::span::{Span, Spanned};
+
+    fn value_u32(value: &Value<Span>, field: &str) -> eyre::Result<u32> {
+        match &*value.literal {
+            Literal::Int(integer) => {
+                u32::try_from(integer).wrap_err_with(|| format!("invalid u32 {field}"))
+            }
+            _ => eyre::bail!("{field}: expected integer"),
+        }
+    }
+
+    fn property_u32(node: &Node<Span>, name: &str) -> eyre::Result<Option<u32>> {
+        node.properties
+            .iter()
+            .find(|(key, _)| key.as_ref() == name)
+            .map(|(_, value)| value_u32(value, name))
+            .transpose()
+    }
+
+    fn collect_t_nodes<'a, I>(nodes: I, entries: &mut Vec<TranscodeEntry>) -> eyre::Result<()>
+    where
+        I: IntoIterator<Item = &'a Spanned<Node<Span>, Span>>,
+    {
+        for node in nodes {
+            if node.node_name.as_ref() == "t" {
+                if let Some(cc_id) = property_u32(node, "cc")? {
+                    let target_id = property_u32(node, "kr")?
+                        .or(property_u32(node, "ec")?)
+                        .or(property_u32(node, "target")?)
+                        .ok_or_else(|| eyre::eyre!("t cc={cc_id}: missing kr/ec/target property"))?;
+                    entries.push(TranscodeEntry {
+                        new_id: target_id,
+                        old_ids: vec![cc_id],
+                    });
+                    continue;
+                }
+
+                let mut args = node.arguments.iter();
+                let new_id = args
+                    .next()
+                    .ok_or_else(|| eyre::eyre!("t: missing target id"))?;
+                let old_ids = args
+                    .map(|value| value_u32(value, "source id"))
+                    .collect::<eyre::Result<Vec<_>>>()?;
+                if old_ids.is_empty() {
+                    eyre::bail!("t {}: missing source ids", value_u32(new_id, "target id")?);
+                }
+                entries.push(TranscodeEntry {
+                    new_id: value_u32(new_id, "target id")?,
+                    old_ids,
+                });
+            }
+
+            collect_t_nodes(node.children(), entries)?;
+        }
+        Ok(())
+    }
+
+    let document = knuffel::parse_ast::<Span>(source_name, content)
+        .wrap_err_with(|| format!("parse {source_name} AST"))?;
+    let mut entries = Vec::new();
+    collect_t_nodes(document.nodes.iter(), &mut entries)?;
+    Ok(TerrainTranscode { entries })
 }
 
 #[derive(Decode, Debug, Clone)]
@@ -229,11 +300,8 @@ mod tests {
         let content = include_str!(
             "../../../dynamapper/assets/cc_ec_convtables/TerrainTranscodeSnowOverrides.kdl"
         );
-        let stripped = strip_c_style_block_comments(content);
-        let stripped = strip_cpp_style_line_comments(&stripped);
-        let parsed: TerrainTranscode =
-            knuffel::parse("TerrainTranscodeSnowOverrides.kdl", &stripped)
-                .expect("parse snow terrain transcode overrides");
+        let parsed = TerrainTranscode::from_str("TerrainTranscodeSnowOverrides.kdl", content)
+            .expect("parse snow terrain transcode overrides");
         let map = parsed.to_map();
 
         assert_eq!(parsed.entries.len(), 10);
@@ -244,6 +312,62 @@ mod tests {
         assert_eq!(map.get(&36), Some(&63));
         assert_eq!(map.get(&742), Some(&61));
         assert_eq!(map.get(&141), None);
+    }
+
+    #[test]
+    fn terrain_transcode_accepts_generated_property_rows() {
+        let parsed = TerrainTranscode::from_str(
+            "KrFacetTranscode.generated.kdl",
+            r#"
+source client="kr"
+facet_transcodes {
+    t cc=168 kr=5 count=1
+    t cc=169 kr=5 count=1
+    t cc=170 kr=6 count=1
+}
+"#,
+        )
+        .expect("parse generated routing rows");
+        let map = parsed.to_map();
+
+        assert_eq!(parsed.entries.len(), 3);
+        assert_eq!(map.get(&168), Some(&5));
+        assert_eq!(map.get(&169), Some(&5));
+        assert_eq!(map.get(&170), Some(&6));
+    }
+
+    #[test]
+    fn terrain_transcode_accepts_grouped_routing_rows() {
+        let parsed = TerrainTranscode::from_str(
+            "KrTerrainRouting.generated.kdl",
+            r#"
+route client="kr" source="manawydan-tile-dictionary"
+t 5 168 169
+t 6 170
+"#,
+        )
+        .expect("parse grouped routing rows");
+        let map = parsed.to_map();
+
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(map.get(&168), Some(&5));
+        assert_eq!(map.get(&169), Some(&5));
+        assert_eq!(map.get(&170), Some(&6));
+    }
+
+    #[test]
+    fn kr_generated_routing_file_parses() {
+        let content = include_str!(
+            "../../../dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
+        );
+        let parsed = TerrainTranscode::from_str("KrTerrainRouting.generated.kdl", content)
+            .expect("parse generated KR routing");
+        let map = parsed.to_map();
+
+        assert_eq!(parsed.entries.len(), 175);
+        assert_eq!(map.len(), 1454);
+        assert_eq!(map.get(&168), Some(&5));
+        assert_eq!(map.get(&3), Some(&1));
     }
 
     #[test]

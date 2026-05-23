@@ -140,16 +140,16 @@ Recommended evidence files:
 
 - `KrFacetTranscode.generated.kdl`: generated KR dictionary/facet evidence; use compact `t cc=... kr=...` rows.
 - `EcFacetTranscode.generated.kdl`: generated EC facet and TerrainDefinition evidence; use compact `t cc=... ec=...` rows plus material/layer evidence.
+- `KrTerrainRouting.generated.kdl`: generated runtime routing grouped as `t KR_MATERIAL_ID CC_LAND_ID...`.
 - `KrEcTerrainDiff.generated.csv`: generated comparison report; do not hand-edit as runtime policy.
 
 Recommended runtime-facing KR routing KDL shape:
 
 ```kdl
-// Generated or reviewed KR routing. One row per observed or reviewed mapping.
+// Generated or reviewed KR routing. Grouped rows keep the runtime table compact.
 route client="kr" source="manawydan-tile-dictionary"
 
-t cc=168 kr=5 code="dictionary"
-t cc=169 kr=5 code="dictionary"
+t 5 168 169 170 171
 
 material kr=5 {
     // Optional only after KR TerrainDefinition or shader evidence is decoded.
@@ -161,7 +161,8 @@ material kr=5 {
 
 Design rules for this routing file:
 
-- Use one compact `t` row per mapping when preserving generated evidence.
+- Use grouped `t TARGET_ID SOURCE_ID...` rows for runtime routing tables.
+- Keep evidence files free to use `t cc=... kr=...` / `t cc=... ec=...` rows when preserving observed counts.
 - Use `code` or `source` fields to distinguish generated dictionary evidence from reviewed manual corrections.
 - Do not copy EC TerrainDefinition layers into KR routing unless the KR source package proves the same relationship.
 - Let manual/reviewed routing override generated routing in file order, matching the existing `TerrainTranscode.kdl` conflict behavior.

@@ -988,7 +988,16 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
 fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
     let bytes = read_path_entry(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
     let text = String::from_utf8(bytes).ok()?;
-    // Minimal KDL-like parser for simple (cc_id, material_id) pairs
+    if let Ok(transcode) = crate::cc_tex_land_ec_transcode::TerrainTranscode::from_str(
+        UDDP_TRANSCODE_ENTRY_VPATH,
+        &text,
+    ) {
+        return Some(transcode.to_map());
+    }
+    parse_legacy_pair_transcode(&text)
+}
+
+fn parse_legacy_pair_transcode(text: &str) -> Option<HashMap<u32, u32>> {
     let mut transcode = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
