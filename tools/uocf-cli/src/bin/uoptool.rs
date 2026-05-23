@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use uocf::uop_container::file::{CompressionFlag, UopFile};
@@ -295,8 +295,12 @@ fn main() -> eyre::Result<()> {
                 };
 
                 let out_path = if let Some(name) = name_map.get(&hash) {
-                    let sanitized = name.replace('\\', "/");
-                    let p = out_dir.join(sanitized);
+                    let p = safe_extract_path(out_dir, name).with_context(|| {
+                        format!(
+                            "Dictionary name for hash 0x{:016x} is not a safe relative path: {}",
+                            hash, name
+                        )
+                    })?;
                     if let Some(parent) = p.parent() {
                         fs::create_dir_all(parent)?;
                     }
@@ -341,4 +345,63 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+fn safe_extract_path(out_dir: &Path, file_name: &str) -> eyre::Result<PathBuf> {
+    let normalized = file_name.replace('\\', "/");
+    let relative = Path::new(&normalized);
+    let mut out_path = PathBuf::from(out_dir);
+    let mut has_component = false;
+
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => {
+                out_path.push(part);
+                has_component = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(eyre::eyre!("path escapes output directory"));
+            }
+        }
+    }
+
+    if !has_component {
+        return Err(eyre::eyre!("empty output path"));
+    }
+
+    Ok(out_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_extract_path_preserves_relative_subdirs() {
+        let path = safe_extract_path(
+            Path::new("/tmp/out"),
+            "build\\worldart/00000042.dds",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/out")
+                .join("build")
+                .join("worldart")
+                .join("00000042.dds")
+        );
+    }
+
+    #[test]
+    fn safe_extract_path_rejects_parent_dir() {
+        assert!(safe_extract_path(Path::new("/tmp/out"), "../outside.dds").is_err());
+        assert!(safe_extract_path(Path::new("/tmp/out"), "build/../outside.dds").is_err());
+    }
+
+    #[test]
+    fn safe_extract_path_rejects_absolute_path() {
+        assert!(safe_extract_path(Path::new("/tmp/out"), "/tmp/outside.dds").is_err());
+    }
 }
