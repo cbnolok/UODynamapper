@@ -115,9 +115,15 @@ Release builds should expose these binaries as separate executables.
   - Classic Client support:
     - map and statics files, art and land textures, tiledata, hues, lights, gumps, fonts, sounds, multis, radar colors, animation metadata, `body.def` / `bodyconv.def`, `verdata.mul`, map/statics DIFs, `multimap.rle`, and related `.mul` / `.idx` layouts.
   - Kingdom Reborn support:
-    - facet package decoding/encoding, facet tile/static dictionaries, and KR-to-classic terrain/static mapping helpers.
+    - KR world maps are stored as compressed facet sectors inside `facet*.uop` packages, not as Classic `map*.mul` / `statics*.mul` files.
+    - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR terrain/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known.
+    - This is format support for conversion, inspection, and evidence gathering. It does not mean the Dynamapper runtime already renders every KR-only material or visual rule as the original KR client did.
   - Enhanced Client support:
-    - facet decoding/encoding, `tileart.uop`, `TerrainDefinition.uop`, texture package access, string dictionaries, localized strings, hues, multis, terrain config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
+    - EC world maps are also stored as compressed facet sectors inside `facet*.uop`; UOCF decodes those sectors into terrain cells and placed statics with ids, z values, and hues.
+    - `TerrainDefinition.uop` is parsed as the terrain/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields.
+    - `tileart.uop` is parsed as the item/static ownership source: tile records, art windows, offsets, flags, shader/type hints, lighting fields, surface-like/liquid-like classification evidence, and linked texture refs.
+    - Supporting EC data includes texture package access, string dictionaries, localized strings, hues, multis, terrain config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
+    - As with KR, this is parser and conversion support. Dynamapper currently uses only the converted runtime packages and still has open work for full EC material routing, support textures, and static-art behavior.
   - Compatibility and custom-format work:
     - Michelangelo-style `.uop` handling, `.vd` codec support, and shared helpers used by inspectors and converters.
 - Custom support libraries
