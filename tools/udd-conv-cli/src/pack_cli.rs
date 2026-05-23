@@ -19,6 +19,12 @@ use udd_conv::{
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
     },
+    mobile_anim_ec::{
+        convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources, MobileAnimEcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
     source_paths::{gather_source_dirs, resolve_output_path},
     tex_art_cc::{
         convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, TexArtCcAtlasOptions,
@@ -296,6 +302,19 @@ enum Commands {
         #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT)]
         atlas_height: u32,
         #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
+        gutter: u16,
+    },
+    /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
+    PackEcMobileAnims {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "mobile_anim_ec.uddp")]
+        output: PathBuf,
+        #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH)]
+        atlas_width: u32,
+        #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT)]
+        atlas_height: u32,
+        #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
@@ -672,6 +691,36 @@ pub fn run() -> eyre::Result<()> {
                 summary.packed_frame_count,
                 summary.frame_count,
                 summary.animation_count,
+                out_file.display()
+            );
+        }
+        Commands::PackEcMobileAnims {
+            source_dirs: source_dir_args,
+            output,
+            atlas_width,
+            atlas_height,
+            gutter,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
+                &paths,
+                &out_file,
+                &MobileAnimEcAtlasOptions {
+                    atlas_width,
+                    atlas_height,
+                    gutter,
+                    compression: CompressionFlag::ZstdNoDict,
+                    pixel_format: PagePixelFormat::Rgba8888,
+                },
+            )?;
+            println!(
+                "Wrote {} pages (RGBA8888) for {} packed frames out of {} logical frames across {} EC animations from {} bodies to '{}'.",
+                summary.page_count,
+                summary.packed_frame_count,
+                summary.frame_count,
+                summary.animation_count,
+                summary.body_count,
                 out_file.display()
             );
         }
