@@ -117,13 +117,8 @@ pub fn reduce_entropy_bc7(
         let mut decoded_bc7_block = [[0u8; 4]; 16];
         unpack_bc7(&orig_blk, &mut decoded_bc7_block);
 
-        let mut cur_err = 0u64;
-        for i in 0..16 {
-            for c in 0..4 {
-                let d = p_pixels[i][c] as i32 - decoded_bc7_block[i][c] as i32;
-                cur_err += (d * d) as u64;
-            }
-        }
+        let cur_err = block_error_bounded(p_pixels, &decoded_bc7_block, u64::MAX)
+            .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
             continue;

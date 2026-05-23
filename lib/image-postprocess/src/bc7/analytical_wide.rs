@@ -67,19 +67,29 @@ fn pack_one_block(
     let block_y = block_index / blocks_x;
     let block_x = block_index % blocks_x;
     let mut pixels = [[0u8; 4]; 16];
-    for row in 0..4 {
-        let src_y = (block_y * 4 + row).min(height - 1);
-        let base_x = block_x * 4;
-        if base_x + 4 <= width {
-            let offset = (src_y * width + base_x) * 4;
+    let base_x = block_x * 4;
+    let base_y = block_y * 4;
+    if base_x + 4 <= width && base_y + 4 <= height {
+        for row in 0..4 {
+            let offset = ((base_y + row) * width + base_x) * 4;
             pixels[row * 4..row * 4 + 4]
                 .as_flattened_mut()
                 .copy_from_slice(&rgba_pixels[offset..offset + 16]);
-        } else {
-            for col in 0..4 {
-                let src_x = (base_x + col).min(width - 1);
-                let src = (src_y * width + src_x) * 4;
-                pixels[row * 4 + col].copy_from_slice(&rgba_pixels[src..src + 4]);
+        }
+    } else {
+        for row in 0..4 {
+            let src_y = (base_y + row).min(height - 1);
+            if base_x + 4 <= width {
+                let offset = (src_y * width + base_x) * 4;
+                pixels[row * 4..row * 4 + 4]
+                    .as_flattened_mut()
+                    .copy_from_slice(&rgba_pixels[offset..offset + 16]);
+            } else {
+                for col in 0..4 {
+                    let src_x = (base_x + col).min(width - 1);
+                    let src = (src_y * width + src_x) * 4;
+                    pixels[row * 4 + col].copy_from_slice(&rgba_pixels[src..src + 4]);
+                }
             }
         }
     }
