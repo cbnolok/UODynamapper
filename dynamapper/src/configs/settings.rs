@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub core: SectCore,
     pub graphics: SectGraphics,
-    pub uo_files: SectUoFiles,
+    pub runtime_assets: SectRuntimeAssets,
     pub app: SectApp,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
@@ -49,7 +49,7 @@ pub struct SectApp {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub struct SectUoFiles {
+pub struct SectRuntimeAssets {
     pub udd_path: String,
 }
 
@@ -446,7 +446,7 @@ pub struct ToggleWireframe;
 // ----
 
 const CORE_CONFIG_FILE: &str = "settings/core.toml";
-const UO_FILES_CONFIG_FILE: &str = "settings/uo_files.toml";
+const RUNTIME_ASSETS_CONFIG_FILE: &str = "settings/runtime_assets.toml";
 const USER_CONFIG_FILE: &str = "settings/preferences.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
@@ -457,7 +457,7 @@ pub fn load_from_files() -> Settings {
     let assets_path = crate::core::constants::valid_asset_dir();
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
-    let uo_files_path = assets_path.join(UO_FILES_CONFIG_FILE);
+    let runtime_assets_path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
     let user_path = assets_path.join(USER_CONFIG_FILE);
     let maps_path = assets_path.join(MAPS_CONFIG_FILE);
     let worldmap_rendering_path = assets_path.join(WORLDMAP_RENDERING_CONFIG_FILE);
@@ -475,11 +475,11 @@ pub fn load_from_files() -> Settings {
         "Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml",
     );
 
-    // UO files settings (assets/settings/uo_files.toml)
-    let uo_files_contents = std::fs::read_to_string(&uo_files_path)
-        .expect("Failed to read settings/uo_files.toml — please ensure assets/settings/uo_files.toml exists");
-    let uo_files: SectUoFiles = toml::from_str(&uo_files_contents)
-        .expect("Failed to parse settings/uo_files.toml — please fix the file in assets/settings/uo_files.toml");
+    // Runtime asset package settings (assets/settings/runtime_assets.toml)
+    let runtime_assets_contents = std::fs::read_to_string(&runtime_assets_path)
+        .expect("Failed to read settings/runtime_assets.toml — please ensure assets/settings/runtime_assets.toml exists");
+    let runtime_assets: SectRuntimeAssets = toml::from_str(&runtime_assets_contents)
+        .expect("Failed to parse settings/runtime_assets.toml — please fix the file in assets/settings/runtime_assets.toml");
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
@@ -540,7 +540,7 @@ pub fn load_from_files() -> Settings {
     Settings {
         core: core_data.core,
         graphics,
-        uo_files,
+        runtime_assets,
         app: user_app,
         logging: core_data.logging,
         keybindings,
@@ -715,27 +715,27 @@ pub fn save_worldmap_rendering_settings(settings: &Settings) {
     }
 }
 
-pub fn save_uo_files_settings(settings: &Settings) {
+pub fn save_runtime_assets_settings(settings: &Settings) {
     let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(UO_FILES_CONFIG_FILE);
+    let path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
 
-    match toml::to_string_pretty(&settings.uo_files) {
+    match toml::to_string_pretty(&settings.runtime_assets) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&path, toml_str) {
                 console_logger::one(
                     LogSev::Error,
                     LogAbout::Settings,
-                    &format!("Failed to save uo_files.toml: {}", e),
+                    &format!("Failed to save runtime_assets.toml: {}", e),
                 );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved uo_files.toml");
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved runtime_assets.toml");
             }
         }
         Err(e) => {
             console_logger::one(
                 LogSev::Error,
                 LogAbout::Settings,
-                &format!("Failed to serialize uo_files settings: {}", e),
+                &format!("Failed to serialize runtime asset settings: {}", e),
             );
         }
     }
@@ -776,7 +776,7 @@ struct SettingsSaveSnapshot {
     keybindings: SectKeybindings,
     core: SectCore,
     logging: SectLogging,
-    uo_files: SectUoFiles,
+    runtime_assets: SectRuntimeAssets,
     maps: SectMaps,
     worldmap_rendering: SectWorldMapRendering,
 }
@@ -789,7 +789,7 @@ impl SettingsSaveSnapshot {
             keybindings: settings.keybindings.clone(),
             core: settings.core.clone(),
             logging: settings.logging.clone(),
-            uo_files: settings.uo_files.clone(),
+            runtime_assets: settings.runtime_assets.clone(),
             maps: settings.maps.clone(),
             worldmap_rendering: settings.worldmap_rendering.clone(),
         }
@@ -802,7 +802,7 @@ impl SettingsSaveSnapshot {
             keybindings: self.keybindings != other.keybindings,
             core: self.core != other.core,
             logging: self.logging != other.logging,
-            uo_files: self.uo_files != other.uo_files,
+            runtime_assets: self.runtime_assets != other.runtime_assets,
             maps: self.maps != other.maps,
             worldmap_rendering: self.worldmap_rendering != other.worldmap_rendering,
         }
@@ -816,7 +816,7 @@ struct SettingsChangeSet {
     keybindings: bool,
     core: bool,
     logging: bool,
-    uo_files: bool,
+    runtime_assets: bool,
     maps: bool,
     worldmap_rendering: bool,
 }
@@ -828,7 +828,7 @@ impl SettingsChangeSet {
             || self.keybindings
             || self.core
             || self.logging
-            || self.uo_files
+            || self.runtime_assets
             || self.maps
             || self.worldmap_rendering
     }
@@ -1117,8 +1117,8 @@ fn sys_debounced_save(
                 save_core_settings(&settings);
             }
 
-            if changes.uo_files {
-                save_uo_files_settings(&settings);
+            if changes.runtime_assets {
+                save_runtime_assets_settings(&settings);
             }
 
             if changes.maps {

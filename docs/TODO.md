@@ -229,6 +229,7 @@ Current execution decisions:
 ### Terrain Architecture Beyond Current EC Work
 
 - Keep the current threshold-based terrain scale and mesh path explicitly documented as transitional.
+- Design the clipmap terrain path as nested GPU terrain rings around the camera, with clear rules for ring size, update cadence, and metadata residency.
 - Replace discrete zoom mesh swapping with GPU clipmap rings.
 - Implement snapped world-space sampling in the vertex stage.
 - Use continuous LOD so zoom no longer depends on hard render-threshold swaps.

@@ -67,7 +67,7 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 - **Dialogs**: F1 (Help), F2 (Options), F3 (Shader Controls) — all configurable — plus Ctrl+G (Teleport)
 
 ### Configuration
-- **Modular TOML**: Settings split into `core.toml`, `uo_files.toml`, `graphics.toml`, etc. under `assets/settings/`.
+- **Modular TOML**: Settings split into `core.toml`, `runtime_assets.toml`, `graphics.toml`, etc. under `assets/settings/`.
 - **Shader Presets**: Stored in `assets/defaults/shader_presets.toml`.
 
 ---

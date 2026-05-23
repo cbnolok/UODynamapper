@@ -70,6 +70,40 @@ KTX2 texture handling used by the conversion pipeline.
 
 Image processing support code used by texture packaging work, including BC7-related paths.
 
+## Distributed Binaries
+
+Release packages are expected to ship `dynamapper` and each tool as separate binaries. Some executable names differ from the Cargo crate names.
+
+### Standalone Renderer
+
+- `dynamapper`: interactive Bevy map renderer and viewer.
+
+### UDD Package Management
+
+- `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
+- `udd-conv-cli`: CLI crate that builds:
+  - `udd-pack`: package builder for `.uddp` runtime assets.
+  - `udd-tool`: package inspector/editor for existing `.uddp` files.
+- `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
+
+### UOCF Command-Line Tools
+
+All of these are built by the `uocf-cli` crate:
+
+- `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
+- `cc-uop-mul-converter`: convert between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
+- `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
+- `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
+- `sound-tool`: inspect or convert supported UO sound data.
+- `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
+- `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
+- `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
+
+### UOCF Graphical Frontends
+
+- `uocf-inspector-gui`: inspector for UOCF-supported source client formats.
+- `uop-dict-populator-gui`: GUI for building and expanding UOP hash dictionaries.
+
 ## CLI Tools
 
 ### `tools/udd-conv-cli/`
@@ -78,8 +112,8 @@ Command-line tooling for UODynamapper package workflows.
 
 Primary binaries:
 
-- `uddpack`: builds runtime packages from source client assets.
-- `uddtool`: inspects, extracts, diffs, edits, and rebuilds existing `.uddp` packages.
+- `udd-pack`: builds runtime packages from source client assets.
+- `udd-tool`: inspects, extracts, diffs, edits, and rebuilds existing `.uddp` packages.
 
 See [ASSET_PIPELINE.md](ASSET_PIPELINE.md) for commands and package notes.
 
@@ -89,11 +123,14 @@ General-purpose Ultima Online format tooling built around `uocf`.
 
 Included tools:
 
-- `uoptool`: hash, inspect, replace, crack candidate paths for, and rebuild modern `.uop` packages.
-- `cc_uop_mul_converter`: convert between legacy `.mul`/`.idx` files and modern Classic Client `.uop` packages.
-- `texture_scanner`: identify and isolate terrain or land candidates from UO texture pools.
+- `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild modern `.uop` packages.
+- `cc-uop-mul-converter`: convert between legacy `.mul`/`.idx` files and modern Classic Client `.uop` packages.
+- `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
 - `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
+- `sound-tool`: inspect or convert supported UO sound data.
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
+- `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
+- `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
 
 ## GUI Tools
 

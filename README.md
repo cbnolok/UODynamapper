@@ -43,11 +43,11 @@ See [docs/TODO.md](docs/TODO.md) for the working roadmap.
 
 The main app expects shared assets, shaders, fonts, settings, and runtime data under `assets/`.
 
-Most users are expected to use distributed binaries rather than compile the workspace themselves. Source builds are mainly for contributors, toolchain work, and renderer development.
+Most users are expected to use distributed binaries rather than compile the workspace themselves. Release packages are expected to include `dynamapper` and the individual tool binaries. Source builds are mainly for contributors, toolchain work, and renderer development.
 
 ## Basic Setup
 
-Configure the runtime UDDP package path in the modular settings files under `assets/settings/`. The current file is `uo_files.toml`, although it now points only at generated UDDP assets.
+Configure the runtime UDDP package path in `assets/settings/runtime_assets.toml`.
 
 Runtime packages are produced with the conversion tools and then placed in, or linked into, the Dynamapper asset tree. A typical working set includes:
 
@@ -69,7 +69,7 @@ From the workspace root:
 cargo run -p dynamapper
 ```
 
-The exact result depends on the configured client paths, the converted packages available under `dynamapper/assets/`, and the current state of the renderer.
+The exact result depends on the configured runtime package path, the converted packages available there, and the current state of the renderer.
 
 ## Controls
 
@@ -89,17 +89,33 @@ Keybindings are configurable. See [docs/keybindings.md](docs/keybindings.md) for
 
 ## Provided Tools
 
-- `dynamapper`: interactive Bevy map renderer and viewer.
-- `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
-- `uddpack`: command-line packer for building `.uddp` packages from Classic Client and Enhanced Client data.
-- `uddtool`: command-line inspector and editor for existing `.uddp` packages.
-- `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
-- `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
-- `uoptool`: command-line utility for hashing, inspecting, replacing, cracking paths for, and rebuilding `.uop` packages.
-- `cc_uop_mul_converter`: converter between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
-- `texture_scanner`: utility for identifying and isolating terrain or land candidates from UO texture pools.
-- `uop-dict-populator-cli` / `uop-dict-populator-gui`: tools for building and expanding UOP hash dictionaries.
-- `multimap-tool`: converter for Classic Client `multimap.rle` files to and from BMP or PNG.
+Release builds should expose these binaries as separate executables.
+
+- Standalone renderer
+  - `dynamapper`: interactive Bevy map renderer and viewer.
+- UDD package management
+  - `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
+  - `udd-conv-cli`: CLI crate; generated executables are `udd-pack` for building `.uddp` packages and `udd-tool` for inspecting, extracting, diffing, editing, and rebuilding them.
+  - `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
+- UOCF command-line tools
+  - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
+  - `cc-uop-mul-converter`: convert between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
+  - `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
+  - `sound-tool`: inspect or convert supported UO sound data.
+  - `multimap-tool`: convert Classic Client `multimap.rle` files to and from BMP or PNG.
+  - `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
+  - `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
+  - `uop-dict-populator-cli`: build and expand UOP hash dictionaries without the GUI.
+- UOCF graphical frontends
+  - `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
+  - `uop-dict-populator-gui`: graphical tool for building and expanding UOP hash dictionaries.
+- Libraries
+  - `uocf`: source-format parsing for Classic Client, Enhanced Client, Kingdom Reborn, and related custom formats.
+  - `udd-container`: low-level UDDP/UDDF container infrastructure.
+  - `udd-assets`: runtime readers and package access helpers for converted assets.
+  - `udd-conv`: conversion and packaging logic shared by frontends and CLIs.
+  - `udd-conv-ktx2`: KTX2 texture handling for the conversion pipeline.
+  - `image-postprocess`: image processing and compression support used by packaging work.
 
 ## Workspace
 

@@ -34,5 +34,5 @@ The EC source package split matters here:
 ## CLI Status
 
 - The standalone cropped EC-art command has been removed.
-- EC package creation now goes through the shared `uddpack pack-ec-textures` pass.
+- EC package creation now goes through the shared `udd-pack pack-ec-textures` pass.
 - This file remains as a description of the historical cropped-art behavior and matching tilemeta contract, not as a supported current workflow.

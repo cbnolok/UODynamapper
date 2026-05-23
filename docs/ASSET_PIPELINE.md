@@ -6,9 +6,9 @@ The runtime renderer consumes converted `.uddp` packages. Source Ultima Online c
 
 ## Main Tools
 
-### `uddpack`
+### `udd-pack`
 
-`uddpack` builds runtime packages from source assets.
+`udd-pack` builds runtime packages from source assets. It is produced by the `udd-conv-cli` crate.
 
 Common commands:
 
@@ -22,13 +22,13 @@ Common commands:
 Typical Enhanced Client texture and metadata workflow:
 
 ```text
-uddpack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
-uddpack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
+udd-pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
+udd-pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
 ```
 
-### `uddtool`
+### `udd-tool`
 
-`uddtool` inspects and edits already-built packages.
+`udd-tool` inspects and edits already-built packages. It is produced by the `udd-conv-cli` crate.
 
 Common commands:
 
@@ -44,13 +44,13 @@ Common commands:
 Typical inspection commands:
 
 ```text
-uddtool info tilemeta.uddp
-uddtool extract tex_art_ec.uddp --output tex_art_ec.extract
+udd-tool info tilemeta.uddp
+udd-tool extract tex_art_ec.uddp --output tex_art_ec.extract
 ```
 
-### `uoptool`
+### `uop-tool`
 
-`uoptool` works with modern `.uop` package files.
+`uop-tool` works with modern `.uop` package files. It is produced by the `uocf-cli` crate.
 
 Common uses:
 

@@ -75,7 +75,7 @@ Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes. Toggled vi
 ---
 
 ## 4. Configuration Files
-Settings are split into modular TOML files under `assets/settings/` (`core.toml`, `graphics.toml`, `uo_files.toml`, etc.). Shader presets are in `assets/defaults/shader_presets.toml`.
+Settings are split into modular TOML files under `assets/settings/` (`core.toml`, `graphics.toml`, `runtime_assets.toml`, etc.). Shader presets are in `assets/defaults/shader_presets.toml`.
 
 ---
 

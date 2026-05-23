@@ -1,4 +1,4 @@
-# UO data files configuration.
+# Runtime asset package configuration.
 # This file contains the path to the UDDP assets folder.
 # Standard UO files (.mul, .uop) are no longer supported directly.
 
