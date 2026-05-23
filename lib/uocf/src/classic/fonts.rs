@@ -49,14 +49,14 @@ pub struct AsciiFont {
 pub struct UnicodeFontGlyph {
     pub offset_x: i8,
     pub offset_y: i8,
-    pub width: i8,
-    pub height: i8,
+    pub width: u8,
+    pub height: u8,
     pub bitmap: Vec<u8>,
 }
 
 impl UnicodeFontGlyph {
     pub fn row_stride_bytes(&self) -> Option<usize> {
-        if self.width <= 0 || self.height <= 0 {
+        if self.width == 0 || self.height == 0 {
             return None;
         }
 
@@ -249,9 +249,9 @@ impl UnicodeFontFile {
 
         let offset_x = self.mmap[payload_offset] as i8;
         let offset_y = self.mmap[payload_offset + 1] as i8;
-        let width = self.mmap[payload_offset + 2] as i8;
-        let height = self.mmap[payload_offset + 3] as i8;
-        if width <= 0 || height <= 0 {
+        let width = self.mmap[payload_offset + 2];
+        let height = self.mmap[payload_offset + 3];
+        if width == 0 || height == 0 {
             return Ok(Some(UnicodeFontGlyph {
                 offset_x,
                 offset_y,
@@ -371,5 +371,27 @@ impl ClassicFonts {
         };
 
         font.glyph(codepoint)
+    }
+
+    pub fn unicode_text_width(&self, font: usize, text: &str) -> eyre::Result<i32> {
+        let mut width = 0i32;
+        for ch in text.chars() {
+            if let Some(glyph) = self.unicode_glyph(font, ch as u16)? {
+                width += glyph.width as i32 + glyph.offset_x as i32;
+            }
+        }
+
+        Ok(width)
+    }
+
+    pub fn unicode_text_height(&self, font: usize, text: &str) -> eyre::Result<i32> {
+        let mut height = 0i32;
+        for ch in text.chars() {
+            if let Some(glyph) = self.unicode_glyph(font, ch as u16)? {
+                height = height.max(glyph.height as i32 + glyph.offset_y as i32);
+            }
+        }
+
+        Ok(height)
     }
 }

@@ -116,3 +116,43 @@ fn unicode_font_decodes_bitpacked_glyphs() {
 
     result.unwrap();
 }
+
+#[test]
+fn classic_fonts_unicode_metrics_include_offsets() {
+    let unique = format!(
+        "uocf_unifont_metrics_test_{}_{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    );
+    let dir = std::env::temp_dir().join(unique);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let result = (|| -> std::io::Result<()> {
+        let path = dir.join("unifont.mul");
+        let mut file = std::fs::File::create(&path)?;
+        file.set_len((0x10000 * 4 + 12) as u64)?;
+
+        file.seek(SeekFrom::Start(('A' as u32 * 4) as u64))?;
+        file.write_all(&(0x10000i32 * 4).to_le_bytes())?;
+        file.seek(SeekFrom::Start(('B' as u32 * 4) as u64))?;
+        file.write_all(&((0x10000i32 * 4) + 6).to_le_bytes())?;
+
+        file.seek(SeekFrom::Start((0x10000 * 4) as u64))?;
+        file.write_all(&[1u8, 2u8, 3u8, 4u8, 0u8, 0u8])?;
+        file.write_all(&[255u8, 1u8, 5u8, 2u8, 0u8, 0u8])?;
+
+        let fonts = ClassicFonts::load(&dir).unwrap();
+
+        assert!(fonts.unicode_font_exists(0));
+        assert!(fonts.unicode_font_exists(1));
+        assert_eq!(fonts.unicode_text_width(0, "AB").unwrap(), 8);
+        assert_eq!(fonts.unicode_text_height(0, "AB").unwrap(), 6);
+
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(dir.join("unifont.mul"));
+    let _ = std::fs::remove_dir(&dir);
+
+    result.unwrap();
+}
