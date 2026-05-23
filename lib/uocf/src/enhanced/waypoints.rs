@@ -9,6 +9,10 @@
 //! sections and a compact waypoint section. Cliloc-backed fields and waypoint
 //! coordinates are named here; the remaining small fields keep neutral names
 //! until their UI role is verified.
+//!
+//! EC `mapcommon.lua` identifies the waypoint type ids used by the client:
+//! 1 corpse, 2 party, 4 quest giver, 5 new player quest, 6 wandering healer,
+//! 7 danger, 9 city, 10 dungeon, 11 shrine, 12 moongate, 14 player, 15 custom.
 
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -59,7 +63,7 @@ pub struct WaypointRecord {
     pub y: u32,
     pub z: i8,
     pub facet: u8,
-    pub kind: u16,
+    pub waypoint_type: u16,
     pub value_6: u16,
     pub name_cliloc: u32,
 }
@@ -190,7 +194,7 @@ fn read_waypoint_section(
             y: reader.read_u32::<LittleEndian>()?,
             z: reader.read_i8()?,
             facet: reader.read_u8()?,
-            kind: reader.read_u16::<LittleEndian>()?,
+            waypoint_type: reader.read_u16::<LittleEndian>()?,
             value_6: reader.read_u16::<LittleEndian>()?,
             name_cliloc: reader.read_u32::<LittleEndian>()?,
         });
@@ -286,7 +290,7 @@ mod tests {
                 y: 90,
                 z: 100,
                 facet: 101,
-                kind: 110,
+                waypoint_type: 110,
                 value_6: 120,
                 name_cliloc: 130,
             }]

@@ -115,11 +115,21 @@ unless the data becomes a stable package contract.
 - Stores waypoint definition tables and compact waypoint records under
   `build/sectors/waypoint.bin`.
 - The waypoint record section has verified `x`, `y`, signed `z`, `facet`, and
-  `name_cliloc` fields. The two remaining small fields are preserved as
-  `kind` and `value_6` until their UI role is verified.
+  `name_cliloc` fields. EC `mapcommon.lua` confirms the record `waypoint_type`
+  is the client `wtype` used for default display behavior. The remaining small
+  field is preserved as `value_6` until its UI role is verified.
 - The extracted EC `waypoints.lua` table exposes the client-facing schema as
   facet-local `x`, `y`, `z`, `type`, `Name`, `Icon`, `Scale`, and optional
   `flag`, but it is not a byte-for-byte copy of the UOP payload.
+- Icon and scale values are display-layer data. Default icons come from
+  `WindowData.WaypointDisplay.displayTypes`; custom static Lua waypoints store
+  explicit `Icon` and `Scale`, and custom user waypoints may encode
+  `_ICON_..._SCALE_...` in the waypoint name string.
+- `userwaypointwindow.lua` owns the custom waypoint icon palette shown to the
+  player. It maps UI selections to icon ids such as `100022` custom,
+  `100000` danger, `100042` city, `100045` dungeon, `100053` moongate,
+  `100060` shrine, and the shop/service icon range. These icon ids are display
+  choices, not proven fields in the compact `waypoint.uop` records.
 
 `Texture.uop` and `LegacyTexture.uop`:
 
