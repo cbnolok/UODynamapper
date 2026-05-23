@@ -12,6 +12,10 @@
 use crate::bc7_tables::*;
 use std::cmp::min;
 use wide::f32x4;
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
 
 // ─── 1. TYPES ────────────────────────────────────────────────────────────────
 
@@ -274,6 +278,56 @@ fn eval_rgb_weights4(
     sse
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1")]
+unsafe fn eval_m6_rgb_sse41(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    f: f32,
+) -> u32 {
+    let zero = _mm_setzero_si128();
+    let fifteen = _mm_set1_epi32(15);
+    let f = _mm_set1_ps(f);
+    let half = _mm_set1_ps(0.5);
+    let ep = _mm_setr_epi16(lr as i16, lg as i16, lb as i16, 0, lr as i16, lg as i16, lb as i16, 0);
+    let coef = _mm_setr_epi16(dr as i16, dg as i16, db as i16, 0, dr as i16, dg as i16, db as i16, 0);
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(4) {
+        let px = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let lo16 = _mm_unpacklo_epi8(px, zero);
+        let hi16 = _mm_unpackhi_epi8(px, zero);
+        let lo_adj = _mm_sub_epi16(lo16, ep);
+        let hi_adj = _mm_sub_epi16(hi16, ep);
+        let lo32p = _mm_madd_epi16(lo_adj, coef);
+        let hi32p = _mm_madd_epi16(hi_adj, coef);
+        let lo_sum = _mm_add_epi32(lo32p, _mm_shuffle_epi32(lo32p, 0b10_11_00_01));
+        let hi_sum = _mm_add_epi32(hi32p, _mm_shuffle_epi32(hi32p, 0b10_11_00_01));
+        let pair01 = _mm_shuffle_epi32(lo_sum, 0b10_00_10_00);
+        let pair23 = _mm_shuffle_epi32(hi_sum, 0b10_00_10_00);
+        let dot32 = _mm_unpacklo_epi64(pair01, pair23);
+        let y = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(dot32), f), half);
+        let sel32 = _mm_min_epi32(_mm_max_epi32(_mm_cvttps_epi32(y), zero), fifteen);
+        let sel16 = _mm_packs_epi32(sel32, zero);
+        let sel8 = _mm_packus_epi16(sel16, zero);
+        let packed = _mm_cvtsi128_si32(sel8) as u32;
+
+        for lane in 0..4 {
+            let sel = ((packed >> (lane * 8)) & 0xff) as usize;
+            weights[i + lane] = sel as u8;
+            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+        }
+    }
+
+    sse
+}
+
 #[inline(always)]
 fn eval_rgba_weights4(
     pixels: &[Pixel; 16],
@@ -337,6 +391,10 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
     let(lr,lg,lb)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32);
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
     let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("sse4.1") {
+        return unsafe { eval_m6_rgb_sse41(pixels, weights, lr, lg, lb, dr, dg, db, f) };
+    }
     let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_weights4(pixels,weights,i,lr,lg,lb,dr,dg,db,sofs,f,15,&BC7_WEIGHTS4);}sse}
 
 pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,la:i32,p0:u32,hr:i32,hg:i32,hb:i32,ha:i32,p1:u32)->u32{
