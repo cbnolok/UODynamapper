@@ -658,6 +658,7 @@ impl UopInspectorApp {
                 "legacyterrain.uop",
                 "texture.uop",
                 "interface.uop",
+                "waypoint.uop",
             ];
             for uop_name in ec_uops {
                 let uop_path = ec_base_path.join(uop_name);
