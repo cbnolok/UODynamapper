@@ -287,7 +287,7 @@ fn write_transcodes(output: &mut String, client: ClientKind, evidence: &Evidence
     output.push_str("facet_transcodes {\n");
     for (key, count) in &evidence.transcodes {
         output.push_str(&format!(
-            "    transcode cc={} {}={} count={}",
+            "    t cc={} {}={} count={}",
             key.cc_land_id,
             target_name,
             key.client_land_id,
