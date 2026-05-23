@@ -133,7 +133,9 @@ impl eframe::App for UopPopulatorApp {
                 Message::Finished(found) => {
                     self.is_running = false;
                     self.add_log(format!("Finished! Found {} total new strings.", found.len()));
-                    self.dictionary.hash_to_name.extend(found);
+                    for (hash, name) in found {
+                        self.dictionary.set(hash, name);
+                    }
                     if let Some(path) = &self.dictionary_path {
                         if let Err(e) = self.dictionary.save(path) {
                             self.add_log(format!("Error saving dictionary: {}", e));
@@ -173,7 +175,11 @@ impl eframe::App for UopPopulatorApp {
                                 match UopDictionary::load(self.dictionary_path.as_ref().unwrap()) {
                                     Ok(dict) => {
                                         self.dictionary = dict;
-                                        self.add_log(format!("Loaded dictionary with {} entries.", self.dictionary.hash_to_name.len()));
+                                        self.add_log(format!(
+                                            "Loaded dictionary with {} entries ({} named).",
+                                            self.dictionary.len(),
+                                            self.dictionary.named_len(),
+                                        ));
                                     }
                                     Err(e) => self.add_log(format!("Failed to load dictionary: {}", e)),
                                 }
@@ -203,6 +209,8 @@ impl eframe::App for UopPopulatorApp {
                     if ui.button("Start Cracking").clicked() {
                         if self.uop_dir.is_none() {
                             self.add_log("Error: No UOP directory selected.");
+                        } else if self.dictionary_path.is_none() {
+                            self.add_log("Error: No dictionary output file selected.");
                         } else {
                             match toml::from_str::<PopulatorConfig>(&self.config_text) {
                                 Ok(config) => {

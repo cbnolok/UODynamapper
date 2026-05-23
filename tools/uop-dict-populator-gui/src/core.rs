@@ -22,25 +22,34 @@ pub struct PackageConfig {
 
 #[derive(Debug, Default, Clone)]
 pub struct UopDictionary {
-    pub hash_to_name: HashMap<u64, String>,
+    hash_dictionary: HashDictionary,
 }
 
 impl UopDictionary {
     pub fn load(path: impl AsRef<Path>) -> color_eyre::eyre::Result<Self> {
-        let dictionary = HashDictionary::load(path.as_ref())?;
-        let hash_to_name = dictionary
-            .iter()
-            .filter_map(|(hash, name)| name.map(|name| (hash, name.to_string())))
-            .collect();
-        Ok(Self { hash_to_name })
+        Ok(Self {
+            hash_dictionary: HashDictionary::load(path.as_ref())?,
+        })
     }
 
     pub fn save(&self, path: impl AsRef<Path>) -> color_eyre::eyre::Result<()> {
-        let mut dictionary = HashDictionary::new();
-        for (hash, name) in &self.hash_to_name {
-            dictionary.set(*hash, name.as_str());
-        }
-        dictionary.save(path.as_ref())
+        self.hash_dictionary.save(path.as_ref())
+    }
+
+    pub fn contains(&self, hash: u64) -> bool {
+        self.hash_dictionary.contains(hash)
+    }
+
+    pub fn set(&mut self, hash: u64, name: impl Into<String>) -> bool {
+        self.hash_dictionary.set(hash, name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.hash_dictionary.len()
+    }
+
+    pub fn named_len(&self) -> usize {
+        self.hash_dictionary.named_len()
     }
 }
 
@@ -56,7 +65,7 @@ impl PopulatorTask {
         let package = UopPackage::load(&self.uop_path)?;
         let missing_hashes: HashSet<u64> = package.iter_files()
             .map(|f| f.filename_hash())
-            .filter(|h| !self.dictionary.hash_to_name.contains_key(h))
+            .filter(|h| !self.dictionary.contains(*h))
             .collect();
 
         if missing_hashes.is_empty() {
@@ -76,5 +85,26 @@ impl PopulatorTask {
         }
 
         Ok(all_found)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uop_dictionary_preserves_unknown_hash_entries() {
+        let mut source = HashDictionary::new();
+        source.insert_unknown(0x1111);
+        source.set(0x2222, "known/name.dds");
+
+        let dictionary = UopDictionary {
+            hash_dictionary: source.clone(),
+        };
+
+        let bytes = dictionary.hash_dictionary.to_bytes().expect("serialize dictionary");
+        let parsed = HashDictionary::from_bytes(&bytes).expect("parse dictionary");
+
+        assert_eq!(parsed, source);
     }
 }
