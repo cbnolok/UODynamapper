@@ -148,26 +148,6 @@ build-ci-shipping *args:
     @just build-ci-dynamapper {{args}}
     @just build-ci-tools {{args}}
 
-# Build the workspace in release mode (nightly toolchain, most optimized)
-build-release-nightly *args:
-    @just build-ci-workspace {{args}}
-
-# Build only dynamapper in release mode
-build-release-dynamapper *args:
-    @just build-ci-dynamapper {{args}}
-
-# Build only the shipped tools in release mode
-build-release-tools *args:
-    @just build-ci-tools {{args}}
-
-# Build the binaries that are included in release artifacts
-build-release-shipping *args:
-    @just build-ci-shipping {{args}}
-
-# Alias for nightly release build (preferred for production)
-build-release *args:
-    @just build-release-nightly {{args}}
-
 # Build the workspace in profiling mode (stable toolchain)
 # Purpose: Release-level optimizations but with frame pointers and symbols kept for profilers.
 build-profile-stable *args:
