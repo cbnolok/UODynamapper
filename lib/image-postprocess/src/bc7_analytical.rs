@@ -661,6 +661,22 @@ unsafe fn eval_m6_rgb_neon(
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn select_m6_avx512(pairs: __m512i, f: f32) -> [u8; 8] {
+    let pair_sums = _mm512_add_epi32(pairs, _mm512_shuffle_epi32(pairs, 0b10_11_00_01));
+    let dots = _mm512_permutexvar_epi32(
+        _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 0, 0, 0, 0, 0, 0, 0, 0),
+        pair_sums,
+    );
+    let y = _mm512_add_ps(_mm512_mul_ps(_mm512_cvtepi32_ps(dots), _mm512_set1_ps(f)), _mm512_set1_ps(0.5));
+    let sel32 = _mm512_min_epi32(_mm512_max_epi32(_mm512_cvttps_epi32(y), _mm512_setzero_si512()), _mm512_set1_epi32(15));
+    let sel8 = _mm512_cvtusepi32_epi8(sel32);
+    let mut packed = [0u8; 8];
+    _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
+    packed
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn eval_m6_rgba_avx512(
     pixels: &[Pixel; 16],
@@ -704,19 +720,16 @@ unsafe fn eval_m6_rgba_avx512(
         let px16 = _mm512_cvtepu8_epi16(px);
         let adj = _mm512_sub_epi16(px16, ep);
         let pairs = _mm512_madd_epi16(adj, coef);
-        let mut pair_sums = [0i32; 16];
-        _mm512_storeu_si512(pair_sums.as_mut_ptr() as *mut _, pairs);
+        let packed = select_m6_avx512(pairs, f);
 
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            let dot = pair_sums[lane * 2] + pair_sums[lane * 2 + 1];
-            let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
-            weights[i + lane] = sel as u8;
+            weights[i + lane] = packed[lane];
             if lane < 4 {
-                packed0 |= (sel as u32) << (lane * 8);
+                packed0 |= (packed[lane] as u32) << (lane * 8);
             } else {
-                packed1 |= (sel as u32) << ((lane - 4) * 8);
+                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da);
@@ -768,19 +781,16 @@ unsafe fn eval_m6_rgb_avx512(
         let px16 = _mm512_cvtepu8_epi16(px);
         let adj = _mm512_sub_epi16(px16, ep);
         let pairs = _mm512_madd_epi16(adj, coef);
-        let mut pair_sums = [0i32; 16];
-        _mm512_storeu_si512(pair_sums.as_mut_ptr() as *mut _, pairs);
+        let packed = select_m6_avx512(pairs, f);
 
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            let dot = pair_sums[lane * 2] + pair_sums[lane * 2 + 1];
-            let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
-            weights[i + lane] = sel as u8;
+            weights[i + lane] = packed[lane];
             if lane < 4 {
-                packed0 |= (sel as u32) << (lane * 8);
+                packed0 |= (packed[lane] as u32) << (lane * 8);
             } else {
-                packed1 |= (sel as u32) << ((lane - 4) * 8);
+                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
