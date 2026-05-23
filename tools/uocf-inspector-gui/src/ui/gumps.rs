@@ -7,6 +7,7 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTex
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
+const HUE_SWATCH_COUNT: usize = 32;
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/cc_ec_convtables/PaperdollProfiles.kdl");
 
@@ -57,6 +58,121 @@ struct PaperdollLayer {
     x: i32,
     y: i32,
 }
+
+#[derive(Clone, Copy)]
+struct PaperdollSlot {
+    id: &'static str,
+    label: &'static str,
+    layer: u8,
+}
+
+const PAPERDOLL_SLOTS: &[PaperdollSlot] = &[
+    PaperdollSlot {
+        id: "one_handed",
+        label: "One Handed",
+        layer: 1,
+    },
+    PaperdollSlot {
+        id: "two_handed",
+        label: "Two Handed",
+        layer: 2,
+    },
+    PaperdollSlot {
+        id: "footwear",
+        label: "Footwear",
+        layer: 3,
+    },
+    PaperdollSlot {
+        id: "legs",
+        label: "Legs",
+        layer: 4,
+    },
+    PaperdollSlot {
+        id: "shirt",
+        label: "Shirt",
+        layer: 5,
+    },
+    PaperdollSlot {
+        id: "head",
+        label: "Head",
+        layer: 6,
+    },
+    PaperdollSlot {
+        id: "hands",
+        label: "Hands",
+        layer: 7,
+    },
+    PaperdollSlot {
+        id: "ring",
+        label: "Ring",
+        layer: 8,
+    },
+    PaperdollSlot {
+        id: "neck",
+        label: "Neck",
+        layer: 10,
+    },
+    PaperdollSlot {
+        id: "hair",
+        label: "Hair",
+        layer: 12,
+    },
+    PaperdollSlot {
+        id: "waist",
+        label: "Waist",
+        layer: 13,
+    },
+    PaperdollSlot {
+        id: "inner_torso",
+        label: "Inner Torso",
+        layer: 14,
+    },
+    PaperdollSlot {
+        id: "bracelet",
+        label: "Bracelet",
+        layer: 17,
+    },
+    PaperdollSlot {
+        id: "facial_hair",
+        label: "Facial Hair",
+        layer: 18,
+    },
+    PaperdollSlot {
+        id: "middle_torso",
+        label: "Middle Torso",
+        layer: 19,
+    },
+    PaperdollSlot {
+        id: "earrings",
+        label: "Earrings",
+        layer: 20,
+    },
+    PaperdollSlot {
+        id: "arms",
+        label: "Arms",
+        layer: 22,
+    },
+    PaperdollSlot {
+        id: "cloak",
+        label: "Cloak",
+        layer: 23,
+    },
+    PaperdollSlot {
+        id: "outer_torso",
+        label: "Outer Torso",
+        layer: 25,
+    },
+    PaperdollSlot {
+        id: "outer_legs",
+        label: "Outer Legs",
+        layer: 26,
+    },
+    PaperdollSlot {
+        id: "mount",
+        label: "Mount",
+        layer: 29,
+    },
+];
 
 #[derive(Decode)]
 struct PaperdollProfilesKdl {
@@ -186,12 +302,18 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.text_edit_singleline(&mut app.paperdoll_body_id);
             ui.label("Hue:");
             ui.text_edit_singleline(&mut app.paperdoll_body_hue);
+            if ui.button("Use Selected Hue").clicked() {
+                app.paperdoll_body_hue = app.selected_hue_id.to_string();
+                app.paperdoll_preview = None;
+            }
         });
+        ui_hue_picker(app, ui);
 
         egui::Grid::new("uocf_inspector_paperdoll_equipment")
-            .num_columns(5)
+            .num_columns(7)
             .spacing([8.0, 4.0])
             .show(ui, |ui| {
+                ui.label("Slot");
                 ui.label("Item ID");
                 ui.label("Hue");
                 ui.label("Derived");
@@ -199,14 +321,37 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
                 let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
                 let mut remove_index = None;
+                let mut inspect_item_id = None;
                 for (index, row) in app.paperdoll_equipment.iter_mut().enumerate() {
+                    egui::ComboBox::from_id_salt(format!("paperdoll_slot_{index}"))
+                        .selected_text(slot_label(&row.slot))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut row.slot, String::new(), "Any");
+                            for slot in PAPERDOLL_SLOTS {
+                                ui.selectable_value(
+                                    &mut row.slot,
+                                    slot.id.to_string(),
+                                    format!("{} ({})", slot.label, slot.layer),
+                                );
+                            }
+                        });
                     ui.text_edit_singleline(&mut row.item_id);
                     ui.text_edit_singleline(&mut row.hue);
                     ui.monospace(equipment_detail(
                         tiledata.as_deref(),
                         selected_profile,
+                        row.slot.as_str(),
                         row.item_id.as_str(),
                     ));
+                    if ui.button("Hue").clicked() {
+                        row.hue = app.selected_hue_id.to_string();
+                        app.paperdoll_preview = None;
+                    }
+                    if ui.button("Inspect").clicked() {
+                        if let Ok(item_id) = parse_u32_field(&row.item_id) {
+                            inspect_item_id = Some(item_id);
+                        }
+                    }
                     if ui.button("Remove").clicked() {
                         remove_index = Some(index);
                     }
@@ -215,9 +360,24 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 if let Some(index) = remove_index {
                     app.paperdoll_equipment.remove(index);
                 }
+                if let Some(item_id) = inspect_item_id {
+                    app.selected_tex_art_cc_id = Some(0x4000 + item_id);
+                    app.view_mode = crate::app::ViewMode::TexArtCc;
+                }
             });
 
         ui.horizontal(|ui| {
+            if ui.button("Add Slots").clicked() {
+                app.paperdoll_equipment = PAPERDOLL_SLOTS
+                    .iter()
+                    .map(|slot| PaperdollEquipmentInput {
+                        slot: slot.id.to_string(),
+                        item_id: String::new(),
+                        hue: "0".to_string(),
+                    })
+                    .collect();
+                app.paperdoll_preview = None;
+            }
             if ui.button("Add Row").clicked() {
                 app.paperdoll_equipment.push(PaperdollEquipmentInput::default());
             }
@@ -284,6 +444,16 @@ fn profile_by_id<'a>(profiles: &'a [PaperdollProfile], id: &str) -> &'a Paperdol
         .unwrap_or(&profiles[0])
 }
 
+fn slot_by_id(id: &str) -> Option<PaperdollSlot> {
+    PAPERDOLL_SLOTS.iter().copied().find(|slot| slot.id == id)
+}
+
+fn slot_label(id: &str) -> String {
+    slot_by_id(id)
+        .map(|slot| format!("{} ({})", slot.label, slot.layer))
+        .unwrap_or_else(|| "Any".to_string())
+}
+
 fn ec_gump_path(gump_id: u32, extension: &str) -> String {
     format!("data/interface/default/textures/gumpart/{gump_id:08}.{extension}")
 }
@@ -310,6 +480,55 @@ fn gump_source_detail(source: GumpSource, gump_id: u32) -> String {
             format!("EC source: interface.uop {path} hash={hash:016X}")
         }
     }
+}
+
+fn ui_hue_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let Some(hues) = app
+        .client_data
+        .as_ref()
+        .and_then(|client| client.hues.as_ref())
+        .map(Arc::clone)
+    else {
+        ui.label("Load hues.mul to enable hue swatches.");
+        return;
+    };
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Hue:");
+        ui.add(egui::DragValue::new(&mut app.selected_hue_id).range(0..=hues.len() as u16));
+        if app.selected_hue_id > 0 {
+            if let Some(hue) = hues.get(app.selected_hue_id as usize - 1) {
+                ui.label(hue_name(hue));
+            }
+        }
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        for hue in hues.iter().take(HUE_SWATCH_COUNT) {
+            let color = hue_swatch_color(hue);
+            let selected = app.selected_hue_id == hue.id as u16;
+            let text = if selected { format!("[{}]", hue.id) } else { hue.id.to_string() };
+            let button = egui::Button::new(text).fill(color);
+            if ui.add(button).clicked() {
+                app.selected_hue_id = hue.id as u16;
+            }
+        }
+    });
+}
+
+fn hue_name(hue: &uocf::classic::hues::HueEntry) -> String {
+    std::str::from_utf8(&hue.name)
+        .unwrap_or("")
+        .trim_matches('\0')
+        .to_string()
+}
+
+fn hue_swatch_color(hue: &uocf::classic::hues::HueEntry) -> egui::Color32 {
+    let color = hue.color_table[24];
+    let r = (((color >> 10) & 0x1F) as u8) << 3;
+    let g = (((color >> 5) & 0x1F) as u8) << 3;
+    let b = ((color & 0x1F) as u8) << 3;
+    egui::Color32::from_rgb(r, g, b)
 }
 
 fn select_or_load_ec_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool {
@@ -381,6 +600,7 @@ fn select_or_load_cc_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool
 fn equipment_detail(
     tiledata: Option<&uocf::classic::tiledata::TileData>,
     profile: &PaperdollProfile,
+    slot_id: &str,
     item_id: &str,
 ) -> String {
     if item_id.trim().is_empty() {
@@ -397,13 +617,24 @@ fn equipment_detail(
         return format!("{} anim_id=0", item.name_ascii());
     }
 
+    let slot_note = slot_by_id(slot_id)
+        .map(|slot| {
+            if slot.layer == item.quality {
+                format!(" slot={}", slot.label)
+            } else {
+                format!(" slot={} expected_layer={}", slot.label, slot.layer)
+            }
+        })
+        .unwrap_or_default();
+
     format!(
-        "{} anim_id={} gump={} layer={} partial_hue={}",
+        "{} anim_id={} gump={} layer={} partial_hue={}{}",
         item.name_ascii(),
         item.anim_id,
         item.anim_id as u32 + profile.equipment_offset,
         item.quality,
         item.flags.partialhue(),
+        slot_note,
     )
 }
 
@@ -682,6 +913,13 @@ mod tests {
         assert_eq!(male.canvas_width, 260);
         assert_eq!(gargoyle.equipment_offset, 60_000);
         assert_eq!(gargoyle.canvas_height, 340);
+    }
+
+    #[test]
+    fn paperdoll_slot_labels_include_layers() {
+        assert_eq!(slot_label("head"), "Head (6)");
+        assert_eq!(slot_label("outer_torso"), "Outer Torso (25)");
+        assert_eq!(slot_label(""), "Any");
     }
 
     #[test]

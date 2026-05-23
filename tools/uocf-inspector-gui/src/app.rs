@@ -75,6 +75,7 @@ pub enum GumpSource {
 
 #[derive(Clone, Debug)]
 pub struct PaperdollEquipmentInput {
+    pub slot: String,
     pub item_id: String,
     pub hue: String,
 }
@@ -82,6 +83,7 @@ pub struct PaperdollEquipmentInput {
 impl Default for PaperdollEquipmentInput {
     fn default() -> Self {
         Self {
+            slot: String::new(),
             item_id: String::new(),
             hue: "0".to_string(),
         }
