@@ -1,4 +1,5 @@
 use crate::app::{ArtSource, UopInspectorApp};
+use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use color_eyre::eyre;
 use eframe::egui;
 use uocf::classic::anim::AnimMap;
@@ -287,6 +288,36 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         ));
 
                         if frame.width > 0 && frame.height > 0 {
+                            if ui.button("Export PNG").clicked() {
+                                let source = animation_source_label(app.selected_legacy_source);
+                                let name = sanitize_file_stem(
+                                    &format!(
+                                        "{source}_body_{}_action_{}_dir_{}_frame_{}",
+                                        body_id,
+                                        app.selected_action_id,
+                                        app.selected_direction,
+                                        frame_idx
+                                    ),
+                                    "animation_frame",
+                                );
+                                match export_rgba_png(
+                                    format!("{name}.png"),
+                                    frame.width as u32,
+                                    frame.height as u32,
+                                    &frame.data,
+                                ) {
+                                    Ok(Some(path)) => {
+                                        app.status_message =
+                                            format!("Exported animation frame to {path}.");
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => {
+                                        app.status_message =
+                                            format!("Failed to export animation frame: {e}");
+                                    }
+                                }
+                            }
+
                             let key = if app.selected_anim_sequence.is_some() {
                                 0xAB000000
                                     | (app.selected_legacy_source as u64) << 48
@@ -332,4 +363,13 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         }
     });
+}
+
+fn animation_source_label(source: ArtSource) -> &'static str {
+    match source {
+        ArtSource::Mul => "mul",
+        ArtSource::CcUop => "cc_uop",
+        ArtSource::EcUop => "ec_uop",
+        ArtSource::Any => "any",
+    }
 }

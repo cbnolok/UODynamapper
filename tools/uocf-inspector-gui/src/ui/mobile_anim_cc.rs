@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::app::UopInspectorApp;
+use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 
 pub fn ui_mobile_anim_cc(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(package) = app.mobile_anim_cc_package.clone() else {
@@ -171,6 +172,19 @@ pub fn ui_mobile_anim_cc(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
         match frame_texture(app, ctx, &package, frame) {
             Some(handle) => {
+                if ui.button("Export PNG").clicked() {
+                    match export_mobile_frame_png(&package, selected_animation, frame) {
+                        Ok(Some(path)) => {
+                            app.status_message =
+                                format!("Exported mobile animation frame to {path}.");
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            app.status_message =
+                                format!("Failed to export mobile animation frame: {e}");
+                        }
+                    }
+                }
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
                 });
@@ -180,6 +194,39 @@ pub fn ui_mobile_anim_cc(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
         }
     });
+}
+
+fn export_mobile_frame_png(
+    package: &udd_assets::MobileAnimCcPackage,
+    animation: udd_assets::mobile_anim_cc::MobileAnimCcAnimationRecord,
+    frame: udd_assets::mobile_anim_cc::MobileAnimCcFrameRecord,
+) -> Result<Option<String>, String> {
+    let page_rgba = package.read_page_rgba(frame.page_index).map_err(|e| e.to_string())?;
+    let cropped = crop_frame_rgba(
+        &page_rgba,
+        package.atlas_width(),
+        frame.x as u32,
+        frame.y as u32,
+        frame.width as u32,
+        frame.height as u32,
+    )
+    .ok_or_else(|| "Frame rectangle is outside the atlas page.".to_string())?;
+    let name = sanitize_file_stem(
+        &format!(
+            "mobile_body_{}_action_{}_dir_{}_frame_{}",
+            animation.body_id,
+            animation.action_id,
+            animation.direction,
+            frame.frame_index
+        ),
+        "mobile_animation_frame",
+    );
+    export_rgba_png(
+        format!("{name}.png"),
+        frame.width as u32,
+        frame.height as u32,
+        &cropped,
+    )
 }
 
 fn frame_texture(

@@ -7,6 +7,7 @@ pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
 pub mod hues;
+pub mod image_export;
 pub mod gumps;
 pub mod clilocs;
 pub mod terrain_definition;

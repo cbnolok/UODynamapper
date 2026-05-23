@@ -8267,6 +8267,7 @@ dependencies = [
  "egui 0.31.1",
  "egui_extras",
  "env_logger",
+ "image",
  "knuffel",
  "rfd 0.15.4",
  "rodio",
