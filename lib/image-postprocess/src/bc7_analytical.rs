@@ -800,7 +800,7 @@ unsafe fn eval_m6_rgba_neon(
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx512f")]
-unsafe fn select_m6_avx512(pairs: __m512i, f: f32) -> [u8; 8] {
+unsafe fn select_m6_avx512(pairs: __m512i, f: f32) -> u64 {
     let pair_sums = _mm512_add_epi32(pairs, _mm512_shuffle_epi32(pairs, 0b10_11_00_01));
     let dots = _mm512_permutexvar_epi32(
         _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 0, 0, 0, 0, 0, 0, 0, 0),
@@ -809,9 +809,7 @@ unsafe fn select_m6_avx512(pairs: __m512i, f: f32) -> [u8; 8] {
     let y = _mm512_add_ps(_mm512_mul_ps(_mm512_cvtepi32_ps(dots), _mm512_set1_ps(f)), _mm512_set1_ps(0.5));
     let sel32 = _mm512_min_epi32(_mm512_max_epi32(_mm512_cvttps_epi32(y), _mm512_setzero_si512()), _mm512_set1_epi32(15));
     let sel8 = _mm512_cvtusepi32_epi8(sel32);
-    let mut packed = [0u8; 8];
-    _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
-    packed
+    _mm_cvtsi128_si64(sel8) as u64
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -863,11 +861,12 @@ unsafe fn eval_m6_rgba_avx512(
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            weights[i + lane] = packed[lane];
+            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
+            weights[i + lane] = sel as u8;
             if lane < 4 {
-                packed0 |= (packed[lane] as u32) << (lane * 8);
+                packed0 |= sel << (lane * 8);
             } else {
-                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+                packed1 |= sel << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da);
@@ -924,11 +923,12 @@ unsafe fn eval_m6_rgb_avx512(
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            weights[i + lane] = packed[lane];
+            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
+            weights[i + lane] = sel as u8;
             if lane < 4 {
-                packed0 |= (packed[lane] as u32) << (lane * 8);
+                packed0 |= sel << (lane * 8);
             } else {
-                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+                packed1 |= sel << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
@@ -987,17 +987,17 @@ unsafe fn eval_m6_rgba_avx2(
         let sel32 = _mm256_min_epi32(_mm256_max_epi32(_mm256_cvttps_epi32(y), _mm256_setzero_si256()), fifteen256);
         let sel16 = _mm_packus_epi32(_mm256_castsi256_si128(sel32), _mm256_extracti128_si256::<1>(sel32));
         let sel8 = _mm_packus_epi16(sel16, zero128);
-        let mut packed = [0u8; 8];
-        _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
+        let packed = _mm_cvtsi128_si64(sel8) as u64;
 
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            weights[i + lane] = packed[lane];
+            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
+            weights[i + lane] = sel as u8;
             if lane < 4 {
-                packed0 |= (packed[lane] as u32) << (lane * 8);
+                packed0 |= sel << (lane * 8);
             } else {
-                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+                packed1 |= sel << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgba4_sse41(px0, packed0, lr, lg, lb, la, dr, dg, db, da);
@@ -1054,17 +1054,17 @@ unsafe fn eval_m6_rgb_avx2(
         let sel32 = _mm256_min_epi32(_mm256_max_epi32(_mm256_cvttps_epi32(y), _mm256_setzero_si256()), fifteen256);
         let sel16 = _mm_packus_epi32(_mm256_castsi256_si128(sel32), _mm256_extracti128_si256::<1>(sel32));
         let sel8 = _mm_packus_epi16(sel16, zero128);
-        let mut packed = [0u8; 8];
-        _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
+        let packed = _mm_cvtsi128_si64(sel8) as u64;
 
         let mut packed0 = 0u32;
         let mut packed1 = 0u32;
         for lane in 0..8 {
-            weights[i + lane] = packed[lane];
+            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
+            weights[i + lane] = sel as u8;
             if lane < 4 {
-                packed0 |= (packed[lane] as u32) << (lane * 8);
+                packed0 |= sel << (lane * 8);
             } else {
-                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+                packed1 |= sel << ((lane - 4) * 8);
             }
         }
         sse += sse_m6_rgb4_sse41(px0, packed0, lr, lg, lb, dr, dg, db);
