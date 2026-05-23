@@ -16,6 +16,8 @@ use wide::f32x4;
 use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
 
 // ─── 1. TYPES ────────────────────────────────────────────────────────────────
 
@@ -278,6 +280,152 @@ fn eval_rgb_weights4(
     sse
 }
 
+#[inline(always)]
+fn eval_rgb_partition_weights4(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    start: usize,
+    subsets: [usize; 4],
+    el: &[[i32; 3]],
+    dlt: &[[i32; 3]],
+    sofs: &[i32],
+    f: &[f32],
+    max_w: i32,
+    weight_tab: &[u32],
+) -> u32 {
+    let pr = f32x4::from([
+        pixels[start][0] as f32,
+        pixels[start + 1][0] as f32,
+        pixels[start + 2][0] as f32,
+        pixels[start + 3][0] as f32,
+    ]);
+    let pg = f32x4::from([
+        pixels[start][1] as f32,
+        pixels[start + 1][1] as f32,
+        pixels[start + 2][1] as f32,
+        pixels[start + 3][1] as f32,
+    ]);
+    let pb = f32x4::from([
+        pixels[start][2] as f32,
+        pixels[start + 1][2] as f32,
+        pixels[start + 2][2] as f32,
+        pixels[start + 3][2] as f32,
+    ]);
+    let dr = f32x4::from([
+        dlt[subsets[0]][0] as f32,
+        dlt[subsets[1]][0] as f32,
+        dlt[subsets[2]][0] as f32,
+        dlt[subsets[3]][0] as f32,
+    ]);
+    let dg = f32x4::from([
+        dlt[subsets[0]][1] as f32,
+        dlt[subsets[1]][1] as f32,
+        dlt[subsets[2]][1] as f32,
+        dlt[subsets[3]][1] as f32,
+    ]);
+    let db = f32x4::from([
+        dlt[subsets[0]][2] as f32,
+        dlt[subsets[1]][2] as f32,
+        dlt[subsets[2]][2] as f32,
+        dlt[subsets[3]][2] as f32,
+    ]);
+    let bias = f32x4::from([
+        -(sofs[subsets[0]] as f32),
+        -(sofs[subsets[1]] as f32),
+        -(sofs[subsets[2]] as f32),
+        -(sofs[subsets[3]] as f32),
+    ]);
+    let scale = f32x4::from([f[subsets[0]], f[subsets[1]], f[subsets[2]], f[subsets[3]]]);
+    let sel_f = ((pr * dr + pg * dg + pb * db + bias) * scale + f32x4::splat(0.5)).to_array();
+    let mut sse = 0u32;
+    for lane in 0..4 {
+        let s = subsets[lane];
+        let sel = clamp_weight_sel(sel_f[lane] as i32, max_w);
+        weights[start + lane] = sel as u8;
+        sse += sse3(&pixels[start + lane], el[s][0], el[s][1], el[s][2], dlt[s][0], dlt[s][1], dlt[s][2], weight_tab[sel as usize]);
+    }
+    sse
+}
+
+#[inline(always)]
+fn eval_rgba_partition_weights4(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    start: usize,
+    subsets: [usize; 4],
+    el: &[[i32; 4]],
+    dlt: &[[i32; 4]],
+    sofs: &[i32],
+    f: &[f32],
+    max_w: i32,
+    weight_tab: &[u32],
+) -> u32 {
+    let pr = f32x4::from([
+        pixels[start][0] as f32,
+        pixels[start + 1][0] as f32,
+        pixels[start + 2][0] as f32,
+        pixels[start + 3][0] as f32,
+    ]);
+    let pg = f32x4::from([
+        pixels[start][1] as f32,
+        pixels[start + 1][1] as f32,
+        pixels[start + 2][1] as f32,
+        pixels[start + 3][1] as f32,
+    ]);
+    let pb = f32x4::from([
+        pixels[start][2] as f32,
+        pixels[start + 1][2] as f32,
+        pixels[start + 2][2] as f32,
+        pixels[start + 3][2] as f32,
+    ]);
+    let pa = f32x4::from([
+        pixels[start][3] as f32,
+        pixels[start + 1][3] as f32,
+        pixels[start + 2][3] as f32,
+        pixels[start + 3][3] as f32,
+    ]);
+    let dr = f32x4::from([
+        dlt[subsets[0]][0] as f32,
+        dlt[subsets[1]][0] as f32,
+        dlt[subsets[2]][0] as f32,
+        dlt[subsets[3]][0] as f32,
+    ]);
+    let dg = f32x4::from([
+        dlt[subsets[0]][1] as f32,
+        dlt[subsets[1]][1] as f32,
+        dlt[subsets[2]][1] as f32,
+        dlt[subsets[3]][1] as f32,
+    ]);
+    let db = f32x4::from([
+        dlt[subsets[0]][2] as f32,
+        dlt[subsets[1]][2] as f32,
+        dlt[subsets[2]][2] as f32,
+        dlt[subsets[3]][2] as f32,
+    ]);
+    let da = f32x4::from([
+        dlt[subsets[0]][3] as f32,
+        dlt[subsets[1]][3] as f32,
+        dlt[subsets[2]][3] as f32,
+        dlt[subsets[3]][3] as f32,
+    ]);
+    let bias = f32x4::from([
+        -(sofs[subsets[0]] as f32),
+        -(sofs[subsets[1]] as f32),
+        -(sofs[subsets[2]] as f32),
+        -(sofs[subsets[3]] as f32),
+    ]);
+    let scale = f32x4::from([f[subsets[0]], f[subsets[1]], f[subsets[2]], f[subsets[3]]]);
+    let sel_f = ((pr * dr + pg * dg + pb * db + pa * da + bias) * scale + f32x4::splat(0.5)).to_array();
+    let mut sse = 0u32;
+    for lane in 0..4 {
+        let s = subsets[lane];
+        let sel = clamp_weight_sel(sel_f[lane] as i32, max_w);
+        weights[start + lane] = sel as u8;
+        sse += sse4(&pixels[start + lane], el[s][0], el[s][1], el[s][2], el[s][3], dlt[s][0], dlt[s][1], dlt[s][2], dlt[s][3], weight_tab[sel as usize]);
+    }
+    sse
+}
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "sse4.1")]
 unsafe fn eval_m6_rgb_sse41(
@@ -320,6 +468,60 @@ unsafe fn eval_m6_rgb_sse41(
 
         for lane in 0..4 {
             let sel = ((packed >> (lane * 8)) & 0xff) as usize;
+            weights[i + lane] = sel as u8;
+            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+        }
+    }
+
+    sse
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn eval_m6_rgb_neon(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    f: f32,
+) -> u32 {
+    let ep = vdupq_n_s16(0);
+    let ep = vsetq_lane_s16(lr as i16, ep, 0);
+    let ep = vsetq_lane_s16(lg as i16, ep, 1);
+    let ep = vsetq_lane_s16(lb as i16, ep, 2);
+    let ep = vsetq_lane_s16(lr as i16, ep, 4);
+    let ep = vsetq_lane_s16(lg as i16, ep, 5);
+    let ep = vsetq_lane_s16(lb as i16, ep, 6);
+    let coef = vdupq_n_s16(0);
+    let coef = vsetq_lane_s16(dr as i16, coef, 0);
+    let coef = vsetq_lane_s16(dg as i16, coef, 1);
+    let coef = vsetq_lane_s16(db as i16, coef, 2);
+    let coef = vsetq_lane_s16(dr as i16, coef, 4);
+    let coef = vsetq_lane_s16(dg as i16, coef, 5);
+    let coef = vsetq_lane_s16(db as i16, coef, 6);
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(4) {
+        let px = vld1q_u8(pixels.as_ptr().add(i) as *const u8);
+        let lo = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(px))), ep);
+        let hi = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(px))), ep);
+        let prod0 = vmull_s16(vget_low_s16(lo), vget_low_s16(coef));
+        let prod1 = vmull_s16(vget_high_s16(lo), vget_high_s16(coef));
+        let prod2 = vmull_s16(vget_low_s16(hi), vget_low_s16(coef));
+        let prod3 = vmull_s16(vget_high_s16(hi), vget_high_s16(coef));
+        let mut sums = [[0i32; 4]; 4];
+        vst1q_s32(sums[0].as_mut_ptr(), prod0);
+        vst1q_s32(sums[1].as_mut_ptr(), prod1);
+        vst1q_s32(sums[2].as_mut_ptr(), prod2);
+        vst1q_s32(sums[3].as_mut_ptr(), prod3);
+
+        for lane in 0..4 {
+            let dot = sums[lane][0] + sums[lane][1] + sums[lane][2];
+            let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
             weights[i + lane] = sel as u8;
             sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
         }
@@ -506,7 +708,7 @@ fn eval_rgba_weights4(
 pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,hr:i32,hg:i32,hb:i32,p0:u32,p1:u32)->u32{
     let(lr,lg,lb)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32);
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
-    let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db);
+    let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
         return unsafe { eval_m6_rgb_avx512(pixels, weights, lr, lg, lb, dr, dg, db, f) };
@@ -519,7 +721,15 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
     if std::is_x86_feature_detected!("sse4.1") {
         return unsafe { eval_m6_rgb_sse41(pixels, weights, lr, lg, lb, dr, dg, db, f) };
     }
-    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_weights4(pixels,weights,i,lr,lg,lb,dr,dg,db,sofs,f,15,&BC7_WEIGHTS4);}sse}
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { eval_m6_rgb_neon(pixels, weights, lr, lg, lb, dr, dg, db, f) }
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let sofs=-(lr*dr+lg*dg+lb*db);
+        let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_weights4(pixels,weights,i,lr,lg,lb,dr,dg,db,sofs,f,15,&BC7_WEIGHTS4);}sse
+    }}
 
 pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,la:i32,p0:u32,hr:i32,hg:i32,hb:i32,ha:i32,p1:u32)->u32{
     let(lr,lg,lb,la)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32,from_7(la as u32,p0)as i32);
@@ -530,29 +740,29 @@ pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,
 pub fn eval_m1(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;2],lg:&[u32;2],lb:&[u32;2],hr:&[u32;2],hg:&[u32;2],hb:&[u32;2],pbits:&[u32;2],bmask:u16)->u32{
     let mut el=[[0i32;3];2];let mut dlt=[[0i32;3];2];let mut f=[0.0f32;2];let mut sofs=[0i32;2];
     for s in 0..2{el[s][0]=from_6(lr[s],pbits[s])as i32;let ehr=from_6(hr[s],pbits[s])as i32;el[s][1]=from_6(lg[s],pbits[s])as i32;let ehg=from_6(hg[s],pbits[s])as i32;el[s][2]=from_6(lb[s],pbits[s])as i32;let ehb=from_6(hb[s],pbits[s])as i32;dlt[s]=[ehr-el[s][0],ehg-el[s][1],ehb-el[s][2]];let d2=dlt[s][0]*dlt[s][0]+dlt[s][1]*dlt[s][1]+dlt[s][2]*dlt[s][2];f[s]=7.0/(d2 as f32+1.25e-7);sofs[s]=el[s][0]*dlt[s][0]+el[s][1]*dlt[s][1]+el[s][2]*dlt[s][2];}
-    let mut sse=0u32;for i in 0..16{let s=((bmask>>i)&1)as usize;let p=&pixels[i];let mut sel=((p[0]as i32*dlt[s][0]+p[1]as i32*dlt[s][1]+p[2]as i32*dlt[s][2]-sofs[s])as f32*f[s]+0.5)as i32;if sel as u32>7{sel=(!sel>>31)&7;}weights[i]=sel as u8;sse+=sse3(p,el[s][0],el[s][1],el[s][2],dlt[s][0],dlt[s][1],dlt[s][2],BC7_WEIGHTS3[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_partition_weights4(pixels,weights,i,[((bmask>>i)&1)as usize,((bmask>>(i+1))&1)as usize,((bmask>>(i+2))&1)as usize,((bmask>>(i+3))&1)as usize],&el,&dlt,&sofs,&f,7,&BC7_WEIGHTS3);}sse}
 
 pub fn eval_m3(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;2],lg:&[u32;2],lb:&[u32;2],hr:&[u32;2],hg:&[u32;2],hb:&[u32;2],pbits:&[u32;4],bmask:u16)->u32{
     let mut el=[[0i32;3];2];let mut dlt=[[0i32;3];2];let mut f=[0.0f32;2];let mut sofs=[0i32;2];
     for s in 0..2{el[s][0]=from_7(lr[s],pbits[s*2])as i32;let ehr=from_7(hr[s],pbits[s*2+1])as i32;el[s][1]=from_7(lg[s],pbits[s*2])as i32;let ehg=from_7(hg[s],pbits[s*2+1])as i32;el[s][2]=from_7(lb[s],pbits[s*2])as i32;let ehb=from_7(hb[s],pbits[s*2+1])as i32;dlt[s]=[ehr-el[s][0],ehg-el[s][1],ehb-el[s][2]];let d2=dlt[s][0]*dlt[s][0]+dlt[s][1]*dlt[s][1]+dlt[s][2]*dlt[s][2];f[s]=3.0/(d2 as f32+1.25e-7);sofs[s]=el[s][0]*dlt[s][0]+el[s][1]*dlt[s][1]+el[s][2]*dlt[s][2];}
-    let mut sse=0u32;for i in 0..16{let s=((bmask>>i)&1)as usize;let p=&pixels[i];let mut sel=((p[0]as i32*dlt[s][0]+p[1]as i32*dlt[s][1]+p[2]as i32*dlt[s][2]-sofs[s])as f32*f[s]+0.5)as i32;if sel as u32>3{sel=(!sel>>31)&3;}weights[i]=sel as u8;sse+=sse3(p,el[s][0],el[s][1],el[s][2],dlt[s][0],dlt[s][1],dlt[s][2],BC7_WEIGHTS2[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_partition_weights4(pixels,weights,i,[((bmask>>i)&1)as usize,((bmask>>(i+1))&1)as usize,((bmask>>(i+2))&1)as usize,((bmask>>(i+3))&1)as usize],&el,&dlt,&sofs,&f,3,&BC7_WEIGHTS2);}sse}
 
 pub fn eval_m7(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;2],lg:&[u32;2],lb:&[u32;2],la:&[u32;2],hr:&[u32;2],hg:&[u32;2],hb:&[u32;2],ha:&[u32;2],pbits:&[u32;4],bmask:u16)->u32{
     let mut el=[[0i32;4];2];let mut dlt=[[0i32;4];2];let mut f=[0.0f32;2];let mut sofs=[0i32;2];
     for s in 0..2{el[s][0]=from_5p(lr[s],pbits[s*2])as i32;let ehr=from_5p(hr[s],pbits[s*2+1])as i32;el[s][1]=from_5p(lg[s],pbits[s*2])as i32;let ehg=from_5p(hg[s],pbits[s*2+1])as i32;el[s][2]=from_5p(lb[s],pbits[s*2])as i32;let ehb=from_5p(hb[s],pbits[s*2+1])as i32;el[s][3]=from_5p(la[s],pbits[s*2])as i32;let eha=from_5p(ha[s],pbits[s*2+1])as i32;dlt[s]=[ehr-el[s][0],ehg-el[s][1],ehb-el[s][2],eha-el[s][3]];let d2:i32=dlt[s].iter().map(|&x|x*x).sum();f[s]=3.0/(d2 as f32+1.25e-7);sofs[s]=dlt[s].iter().zip(el[s].iter()).map(|(&d,&e)|d*e).sum();}
-    let mut sse=0u32;for i in 0..16{let s=((bmask>>i)&1)as usize;let p=&pixels[i];let dot=p[0]as i32*dlt[s][0]+p[1]as i32*dlt[s][1]+p[2]as i32*dlt[s][2]+p[3]as i32*dlt[s][3];let mut sel=((dot-sofs[s])as f32*f[s]+0.5)as i32;if sel as u32>3{sel=(!sel>>31)&3;}weights[i]=sel as u8;sse+=sse4(p,el[s][0],el[s][1],el[s][2],el[s][3],dlt[s][0],dlt[s][1],dlt[s][2],dlt[s][3],BC7_WEIGHTS2[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgba_partition_weights4(pixels,weights,i,[((bmask>>i)&1)as usize,((bmask>>(i+1))&1)as usize,((bmask>>(i+2))&1)as usize,((bmask>>(i+3))&1)as usize],&el,&dlt,&sofs,&f,3,&BC7_WEIGHTS2);}sse}
 
 pub fn eval_m0(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;3],lg:&[u32;3],lb:&[u32;3],hr:&[u32;3],hg:&[u32;3],hb:&[u32;3],pbits:&[u32;6],pat_id:usize)->u32{
     let pm=&BC7_PARTITION3[pat_id*16..(pat_id+1)*16];
     let mut el=[[0i32;3];3];let mut dlt=[[0i32;3];3];let mut f=[0.0f32;3];let mut sofs=[0i32;3];
     for s in 0..3{el[s][0]=from_4(lr[s],pbits[s*2])as i32;let ehr=from_4(hr[s],pbits[s*2+1])as i32;el[s][1]=from_4(lg[s],pbits[s*2])as i32;let ehg=from_4(hg[s],pbits[s*2+1])as i32;el[s][2]=from_4(lb[s],pbits[s*2])as i32;let ehb=from_4(hb[s],pbits[s*2+1])as i32;dlt[s]=[ehr-el[s][0],ehg-el[s][1],ehb-el[s][2]];let d2=dlt[s][0]*dlt[s][0]+dlt[s][1]*dlt[s][1]+dlt[s][2]*dlt[s][2];f[s]=7.0/(d2 as f32+1.25e-7);sofs[s]=el[s][0]*dlt[s][0]+el[s][1]*dlt[s][1]+el[s][2]*dlt[s][2];}
-    let mut sse=0u32;for i in 0..16{let s=pm[i]as usize;let p=&pixels[i];let mut sel=((p[0]as i32*dlt[s][0]+p[1]as i32*dlt[s][1]+p[2]as i32*dlt[s][2]-sofs[s])as f32*f[s]+0.5)as i32;if sel as u32>7{sel=(!sel>>31)&7;}weights[i]=sel as u8;sse+=sse3(p,el[s][0],el[s][1],el[s][2],dlt[s][0],dlt[s][1],dlt[s][2],BC7_WEIGHTS3[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_partition_weights4(pixels,weights,i,[pm[i]as usize,pm[i+1]as usize,pm[i+2]as usize,pm[i+3]as usize],&el,&dlt,&sofs,&f,7,&BC7_WEIGHTS3);}sse}
 
 pub fn eval_m2(pixels:&[Pixel;16],weights:&mut[u8;16],lr:&[u32;3],lg:&[u32;3],lb:&[u32;3],hr:&[u32;3],hg:&[u32;3],hb:&[u32;3],pat_id:usize)->u32{
     let pm=&BC7_PARTITION3[pat_id*16..(pat_id+1)*16];
     let mut el=[[0i32;3];3];let mut dlt=[[0i32;3];3];let mut f=[0.0f32;3];let mut sofs=[0i32;3];
     for s in 0..3{el[s][0]=from_5(lr[s])as i32;let ehr=from_5(hr[s])as i32;el[s][1]=from_5(lg[s])as i32;let ehg=from_5(hg[s])as i32;el[s][2]=from_5(lb[s])as i32;let ehb=from_5(hb[s])as i32;dlt[s]=[ehr-el[s][0],ehg-el[s][1],ehb-el[s][2]];let d2=dlt[s][0]*dlt[s][0]+dlt[s][1]*dlt[s][1]+dlt[s][2]*dlt[s][2];f[s]=3.0/(d2 as f32+1.25e-7);sofs[s]=el[s][0]*dlt[s][0]+el[s][1]*dlt[s][1]+el[s][2]*dlt[s][2];}
-    let mut sse=0u32;for i in 0..16{let s=pm[i]as usize;let p=&pixels[i];let mut sel=((p[0]as i32*dlt[s][0]+p[1]as i32*dlt[s][1]+p[2]as i32*dlt[s][2]-sofs[s])as f32*f[s]+0.5)as i32;if sel as u32>3{sel=(!sel>>31)&3;}weights[i]=sel as u8;sse+=sse3(p,el[s][0],el[s][1],el[s][2],dlt[s][0],dlt[s][1],dlt[s][2],BC7_WEIGHTS2[sel as usize]);}sse}
+    let mut sse=0u32;for i in (0..16).step_by(4){sse+=eval_rgb_partition_weights4(pixels,weights,i,[pm[i]as usize,pm[i+1]as usize,pm[i+2]as usize,pm[i+3]as usize],&el,&dlt,&sofs,&f,3,&BC7_WEIGHTS2);}sse}
 
 // ─── 6. ENCODE FUNCTIONS (Modes 0–7) ─────────────────────────────────────────
 // Each function takes quantized endpoints, p-bits, weights, and writes a 16-byte BC7 block.
