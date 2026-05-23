@@ -179,13 +179,10 @@ pub fn reduce_entropy_bc7(
                             trial_blk[dst_ofs..dst_ofs + len].copy_from_slice(&prev_blk[src_ofs..src_ofs + len]);
                             let mut trial_decoded = [[0u8; 4]; 16];
                             if !unpack_bc7(&trial_blk, &mut trial_decoded) { continue; }
-                            let mut trial_err = 0u64;
-                            for i in 0..16 {
-                                for c in 0..4 {
-                                    let d = p_pixels[i][c] as i32 - trial_decoded[i][c] as i32;
-                                    trial_err += (d * d) as u64;
-                                }
-                            }
+                            let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                            let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                                continue;
+                            };
                             let trial_ms_err = trial_err as f32 / 64.0;
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
@@ -235,13 +232,10 @@ pub fn reduce_entropy_bc7(
                         trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
                         let mut trial_decoded = [[0u8; 4]; 16];
                         if !unpack_bc7(&trial_blk, &mut trial_decoded) { continue; }
-                        let mut trial_err = 0u64;
-                        for i in 0..16 {
-                            for c in 0..4 {
-                                let d = p_pixels[i][c] as i32 - trial_decoded[i][c] as i32;
-                                trial_err += (d * d) as u64;
-                            }
-                        }
+                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                        let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                            continue;
+                        };
                         let trial_ms_err = trial_err as f32 / 64.0;
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
@@ -300,13 +294,10 @@ pub fn reduce_entropy_bc7(
                             continue;
                         }
 
-                        let mut trial_err = 0u64;
-                        for i in 0..16 {
-                            for c in 0..4 {
-                                let d = p_pixels[i][c] as i32 - trial_decoded[i][c] as i32;
-                                trial_err += (d * d) as u64;
-                            }
-                        }
+                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                        let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                            continue;
+                        };
 
                         let trial_ms_err = trial_err as f32 / 64.0;
                         if trial_ms_err < thresh_ms_err {
@@ -329,6 +320,33 @@ pub fn reduce_entropy_bc7(
     }
 
     total_modified
+}
+
+#[inline(always)]
+fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error_scale: f32) -> u64 {
+    if smooth_block_error_scale <= 0.0 {
+        return u64::MAX;
+    }
+    (((best_t - trial_bits_times_lambda) * 64.0) / smooth_block_error_scale).max(0.0).ceil() as u64
+}
+
+#[inline(always)]
+fn block_error_bounded(
+    source: &[[u8; 4]],
+    decoded: &[[u8; 4]; 16],
+    max_error: u64,
+) -> Option<u64> {
+    let mut err = 0u64;
+    for i in 0..16 {
+        for c in 0..4 {
+            let d = source[i][c] as i32 - decoded[i][c] as i32;
+            err += (d * d) as u64;
+        }
+        if err >= max_error {
+            return None;
+        }
+    }
+    Some(err)
 }
 
 fn hash_hsieh(buf: &[u8], salt: u32) -> u32 {
