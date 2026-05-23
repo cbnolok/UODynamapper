@@ -238,6 +238,44 @@ fn pack_i16x4(a: i32, b: i32, c: i32, d: i32) -> i64 {
         | ((d as i16 as u16 as u64) << 48)) as i64
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const BC7_M6_BACKEND_UNKNOWN: u8 = 0;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const BC7_M6_BACKEND_SCALAR: u8 = 1;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const BC7_M6_BACKEND_SSE41: u8 = 2;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const BC7_M6_BACKEND_AVX2: u8 = 3;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const BC7_M6_BACKEND_AVX512: u8 = 4;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+static BC7_M6_BACKEND: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(BC7_M6_BACKEND_UNKNOWN);
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline(always)]
+fn x86_m6_backend() -> u8 {
+    let cached = BC7_M6_BACKEND.load(std::sync::atomic::Ordering::Relaxed);
+    if cached != BC7_M6_BACKEND_UNKNOWN {
+        return cached;
+    }
+
+    let backend = if std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512bw")
+    {
+        BC7_M6_BACKEND_AVX512
+    } else if std::is_x86_feature_detected!("avx2") {
+        BC7_M6_BACKEND_AVX2
+    } else if std::is_x86_feature_detected!("sse4.1") {
+        BC7_M6_BACKEND_SSE41
+    } else {
+        BC7_M6_BACKEND_SCALAR
+    };
+    BC7_M6_BACKEND.store(backend, std::sync::atomic::Ordering::Relaxed);
+    backend
+}
+
 #[inline(always)]
 fn eval_rgb_weights4(
     pixels: &[Pixel; 16],
@@ -1022,16 +1060,11 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
     let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
-        return unsafe { eval_m6_rgb_avx512(pixels, weights, lr, lg, lb, dr, dg, db, f) };
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("avx2") {
-        return unsafe { eval_m6_rgb_avx2(pixels, weights, lr, lg, lb, dr, dg, db, f) };
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("sse4.1") {
-        return unsafe { eval_m6_rgb_sse41(pixels, weights, lr, lg, lb, dr, dg, db, f) };
+    match x86_m6_backend() {
+        BC7_M6_BACKEND_AVX512 => return unsafe { eval_m6_rgb_avx512(pixels, weights, lr, lg, lb, dr, dg, db, f) },
+        BC7_M6_BACKEND_AVX2 => return unsafe { eval_m6_rgb_avx2(pixels, weights, lr, lg, lb, dr, dg, db, f) },
+        BC7_M6_BACKEND_SSE41 => return unsafe { eval_m6_rgb_sse41(pixels, weights, lr, lg, lb, dr, dg, db, f) },
+        _ => {}
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -1048,16 +1081,11 @@ pub fn eval_m6_rgba(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,
     let(hr,hg,hb,ha)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32,from_7(ha as u32,p1)as i32);
     let(dr,dg,db,da)=(hr-lr,hg-lg,hb-lb,ha-la);let f=15.0/((dr*dr+dg*dg+db*db+da*da)as f32+1.25e-7);
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
-        return unsafe { eval_m6_rgba_avx512(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("avx2") {
-        return unsafe { eval_m6_rgba_avx2(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
-    }
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("sse4.1") {
-        return unsafe { eval_m6_rgba_sse41(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) };
+    match x86_m6_backend() {
+        BC7_M6_BACKEND_AVX512 => return unsafe { eval_m6_rgba_avx512(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) },
+        BC7_M6_BACKEND_AVX2 => return unsafe { eval_m6_rgba_avx2(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) },
+        BC7_M6_BACKEND_SSE41 => return unsafe { eval_m6_rgba_sse41(pixels, weights, lr, lg, lb, la, dr, dg, db, da, f) },
+        _ => {}
     }
     #[cfg(target_arch = "aarch64")]
     {
