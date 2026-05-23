@@ -94,6 +94,7 @@ pub fn reduce_entropy_bc7(
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
     let mut block_modes = blocks.iter().map(get_bc7_mode).collect::<Vec<_>>();
+    let mut previous_blocks_by_mode = vec![Vec::<usize>::new(); 8];
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
     //   prev_cont_window_ofs: source-window offset just past the last accepted match end.
@@ -121,6 +122,7 @@ pub fn reduce_entropy_bc7(
             .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
+            previous_blocks_by_mode[bc7_mode as usize].push(block_index);
             continue;
         }
 
@@ -150,9 +152,11 @@ pub fn reduce_entropy_bc7(
             * cur_ms_err.max(1.0);
 
         // ── Main search window ──
-        for prev_block_index in (first_block_to_check..block_index).rev() {
+        for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+            if prev_block_index < first_block_to_check {
+                break;
+            }
             let prev_blk = blocks[prev_block_index];
-            if block_modes[prev_block_index] != bc7_mode { continue; }
 
             for len in (3..=16).rev() {
                 if params.allow_relative_movement {
@@ -261,11 +265,11 @@ pub fn reduce_entropy_bc7(
             let orig_best_block = best_block;
             let best_match_end = best_match_dst_block_ofs + best_match_len;
 
-            for prev_block_index in (first_block_to_check..block_index).rev() {
-                let prev_blk = blocks[prev_block_index];
-                if block_modes[prev_block_index] != bc7_mode {
-                    continue;
+            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+                if prev_block_index < first_block_to_check {
+                    break;
                 }
+                let prev_blk = blocks[prev_block_index];
 
                 let dist = (block_index - prev_block_index) * 16;
                 for len in 3..=(16 - best_match_len) {
@@ -310,6 +314,9 @@ pub fn reduce_entropy_bc7(
             blocks[block_index] = best_block;
             block_modes[block_index] = get_bc7_mode(&best_block);
             total_modified += 1;
+        }
+        if block_modes[block_index] < 8 {
+            previous_blocks_by_mode[block_modes[block_index] as usize].push(block_index);
         }
     }
 
