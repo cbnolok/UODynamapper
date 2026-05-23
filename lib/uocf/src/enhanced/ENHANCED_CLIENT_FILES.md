@@ -88,6 +88,7 @@ unless the data becomes a stable package contract.
 - Each texture item stores string offset, `texture_stretch`, `unk4`, `unk6`,
   and `unk7`. These are copied into `tilemeta.uddp` texture-ref metadata.
 - Current tile type classification is render-oriented:
+
   - `UOWaterShader` -> liquid
   - `UOStaticTerrainShader` -> solid/surface-like
   - `UOSpriteShader` + `Unused1` flag -> solid/surface-like
@@ -108,6 +109,17 @@ unless the data becomes a stable package contract.
   - item `unk6` and `unk7` are preserved in `tilemeta.uddp`. They may encode
     sampler/channel/blend parameters, but current routing does not depend on
     them.
+
+`waypoint.uop`:
+
+- Stores waypoint definition tables and compact waypoint records under
+  `build/sectors/waypoint.bin`.
+- The waypoint record section has verified `x`, `y`, signed `z`, `facet`, and
+  `name_cliloc` fields. The two remaining small fields are preserved as
+  `kind` and `value_6` until their UI role is verified.
+- The extracted EC `waypoints.lua` table exposes the client-facing schema as
+  facet-local `x`, `y`, `z`, `type`, `Name`, `Icon`, `Scale`, and optional
+  `flag`, but it is not a byte-for-byte copy of the UOP payload.
 
 `Texture.uop` and `LegacyTexture.uop`:
 

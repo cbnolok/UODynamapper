@@ -1,9 +1,14 @@
-//! Decoder for Enhanced Client `waypoints.uop`.
+//! Decoder for Enhanced Client `waypoint.uop`.
 //!
 //! The package is currently known to contain one payload at
-//! `build/sectors/waypoint.bin`. The record semantics are not yet verified, so
-//! this module preserves the raw section layout instead of naming fields as
-//! coordinates, map ids, names, or icon ids prematurely.
+//! `build/sectors/waypoint.bin`.
+//!
+//! The extracted EC UI `waypoints.lua` table describes waypoints as facet-local
+//! `x`, `y`, `z`, `type`, `Name`, `Icon`, and `Scale` values. The binary package
+//! is not a byte-for-byte copy of that Lua table: it contains definition
+//! sections and a compact waypoint section. Cliloc-backed fields and waypoint
+//! coordinates are named here; the remaining small fields keep neutral names
+//! until their UI role is verified.
 
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -14,7 +19,7 @@ use color_eyre::eyre::{self, WrapErr};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::UopPackage;
 
-pub const WAYPOINTS_UOP_NAME: &str = "waypoints.uop";
+pub const WAYPOINTS_UOP_NAME: &str = "waypoint.uop";
 pub const WAYPOINTS_PAYLOAD_PATH: &str = "build/sectors/waypoint.bin";
 pub const KNOWN_WAYPOINTS_PAYLOAD_HASH: u64 = 0xE2818A15B51C6F36;
 pub const WAYPOINTS_SUPPORTED_VERSION: u16 = 2;
@@ -22,41 +27,41 @@ pub const WAYPOINTS_SUPPORTED_VERSION: u16 = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaypointsPackage {
     pub version: u16,
-    pub sub_24: Vec<WaypointPairRecord>,
-    pub sub_24_2: Vec<WaypointPairRecord>,
-    pub sub_24_3: Vec<WaypointLinkedRecord>,
-    pub sub_24_4: Vec<WaypointDetailRecord>,
+    pub icon_definitions: Vec<WaypointClilocDefinition>,
+    pub effect_definitions: Vec<WaypointClilocDefinition>,
+    pub type_definitions: Vec<WaypointTypeDefinition>,
+    pub waypoints: Vec<WaypointRecord>,
     pub trailing_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaypointPairRecord {
-    pub value_1: u32,
-    pub value_2: u32,
+pub struct WaypointClilocDefinition {
+    pub id: u32,
+    pub name_cliloc: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaypointLinkedRecord {
+pub struct WaypointTypeDefinition {
+    pub name_cliloc: u32,
+    pub flags: u8,
+    pub links: [WaypointTypeLink; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaypointTypeLink {
     pub value_1: u32,
     pub value_2: u8,
-    pub links: [WaypointLinkedValue; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaypointLinkedValue {
-    pub value_1: u32,
-    pub value_2: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaypointDetailRecord {
-    pub value_1: u32,
-    pub value_2: u32,
-    pub value_3: u8,
-    pub value_4: u8,
-    pub value_5: u16,
+pub struct WaypointRecord {
+    pub x: u32,
+    pub y: u32,
+    pub z: i8,
+    pub facet: u8,
+    pub kind: u16,
     pub value_6: u16,
-    pub value_7: u32,
+    pub name_cliloc: u32,
 }
 
 impl WaypointsPackage {
@@ -96,20 +101,22 @@ impl WaypointsPackage {
             );
         }
 
-        let sub_24 = read_pair_section(&mut reader, bytes, "sub_24")?;
-        let sub_24_2 = read_pair_section(&mut reader, bytes, "sub_24_2")?;
-        let sub_24_3 = read_linked_section(&mut reader, bytes)?;
-        let sub_24_4 = read_detail_section(&mut reader, bytes)?;
+        let icon_definitions =
+            read_cliloc_definition_section(&mut reader, bytes, "icon_definitions")?;
+        let effect_definitions =
+            read_cliloc_definition_section(&mut reader, bytes, "effect_definitions")?;
+        let type_definitions = read_type_definition_section(&mut reader, bytes)?;
+        let waypoints = read_waypoint_section(&mut reader, bytes)?;
 
         let mut trailing_bytes = Vec::new();
         reader.read_to_end(&mut trailing_bytes)?;
 
         Ok(Self {
             version,
-            sub_24,
-            sub_24_2,
-            sub_24_3,
-            sub_24_4,
+            icon_definitions,
+            effect_definitions,
+            type_definitions,
+            waypoints,
             trailing_bytes,
         })
     }
@@ -124,35 +131,35 @@ fn read_count(reader: &mut Cursor<&[u8]>, bytes: &[u8], section: &str) -> eyre::
     Ok(reader.read_u16::<LittleEndian>()? as usize)
 }
 
-fn read_pair_section(
+fn read_cliloc_definition_section(
     reader: &mut Cursor<&[u8]>,
     bytes: &[u8],
     section: &str,
-) -> eyre::Result<Vec<WaypointPairRecord>> {
+) -> eyre::Result<Vec<WaypointClilocDefinition>> {
     let count = read_count(reader, bytes, section)?;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
         require_remaining(reader, bytes, 8, section)?;
-        records.push(WaypointPairRecord {
-            value_1: reader.read_u32::<LittleEndian>()?,
-            value_2: reader.read_u32::<LittleEndian>()?,
+        records.push(WaypointClilocDefinition {
+            id: reader.read_u32::<LittleEndian>()?,
+            name_cliloc: reader.read_u32::<LittleEndian>()?,
         });
     }
     Ok(records)
 }
 
-fn read_linked_section(
+fn read_type_definition_section(
     reader: &mut Cursor<&[u8]>,
     bytes: &[u8],
-) -> eyre::Result<Vec<WaypointLinkedRecord>> {
-    let section = "sub_24_3";
+) -> eyre::Result<Vec<WaypointTypeDefinition>> {
+    let section = "type_definitions";
     let count = read_count(reader, bytes, section)?;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
         require_remaining(reader, bytes, 19, section)?;
-        let value_1 = reader.read_u32::<LittleEndian>()?;
-        let value_2 = reader.read_u8()?;
-        let mut links = [WaypointLinkedValue {
+        let name_cliloc = reader.read_u32::<LittleEndian>()?;
+        let flags = reader.read_u8()?;
+        let mut links = [WaypointTypeLink {
             value_1: 0,
             value_2: 0,
         }; 3];
@@ -160,32 +167,32 @@ fn read_linked_section(
             link.value_1 = reader.read_u32::<LittleEndian>()?;
             link.value_2 = reader.read_u8()?;
         }
-        records.push(WaypointLinkedRecord {
-            value_1,
-            value_2,
+        records.push(WaypointTypeDefinition {
+            name_cliloc,
+            flags,
             links,
         });
     }
     Ok(records)
 }
 
-fn read_detail_section(
+fn read_waypoint_section(
     reader: &mut Cursor<&[u8]>,
     bytes: &[u8],
-) -> eyre::Result<Vec<WaypointDetailRecord>> {
-    let section = "sub_24_4";
+) -> eyre::Result<Vec<WaypointRecord>> {
+    let section = "waypoints";
     let count = read_count(reader, bytes, section)?;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
         require_remaining(reader, bytes, 18, section)?;
-        records.push(WaypointDetailRecord {
-            value_1: reader.read_u32::<LittleEndian>()?,
-            value_2: reader.read_u32::<LittleEndian>()?,
-            value_3: reader.read_u8()?,
-            value_4: reader.read_u8()?,
-            value_5: reader.read_u16::<LittleEndian>()?,
+        records.push(WaypointRecord {
+            x: reader.read_u32::<LittleEndian>()?,
+            y: reader.read_u32::<LittleEndian>()?,
+            z: reader.read_i8()?,
+            facet: reader.read_u8()?,
+            kind: reader.read_u16::<LittleEndian>()?,
             value_6: reader.read_u16::<LittleEndian>()?,
-            value_7: reader.read_u32::<LittleEndian>()?,
+            name_cliloc: reader.read_u32::<LittleEndian>()?,
         });
     }
     Ok(records)
@@ -254,28 +261,34 @@ mod tests {
         let package = WaypointsPackage::from_payload_bytes(&sample_payload()).unwrap();
 
         assert_eq!(package.version, 2);
-        assert_eq!(package.sub_24, vec![WaypointPairRecord { value_1: 10, value_2: 20 }]);
-        assert_eq!(package.sub_24_2, vec![WaypointPairRecord { value_1: 30, value_2: 40 }]);
-        assert_eq!(package.sub_24_3[0].value_1, 50);
-        assert_eq!(package.sub_24_3[0].value_2, 51);
         assert_eq!(
-            package.sub_24_3[0].links,
+            package.icon_definitions,
+            vec![WaypointClilocDefinition { id: 10, name_cliloc: 20 }]
+        );
+        assert_eq!(
+            package.effect_definitions,
+            vec![WaypointClilocDefinition { id: 30, name_cliloc: 40 }]
+        );
+        assert_eq!(package.type_definitions[0].name_cliloc, 50);
+        assert_eq!(package.type_definitions[0].flags, 51);
+        assert_eq!(
+            package.type_definitions[0].links,
             [
-                WaypointLinkedValue { value_1: 60, value_2: 70 },
-                WaypointLinkedValue { value_1: 61, value_2: 71 },
-                WaypointLinkedValue { value_1: 62, value_2: 72 },
+                WaypointTypeLink { value_1: 60, value_2: 70 },
+                WaypointTypeLink { value_1: 61, value_2: 71 },
+                WaypointTypeLink { value_1: 62, value_2: 72 },
             ]
         );
         assert_eq!(
-            package.sub_24_4,
-            vec![WaypointDetailRecord {
-                value_1: 80,
-                value_2: 90,
-                value_3: 100,
-                value_4: 101,
-                value_5: 110,
+            package.waypoints,
+            vec![WaypointRecord {
+                x: 80,
+                y: 90,
+                z: 100,
+                facet: 101,
+                kind: 110,
                 value_6: 120,
-                value_7: 130,
+                name_cliloc: 130,
             }]
         );
         assert_eq!(package.trailing_bytes, vec![0xAA, 0xBB]);
@@ -289,6 +302,8 @@ mod tests {
         bytes.write_u32::<LittleEndian>(10).unwrap();
 
         let error = WaypointsPackage::from_payload_bytes(&bytes).unwrap_err();
-        assert!(error.to_string().contains("truncated waypoints payload in sub_24"));
+        assert!(error
+            .to_string()
+            .contains("truncated waypoints payload in icon_definitions"));
     }
 }
