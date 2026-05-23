@@ -29,7 +29,11 @@ is_ci := env_var_or_default("GITHUB_ACTIONS", "false")
 sccache := "false"
 
 # --- Tool Detection ---
-has_sccache := `command -v sccache || echo ""`
+has_sccache := if is_windows == "true" {
+    `powershell -NoProfile -Command "if (Get-Command sccache -ErrorAction SilentlyContinue) { (Get-Command sccache).Source }"`
+} else {
+    `command -v sccache || echo ""`
+}
 has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
 has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
 

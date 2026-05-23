@@ -1,6 +1,6 @@
 # -- Local
 [build]
-target-dir = "/home/claudio/_builds"
+target-dir = "target"
 
 # -- Unstable Rust compiler only, but useful for profiling.
 #[unstable]

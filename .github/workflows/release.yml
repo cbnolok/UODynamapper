@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libjxl-dev \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
             pkg-config clang mold
           sudo ln -sf $(which mold) /usr/bin/ld.mold
 
@@ -98,7 +98,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libjxl-dev \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
             pkg-config clang mold
 
       - name: Install Rust nightly
@@ -162,11 +162,12 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just \
-                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add x86_64-unknown-linux-musl
               rustup component add rust-src
+              chmod +x scripts/build/common/rustc_wrapper.sh
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
@@ -212,11 +213,12 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just \
-                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev libjxl-dev
+                alsa-lib-dev eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add aarch64-unknown-linux-musl
               rustup component add rust-src
+              chmod +x scripts/build/common/rustc_wrapper.sh
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
@@ -372,7 +374,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install Just
-        uses: extractions/setup-just@v2
+        run: cargo install just --locked
 
       - name: Cache Cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
