@@ -4,6 +4,8 @@ use std::cmp::max;
 use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
@@ -460,14 +462,18 @@ fn block_error_bounded(
             block_error_bounded_scalar(source, decoded, max_error)
         }
     }
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { block_error_bounded_neon(source, decoded, max_error) }
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
     {
         block_error_bounded_scalar(source, decoded, max_error)
     }
 }
 
 #[inline(always)]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn block_error_bounded_scalar(
     source: &[[u8; 4]],
     decoded: &[[u8; 4]; 16],
@@ -532,6 +538,46 @@ unsafe fn hsum_epi32_sse2(v: __m128i) -> u32 {
     let sum64 = _mm_add_epi32(v, hi64);
     let hi32 = _mm_srli_si128::<4>(sum64);
     _mm_cvtsi128_si32(_mm_add_epi32(sum64, hi32)) as u32
+}
+
+// AArch64 NEON mirrors the SSE2 path: process one 16-byte row at a time,
+// widen to i16, square into i32 lanes, and keep the same half-block early exit.
+#[cfg(target_arch = "aarch64")]
+unsafe fn block_error_bounded_neon(
+    source: &[[u8; 4]],
+    decoded: &[[u8; 4]; 16],
+    max_error: u64,
+) -> Option<u64> {
+    let source_ptr = source.as_ptr() as *const u8;
+    let decoded_ptr = decoded.as_ptr() as *const u8;
+    let mut sum = vdupq_n_s32(0);
+    let mut err = 0u64;
+
+    for i in 0..4 {
+        let src = vld1q_u8(source_ptr.add(i * 16));
+        let dec = vld1q_u8(decoded_ptr.add(i * 16));
+        let src_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(src)));
+        let src_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(src)));
+        let dec_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(dec)));
+        let dec_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(dec)));
+        let diff_lo = vsubq_s16(src_lo, dec_lo);
+        let diff_hi = vsubq_s16(src_hi, dec_hi);
+
+        sum = vaddq_s32(sum, vmull_s16(vget_low_s16(diff_lo), vget_low_s16(diff_lo)));
+        sum = vaddq_s32(sum, vmull_s16(vget_high_s16(diff_lo), vget_high_s16(diff_lo)));
+        sum = vaddq_s32(sum, vmull_s16(vget_low_s16(diff_hi), vget_low_s16(diff_hi)));
+        sum = vaddq_s32(sum, vmull_s16(vget_high_s16(diff_hi), vget_high_s16(diff_hi)));
+
+        if i == 1 || i == 3 {
+            err += vaddvq_s32(sum) as u64;
+            if err >= max_error {
+                return None;
+            }
+            sum = vdupq_n_s32(0);
+        }
+    }
+
+    Some(err)
 }
 
 fn hash_hsieh(buf: &[u8], salt: u32) -> u32 {
