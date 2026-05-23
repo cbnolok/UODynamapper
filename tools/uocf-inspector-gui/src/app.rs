@@ -5,6 +5,7 @@ use std::sync::Arc;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
+use uocf::classic::gump::GumpMap;
 use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
@@ -32,6 +33,7 @@ pub enum ViewMode {
     Animations,
     AnimData,
     MobileAnimCc,
+    Gumps,
     Multis,
     Hues,
     Clilocs,
@@ -63,6 +65,27 @@ pub enum MultisSource {
 pub enum LocalizedStringsSource {
     Cliloc,
     LocalizedStringsUop,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum GumpSource {
+    Classic,
+    Enhanced,
+}
+
+#[derive(Clone, Debug)]
+pub struct PaperdollEquipmentInput {
+    pub item_id: String,
+    pub hue: String,
+}
+
+impl Default for PaperdollEquipmentInput {
+    fn default() -> Self {
+        Self {
+            item_id: String::new(),
+            hue: "0".to_string(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -169,6 +192,7 @@ pub struct UopInspectorApp {
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
+    pub cc_gumps: Option<Arc<GumpMap>>,
     pub cc_sounds: Option<Arc<SoundMap>>,
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
     pub cc_multimap: Option<Arc<MultimapRleImage>>,
@@ -202,6 +226,15 @@ pub struct UopInspectorApp {
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
     pub multimap_texture: Option<egui::TextureHandle>,
+
+    // Gumps and paperdolls
+    pub selected_gump_source: GumpSource,
+    pub selected_gump_id: String,
+    pub selected_paperdoll_profile: String,
+    pub paperdoll_body_id: String,
+    pub paperdoll_body_hue: String,
+    pub paperdoll_equipment: Vec<PaperdollEquipmentInput>,
+    pub paperdoll_preview: Option<egui::TextureHandle>,
 
     // Animations
     pub selected_anim_id: u32,
@@ -257,6 +290,7 @@ impl UopInspectorApp {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
             cc_multimap: None,
@@ -292,6 +326,13 @@ impl UopInspectorApp {
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             multimap_texture: None,
+            selected_gump_source: GumpSource::Classic,
+            selected_gump_id: String::new(),
+            selected_paperdoll_profile: "human_male".to_string(),
+            paperdoll_body_id: String::new(),
+            paperdoll_body_hue: "0".to_string(),
+            paperdoll_equipment: vec![PaperdollEquipmentInput::default(); 6],
+            paperdoll_preview: None,
 
             selected_anim_id: 0,
             selected_animdata_id: 0,
@@ -344,9 +385,11 @@ impl UopInspectorApp {
         self.selected_mobile_anim_frame_index = 0;
         self.cc_sounds = None;
         self.cc_sound_entries = None;
+        self.cc_gumps = None;
         self.cc_multimap = None;
         self.cc_multimap_path = None;
         self.multimap_texture = None;
+        self.paperdoll_preview = None;
         if let Some(player) = &mut self.sound_player {
             player.stop();
         }
@@ -356,6 +399,15 @@ impl UopInspectorApp {
             self.log(format!("Trying to load CC assets from {}", path.display()));
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
+            match GumpMap::load(&path) {
+                Ok(gumps) => {
+                    self.cc_gumps = Some(Arc::new(gumps));
+                    self.log("Successfully loaded CC gump art.");
+                }
+                Err(e) => {
+                    self.log(format!("CC gump art unavailable: {}", e));
+                }
+            }
             let loaded_sounds = SoundMap::load(&path).ok().map(Arc::new);
             let loaded_sound_entries = loaded_sounds
                 .as_ref()
@@ -605,6 +657,7 @@ impl UopInspectorApp {
                 "legacytexture.uop",
                 "legacyterrain.uop",
                 "texture.uop",
+                "interface.uop",
             ];
             for uop_name in ec_uops {
                 let uop_path = ec_base_path.join(uop_name);
@@ -947,6 +1000,76 @@ impl UopInspectorApp {
             }
         }
         None
+    }
+
+    pub fn get_cc_gump_texture(
+        &mut self,
+        ctx: &egui::Context,
+        gump_id: u32,
+    ) -> Option<egui::TextureHandle> {
+        let key = 0x6D00000000000000 | gump_id as u64;
+        if let Some(handle) = self.texture_previews.get(&key) {
+            return Some(handle.clone());
+        }
+
+        let gumps = Arc::clone(self.cc_gumps.as_ref()?);
+        let mut scratch = Vec::new();
+        let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            &pixels,
+        );
+        let handle = ctx.load_texture(format!("cc_gump_{gump_id}"), image, Default::default());
+        self.texture_previews.insert(key, handle.clone());
+        Some(handle)
+    }
+
+    pub fn get_ec_gump_texture(
+        &mut self,
+        ctx: &egui::Context,
+        gump_id: u32,
+    ) -> Option<egui::TextureHandle> {
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let is_interface = loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case("interface.uop"))
+                .unwrap_or(false);
+            if !is_interface {
+                continue;
+            }
+
+            let candidates = [
+                format!("data/interface/default/textures/gumpart/{:08}.tga", gump_id),
+                format!("data/interface/default/textures/gumpart/{:08}.dds", gump_id),
+            ];
+            for path in candidates {
+                let hash = hash_file_name_single(&path);
+                if let Some(file) = loaded.package.get_file_by_hash(hash) {
+                    if let Ok(data) = file.unpack() {
+                        if let Some(handle) = self.get_uop_texture(ctx, hash, &data, &path) {
+                            return Some(handle);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn get_gump_texture(
+        &mut self,
+        ctx: &egui::Context,
+        source: GumpSource,
+        gump_id: u32,
+    ) -> Option<egui::TextureHandle> {
+        match source {
+            GumpSource::Classic => self.get_cc_gump_texture(ctx, gump_id),
+            GumpSource::Enhanced => self.get_ec_gump_texture(ctx, gump_id),
+        }
     }
 
     fn get_uop_art_image_texture(
@@ -1404,6 +1527,7 @@ mod tests {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
             cc_multimap: None,
@@ -1433,6 +1557,13 @@ mod tests {
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             multimap_texture: None,
+            selected_gump_source: GumpSource::Classic,
+            selected_gump_id: String::new(),
+            selected_paperdoll_profile: "human_male".to_string(),
+            paperdoll_body_id: String::new(),
+            paperdoll_body_hue: "0".to_string(),
+            paperdoll_equipment: vec![PaperdollEquipmentInput::default(); 6],
+            paperdoll_preview: None,
             selected_anim_id: 0,
             selected_animdata_id: 0,
             selected_animdata_art_source: ArtSource::CcUop,

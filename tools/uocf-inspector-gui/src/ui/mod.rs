@@ -7,6 +7,7 @@ pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
 pub mod hues;
+pub mod gumps;
 pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
@@ -56,6 +57,18 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
             if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
+            }
+            if app.cc_gumps.is_some()
+                || app.uop_cache.loaded_uops.iter().any(|loaded| {
+                    loaded
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.eq_ignore_ascii_case("interface.uop"))
+                        .unwrap_or(false)
+                })
+            {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Gumps, "Gumps");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
             if app.mobile_anim_cc_package.is_some() {
@@ -171,6 +184,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::MobileAnimCc => {
             mobile_anim_cc::ui_mobile_anim_cc(app, ctx);
+        }
+        crate::app::ViewMode::Gumps => {
+            gumps::ui_gumps(app, ctx);
         }
         crate::app::ViewMode::AnimData => {
             animdata::ui_animdata(app, ctx);
