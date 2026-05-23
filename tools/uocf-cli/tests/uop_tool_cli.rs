@@ -133,3 +133,59 @@ fn extract_rejects_malformed_uop() {
 
     assert!(!output.status.success());
 }
+
+#[test]
+fn replace_updates_payload_without_fixed_temp_file() {
+    let temp = TempDir::new("replace");
+    let uop_path = temp.path().join("package.uop");
+    let replacement_path = temp.path().join("replacement.bin");
+    let packed_name = "build/worldart/00000042.dds";
+    let hash = hash_file_name_single(packed_name);
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"old payload", packed_name, CompressionFlag::None)
+        .expect("add uop fixture file");
+    package.finalize_and_save(&uop_path).expect("save uop fixture");
+    fs::write(&replacement_path, b"new payload").expect("write replacement");
+
+    let output = uop_tool()
+        .arg("replace")
+        .arg(&uop_path)
+        .arg(format!("0x{hash:016x}"))
+        .arg(&replacement_path)
+        .output()
+        .expect("run uop-tool replace");
+
+    assert!(output.status.success());
+    assert!(!uop_path.with_extension("uop.temp").exists());
+    let loaded = UopPackage::load(&uop_path).expect("load replaced package");
+    let file = loaded.get_file_by_hash(hash).expect("find replaced file");
+    assert_eq!(file.unpack().expect("unpack replaced file"), b"new payload");
+}
+
+#[test]
+fn rebuild_rewrites_package_without_fixed_temp_file() {
+    let temp = TempDir::new("rebuild");
+    let uop_path = temp.path().join("package.uop");
+    let packed_name = "build/worldart/00000042.dds";
+    let hash = hash_file_name_single(packed_name);
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"payload", packed_name, CompressionFlag::None)
+        .expect("add uop fixture file");
+    package.finalize_and_save(&uop_path).expect("save uop fixture");
+
+    let output = uop_tool()
+        .arg("rebuild")
+        .arg(&uop_path)
+        .output()
+        .expect("run uop-tool rebuild");
+
+    assert!(output.status.success());
+    assert!(!uop_path.with_extension("uop.temp").exists());
+    let loaded = UopPackage::load(&uop_path).expect("load rebuilt package");
+    let file = loaded.get_file_by_hash(hash).expect("find rebuilt file");
+    assert_eq!(file.unpack().expect("unpack rebuilt file"), b"payload");
+}

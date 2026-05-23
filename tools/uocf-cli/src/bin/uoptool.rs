@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uocf::uop_container::file::{CompressionFlag, UopFile};
 use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
@@ -196,12 +197,7 @@ fn main() -> eyre::Result<()> {
 
             *old_uop_file = new_uop_file;
 
-            let temp_path = uop_file.with_extension("uop.temp");
-            uop.finalize_and_save(&temp_path)
-                .with_context(|| "Failed to save temporary UOP file")?;
-
-            fs::rename(&temp_path, uop_file)
-                .with_context(|| "Failed to replace old UOP file with the new one")?;
+            save_package_atomically(&mut uop, uop_file)?;
 
             println!("Successfully replaced file and saved the UOP package.");
         }
@@ -214,12 +210,7 @@ fn main() -> eyre::Result<()> {
             uop.recompress(flate2::Compression::best())
                 .with_context(|| "Failed to recompress UOP package")?;
 
-            let temp_path = uop_file.with_extension("uop.temp");
-            uop.finalize_and_save(&temp_path)
-                .with_context(|| "Failed to save temporary UOP file")?;
-
-            fs::rename(&temp_path, uop_file)
-                .with_context(|| "Failed to replace old UOP file with the new one")?;
+            save_package_atomically(&mut uop, uop_file)?;
 
             println!("Successfully rebuilt and saved the UOP package.");
         }
@@ -373,6 +364,50 @@ fn safe_extract_path(out_dir: &Path, file_name: &str) -> eyre::Result<PathBuf> {
     Ok(out_path)
 }
 
+fn save_package_atomically(package: &mut UopPackage, target_path: &Path) -> eyre::Result<()> {
+    let temp_path = unique_temp_path_for(target_path)?;
+    package
+        .finalize_and_save(&temp_path)
+        .with_context(|| format!("Failed to save temporary UOP file: {}", temp_path.display()))?;
+
+    if let Err(error) = fs::rename(&temp_path, target_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error)
+            .with_context(|| "Failed to replace old UOP file with the new one");
+    }
+
+    Ok(())
+}
+
+fn unique_temp_path_for(target_path: &Path) -> eyre::Result<PathBuf> {
+    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target_path
+        .file_name()
+        .ok_or_else(|| eyre::eyre!("target UOP path has no file name: {}", target_path.display()))?
+        .to_string_lossy();
+
+    for attempt in 0..100u32 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            ".{file_name}.tmp.{}.{}.{}",
+            std::process::id(),
+            nonce,
+            attempt
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(eyre::eyre!(
+        "failed to allocate a temporary UOP path beside {}",
+        target_path.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,5 +438,15 @@ mod tests {
     #[test]
     fn safe_extract_path_rejects_absolute_path() {
         assert!(safe_extract_path(Path::new("/tmp/out"), "/tmp/outside.dds").is_err());
+    }
+
+    #[test]
+    fn unique_temp_path_is_sibling_and_not_fixed_name() {
+        let target = Path::new("/tmp/client.uop");
+        let temp = unique_temp_path_for(target).unwrap();
+
+        assert_eq!(temp.parent(), Some(Path::new("/tmp")));
+        assert_ne!(temp, target.with_extension("uop.temp"));
+        assert!(temp.file_name().unwrap().to_string_lossy().contains("client.uop"));
     }
 }
