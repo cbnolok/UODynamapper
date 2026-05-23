@@ -47,3 +47,7 @@ path = "src/bin/multimap_tool.rs"
 [[bin]]
 name = "facet-evidence-tool"
 path = "src/bin/facet_evidence_tool.rs"
+
+[[bin]]
+name = "kr-ec-terrain-diff-tool"
+path = "src/bin/kr_ec_terrain_diff_tool.rs"
