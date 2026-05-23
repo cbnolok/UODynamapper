@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ec_material_audit::{
@@ -8,6 +10,7 @@ use crate::ec_material_audit::{
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
+use serde::Serialize;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
@@ -108,6 +111,127 @@ fn collect_ec_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
         .as_ref()
         .map(|path| vec![path.clone()])
         .ok_or_else(|| eyre::eyre!("--ecdir is required for EC source files"))
+}
+
+#[derive(Serialize)]
+struct LandRoutingAuditReport {
+    routing_path: String,
+    tex_land_ec_path: String,
+    route_rows: usize,
+    route_count: usize,
+    unique_source_count: usize,
+    target_material_count: usize,
+    duplicate_source_count: usize,
+    duplicate_sources: Vec<LandRoutingDuplicateSource>,
+    missing_target_provenance_count: usize,
+    missing_target_provenance: Vec<u32>,
+    unresolved_route_count: usize,
+    unresolved_routes: Vec<LandRoutingUnresolvedRoute>,
+}
+
+#[derive(Serialize)]
+struct LandRoutingDuplicateSource {
+    cc_id: u32,
+    previous_target: u32,
+    previous_row: usize,
+    replacement_target: u32,
+    replacement_row: usize,
+}
+
+#[derive(Serialize)]
+struct LandRoutingUnresolvedRoute {
+    cc_id: u32,
+    target_material_id: u32,
+    resolved_runtime_slot_id: Option<u32>,
+}
+
+fn audit_land_routing_kdl(
+    routing_path: &Path,
+    tex_land_ec_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    let routing = udd_assets::cc_tex_land_ec_transcode::TerrainTranscode::load(routing_path)?;
+    let route_count = routing
+        .entries
+        .iter()
+        .map(|entry| entry.old_ids.len())
+        .sum::<usize>();
+
+    let mut route_map = HashMap::new();
+    let mut first_seen: HashMap<u32, (u32, usize)> = HashMap::new();
+    let mut duplicates = Vec::new();
+    for (row_index, entry) in routing.entries.iter().enumerate() {
+        let row_index = row_index + 1;
+        for &cc_id in &entry.old_ids {
+            if let Some((previous_target, previous_row)) =
+                first_seen.insert(cc_id, (entry.new_id, row_index))
+            {
+                duplicates.push(LandRoutingDuplicateSource {
+                    cc_id,
+                    previous_target,
+                    previous_row,
+                    replacement_target: entry.new_id,
+                    replacement_row: row_index,
+                });
+            }
+            route_map.insert(cc_id, entry.new_id);
+        }
+    }
+
+    let target_materials = route_map.values().copied().collect::<BTreeSet<_>>();
+    let mut provenance_by_material: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut package = udd_assets::TexLandEcPackage::load(tex_land_ec_path)?;
+    for record in package.terrain_provenance() {
+        *provenance_by_material.entry(record.material_id).or_default() += 1;
+    }
+    package.set_transcode(route_map.clone());
+
+    let missing_target_provenance = target_materials
+        .iter()
+        .copied()
+        .filter(|target| !provenance_by_material.contains_key(target))
+        .collect::<Vec<_>>();
+
+    let mut unresolved_routes = Vec::new();
+    for (&cc_id, &target_material_id) in &route_map {
+        let resolved_runtime_slot_id = package.resolve_runtime_slot_id(cc_id);
+        if resolved_runtime_slot_id
+            .and_then(|slot_id| package.present_slot(slot_id).map(|_| slot_id))
+            .is_none()
+        {
+            unresolved_routes.push(LandRoutingUnresolvedRoute {
+                cc_id,
+                target_material_id,
+                resolved_runtime_slot_id,
+            });
+        }
+    }
+    unresolved_routes.sort_by_key(|route| (route.target_material_id, route.cc_id));
+
+    let report = LandRoutingAuditReport {
+        routing_path: routing_path.display().to_string(),
+        tex_land_ec_path: tex_land_ec_path.display().to_string(),
+        route_rows: routing.entries.len(),
+        route_count,
+        unique_source_count: route_map.len(),
+        target_material_count: target_materials.len(),
+        duplicate_source_count: duplicates.len(),
+        duplicate_sources: duplicates,
+        missing_target_provenance_count: missing_target_provenance.len(),
+        missing_target_provenance,
+        unresolved_route_count: unresolved_routes.len(),
+        unresolved_routes,
+    };
+
+    let bytes = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, bytes)?;
+    println!(
+        "Wrote land routing audit with {} routes and {} unresolved routes to '{}'.",
+        report.unique_source_count,
+        report.unresolved_route_count,
+        output.display()
+    );
+    Ok(())
 }
 
 fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
@@ -472,6 +596,15 @@ enum Commands {
         )]
         terrain_overrides: PathBuf,
         #[arg(long, default_value = "ec_terrain_overrides_audit.json")]
+        output: PathBuf,
+    },
+    /// Validates a terrain routing KDL against a tex_land_ec.uddp package.
+    AuditLandRoutingKdl {
+        #[arg(long)]
+        routing: PathBuf,
+        #[arg(long = "tex-land-ec")]
+        tex_land_ec: PathBuf,
+        #[arg(long, default_value = "land_routing_audit.json")]
         output: PathBuf,
     },
     /// Writes a JSON audit of surface-like art redirection through tilemeta and tex_land_ec provenance.
@@ -970,6 +1103,13 @@ pub fn run() -> eyre::Result<()> {
             let out_file = resolve_output_path(&paths, &output);
             audit_ec_terrain_overrides(&paths, &terrain_overrides, &out_file)?;
         }
+        Commands::AuditLandRoutingKdl {
+            routing,
+            tex_land_ec,
+            output,
+        } => {
+            audit_land_routing_kdl(&routing, &tex_land_ec, &output)?;
+        }
         Commands::AuditEcSurfaceRedirection {
             source_dirs: source_dir_args,
             tilemeta,
@@ -1292,6 +1432,37 @@ mod tests {
                     ))
                 );
                 assert!(land_bc7);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_audit_land_routing_kdl() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "audit-land-routing-kdl",
+            "--routing",
+            "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
+            "--tex-land-ec",
+            "/tmp/tex_land_ec.uddp",
+            "--output",
+            "/tmp/land_routing_audit.json",
+        ])
+        .expect("parse land routing audit args");
+
+        match cli.command {
+            Commands::AuditLandRoutingKdl {
+                routing,
+                tex_land_ec,
+                output,
+            } => {
+                assert_eq!(
+                    routing,
+                    PathBuf::from("dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl")
+                );
+                assert_eq!(tex_land_ec, PathBuf::from("/tmp/tex_land_ec.uddp"));
+                assert_eq!(output, PathBuf::from("/tmp/land_routing_audit.json"));
             }
             _ => panic!("unexpected command parsed"),
         }
