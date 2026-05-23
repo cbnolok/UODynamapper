@@ -127,6 +127,28 @@ fn analytical_bc7_with_rdo_lambda_preserves_block_layout() {
 }
 
 #[test]
+fn analytical_wide_bc7_matches_scalar_for_edge_padded_blocks() {
+    let extent = ImageExtent::new(7, 5).unwrap();
+    let rgba = patterned_rgba(extent);
+    let scalar = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::Analytical,
+    )
+    .unwrap();
+    let wide = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::AnalyticalWide,
+    )
+    .unwrap();
+
+    assert_eq!(wide.blocks(), scalar.blocks());
+}
+
+#[test]
 fn analytical_bc7_decodes_with_bounded_error() {
     let extent = ImageExtent::new(16, 16).unwrap();
     let rgba = patterned_rgba(extent);
@@ -190,10 +212,16 @@ fn analytical_bc7_high_rdo_can_modify_blocks() {
 #[test]
 fn project_bc7_backend_is_available() {
     assert!(Bc7EncoderBackend::Analytical.is_available());
+    assert!(Bc7EncoderBackend::AnalyticalWide.is_available());
     assert_eq!(
         resolve_bc7_encoder_backend(Bc7EncoderBackend::Analytical),
         Bc7EncoderBackend::Analytical
     );
+    assert_eq!(
+        resolve_bc7_encoder_backend(Bc7EncoderBackend::AnalyticalWide),
+        Bc7EncoderBackend::AnalyticalWide
+    );
+    assert_eq!(preferred_bc7_encoder_backend(), Bc7EncoderBackend::AnalyticalWide);
 }
 
 #[test]

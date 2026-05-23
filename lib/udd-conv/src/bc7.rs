@@ -20,12 +20,14 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
     fn is_available(self) -> bool {
         match self {
             Self::Analytical => true,
+            Self::AnalyticalWide => true,
         }
     }
 
     fn unavailable_reason(self) -> Option<&'static str> {
         match self {
             Self::Analytical => None,
+            Self::AnalyticalWide => None,
         }
     }
 }
@@ -40,12 +42,13 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
     } else {
         match backend {
             Bc7EncoderBackend::Analytical => backend,
+            Bc7EncoderBackend::AnalyticalWide => backend,
         }
     }
 }
 
 pub const fn preferred_bc7_encoder_backend() -> Bc7EncoderBackend {
-    Bc7EncoderBackend::Analytical
+    Bc7EncoderBackend::AnalyticalWide
 }
 
 pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
@@ -337,6 +340,9 @@ pub fn encode_to_bc7_with_rdo_lambda(
 
     let mut blocks = match backend {
         Bc7EncoderBackend::Analytical => encode_with_analytical(rgba_pixels.as_ref(), extent),
+        Bc7EncoderBackend::AnalyticalWide => {
+            encode_with_analytical_wide(rgba_pixels.as_ref(), extent)
+        }
     };
     apply_bc7_rdo(&mut blocks, rgba_pixels.as_ref(), extent, rdo_lambda);
 
@@ -601,6 +607,20 @@ fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
         pack_bc7_rgba(block, pixels, flags);
     }
 
+    blocks
+}
+
+fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
+    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
+
+    let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
+    image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
+        &mut blocks,
+        rgba_pixels,
+        extent.width(),
+        extent.height(),
+        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE,
+    );
     blocks
 }
 
