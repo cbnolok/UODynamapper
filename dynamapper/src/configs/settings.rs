@@ -13,7 +13,6 @@ use bevy::{
     window::WindowResolution,
 };
 use serde::{Deserialize, Serialize};
-use udd_conv::bc7::{is_bc7_encoder_backend_available, Bc7EncoderBackend};
 
 #[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
 pub struct Settings {
@@ -338,17 +337,13 @@ impl AntiAliasingMode {
 #[serde(rename_all = "snake_case")]
 pub enum LossyTextureCompressionBackend {
     #[default]
-    Dds,
-    BlockCompression,
-    Ispc,
+    Analytical,
 }
 
 impl LossyTextureCompressionBackend {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Dds => "dds",
-            Self::BlockCompression => "block_compression",
-            Self::Ispc => "ispc",
+            Self::Analytical => "analytical",
         }
     }
 }
@@ -362,21 +357,7 @@ impl SectGraphics {
         }
 
         match self.lossy_texture_compression_backend {
-            LossyTextureCompressionBackend::Dds => Some(LossyTextureCompressionBackend::Dds),
-            LossyTextureCompressionBackend::BlockCompression => {
-                if is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) {
-                    Some(LossyTextureCompressionBackend::BlockCompression)
-                } else {
-                    Some(LossyTextureCompressionBackend::Dds)
-                }
-            }
-            LossyTextureCompressionBackend::Ispc => {
-                if is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) {
-                    Some(LossyTextureCompressionBackend::Ispc)
-                } else {
-                    Some(LossyTextureCompressionBackend::Dds)
-                }
-            }
+            LossyTextureCompressionBackend::Analytical => Some(LossyTextureCompressionBackend::Analytical),
         }
     }
 
@@ -389,34 +370,6 @@ impl SectGraphics {
         }
     }
 
-    pub fn log_unavailable_texture_compression_backend_warning(&self) {
-        if !self.lossy_texture_compression {
-            return;
-        }
-
-        let warning = match self.lossy_texture_compression_backend {
-            LossyTextureCompressionBackend::Dds => None,
-            LossyTextureCompressionBackend::BlockCompression
-                if !is_bc7_encoder_backend_available(Bc7EncoderBackend::BlockCompression) =>
-            {
-                Some(
-                    "graphics.lossy_texture_compression_backend = \"block_compression\" requested, but this build was compiled without the `uddconv/block_compression` backend. Falling back to dds.",
-                )
-            }
-            LossyTextureCompressionBackend::Ispc
-                if !is_bc7_encoder_backend_available(Bc7EncoderBackend::Ispc) =>
-            {
-                Some(
-                    "graphics.lossy_texture_compression_backend = \"ispc\" requested, but this build was compiled without the `uddconv/ispc` backend. Falling back to dds.",
-                )
-            }
-            _ => None,
-        };
-
-        if let Some(message) = warning {
-            console_logger::one(LogSev::Warn, LogAbout::General, message);
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -920,8 +873,6 @@ fn sys_startup_load_file(mut commands: Commands) {
 
     // Initialize logger settings
     apply_logging_settings(&data.logging);
-    data.graphics
-        .log_unavailable_texture_compression_backend_warning();
     // Ensure plugin log toggles follow configured settings
     set_plugin_log_toggles(
         data.logging.emit_flat_plugin_build,

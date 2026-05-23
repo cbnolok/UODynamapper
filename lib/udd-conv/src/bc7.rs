@@ -11,9 +11,6 @@ const VRAM_TEXTURE_CONTAINER_MAGIC: [u8; 4] = *b"UDT1";
 const VRAM_TEXTURE_CONTAINER_VERSION: u16 = 1;
 const VRAM_TEXTURE_CONTAINER_HEADER_LEN: usize = 20;
 
-#[cfg(feature = "block_compression")]
-use block_compression::{BC7Settings, CompressionVariant};
-
 pub trait Bc7EncoderBackendExt {
     fn is_available(self) -> bool;
     fn unavailable_reason(self) -> Option<&'static str>;
@@ -23,24 +20,12 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
     fn is_available(self) -> bool {
         match self {
             Self::Analytical => true,
-            Self::Dds => true,
-            Self::BlockCompression => cfg!(feature = "block_compression"),
-            Self::Ispc => cfg!(feature = "ispc"),
         }
     }
 
     fn unavailable_reason(self) -> Option<&'static str> {
         match self {
             Self::Analytical => None,
-            Self::Dds => None,
-            Self::BlockCompression if cfg!(feature = "block_compression") => None,
-            Self::BlockCompression => Some(
-                "this build does not include uddconv/block_compression support for the block_compression backend",
-            ),
-            Self::Ispc if cfg!(feature = "ispc") => None,
-            Self::Ispc => Some(
-                "this build does not include uddconv/ispc support for the Intel ISPC backend",
-            ),
         }
     }
 }
@@ -55,29 +40,6 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
     } else {
         match backend {
             Bc7EncoderBackend::Analytical => backend,
-            Bc7EncoderBackend::Dds => backend,
-            Bc7EncoderBackend::BlockCompression => {
-                if Bc7EncoderBackend::Analytical.is_available() {
-                    Bc7EncoderBackend::Analytical
-                } else if Bc7EncoderBackend::Dds.is_available() {
-                    Bc7EncoderBackend::Dds
-                } else if Bc7EncoderBackend::Ispc.is_available() {
-                    Bc7EncoderBackend::Ispc
-                } else {
-                    backend
-                }
-            }
-            Bc7EncoderBackend::Ispc => {
-                if Bc7EncoderBackend::Analytical.is_available() {
-                    Bc7EncoderBackend::Analytical
-                } else if Bc7EncoderBackend::Dds.is_available() {
-                    Bc7EncoderBackend::Dds
-                } else if Bc7EncoderBackend::BlockCompression.is_available() {
-                    Bc7EncoderBackend::BlockCompression
-                } else {
-                    backend
-                }
-            }
         }
     }
 }
@@ -277,9 +239,8 @@ pub enum UddconvError {
         expected: usize,
         actual: usize,
     },
-    BackendUnavailable(Bc7EncoderBackend),
     BackendOperationFailed {
-        backend: Bc7EncoderBackend,
+        backend: &'static str,
         operation: &'static str,
         message: String,
     },
@@ -337,16 +298,13 @@ impl fmt::Display for UddconvError {
                 f,
                 "invalid texture container length: expected {expected}, got {actual}"
             ),
-            Self::BackendUnavailable(backend) => {
-                write!(f, "requested BC7 backend is unavailable in this build: {backend:?}")
-            }
             Self::BackendOperationFailed {
                 backend,
                 operation,
                 message,
             } => write!(
                 f,
-                "BC7 backend {backend:?} failed during {operation}: {message}"
+                "BC7 backend {backend} failed during {operation}: {message}"
             ),
             Self::TextureError(err) => write!(f, "texture error: {err}"),
         }
@@ -379,11 +337,6 @@ pub fn encode_to_bc7_with_rdo_lambda(
 
     let mut blocks = match backend {
         Bc7EncoderBackend::Analytical => encode_with_analytical(rgba_pixels.as_ref(), extent),
-        Bc7EncoderBackend::Dds => encode_with_dds(rgba_pixels.as_ref(), extent)?,
-        Bc7EncoderBackend::BlockCompression => {
-            encode_with_block_compression(rgba_pixels.as_ref(), extent)?
-        }
-        Bc7EncoderBackend::Ispc => encode_with_ispc(rgba_pixels.as_ref(), extent)?,
     };
     apply_bc7_rdo(&mut blocks, rgba_pixels.as_ref(), extent, rdo_lambda);
 
@@ -480,7 +433,7 @@ pub fn decode_bc7(
     let size = Size::new(extent.width(), extent.height());
     let image = ImageViewMut::new(&mut rgba, size, ColorFormat::RGBA_U8).ok_or_else(|| {
         UddconvError::BackendOperationFailed {
-            backend: Bc7EncoderBackend::Dds,
+            backend: "dds decode",
             operation: "decode",
             message: "failed to construct RGBA8 output view".to_string(),
         }
@@ -489,7 +442,7 @@ pub fn decode_bc7(
     let mut reader = Cursor::new(blocks);
     dds::decode(&mut reader, image, Format::BC7_UNORM, &options).map_err(|error| {
         UddconvError::BackendOperationFailed {
-            backend: Bc7EncoderBackend::Dds,
+            backend: "dds decode",
             operation: "decode",
             message: error.to_string(),
         }
@@ -623,15 +576,7 @@ fn rgba8888_to_rgb888(rgba: &[u8]) -> Vec<u8> {
 
 fn bc7_block_byte_len(width: u32, height: u32) -> usize {
     // BC7 always stores one 16-byte block per 4x4 texel group.
-    #[cfg(feature = "block_compression")]
-    {
-        CompressionVariant::BC7(BC7Settings::alpha_basic()).blocks_byte_size(width, height)
-    }
-
-    #[cfg(not(feature = "block_compression"))]
-    {
-        width.div_ceil(4) as usize * height.div_ceil(4) as usize * 16
-    }
+    width.div_ceil(4) as usize * height.div_ceil(4) as usize * 16
 }
 
 fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
@@ -713,88 +658,4 @@ fn rgba_pixels_to_block_order(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<[u
     }
 
     rgba_blocks
-}
-
-fn encode_with_block_compression(
-    rgba_pixels: &[u8],
-    extent: ImageExtent,
-) -> Result<Vec<u8>, UddconvError> {
-    #[cfg(feature = "block_compression")]
-    {
-        // This backend is kept as an optional fast path for targets where the crate builds.
-        let variant = CompressionVariant::BC7(BC7Settings::alpha_basic());
-        let mut blocks = vec![0u8; variant.blocks_byte_size(extent.width(), extent.height())];
-        block_compression::encode::compress_rgba8(
-            variant,
-            rgba_pixels,
-            &mut blocks,
-            extent.width(),
-            extent.height(),
-            extent.width() * 4,
-        );
-        Ok(blocks)
-    }
-
-    #[cfg(not(feature = "block_compression"))]
-    {
-        let _ = rgba_pixels;
-        let _ = extent;
-        Err(UddconvError::BackendUnavailable(
-            Bc7EncoderBackend::BlockCompression,
-        ))
-    }
-}
-
-fn encode_with_ispc(
-    rgba_pixels: &[u8],
-    extent: ImageExtent,
-) -> Result<Vec<u8>, UddconvError> {
-    #[cfg(feature = "ispc")]
-    {
-        // Intel ISPC uses an explicit surface description and returns already packed BC7 blocks.
-        let surface = intel_tex_2::RgbaSurface {
-            data: rgba_pixels,
-            width: extent.width(),
-            height: extent.height(),
-            stride: extent.width() * 4,
-        };
-        let settings = intel_tex_2::bc7::alpha_basic_settings();
-        Ok(intel_tex_2::bc7::compress_blocks(&settings, &surface))
-    }
-
-    #[cfg(not(feature = "ispc"))]
-    {
-        let _ = rgba_pixels;
-        let _ = extent;
-        Err(UddconvError::BackendUnavailable(Bc7EncoderBackend::Ispc))
-    }
-}
-
-fn encode_with_dds(
-    rgba_pixels: &[u8],
-    extent: ImageExtent,
-) -> Result<Vec<u8>, UddconvError> {
-    use dds::{ColorFormat, CompressionQuality, EncodeOptions, Format, ImageView, Size};
-
-    let size = Size::new(extent.width(), extent.height());
-    let image = ImageView::new(rgba_pixels, size, ColorFormat::RGBA_U8).ok_or_else(|| {
-        UddconvError::BackendOperationFailed {
-            backend: Bc7EncoderBackend::Dds,
-            operation: "encode",
-            message: "failed to construct RGBA8 input view".to_string(),
-        }
-    })?;
-    let mut options = EncodeOptions::default();
-    options.quality = CompressionQuality::Normal;
-
-    let mut blocks = Vec::with_capacity(expected_bc7_byte_len(extent));
-    dds::encode(&mut blocks, image, Format::BC7_UNORM, None, &options).map_err(|error| {
-        UddconvError::BackendOperationFailed {
-            backend: Bc7EncoderBackend::Dds,
-            operation: "encode",
-            message: error.to_string(),
-        }
-    })?;
-
-    Ok(blocks)
 }

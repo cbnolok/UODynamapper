@@ -25,9 +25,6 @@ use uocf::classic::statics::StaticsReader;
 const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
     match backend {
         Bc7EncoderBackend::Analytical => "analytical (project BC7 encoder)",
-        Bc7EncoderBackend::Dds => "dds baseline (portable, non-ISPC)",
-        Bc7EncoderBackend::BlockCompression => "block_compression (pure Rust)",
-        Bc7EncoderBackend::Ispc => "intel_tex_2 (ISPC)",
     }
 }
 

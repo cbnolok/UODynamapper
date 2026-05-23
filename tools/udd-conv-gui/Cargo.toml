@@ -23,7 +23,6 @@ zstd = "0.13"
 
 [features]
 default = []
-ispc = ["udd-conv/ispc", "udd-conv-cli/ispc"]
 
 [[bin]]
 name = "udd-conv-gui"

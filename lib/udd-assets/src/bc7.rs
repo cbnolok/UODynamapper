@@ -19,9 +19,6 @@ impl RawImageFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bc7EncoderBackend {
     Analytical,
-    Dds,
-    BlockCompression,
-    Ispc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

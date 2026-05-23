@@ -60,8 +60,13 @@ fn bc7_upload_layout_matches_block_math() {
 fn rgb888_roundtrip_preserves_sizes() {
     let extent = ImageExtent::new(4, 4).unwrap();
     let rgb = vec![96u8; extent.byte_len(RawImageFormat::Rgb888)];
-    let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
-    let bc7 = encode_to_bc7(&rgb, extent, RawImageFormat::Rgb888, backend).unwrap();
+    let bc7 = encode_to_bc7(
+        &rgb,
+        extent,
+        RawImageFormat::Rgb888,
+        Bc7EncoderBackend::Analytical,
+    )
+    .unwrap();
     let decoded = decode_bc7_to_rgb888(bc7.blocks(), extent).unwrap();
 
     assert_eq!(bc7.blocks().len(), expected_bc7_byte_len(extent));
@@ -72,8 +77,13 @@ fn rgb888_roundtrip_preserves_sizes() {
 fn rgba8888_roundtrip_preserves_sizes() {
     let extent = ImageExtent::new(4, 4).unwrap();
     let rgba = vec![255u8; extent.byte_len(RawImageFormat::Rgba8888)];
-    let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
-    let bc7 = encode_to_bc7(&rgba, extent, RawImageFormat::Rgba8888, backend).unwrap();
+    let bc7 = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::Analytical,
+    )
+    .unwrap();
     let decoded = decode_bc7_to_rgba8888(bc7.blocks(), extent).unwrap();
 
     assert_eq!(bc7.blocks().len(), expected_bc7_byte_len(extent));
@@ -84,12 +94,11 @@ fn rgba8888_roundtrip_preserves_sizes() {
 fn vram_texture_container_roundtrip_preserves_bc7_metadata() {
     let extent = ImageExtent::new(8, 4).unwrap();
     let rgba = vec![128u8; extent.byte_len(RawImageFormat::Rgba8888)];
-    let backend = resolve_bc7_encoder_backend(Bc7EncoderBackend::Dds);
     let texture = encode_for_vram(
         &rgba,
         extent,
         RawImageFormat::Rgba8888,
-        VramTextureEncoding::Bc7(backend),
+        VramTextureEncoding::Bc7(Bc7EncoderBackend::Analytical),
     )
     .unwrap();
 
@@ -179,44 +188,25 @@ fn analytical_bc7_high_rdo_can_modify_blocks() {
 }
 
 #[test]
-fn unavailable_backends_resolve_to_a_supported_backend_when_possible() {
+fn project_bc7_backend_is_available() {
+    assert!(Bc7EncoderBackend::Analytical.is_available());
     assert_eq!(
-        resolve_bc7_encoder_backend(Bc7EncoderBackend::BlockCompression),
-        if cfg!(feature = "block_compression") {
-            Bc7EncoderBackend::BlockCompression
-        } else if Bc7EncoderBackend::Analytical.is_available() {
-            Bc7EncoderBackend::Analytical
-        } else if cfg!(feature = "ispc") {
-            Bc7EncoderBackend::Ispc
-        } else {
-            Bc7EncoderBackend::BlockCompression
-        }
-    );
-    assert_eq!(
-        resolve_bc7_encoder_backend(Bc7EncoderBackend::Ispc),
-        if cfg!(feature = "ispc") {
-            Bc7EncoderBackend::Ispc
-        } else if Bc7EncoderBackend::Analytical.is_available() {
-            Bc7EncoderBackend::Analytical
-        } else if cfg!(feature = "block_compression") {
-            Bc7EncoderBackend::BlockCompression
-        } else {
-            Bc7EncoderBackend::Ispc
-        }
+        resolve_bc7_encoder_backend(Bc7EncoderBackend::Analytical),
+        Bc7EncoderBackend::Analytical
     );
 }
 
 #[test]
-fn encode_to_bc7_resolves_unavailable_backends_before_encoding() {
+fn encode_to_bc7_uses_analytical_backend() {
     let extent = ImageExtent::new(4, 4).unwrap();
     let rgba = vec![7u8; extent.byte_len(RawImageFormat::Rgba8888)];
-    let requested_backend = if cfg!(feature = "block_compression") {
-        Bc7EncoderBackend::BlockCompression
-    } else {
-        Bc7EncoderBackend::Ispc
-    };
-
-    let bc7 = encode_to_bc7(&rgba, extent, RawImageFormat::Rgba8888, requested_backend).unwrap();
+    let bc7 = encode_to_bc7(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::Analytical,
+    )
+    .unwrap();
 
     assert_eq!(bc7.blocks().len(), expected_bc7_byte_len(extent));
 }

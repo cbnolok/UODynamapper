@@ -10,14 +10,12 @@ manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-block_compression = { version = "0.7", optional = true, default-features = false, features = ["bc7"] }
 bytemuck = { version = "1.25.0", default-features = false, features = ["derive"] }
 byteorder = { version = "1.5.0", default-features = false }
 color-eyre = "0.6.5"
-dds = { version = "0.2", default-features = false } # Portable baseline BC7 encode/decode path.
+dds = { version = "0.2", default-features = false } # Portable BC7 decode path.
 guillotiere = "0.6"
 indicatif = "0.18.4"
-intel_tex_2 = { version = "0.5.0", optional = true }
 log = "0.4.29"
 rayon = "1.12.0"
 uocf = { path = "../uocf" }
@@ -31,8 +29,3 @@ image-postprocess = { path = "../image-postprocess" }
 
 [features]
 default = []
-# Secondary BC7 compression backends, more efficient but less portable than the baseline `dds` path.
-block_compression = ["dep:block_compression"]
-block_compression_gpu = ["block_compression", "block_compression/wgpu"]
-ispc = ["dep:intel_tex_2"]
-ispc_source = ["ispc", "intel_tex_2/ispc"]

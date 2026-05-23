@@ -9,9 +9,4 @@ fn main() {
     if is_nightly {
         println!("cargo:rustc-flag=-Zlocation-detail=full");
     }
-
-    /*  CRATE: intel_tex_2  */
-    // Removed: intel_tex_2 is no longer a dependency of uocf.
-    // The C++ linking logic for stdc++/c++ is no longer required.
-    // TODO: move this to the uddconv build.rs if that crate is the only user of intel_tex_2.
 }

@@ -23,7 +23,6 @@ uocf = { path = "../../lib/uocf" }
 
 [features]
 default = []
-ispc = ["udd-conv/ispc"]
 
 [[bin]]
 name = "udd-pack"
