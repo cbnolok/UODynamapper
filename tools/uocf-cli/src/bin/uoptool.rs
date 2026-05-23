@@ -129,6 +129,17 @@ fn main() -> eyre::Result<()> {
             threads,
             method,
         } => {
+            if charset.is_empty() {
+                return Err(eyre::eyre!("Charset must not be empty."));
+            }
+            if min_len > max_len {
+                return Err(eyre::eyre!(
+                    "Minimum length ({}) must not be greater than maximum length ({}).",
+                    min_len,
+                    max_len
+                ));
+            }
+
             println!("Cracking hash 0x{:016x}...", hash);
             println!("  Prefix: \"{}\"", prefix);
             println!("  Suffix: \"{}\"", suffix);

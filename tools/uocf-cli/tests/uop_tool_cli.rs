@@ -55,6 +55,46 @@ fn hash_command_prints_expected_uop_hash() {
 }
 
 #[test]
+fn crack_rejects_empty_charset() {
+    let output = uop_tool()
+        .args([
+            "crack",
+            "0x0000000000000000",
+            "--charset",
+            "",
+            "--min-len",
+            "1",
+            "--max-len",
+            "1",
+        ])
+        .output()
+        .expect("run uop-tool crack");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Charset must not be empty"));
+}
+
+#[test]
+fn crack_rejects_min_len_greater_than_max_len() {
+    let output = uop_tool()
+        .args([
+            "crack",
+            "0x0000000000000000",
+            "--min-len",
+            "2",
+            "--max-len",
+            "1",
+        ])
+        .output()
+        .expect("run uop-tool crack");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Minimum length"));
+}
+
+#[test]
 fn merge_dic_merges_input_dictionaries() {
     let temp = TempDir::new("merge-dic");
     let first_path = temp.path().join("first.dic");
