@@ -162,40 +162,53 @@ package name="dynamapper-pkg" target="":
     if [ -n "{{target}}" ]; then
         RELEASE_DIR="target/{{target}}/release"
     fi
-    DEST_DIR="artifact/{{name}}"
-    mkdir -p "$DEST_DIR/tools/cli" "$DEST_DIR/tools/gui" "$DEST_DIR/tools/dev-tools"
+    APP_DIR="artifact/{{name}}/UODynamapper"
+    TOOLS_DIR="artifact/{{name}}-tools/UODynamapper-tools"
+    rm -rf "artifact/{{name}}" "artifact/{{name}}-tools"
+    mkdir -p "$APP_DIR" "$TOOLS_DIR/bin" "$TOOLS_DIR/shared" "$TOOLS_DIR/docs"
     echo "Packaging {{name}} from $RELEASE_DIR..."
-    [ -f "$RELEASE_DIR/dynamapper" ] && cp "$RELEASE_DIR/dynamapper" "$DEST_DIR/"
-    CLI_UTILS=("udd-pack" "udd-tool" "uop-tool" "cc-uop-mul-converter" "uop-dict-populator-cli")
-    for util in "${CLI_UTILS[@]}"; do
-        [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/cli/"
+    [ -f "$RELEASE_DIR/dynamapper" ] && cp "$RELEASE_DIR/dynamapper" "$APP_DIR/"
+    cp -r dynamapper/assets "$APP_DIR/"
+    [ -f "README.md" ] && cp "README.md" "$APP_DIR/"
+    mkdir -p "$APP_DIR/docs"
+    for doc in docs/keybindings.md docs/USER_TROUBLESHOOTING.md; do
+        [ -f "$doc" ] && cp "$doc" "$APP_DIR/docs/"
     done
-    GUI_UTILS=("udd-conv-gui" "uddp-inspector-gui" "uocf-inspector-gui" "uop-dict-populator-gui")
-    for util in "${GUI_UTILS[@]}"; do
-        [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$DEST_DIR/tools/gui/"
+
+    TOOL_BINS=(
+        "udd-conv-gui" "udd-pack" "udd-tool" "uddp-inspector-gui"
+        "uocf-inspector-gui" "uop-tool" "cc-uop-mul-converter"
+        "texture-scanner" "sound-tool" "multimap-tool" "facet-evidence-tool"
+        "kr-ec-terrain-diff-tool" "uop-dict-populator-cli" "uop-dict-populator-gui"
+    )
+    for util in "${TOOL_BINS[@]}"; do
+        [ -f "$RELEASE_DIR/$util" ] && cp "$RELEASE_DIR/$util" "$TOOLS_DIR/bin/"
     done
-    [ -f "$RELEASE_DIR/texture-scanner" ] && cp "$RELEASE_DIR/texture-scanner" "$DEST_DIR/tools/dev-tools/"
-    cp -r assets "$DEST_DIR/"
-    [ -f "README.md" ] && cp "README.md" "$DEST_DIR/"
-    echo "Packaging complete: $DEST_DIR"
+    [ -f "tools/_shared_assets/Dictionary.dic" ] && cp "tools/_shared_assets/Dictionary.dic" "$TOOLS_DIR/shared/"
+    for doc in docs/ASSET_PIPELINE.md docs/WORKSPACE_COMPONENTS.md docs/UDDP_FORMATS.md README.md; do
+        [ -f "$doc" ] && cp "$doc" "$TOOLS_DIR/docs/"
+    done
+    echo "Packaging complete: $APP_DIR and $TOOLS_DIR"
 
 # Package the build artifacts (Windows)
 [windows]
 package name="dynamapper-pkg" target="":
     @powershell -NoProfile -Command " \
     $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }; \
-    $destDir = 'artifact/{{name}}'; \
-    New-Item -ItemType Directory -Force -Path \"$destDir/tools/cli\", \"$destDir/tools/gui\", \"$destDir/tools/dev-tools\" | Out-Null; \
+    $appDir = 'artifact/{{name}}/UODynamapper'; \
+    $toolsDir = 'artifact/{{name}}-tools/UODynamapper-tools'; \
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'artifact/{{name}}', 'artifact/{{name}}-tools'; \
+    New-Item -ItemType Directory -Force -Path \"$appDir\", \"$appDir/docs\", \"$toolsDir/bin\", \"$toolsDir/shared\", \"$toolsDir/docs\" | Out-Null; \
     Write-Host \"Packaging {{name}} from $releaseDir...\"; \
-    if (Test-Path \"$releaseDir/dynamapper.exe\") { Copy-Item \"$releaseDir/dynamapper.exe\" \"$destDir/\" }; \
-    $cliUtils = @('udd-pack.exe', 'udd-tool.exe', 'uop-tool.exe', 'cc-uop-mul-converter.exe', 'uop-dict-populator-cli.exe'); \
-    foreach ($util in $cliUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/cli/\" } }; \
-    $guiUtils = @('udd-conv-gui.exe', 'uddp-inspector-gui.exe', 'uocf-inspector-gui.exe', 'uop-dict-populator-gui.exe'); \
-    foreach ($util in $guiUtils) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$destDir/tools/gui/\" } }; \
-    if (Test-Path \"$releaseDir/texture-scanner.exe\") { Copy-Item \"$releaseDir/texture-scanner.exe\" \"$destDir/tools/dev-tools/\" }; \
-    Copy-Item -Recurse assets \"$destDir/\"; \
-    if (Test-Path 'README.md') { Copy-Item 'README.md' \"$destDir/\" }; \
-    Write-Host \"Packaging complete: $destDir\""
+    if (Test-Path \"$releaseDir/dynamapper.exe\") { Copy-Item \"$releaseDir/dynamapper.exe\" \"$appDir/\" }; \
+    Copy-Item -Recurse 'dynamapper/assets' \"$appDir/assets\"; \
+    if (Test-Path 'README.md') { Copy-Item 'README.md' \"$appDir/\" }; \
+    foreach ($doc in @('docs/keybindings.md', 'docs/USER_TROUBLESHOOTING.md')) { if (Test-Path $doc) { Copy-Item $doc \"$appDir/docs/\" } }; \
+    $toolBins = @('udd-conv-gui.exe', 'udd-pack.exe', 'udd-tool.exe', 'uddp-inspector-gui.exe', 'uocf-inspector-gui.exe', 'uop-tool.exe', 'cc-uop-mul-converter.exe', 'texture-scanner.exe', 'sound-tool.exe', 'multimap-tool.exe', 'facet-evidence-tool.exe', 'kr-ec-terrain-diff-tool.exe', 'uop-dict-populator-cli.exe', 'uop-dict-populator-gui.exe'); \
+    foreach ($util in $toolBins) { if (Test-Path \"$releaseDir/$util\") { Copy-Item \"$releaseDir/$util\" \"$toolsDir/bin/\" } }; \
+    if (Test-Path 'tools/_shared_assets/Dictionary.dic') { Copy-Item 'tools/_shared_assets/Dictionary.dic' \"$toolsDir/shared/\" }; \
+    foreach ($doc in @('docs/ASSET_PIPELINE.md', 'docs/WORKSPACE_COMPONENTS.md', 'docs/UDDP_FORMATS.md', 'README.md')) { if (Test-Path $doc) { Copy-Item $doc \"$toolsDir/docs/\" } }; \
+    Write-Host \"Packaging complete: $appDir and $toolsDir\""
 
 # --- Development Run Recipes ---
 
