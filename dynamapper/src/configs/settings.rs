@@ -257,6 +257,8 @@ pub struct SectGraphics {
     pub art_texture_source: ClientTextureSource,
     #[serde(default = "default_client_texture_source")]
     pub land_texture_source: ClientTextureSource,
+    #[serde(default)]
+    pub enhanced_terrain_routing: EnhancedTerrainRouting,
     pub sharpening_strength: f32,    // 0.0 to 1.0
 }
 
@@ -294,6 +296,33 @@ impl ClientTextureSource {
         match self {
             Self::Cc => "Classic (tex_land_cc.uddp)",
             Self::Ec => "Enhanced (tex_land_ec.uddp)",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum EnhancedTerrainRouting {
+    #[default]
+    #[serde(rename = "ec")]
+    Ec,
+    #[serde(rename = "kr")]
+    Kr,
+}
+
+impl EnhancedTerrainRouting {
+    pub const ALL: [Self; 2] = [Self::Ec, Self::Kr];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ec => "Enhanced",
+            Self::Kr => "Kingdom Reborn",
+        }
+    }
+
+    pub const fn kdl_filename(self) -> &'static str {
+        match self {
+            Self::Ec => "TerrainTranscode.kdl",
+            Self::Kr => "KrTerrainRouting.generated.kdl",
         }
     }
 }

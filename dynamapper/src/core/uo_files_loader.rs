@@ -409,35 +409,40 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Done loading UO Data.");
 
-    // Load CC-EC conversion tables from KDL
+    // Load CC-EC/KR conversion tables from KDL
     let asset_root = crate::core::constants::valid_asset_dir();
-    let transcode_path = asset_root.join("cc_ec_convtables/TerrainTranscode.kdl");
+    let terrain_routing = settings.graphics.enhanced_terrain_routing;
+    let transcode_filename = terrain_routing.kdl_filename();
+    let transcode_path = asset_root.join("cc_ec_convtables").join(transcode_filename);
 
     if transcode_path.exists() {
         lg(&format!(
-            "Loading TerrainTranscode.kdl from: {}",
+            "Loading {} terrain routing from: {}",
+            terrain_routing.label(),
             transcode_path.display()
         ));
         match udd_assets::cc_tex_land_ec_transcode::TerrainTranscode::load(&transcode_path) {
             Ok(transcode) => {
-                lg("Loaded TerrainTranscode.kdl (loose file)");
+                lg(&format!("Loaded {transcode_filename} (loose file)"));
                 let transcode_map = transcode.to_map();
 
                 // Apply override to EC land package if present
                 if let Some(tex_land_ec) = tex_land_ec_package.as_mut() {
-                    lg("Applying loose TerrainTranscode.kdl as override to EC land package.");
+                    lg(&format!(
+                        "Applying loose {transcode_filename} as override to EC land package."
+                    ));
                     tex_land_ec.set_transcode(transcode_map.clone());
                 }
 
                 commands.insert_resource(TerrainTranscodeRes(Arc::new(transcode_map)));
             }
             Err(e) => {
-                bevy::log::error!("Failed to load TerrainTranscode.kdl: {e}");
+                bevy::log::error!("Failed to load {transcode_filename}: {e}");
             }
         }
     } else {
         lg(&format!(
-            "TerrainTranscode.kdl not found at {}",
+            "{transcode_filename} not found at {}",
             transcode_path.display()
         ));
     }
