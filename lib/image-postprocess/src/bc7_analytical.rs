@@ -685,20 +685,8 @@ unsafe fn eval_m6_rgb_neon(
     db: i32,
     f: f32,
 ) -> u32 {
-    let ep = vdupq_n_s16(0);
-    let ep = vsetq_lane_s16(lr as i16, ep, 0);
-    let ep = vsetq_lane_s16(lg as i16, ep, 1);
-    let ep = vsetq_lane_s16(lb as i16, ep, 2);
-    let ep = vsetq_lane_s16(lr as i16, ep, 4);
-    let ep = vsetq_lane_s16(lg as i16, ep, 5);
-    let ep = vsetq_lane_s16(lb as i16, ep, 6);
-    let coef = vdupq_n_s16(0);
-    let coef = vsetq_lane_s16(dr as i16, coef, 0);
-    let coef = vsetq_lane_s16(dg as i16, coef, 1);
-    let coef = vsetq_lane_s16(db as i16, coef, 2);
-    let coef = vsetq_lane_s16(dr as i16, coef, 4);
-    let coef = vsetq_lane_s16(dg as i16, coef, 5);
-    let coef = vsetq_lane_s16(db as i16, coef, 6);
+    let ep = vreinterpretq_s16_u64(vdupq_n_u64(pack_i16x4(lr, lg, lb, 0) as u64));
+    let coef = vreinterpretq_s16_u64(vdupq_n_u64(pack_i16x4(dr, dg, db, 0) as u64));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
@@ -749,24 +737,8 @@ unsafe fn eval_m6_rgba_neon(
     da: i32,
     f: f32,
 ) -> u32 {
-    let ep = vdupq_n_s16(0);
-    let ep = vsetq_lane_s16(lr as i16, ep, 0);
-    let ep = vsetq_lane_s16(lg as i16, ep, 1);
-    let ep = vsetq_lane_s16(lb as i16, ep, 2);
-    let ep = vsetq_lane_s16(la as i16, ep, 3);
-    let ep = vsetq_lane_s16(lr as i16, ep, 4);
-    let ep = vsetq_lane_s16(lg as i16, ep, 5);
-    let ep = vsetq_lane_s16(lb as i16, ep, 6);
-    let ep = vsetq_lane_s16(la as i16, ep, 7);
-    let coef = vdupq_n_s16(0);
-    let coef = vsetq_lane_s16(dr as i16, coef, 0);
-    let coef = vsetq_lane_s16(dg as i16, coef, 1);
-    let coef = vsetq_lane_s16(db as i16, coef, 2);
-    let coef = vsetq_lane_s16(da as i16, coef, 3);
-    let coef = vsetq_lane_s16(dr as i16, coef, 4);
-    let coef = vsetq_lane_s16(dg as i16, coef, 5);
-    let coef = vsetq_lane_s16(db as i16, coef, 6);
-    let coef = vsetq_lane_s16(da as i16, coef, 7);
+    let ep = vreinterpretq_s16_u64(vdupq_n_u64(pack_i16x4(lr, lg, lb, la) as u64));
+    let coef = vreinterpretq_s16_u64(vdupq_n_u64(pack_i16x4(dr, dg, db, da) as u64));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
