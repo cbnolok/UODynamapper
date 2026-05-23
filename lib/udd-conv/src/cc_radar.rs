@@ -20,7 +20,7 @@ use crate::source_paths::find_first_existing_file;
 use udd_assets::TileMetaPackage;
 use uocf::classic::hues::load_hues;
 use uocf::classic::map::MapPlane;
-use uocf::classic::statics::StaticsReader;
+use uocf::classic::statics::{PackedStaticTile, StaticsReader};
 
 const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
     match backend {
@@ -52,6 +52,46 @@ pub struct RadarBuildOptions {
     pub format: RadarFormat,
     pub zstd_level: i32,
     pub classic_patches: ClassicPatchOptions,
+}
+
+fn radar_static_top_z(statics_tile: PackedStaticTile, height: i8) -> i16 {
+    i16::from(statics_tile.z) + i16::from(height)
+}
+
+// Classic radar selection is based on the rendered top of a static, not only its base Z.
+fn select_radar_static<F>(
+    static_tiles: &[PackedStaticTile],
+    cell_x: u32,
+    cell_y: u32,
+    mut item_height: F,
+) -> Option<PackedStaticTile>
+where
+    F: FnMut(u16) -> i8,
+{
+    let mut highest_static = None;
+
+    for &statics_tile in static_tiles {
+        if statics_tile.x_offset() as u32 != cell_x || statics_tile.y_offset() as u32 != cell_y {
+            continue;
+        }
+
+        match highest_static {
+            None => highest_static = Some(statics_tile),
+            Some(previous) => {
+                let candidate_top =
+                    radar_static_top_z(statics_tile, item_height(statics_tile.graphic));
+                let previous_top = radar_static_top_z(previous, item_height(previous.graphic));
+
+                if candidate_top > previous_top
+                    || (statics_tile.z > previous.z && candidate_top >= previous_top)
+                {
+                    highest_static = Some(statics_tile);
+                }
+            }
+        }
+    }
+
+    highest_static
 }
 
 fn build_radar_rgba_pixels(
@@ -141,24 +181,23 @@ fn build_radar_rgba_pixels(
             let land_id = land_cell.id as u32;
 
             let static_tiles = statics_store.block_tiles(block_x, block_y);
-            let mut highest_static = None;
-
-            for statics_tile in static_tiles {
-                if statics_tile.x_offset() as u32 == cell_x
-                    && statics_tile.y_offset() as u32 == cell_y
-                {
-                    match highest_static {
-                        None => highest_static = Some(statics_tile),
-                        Some(previous) if statics_tile.z > previous.z => {
-                            highest_static = Some(statics_tile)
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            let highest_static = select_radar_static(static_tiles, cell_x, cell_y, |graphic| {
+                tilemeta
+                    .item_tile(graphic as u32)
+                    .map(|meta| meta.height)
+                    .unwrap_or(0)
+            });
 
             let final_rgba = match highest_static {
-                Some(statics_tile) if statics_tile.z >= land_z => {
+                Some(statics_tile)
+                    if radar_static_top_z(
+                        statics_tile,
+                        tilemeta
+                            .item_tile(statics_tile.graphic as u32)
+                            .map(|meta| meta.height)
+                            .unwrap_or(0),
+                    ) >= i16::from(land_z) =>
+                {
                     if let Some(meta) = tilemeta.item_tile(statics_tile.graphic as u32) {
                         let base_color = meta.radar_color;
 
@@ -250,6 +289,68 @@ fn build_radar_bc7_from_rgba(
         RawImageFormat::Rgba8888,
         backend,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn static_tile(graphic: u16, x: u8, y: u8, z: i8) -> PackedStaticTile {
+        PackedStaticTile {
+            graphic,
+            xy_packed: (x & 0x07) | ((y & 0x07) << 3),
+            z,
+            hue: 0,
+        }
+    }
+
+    fn height_for(graphic: u16) -> i8 {
+        match graphic {
+            1 => 20,
+            2 => 1,
+            3 => 4,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn radar_static_selection_prefers_highest_top_not_highest_base_z() {
+        let tiles = [
+            static_tile(1, 2, 3, 0),
+            static_tile(2, 2, 3, 15),
+        ];
+
+        let selected = select_radar_static(&tiles, 2, 3, height_for).expect("selected static");
+        let selected_graphic = selected.graphic;
+
+        assert_eq!(selected_graphic, 1);
+    }
+
+    #[test]
+    fn radar_static_selection_uses_base_z_as_tie_break() {
+        let tiles = [
+            static_tile(3, 1, 1, 6),
+            static_tile(0, 1, 1, 10),
+        ];
+
+        let selected = select_radar_static(&tiles, 1, 1, height_for).expect("selected static");
+        let selected_graphic = selected.graphic;
+
+        assert_eq!(selected_graphic, 0);
+    }
+
+    #[test]
+    fn radar_static_selection_filters_to_requested_cell() {
+        let tiles = [
+            static_tile(1, 2, 3, 0),
+            static_tile(2, 4, 3, 15),
+        ];
+
+        let selected = select_radar_static(&tiles, 2, 3, height_for).expect("selected static");
+        let selected_graphic = selected.graphic;
+
+        assert_eq!(selected_graphic, 1);
+    }
 }
 
 pub fn build_facet_radar_dds(
