@@ -333,4 +333,58 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
         Ok(())
     }
+
+    #[test]
+    fn sound_mul_uop_roundtrip_preserves_payload() -> io::Result<()> {
+        let temp = std::env::temp_dir().join(format!(
+            "uocf-cli-sound-roundtrip-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp)?;
+
+        let sound_mul = temp.join("sound.mul");
+        let sound_idx = temp.join("soundidx.mul");
+        let sound_uop = temp.join("soundLegacyMUL.uop");
+        let out_mul = temp.join("out_sound.mul");
+        let out_idx = temp.join("out_soundidx.mul");
+        let payload = b"RIFFdemo-wave-payload";
+
+        std::fs::write(&sound_mul, payload)?;
+        {
+            let mut idx = BufWriter::new(File::create(&sound_idx)?);
+            idx.write_i32::<LittleEndian>(0)?;
+            idx.write_i32::<LittleEndian>(payload.len() as i32)?;
+            idx.write_i32::<LittleEndian>(1)?;
+        }
+
+        LegacyMulFileConverter::to_uop(
+            &sound_mul,
+            Some(&sound_idx),
+            &sound_uop,
+            FileType::SoundLegacyMul,
+            0,
+            CompressionFlag::Zlib,
+        )?;
+        LegacyMulFileConverter::from_uop(
+            &sound_uop,
+            &out_mul,
+            Some(&out_idx),
+            FileType::SoundLegacyMul,
+            0,
+            None,
+        )?;
+
+        assert_eq!(std::fs::read(&out_mul)?, payload);
+        let mut idx = BufReader::new(File::open(&out_idx)?);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, 0);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, payload.len() as i32);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, 1);
+
+        let _ = std::fs::remove_dir_all(temp);
+        Ok(())
+    }
 }
