@@ -158,8 +158,8 @@ pub fn reduce_entropy_bc7(
             }
             let prev_blk = blocks[prev_block_index];
 
-            for len in (3..=16).rev() {
-                if params.allow_relative_movement {
+            if params.allow_relative_movement {
+                for len in (3..=16).rev() {
                     // Full relative-offset search: src and dst offsets may differ
                     for src_ofs in 0..=(16 - len) {
                         for dst_ofs in 0..=(16 - len) {
@@ -197,7 +197,9 @@ pub fn reduce_entropy_bc7(
                             }
                         }
                     }
-                } else {
+                }
+            } else {
+                for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
                     let dist = (block_index - prev_block_index) * 16;
                     let normal_match_bits = compute_match_cost_estimate(dist as u32, len as u32) as f32;
