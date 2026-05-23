@@ -35,7 +35,7 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
-use crate::{AtlasPackingMode, resolve_packing_axis};
+use crate::{AtlasPackingMode, extrude_rgba_rect_edges, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -167,6 +167,7 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_512: UpscaleConfig,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
+    pub filtering_ready: bool,
 }
 
 impl Default for TexLandEcAtlasOptions {
@@ -182,6 +183,7 @@ impl Default for TexLandEcAtlasOptions {
             upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: false,
         }
     }
 }
@@ -1366,12 +1368,32 @@ fn build_page(
                 tile.height as u32,
                 &tile.rgba,
             )?;
+            if options.filtering_ready {
+                extrude_rgba_rect_edges(
+                    &mut pixels,
+                    options.atlas_width,
+                    options.atlas_height,
+                    allocation.rectangle.min.x as u32,
+                    allocation.rectangle.min.y as u32,
+                    width_axis.alloc_extent,
+                    height_axis.alloc_extent,
+                    inner_x as u32,
+                    inner_y as u32,
+                    tile.width as u32,
+                    tile.height as u32,
+                );
+            }
 
             // Store the occupied rectangle in texel space. The package writer crops
             // to exactly this rectangle, which is why wide but short land strips can
             // compress so well compared with saving whole 2048x2048 pages verbatim.
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            if options.filtering_ready {
+                used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+                used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
+            } else {
+                used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
+                used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            }
             placed_tiles.push(PlacedTile {
                 art_id: tile.art_id,
                 kind: tile.kind,
@@ -1556,6 +1578,7 @@ pub fn encode_slot_manifest(
             upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Bc7,
             packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: false,
         },
     )
 }
@@ -1622,6 +1645,7 @@ mod tests {
             upscale_512: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
+            filtering_ready: false,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(11, 3, 3)], &options).unwrap();

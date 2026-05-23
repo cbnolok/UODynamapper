@@ -25,7 +25,7 @@ use crate::bc7::{
     VramTextureEncoding,
 };
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
-use crate::{AtlasPackingMode, merge_unplaced_tiles, resolve_packing_axis};
+use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -56,6 +56,7 @@ pub struct TexLandCcAtlasOptions {
     pub upscale_128: UpscaleConfig,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
+    pub filtering_ready: bool,
 }
 
 impl Default for TexLandCcAtlasOptions {
@@ -69,6 +70,7 @@ impl Default for TexLandCcAtlasOptions {
             upscale_128: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: false,
         }
     }
 }
@@ -503,9 +505,29 @@ fn build_page(
                 tile.height as u32,
                 &tile.rgba,
             )?;
+            if options.filtering_ready {
+                extrude_rgba_rect_edges(
+                    &mut pixels,
+                    options.atlas_width,
+                    options.atlas_height,
+                    allocation.rectangle.min.x as u32,
+                    allocation.rectangle.min.y as u32,
+                    width_axis.alloc_extent,
+                    height_axis.alloc_extent,
+                    x,
+                    y,
+                    tile.width as u32,
+                    tile.height as u32,
+                );
+            }
 
-            used_width = used_width.max(x + width_axis.used_extent);
-            used_height = used_height.max(y + height_axis.used_extent);
+            if options.filtering_ready {
+                used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+                used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
+            } else {
+                used_width = used_width.max(x + width_axis.used_extent);
+                used_height = used_height.max(y + height_axis.used_extent);
+            }
 
             placed_tiles.push(PlacedTile {
                 id: tile.id,
@@ -616,6 +638,7 @@ mod tests {
             upscale_128: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
+            filtering_ready: false,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(11, 3, 3)], &options).unwrap();

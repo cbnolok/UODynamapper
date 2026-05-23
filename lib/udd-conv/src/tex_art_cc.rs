@@ -35,7 +35,7 @@ use crate::bc7::{
     encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
-use crate::{AtlasPackingMode, merge_unplaced_tiles, resolve_packing_axis};
+use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
@@ -72,6 +72,7 @@ pub struct TexArtCcAtlasOptions {
     pub upscale: UpscaleFilter,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
+    pub filtering_ready: bool,
 }
 
 impl Default for TexArtCcAtlasOptions {
@@ -84,6 +85,7 @@ impl Default for TexArtCcAtlasOptions {
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: false,
         }
     }
 }
@@ -711,12 +713,32 @@ fn build_page(
                 tile.height as u32,
                 &tile.rgba,
             )?;
+            if options.filtering_ready {
+                extrude_rgba_rect_edges(
+                    &mut pixels,
+                    options.atlas_width,
+                    options.atlas_height,
+                    allocation.rectangle.min.x as u32,
+                    allocation.rectangle.min.y as u32,
+                    width_axis.alloc_extent,
+                    height_axis.alloc_extent,
+                    inner_x as u32,
+                    inner_y as u32,
+                    tile.width as u32,
+                    tile.height as u32,
+                );
+            }
 
             // Track the furthest written texel, not the allocator rectangle. The
             // later crop step trims only guaranteed-empty space from the right/bottom
             // edges while preserving the logical tile coordinates recorded in metadata.
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            if options.filtering_ready {
+                used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+                used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
+            } else {
+                used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
+                used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            }
             placed_tiles.push(PlacedTile {
                 art_id: tile.art_id,
                 kind: tile.kind,
@@ -869,6 +891,7 @@ pub fn encode_slot_manifest(
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Bc7,
             packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: false,
         },
     )
 }
@@ -888,6 +911,31 @@ mod tests {
     }
 
     #[test]
+    fn filtering_ready_art_page_keeps_extruded_gutters_in_used_bounds() {
+        let options = TexArtCcAtlasOptions {
+            atlas_width: 8,
+            atlas_height: 8,
+            gutter: 1,
+            compression: CompressionFlag::None,
+            upscale: UpscaleFilter::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            packing_mode: AtlasPackingMode::MaximumPacking,
+            filtering_ready: true,
+        };
+
+        let (page, leftovers) = build_page(0, vec![tile(7, 2, 2)], &options).unwrap();
+        assert!(leftovers.is_empty());
+        assert_eq!(page.record.used_width, 4);
+        assert_eq!(page.record.used_height, 4);
+
+        let placed = &page.placed_tiles[0];
+        let gutter_x = placed.x as u32 + placed.width as u32;
+        let gutter_y = placed.y as u32;
+        let gutter_offset = ((gutter_y * options.atlas_width + gutter_x) * 4) as usize;
+        assert_eq!(&page.pixels[gutter_offset..gutter_offset + 4], &[255, 255, 255, 255]);
+    }
+
+    #[test]
     fn bc7_oriented_art_page_is_block_aligned() {
         let options = TexArtCcAtlasOptions {
             atlas_width: 16,
@@ -897,6 +945,7 @@ mod tests {
             upscale: UpscaleFilter::None,
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
+            filtering_ready: false,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(7, 3, 3)], &options).unwrap();

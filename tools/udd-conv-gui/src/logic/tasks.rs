@@ -119,6 +119,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_art_cc),
+                    filtering_ready: settings.filtering_ready_tex_art_cc,
                 },
                 &classic_patch_options(&settings),
             )?;
@@ -154,6 +155,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_cc),
+                    filtering_ready: settings.filtering_ready_tex_land_cc,
                 },
                 &classic_patch_options(&settings),
             )?;
@@ -189,6 +191,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_art_ec),
+                    filtering_ready: settings.filtering_ready_tex_art_ec,
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -225,6 +228,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_ec),
+                    filtering_ready: settings.filtering_ready_tex_land_ec,
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))

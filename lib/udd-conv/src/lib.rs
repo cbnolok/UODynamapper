@@ -96,6 +96,43 @@ pub(crate) fn resolve_packing_axis(
 	}
 }
 
+pub(crate) fn extrude_rgba_rect_edges(
+	pixels: &mut [u8],
+	atlas_width: u32,
+	atlas_height: u32,
+	rect_x: u32,
+	rect_y: u32,
+	rect_width: u32,
+	rect_height: u32,
+	content_x: u32,
+	content_y: u32,
+	content_width: u32,
+	content_height: u32,
+) {
+	if content_width == 0 || content_height == 0 || rect_width == 0 || rect_height == 0 {
+		return;
+	}
+
+	let rect_right = (rect_x + rect_width).min(atlas_width);
+	let rect_bottom = (rect_y + rect_height).min(atlas_height);
+	let content_right = content_x + content_width;
+	let content_bottom = content_y + content_height;
+
+	for y in rect_y..rect_bottom {
+		let sample_y = y.clamp(content_y, content_bottom - 1);
+		for x in rect_x..rect_right {
+			if x >= content_x && x < content_right && y >= content_y && y < content_bottom {
+				continue;
+			}
+			let sample_x = x.clamp(content_x, content_right - 1);
+			let dst = ((y as usize * atlas_width as usize) + x as usize) * 4;
+			let src = ((sample_y as usize * atlas_width as usize) + sample_x as usize) * 4;
+			let rgba = [pixels[src], pixels[src + 1], pixels[src + 2], pixels[src + 3]];
+			pixels[dst..dst + 4].copy_from_slice(&rgba);
+		}
+	}
+}
+
 pub(crate) fn merge_unplaced_tiles<T, K, F>(
 	mut leftovers: Vec<T>,
 	mut unplaced: Vec<T>,
@@ -108,4 +145,37 @@ where
 	leftovers.append(&mut unplaced);
 	leftovers.sort_by_key(|tile| key_fn(tile));
 	leftovers
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn extrude_rgba_rect_edges_clamps_gutter_to_nearest_content_pixel() {
+		let mut pixels = vec![0u8; 6 * 6 * 4];
+		for y in 2..4 {
+			for x in 2..4 {
+				let offset = ((y * 6 + x) * 4) as usize;
+				pixels[offset] = (x * 10) as u8;
+				pixels[offset + 1] = (y * 20) as u8;
+				pixels[offset + 2] = 200;
+				pixels[offset + 3] = 255;
+			}
+		}
+
+		extrude_rgba_rect_edges(&mut pixels, 6, 6, 1, 1, 4, 4, 2, 2, 2, 2);
+
+		let top_left = ((1 * 6 + 1) * 4) as usize;
+		let content_top_left = ((2 * 6 + 2) * 4) as usize;
+		assert_eq!(&pixels[top_left..top_left + 4], &pixels[content_top_left..content_top_left + 4]);
+
+		let right = ((2 * 6 + 4) * 4) as usize;
+		let content_right = ((2 * 6 + 3) * 4) as usize;
+		assert_eq!(&pixels[right..right + 4], &pixels[content_right..content_right + 4]);
+
+		let bottom = ((4 * 6 + 3) * 4) as usize;
+		let content_bottom = ((3 * 6 + 3) * 4) as usize;
+		assert_eq!(&pixels[bottom..bottom + 4], &pixels[content_bottom..content_bottom + 4]);
+	}
 }

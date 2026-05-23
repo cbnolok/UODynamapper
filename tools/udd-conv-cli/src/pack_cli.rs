@@ -251,6 +251,8 @@ enum Commands {
         bc7: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
+        #[arg(long, default_value_t = false, help = "Extrude slot edge pixels into atlas gutters for linear/bilinear filtering.")]
+        filtering_ready: bool,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
@@ -288,6 +290,8 @@ enum Commands {
         bc7: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
+        #[arg(long, default_value_t = false, help = "Extrude tile edge pixels into atlas gutters for linear/bilinear filtering.")]
+        filtering_ready: bool,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
     },
@@ -347,6 +351,10 @@ enum Commands {
         art_packing_mode: CliAtlasPackingMode,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Land atlas placement policy.")]
         land_packing_mode: CliAtlasPackingMode,
+        #[arg(long, default_value_t = false, help = "Extrude EC art edge pixels into atlas gutters for linear/bilinear filtering.")]
+        art_filtering_ready: bool,
+        #[arg(long, default_value_t = false, help = "Extrude EC land edge pixels into atlas gutters for linear/bilinear filtering.")]
+        land_filtering_ready: bool,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
@@ -571,6 +579,7 @@ pub fn run() -> eyre::Result<()> {
             gutter,
             bc7,
             packing_mode,
+            filtering_ready,
             upscale_64_size: _, // Land upscaling not currently applied to CC Art
             upscale_64_algo: _,
             upscale_128_size: _,
@@ -601,6 +610,7 @@ pub fn run() -> eyre::Result<()> {
                         PagePixelFormat::Rgba8888
                     },
                     packing_mode: packing_mode.into(),
+                    filtering_ready,
                 },
                 &classic_patches.into(),
             )?;
@@ -622,6 +632,7 @@ pub fn run() -> eyre::Result<()> {
             gutter,
             bc7,
             packing_mode,
+            filtering_ready,
             upscale,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -653,6 +664,7 @@ pub fn run() -> eyre::Result<()> {
                         PagePixelFormat::Rgba8888
                     },
                     packing_mode: packing_mode.into(),
+                    filtering_ready,
                 },
                 &classic_patches.into(),
             )?;
@@ -740,6 +752,8 @@ pub fn run() -> eyre::Result<()> {
             land_bc7,
             art_packing_mode,
             land_packing_mode,
+            art_filtering_ready,
+            land_filtering_ready,
             upscale_64_size,
             upscale_64_algo,
             upscale_128_size,
@@ -768,6 +782,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale: upscale_filter,
                     pixel_format: PagePixelFormat::Rgba8888,
                     packing_mode: art_packing_mode.into(),
+                    filtering_ready: art_filtering_ready,
                 },
             )?;
             println!(
@@ -818,6 +833,7 @@ pub fn run() -> eyre::Result<()> {
                         PagePixelFormat::Rgba8888
                     },
                     packing_mode: land_packing_mode.into(),
+                    filtering_ready: land_filtering_ready,
                 },
             )?;
             println!(

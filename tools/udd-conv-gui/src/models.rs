@@ -34,6 +34,14 @@ pub struct AppSettings {
     pub packing_tex_land_cc: AtlasPackingModeSetting,
     pub packing_tex_art_ec: AtlasPackingModeSetting,
     pub packing_tex_land_ec: AtlasPackingModeSetting,
+    #[serde(default)]
+    pub filtering_ready_tex_art_cc: bool,
+    #[serde(default)]
+    pub filtering_ready_tex_land_cc: bool,
+    #[serde(default)]
+    pub filtering_ready_tex_art_ec: bool,
+    #[serde(default)]
+    pub filtering_ready_tex_land_ec: bool,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig,
@@ -69,6 +77,10 @@ impl Default for AppSettings {
             packing_tex_land_cc: AtlasPackingModeSetting::MaximumPacking,
             packing_tex_art_ec: AtlasPackingModeSetting::MaximumPacking,
             packing_tex_land_ec: AtlasPackingModeSetting::MaximumPacking,
+            filtering_ready_tex_art_cc: false,
+            filtering_ready_tex_land_cc: false,
+            filtering_ready_tex_art_ec: false,
+            filtering_ready_tex_land_ec: false,
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
             upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig::default(),

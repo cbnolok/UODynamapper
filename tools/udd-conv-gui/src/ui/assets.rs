@@ -77,6 +77,7 @@ impl UddConvApp {
                         "Classic items and land textures (art.mul)",
                         Some(&mut self.settings.opt_tex_art_cc),
                         Some(&mut self.settings.packing_tex_art_cc),
+                        Some(&mut self.settings.filtering_ready_tex_art_cc),
                         Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                         vec![],
                     );
@@ -89,6 +90,7 @@ impl UddConvApp {
                         "Classic high-res terrain textures (texmaps.mul)",
                         Some(&mut self.settings.opt_tex_land_cc),
                         Some(&mut self.settings.packing_tex_land_cc),
+                        Some(&mut self.settings.filtering_ready_tex_land_cc),
                         None,
                         vec![
                             ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
@@ -113,6 +115,7 @@ impl UddConvApp {
                         "Enhanced Client static items (worldart)",
                         Some(&mut self.settings.opt_tex_art_ec),
                         Some(&mut self.settings.packing_tex_art_ec),
+                        Some(&mut self.settings.filtering_ready_tex_art_ec),
                         Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
                         vec![],
                     );
@@ -125,6 +128,7 @@ impl UddConvApp {
                         "Enhanced Client high-res terrain textures",
                         Some(&mut self.settings.opt_tex_land_ec),
                         Some(&mut self.settings.packing_tex_land_ec),
+                        Some(&mut self.settings.filtering_ready_tex_land_ec),
                         None,
                         vec![
                             ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
@@ -146,6 +150,7 @@ impl UddConvApp {
                     None,
                     None,
                     None,
+                    None,
                     vec![],
                 ).0 {
                     self.convert_tilemeta();
@@ -161,6 +166,7 @@ fn draw_asset_card(
     desc: &str,
     opt: Option<&mut TextureOptimization>,
     packing_mode: Option<&mut AtlasPackingModeSetting>,
+    filtering_ready: Option<&mut bool>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
@@ -199,7 +205,7 @@ fn draw_asset_card(
                     });
                 });
 
-                if opt.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
+                if opt.is_some() || filtering_ready.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
                     ui.add_space(4.0);
                     ui.separator();
                     ui.add_space(4.0);
@@ -288,6 +294,11 @@ fn draw_asset_card(
                                         }
                                     });
                             });
+                            ui.add_space(25.0);
+                        }
+
+                        if let Some(filtering_ready_val) = filtering_ready {
+                            ui.checkbox(filtering_ready_val, "Filtering-ready gutters");
                             ui.add_space(25.0);
                         }
 
