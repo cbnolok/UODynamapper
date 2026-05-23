@@ -1,13 +1,12 @@
 //! Wide-vector front-end for the analytical BC7 encoder.
 //!
-//! This keeps the scalar mode-search core intact while using `wide` row vectors
-//! for block extraction and edge padding. It is intentionally a separate entry
+//! This keeps the scalar mode-search core intact while batching block extraction
+//! and dispatching larger images over worker threads. It is intentionally a separate entry
 //! point so deeper SIMD work can move into the analytical core without changing
 //! callers again.
 
 use crate::bc7_analytical::{pack_bc7_rgba, Pixel};
 use rayon::prelude::*;
-use wide::u8x16;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;
 
@@ -71,23 +70,17 @@ fn pack_one_block(
     for row in 0..4 {
         let src_y = (block_y * 4 + row).min(height - 1);
         let base_x = block_x * 4;
-        let row_vec = if base_x + 4 <= width {
+        if base_x + 4 <= width {
             let offset = (src_y * width + base_x) * 4;
-            let mut bytes = [0u8; 16];
-            bytes.copy_from_slice(&rgba_pixels[offset..offset + 16]);
-            u8x16::from(bytes)
+            pixels[row * 4..row * 4 + 4]
+                .as_flattened_mut()
+                .copy_from_slice(&rgba_pixels[offset..offset + 16]);
         } else {
-            let mut bytes = [0u8; 16];
             for col in 0..4 {
                 let src_x = (base_x + col).min(width - 1);
                 let src = (src_y * width + src_x) * 4;
-                bytes[col * 4..col * 4 + 4].copy_from_slice(&rgba_pixels[src..src + 4]);
+                pixels[row * 4 + col].copy_from_slice(&rgba_pixels[src..src + 4]);
             }
-            u8x16::from(bytes)
-        };
-        let row_bytes = row_vec.to_array();
-        for col in 0..4 {
-            pixels[row * 4 + col].copy_from_slice(&row_bytes[col * 4..col * 4 + 4]);
         }
     }
 
