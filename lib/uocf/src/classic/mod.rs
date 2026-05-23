@@ -16,6 +16,7 @@ pub mod multi;
 pub mod multimap_rle;
 pub mod generic_def;
 pub mod generic_index;
+pub mod fonts;
 pub mod gump;
 pub mod map_statics_diff;
 pub mod sound;

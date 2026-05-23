@@ -62,6 +62,10 @@ pub struct GumpMapRes(pub Arc<uocf::classic::gump::GumpMap>);
 #[derive(Resource)]
 pub struct ClassicHuesRes(pub Arc<Vec<uocf::classic::hues::HueEntry>>);
 
+/// Optional Classic Client bitmap fonts.
+#[derive(Resource)]
+pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
+
 /// Optional packed hue lookup texture and metadata.
 #[derive(Resource)]
 pub struct HuesPackageRes(pub Arc<udd_assets::HuesPackage>);
@@ -387,6 +391,21 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let classic_fonts = match uocf::classic::fonts::ClassicFonts::load(&udd_path) {
+        Ok(fonts) => {
+            lg(&format!(
+                "Loaded Classic Client fonts: {} ASCII font face(s).",
+                fonts.ascii_font_count()
+            ));
+            Some(fonts)
+        }
+        Err(error) => {
+            lg("No Classic Client font source selected: fonts.mul/unifont*.mul not found in udd_path.");
+            bevy::log::debug!("Classic Client font load detail: {error}");
+            None
+        }
+    };
+
     let hues_package_path = resolve_optional_uddp_path(&udd_path, "hues.uddp");
     let hues_package = if let Some(hues_package_path) = hues_package_path {
         log_source_choice(
@@ -526,6 +545,9 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(classic_hues) = classic_hues {
         commands.insert_resource(ClassicHuesRes(Arc::new(classic_hues)));
+    }
+    if let Some(classic_fonts) = classic_fonts {
+        commands.insert_resource(ClassicFontsRes(Arc::new(classic_fonts)));
     }
     if let Some(hues_package) = hues_package {
         commands.insert_resource(HuesPackageRes(Arc::new(hues_package)));
