@@ -39,3 +39,7 @@ path = "src/bin/dev-tools/texture_scanner.rs"
 [[bin]]
 name = "sound-tool"
 path = "src/bin/sound_tool.rs"
+
+[[bin]]
+name = "multimap-tool"
+path = "src/bin/multimap_tool.rs"

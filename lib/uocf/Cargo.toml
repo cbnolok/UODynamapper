@@ -18,7 +18,7 @@ dds = { version = "0.2", default-features = false }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
 glam = { version = "0.30", default-features = false, features = ["std"] }
-image = { version = "0.25", default-features = false, features = ["bmp", "dds", "tga"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "dds", "png", "tga"] }
 ddsfile = "0.5.2"
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }

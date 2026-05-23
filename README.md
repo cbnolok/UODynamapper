@@ -29,6 +29,7 @@ This project is organized as a Cargo workspace with several specialized componen
   - `cc_uop_mul_converter`: Converter for switching between legacy `.mul`/`.idx` and modern `.uop` formats for Classic Client.
   - `texture_scanner`: Identification and isolation of land/terrain candidates from UO texture pools.
   - `uop-dict-populator-cli`: GUI-less tool for populating UOP hash dictionaries via templates or brute-force.
+  - `multimap-tool`: Convert Classic Client `multimap.rle` to/from BMP or PNG.
 - **[uddp-inspector-gui](tools/uddp-inspector-gui/)**: GUI for inspecting `.uddp` package contents, atlas layers, and metadata slots.
 - **[uocf-inspector-gui](tools/uocf-inspector-gui/)**: GUI for inspecting UOCF-supported client formats, including `.uop` packages, `tiledata.mul`, and EC `tileart.uop` metadata.
 - **[udd-conv-gui](tools/udd-conv-gui/)**: GUI frontend for the asset conversion pipeline.

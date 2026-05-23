@@ -13,6 +13,7 @@ pub mod body_def;
 pub mod bodyconv_def;
 pub mod cliloc;
 pub mod multi;
+pub mod multimap_rle;
 pub mod generic_def;
 pub mod generic_index;
 pub mod gump;
