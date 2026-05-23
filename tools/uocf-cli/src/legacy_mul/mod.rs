@@ -387,4 +387,177 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp);
         Ok(())
     }
+
+    #[test]
+    fn art_mul_uop_roundtrip_preserves_payload_and_index() -> io::Result<()> {
+        let temp = temp_dir("art-roundtrip")?;
+        let art_mul = temp.join("art.mul");
+        let art_idx = temp.join("artidx.mul");
+        let art_uop = temp.join("artLegacyMUL.uop");
+        let out_mul = temp.join("out_art.mul");
+        let out_idx = temp.join("out_artidx.mul");
+        let payload = b"art-payload";
+
+        std::fs::write(&art_mul, payload)?;
+        write_idx_entry(&art_idx, 0, payload.len() as i32, 0)?;
+
+        LegacyMulFileConverter::to_uop(
+            &art_mul,
+            Some(&art_idx),
+            &art_uop,
+            FileType::ArtLegacyMul,
+            0,
+            CompressionFlag::Zlib,
+        )?;
+        LegacyMulFileConverter::from_uop(
+            &art_uop,
+            &out_mul,
+            Some(&out_idx),
+            FileType::ArtLegacyMul,
+            0,
+            None,
+        )?;
+
+        assert_eq!(std::fs::read(&out_mul)?, payload);
+        assert_idx_entry(&out_idx, 0, payload.len() as i32, 0)?;
+
+        let _ = std::fs::remove_dir_all(temp);
+        Ok(())
+    }
+
+    #[test]
+    fn gump_mul_uop_roundtrip_preserves_payload_and_dimensions() -> io::Result<()> {
+        let temp = temp_dir("gump-roundtrip")?;
+        let gump_mul = temp.join("gumpart.mul");
+        let gump_idx = temp.join("gumpidx.mul");
+        let gump_uop = temp.join("gumpartLegacyMUL.uop");
+        let out_mul = temp.join("out_gumpart.mul");
+        let out_idx = temp.join("out_gumpidx.mul");
+        let payload = b"gump-payload";
+        let extra = (2i32 << 16) | 3;
+
+        std::fs::write(&gump_mul, payload)?;
+        write_idx_entry(&gump_idx, 0, payload.len() as i32, extra)?;
+
+        LegacyMulFileConverter::to_uop(
+            &gump_mul,
+            Some(&gump_idx),
+            &gump_uop,
+            FileType::GumpartLegacyMul,
+            0,
+            CompressionFlag::Zlib,
+        )?;
+        LegacyMulFileConverter::from_uop(
+            &gump_uop,
+            &out_mul,
+            Some(&out_idx),
+            FileType::GumpartLegacyMul,
+            0,
+            None,
+        )?;
+
+        assert_eq!(std::fs::read(&out_mul)?, payload);
+        assert_idx_entry(&out_idx, 0, payload.len() as i32, extra)?;
+
+        let _ = std::fs::remove_dir_all(temp);
+        Ok(())
+    }
+
+    #[test]
+    fn one_block_map_mul_uop_roundtrip_preserves_payload() -> io::Result<()> {
+        let temp = temp_dir("map-roundtrip")?;
+        let map_mul = temp.join("map0.mul");
+        let map_uop = temp.join("map0LegacyMUL.uop");
+        let out_mul = temp.join("out_map0.mul");
+        let mut payload = vec![0u8; 0xC4000];
+        payload[0] = 7;
+        payload[0xC4000 - 1] = 9;
+
+        std::fs::write(&map_mul, &payload)?;
+
+        LegacyMulFileConverter::to_uop(
+            &map_mul,
+            None,
+            &map_uop,
+            FileType::MapLegacyMul,
+            0,
+            CompressionFlag::None,
+        )?;
+        LegacyMulFileConverter::from_uop(
+            &map_uop,
+            &out_mul,
+            None,
+            FileType::MapLegacyMul,
+            0,
+            None,
+        )?;
+
+        assert_eq!(std::fs::read(&out_mul)?, payload);
+
+        let _ = std::fs::remove_dir_all(temp);
+        Ok(())
+    }
+
+    #[test]
+    fn multi_uop_entry_unpack_writes_legacy_multi_record() -> io::Result<()> {
+        let (file, path) = temp_file("valid-multi-entry")?;
+        let mut writer = BufWriter::new(file);
+        let mut data = Vec::new();
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&123u16.to_le_bytes());
+        data.extend_from_slice(&(-2i16).to_le_bytes());
+        data.extend_from_slice(&3i16.to_le_bytes());
+        data.extend_from_slice(&4i16.to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        write_multi_uop_entry_to_mul(&mut writer, &data)?;
+        writer.flush()?;
+
+        let bytes = std::fs::read(&path)?;
+        let _ = std::fs::remove_file(path);
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(u16::from_le_bytes(bytes[0..2].try_into().unwrap()), 123);
+        assert_eq!(i16::from_le_bytes(bytes[2..4].try_into().unwrap()), -2);
+        assert_eq!(i16::from_le_bytes(bytes[4..6].try_into().unwrap()), 3);
+        assert_eq!(i16::from_le_bytes(bytes[6..8].try_into().unwrap()), 4);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 0);
+        Ok(())
+    }
+
+    fn temp_dir(name: &str) -> io::Result<std::path::PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "uocf-cli-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    fn write_idx_entry(path: &std::path::Path, offset: i32, size: i32, extra: i32) -> io::Result<()> {
+        let mut idx = BufWriter::new(File::create(path)?);
+        idx.write_i32::<LittleEndian>(offset)?;
+        idx.write_i32::<LittleEndian>(size)?;
+        idx.write_i32::<LittleEndian>(extra)?;
+        Ok(())
+    }
+
+    fn assert_idx_entry(
+        path: &std::path::Path,
+        expected_offset: i32,
+        expected_size: i32,
+        expected_extra: i32,
+    ) -> io::Result<()> {
+        let mut idx = BufReader::new(File::open(path)?);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, expected_offset);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, expected_size);
+        assert_eq!(idx.read_i32::<LittleEndian>()?, expected_extra);
+        Ok(())
+    }
 }

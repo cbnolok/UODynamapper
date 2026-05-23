@@ -191,7 +191,7 @@ fn write_table_entry_data(
     reader.seek(SeekFrom::Start(idx_entry.offset as u64))?;
     let mut data = vec![0; idx_entry.size as usize];
     reader.read_exact(&mut data)?;
-    let size_decompressed = data.len();
+    let mut size_decompressed = data.len();
 
     if file_type == FileType::GumpartLegacyMul {
         let width = (idx_entry.extra >> 16) & 0xFFFF;
@@ -202,6 +202,7 @@ fn write_table_entry_data(
         gump_art_data.write_u32::<LittleEndian>(height as u32)?;
         gump_art_data.write_all(&data)?;
         data = gump_art_data;
+        size_decompressed = data.len();
     }
 
     let identifier_str = if file_type == FileType::GumpartLegacyMul && idx_entry.id == 9834 {
