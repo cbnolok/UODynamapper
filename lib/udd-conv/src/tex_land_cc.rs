@@ -296,11 +296,9 @@ fn decode_present_tiles(
             let (orig_w, orig_h) = element.size().dimensions();
 
             let (w, h, rgba) = if orig_w == 64 && orig_h == 64 {
-                let target = if options.upscale_64.target_size == 0 { orig_w as u32 * options.upscale_64.filter.scale_factor() } else { options.upscale_64.target_size };
-                (target, target, options.upscale_64.filter.apply_to_size(orig_w as u32, orig_h as u32, &rgba_arc, target, target))
+                apply_upscale_config(orig_w as u32, orig_h as u32, &rgba_arc, options.upscale_64)
             } else if orig_w == 128 && orig_h == 128 {
-                let target = if options.upscale_128.target_size == 0 { orig_w as u32 * options.upscale_128.filter.scale_factor() } else { options.upscale_128.target_size };
-                (target, target, options.upscale_128.filter.apply_to_size(orig_w as u32, orig_h as u32, &rgba_arc, target, target))
+                apply_upscale_config(orig_w as u32, orig_h as u32, &rgba_arc, options.upscale_128)
             } else {
                 (orig_w as u32, orig_h as u32, rgba_arc.to_vec())
             };
@@ -323,6 +321,30 @@ fn decode_present_tiles(
     });
 
     Ok(decoded_tiles)
+}
+
+fn apply_upscale_config(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    config: UpscaleConfig,
+) -> (u32, u32, Vec<u8>) {
+    if matches!(config.filter, UpscaleFilter::None) {
+        return (width, height, rgba.to_vec());
+    }
+
+    let target = if config.target_size == 0 {
+        width * config.filter.scale_factor()
+    } else {
+        config.target_size
+    };
+    (
+        target,
+        target,
+        config
+            .filter
+            .apply_to_size(width, height, rgba, target, target),
+    )
 }
 
 fn pack_tiles_into_pages(
@@ -575,6 +597,14 @@ fn blit_rgba_tile(
     h: u32,
     src: &[u8],
 ) -> eyre::Result<()> {
+    let expected_src_len = w as usize * h as usize * 4;
+    if src.len() != expected_src_len {
+        eyre::bail!(
+            "invalid RGBA tile length for {w}x{h}: expected {expected_src_len}, got {}",
+            src.len()
+        );
+    }
+
     let dst_stride = dst_width as usize * 4;
     let src_stride = w as usize * 4;
     for row in 0..h as usize {
@@ -633,6 +663,25 @@ mod tests {
             height,
             rgba: vec![255; width as usize * height as usize * 4],
         }
+    }
+
+    #[test]
+    fn none_upscale_config_preserves_original_pixels_and_size() {
+        let rgba = vec![7u8; 64 * 64 * 4];
+        let (width, height, out) = apply_upscale_config(
+            64,
+            64,
+            &rgba,
+            UpscaleConfig {
+                target_size: 256,
+                filter: UpscaleFilter::None,
+            },
+        );
+
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        assert_eq!(out.len(), rgba.len());
+        assert_eq!(out, rgba);
     }
 
     #[test]
