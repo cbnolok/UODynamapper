@@ -8,6 +8,7 @@ use std::path::Path;
 use crate::classic::hues::{load_hues, HueEntry};
 use crate::classic::map::{MapBlockRelPos, MapCell, MapPlane};
 use crate::classic::radarcol::load_radarcol;
+use crate::classic::tiledata::{ItemTile, TileData};
 use crate::enhanced::facet_decoder::StaticTile;
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::package::UopPackage;
@@ -27,6 +28,48 @@ pub fn encode_map_plane(
     all_statics: &[StaticTile],
     radarcol_path: &Path,
     hues_path: &Path,
+    output_dir: &Path,
+    map_index: u8,
+) -> eyre::Result<()> {
+    encode_map_plane_inner(
+        map_plane,
+        all_statics,
+        radarcol_path,
+        hues_path,
+        None,
+        output_dir,
+        map_index,
+    )
+}
+
+/// Encodes a classic map plane into Enhanced Client formats using tiledata heights
+/// for radar static priority.
+pub fn encode_map_plane_with_tiledata(
+    map_plane: &mut MapPlane,
+    all_statics: &[StaticTile],
+    radarcol_path: &Path,
+    hues_path: &Path,
+    tiledata: &TileData,
+    output_dir: &Path,
+    map_index: u8,
+) -> eyre::Result<()> {
+    encode_map_plane_inner(
+        map_plane,
+        all_statics,
+        radarcol_path,
+        hues_path,
+        Some(tiledata.item_tiles()),
+        output_dir,
+        map_index,
+    )
+}
+
+fn encode_map_plane_inner(
+    map_plane: &mut MapPlane,
+    all_statics: &[StaticTile],
+    radarcol_path: &Path,
+    hues_path: &Path,
+    item_tiles: Option<&[ItemTile]>,
     output_dir: &Path,
     map_index: u8,
 ) -> eyre::Result<()> {
@@ -99,6 +142,7 @@ pub fn encode_map_plane(
                         &statics_map,
                         &radarcol_data,
                         &hues_data,
+                        item_tiles,
                         global_x,
                         global_y,
                     )?;
@@ -186,6 +230,7 @@ fn calculate_tile_color(
     statics_map: &HashMap<(u32, u32), Vec<&StaticTile>>,
     radarcol: &[Rgb555],
     hues: &[HueEntry],
+    item_tiles: Option<&[ItemTile]>,
     global_x: u32,
     global_y: u32,
 ) -> eyre::Result<Rgb555> {
@@ -194,42 +239,106 @@ fn calculate_tile_color(
 
     let statics_on_tile: Option<&Vec<&StaticTile>> = statics_map.get(&(global_x, global_y));
 
-    let highest_z = land_cell.z;
-    let mut highest_is_static = false;
-    let mut highest_static: Option<&StaticTile> = None;
+    let highest_static = statics_on_tile
+        .and_then(|statics| select_radar_static(statics, |graphic| item_height(item_tiles, graphic)));
 
-    if let Some(statics) = statics_on_tile {
-        if let Some(top_static) = statics.iter().max_by_key(|s| s.z) {
-            if top_static.z > highest_z {
-                //highest_z = top_static.z;
-                highest_is_static = true;
-                highest_static = Some(top_static);
+    if let Some(static_item) = highest_static {
+        if radar_static_top_z(static_item, item_height(item_tiles, static_item.graphic_id))
+            > i16::from(land_cell.z)
+        {
+            let graphic: u32 = static_item.graphic_id;
+            if graphic as usize >= radarcol.len() {
+                return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
+            }
+
+            if static_item.hue > 0 && (static_item.hue as usize) < hues.len() {
+                let hue_entry: &HueEntry = &hues[static_item.hue as usize];
+                let color_index: u8 = radarcol[graphic as usize].r();
+                return Ok(Rgb555::new_from_val(
+                    hue_entry.color_table[color_index as usize],
+                ));
+            } else {
+                return Ok(radarcol[graphic as usize]);
             }
         }
     }
 
-    if highest_is_static {
-        let static_item: &StaticTile = highest_static.unwrap();
-        let graphic: u32 = static_item.graphic_id;
-        if graphic as usize >= radarcol.len() {
-            return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
-        }
+    let graphic: u16 = land_cell.id;
+    if graphic as usize >= radarcol.len() {
+        return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
+    }
+    Ok(radarcol[graphic as usize])
+}
 
-        if static_item.hue > 0 && (static_item.hue as usize) < hues.len() {
-            let hue_entry: &HueEntry = &hues[static_item.hue as usize];
-            let color_index: u8 = radarcol[graphic as usize].r();
-            Ok(Rgb555::new_from_val(
-                hue_entry.color_table[color_index as usize],
-            ))
-        } else {
-            Ok(radarcol[graphic as usize])
+fn item_height(item_tiles: Option<&[ItemTile]>, graphic: u32) -> i8 {
+    item_tiles
+        .and_then(|tiles| tiles.get(graphic as usize))
+        .map(|tile| tile.height_raw())
+        .unwrap_or(0)
+}
+
+fn radar_static_top_z(static_item: &StaticTile, height: i8) -> i16 {
+    i16::from(static_item.z) + i16::from(height)
+}
+
+// EC radar selection follows classic radar behavior: compare rendered top, then base Z.
+fn select_radar_static<'a, F>(statics: &'a [&'a StaticTile], mut item_height: F) -> Option<&'a StaticTile>
+where
+    F: FnMut(u32) -> i8,
+{
+    statics.iter().copied().max_by(|left, right| {
+        let left_top = radar_static_top_z(left, item_height(left.graphic_id));
+        let right_top = radar_static_top_z(right, item_height(right.graphic_id));
+
+        left_top
+            .cmp(&right_top)
+            .then_with(|| left.z.cmp(&right.z))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn static_tile(graphic_id: u32, z: i8) -> StaticTile {
+        StaticTile {
+            graphic_id,
+            x: 0,
+            y: 0,
+            z,
+            hue: 0,
         }
-    } else {
-        let graphic: u16 = land_cell.id;
-        if graphic as usize >= radarcol.len() {
-            return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
+    }
+
+    fn height_for(graphic: u32) -> i8 {
+        match graphic {
+            1 => 20,
+            2 => 1,
+            3 => 4,
+            _ => 0,
         }
-        Ok(radarcol[graphic as usize])
+    }
+
+    #[test]
+    fn ec_radar_static_selection_prefers_highest_top_not_highest_base_z() {
+        let low_tall = static_tile(1, 0);
+        let high_short = static_tile(2, 15);
+        let statics = [&low_tall, &high_short];
+
+        let selected = select_radar_static(&statics, height_for).expect("selected static");
+
+        assert_eq!(selected.graphic_id, 1);
+    }
+
+    #[test]
+    fn ec_radar_static_selection_uses_base_z_as_tie_break() {
+        let lower = static_tile(3, 6);
+        let higher = static_tile(0, 10);
+        let statics = [&lower, &higher];
+
+        let selected = select_radar_static(&statics, height_for).expect("selected static");
+
+        assert_eq!(selected.graphic_id, 0);
     }
 }
 
