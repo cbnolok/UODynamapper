@@ -46,7 +46,9 @@ pub(super) fn from_uop(
                 && entry.identifier == 0x126D1E99DDEDEE0A
                 && housing_bin_file.is_some()
             {
-                write_housing_bin(&mut reader, &entry, housing_bin_file.unwrap())?;
+                if let Some(housing_bin_file) = housing_bin_file {
+                    write_housing_bin(&mut reader, &entry, housing_bin_file)?;
+                }
                 continue;
             }
 
@@ -169,8 +171,16 @@ fn write_non_map_chunk(
 
         match file_type {
             FileType::GumpartLegacyMul => {
-                let width = u32::from_le_bytes(decompressed_chunk_data[0..4].try_into().unwrap());
-                let height = u32::from_le_bytes(decompressed_chunk_data[4..8].try_into().unwrap());
+                let width = u32::from_le_bytes(read_exact_array::<4>(
+                    decompressed_chunk_data,
+                    0,
+                    "gump width",
+                )?);
+                let height = u32::from_le_bytes(read_exact_array::<4>(
+                    decompressed_chunk_data,
+                    4,
+                    "gump height",
+                )?);
                 idx_writer.write_u32::<LittleEndian>((decompressed_chunk_data.len() - 8) as u32)?;
                 idx_writer.write_u32::<LittleEndian>((width << 16) | height)?;
                 data_offset = 8;
@@ -198,6 +208,45 @@ fn write_non_map_chunk(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file(name: &str) -> io::Result<(File, std::path::PathBuf)> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "uocf-cli-{name}-{}-{unique}.tmp",
+            std::process::id()
+        ));
+        Ok((File::create(&path)?, path))
+    }
+
+    #[test]
+    fn truncated_gump_chunk_returns_error() -> io::Result<()> {
+        let (mul_file, mul_path) = temp_file("truncated-gump-mul")?;
+        let (idx_file, idx_path) = temp_file("truncated-gump-idx")?;
+        let mut mul_writer = BufWriter::new(mul_file);
+        let mut idx_writer = BufWriter::new(idx_file);
+
+        let result = write_non_map_chunk(
+            &mut mul_writer,
+            Some(&mut idx_writer),
+            &[0, 1, 2],
+            FileType::GumpartLegacyMul,
+            0,
+        );
+
+        let _ = std::fs::remove_file(mul_path);
+        let _ = std::fs::remove_file(idx_path);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        Ok(())
+    }
 }
 
 fn write_unused_idx_entries(idx_writer: &mut BufWriter<File>, used: &[bool]) -> io::Result<()> {

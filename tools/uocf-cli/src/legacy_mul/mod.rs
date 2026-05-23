@@ -226,20 +226,32 @@ fn write_multi_uop_entry_to_mul(
     chunk_data: &[u8],
 ) -> io::Result<()> {
     let mut span = chunk_data;
-    let count = u32::from_le_bytes(span[4..8].try_into().unwrap());
+    let count = u32::from_le_bytes(read_exact_array::<4>(span, 4, "multi item count")?);
     span = &span[8..];
 
     for _ in 0..count {
-        let item_id = u16::from_le_bytes(span[0..2].try_into().unwrap());
-        let x = i16::from_le_bytes(span[2..4].try_into().unwrap());
-        let y = i16::from_le_bytes(span[4..6].try_into().unwrap());
-        let z = i16::from_le_bytes(span[6..8].try_into().unwrap());
+        let item_id = u16::from_le_bytes(read_exact_array::<2>(span, 0, "multi item id")?);
+        let x = i16::from_le_bytes(read_exact_array::<2>(span, 2, "multi item x")?);
+        let y = i16::from_le_bytes(read_exact_array::<2>(span, 4, "multi item y")?);
+        let z = i16::from_le_bytes(read_exact_array::<2>(span, 6, "multi item z")?);
 
-        let flag_value = u16::from_le_bytes(span[8..10].try_into().unwrap());
-        let clilocs_count = u32::from_le_bytes(span[10..14].try_into().unwrap());
+        let flag_value = u16::from_le_bytes(read_exact_array::<2>(span, 8, "multi item flag")?);
+        let clilocs_count =
+            u32::from_le_bytes(read_exact_array::<4>(span, 10, "multi item cliloc count")?);
 
         let skip = (clilocs_count as usize).min(i32::MAX as usize) * 4;
-        span = &span[(14 + skip)..];
+        let next_offset = 14usize.checked_add(skip).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "multi item cliloc list is too large",
+            )
+        })?;
+        span = span.get(next_offset..).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated multi item cliloc list",
+            )
+        })?;
 
         mul_writer.write_u16::<LittleEndian>(item_id)?;
         mul_writer.write_i16::<LittleEndian>(x)?;
@@ -250,4 +262,75 @@ fn write_multi_uop_entry_to_mul(
     }
 
     Ok(())
+}
+
+fn read_exact_array<const N: usize>(
+    data: &[u8],
+    offset: usize,
+    field_name: &'static str,
+) -> io::Result<[u8; N]> {
+    let end = offset.checked_add(N).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field_name} offset overflow"),
+        )
+    })?;
+    let bytes = data.get(offset..end).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("truncated {field_name}"),
+        )
+    })?;
+    bytes.try_into().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid {field_name} byte width"),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file(name: &str) -> io::Result<(File, std::path::PathBuf)> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "uocf-cli-{name}-{}-{unique}.tmp",
+            std::process::id()
+        ));
+        Ok((File::create(&path)?, path))
+    }
+
+    #[test]
+    fn truncated_multi_header_returns_error() -> io::Result<()> {
+        let (file, path) = temp_file("truncated-multi-header")?;
+        let mut writer = BufWriter::new(file);
+
+        let result = write_multi_uop_entry_to_mul(&mut writer, &[0, 1, 2]);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        Ok(())
+    }
+
+    #[test]
+    fn truncated_multi_item_returns_error() -> io::Result<()> {
+        let (file, path) = temp_file("truncated-multi-item")?;
+        let mut writer = BufWriter::new(file);
+        let mut data = Vec::new();
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[0; 10]);
+
+        let result = write_multi_uop_entry_to_mul(&mut writer, &data);
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        Ok(())
+    }
 }
