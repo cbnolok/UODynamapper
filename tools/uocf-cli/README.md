@@ -31,10 +31,17 @@ Validated coverage currently includes:
 - `uop-tool extract` failure on malformed UOP input.
 - `uop-tool extract --dictionary` failure on a bad explicit dictionary.
 - `uop-tool replace` and `uop-tool rebuild` against generated UOP fixtures.
+- `multimap-tool` RLE to image to RLE round trip.
+- `sound-tool` WAV export from synthetic `sound.mul` / `soundidx.mul` files.
+- `uop-dict-populator-cli` with a generated UOP and TOML template config.
+- `texture-scanner` for missing input directories, empty input directories, and
+  a generated tiny DDS fixture.
 - Safe extraction path handling for dictionary-resolved names.
 - Unique temporary paths for package rewrite operations.
 - Legacy MUL/UOP malformed chunk handling for truncated gump and multi payloads.
 - A synthetic `sound.mul`/`soundidx.mul` to `soundLegacyMUL.uop` round trip.
+- Synthetic art, gump, and one-block map legacy MUL/UOP round trips.
+- MultiCollection UOP-entry payload conversion into a legacy multi record.
 
 ## Important Behavior
 
@@ -48,6 +55,8 @@ Validated coverage currently includes:
   conversions fail. Missing optional map variants during extract are skipped.
 - `texture-scanner` requires explicit input and output paths; it no longer uses
   hardcoded local development paths.
+- `texture-scanner` currently warns and continues after per-file DDS decode
+  failures. This is intentional for inventory scans.
 
 ## Validation
 
@@ -57,6 +66,8 @@ Use targeted checks while developing:
 cargo check -p uocf-cli
 cargo test -p uocf-cli
 cargo test -p uocf-cli --test uop_tool_cli
+cargo test -p uocf-cli --test misc_cli
+cargo test -p uocf-cli --test texture_scanner_cli
 ```
 
 Do not run automatic formatters or linters as part of this repo's normal agent
@@ -64,10 +75,10 @@ workflow.
 
 ## Remaining Gaps
 
-- `cc-uop-mul-converter` still needs broader fixture coverage for art, gump,
-  multi, and map conversions.
-- `uop-dict-populator-cli`, `facet-evidence-tool`, and
-  `kr-ec-terrain-diff-tool` have only compile-level coverage.
+- `cc-uop-mul-converter` still needs real-client fixture coverage beyond the
+  synthetic art, gump, sound, map, and multi payload tests.
+- `facet-evidence-tool` and `kr-ec-terrain-diff-tool` have only compile-level
+  coverage.
 - Real client package fixtures are still needed for end-to-end regression tests.
 - Some tools intentionally continue after per-file warnings; those cases should
   be reviewed command-by-command before changing exit behavior.
