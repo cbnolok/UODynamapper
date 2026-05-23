@@ -233,6 +233,7 @@ impl UddConvApp {
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_ec),
                     filtering_ready: settings.filtering_ready_tex_land_ec,
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    transcode_kdl_path: None,
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))

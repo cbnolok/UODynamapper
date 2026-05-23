@@ -169,6 +169,7 @@ pub struct TexLandEcAtlasOptions {
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
     pub bc7_rdo_lambda: f32,
+    pub transcode_kdl_path: Option<PathBuf>,
 }
 
 impl Default for TexLandEcAtlasOptions {
@@ -186,6 +187,7 @@ impl Default for TexLandEcAtlasOptions {
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            transcode_kdl_path: None,
         }
     }
 }
@@ -429,14 +431,21 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         .map(|manifest| manifest.entry_count)
         .unwrap_or(0);
 
-    let transcode_kdl_path = find_first_existing_file(
-        source_dirs,
-        &[
-            "TerrainTranscode.kdl",
-            "cc_ec_convtables/TerrainTranscode.kdl",
-            "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
-        ],
-    );
+    let transcode_kdl_path = if let Some(path) = options.transcode_kdl_path.as_ref() {
+        if !path.is_file() {
+            eyre::bail!("terrain transcode KDL not found: {}", path.display());
+        }
+        Some(path.clone())
+    } else {
+        find_first_existing_file(
+            source_dirs,
+            &[
+                "TerrainTranscode.kdl",
+                "cc_ec_convtables/TerrainTranscode.kdl",
+                "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
+            ],
+        )
+    };
 
     info!(
         "Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}",
@@ -1588,6 +1597,7 @@ pub fn encode_slot_manifest(
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            transcode_kdl_path: None,
         },
     )
 }
@@ -1656,6 +1666,7 @@ mod tests {
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            transcode_kdl_path: None,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(11, 3, 3)], &options).unwrap();

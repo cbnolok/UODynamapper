@@ -333,6 +333,8 @@ enum Commands {
         art_output: PathBuf,
         #[arg(long, default_value = "tex_land_ec.uddp")]
         land_output: PathBuf,
+        #[arg(long, help = "Embed this terrain routing KDL in tex_land_ec.uddp instead of auto-discovered TerrainTranscode.kdl.")]
+        land_transcode_kdl: Option<PathBuf>,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
         art_atlas_width: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_HEIGHT)]
@@ -753,6 +755,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             art_output,
             land_output,
+            land_transcode_kdl,
             art_atlas_width,
             art_atlas_height,
             art_gutter,
@@ -847,6 +850,7 @@ pub fn run() -> eyre::Result<()> {
                     packing_mode: land_packing_mode.into(),
                     filtering_ready: land_filtering_ready,
                     bc7_rdo_lambda,
+                    transcode_kdl_path: land_transcode_kdl,
                 },
             )?;
             println!(
@@ -1263,6 +1267,8 @@ mod tests {
             "tex_art_ec.uddp",
             "--land-output",
             "tex_land_ec.uddp",
+            "--land-transcode-kdl",
+            "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
             "--land-bc7",
         ])
         .expect("parse unified ec texture args");
@@ -1272,12 +1278,19 @@ mod tests {
                 source_dirs,
                 art_output,
                 land_output,
+                land_transcode_kdl,
                 land_bc7,
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(art_output, PathBuf::from("tex_art_ec.uddp"));
                 assert_eq!(land_output, PathBuf::from("tex_land_ec.uddp"));
+                assert_eq!(
+                    land_transcode_kdl,
+                    Some(PathBuf::from(
+                        "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
+                    ))
+                );
                 assert!(land_bc7);
             }
             _ => panic!("unexpected command parsed"),

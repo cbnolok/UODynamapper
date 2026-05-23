@@ -167,6 +167,7 @@ Design rules for this routing file:
 - Do not copy EC TerrainDefinition layers into KR routing unless the KR source package proves the same relationship.
 - Let manual/reviewed routing override generated routing in file order, matching the existing `TerrainTranscode.kdl` conflict behavior.
 - Keep the routing KDL separate from `EcTerrainOverrides.kdl`; the latter is about EC material behavior, not KR family routing.
+- Use `udd-pack pack-ec-textures --land-transcode-kdl <routing.kdl>` when intentionally embedding a non-default routing table into `tex_land_ec.uddp`.
 
 ## 6. Classification Matrix For This Repo
 
