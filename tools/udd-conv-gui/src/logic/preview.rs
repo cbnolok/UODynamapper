@@ -37,7 +37,9 @@ pub fn load_raw_asset(
             let now = std::time::Instant::now();
             let rgba_arc = texmap_source.get_pixel_data(id as usize, now)
                 .ok_or_else(|| eyre::eyre!("Texmap ID {} not found", id))?;
-            let element = texmap_source.element(id as usize).unwrap();
+            let element = texmap_source
+                .element(id as usize)
+                .ok_or_else(|| eyre::eyre!("Texmap metadata for ID {} not found", id))?;
             let (w, h) = element.size().dimensions();
             Ok(RawAssetData { width: w as u32, height: h as u32, rgba: rgba_arc.to_vec() })
         }

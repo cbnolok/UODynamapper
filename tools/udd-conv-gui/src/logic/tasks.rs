@@ -1,5 +1,6 @@
 use color_eyre::eyre;
 use std::panic::{self, AssertUnwindSafe};
+use std::path::Path;
 use udd_conv::{
     AtlasPackingMode,
     classic_patches::ClassicPatchOptions,
@@ -66,6 +67,14 @@ fn gather_ec_source_dirs(
     ec_dir: Option<&std::path::PathBuf>,
 ) -> Vec<std::path::PathBuf> {
     gather_single_source_dir(ec_dir)
+}
+
+fn ensure_output_parent(output: &Path) -> eyre::Result<()> {
+    let Some(parent) = output.parent() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(parent)?;
+    Ok(())
 }
 
 impl UddConvApp {
@@ -135,6 +144,7 @@ impl UddConvApp {
         self.spawn_task("CC Art Packing".to_string(), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
 
             let compression = match settings.opt_tex_art_cc {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
@@ -171,6 +181,7 @@ impl UddConvApp {
         self.spawn_task("CC Texmaps Packing".to_string(), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
 
             let compression = match settings.opt_tex_land_cc {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
@@ -208,6 +219,7 @@ impl UddConvApp {
         self.spawn_task("EC Art Packing".to_string(), move || {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
 
             let compression = match settings.opt_tex_art_ec {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
@@ -244,6 +256,7 @@ impl UddConvApp {
         self.spawn_task("EC Land Packing".to_string(), move || {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
 
             let compression = match settings.opt_tex_land_ec {
                 TextureOptimization::None => CompressionFlag::ZstdNoDict,
@@ -281,6 +294,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tilemeta.uddp");
         self.spawn_task("Tilemeta Packing".to_string(), move || {
+            ensure_output_parent(&output)?;
             match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
                 (Some(cc_dir), Some(ec_dir)) => {
                     build_tilemeta_uddp_from_split_sources(
@@ -318,6 +332,7 @@ impl UddConvApp {
         self.spawn_task(format!("Map {} Packing", map_id), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
             let summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &output,
@@ -335,6 +350,7 @@ impl UddConvApp {
         self.spawn_task(format!("Statics {} Packing", map_id), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
             let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
                 &sources,
                 &output,
@@ -359,6 +375,7 @@ impl UddConvApp {
             if !tilemeta_path.exists() {
                 eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
             }
+            ensure_output_parent(&output)?;
 
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
                 udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
@@ -393,6 +410,7 @@ impl UddConvApp {
         self.spawn_task(format!("Full Map {} Batch", map_id), move || {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
+            std::fs::create_dir_all(&settings.output_uddp_dir)?;
 
             // 1. Map
             let map_output = settings.output_uddp_dir.join(format!("map{}.uddp", map_id));

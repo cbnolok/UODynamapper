@@ -92,7 +92,9 @@ impl UddConvApp {
 
         self.update_upscale_preview(ctx);
 
-        let preview = self.upscale_preview.as_mut().unwrap();
+        let Some(preview) = self.upscale_preview.as_mut() else {
+            return;
+        };
         let mut open = true;
         let mut is_dirty = false;
         let mut id = preview.id;

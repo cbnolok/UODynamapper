@@ -59,9 +59,6 @@ impl UddConvApp {
     }
 
     pub fn get_output_path(&self, filename: &str) -> PathBuf {
-        if !self.settings.output_uddp_dir.exists() {
-            let _ = std::fs::create_dir_all(&self.settings.output_uddp_dir);
-        }
         self.settings.output_uddp_dir.join(filename)
     }
 
