@@ -19,7 +19,7 @@ use udd_conv::{
 use udd_conv_cli::{
     package_info::get_package_info_string,
     extract::extract_package,
-    tool_cli::{diff_paths, DiffKind},
+    tool_cli::{diff_paths_report, DiffKind},
 };
 use crate::app::UddConvApp;
 use crate::models::{AtlasPackingModeSetting, LogLevel, LogMessage, TextureOptimization};
@@ -512,8 +512,7 @@ impl UddConvApp {
             return;
         };
         self.spawn_task("Diff Packages".to_string(), move || {
-            diff_paths(&left, &right, DiffKind::Auto)?;
-            Ok("Diff complete. Check console for output.".to_string())
+            diff_paths_report(&left, &right, DiffKind::Auto)
         });
     }
 }

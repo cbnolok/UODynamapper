@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -442,38 +443,46 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
 }
 
 pub fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()> {
+    print!("{}", diff_paths_report(left, right, kind)?);
+    Ok(())
+}
+
+pub fn diff_paths_report(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<String> {
+    let mut report = String::new();
     let left_is_csv = left.extension().and_then(|value| value.to_str()) == Some("csv");
     let right_is_csv = right.extension().and_then(|value| value.to_str()) == Some("csv");
 
     if left_is_csv && right_is_csv {
-        return match kind {
+        match kind {
             DiffKind::Auto => match detect_csv_kind(left)? {
-                CsvKind::TerrainProvenance => diff_terrain_provenance_csv(left, right),
-                CsvKind::Slots | CsvKind::Auto => diff_slot_csv(left, right),
+                CsvKind::TerrainProvenance => diff_terrain_provenance_csv(&mut report, left, right)?,
+                CsvKind::Slots | CsvKind::Auto => diff_slot_csv(&mut report, left, right)?,
             },
-            DiffKind::TerrainProvenance => diff_terrain_provenance_csv(left, right),
-            DiffKind::Slots => diff_slot_csv(left, right),
+            DiffKind::TerrainProvenance => diff_terrain_provenance_csv(&mut report, left, right)?,
+            DiffKind::Slots => diff_slot_csv(&mut report, left, right)?,
             DiffKind::Package => eyre::bail!("package diff cannot be used with CSV inputs"),
-        };
+        }
+        return Ok(report);
     }
 
     match kind {
-        DiffKind::TerrainProvenance => diff_terrain_provenance_packages(left, right),
-        DiffKind::Slots => diff_slot_packages(left, right),
-        DiffKind::Package => diff_package_payloads(left, right),
+        DiffKind::TerrainProvenance => diff_terrain_provenance_packages(&mut report, left, right)?,
+        DiffKind::Slots => diff_slot_packages(&mut report, left, right)?,
+        DiffKind::Package => diff_package_payloads(&mut report, left, right)?,
         DiffKind::Auto => {
             if TexLandEcPackage::load(left).is_ok() && TexLandEcPackage::load(right).is_ok() {
-                diff_terrain_provenance_packages(left, right)
+                diff_terrain_provenance_packages(&mut report, left, right)?
             } else if is_atlas_package(left) && is_atlas_package(right) {
-                diff_slot_packages(left, right)
+                diff_slot_packages(&mut report, left, right)?
             } else {
-                diff_package_payloads(left, right)
+                diff_package_payloads(&mut report, left, right)?
             }
         }
     }
+    Ok(report)
 }
 
-fn diff_terrain_provenance_csv(left: &Path, right: &Path) -> eyre::Result<()> {
+fn diff_terrain_provenance_csv(output: &mut String, left: &Path, right: &Path) -> eyre::Result<()> {
     let left_rows = read_tex_land_ec_terrain_provenance_csv(left)?
         .into_iter()
         .map(terrain_record_key)
@@ -482,11 +491,11 @@ fn diff_terrain_provenance_csv(left: &Path, right: &Path) -> eyre::Result<()> {
         .into_iter()
         .map(terrain_record_key)
         .collect::<BTreeSet<_>>();
-    print_set_diff("terrain provenance rows", &left_rows, &right_rows);
+    write_set_diff(output, "terrain provenance rows", &left_rows, &right_rows)?;
     Ok(())
 }
 
-fn diff_slot_csv(left: &Path, right: &Path) -> eyre::Result<()> {
+fn diff_slot_csv(output: &mut String, left: &Path, right: &Path) -> eyre::Result<()> {
     let left_rows = read_atlas_slot_csv(left)?
         .into_iter()
         .map(slot_row_key)
@@ -495,11 +504,11 @@ fn diff_slot_csv(left: &Path, right: &Path) -> eyre::Result<()> {
         .into_iter()
         .map(slot_row_key)
         .collect::<BTreeSet<_>>();
-    print_set_diff("atlas slot rows", &left_rows, &right_rows);
+    write_set_diff(output, "atlas slot rows", &left_rows, &right_rows)?;
     Ok(())
 }
 
-fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<()> {
+fn diff_terrain_provenance_packages(output: &mut String, left: &Path, right: &Path) -> eyre::Result<()> {
     let left_package = load_tex_land_ec_package(left)?;
     let right_package = load_tex_land_ec_package(right)?;
     let left_rows = left_package
@@ -514,7 +523,8 @@ fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<(
         .copied()
         .map(terrain_record_key)
         .collect::<BTreeSet<_>>();
-    println!(
+    writeln!(
+        output,
         "Left: rows={}, populated_slots={} | Right: rows={}, populated_slots={}",
         left_package.terrain_provenance().len(),
         left_package
@@ -528,12 +538,12 @@ fn diff_terrain_provenance_packages(left: &Path, right: &Path) -> eyre::Result<(
             .iter()
             .filter(|slot| slot.is_present())
             .count(),
-    );
-    print_set_diff("terrain provenance rows", &left_rows, &right_rows);
+    )?;
+    write_set_diff(output, "terrain provenance rows", &left_rows, &right_rows)?;
     Ok(())
 }
 
-fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
+fn diff_slot_packages(output: &mut String, left: &Path, right: &Path) -> eyre::Result<()> {
     if let (Ok(left_package), Ok(right_package)) =
         (TexArtCcPackage::load(left), TexArtCcPackage::load(right))
     {
@@ -545,7 +555,7 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("tex_art_cc slot rows", &left_rows, &right_rows);
+        write_set_diff(output, "tex_art_cc slot rows", &left_rows, &right_rows)?;
         return Ok(());
     }
     if let (Ok(left_package), Ok(right_package)) =
@@ -559,7 +569,7 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("tex_art_ec slot rows", &left_rows, &right_rows);
+        write_set_diff(output, "tex_art_ec slot rows", &left_rows, &right_rows)?;
         return Ok(());
     }
     if let (Ok(left_package), Ok(right_package)) =
@@ -573,26 +583,27 @@ fn diff_slot_packages(left: &Path, right: &Path) -> eyre::Result<()> {
             .into_iter()
             .map(slot_row_key)
             .collect::<BTreeSet<_>>();
-        print_set_diff("tex_land_ec slot rows", &left_rows, &right_rows);
+        write_set_diff(output, "tex_land_ec slot rows", &left_rows, &right_rows)?;
         return Ok(());
     }
 
     eyre::bail!("slot diff requires matching atlas package types on both sides")
 }
 
-fn diff_package_payloads(left: &Path, right: &Path) -> eyre::Result<()> {
+fn diff_package_payloads(output: &mut String, left: &Path, right: &Path) -> eyre::Result<()> {
     let left_reader = UddpReader::load(left).wrap_err_with(|| format!("load {}", left.display()))?;
     let right_reader = UddpReader::load(right).wrap_err_with(|| format!("load {}", right.display()))?;
-    println!(
+    writeln!(
+        output,
         "Left: lookup_mode={:?}, files={} | Right: lookup_mode={:?}, files={}",
         left_reader.lookup_mode(),
         left_reader.records().len(),
         right_reader.lookup_mode(),
         right_reader.records().len(),
-    );
+    )?;
     let left_files = package_file_fingerprints(&left_reader)?;
     let right_files = package_file_fingerprints(&right_reader)?;
-    print_map_diff("package payloads", &left_files, &right_files);
+    write_map_diff(output, "package payloads", &left_files, &right_files)?;
     Ok(())
 }
 
@@ -1289,27 +1300,39 @@ fn slot_row_key(row: AtlasSlotCsvRow) -> String {
     )
 }
 
-fn print_set_diff<T>(label: &str, left: &BTreeSet<T>, right: &BTreeSet<T>)
+fn write_set_diff<T>(
+    output: &mut String,
+    label: &str,
+    left: &BTreeSet<T>,
+    right: &BTreeSet<T>,
+) -> eyre::Result<()>
 where
     T: Ord + std::fmt::Display,
 {
     let only_left = left.difference(right).collect::<Vec<_>>();
     let only_right = right.difference(left).collect::<Vec<_>>();
-    println!(
+    writeln!(
+        output,
         "{}: left_only={}, right_only={}",
         label,
         only_left.len(),
         only_right.len()
-    );
+    )?;
     for value in only_left.iter().take(20) {
-        println!("  - {}", value);
+        writeln!(output, "  - {}", value)?;
     }
     for value in only_right.iter().take(20) {
-        println!("  + {}", value);
+        writeln!(output, "  + {}", value)?;
     }
+    Ok(())
 }
 
-fn print_map_diff(label: &str, left: &BTreeMap<String, u64>, right: &BTreeMap<String, u64>) {
+fn write_map_diff(
+    output: &mut String,
+    label: &str,
+    left: &BTreeMap<String, u64>,
+    right: &BTreeMap<String, u64>,
+) -> eyre::Result<()> {
     let left_keys = left.keys().cloned().collect::<BTreeSet<_>>();
     let right_keys = right.keys().cloned().collect::<BTreeSet<_>>();
     let mut changed = Vec::new();
@@ -1319,22 +1342,24 @@ fn print_map_diff(label: &str, left: &BTreeMap<String, u64>, right: &BTreeMap<St
         }
     }
 
-    println!(
+    writeln!(
+        output,
         "{}: added={}, removed={}, changed={}",
         label,
         right_keys.difference(&left_keys).count(),
         left_keys.difference(&right_keys).count(),
         changed.len()
-    );
+    )?;
     for key in changed.iter().take(20) {
-        println!("  * {}", key);
+        writeln!(output, "  * {}", key)?;
     }
     for key in left_keys.difference(&right_keys).take(20) {
-        println!("  - {}", key);
+        writeln!(output, "  - {}", key)?;
     }
     for key in right_keys.difference(&left_keys).take(20) {
-        println!("  + {}", key);
+        writeln!(output, "  + {}", key)?;
     }
+    Ok(())
 }
 
 fn csv_header_index(headers: &StringRecord, name: &str) -> eyre::Result<usize> {
@@ -1499,5 +1524,42 @@ fn optional_u32_string(value: u32, missing: u32) -> String {
         String::new()
     } else {
         value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_csv_path(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("uddtool_diff_{}_{}.csv", name, nanos))
+    }
+
+    #[test]
+    fn diff_paths_report_returns_slot_csv_output() {
+        let left = temp_csv_path("left_slots");
+        let right = temp_csv_path("right_slots");
+        std::fs::write(
+            &left,
+            "art_id,kind,page_index,page_tile_index,x,y,width,height\n1,land,0,0,0,0,44,44\n",
+        )
+        .expect("write left csv");
+        std::fs::write(
+            &right,
+            "art_id,kind,page_index,page_tile_index,x,y,width,height\n2,land,0,0,0,0,44,44\n",
+        )
+        .expect("write right csv");
+
+        let report = diff_paths_report(&left, &right, DiffKind::Slots).expect("diff slots");
+        let _ = std::fs::remove_file(&left);
+        let _ = std::fs::remove_file(&right);
+
+        assert!(report.contains("atlas slot rows: left_only=1, right_only=1"));
+        assert!(report.contains("  - art_id=1|kind=land|page_index=0|page_tile_index=0|x=0|y=0|width=44|height=44"));
+        assert!(report.contains("  + art_id=2|kind=land|page_index=0|page_tile_index=0|x=0|y=0|width=44|height=44"));
     }
 }
