@@ -50,7 +50,7 @@ fn main() {
     }
 }
 
-fn rdo_cases() -> [RdoCase; 6] {
+fn rdo_cases() -> [RdoCase; 7] {
     [
         RdoCase {
             name: "rdo_default",
@@ -97,6 +97,15 @@ fn rdo_cases() -> [RdoCase; 6] {
                 ..Bc7RdoParams::default()
             },
         },
+        RdoCase {
+            name: "rdo_relative_d4",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_offset_delta: 4,
+                ..Bc7RdoParams::default()
+            },
+        },
     ]
 }
 
@@ -125,10 +134,11 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
+                stats.relative_offset_skips,
                 stats.original_block_skips,
                 stats.decode_trials,
                 stats.bounded_error_exits,

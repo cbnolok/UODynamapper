@@ -23,6 +23,7 @@ pub struct Bc7RdoParams {
     pub max_smooth_block_std_dev: f32,
     pub try_two_matches: bool,
     pub allow_relative_movement: bool,
+    pub relative_movement_max_offset_delta: usize,
     pub skip_zero_mse_blocks: bool,
     pub use_ultrasmooth_block_handling: bool,
     pub custom_smooth_block_error_scale: bool,
@@ -35,6 +36,7 @@ pub struct Bc7RdoStats {
     pub candidate_checks: u64,
     pub rate_skips: u64,
     pub hash_skips: u64,
+    pub relative_offset_skips: u64,
     pub original_block_skips: u64,
     pub decode_trials: u64,
     pub bounded_error_exits: u64,
@@ -51,6 +53,7 @@ impl Default for Bc7RdoParams {
             max_smooth_block_std_dev: 18.0,
             try_two_matches: false,
             allow_relative_movement: false,
+            relative_movement_max_offset_delta: 15,
             skip_zero_mse_blocks: false,
             use_ultrasmooth_block_handling: true,
             custom_smooth_block_error_scale: false,
@@ -189,6 +192,7 @@ fn reduce_entropy_bc7_impl(
 
         if params.allow_relative_movement {
             // ── Main search window: full relative-offset search ──
+            let max_relative_delta = params.relative_movement_max_offset_delta.min(15);
             for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
                 if prev_block_index < first_block_to_check {
                     break;
@@ -198,8 +202,14 @@ fn reduce_entropy_bc7_impl(
                 let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
                 for len in (3..=16).rev() {
                     let len_bits = compute_match_len_cost(len as u32) as f32;
-                    for src_ofs in 0..=(16 - len) {
-                        for dst_ofs in 0..=(16 - len) {
+                    for src_ofs in 0usize..=(16 - len) {
+                        let full_dst_count = 17 - len;
+                        let dst_start = src_ofs.saturating_sub(max_relative_delta);
+                        let dst_end = (src_ofs + max_relative_delta).min(16 - len);
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.relative_offset_skips += (full_dst_count - (dst_end - dst_start + 1)) as u64;
+                        }
+                        for dst_ofs in dst_start..=dst_end {
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.candidate_checks += 1;
                             }
