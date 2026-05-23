@@ -427,7 +427,44 @@ fn eval_rgba_partition_weights4(
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "sse4.1")]
+#[target_feature(enable = "sse4.1,ssse3")]
+unsafe fn sse_m6_rgb4_sse41(
+    px: __m128i,
+    packed_sel: u32,
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+) -> u32 {
+    let r_mask = _mm_setr_epi8(0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let g_mask = _mm_setr_epi8(1, 5, 9, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let b_mask = _mm_setr_epi8(2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let pr = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, r_mask));
+    let pg = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, g_mask));
+    let pb = _mm_cvtepu8_epi32(_mm_shuffle_epi8(px, b_mask));
+    let w = _mm_setr_epi32(
+        BC7_WEIGHTS4[(packed_sel & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 8) & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 16) & 0xff) as usize] as i32,
+        BC7_WEIGHTS4[((packed_sel >> 24) & 0xff) as usize] as i32,
+    );
+    let half = _mm_set1_epi32(32);
+    let recon_r = _mm_add_epi32(_mm_set1_epi32(lr), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(dr), w), half), 6));
+    let recon_g = _mm_add_epi32(_mm_set1_epi32(lg), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(dg), w), half), 6));
+    let recon_b = _mm_add_epi32(_mm_set1_epi32(lb), _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(_mm_set1_epi32(db), w), half), 6));
+    let er = _mm_sub_epi32(pr, recon_r);
+    let eg = _mm_sub_epi32(pg, recon_g);
+    let eb = _mm_sub_epi32(pb, recon_b);
+    let err = _mm_add_epi32(_mm_add_epi32(_mm_mullo_epi32(er, er), _mm_mullo_epi32(eg, eg)), _mm_mullo_epi32(eb, eb));
+    let sum2 = _mm_add_epi32(err, _mm_shuffle_epi32(err, 0b10_11_00_01));
+    let sum4 = _mm_add_epi32(sum2, _mm_shuffle_epi32(sum2, 0b01_00_11_10));
+    _mm_cvtsi128_si32(sum4) as u32
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1,ssse3")]
 unsafe fn eval_m6_rgb_sse41(
     pixels: &[Pixel; 16],
     weights: &mut [u8; 16],
@@ -467,10 +504,9 @@ unsafe fn eval_m6_rgb_sse41(
         let packed = _mm_cvtsi128_si32(sel8) as u32;
 
         for lane in 0..4 {
-            let sel = ((packed >> (lane * 8)) & 0xff) as usize;
-            weights[i + lane] = sel as u8;
-            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+            weights[i + lane] = ((packed >> (lane * 8)) & 0xff) as u8;
         }
+        sse += sse_m6_rgb4_sse41(px, packed, lr, lg, lb, dr, dg, db);
     }
 
     sse
@@ -575,12 +611,20 @@ unsafe fn eval_m6_rgb_avx512(
         let mut pair_sums = [0i32; 16];
         _mm512_storeu_si512(pair_sums.as_mut_ptr() as *mut _, pairs);
 
+        let mut packed0 = 0u32;
+        let mut packed1 = 0u32;
         for lane in 0..8 {
             let dot = pair_sums[lane * 2] + pair_sums[lane * 2 + 1];
             let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
             weights[i + lane] = sel as u8;
-            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+            if lane < 4 {
+                packed0 |= (sel as u32) << (lane * 8);
+            } else {
+                packed1 |= (sel as u32) << ((lane - 4) * 8);
+            }
         }
+        sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
+        sse += sse_m6_rgb4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, dr, dg, db);
     }
 
     sse
@@ -636,11 +680,18 @@ unsafe fn eval_m6_rgb_avx2(
         let mut packed = [0u8; 8];
         _mm_storel_epi64(packed.as_mut_ptr() as *mut __m128i, sel8);
 
+        let mut packed0 = 0u32;
+        let mut packed1 = 0u32;
         for lane in 0..8 {
-            let sel = packed[lane] as usize;
-            weights[i + lane] = sel as u8;
-            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+            weights[i + lane] = packed[lane];
+            if lane < 4 {
+                packed0 |= (packed[lane] as u32) << (lane * 8);
+            } else {
+                packed1 |= (packed[lane] as u32) << ((lane - 4) * 8);
+            }
         }
+        sse += sse_m6_rgb4_sse41(px0, packed0, lr, lg, lb, dr, dg, db);
+        sse += sse_m6_rgb4_sse41(px1, packed1, lr, lg, lb, dr, dg, db);
     }
 
     sse
