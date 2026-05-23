@@ -10,12 +10,8 @@ The project is still early. Terrain rendering, multi-map support, BC7-compressed
 
 - Renders Ultima Online terrain from converted Classic Client map data.
 - Supports Classic 2D, Enhanced Classic, and KR-like terrain shader modes.
-- Streams converted `.uddp` packages instead of reading every source client file at runtime.
+- Streams custom `.uddp` packages instead of reading every source client file at runtime.
 - Handles multiple maps and camera-controlled exploration.
-- Uses paged terrain metadata, texture residency, and compressed GPU textures to keep large maps practical.
-- Preserves Enhanced Client material provenance so the renderer can distinguish terrain-owned, art-owned, and surface-like assets.
-
-The goal is not to replace the original clients. It is a rendering and tooling project for studying, converting, and visualizing Ultima Online world data with a modern renderer while keeping source-data relationships explicit.
 
 ## Current Scope
 
@@ -32,6 +28,7 @@ Implemented:
 In progress:
 
 - Production static-art rendering and explicit UO-style depth behavior.
+- Full KR terrain/art/support-resource routing.
 - Full EC terrain/art/support-resource routing.
 - More complete packaging validation and runtime diagnostics.
 - Future renderer work such as clipmap terrain, mobiles, paperdoll, and export tooling.
@@ -40,15 +37,17 @@ See [docs/TODO.md](docs/TODO.md) for the working roadmap.
 
 ## Requirements
 
-- Rust toolchain compatible with the workspace edition.
-- A valid Ultima Online installation for the client data you want to convert or render.
-- Converted `.uddp` packages for runtime use. These are built from local client files; source game assets are not included in this repository.
+- A valid Ultima Online Classic Client (both mul and uop formats) or Enhanced Client installation for the client data you want to convert or render.
+- Converted `.uddp` packages for runtime use. These are built from local client files via `udd-conv-gui` or `udd-conv-cli`; source game assets are not included in this repository.
+- Rust toolchain compatible with the workspace edition only if you are building from source.
 
-The main app expects shared assets, shaders, fonts, settings, and runtime data under `dynamapper/assets/`.
+The main app expects shared assets, shaders, fonts, settings, and runtime data under `assets/`.
+
+Most users are expected to use distributed binaries rather than compile the workspace themselves. Source builds are mainly for contributors, toolchain work, and renderer development.
 
 ## Basic Setup
 
-Configure your Ultima Online paths in the modular settings files under `dynamapper/assets/settings/`. The active file for client locations is `uo_files.toml`.
+Configure the runtime UDDP package path in the modular settings files under `assets/settings/`. The current file is `uo_files.toml`, although it now points only at generated UDDP assets.
 
 Runtime packages are produced with the conversion tools and then placed in, or linked into, the Dynamapper asset tree. A typical working set includes:
 
@@ -61,6 +60,8 @@ Runtime packages are produced with the conversion tools and then placed in, or l
 For conversion commands and package details, see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md).
 
 ## Running
+
+With a distributed build, run the provided `dynamapper` binary from its release folder after configuring the runtime package path.
 
 From the workspace root:
 
@@ -85,6 +86,20 @@ The exact result depends on the configured client paths, the converted packages 
 | `Esc` | Close dialogs |
 
 Keybindings are configurable. See [docs/keybindings.md](docs/keybindings.md) for the full list.
+
+## Provided Tools
+
+- `dynamapper`: interactive Bevy map renderer and viewer.
+- `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
+- `uddpack`: command-line packer for building `.uddp` packages from Classic Client and Enhanced Client data.
+- `uddtool`: command-line inspector and editor for existing `.uddp` packages.
+- `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
+- `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
+- `uoptool`: command-line utility for hashing, inspecting, replacing, cracking paths for, and rebuilding `.uop` packages.
+- `cc_uop_mul_converter`: converter between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
+- `texture_scanner`: utility for identifying and isolating terrain or land candidates from UO texture pools.
+- `uop-dict-populator-cli` / `uop-dict-populator-gui`: tools for building and expanding UOP hash dictionaries.
+- `multimap-tool`: converter for Classic Client `multimap.rle` files to and from BMP or PNG.
 
 ## Workspace
 
