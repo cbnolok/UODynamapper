@@ -139,6 +139,35 @@ fn package_load_mode_can_defer_payload_loading() {
 }
 
 #[test]
+fn package_lazy_unpack_reads_one_payload_without_materializing_entry() {
+    let path = temp_uop_path("uop_lazy_unpack_one");
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"selected payload", "build/selected.bin", CompressionFlag::Zlib)
+        .expect("add selected entry");
+    package.finalize_and_save(&path).expect("save package");
+
+    let file_hash = hash_file_name_single("build/selected.bin");
+    let loaded = UopPackage::load_with_mode(&path, LoadMode::Lazy).expect("load package lazily");
+
+    assert_eq!(
+        loaded
+            .unpack_file_by_hash(file_hash)
+            .expect("unpack selected entry")
+            .expect("selected entry"),
+        b"selected payload"
+    );
+    assert!(loaded
+        .get_file_by_hash(file_hash)
+        .expect("lazy file metadata")
+        .data()
+        .is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn package_recompress_preserves_mythic_and_zlib_bwt_entries() {
     let path = temp_uop_path("uop_recompress_codecs");
 

@@ -664,7 +664,12 @@ impl UopInspectorApp {
                 let uop_path = ec_base_path.join(uop_name);
                 if uop_path.exists() {
                     self.log(format!("Loading {} into cache", uop_name));
-                    match UopPackage::load(&uop_path) {
+                    let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop") {
+                        LoadMode::Lazy
+                    } else {
+                        LoadMode::Eager
+                    };
+                    match UopPackage::load_with_mode(&uop_path, load_mode) {
                         Ok(package) => {
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
@@ -945,19 +950,22 @@ impl UopInspectorApp {
     pub fn save_entry(&mut self, hash: u64, name: &str) {
         if let Some(uop_idx) = self.selected_uop_idx {
             let loaded = &self.uop_cache.loaded_uops[uop_idx];
-            if let Some(file) = loaded.package.get_file_by_hash(hash) {
+            if loaded.package.get_file_by_hash(hash).is_some() {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_file_name(name)
                     .set_title("Extract Entry")
                     .save_file()
                 {
-                    match file.unpack() {
-                        Ok(data) => {
+                    match loaded.package.unpack_file_by_hash(hash) {
+                        Ok(Some(data)) => {
                             if let Err(e) = std::fs::write(&path, data) {
                                 self.status_message = format!("Failed to save: {}", e);
                             } else {
                                 self.status_message = format!("Extracted to: {}", path.display());
                             }
+                        }
+                        Ok(None) => {
+                            self.status_message = format!("Entry {:016X} is not in package", hash);
                         }
                         Err(e) => {
                             self.status_message = format!("Failed to unpack: {}", e);
@@ -990,8 +998,8 @@ impl UopInspectorApp {
 
             for path in candidates {
                 let hash = uocf::uop_container::hash::hash_file_name_single(&path);
-                if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                    if let Ok(data) = file.unpack() {
+                if loaded.package.get_file_by_hash(hash).is_some() {
+                    if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
                         if let Some(handle) = self.get_uop_texture(ctx, hash, &data, &path) {
                             self.ec_texture_previews.insert(texture_id, handle.clone());
                             return Some(handle);
@@ -1347,8 +1355,8 @@ impl UopInspectorApp {
             if !is_hues {
                 continue;
             }
-            if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                if let Ok(data) = file.unpack() {
+            if loaded.package.get_file_by_hash(hash).is_some() {
+                if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
                     return self.get_uop_texture(ctx, hash, &data, name);
                 }
             }

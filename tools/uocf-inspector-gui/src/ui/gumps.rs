@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
+use uocf::uop_container::package::{LoadMode, UopPackage};
 
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/cc_ec_convtables/PaperdollProfiles.kdl");
@@ -124,22 +125,14 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     if app.selected_gump_source == GumpSource::Enhanced
                         && ui.button("Open raw entry").clicked()
                     {
-                        let path = ec_gump_path(gump_id, "tga");
-                        let hash = hash_file_name_single(&path);
-                        if !app.select_raw_uop_entry("interface.uop", hash) {
+                        if !select_or_load_ec_gump_entry(app, gump_id) {
                             app.status_message = "interface.uop entry was not loaded.".to_string();
                         }
                     }
                     if app.selected_gump_source == GumpSource::Classic
                         && ui.button("Open CC UOP entry").clicked()
                     {
-                        let selected = cc_gump_paths(gump_id)
-                            .iter()
-                            .any(|path| app.select_raw_uop_entry(
-                                "gumpartLegacyMUL.uop",
-                                hash_file_name_single(path),
-                            ));
-                        if !selected {
+                        if !select_or_load_cc_gump_entry(app, gump_id) {
                             app.status_message =
                                 "No matching gumpartLegacyMUL.uop entry was loaded.".to_string();
                         }
@@ -196,7 +189,7 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
 
         egui::Grid::new("uocf_inspector_paperdoll_equipment")
-            .num_columns(4)
+            .num_columns(5)
             .spacing([8.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Item ID");
@@ -205,7 +198,8 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.end_row();
 
                 let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
-                for row in &mut app.paperdoll_equipment {
+                let mut remove_index = None;
+                for (index, row) in app.paperdoll_equipment.iter_mut().enumerate() {
                     ui.text_edit_singleline(&mut row.item_id);
                     ui.text_edit_singleline(&mut row.hue);
                     ui.monospace(equipment_detail(
@@ -213,13 +207,23 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         selected_profile,
                         row.item_id.as_str(),
                     ));
+                    if ui.button("Remove").clicked() {
+                        remove_index = Some(index);
+                    }
                     ui.end_row();
+                }
+                if let Some(index) = remove_index {
+                    app.paperdoll_equipment.remove(index);
                 }
             });
 
         ui.horizontal(|ui| {
             if ui.button("Add Row").clicked() {
                 app.paperdoll_equipment.push(PaperdollEquipmentInput::default());
+            }
+            if ui.button("Clear Rows").clicked() {
+                app.paperdoll_equipment.clear();
+                app.paperdoll_preview = None;
             }
             if ui.button("Render").clicked() {
                 match render_paperdoll(app, ctx) {
@@ -306,6 +310,72 @@ fn gump_source_detail(source: GumpSource, gump_id: u32) -> String {
             format!("EC source: interface.uop {path} hash={hash:016X}")
         }
     }
+}
+
+fn select_or_load_ec_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool {
+    let path = ec_gump_path(gump_id, "tga");
+    let hash = hash_file_name_single(&path);
+    if app.select_raw_uop_entry("interface.uop", hash) {
+        return true;
+    }
+
+    let Some(ec_path) = app.settings.ec_path.clone() else {
+        return false;
+    };
+    let uop_path = ec_path.join("interface.uop");
+    if !uop_path.exists() {
+        return false;
+    }
+
+    match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+        Ok(package) => {
+            app.uop_cache.add(uop_path, package);
+            app.select_raw_uop_entry("interface.uop", hash)
+        }
+        Err(error) => {
+            app.status_message = format!("Failed to open interface.uop lazily: {error}");
+            false
+        }
+    }
+}
+
+fn select_or_load_cc_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool {
+    for path in cc_gump_paths(gump_id) {
+        let hash = hash_file_name_single(&path);
+        if app.select_raw_uop_entry("gumpartLegacyMUL.uop", hash)
+            || app.select_raw_uop_entry("gumpartlegacymul.uop", hash)
+        {
+            return true;
+        }
+    }
+
+    let Some(cc_path) = app.settings.cc_path.clone() else {
+        return false;
+    };
+    for package_name in ["gumpartLegacyMUL.uop", "GumpartLegacyMUL.uop", "gumpartlegacymul.uop"] {
+        let uop_path = cc_path.join(package_name);
+        if !uop_path.exists() {
+            continue;
+        }
+        match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+            Ok(package) => {
+                app.uop_cache.add(uop_path, package);
+                for path in cc_gump_paths(gump_id) {
+                    let hash = hash_file_name_single(&path);
+                    if app.select_raw_uop_entry(package_name, hash) {
+                        return true;
+                    }
+                }
+            }
+            Err(error) => {
+                app.status_message =
+                    format!("Failed to open {package_name} lazily: {error}");
+                return false;
+            }
+        }
+    }
+
+    false
 }
 
 fn equipment_detail(
@@ -479,8 +549,10 @@ fn decode_ec_gump_rgba(
         ];
         for (path, format) in candidates {
             let hash = hash_file_name_single(&path);
-            if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                let data: Arc<[u8]> = file.unpack()?.into();
+            if loaded.package.get_file_by_hash(hash).is_some() {
+                let data: Arc<[u8]> = loaded.package.unpack_file_by_hash(hash)?
+                    .ok_or_else(|| color_eyre::eyre::eyre!("EC gump entry disappeared from interface.uop."))?
+                    .into();
                 let tex_file = TextureFile {
                     metadata: RawTextureItem::absent(),
                     is_ec: true,

@@ -21,7 +21,7 @@ use memmap2::Mmap;
 
 use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
-use crate::uop_container::package::UopPackage;
+use crate::uop_container::package::{LoadMode, UopPackage};
 use crate::utils::color::color_lut;
 
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
@@ -236,7 +236,7 @@ impl GumpMap {
         }
 
         if let Some(path) = uop_path {
-            uop_package = Some(UopPackage::load(&path)?);
+            uop_package = Some(UopPackage::load_with_mode(&path, LoadMode::Lazy)?);
             log::info!("uocf: Loaded gump UOP format from {}", path.display());
         }
 
@@ -316,9 +316,7 @@ impl GumpMap {
         if let Some(uop) = &self.uop_package {
             for file_name in uop_gump_candidates(gump_id) {
                 let hash = crate::uop_container::hash::hash_file_name_single(&file_name);
-                if let Some(file) = uop.get_file_by_hash(hash) {
-                    let mut uop_payload = Vec::new();
-                    file.unpack_to(&mut uop_payload)?;
+                if let Some(uop_payload) = uop.unpack_file_by_hash(hash)? {
                     let (dimensions, rle_payload) = decode_uop_gump_header(&uop_payload)?;
                     scratch_buffer.extend_from_slice(rle_payload);
                     return Ok(dimensions);

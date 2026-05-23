@@ -94,7 +94,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 } else if resolved_name.contains("terraindefinition") && resolved_name.ends_with(".bin") {
                     ui_integrated_terrain_view(app, ctx, ui, file);
                 } else {
-                    ui_generic_preview(app, ctx, ui, file, &resolved_name);
+                    ui_generic_preview(app, ctx, ui, &loaded_uop.package, hash, &resolved_name);
                 }
             }
         } else {
@@ -283,10 +283,17 @@ fn resolve_localized_string(app: &UopInspectorApp, string_id: u32) -> String {
         .unwrap_or_default()
 }
 
-fn ui_generic_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &uocf::uop_container::file::UopFile, name: &str) {
-    if let Ok(data) = file.unpack() {
+fn ui_generic_preview(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    package: &uocf::uop_container::package::UopPackage,
+    hash: u64,
+    name: &str,
+) {
+    if let Ok(Some(data)) = package.unpack_file_by_hash(hash) {
         if name.to_lowercase().ends_with(".dds") || name.to_lowercase().ends_with(".tga") || name.to_lowercase().ends_with(".bmp") {
-            if let Some(handle) = app.get_uop_texture(ctx, file.filename_hash(), &data, name) {
+            if let Some(handle) = app.get_uop_texture(ctx, hash, &data, name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
