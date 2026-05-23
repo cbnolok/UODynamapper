@@ -18,17 +18,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  ISPC_VERSION: "1.30.0"
-  ISPC_URL_WINDOWS_X86_64: "https://github.com/ispc/ispc/releases/download/v1.30.0/ispc-v1.30.0-windows.zip"
-  # ISPC is available on all desktop GNU/MSVC/macOS targets in this matrix except:
-  # - Windows GNU / MinGW
-  # - Linux musl static builds (x86_64 and aarch64)
-  RELEASE_FEATURES_LINUX_DESKTOP: "udd-conv/ispc,linux_x11,linux_wayland"
-  RELEASE_FEATURES_LINUX_DESKTOP_FALLBACK: "linux_x11,linux_wayland"
-  RELEASE_FEATURES_LINUX_X11_FALLBACK: "linux_x11"
-  RELEASE_FEATURES_UDDCONV_ISPC: "udd-conv/ispc"
-  RELEASE_FEATURES_UDDCONV_ISPC_SOURCE: "udd-conv/ispc_source"
-  RELEASE_FEATURES_NONE: ""
   SCCACHE_GHA_ENABLED: "true"
   SCCACHE_NO_DAEMON: "1"
 
@@ -74,7 +63,6 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: just build-release-nightly
 
       - name: Package binary and assets
@@ -127,7 +115,6 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_DESKTOP }}
         run: just build-release-nightly --target aarch64-unknown-linux-gnu
 
       - name: Package binary and assets
@@ -150,13 +137,10 @@ jobs:
           fetch-depth: 0
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_X11_FALLBACK }}
         run: |
           docker run --rm \
             -v "$PWD:/work" \
             -w /work \
-            -e CARGO_FEATURES="${CARGO_FEATURES}" \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             alpine:3.20 \
@@ -196,13 +180,10 @@ jobs:
           fetch-depth: 0
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_LINUX_X11_FALLBACK }}
         run: |
           docker run --rm \
             -v "$PWD:/work" \
             -w /work \
-            -e CARGO_FEATURES="${CARGO_FEATURES}" \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             alpine:3.20 \
@@ -259,8 +240,6 @@ jobs:
           key: "windows-x86_64-nightly-sccache"
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: just build-release-nightly
 
       - name: Package binary and assets
@@ -313,7 +292,6 @@ jobs:
 
       - name: Build release binary
         env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_NONE }}
           CC: "clang"
           CXX: "clang++"
           AR: "llvm-ar"
@@ -361,8 +339,6 @@ jobs:
           key: "windows-arm64-nightly-sccache"
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: just build-release-nightly --target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
@@ -403,8 +379,6 @@ jobs:
           key: "macos-x86_64-nightly-sccache"
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: just build-release-nightly --target x86_64-apple-darwin
 
       - name: Package binary and assets
@@ -445,8 +419,6 @@ jobs:
           key: "macos-arm64-nightly-sccache"
 
       - name: Build release binary
-        env:
-          CARGO_FEATURES: ${{ env.RELEASE_FEATURES_UDDCONV_ISPC }}
         run: just build-release-nightly --target aarch64-apple-darwin
 
       - name: Package binary and assets
