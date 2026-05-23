@@ -1,5 +1,6 @@
 use crate::app::{LocalizedStringsSource, UopInspectorApp};
 use eframe::egui;
+use uocf::enhanced::localized_strings::LocalizedStringEntry;
 
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let has_cliloc = app.cliloc.is_some();
@@ -133,7 +134,7 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
         search_box(app, ui);
         ui.separator();
-        cliloc_table(app, ui, &file.strings.entries);
+        localized_strings_table(app, ui, &file.strings.entries);
     });
 }
 
@@ -169,27 +170,27 @@ fn cliloc_list(
     });
 }
 
-fn cliloc_table(
+fn localized_strings_table(
     app: &mut UopInspectorApp,
     ui: &mut egui::Ui,
-    entries: &[uocf::classic::cliloc::ClilocEntry],
+    entries: &[LocalizedStringEntry],
 ) {
     let query = app.search_query.to_lowercase();
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("localized_strings_grid").striped(true).show(ui, |ui| {
-            ui.label("Number");
-            ui.label("Flag");
-            ui.label("Text");
+            ui.label("ID");
+            ui.label("unk");
+            ui.label("String value");
             ui.end_row();
             for entry in entries {
                 if !query.is_empty()
-                    && !entry.number.to_string().contains(&query)
+                    && !entry.id.to_string().contains(&query)
                     && !entry.text.to_lowercase().contains(&query)
                 {
                     continue;
                 }
-                ui.label(entry.number.to_string());
-                ui.label(format!("0x{:02X}", entry.flag));
+                ui.label(entry.id.to_string());
+                ui.label(format!("0x{:02X}", entry.unk));
                 ui.label(&entry.text);
                 ui.end_row();
             }
