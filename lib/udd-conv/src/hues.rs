@@ -284,5 +284,27 @@ mod tests {
             package.texture_coord_for_hue(1).expect("coord").row,
             1
         );
+        assert_eq!(package.read_texture_bytes().expect("texture bytes"), texture);
+    }
+
+    #[test]
+    fn hues_uddp_creation_expands_each_hue_to_256_pixel_strip() {
+        let mut colors = [0u16; 32];
+        colors.fill(0x7C00);
+        let hues = vec![hue_entry(1, "red", colors)];
+
+        let (records, texture) = build_hues_texture_and_records(&hues).expect("build texture");
+        let coord = records
+            .iter()
+            .find(|record| record.hue_id == 1)
+            .expect("hue 1 record");
+        let row_start = ((coord.texture_row * HUES_TEXTURE_WIDTH
+            + coord.texture_column * HUE_STRIP_WIDTH)
+            * 4) as usize;
+        let strip = &texture[row_start..row_start + HUE_STRIP_WIDTH as usize * 4];
+
+        for pixel in strip.chunks_exact(4) {
+            assert_eq!(pixel, &[255, 0, 0, 255]);
+        }
     }
 }

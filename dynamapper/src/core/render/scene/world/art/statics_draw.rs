@@ -1395,3 +1395,88 @@ fn update_art_material_uniforms_ground(
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use udd_container::{
+        AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder, UddpReader,
+    };
+
+    fn build_hues_package(texture: &[u8]) -> udd_assets::HuesPackage {
+        let records = vec![udd_assets::hues::HueSlotRecord {
+            hue_id: 1,
+            name: "test".to_string(),
+            table_start: 0,
+            table_end: 31,
+            texture_column: 0,
+            texture_row: 1,
+            palette_width_pixels: udd_assets::hues::HUE_STRIP_WIDTH,
+            flags: udd_assets::hues::HUE_FLAG_PRESENT,
+        }];
+        let csv = udd_assets::hues::encode_hues_csv(&records).expect("encode hues csv");
+
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(udd_assets::hues::HUES_METADATA_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: &csv,
+            })
+            .expect("add hues metadata");
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::None,
+                width: udd_assets::hues::HUES_TEXTURE_WIDTH,
+                height: udd_assets::hues::HUES_TEXTURE_HEIGHT,
+                virtual_path: Some(udd_assets::hues::HUES_TEXTURE_ENTRY_PATH),
+                path_hash64: None,
+                id: None,
+                data: texture,
+            })
+            .expect("add hues texture");
+
+        udd_assets::HuesPackage::from_uddp_package(
+            UddpReader::open(builder.build().expect("build hues package"))
+                .expect("open hues package"),
+        )
+        .expect("load hues package")
+    }
+
+    #[test]
+    fn hue_lookup_image_uses_hues_uddp_texture_bytes() {
+        let mut images = Assets::<Image>::default();
+        let texture_len = udd_assets::hues::HUES_TEXTURE_WIDTH as usize
+            * udd_assets::hues::HUES_TEXTURE_HEIGHT as usize
+            * 4;
+        let texture = vec![17u8; texture_len];
+        let package = HuesPackageRes(Arc::new(build_hues_package(&texture)));
+
+        let (handle, hue_enabled) = create_hue_lookup_image(&mut images, Some(&package));
+        let image = images.get(&handle).expect("hue image");
+
+        assert_eq!(hue_enabled, 1);
+        assert_eq!(image.texture_descriptor.size.width, udd_assets::hues::HUES_TEXTURE_WIDTH);
+        assert_eq!(image.texture_descriptor.size.height, udd_assets::hues::HUES_TEXTURE_HEIGHT);
+        assert_eq!(image.data.as_ref().expect("image data"), &texture);
+    }
+
+    #[test]
+    fn hue_lookup_image_falls_back_when_hues_uddp_is_missing() {
+        let mut images = Assets::<Image>::default();
+
+        let (handle, hue_enabled) = create_hue_lookup_image(&mut images, None);
+        let image = images.get(&handle).expect("hue image");
+
+        assert_eq!(hue_enabled, 0);
+        assert_eq!(image.texture_descriptor.size.width, udd_assets::hues::HUES_TEXTURE_WIDTH);
+        assert_eq!(image.texture_descriptor.size.height, udd_assets::hues::HUES_TEXTURE_HEIGHT);
+    }
+}
