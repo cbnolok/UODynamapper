@@ -95,6 +95,78 @@ Packages:
 
 That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
 
+## 5.1 KR And EC Terrain Relationship
+
+Kingdom Reborn and Enhanced Client terrain evidence should be kept separate until a specific runtime mode intentionally merges them.
+
+Verified package relationship from `kr-ec-terrain-diff-tool` using:
+
+- KR: `/mnt/dati/_proj_local/_uo_clients/UO - Old KR/`
+- EC: `/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced fp/`
+- KR routing: `KrFacetTranscode.generated.kdl`
+- EC routing/material evidence: `EcFacetTranscode.generated.kdl`
+
+Observed texture-pool containment:
+
+| Package | KR files | EC files | KR files absent from EC | Meaning |
+| ------- | -------- | -------- | ----------------------- | ------- |
+| `Texture.uop` | 9348 | 9798 | 0 | EC appears to be a superset of KR for this pool. |
+| `TerrainTexture.uop` | 20 | 38 | 0 | EC appears to be a superset of KR support terrain textures. |
+| `LegacyTexture.uop` | 16877 | 52430 | 2 | EC is nearly a superset; two KR legacy hashes need separate review if referenced. |
+
+Observed routing relationship:
+
+- The Manawydan KR dictionary agrees with the current `TerrainTranscode.kdl` semantic family routing.
+- EC facet comparison against the matching FP Classic client is mostly direct/id-preserving: `cc -> ec facet id`.
+- EC `TerrainDefinition.uop` then maps that facet id through aliases to EC material definitions.
+- KR and EC often choose different material ids for the same Classic land id. In the first generated report, 288 rows were comparable through EC TerrainDefinition aliases; 105 matched the KR material id and 183 differed.
+
+This means:
+
+- KR material routing is not just "EC routing with older packages".
+- EC texture packages are probably sufficient as a physical image pool for many KR terrain experiments.
+- A separate `tex_land_kr.uddp` should not be added until a report proves that KR uses visible texture refs or layer roles that cannot be represented by EC packages plus KR routing metadata.
+
+Recommended near-term KR model:
+
+```text
+Classic land id
+  -> KR routing KDL material/family id
+  -> EC texture pool lookup where compatible
+  -> KR-specific material/layer metadata only where proven
+```
+
+Recommended evidence files:
+
+- `KrFacetTranscode.generated.kdl`: generated KR dictionary/facet evidence; use compact `t cc=... kr=...` rows.
+- `EcFacetTranscode.generated.kdl`: generated EC facet and TerrainDefinition evidence; use compact `t cc=... ec=...` rows plus material/layer evidence.
+- `KrEcTerrainDiff.generated.csv`: generated comparison report; do not hand-edit as runtime policy.
+
+Recommended runtime-facing KR routing KDL shape:
+
+```kdl
+// Generated or reviewed KR routing. One row per observed or reviewed mapping.
+route client="kr" source="manawydan-tile-dictionary"
+
+t cc=168 kr=5 code="dictionary"
+t cc=169 kr=5 code="dictionary"
+
+material kr=5 {
+    // Optional only after KR TerrainDefinition or shader evidence is decoded.
+    // Keep physical texture refs out of this file until the role is proven.
+    alias cc=168
+    alias cc=169
+}
+```
+
+Design rules for this routing file:
+
+- Use one compact `t` row per mapping when preserving generated evidence.
+- Use `code` or `source` fields to distinguish generated dictionary evidence from reviewed manual corrections.
+- Do not copy EC TerrainDefinition layers into KR routing unless the KR source package proves the same relationship.
+- Let manual/reviewed routing override generated routing in file order, matching the existing `TerrainTranscode.kdl` conflict behavior.
+- Keep the routing KDL separate from `EcTerrainOverrides.kdl`; the latter is about EC material behavior, not KR family routing.
+
 ## 6. Classification Matrix For This Repo
 
 The safest rule is to classify by logical owner first, then use shader and flag information to subtype the asset.
