@@ -21,6 +21,12 @@ struct Case {
     rgba: Vec<u8>,
 }
 
+#[derive(Clone)]
+struct RdoCase {
+    name: &'static str,
+    params: Bc7RdoParams,
+}
+
 fn main() {
     let quick = std::env::args().any(|arg| arg == "--quick");
     let min_duration = if quick {
@@ -37,28 +43,76 @@ fn main() {
     println!("bc7_encode benchmark");
     println!("profile={} min_duration_ms={}", profile_name(), min_duration.as_millis());
     for case in &cases {
-        run_case(case, min_duration);
+        run_case(case, min_duration, &rdo_cases());
     }
 }
 
-fn run_case(case: &Case, min_duration: Duration) {
+fn rdo_cases() -> [RdoCase; 5] {
+    [
+        RdoCase {
+            name: "rdo_default",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_low_lambda",
+            params: Bc7RdoParams {
+                lambda: 0.125,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_high_lambda",
+            params: Bc7RdoParams {
+                lambda: 2.0,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_large_window",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                lookback_window_size: 64 * 1024,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_two_matches",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                try_two_matches: true,
+                ..Bc7RdoParams::default()
+            },
+        },
+    ]
+}
+
+fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase]) {
     let blocks = case.width.div_ceil(4) as usize * case.height.div_ceil(4) as usize;
     let scalar = bench_scalar(case, min_duration);
     let wide = bench_wide(case, min_duration);
-    let rdo = bench_rdo(case, min_duration);
 
     println!(
-        "{:<18} blocks={:<5} scalar={:>10.2} blk/s wide={:>10.2} blk/s rdo={:>10.2} blk/s speedup={:>5.2}x checksums={:016x}/{:016x}/{:016x}",
+        "{:<18} blocks={:<5} scalar={:>10.2} blk/s wide={:>10.2} blk/s speedup={:>5.2}x checksums={:016x}/{:016x}",
         case.name,
         blocks,
         scalar.blocks_per_second,
         wide.blocks_per_second,
-        rdo.blocks_per_second,
         wide.blocks_per_second / scalar.blocks_per_second,
         scalar.checksum,
-        wide.checksum,
-        rdo.checksum
+        wide.checksum
     );
+    for rdo_case in rdo_cases {
+        let rdo = bench_rdo(case, min_duration, &rdo_case.params);
+        println!(
+            "  {:<16} rdo={:>10.2} blk/s checksum={:016x}",
+            rdo_case.name,
+            rdo.blocks_per_second,
+            rdo.checksum
+        );
+    }
 }
 
 fn bench_scalar(case: &Case, min_duration: Duration) -> BenchResult {
@@ -93,7 +147,7 @@ fn bench_wide(case: &Case, min_duration: Duration) -> BenchResult {
     BenchResult::new(blocks_x * blocks_y, iterations, start.elapsed(), checksum(&out))
 }
 
-fn bench_rdo(case: &Case, min_duration: Duration) -> BenchResult {
+fn bench_rdo(case: &Case, min_duration: Duration, params: &Bc7RdoParams) -> BenchResult {
     let blocks_x = case.width.div_ceil(4) as usize;
     let blocks_y = case.height.div_ceil(4) as usize;
     let mut encoded = vec![0u8; blocks_x * blocks_y * 16];
@@ -103,10 +157,6 @@ fn bench_rdo(case: &Case, min_duration: Duration) -> BenchResult {
         .map(|chunk| chunk.try_into().expect("BC7 blocks are 16 bytes"))
         .collect::<Vec<[u8; 16]>>();
     let rgba_blocks = rgba_to_block_order(&case.rgba, case.width, case.height);
-    let params = Bc7RdoParams {
-        lambda: 0.5,
-        ..Bc7RdoParams::default()
-    };
     let mut out = baseline.clone();
     let mut modified = 0u32;
     let mut iterations = 0u64;
@@ -114,7 +164,7 @@ fn bench_rdo(case: &Case, min_duration: Duration) -> BenchResult {
 
     while iterations == 0 || start.elapsed() < min_duration {
         out.clone_from(&baseline);
-        modified = reduce_entropy_bc7(&mut out, &rgba_blocks, blocks_x, blocks_y, &params);
+        modified = reduce_entropy_bc7(&mut out, &rgba_blocks, blocks_x, blocks_y, params);
         black_box(&out);
         iterations += 1;
     }
