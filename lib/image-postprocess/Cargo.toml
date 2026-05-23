@@ -14,3 +14,7 @@ wide = "1.4"
 
 [package.metadata.cargo-machete]
 ignored = ["xbrz-rs"]
+
+[[bench]]
+name = "bc7_encode"
+harness = false
