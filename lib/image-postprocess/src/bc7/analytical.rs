@@ -3,13 +3,13 @@
 //!
 //! Architecture:
 //!   1. Types and quantization helpers
-//!   2. LS tables and bc7_sse error helpers
+//!   2. LS tables and BC7 error helpers
 //!   3. Weight evaluation for each mode
 //!   4. Least-squares endpoint fitting (1D / 3D / 4D)
 //!   5. Encode functions (modes 0–7) with anchor-inversion logic
 //!   6. Mode-selection entry points
 
-use crate::bc7_tables::*;
+use super::tables::*;
 use std::cmp::min;
 use wide::f32x4;
 #[cfg(target_arch = "x86")]
@@ -109,7 +109,7 @@ pub const FLAG_PBIT_OPT:         u32 = 1 << 5;  // optimize p-bits for all modes
 /// Expand 7-bit endpoint + shared p-bit → 8-bit (just OR the p-bit in).
 #[inline] pub fn from_7(v: u32, p: u32) -> u32 { (v<<1)|p }
 
-// ─── 3. BC7 INTERPOLATION & SSE ───────────────────────────────────────────────
+// ─── 3. BC7 INTERPOLATION & ERROR EVALUATION ─────────────────────────────────
 
 /// Reconstruct a channel value from endpoints and a weight (w in 0..64).
 /// Matches the BC7 hardware formula: (lo*(64-w) + hi*w + 32) >> 6.
@@ -253,6 +253,8 @@ const BC7_M6_BACKEND_AVX512: u8 = 4;
 static BC7_M6_BACKEND: std::sync::atomic::AtomicU8 =
     std::sync::atomic::AtomicU8::new(BC7_M6_BACKEND_UNKNOWN);
 
+// Runtime x86 dispatch keeps older CPUs on scalar/wide code while selecting the
+// fastest available mode-6 selector for SSE4.1, AVX2, or AVX512BW machines.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline(always)]
 fn x86_m6_backend() -> u8 {
@@ -276,6 +278,8 @@ fn x86_m6_backend() -> u8 {
     backend
 }
 
+// Portable `wide` vectors accelerate four-lane weight selection for all targets
+// and remain the fallback when no architecture-specific mode-6 kernel is used.
 #[inline(always)]
 fn eval_rgb_weights4(
     pixels: &[Pixel; 16],
@@ -472,6 +476,8 @@ fn eval_rgba_partition_weights4(
     sse
 }
 
+// SSE4.1/SSSE3 kernels evaluate four mode-6 pixels at a time using byte shuffles
+// for channel extraction and integer multiply/add for reconstructed error.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "sse4.1,ssse3")]
 unsafe fn sse_m6_rgb4_sse41(
@@ -648,6 +654,7 @@ unsafe fn eval_m6_rgba_sse41(
     sse
 }
 
+// AArch64 NEON kernels mirror the SSE4.1 path for four mode-6 pixels at a time.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn sse_m6_rgb4_neon(
@@ -812,6 +819,8 @@ unsafe fn eval_m6_rgba_neon(
     sse
 }
 
+// AVX512F/BW handles eight mode-6 weight selections at once, then reuses the
+// SSE4.1 four-pixel error kernels for final reconstruction error.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn select_m6_avx512(pairs: __m512i, f: f32) -> u64 {
@@ -896,6 +905,7 @@ unsafe fn eval_m6_rgb_avx512(
     sse
 }
 
+// AVX2 handles eight mode-6 weight selections at once on CPUs without AVX512.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn eval_m6_rgba_avx2(

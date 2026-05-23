@@ -5,7 +5,7 @@
 //! point so deeper SIMD work can move into the analytical core without changing
 //! callers again.
 
-use crate::bc7_analytical::{pack_bc7_rgba, Pixel};
+use super::analytical::{pack_bc7_rgba, Pixel};
 use rayon::prelude::*;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;

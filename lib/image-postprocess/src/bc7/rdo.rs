@@ -373,6 +373,8 @@ fn block_error_bounded_scalar(
     Some(err)
 }
 
+// SSE2 is enough for RDO's 4x4 RGBA squared-error checks: widen bytes to i16,
+// square via madd, and stop after each half block once the candidate is hopeless.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "sse2")]
 unsafe fn block_error_bounded_sse2(
@@ -692,7 +694,7 @@ fn compute_block_mse_scales(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bc7_analytical::{pack_bc7_rgba, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
+    use crate::bc7::analytical::{pack_bc7_rgba, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
 
     #[test]
     fn test_bc7_analytical_and_rdo_roundtrip_with_bcdec() {
@@ -730,7 +732,7 @@ mod tests {
         // 1. Encode without RDO (Analytical Encoder)
         let mut original_blocks = vec![[0u8; 16]; num_blocks];
         for b in 0..num_blocks {
-            let pixels: &[crate::bc7_analytical::Pixel; 16] = rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
+            let pixels: &[crate::bc7::analytical::Pixel; 16] = rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
             pack_bc7_rgba(&mut original_blocks[b], pixels, FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE);
         }
 
