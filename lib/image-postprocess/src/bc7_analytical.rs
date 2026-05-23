@@ -329,6 +329,62 @@ unsafe fn eval_m6_rgb_sse41(
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn eval_m6_rgb_avx512(
+    pixels: &[Pixel; 16],
+    weights: &mut [u8; 16],
+    lr: i32,
+    lg: i32,
+    lb: i32,
+    dr: i32,
+    dg: i32,
+    db: i32,
+    f: f32,
+) -> u32 {
+    let ep_lanes = [
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+        lr as i16, lg as i16, lb as i16, 0,
+    ];
+    let coef_lanes = [
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+        dr as i16, dg as i16, db as i16, 0,
+    ];
+    let ep = _mm512_loadu_si512(ep_lanes.as_ptr() as *const _);
+    let coef = _mm512_loadu_si512(coef_lanes.as_ptr() as *const _);
+    let mut sse = 0u32;
+
+    for i in (0..16).step_by(8) {
+        let px = _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i);
+        let px16 = _mm512_cvtepu8_epi16(px);
+        let adj = _mm512_sub_epi16(px16, ep);
+        let pairs = _mm512_madd_epi16(adj, coef);
+        let mut pair_sums = [0i32; 16];
+        _mm512_storeu_si512(pair_sums.as_mut_ptr() as *mut _, pairs);
+
+        for lane in 0..8 {
+            let dot = pair_sums[lane * 2] + pair_sums[lane * 2 + 1];
+            let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
+            weights[i + lane] = sel as u8;
+            sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
+        }
+    }
+
+    sse
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn eval_m6_rgb_avx2(
     pixels: &[Pixel; 16],
@@ -451,6 +507,10 @@ pub fn eval_m6_rgb(pixels:&[Pixel;16],weights:&mut[u8;16],lr:i32,lg:i32,lb:i32,h
     let(lr,lg,lb)=(from_7(lr as u32,p0)as i32,from_7(lg as u32,p0)as i32,from_7(lb as u32,p0)as i32);
     let(hr,hg,hb)=(from_7(hr as u32,p1)as i32,from_7(hg as u32,p1)as i32,from_7(hb as u32,p1)as i32);
     let(dr,dg,db)=(hr-lr,hg-lg,hb-lb);let f=15.0/((dr*dr+dg*dg+db*db)as f32+1.25e-7);let sofs=-(lr*dr+lg*dg+lb*db);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
+        return unsafe { eval_m6_rgb_avx512(pixels, weights, lr, lg, lb, dr, dg, db, f) };
+    }
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if std::is_x86_feature_detected!("avx2") {
         return unsafe { eval_m6_rgb_avx2(pixels, weights, lr, lg, lb, dr, dg, db, f) };

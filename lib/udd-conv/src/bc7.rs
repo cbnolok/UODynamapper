@@ -21,7 +21,6 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
         match self {
             Self::Analytical => true,
             Self::AnalyticalWide => true,
-            Self::AnalyticalPulp => true,
         }
     }
 
@@ -29,7 +28,6 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
         match self {
             Self::Analytical => None,
             Self::AnalyticalWide => None,
-            Self::AnalyticalPulp => None,
         }
     }
 }
@@ -45,7 +43,6 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
         match backend {
             Bc7EncoderBackend::Analytical => backend,
             Bc7EncoderBackend::AnalyticalWide => backend,
-            Bc7EncoderBackend::AnalyticalPulp => backend,
         }
     }
 }
@@ -346,9 +343,6 @@ pub fn encode_to_bc7_with_rdo_lambda(
         Bc7EncoderBackend::AnalyticalWide => {
             encode_with_analytical_wide(rgba_pixels.as_ref(), extent)
         }
-        Bc7EncoderBackend::AnalyticalPulp => {
-            encode_with_analytical_pulp(rgba_pixels.as_ref(), extent)
-        }
     };
     apply_bc7_rdo(&mut blocks, rgba_pixels.as_ref(), extent, rdo_lambda);
 
@@ -621,20 +615,6 @@ fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u
 
     let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
     image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
-        &mut blocks,
-        rgba_pixels,
-        extent.width(),
-        extent.height(),
-        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6,
-    );
-    blocks
-}
-
-fn encode_with_analytical_pulp(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
-    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
-
-    let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
-    image_postprocess::bc7_analytical_pulp::pack_bc7_rgba_blocks_pulp(
         &mut blocks,
         rgba_pixels,
         extent.width(),

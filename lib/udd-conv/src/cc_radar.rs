@@ -26,7 +26,6 @@ const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
     match backend {
         Bc7EncoderBackend::Analytical => "analytical (project BC7 encoder)",
         Bc7EncoderBackend::AnalyticalWide => "analytical-wide (project BC7 encoder)",
-        Bc7EncoderBackend::AnalyticalPulp => "analytical-pulp (project BC7 encoder)",
     }
 }
 
