@@ -3142,6 +3142,7 @@ dependencies = [
  "color-eyre",
  "image",
  "indexmap",
+ "knuffel",
  "log",
  "mimalloc",
  "nohash-hasher",

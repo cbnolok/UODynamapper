@@ -3,11 +3,14 @@ use crate::core::render::scene::camera::UiCameraResource;
 use crate::core::uo_files_loader::{ClassicHuesRes, GumpMapRes, TileMetaPackageRes};
 use crate::ingame_sysmessage_logger;
 use crate::{
+    core::constants,
     core::render::dialogs,
     prelude::*,
 };
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures};
+use knuffel::Decode;
+use std::path::Path;
 
 #[derive(Resource)]
 pub struct GumpDialogState {
@@ -15,7 +18,7 @@ pub struct GumpDialogState {
     pub id: String,
     open_gumps: Vec<OpenGump>,
     pub paperdoll_open: bool,
-    pub paperdoll_female: bool,
+    pub paperdoll_profile_id: String,
     pub paperdoll_body_id: String,
     pub paperdoll_body_hue: String,
     paperdoll_equipment: Vec<PaperdollEquipmentRow>,
@@ -51,10 +54,149 @@ impl Default for GumpDialogState {
             id: String::new(),
             open_gumps: Vec::new(),
             paperdoll_open: false,
-            paperdoll_female: false,
+            paperdoll_profile_id: "human_male".to_string(),
             paperdoll_body_id: String::new(),
             paperdoll_body_hue: "0".to_string(),
             paperdoll_equipment: vec![PaperdollEquipmentRow::default(); 6],
+        }
+    }
+}
+
+#[derive(Resource, Clone)]
+struct PaperdollProfilesRes {
+    profiles: Vec<PaperdollProfile>,
+}
+
+impl PaperdollProfilesRes {
+    fn load() -> Self {
+        let path = constants::valid_asset_dir().join("cc_ec_convtables/PaperdollProfiles.kdl");
+        match Self::load_from_path(&path) {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                bevy::log::warn!(
+                    "Failed to load PaperdollProfiles.kdl from {}: {error}. Using built-in profiles.",
+                    path.display()
+                );
+                Self::default()
+            }
+        }
+    }
+
+    fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let decoded: PaperdollProfilesKdl =
+            knuffel::parse(path.to_str().unwrap_or("PaperdollProfiles.kdl"), &content)?;
+        let profiles = decoded
+            .profiles
+            .into_iter()
+            .map(PaperdollProfile::from)
+            .collect::<Vec<_>>();
+        if profiles.is_empty() {
+            color_eyre::eyre::bail!("PaperdollProfiles.kdl contains no profile nodes");
+        }
+
+        Ok(Self { profiles })
+    }
+
+    fn profile(&self, id: &str) -> Option<&PaperdollProfile> {
+        self.profiles.iter().find(|profile| profile.id == id)
+    }
+
+    fn default_profile(&self) -> &PaperdollProfile {
+        &self.profiles[0]
+    }
+}
+
+impl Default for PaperdollProfilesRes {
+    fn default() -> Self {
+        Self {
+            profiles: vec![
+                PaperdollProfile::new("human_male", "Human Male", 50_000, 260, 300),
+                PaperdollProfile::new("human_female", "Human Female", 60_000, 260, 300),
+                PaperdollProfile::new("elf_male", "Elf Male", 50_000, 260, 300),
+                PaperdollProfile::new("elf_female", "Elf Female", 60_000, 260, 300),
+                PaperdollProfile::new("gargoyle_male", "Gargoyle Male", 50_000, 300, 340),
+                PaperdollProfile::new("gargoyle_female", "Gargoyle Female", 60_000, 300, 340),
+            ],
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PaperdollProfile {
+    id: String,
+    label: String,
+    equipment_offset: u32,
+    canvas_width: u32,
+    canvas_height: u32,
+    body_x: i32,
+    body_y: i32,
+    equipment_x: i32,
+    equipment_y: i32,
+}
+
+impl PaperdollProfile {
+    fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        equipment_offset: u32,
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            equipment_offset,
+            canvas_width,
+            canvas_height,
+            body_x: 0,
+            body_y: 0,
+            equipment_x: 0,
+            equipment_y: 0,
+        }
+    }
+}
+
+#[derive(Decode)]
+struct PaperdollProfilesKdl {
+    #[knuffel(children(name = "profile"))]
+    profiles: Vec<PaperdollProfileKdl>,
+}
+
+#[derive(Decode)]
+struct PaperdollProfileKdl {
+    #[knuffel(argument)]
+    id: String,
+    #[knuffel(property)]
+    label: Option<String>,
+    #[knuffel(property(name = "equipment_offset"))]
+    equipment_offset: u32,
+    #[knuffel(property(name = "canvas_width"))]
+    canvas_width: Option<u32>,
+    #[knuffel(property(name = "canvas_height"))]
+    canvas_height: Option<u32>,
+    #[knuffel(property(name = "body_x"))]
+    body_x: Option<i32>,
+    #[knuffel(property(name = "body_y"))]
+    body_y: Option<i32>,
+    #[knuffel(property(name = "equipment_x"))]
+    equipment_x: Option<i32>,
+    #[knuffel(property(name = "equipment_y"))]
+    equipment_y: Option<i32>,
+}
+
+impl From<PaperdollProfileKdl> for PaperdollProfile {
+    fn from(value: PaperdollProfileKdl) -> Self {
+        Self {
+            label: value.label.unwrap_or_else(|| value.id.clone()),
+            id: value.id,
+            equipment_offset: value.equipment_offset,
+            canvas_width: value.canvas_width.unwrap_or(0),
+            canvas_height: value.canvas_height.unwrap_or(0),
+            body_x: value.body_x.unwrap_or(0),
+            body_y: value.body_y.unwrap_or(0),
+            equipment_x: value.equipment_x.unwrap_or(0),
+            equipment_y: value.equipment_y.unwrap_or(0),
         }
     }
 }
@@ -67,7 +209,8 @@ impl_tracked_plugin!(GumpDialogPlugin);
 impl Plugin for GumpDialogPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.init_resource::<GumpDialogState>()
+        app.insert_resource(PaperdollProfilesRes::load())
+            .init_resource::<GumpDialogState>()
             .add_observer(sys_gump_toggle)
             .add_observer(sys_gump_close)
             .add_systems(
@@ -93,13 +236,14 @@ fn sys_gump_close(
     state.open = false;
 }
 
-pub fn sys_render_gump_dialog(
+fn sys_render_gump_dialog(
     mut state: ResMut<GumpDialogState>,
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     gump_map: Option<Res<GumpMapRes>>,
     tilemeta: Option<Res<TileMetaPackageRes>>,
     classic_hues: Option<Res<ClassicHuesRes>>,
+    paperdoll_profiles: Res<PaperdollProfilesRes>,
     mut images: ResMut<Assets<Image>>,
     mut egui_user_textures: ResMut<EguiUserTextures>,
 ) {
@@ -118,6 +262,7 @@ pub fn sys_render_gump_dialog(
             gump_map.as_deref(),
             tilemeta.as_deref(),
             classic_hues.as_deref(),
+            &paperdoll_profiles,
             &mut images,
             &mut egui_user_textures,
         );
@@ -167,6 +312,7 @@ fn render_open_gump_dialog(
     gump_map: Option<&GumpMapRes>,
     tilemeta: Option<&TileMetaPackageRes>,
     classic_hues: Option<&ClassicHuesRes>,
+    paperdoll_profiles: &PaperdollProfilesRes,
     images: &mut Assets<Image>,
     egui_user_textures: &mut EguiUserTextures,
 ) {
@@ -191,9 +337,22 @@ fn render_open_gump_dialog(
             ui.separator();
             ui.checkbox(&mut state.paperdoll_open, "Paperdoll");
             if state.paperdoll_open {
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut state.paperdoll_female, false, "Male");
-                    ui.radio_value(&mut state.paperdoll_female, true, "Female");
+                egui::ComboBox::from_label("Profile")
+                    .selected_text(
+                        paperdoll_profiles
+                            .profile(&state.paperdoll_profile_id)
+                            .unwrap_or_else(|| paperdoll_profiles.default_profile())
+                            .label
+                            .as_str(),
+                    )
+                    .show_ui(ui, |ui| {
+                        for profile in &paperdoll_profiles.profiles {
+                            ui.selectable_value(
+                                &mut state.paperdoll_profile_id,
+                                profile.id.clone(),
+                                profile.label.as_str(),
+                            );
+                        }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Body:");
@@ -227,6 +386,7 @@ fn render_open_gump_dialog(
                             gump_map,
                             tilemeta,
                             classic_hues,
+                            paperdoll_profiles,
                             images,
                             egui_user_textures,
                         );
@@ -285,6 +445,8 @@ struct PaperdollLayer {
     hue_id: u16,
     partial_hue: bool,
     sort_key: u16,
+    x: i32,
+    y: i32,
 }
 
 fn open_paperdoll(
@@ -292,6 +454,7 @@ fn open_paperdoll(
     gump_map: Option<&GumpMapRes>,
     tilemeta: Option<&TileMetaPackageRes>,
     classic_hues: Option<&ClassicHuesRes>,
+    paperdoll_profiles: &PaperdollProfilesRes,
     images: &mut Assets<Image>,
     egui_user_textures: &mut EguiUserTextures,
 ) {
@@ -312,15 +475,19 @@ fn open_paperdoll(
         return;
     };
     let body_hue = parse_optional_hue(&state.paperdoll_body_hue);
+    let profile = paperdoll_profiles
+        .profile(&state.paperdoll_profile_id)
+        .unwrap_or_else(|| paperdoll_profiles.default_profile());
 
     let mut layers = vec![PaperdollLayer {
         gump_id: body_id,
         hue_id: body_hue,
         partial_hue: false,
         sort_key: 0,
+        x: profile.body_x,
+        y: profile.body_y,
     }];
 
-    let equipment_offset = if state.paperdoll_female { 60_000 } else { 50_000 };
     for row in &state.paperdoll_equipment {
         if row.item_id.trim().is_empty() {
             continue;
@@ -342,16 +509,18 @@ fn open_paperdoll(
         }
 
         layers.push(PaperdollLayer {
-            gump_id: item.anim_id as u32 + equipment_offset,
+            gump_id: item.anim_id as u32 + profile.equipment_offset,
             hue_id: parse_optional_hue(&row.hue),
             partial_hue: (item.flags & 0x40000) != 0,
             sort_key: u16::from(item.quality),
+            x: profile.equipment_x,
+            y: profile.equipment_y,
         });
     }
 
     layers[1..].sort_by_key(|layer| layer.sort_key);
 
-    let (width, height, pixels) = match compose_paperdoll(gump_map, classic_hues, &layers) {
+    let (width, height, pixels) = match compose_paperdoll(gump_map, classic_hues, profile, &layers) {
         Ok(composed) => composed,
         Err(error) => {
             ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
@@ -364,7 +533,7 @@ fn open_paperdoll(
     let image = images.add(image);
     let texture_id = egui_user_textures.add_image(EguiTextureHandle::Strong(image.clone()));
     state.open_gumps.push(OpenGump {
-        title: "Paperdoll".to_string(),
+        title: format!("Paperdoll ({})", profile.label),
         width: width as u16,
         height: height as u16,
         image,
@@ -388,12 +557,15 @@ fn parse_optional_hue(text: &str) -> u16 {
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
     classic_hues: Option<&ClassicHuesRes>,
+    profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
     let mut decoded_layers = Vec::with_capacity(layers.len());
     let mut scratch = Vec::new();
-    let mut width = 0u32;
-    let mut height = 0u32;
+    let mut min_x = 0i32;
+    let mut min_y = 0i32;
+    let mut max_x = profile.canvas_width as i32;
+    let mut max_y = profile.canvas_height as i32;
 
     for layer in layers {
         let (layer_width, layer_height, mut pixels) =
@@ -401,14 +573,26 @@ fn compose_paperdoll(
         if layer.hue_id > 0 {
             apply_hue(&mut pixels, classic_hues, layer.hue_id, layer.partial_hue)?;
         }
-        width = width.max(layer_width as u32);
-        height = height.max(layer_height as u32);
-        decoded_layers.push((layer_width as u32, layer_height as u32, pixels));
+        min_x = min_x.min(layer.x);
+        min_y = min_y.min(layer.y);
+        max_x = max_x.max(layer.x + layer_width as i32);
+        max_y = max_y.max(layer.y + layer_height as i32);
+        decoded_layers.push((layer.x, layer.y, layer_width as u32, layer_height as u32, pixels));
     }
 
+    let width = (max_x - min_x).max(1) as u32;
+    let height = (max_y - min_y).max(1) as u32;
     let mut canvas = vec![0u8; width as usize * height as usize * 4];
-    for (layer_width, layer_height, pixels) in decoded_layers {
-        alpha_blend_top_left(&mut canvas, width, layer_width, layer_height, &pixels);
+    for (x, y, layer_width, layer_height, pixels) in decoded_layers {
+        alpha_blend_at(
+            &mut canvas,
+            width,
+            x - min_x,
+            y - min_y,
+            layer_width,
+            layer_height,
+            &pixels,
+        );
     }
 
     Ok((width, height, canvas))
@@ -446,22 +630,34 @@ fn apply_hue(
     Ok(())
 }
 
-fn alpha_blend_top_left(
+fn alpha_blend_at(
     canvas: &mut [u8],
     canvas_width: u32,
+    dst_x: i32,
+    dst_y: i32,
     layer_width: u32,
     layer_height: u32,
     layer: &[u8],
 ) {
     for y in 0..layer_height as usize {
         for x in 0..layer_width as usize {
+            let canvas_x = x as i32 + dst_x;
+            let canvas_y = y as i32 + dst_y;
+            if canvas_x < 0 || canvas_y < 0 {
+                continue;
+            }
+
             let src_i = (y * layer_width as usize + x) * 4;
             let src_a = layer[src_i + 3] as u16;
             if src_a == 0 {
                 continue;
             }
 
-            let dst_i = (y * canvas_width as usize + x) * 4;
+            let dst_i = (canvas_y as usize * canvas_width as usize + canvas_x as usize) * 4;
+            if dst_i + 4 > canvas.len() {
+                continue;
+            }
+
             if src_a == 255 {
                 canvas[dst_i..dst_i + 4].copy_from_slice(&layer[src_i..src_i + 4]);
                 continue;

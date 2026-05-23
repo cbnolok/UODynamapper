@@ -1,0 +1,12 @@
+// Classic Client paperdoll composition profiles.
+//
+// equipment_offset is added to tiledata/item tile anim_id to select the wearable gump.
+// canvas_* is the minimum output surface size. body_* and equipment_* are draw origins.
+// Custom shards can add body/race variants here without changing renderer code.
+
+profile "human_male" label="Human Male" equipment_offset=50000 canvas_width=260 canvas_height=300 body_x=0 body_y=0 equipment_x=0 equipment_y=0
+profile "human_female" label="Human Female" equipment_offset=60000 canvas_width=260 canvas_height=300 body_x=0 body_y=0 equipment_x=0 equipment_y=0
+profile "elf_male" label="Elf Male" equipment_offset=50000 canvas_width=260 canvas_height=300 body_x=0 body_y=0 equipment_x=0 equipment_y=0
+profile "elf_female" label="Elf Female" equipment_offset=60000 canvas_width=260 canvas_height=300 body_x=0 body_y=0 equipment_x=0 equipment_y=0
+profile "gargoyle_male" label="Gargoyle Male" equipment_offset=50000 canvas_width=300 canvas_height=340 body_x=0 body_y=0 equipment_x=0 equipment_y=0
+profile "gargoyle_female" label="Gargoyle Female" equipment_offset=60000 canvas_width=300 canvas_height=340 body_x=0 body_y=0 equipment_x=0 equipment_y=0

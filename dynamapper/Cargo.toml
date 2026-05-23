@@ -25,6 +25,7 @@ chrono = { version = "0.4", default-features = false, features = [
 color-eyre = { version = "0.6", features = ["track-caller"] }
 #lru = "0.16"
 indexmap = "2.14.0"
+knuffel = "3"
 image = { version = "0.25", default-features = false, features = [
   "bmp",
   "png",
