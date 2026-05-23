@@ -231,6 +231,14 @@ fn clamp_weight_sel(sel: i32, max_w: i32) -> i32 {
 }
 
 #[inline(always)]
+fn pack_i16x4(a: i32, b: i32, c: i32, d: i32) -> i64 {
+    ((a as i16 as u16 as u64)
+        | ((b as i16 as u16 as u64) << 16)
+        | ((c as i16 as u16 as u64) << 32)
+        | ((d as i16 as u16 as u64) << 48)) as i64
+}
+
+#[inline(always)]
 fn eval_rgb_weights4(
     pixels: &[Pixel; 16],
     weights: &mut [u8; 16],
@@ -523,8 +531,8 @@ unsafe fn eval_m6_rgb_sse41(
     let fifteen = _mm_set1_epi32(15);
     let f = _mm_set1_ps(f);
     let half = _mm_set1_ps(0.5);
-    let ep = _mm_setr_epi16(lr as i16, lg as i16, lb as i16, 0, lr as i16, lg as i16, lb as i16, 0);
-    let coef = _mm_setr_epi16(dr as i16, dg as i16, db as i16, 0, dr as i16, dg as i16, db as i16, 0);
+    let ep = _mm_set1_epi64x(pack_i16x4(lr, lg, lb, 0));
+    let coef = _mm_set1_epi64x(pack_i16x4(dr, dg, db, 0));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
@@ -574,8 +582,8 @@ unsafe fn eval_m6_rgba_sse41(
     let fifteen = _mm_set1_epi32(15);
     let f = _mm_set1_ps(f);
     let half = _mm_set1_ps(0.5);
-    let ep = _mm_setr_epi16(lr as i16, lg as i16, lb as i16, la as i16, lr as i16, lg as i16, lb as i16, la as i16);
-    let coef = _mm_setr_epi16(dr as i16, dg as i16, db as i16, da as i16, dr as i16, dg as i16, db as i16, da as i16);
+    let ep = _mm_set1_epi64x(pack_i16x4(lr, lg, lb, la));
+    let coef = _mm_set1_epi64x(pack_i16x4(dr, dg, db, da));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
@@ -827,28 +835,8 @@ unsafe fn eval_m6_rgba_avx512(
     da: i32,
     f: f32,
 ) -> u32 {
-    let ep_lanes = [
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-    ];
-    let coef_lanes = [
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-    ];
-    let ep = _mm512_loadu_si512(ep_lanes.as_ptr() as *const _);
-    let coef = _mm512_loadu_si512(coef_lanes.as_ptr() as *const _);
+    let ep = _mm512_set1_epi64(pack_i16x4(lr, lg, lb, la));
+    let coef = _mm512_set1_epi64(pack_i16x4(dr, dg, db, da));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
@@ -881,28 +869,8 @@ unsafe fn eval_m6_rgb_avx512(
     db: i32,
     f: f32,
 ) -> u32 {
-    let ep_lanes = [
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-    ];
-    let coef_lanes = [
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-    ];
-    let ep = _mm512_loadu_si512(ep_lanes.as_ptr() as *const _);
-    let coef = _mm512_loadu_si512(coef_lanes.as_ptr() as *const _);
+    let ep = _mm512_set1_epi64(pack_i16x4(lr, lg, lb, 0));
+    let coef = _mm512_set1_epi64(pack_i16x4(dr, dg, db, 0));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
@@ -941,18 +909,8 @@ unsafe fn eval_m6_rgba_avx2(
     let fifteen256 = _mm256_set1_epi32(15);
     let f = _mm_set1_ps(f);
     let half = _mm_set1_ps(0.5);
-    let ep = _mm256_setr_epi16(
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-        lr as i16, lg as i16, lb as i16, la as i16,
-    );
-    let coef = _mm256_setr_epi16(
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-        dr as i16, dg as i16, db as i16, da as i16,
-    );
+    let ep = _mm256_set1_epi64x(pack_i16x4(lr, lg, lb, la));
+    let coef = _mm256_set1_epi64x(pack_i16x4(dr, dg, db, da));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
@@ -1000,18 +958,8 @@ unsafe fn eval_m6_rgb_avx2(
     let fifteen256 = _mm256_set1_epi32(15);
     let f = _mm_set1_ps(f);
     let half = _mm_set1_ps(0.5);
-    let ep = _mm256_setr_epi16(
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-        lr as i16, lg as i16, lb as i16, 0,
-    );
-    let coef = _mm256_setr_epi16(
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-        dr as i16, dg as i16, db as i16, 0,
-    );
+    let ep = _mm256_set1_epi64x(pack_i16x4(lr, lg, lb, 0));
+    let coef = _mm256_set1_epi64x(pack_i16x4(dr, dg, db, 0));
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
