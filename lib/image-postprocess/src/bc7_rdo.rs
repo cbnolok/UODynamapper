@@ -89,6 +89,7 @@ pub fn reduce_entropy_bc7(
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
+    let mut block_modes = blocks.iter().map(get_bc7_mode).collect::<Vec<_>>();
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
     //   prev_cont_window_ofs: source-window offset just past the last accepted match end.
@@ -104,6 +105,10 @@ pub fn reduce_entropy_bc7(
 
         let orig_blk = blocks[block_index];
         let p_pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
+        let bc7_mode = block_modes[block_index];
+        if bc7_mode == 8 {
+            continue; // Invalid block or mode 8 (reserved)
+        }
 
         let mut decoded_bc7_block = [[0u8; 4]; 16];
         unpack_bc7(&orig_blk, &mut decoded_bc7_block);
@@ -118,11 +123,6 @@ pub fn reduce_entropy_bc7(
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
             continue;
-        }
-
-        let bc7_mode = get_bc7_mode(&orig_blk);
-        if bc7_mode == 8 {
-            continue; // Invalid block or mode 8 (reserved)
         }
 
         let max_std_dev = compute_block_max_std_dev(p_pixels);
@@ -153,7 +153,7 @@ pub fn reduce_entropy_bc7(
         // ── Main search window ──
         for prev_block_index in (first_block_to_check..block_index).rev() {
             let prev_blk = blocks[prev_block_index];
-            if get_bc7_mode(&prev_blk) != bc7_mode { continue; }
+            if block_modes[prev_block_index] != bc7_mode { continue; }
 
             for len in (3..=16).rev() {
                 if params.allow_relative_movement {
@@ -164,6 +164,9 @@ pub fn reduce_entropy_bc7(
                             let mb = compute_match_cost_estimate(dist as u32, len as u32) as f32;
                             let trial_bits = (16 - len) as f32 * LITERAL_BITS + mb;
                             let trial_bits_times_lambda = trial_bits * params.lambda;
+                            if trial_bits_times_lambda >= best_t {
+                                continue;
+                            }
 
                             // Hash check to skip redundant trials
                             let hs = hash_hsieh(&prev_blk[src_ofs..src_ofs + len], dst_ofs as u32);
@@ -224,6 +227,9 @@ pub fn reduce_entropy_bc7(
                                 let tb = (16 - len) as f32 * LITERAL_BITS + mb;
                                 (mb, tb * params.lambda)
                             };
+                        if trial_bits_times_lambda >= best_t {
+                            continue;
+                        }
 
                         let mut trial_blk = orig_blk;
                         trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
@@ -264,7 +270,7 @@ pub fn reduce_entropy_bc7(
 
             for prev_block_index in (first_block_to_check..block_index).rev() {
                 let prev_blk = blocks[prev_block_index];
-                if get_bc7_mode(&prev_blk) != bc7_mode {
+                if block_modes[prev_block_index] != bc7_mode {
                     continue;
                 }
 
@@ -272,6 +278,9 @@ pub fn reduce_entropy_bc7(
                 for len in 3..=(16 - best_match_len) {
                     let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS + compute_match_cost_estimate(dist as u32, len as u32) as f32 + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
+                    if trial_bits_times_lambda >= best_t {
+                        continue;
+                    }
 
                     for ofs in 0..=(16 - len) {
                         let mut overlap = false;
@@ -314,6 +323,7 @@ pub fn reduce_entropy_bc7(
 
         if best_t < cur_t {
             blocks[block_index] = best_block;
+            block_modes[block_index] = get_bc7_mode(&best_block);
             total_modified += 1;
         }
     }
