@@ -5,7 +5,7 @@
 //! point so deeper SIMD work can move into the analytical core without changing
 //! callers again.
 
-use super::analytical::{pack_bc7_rgba, Pixel};
+use super::analytical::{pack_bc7_rgb, pack_bc7_rgba, Pixel};
 use rayon::prelude::*;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;
@@ -24,6 +24,7 @@ pub fn pack_bc7_rgba_blocks_wide(
 
     let width = width as usize;
     let height = height as usize;
+    let force_rgb = rgba_pixels.chunks_exact(4).all(|pixel| pixel[3] == 255);
 
     if blocks_x * blocks_y >= PARALLEL_BLOCK_THRESHOLD {
         blocks
@@ -38,6 +39,7 @@ pub fn pack_bc7_rgba_blocks_wide(
                     blocks_x,
                     block_index,
                     flags,
+                    force_rgb,
                 );
             });
     } else {
@@ -50,6 +52,7 @@ pub fn pack_bc7_rgba_blocks_wide(
                 blocks_x,
                 block_index,
                 flags,
+                force_rgb,
             );
         }
     }
@@ -63,6 +66,7 @@ fn pack_one_block(
     blocks_x: usize,
     block_index: usize,
     flags: u32,
+    force_rgb: bool,
 ) {
     let block_y = block_index / blocks_x;
     let block_x = block_index % blocks_x;
@@ -95,5 +99,9 @@ fn pack_one_block(
     }
 
     let pixels: &[Pixel; 16] = &pixels;
-    pack_bc7_rgba(block, pixels, flags);
+    if force_rgb {
+        pack_bc7_rgb(block, pixels, flags);
+    } else {
+        pack_bc7_rgba(block, pixels, flags);
+    }
 }
