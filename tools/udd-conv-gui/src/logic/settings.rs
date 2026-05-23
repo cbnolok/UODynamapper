@@ -3,10 +3,14 @@ use color_eyre::eyre;
 use crate::models::AppSettings;
 
 const CONFIG_FILE_NAME: &str = "uddconv_gui_config.toml";
+const CONFIG_ENV_VAR: &str = "UDDCONV_GUI_CONFIG";
 
 pub fn config_file_path() -> PathBuf {
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        return PathBuf::from(manifest_dir).join(CONFIG_FILE_NAME);
+    if let Some(path) = std::env::var_os(CONFIG_ENV_VAR) {
+        return PathBuf::from(path);
+    }
+    if let Some(config_dir) = platform_config_dir() {
+        return config_dir.join("UODynamapper").join(CONFIG_FILE_NAME);
     }
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
@@ -14,6 +18,25 @@ pub fn config_file_path() -> PathBuf {
         }
     }
     PathBuf::from(CONFIG_FILE_NAME)
+}
+
+#[cfg(target_os = "windows")]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library").join("Application Support"))
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
 }
 
 pub fn load_settings_report() -> (AppSettings, Option<String>) {
@@ -47,6 +70,9 @@ pub fn save_settings(settings: &AppSettings) -> eyre::Result<()> {
 
 pub fn save_settings_to_path(settings: &AppSettings, path: &std::path::Path) -> eyre::Result<()> {
     let contents = toml::to_string_pretty(settings)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(path, contents)?;
     Ok(())
 }
@@ -97,5 +123,15 @@ mod tests {
 
         assert_eq!(loaded.output_uddp_dir, PathBuf::from("converted"));
         assert!(loaded.include_verdata);
+    }
+
+    #[test]
+    fn settings_save_creates_parent_directory() {
+        let dir = temp_config_path("nested").with_extension("");
+        let path = dir.join(CONFIG_FILE_NAME);
+
+        save_settings_to_path(&AppSettings::default(), &path).expect("save nested settings");
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
