@@ -167,6 +167,17 @@ pub fn export_anim_blocks_from_mul(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use byteorder::{LittleEndian, WriteBytesExt};
+    use std::io::Write;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "uocf_michelangelo_uop_test_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ))
+    }
 
     #[test]
     fn michelangelo_patch_roundtrip_matches_quickexport_layout() {
@@ -192,6 +203,45 @@ mod tests {
     }
 
     #[test]
+    fn michelangelo_patch_roundtrip_preserves_multiple_file_ids() {
+        let patch = MichelangeloPatch {
+            entries: vec![
+                MichelangeloPatchEntry::anim(77, 9, vec![1, 2, 3]),
+                MichelangeloPatchEntry {
+                    file_id: 4,
+                    index: -8,
+                    extra: -1,
+                    data: Vec::new(),
+                },
+            ],
+        };
+
+        let bytes = patch.to_bytes().unwrap();
+
+        assert_eq!(MichelangeloPatch::from_bytes(&bytes).unwrap(), patch);
+    }
+
+    #[test]
+    fn michelangelo_patch_save_and_load_roundtrip() {
+        let dir = temp_dir("save_load");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("patch.uop");
+        let patch = MichelangeloPatch {
+            entries: vec![MichelangeloPatchEntry::anim(12, 34, vec![5, 6, 7])],
+        };
+
+        let result = (|| -> eyre::Result<()> {
+            patch.save(&path)?;
+            assert_eq!(MichelangeloPatch::load(&path)?, patch);
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+
+        result.unwrap();
+    }
+
+    #[test]
     fn anim_block_index_matches_uoanimtool_mapping() {
         assert_eq!(anim_block_index(0), 0);
         assert_eq!(anim_block_index(199), 21_890);
@@ -207,5 +257,87 @@ mod tests {
         bytes.push(0);
 
         assert!(MichelangeloPatch::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn michelangelo_patch_rejects_malformed_headers() {
+        assert!(MichelangeloPatch::from_bytes(&[]).is_err());
+
+        let mut bad_magic = Vec::new();
+        bad_magic.write_i32::<LittleEndian>(0).unwrap();
+        bad_magic.write_i64::<LittleEndian>(0).unwrap();
+        assert!(MichelangeloPatch::from_bytes(&bad_magic).is_err());
+
+        let mut negative_count = Vec::new();
+        negative_count
+            .write_i32::<LittleEndian>(MICHELANGELO_UOP_MAGIC)
+            .unwrap();
+        negative_count.write_i64::<LittleEndian>(-1).unwrap();
+        assert!(MichelangeloPatch::from_bytes(&negative_count).is_err());
+    }
+
+    #[test]
+    fn michelangelo_patch_rejects_negative_and_truncated_lengths() {
+        let mut negative_length = Vec::new();
+        negative_length
+            .write_i32::<LittleEndian>(MICHELANGELO_UOP_MAGIC)
+            .unwrap();
+        negative_length.write_i64::<LittleEndian>(1).unwrap();
+        negative_length.write_u8(VERDATA_FILE_ID_ANIM as u8).unwrap();
+        negative_length.write_i32::<LittleEndian>(1).unwrap();
+        negative_length.write_i32::<LittleEndian>(-1).unwrap();
+        negative_length.write_i32::<LittleEndian>(0).unwrap();
+        assert!(MichelangeloPatch::from_bytes(&negative_length).is_err());
+
+        let mut truncated_payload = Vec::new();
+        truncated_payload
+            .write_i32::<LittleEndian>(MICHELANGELO_UOP_MAGIC)
+            .unwrap();
+        truncated_payload.write_i64::<LittleEndian>(1).unwrap();
+        truncated_payload.write_u8(VERDATA_FILE_ID_ANIM as u8).unwrap();
+        truncated_payload.write_i32::<LittleEndian>(1).unwrap();
+        truncated_payload.write_i32::<LittleEndian>(4).unwrap();
+        truncated_payload.write_i32::<LittleEndian>(0).unwrap();
+        truncated_payload.write_all(&[1, 2]).unwrap();
+        assert!(MichelangeloPatch::from_bytes(&truncated_payload).is_err());
+    }
+
+    #[test]
+    fn export_anim_blocks_reads_mul_payloads_and_remaps_target_indices() {
+        let dir = temp_dir("export_anim_blocks");
+        std::fs::create_dir_all(&dir).unwrap();
+        let idx_path = dir.join("anim.idx");
+        let mul_path = dir.join("anim.mul");
+
+        let result = write_anim_pair_and_export(&idx_path, &mul_path);
+        let _ = std::fs::remove_file(&idx_path);
+        let _ = std::fs::remove_file(&mul_path);
+        let _ = std::fs::remove_dir(&dir);
+
+        result.unwrap();
+    }
+
+    fn write_anim_pair_and_export(idx_path: &Path, mul_path: &Path) -> eyre::Result<()> {
+        let mut idx = File::create(idx_path)?;
+        let mut mul = Vec::new();
+        for block_id in 0..3u32 {
+            let data = [block_id as u8 + 1, block_id as u8 + 11];
+            idx.write_all(&(mul.len() as u32).to_le_bytes())?;
+            idx.write_all(&(data.len() as u32).to_le_bytes())?;
+            idx.write_all(&(100 + block_id).to_le_bytes())?;
+            mul.extend_from_slice(&data);
+        }
+        std::fs::write(mul_path, mul)?;
+
+        let patch = export_anim_blocks_from_mul(idx_path, mul_path, &[1, 2], 0, 200)?;
+
+        assert_eq!(
+            patch.entries,
+            vec![
+                MichelangeloPatchEntry::anim(22_001, 101, vec![2, 12]),
+                MichelangeloPatchEntry::anim(22_002, 102, vec![3, 13]),
+            ]
+        );
+        Ok(())
     }
 }

@@ -120,6 +120,16 @@ impl VdFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use byteorder::{LittleEndian, WriteBytesExt};
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "uocf_vd_codec_test_{}_{}_{}",
+            name,
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ))
+    }
 
     #[test]
     fn vd_roundtrip_preserves_verdata_header_and_payload() {
@@ -142,6 +152,27 @@ mod tests {
     }
 
     #[test]
+    fn vd_roundtrip_preserves_non_anim_verdata_entry_fields() {
+        let vd = VdFile::new(
+            VerdataEntry {
+                file_id: 4,
+                index: -12,
+                lookup: 99,
+                length: 4,
+                extra: -5,
+            },
+            vec![0x10, 0x20, 0x30, 0x40],
+        )
+        .unwrap();
+
+        let bytes = vd.to_bytes().unwrap();
+
+        assert_eq!(VdFile::from_bytes(&bytes).unwrap(), vd);
+        assert_eq!(bytes[8..12], 99i32.to_le_bytes());
+        assert_eq!(bytes[16..20], (-5i32).to_le_bytes());
+    }
+
+    #[test]
     fn vd_rejects_length_mismatch() {
         let mut bytes = VdFile::for_anim(1, 0, vec![1, 2, 3])
             .unwrap()
@@ -150,5 +181,53 @@ mod tests {
         bytes.pop();
 
         assert!(VdFile::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn vd_rejects_short_header_and_negative_length() {
+        assert!(VdFile::from_bytes(&[0; 19]).is_err());
+
+        let mut bytes = Vec::new();
+        bytes.write_i32::<LittleEndian>(VERDATA_FILE_ID_ANIM).unwrap();
+        bytes.write_i32::<LittleEndian>(1).unwrap();
+        bytes.write_i32::<LittleEndian>(0).unwrap();
+        bytes.write_i32::<LittleEndian>(-1).unwrap();
+        bytes.write_i32::<LittleEndian>(0).unwrap();
+
+        assert!(VdFile::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn vd_new_and_to_bytes_validate_payload_length() {
+        let entry = VerdataEntry {
+            file_id: VERDATA_FILE_ID_ANIM,
+            index: 1,
+            lookup: 0,
+            length: 2,
+            extra: 0,
+        };
+
+        assert!(VdFile::new(entry, vec![1]).is_err());
+
+        let vd = VdFile {
+            entry,
+            data: vec![1],
+        };
+        assert!(vd.to_bytes().is_err());
+    }
+
+    #[test]
+    fn vd_save_and_load_roundtrip() {
+        let path = temp_path("save_load.vd");
+        let vd = VdFile::for_anim(500, 12, vec![9, 8, 7, 6]).unwrap();
+
+        let result = (|| -> eyre::Result<()> {
+            vd.save(&path)?;
+            assert_eq!(VdFile::load(&path)?, vd);
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&path);
+
+        result.unwrap();
     }
 }
