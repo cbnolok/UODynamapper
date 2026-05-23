@@ -3,7 +3,9 @@ use image_postprocess::bc7_analytical::{
     FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
 };
 use image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide;
-use image_postprocess::bc7_rdo::{reduce_entropy_bc7, Bc7RdoParams};
+use image_postprocess::bc7_rdo::{
+    reduce_entropy_bc7, reduce_entropy_bc7_with_stats, Bc7RdoParams, Bc7RdoStats,
+};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -29,6 +31,7 @@ struct RdoCase {
 
 fn main() {
     let quick = std::env::args().any(|arg| arg == "--quick");
+    let rdo_stats = std::env::args().any(|arg| arg == "--rdo-stats");
     let min_duration = if quick {
         Duration::from_millis(80)
     } else {
@@ -43,7 +46,7 @@ fn main() {
     println!("bc7_encode benchmark");
     println!("profile={} min_duration_ms={}", profile_name(), min_duration.as_millis());
     for case in &cases {
-        run_case(case, min_duration, &rdo_cases());
+        run_case(case, min_duration, &rdo_cases(), rdo_stats);
     }
 }
 
@@ -97,7 +100,7 @@ fn rdo_cases() -> [RdoCase; 6] {
     ]
 }
 
-fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase]) {
+fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stats: bool) {
     let blocks = case.width.div_ceil(4) as usize * case.height.div_ceil(4) as usize;
     let scalar = bench_scalar(case, min_duration);
     let wide = bench_wide(case, min_duration);
@@ -113,13 +116,25 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase]) {
         wide.checksum
     );
     for rdo_case in rdo_cases {
-        let rdo = bench_rdo(case, min_duration, &rdo_case.params);
+        let rdo = bench_rdo(case, min_duration, &rdo_case.params, rdo_stats);
         println!(
             "  {:<16} rdo={:>10.2} blk/s checksum={:016x}",
             rdo_case.name,
-            rdo.blocks_per_second,
-            rdo.checksum
+            rdo.bench.blocks_per_second,
+            rdo.bench.checksum
         );
+        if let Some(stats) = rdo.stats {
+            println!(
+                "    stats candidates={} rate_skips={} hash_skips={} decodes={} bounded_exits={} accepted={} modified={}",
+                stats.candidate_checks,
+                stats.rate_skips,
+                stats.hash_skips,
+                stats.decode_trials,
+                stats.bounded_error_exits,
+                stats.accepted_matches,
+                stats.modified_blocks
+            );
+        }
     }
 }
 
@@ -155,7 +170,7 @@ fn bench_wide(case: &Case, min_duration: Duration) -> BenchResult {
     BenchResult::new(blocks_x * blocks_y, iterations, start.elapsed(), checksum(&out))
 }
 
-fn bench_rdo(case: &Case, min_duration: Duration, params: &Bc7RdoParams) -> BenchResult {
+fn bench_rdo(case: &Case, min_duration: Duration, params: &Bc7RdoParams, collect_stats: bool) -> RdoBenchResult {
     let blocks_x = case.width.div_ceil(4) as usize;
     let blocks_y = case.height.div_ceil(4) as usize;
     let mut encoded = vec![0u8; blocks_x * blocks_y * 16];
@@ -167,23 +182,32 @@ fn bench_rdo(case: &Case, min_duration: Duration, params: &Bc7RdoParams) -> Benc
     let rgba_blocks = rgba_to_block_order(&case.rgba, case.width, case.height);
     let mut out = baseline.clone();
     let mut modified = 0u32;
+    let mut stats = Bc7RdoStats::default();
     let mut iterations = 0u64;
     let start = Instant::now();
 
     while iterations == 0 || start.elapsed() < min_duration {
         out.clone_from(&baseline);
-        modified = reduce_entropy_bc7(&mut out, &rgba_blocks, blocks_x, blocks_y, params);
+        if collect_stats {
+            stats = Bc7RdoStats::default();
+            modified = reduce_entropy_bc7_with_stats(&mut out, &rgba_blocks, blocks_x, blocks_y, params, &mut stats);
+        } else {
+            modified = reduce_entropy_bc7(&mut out, &rgba_blocks, blocks_x, blocks_y, params);
+        }
         black_box(&out);
         iterations += 1;
     }
 
     let flat = out.iter().flatten().copied().collect::<Vec<_>>();
-    BenchResult::new(
-        blocks_x * blocks_y,
-        iterations,
-        start.elapsed(),
-        checksum(&flat) ^ modified as u64,
-    )
+    RdoBenchResult {
+        bench: BenchResult::new(
+            blocks_x * blocks_y,
+            iterations,
+            start.elapsed(),
+            checksum(&flat) ^ modified as u64,
+        ),
+        stats: collect_stats.then_some(stats),
+    }
 }
 
 fn encode_scalar_image(out: &mut [u8], rgba: &[u8], width: u32, height: u32) {
@@ -292,6 +316,11 @@ fn image_case(
 struct BenchResult {
     blocks_per_second: f64,
     checksum: u64,
+}
+
+struct RdoBenchResult {
+    bench: BenchResult,
+    stats: Option<Bc7RdoStats>,
 }
 
 impl BenchResult {

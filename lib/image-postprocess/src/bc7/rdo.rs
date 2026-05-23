@@ -28,6 +28,17 @@ pub struct Bc7RdoParams {
     pub debug_output: bool,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Bc7RdoStats {
+    pub candidate_checks: u64,
+    pub rate_skips: u64,
+    pub hash_skips: u64,
+    pub decode_trials: u64,
+    pub bounded_error_exits: u64,
+    pub accepted_matches: u64,
+    pub modified_blocks: u64,
+}
+
 impl Default for Bc7RdoParams {
     fn default() -> Self {
         Self {
@@ -56,6 +67,28 @@ pub fn reduce_entropy_bc7(
     blocks_x: usize,
     blocks_y: usize,
     params: &Bc7RdoParams,
+) -> u32 {
+    reduce_entropy_bc7_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, None)
+}
+
+pub fn reduce_entropy_bc7_with_stats(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    stats: &mut Bc7RdoStats,
+) -> u32 {
+    reduce_entropy_bc7_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, Some(stats))
+}
+
+fn reduce_entropy_bc7_impl(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    mut stats: Option<&mut Bc7RdoStats>,
 ) -> u32 {
     if params.lambda <= 0.0 {
         return 0;
@@ -158,14 +191,23 @@ pub fn reduce_entropy_bc7(
                     break;
                 }
                 let prev_blk = blocks[prev_block_index];
+                let base_dist = (block_index - prev_block_index) * 16;
+                let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
                 for len in (3..=16).rev() {
+                    let len_bits = compute_match_len_cost(len as u32) as f32;
                     for src_ofs in 0..=(16 - len) {
                         for dst_ofs in 0..=(16 - len) {
-                            let dist = (block_index - prev_block_index) * 16 + dst_ofs - src_ofs;
-                            let mb = compute_match_cost_estimate(dist as u32, len as u32) as f32;
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.candidate_checks += 1;
+                            }
+                            let relative_dist_index = (dst_ofs as i32 - src_ofs as i32 + 15) as usize;
+                            let mb = relative_dist_bits[relative_dist_index] as f32 + len_bits;
                             let trial_bits = (16 - len) as f32 * LITERAL_BITS + mb;
                             let trial_bits_times_lambda = trial_bits * params.lambda;
                             if trial_bits_times_lambda >= best_t {
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.rate_skips += 1;
+                                }
                                 continue;
                             }
 
@@ -173,15 +215,26 @@ pub fn reduce_entropy_bc7(
                             let hs = hash_hsieh(&prev_blk[src_ofs..src_ofs + len], dst_ofs as u32);
                             let hash_check = hash_table[hs as usize & hash_mask];
                             if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
-                                && (hash_check >> 8) == (hs >> 8) { continue; }
+                                && (hash_check >> 8) == (hs >> 8) {
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.hash_skips += 1;
+                                }
+                                continue;
+                            }
                             hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
 
                             let mut trial_blk = orig_blk;
                             trial_blk[dst_ofs..dst_ofs + len].copy_from_slice(&prev_blk[src_ofs..src_ofs + len]);
                             let mut trial_decoded = [[0u8; 4]; 16];
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.decode_trials += 1;
+                            }
                             if !unpack_bc7(&trial_blk, &mut trial_decoded) { continue; }
                             let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                             let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.bounded_error_exits += 1;
+                                }
                                 continue;
                             };
                             let trial_ms_err = trial_err as f32 / 64.0;
@@ -191,6 +244,9 @@ pub fn reduce_entropy_bc7(
                                     best_t = t; best_block = trial_blk;
                                     best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
+                                    if let Some(stats) = stats.as_deref_mut() {
+                                        stats.accepted_matches += 1;
+                                    }
                                 }
                             }
                         }
@@ -213,6 +269,9 @@ pub fn reduce_entropy_bc7(
                         ((16 - len) as f32 * LITERAL_BITS + normal_match_bits) * params.lambda;
 
                     for ofs in 0..=(16 - len) {
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.candidate_checks += 1;
+                        }
                         let src_win_ofs = (prev_block_index * 16 + ofs) as i64;
                         let dst_win_ofs = (block_index      * 16 + ofs) as i64;
 
@@ -228,27 +287,44 @@ pub fn reduce_entropy_bc7(
                                 (MATCH_REP0_BITS, tb * params.lambda)
                             } else {
                                 if normal_trial_bits_times_lambda >= best_t {
+                                    if let Some(stats) = stats.as_deref_mut() {
+                                        stats.rate_skips += 1;
+                                    }
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
                                 let hs = hash_hsieh(&prev_blk[ofs..ofs + len], ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
-                                    && (hash_check >> 8) == (hs >> 8) { continue; }
+                                    && (hash_check >> 8) == (hs >> 8) {
+                                    if let Some(stats) = stats.as_deref_mut() {
+                                        stats.hash_skips += 1;
+                                    }
+                                    continue;
+                                }
                                 hash_table[hs as usize & hash_mask] =
                                     (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
                                 (normal_match_bits, normal_trial_bits_times_lambda)
                             };
                         if trial_bits_times_lambda >= best_t {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.rate_skips += 1;
+                            }
                             continue;
                         }
 
                         let mut trial_blk = orig_blk;
                         trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
                         let mut trial_decoded = [[0u8; 4]; 16];
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.decode_trials += 1;
+                        }
                         if !unpack_bc7(&trial_blk, &mut trial_decoded) { continue; }
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.bounded_error_exits += 1;
+                            }
                             continue;
                         };
                         let trial_ms_err = trial_err as f32 / 64.0;
@@ -261,6 +337,9 @@ pub fn reduce_entropy_bc7(
                                 // Update continuation/REP0 state for the next block
                                 prev_cont_window_ofs = src_win_ofs + len as i64;
                                 prev_rep0_dist       = dst_win_ofs - src_win_ofs;
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.accepted_matches += 1;
+                                }
                             }
                         }
                     }
@@ -288,10 +367,18 @@ pub fn reduce_entropy_bc7(
                         + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
                     if trial_bits_times_lambda >= best_t {
+                        if let Some(stats) = stats.as_deref_mut() {
+                            let skipped_offsets = 17 - len;
+                            stats.candidate_checks += skipped_offsets as u64;
+                            stats.rate_skips += skipped_offsets as u64;
+                        }
                         continue;
                     }
 
                     for ofs in 0..=(16 - len) {
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.candidate_checks += 1;
+                        }
                         if ofs < best_match_end && ofs + len > best_match_dst_block_ofs {
                             continue;
                         }
@@ -300,12 +387,18 @@ pub fn reduce_entropy_bc7(
                         trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
 
                         let mut trial_decoded = [[0u8; 4]; 16];
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.decode_trials += 1;
+                        }
                         if !unpack_bc7(&trial_blk, &mut trial_decoded) {
                             continue;
                         }
 
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = block_error_bounded(p_pixels, &trial_decoded, max_trial_err) else {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.bounded_error_exits += 1;
+                            }
                             continue;
                         };
 
@@ -315,6 +408,9 @@ pub fn reduce_entropy_bc7(
                             if t < best_t {
                                 best_t = t;
                                 best_block = trial_blk;
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.accepted_matches += 1;
+                                }
                             }
                         }
                     }
@@ -326,6 +422,9 @@ pub fn reduce_entropy_bc7(
             blocks[block_index] = best_block;
             block_modes[block_index] = get_bc7_mode(&best_block);
             total_modified += 1;
+            if let Some(stats) = stats.as_deref_mut() {
+                stats.modified_blocks += 1;
+            }
         }
         if block_modes[block_index] < 8 {
             previous_blocks_by_mode[block_modes[block_index] as usize].push(block_index);
@@ -524,10 +623,6 @@ fn compute_block_max_std_dev(pixels: &[[u8; 4]]) -> f32 {
     max_std_dev
 }
 
-fn compute_match_cost_estimate(dist: u32, match_len: u32) -> u32 {
-    compute_match_len_cost(match_len) + compute_dist_cost_estimate(dist)
-}
-
 #[inline(always)]
 fn compute_match_len_cost(match_len: u32) -> u32 {
     if match_len >= 12 {
@@ -555,6 +650,16 @@ fn compute_dist_cost_estimate(dist: u32) -> u32 {
         }
     }
     dist_cost
+}
+
+#[inline(always)]
+fn compute_relative_dist_costs(base_dist: u32) -> [u32; 31] {
+    let mut costs = [0u32; 31];
+    for (i, cost) in costs.iter_mut().enumerate() {
+        let dist = (base_dist as i32 + i as i32 - 15) as u32;
+        *cost = compute_dist_cost_estimate(dist);
+    }
+    costs
 }
 
 const SMALL_DIST_EXTRA: [u8; 512] = [
