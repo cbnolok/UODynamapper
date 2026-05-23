@@ -109,8 +109,18 @@ Release builds should expose these binaries as separate executables.
 - UOCF graphical frontends
   - `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
   - `uop-dict-populator-gui`: graphical tool for building and expanding UOP hash dictionaries.
-- Libraries
-  - `uocf`: source-format parsing for Classic Client, Enhanced Client, Kingdom Reborn, and related custom formats.
+- UOCF (UO Client Files) library
+  - Shared package support:
+    - `.uop` package reading, writing, compression handling, path hashing, hash dictionaries, and brute-force path discovery.
+  - Classic Client support:
+    - map and statics files, art and land textures, tiledata, hues, lights, gumps, fonts, sounds, multis, radar colors, animation metadata, `body.def` / `bodyconv.def`, `verdata.mul`, map/statics DIFs, `multimap.rle`, and related `.mul` / `.idx` layouts.
+  - Kingdom Reborn support:
+    - facet package decoding/encoding, facet tile/static dictionaries, and KR-to-classic terrain/static mapping helpers.
+  - Enhanced Client support:
+    - facet decoding/encoding, `tileart.uop`, `TerrainDefinition.uop`, texture package access, string dictionaries, localized strings, hues, multis, terrain config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
+  - Compatibility and custom-format work:
+    - Michelangelo-style `.uop` handling, `.vd` codec support, and shared helpers used by inspectors and converters.
+- Custom support libraries
   - `udd-container`: low-level UDDP/UDDF container infrastructure.
   - `udd-assets`: runtime readers and package access helpers for converted assets.
   - `udd-conv`: conversion and packaging logic shared by frontends and CLIs.

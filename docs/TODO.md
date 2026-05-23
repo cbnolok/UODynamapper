@@ -49,6 +49,14 @@ Current execution decisions:
 - `Validation`: tests and regression work needed to keep the pipeline from drifting.
 - `Deferred`: still tracked, but intentionally not on the immediate path.
 
+## Canonical Milestones
+
+- [ ] Close remaining EC chosen-base, support-texture, and surface-like routing gaps.
+- [ ] Finish the production static-art pipeline and explicit UO-style static depth follow-up.
+- [ ] Harden UDDP packaging, streaming, and validation.
+- [ ] Move from transitional terrain scaling toward clipmap-based terrain.
+- [ ] Expand mobiles, paperdoll, and export tooling.
+
 ## Now
 
 ### Baseline And Instrumentation
