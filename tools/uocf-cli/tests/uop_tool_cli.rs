@@ -95,6 +95,31 @@ fn crack_rejects_min_len_greater_than_max_len() {
 }
 
 #[test]
+fn crack_finds_known_hash_in_tiny_search_space() {
+    let target = "ab";
+    let hash = hash_file_name_single(target);
+    let output = uop_tool()
+        .args([
+            "crack",
+            &format!("0x{hash:016x}"),
+            "--charset",
+            "ab",
+            "--min-len",
+            "2",
+            "--max-len",
+            "2",
+            "--method",
+            "parallel-scalar",
+        ])
+        .output()
+        .expect("run uop-tool crack");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Found: ab"));
+}
+
+#[test]
 fn merge_dic_merges_input_dictionaries() {
     let temp = TempDir::new("merge-dic");
     let first_path = temp.path().join("first.dic");
