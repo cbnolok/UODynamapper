@@ -1283,14 +1283,19 @@ mod tests {
     fn mobile_anim_cc_package_bytes() -> Vec<u8> {
         use udd_assets::mobile_anim_cc::{
             page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
-            ANIMATION_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
-            MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
+            MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord,
+            ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODY_DEF,
+            BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH,
+            FRAME_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX,
+            PAGE_MANIFEST_ENTRY_PATH,
         };
         use udd_assets::tex_art_cc::PagePixelFormat;
         use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
         use udd_conv::mobile_anim_cc::{
-            pack_frames_into_pages, serialize_animation_manifest, serialize_frame_manifest,
-            serialize_page_manifest, DecodedMobileAnimFrame, MobileAnimCcAtlasOptions,
+            pack_frames_into_pages, serialize_animation_manifest,
+            serialize_body_resolve_manifest, serialize_body_type_manifest,
+            serialize_frame_manifest, serialize_page_manifest, DecodedMobileAnimFrame,
+            MobileAnimCcAtlasOptions,
         };
 
         let options = MobileAnimCcAtlasOptions {
@@ -1337,6 +1342,23 @@ mod tests {
         let animation_manifest =
             serialize_animation_manifest(&animations).expect("animation manifest");
         let frame_manifest = serialize_frame_manifest(&frame_records).expect("frame manifest");
+        let body_resolve_manifest = serialize_body_resolve_manifest(&[
+            MobileAnimCcBodyResolveRecord {
+                body_id: 7,
+                resolved_body_id: 8,
+                hue: 9,
+                file_index: 0,
+                mount_height: 0,
+                flags: BODY_RESOLVE_FLAG_BODY_DEF,
+            },
+        ]).expect("body resolve manifest");
+        let body_type_manifest = serialize_body_type_manifest(&[
+            MobileAnimCcBodyTypeRecord {
+                body_id: 7,
+                group_type: 3,
+                flags: 0x8000_0001,
+            },
+        ]).expect("body type manifest");
         let stored_page = udd_conv::tex_art_cc::crop_rgba_page(
             &pages[0].pixels,
             options.atlas_width,
@@ -1349,6 +1371,8 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice(), DataType::Metadata),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
         ] {
             builder

@@ -85,6 +85,10 @@ pub fn ui_mobile_anim_cc(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label(format!("Animations: {}", package.animations().len()));
             ui.separator();
             ui.label(format!("Frames: {}", package.frames().len()));
+            ui.separator();
+            ui.label(format!("Body maps: {}", package.body_resolve().len()));
+            ui.separator();
+            ui.label(format!("Body types: {}", package.body_types().len()));
         });
 
         ui.separator();

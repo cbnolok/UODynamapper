@@ -11,14 +11,21 @@ use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const ANIMATION_MANIFEST_ENTRY_PATH: &str = "metadata/animations.bin";
 pub const FRAME_MANIFEST_ENTRY_PATH: &str = "metadata/frames.bin";
+pub const BODY_RESOLVE_MANIFEST_ENTRY_PATH: &str = "metadata/body_resolve.bin";
+pub const BODY_TYPE_MANIFEST_ENTRY_PATH: &str = "metadata/body_types.bin";
 
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_FRAME_INDEX: u16 = u16::MAX;
 
+pub const BODY_RESOLVE_FLAG_BODY_DEF: u16 = 1 << 0;
+pub const BODY_RESOLVE_FLAG_BODYCONV_DEF: u16 = 1 << 1;
+
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
-const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 1;
+const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
+const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
+const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcPageRecord {
@@ -55,6 +62,23 @@ pub struct MobileAnimCcFrameRecord {
     pub center_y: i16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobileAnimCcBodyResolveRecord {
+    pub body_id: u16,
+    pub resolved_body_id: u16,
+    pub hue: u16,
+    pub file_index: u8,
+    pub mount_height: i8,
+    pub flags: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobileAnimCcBodyTypeRecord {
+    pub body_id: u16,
+    pub group_type: u8,
+    pub flags: u32,
+}
+
 pub struct MobileAnimCcPackage {
     package: UddpReader,
     atlas_width: u32,
@@ -64,6 +88,8 @@ pub struct MobileAnimCcPackage {
     pages: Vec<MobileAnimCcPageRecord>,
     animations: Vec<MobileAnimCcAnimationRecord>,
     frames: Vec<MobileAnimCcFrameRecord>,
+    body_resolve: Vec<MobileAnimCcBodyResolveRecord>,
+    body_types: Vec<MobileAnimCcBodyTypeRecord>,
     page_cache: AtlasPageCache,
 }
 
@@ -92,11 +118,17 @@ impl MobileAnimCcPackage {
             .context("mobile_anim_cc.uddp missing metadata/animations.bin")?;
         let frame_manifest = read_path_entry(&package, FRAME_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/frames.bin")?;
+        let body_resolve_manifest = read_path_entry(&package, BODY_RESOLVE_MANIFEST_ENTRY_PATH)
+            .context("mobile_anim_cc.uddp missing metadata/body_resolve.bin")?;
+        let body_type_manifest = read_path_entry(&package, BODY_TYPE_MANIFEST_ENTRY_PATH)
+            .context("mobile_anim_cc.uddp missing metadata/body_types.bin")?;
 
         let (page_width, page_height, page_gutter, page_packing_mode, pages) =
             parse_page_manifest(&page_manifest)?;
         let animations = parse_animation_manifest(&animation_manifest)?;
         let frames = parse_frame_manifest(&frame_manifest)?;
+        let body_resolve = parse_body_resolve_manifest(&body_resolve_manifest)?;
+        let body_types = parse_body_type_manifest(&body_type_manifest)?;
 
         Ok(Self {
             package,
@@ -107,6 +139,8 @@ impl MobileAnimCcPackage {
             pages,
             animations,
             frames,
+            body_resolve,
+            body_types,
             page_cache: AtlasPageCache::new(options),
         })
     }
@@ -137,6 +171,28 @@ impl MobileAnimCcPackage {
 
     pub fn frames(&self) -> &[MobileAnimCcFrameRecord] {
         &self.frames
+    }
+
+    pub fn body_resolve(&self) -> &[MobileAnimCcBodyResolveRecord] {
+        &self.body_resolve
+    }
+
+    pub fn body_types(&self) -> &[MobileAnimCcBodyTypeRecord] {
+        &self.body_types
+    }
+
+    pub fn body_resolve_record(&self, body_id: u16) -> Option<&MobileAnimCcBodyResolveRecord> {
+        self.body_resolve
+            .binary_search_by_key(&body_id, |record| record.body_id)
+            .ok()
+            .map(|index| &self.body_resolve[index])
+    }
+
+    pub fn body_type_record(&self, body_id: u16) -> Option<&MobileAnimCcBodyTypeRecord> {
+        self.body_types
+            .binary_search_by_key(&body_id, |record| record.body_id)
+            .ok()
+            .map(|index| &self.body_types[index])
     }
 
     pub fn animation(&self, body_id: u16, action_id: u16, direction: u8) -> Option<&MobileAnimCcAnimationRecord> {
@@ -266,6 +322,51 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcFrameRecor
     Ok(frames)
 }
 
+fn parse_body_resolve_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBodyResolveRecord>> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != BODY_RESOLVE_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation body resolve magic"); }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+        eyre::bail!("invalid mobile animation body resolve manifest version");
+    }
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        records.push(MobileAnimCcBodyResolveRecord {
+            body_id: cursor.read_u16::<LittleEndian>()?,
+            resolved_body_id: cursor.read_u16::<LittleEndian>()?,
+            hue: cursor.read_u16::<LittleEndian>()?,
+            file_index: cursor.read_u8()?,
+            mount_height: cursor.read_i8()?,
+            flags: cursor.read_u16::<LittleEndian>()?,
+        });
+    }
+    Ok(records)
+}
+
+fn parse_body_type_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != BODY_TYPE_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation body type magic"); }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+        eyre::bail!("invalid mobile animation body type manifest version");
+    }
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        records.push(MobileAnimCcBodyTypeRecord {
+            body_id: cursor.read_u16::<LittleEndian>()?,
+            group_type: cursor.read_u8()?,
+            flags: cursor.read_u32::<LittleEndian>()?,
+        });
+    }
+    Ok(records)
+}
+
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
     format!("pages/{page_index:05}.{}", fmt.extension())
 }
@@ -325,6 +426,29 @@ mod tests {
             byteorder::WriteBytesExt::write_i16::<LittleEndian>(&mut bytes, -1).unwrap();
             bytes
         };
+        let body_resolve_manifest = {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&BODY_RESOLVE_MANIFEST_MAGIC);
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, MOBILE_ANIM_CC_METADATA_VERSION).unwrap();
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 1).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 7).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 8).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 9).unwrap();
+            bytes.push(2);
+            byteorder::WriteBytesExt::write_i8(&mut bytes, -1).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF).unwrap();
+            bytes
+        };
+        let body_type_manifest = {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&BODY_TYPE_MANIFEST_MAGIC);
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, MOBILE_ANIM_CC_METADATA_VERSION).unwrap();
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 1).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 7).unwrap();
+            bytes.push(3);
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 0x8000_0001).unwrap();
+            bytes
+        };
         let page = vec![255u8; 4 * 4 * 4];
         let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -332,6 +456,8 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice(), DataType::Metadata),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), page.as_slice(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest {
@@ -353,6 +479,8 @@ mod tests {
         assert_eq!(package.pages().len(), 1);
         assert_eq!(package.animation(2, 3, 4).unwrap().source_index, 20);
         assert_eq!(package.animation_frames(package.animation(2, 3, 4).unwrap()).len(), 1);
+        assert_eq!(package.body_resolve_record(7).unwrap().resolved_body_id, 8);
+        assert_eq!(package.body_type_record(7).unwrap().group_type, 3);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), page.len());
     }
 }

@@ -64,6 +64,10 @@ impl BodyConvDef {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&u16, &BodyConvEntry)> {
+        self.entries.iter()
+    }
 }
 
 fn mounted_height_offset(body: u16, part_index: usize) -> i8 {

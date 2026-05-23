@@ -5,6 +5,8 @@
 //! extents so the same metadata remains valid when page payloads gain BC7
 //! support later.
 
+use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -14,13 +16,17 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::anim::{AnimFrame, AnimMap, MAX_ANIM_FILES};
+use uocf::classic::body_def::BodyDef;
+use uocf::classic::bodyconv_def::BodyConvDef;
 
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
 use crate::{resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_cc::{
     page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
-    MobileAnimCcPageRecord, ANIMATION_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
+    MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord, MobileAnimCcPageRecord,
+    ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODYCONV_DEF, BODY_RESOLVE_FLAG_BODY_DEF,
+    BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -32,7 +38,9 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 4;
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
-const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 1;
+const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
+const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
+const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcBuildSummary {
@@ -110,16 +118,22 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         decode_present_animations(&anim_map)?;
     let packed_frame_count = decoded_frames.len() as u32;
     let pages = pack_frames_into_pages(decoded_frames, &mut frame_records, options)?;
+    let body_resolve_records = build_body_resolve_records(&client_dir)?;
+    let body_type_records = build_body_type_records(&client_dir)?;
 
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let animation_manifest = serialize_animation_manifest(&animation_records)?;
     let frame_manifest = serialize_frame_manifest(&frame_records)?;
+    let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records)?;
+    let body_type_manifest = serialize_body_type_manifest(&body_type_records)?;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
         (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
         (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
+        (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice()),
+        (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice()),
     ] {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -163,6 +177,99 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
+}
+
+fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyResolveRecord>> {
+    let mut records = BTreeMap::<u16, MobileAnimCcBodyResolveRecord>::new();
+
+    let body_def_path = client_dir.join("Body.def");
+    if body_def_path.is_file() {
+        let body_def = BodyDef::load(&body_def_path)
+            .wrap_err_with(|| format!("load {}", body_def_path.display()))?;
+        for (&body_id, entry) in body_def.iter() {
+            records.insert(body_id, MobileAnimCcBodyResolveRecord {
+                body_id,
+                resolved_body_id: entry.graphic,
+                hue: entry.hue,
+                file_index: 0,
+                mount_height: 0,
+                flags: BODY_RESOLVE_FLAG_BODY_DEF,
+            });
+        }
+    }
+
+    let bodyconv_path = client_dir.join("Bodyconv.def");
+    if bodyconv_path.is_file() {
+        let bodyconv = BodyConvDef::load(&bodyconv_path)
+            .wrap_err_with(|| format!("load {}", bodyconv_path.display()))?;
+        for (&body_id, entry) in bodyconv.iter() {
+            records
+                .entry(body_id)
+                .and_modify(|record| {
+                    record.resolved_body_id = entry.graphic;
+                    record.file_index = entry.file_index;
+                    record.mount_height = entry.mount_height;
+                    record.flags |= BODY_RESOLVE_FLAG_BODYCONV_DEF;
+                })
+                .or_insert(MobileAnimCcBodyResolveRecord {
+                    body_id,
+                    resolved_body_id: entry.graphic,
+                    hue: 0,
+                    file_index: entry.file_index,
+                    mount_height: entry.mount_height,
+                    flags: BODY_RESOLVE_FLAG_BODYCONV_DEF,
+                });
+        }
+    }
+
+    Ok(records.into_values().collect())
+}
+
+fn build_body_type_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
+    let path = client_dir.join("mobtypes.txt");
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    parse_mobtypes_txt(&fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?)
+}
+
+fn parse_mobtypes_txt(text: &str) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
+    let mut records = BTreeMap::<u16, MobileAnimCcBodyTypeRecord>::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || !line.as_bytes()[0].is_ascii_digit() {
+            continue;
+        }
+        let line = line.split('#').next().unwrap_or("").trim();
+        let mut parts = line.split_whitespace();
+        let Some(body) = parts.next() else { continue; };
+        let Some(type_name) = parts.next() else { continue; };
+        let Some(flags) = parts.next() else { continue; };
+
+        let Ok(body_id) = body.parse::<u16>() else { continue; };
+        let Some(group_type) = mob_type_group(type_name) else { continue; };
+        let flags = u32::from_str_radix(flags.trim_start_matches("0x").trim_start_matches("0X"), 16)
+            .unwrap_or(0);
+
+        records.insert(body_id, MobileAnimCcBodyTypeRecord {
+            body_id,
+            group_type,
+            flags: 0x8000_0000 | flags,
+        });
+    }
+    Ok(records.into_values().collect())
+}
+
+fn mob_type_group(type_name: &str) -> Option<u8> {
+    match type_name.to_ascii_lowercase().as_str() {
+        "monster" => Some(0),
+        "sea_monster" => Some(1),
+        "animal" => Some(2),
+        "human" => Some(3),
+        "equipment" => Some(4),
+        _ => None,
+    }
 }
 
 fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
@@ -694,6 +801,39 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimCcFrameRecord]) -> eyre::Res
     Ok(bytes)
 }
 
+pub fn serialize_body_resolve_manifest(
+    records: &[MobileAnimCcBodyResolveRecord],
+) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(12 + records.len() * 10);
+    bytes.extend_from_slice(&BODY_RESOLVE_MANIFEST_MAGIC);
+    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
+    for record in records {
+        bytes.write_u16::<LittleEndian>(record.body_id)?;
+        bytes.write_u16::<LittleEndian>(record.resolved_body_id)?;
+        bytes.write_u16::<LittleEndian>(record.hue)?;
+        bytes.push(record.file_index);
+        bytes.write_i8(record.mount_height)?;
+        bytes.write_u16::<LittleEndian>(record.flags)?;
+    }
+    Ok(bytes)
+}
+
+pub fn serialize_body_type_manifest(
+    records: &[MobileAnimCcBodyTypeRecord],
+) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(12 + records.len() * 7);
+    bytes.extend_from_slice(&BODY_TYPE_MANIFEST_MAGIC);
+    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
+    for record in records {
+        bytes.write_u16::<LittleEndian>(record.body_id)?;
+        bytes.push(record.group_type);
+        bytes.write_u32::<LittleEndian>(record.flags)?;
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +847,20 @@ mod tests {
             height,
             rgba: vec![255u8; width as usize * height as usize * 4],
         }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mobile_anim_cc_{name}_{}_{}",
+            std::process::id(),
+            timestamp
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
     }
 
     #[test]
@@ -800,6 +954,21 @@ mod tests {
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frame_records).unwrap();
+        let body_resolve_records = vec![MobileAnimCcBodyResolveRecord {
+            body_id: 7,
+            resolved_body_id: 8,
+            hue: 9,
+            file_index: 2,
+            mount_height: -1,
+            flags: BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF,
+        }];
+        let body_type_records = vec![MobileAnimCcBodyTypeRecord {
+            body_id: 7,
+            group_type: 3,
+            flags: 0x8000_0001,
+        }];
+        let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records).unwrap();
+        let body_type_manifest = serialize_body_type_manifest(&body_type_records).unwrap();
         let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
         let stored_page = crate::tex_art_cc::crop_rgba_page(
             &pages[0].pixels,
@@ -813,6 +982,8 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice(), DataType::Metadata),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest {
@@ -834,6 +1005,69 @@ mod tests {
         assert_eq!(package.pages().len(), 1);
         assert_eq!(package.animation(1, 2, 3).unwrap().source_index, 13);
         assert_eq!(package.animation_frames(package.animation(1, 2, 3).unwrap())[0].center_y, -1);
+        assert_eq!(package.body_resolve_record(7).unwrap().file_index, 2);
+        assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
+    }
+
+    #[test]
+    fn mobtypes_parser_normalizes_known_types_and_flags() {
+        let records = parse_mobtypes_txt(
+            "
+            # comment
+            7 human 00000001
+            8 monster 0x00000002 # trailing comment
+            invalid animal 00000004
+            ",
+        )
+        .unwrap();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0], MobileAnimCcBodyTypeRecord {
+            body_id: 7,
+            group_type: 3,
+            flags: 0x8000_0001,
+        });
+        assert_eq!(records[1], MobileAnimCcBodyTypeRecord {
+            body_id: 8,
+            group_type: 0,
+            flags: 0x8000_0002,
+        });
+    }
+
+    #[test]
+    fn body_resolve_records_merge_body_def_and_bodyconv_def() {
+        let dir = temp_dir("body_resolve");
+        std::fs::write(dir.join("Body.def"), "7 {8} 9\n10 {11} 12\n").unwrap();
+        std::fs::write(dir.join("Bodyconv.def"), "7 20\n8 21\n").unwrap();
+
+        let records = build_body_resolve_records(&dir).unwrap();
+
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0], MobileAnimCcBodyResolveRecord {
+            body_id: 7,
+            resolved_body_id: 20,
+            hue: 9,
+            file_index: 1,
+            mount_height: 0,
+            flags: BODY_RESOLVE_FLAG_BODY_DEF | BODY_RESOLVE_FLAG_BODYCONV_DEF,
+        });
+        assert_eq!(records[1], MobileAnimCcBodyResolveRecord {
+            body_id: 8,
+            resolved_body_id: 21,
+            hue: 0,
+            file_index: 1,
+            mount_height: 0,
+            flags: BODY_RESOLVE_FLAG_BODYCONV_DEF,
+        });
+        assert_eq!(records[2], MobileAnimCcBodyResolveRecord {
+            body_id: 10,
+            resolved_body_id: 11,
+            hue: 12,
+            file_index: 0,
+            mount_height: 0,
+            flags: BODY_RESOLVE_FLAG_BODY_DEF,
+        });
+        std::fs::remove_dir_all(dir).ok();
     }
 }
