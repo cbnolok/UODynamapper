@@ -63,7 +63,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-        run: just build-release-nightly
+        run: just build-ci-workspace
 
       - name: Package binary and assets
         run: just package-release dynamapper-linux-x86_64
@@ -122,7 +122,7 @@ jobs:
         env:
           CC: "clang"
           CXX: "clang++"
-        run: just build-release-nightly --target aarch64-unknown-linux-gnu
+        run: just build-ci-workspace --target aarch64-unknown-linux-gnu
 
       - name: Package binary and assets
         run: just package-release dynamapper-linux-arm64 aarch64-unknown-linux-gnu
@@ -171,7 +171,7 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-release-nightly --target x86_64-unknown-linux-musl
+              just build-ci-workspace --target x86_64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
@@ -222,7 +222,7 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-release-nightly --target aarch64-unknown-linux-musl
+              just build-ci-workspace --target aarch64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
@@ -270,7 +270,7 @@ jobs:
           key: "windows-x86_64-nightly-sccache"
 
       - name: Build release binary
-        run: just build-release-nightly
+        run: just build-ci-workspace
 
       - name: Package binary and assets
         run: just package-release dynamapper-windows-x86_64
@@ -336,7 +336,7 @@ jobs:
         run: |
           $mingwBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
           $env:PATH = "$mingwBin;$env:PATH"
-          just build-release-nightly --target x86_64-pc-windows-gnu
+          just build-ci-workspace --target x86_64-pc-windows-gnu
 
       - name: Package binary and assets
         run: just package-release dynamapper-windows-x86_64-clang x86_64-pc-windows-gnu
@@ -383,7 +383,7 @@ jobs:
           key: "windows-arm64-nightly-sccache"
 
       - name: Build release binary
-        run: just build-release-nightly --target aarch64-pc-windows-msvc
+        run: just build-ci-workspace --target aarch64-pc-windows-msvc
 
       - name: Package binary and assets
         run: just package-release dynamapper-windows-arm64 aarch64-pc-windows-msvc
@@ -430,7 +430,7 @@ jobs:
           key: "macos-x86_64-nightly-sccache"
 
       - name: Build release binary
-        run: just build-release-nightly --target x86_64-apple-darwin
+        run: just build-ci-workspace --target x86_64-apple-darwin
 
       - name: Package binary and assets
         run: just package-release dynamapper-macos-x86_64 x86_64-apple-darwin
@@ -477,7 +477,7 @@ jobs:
           key: "macos-arm64-nightly-sccache"
 
       - name: Build release binary
-        run: just build-release-nightly --target aarch64-apple-darwin
+        run: just build-ci-workspace --target aarch64-apple-darwin
 
       - name: Package binary and assets
         run: just package-release dynamapper-macos-arm64 aarch64-apple-darwin

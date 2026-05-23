@@ -120,35 +120,49 @@ build-release-stable *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{args}}
 
-# Build the workspace in release mode (nightly toolchain, most optimized)
-# Purpose: Highly optimized production build using nightly features.
-# Optimizations: build-std (recompiles std with optimizations), panic_abort, symbol stripping.
-build-release-nightly *args:
-    @echo "Running {{os}} nightly release build..."
+# Build the workspace exactly as CI does for release artifacts
+build-ci-workspace *args:
+    @echo "Running {{os}} CI workspace build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
-# Build only dynamapper in release mode
-build-release-dynamapper *args:
-    @echo "Running {{os}} dynamapper release build..."
+# Build only dynamapper with the same release settings used by CI
+build-ci-dynamapper *args:
+    @echo "Running {{os}} CI dynamapper build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         -p dynamapper --bin dynamapper {{args}}
 
-# Build only the shipped tools in release mode
-build-release-tools *args:
-    @echo "Running {{os}} tools release build..."
+# Build only the shipped tools with the same release settings used by CI
+build-ci-tools *args:
+    @echo "Running {{os}} CI tools build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         {{tool_packages}} --bins {{args}}
 
 # Build the binaries that are included in release artifacts
+build-ci-shipping *args:
+    @just build-ci-dynamapper {{args}}
+    @just build-ci-tools {{args}}
+
+# Build the workspace in release mode (nightly toolchain, most optimized)
+build-release-nightly *args:
+    @just build-ci-workspace {{args}}
+
+# Build only dynamapper in release mode
+build-release-dynamapper *args:
+    @just build-ci-dynamapper {{args}}
+
+# Build only the shipped tools in release mode
+build-release-tools *args:
+    @just build-ci-tools {{args}}
+
+# Build the binaries that are included in release artifacts
 build-release-shipping *args:
-    @just build-release-dynamapper {{args}}
-    @just build-release-tools {{args}}
+    @just build-ci-shipping {{args}}
 
 # Alias for nightly release build (preferred for production)
 build-release *args:
