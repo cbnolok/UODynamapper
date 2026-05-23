@@ -59,7 +59,7 @@ impl UddConvApp {
             });
             ui.add_space(10.0);
 
-            let is_busy = *self.is_converting.lock().unwrap();
+            let is_busy = self.is_busy();
 
             ui.add_enabled_ui(!is_busy, |ui| {
                 let column_gap = 12.0;

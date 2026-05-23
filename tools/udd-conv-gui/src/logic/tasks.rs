@@ -1,4 +1,5 @@
 use color_eyre::eyre;
+use std::panic::{self, AssertUnwindSafe};
 use udd_conv::{
     AtlasPackingMode,
     classic_patches::ClassicPatchOptions,
@@ -21,6 +22,18 @@ use udd_conv_cli::{
 };
 use crate::app::UddConvApp;
 use crate::models::{AtlasPackingModeSetting, LogLevel, LogMessage, TextureOptimization};
+
+struct ConvertingFlagReset {
+    is_converting: std::sync::Arc<std::sync::Mutex<bool>>,
+}
+
+impl Drop for ConvertingFlagReset {
+    fn drop(&mut self) {
+        if let Ok(mut is_converting) = self.is_converting.lock() {
+            *is_converting = false;
+        }
+    }
+}
 
 fn atlas_packing_mode(setting: AtlasPackingModeSetting) -> AtlasPackingMode {
     match setting {
@@ -63,9 +76,31 @@ impl UddConvApp {
         let is_converting = self.is_converting.clone();
         let logs = self.logs.clone();
 
-        *is_converting.lock().unwrap() = true;
+        match is_converting.lock() {
+            Ok(mut busy) => {
+                if *busy {
+                    self.push_log(
+                        format!("Cannot start {} while another task is running.", name),
+                        LogLevel::Error,
+                    );
+                    return;
+                }
+                *busy = true;
+            }
+            Err(_) => {
+                self.push_log(
+                    format!("Cannot start {} because the task state is unavailable.", name),
+                    LogLevel::Error,
+                );
+                return;
+            }
+        }
 
         std::thread::spawn(move || {
+            let _reset_busy = ConvertingFlagReset {
+                is_converting: is_converting.clone(),
+            };
+
             {
                 let Ok(mut logs) = logs.lock() else {
                     return;
@@ -76,7 +111,10 @@ impl UddConvApp {
                 });
             }
 
-            let result = task();
+            let result = match panic::catch_unwind(AssertUnwindSafe(task)) {
+                Ok(result) => result,
+                Err(_) => Err(eyre::eyre!("task panicked")),
+            };
 
             {
                 let Ok(mut logs) = logs.lock() else {
@@ -88,7 +126,6 @@ impl UddConvApp {
                 };
                 logs.push(LogMessage { text, level });
             }
-            *is_converting.lock().unwrap() = false;
         });
     }
 
@@ -419,23 +456,43 @@ impl UddConvApp {
     }
 
     pub fn tool_info(&self) {
-        let file = self.tool_file_1.clone().unwrap();
-        self.spawn_task(format!("Info: {}", file.file_name().unwrap().to_string_lossy()), move || {
+        let Some(file) = self.tool_file_1.clone() else {
+            self.push_log("Select a package before running info.", LogLevel::Error);
+            return;
+        };
+        let file_name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.display().to_string());
+        self.spawn_task(format!("Info: {}", file_name), move || {
             get_package_info_string(&file)
         });
     }
 
     pub fn tool_extract(&self) {
-        let file = self.tool_file_1.clone().unwrap();
-        self.spawn_task(format!("Extract: {}", file.file_name().unwrap().to_string_lossy()), move || {
+        let Some(file) = self.tool_file_1.clone() else {
+            self.push_log("Select a package before extracting.", LogLevel::Error);
+            return;
+        };
+        let file_name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.display().to_string());
+        self.spawn_task(format!("Extract: {}", file_name), move || {
             extract_package(&file, None)?;
             Ok(format!("Extracted to sidecar folder next to {}", file.display()))
         });
     }
 
     pub fn tool_diff(&self) {
-        let left = self.tool_file_1.clone().unwrap();
-        let right = self.tool_file_2.clone().unwrap();
+        let Some(left) = self.tool_file_1.clone() else {
+            self.push_log("Select package A before running diff.", LogLevel::Error);
+            return;
+        };
+        let Some(right) = self.tool_file_2.clone() else {
+            self.push_log("Select package B before running diff.", LogLevel::Error);
+            return;
+        };
         self.spawn_task("Diff Packages".to_string(), move || {
             diff_paths(&left, &right, DiffKind::Auto)?;
             Ok("Diff complete. Check console for output.".to_string())

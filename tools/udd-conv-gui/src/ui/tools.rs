@@ -8,7 +8,7 @@ impl UddConvApp {
             ui.label("Inspect, extract and compare UDDP packages.");
             ui.add_space(15.0);
 
-            let is_busy = *self.is_converting.lock().unwrap();
+            let is_busy = self.is_busy();
 
             ui.group(|ui| {
                 ui.set_width(ui.available_width());

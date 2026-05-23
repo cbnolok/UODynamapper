@@ -9,7 +9,7 @@ impl UddConvApp {
             ui.label("Convert map and statics mul files into optimized block packages.");
             ui.add_space(15.0);
 
-            let is_busy = *self.is_converting.lock().unwrap();
+            let is_busy = self.is_busy();
 
             ui.add_enabled_ui(!is_busy, |ui| {
                 ui.horizontal(|ui| {

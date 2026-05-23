@@ -95,7 +95,7 @@ impl eframe::App for UddConvApp {
                                     logs.clear();
                                 }
                             }
-                            if *self.is_converting.lock().unwrap() {
+                            if self.is_busy() {
                                 ui.spinner();
                                 ui.label("Processing...");
                             }
@@ -130,12 +130,14 @@ impl eframe::App for UddConvApp {
         });
 
         // Keep repainting while a background task is running
-        if *self.is_converting.lock().unwrap() {
+        if self.is_busy() {
             ctx.request_repaint();
         }
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        save_settings(&self.settings);
+        if let Err(error) = save_settings(&self.settings) {
+            self.push_log(format!("Could not save settings: {}", error), LogLevel::Error);
+        }
     }
 }

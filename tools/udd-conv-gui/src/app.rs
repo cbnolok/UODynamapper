@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use eframe::egui;
 use crate::models::{AppSettings, LogMessage, LogLevel, Tab};
-use crate::logic::settings::{load_settings};
+use crate::logic::settings::load_settings_report;
 
 pub struct UddConvApp {
     pub settings: AppSettings,
@@ -20,14 +20,21 @@ pub struct UddConvApp {
 
 impl UddConvApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let settings = load_settings();
+        let (settings, settings_warning) = load_settings_report();
+        let mut logs = vec![LogMessage {
+            text: "Application started. Please configure your source directories.".to_string(),
+            level: LogLevel::Info,
+        }];
+        if let Some(warning) = settings_warning {
+            logs.push(LogMessage {
+                text: warning,
+                level: LogLevel::Error,
+            });
+        }
 
         Self {
             settings,
-            logs: Arc::new(Mutex::new(vec![LogMessage {
-                text: "Application started. Please configure your source directories.".to_string(),
-                level: LogLevel::Info,
-            }])),
+            logs: Arc::new(Mutex::new(logs)),
             is_converting: Arc::new(Mutex::new(false)),
             current_tab: Tab::Sources,
             tool_file_1: None,
@@ -36,6 +43,19 @@ impl UddConvApp {
             preview_texture: None,
             upscale_preview: None,
         }
+    }
+
+    pub fn push_log(&self, text: impl Into<String>, level: LogLevel) {
+        if let Ok(mut logs) = self.logs.lock() {
+            logs.push(LogMessage {
+                text: text.into(),
+                level,
+            });
+        }
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.is_converting.lock().map(|busy| *busy).unwrap_or(false)
     }
 
     pub fn get_output_path(&self, filename: &str) -> PathBuf {
@@ -74,6 +94,7 @@ impl UddConvApp {
 
         let cc_dir = self.settings.cc_dir.as_deref();
         let ec_dir = self.settings.ec_dir.as_deref();
+        let mut preview_error = None;
 
         match crate::logic::preview::load_raw_asset(cc_dir, ec_dir, preview.target, preview.id) {
             Ok(raw) => {
@@ -101,12 +122,15 @@ impl UddConvApp {
                 ));
             }
             Err(e) => {
-                eprintln!("Preview error: {}", e);
                 preview.texture = None;
                 preview.upscaled_texture = None;
+                preview_error = Some(format!("Preview error: {}", e));
             }
         }
 
         preview.is_dirty = false;
+        if let Some(error) = preview_error {
+            self.push_log(error, LogLevel::Error);
+        }
     }
 }
