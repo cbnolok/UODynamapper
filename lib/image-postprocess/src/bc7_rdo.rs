@@ -201,6 +201,9 @@ pub fn reduce_entropy_bc7(
                 } else {
                     // Fixed-offset search: src_ofs == dst_ofs
                     let dist = (block_index - prev_block_index) * 16;
+                    let normal_match_bits = compute_match_cost_estimate(dist as u32, len as u32) as f32;
+                    let normal_trial_bits_times_lambda =
+                        ((16 - len) as f32 * LITERAL_BITS + normal_match_bits) * params.lambda;
 
                     for ofs in 0..=(16 - len) {
                         let src_win_ofs = (prev_block_index * 16 + ofs) as i64;
@@ -217,6 +220,9 @@ pub fn reduce_entropy_bc7(
                                 let tb = (16 - len) as f32 * LITERAL_BITS + MATCH_REP0_BITS;
                                 (MATCH_REP0_BITS, tb * params.lambda)
                             } else {
+                                if normal_trial_bits_times_lambda >= best_t {
+                                    continue;
+                                }
                                 // Normal match: deduplicate via hash before decoding
                                 let hs = hash_hsieh(&prev_blk[ofs..ofs + len], ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
@@ -224,9 +230,7 @@ pub fn reduce_entropy_bc7(
                                     && (hash_check >> 8) == (hs >> 8) { continue; }
                                 hash_table[hs as usize & hash_mask] =
                                     (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
-                                let mb = compute_match_cost_estimate(dist as u32, len as u32) as f32;
-                                let tb = (16 - len) as f32 * LITERAL_BITS + mb;
-                                (mb, tb * params.lambda)
+                                (normal_match_bits, normal_trial_bits_times_lambda)
                             };
                         if trial_bits_times_lambda >= best_t {
                             continue;
@@ -259,12 +263,8 @@ pub fn reduce_entropy_bc7(
 
         // Try a second non-overlapping match — only attempted when the first was accepted (best_t < cur_t)
         if params.try_two_matches && best_t < cur_t && best_match_len > 0 && best_match_len <= (16 - 3) {
-            let mut matched_flags = [false; 16];
-            for i in 0..best_match_len {
-                matched_flags[best_match_dst_block_ofs + i] = true;
-            }
-
             let orig_best_block = best_block;
+            let best_match_end = best_match_dst_block_ofs + best_match_len;
 
             for prev_block_index in (first_block_to_check..block_index).rev() {
                 let prev_blk = blocks[prev_block_index];
@@ -281,14 +281,9 @@ pub fn reduce_entropy_bc7(
                     }
 
                     for ofs in 0..=(16 - len) {
-                        let mut overlap = false;
-                        for i in 0..len {
-                            if matched_flags[ofs + i] {
-                                overlap = true;
-                                break;
-                            }
+                        if ofs < best_match_end && ofs + len > best_match_dst_block_ofs {
+                            continue;
                         }
-                        if overlap { continue; }
 
                         let mut trial_blk = orig_best_block;
                         trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
