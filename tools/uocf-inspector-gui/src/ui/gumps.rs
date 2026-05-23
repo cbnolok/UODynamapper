@@ -458,6 +458,13 @@ fn ec_gump_path(gump_id: u32, extension: &str) -> String {
     format!("data/interface/default/textures/gumpart/{gump_id:08}.{extension}")
 }
 
+fn ec_gump_candidates(gump_id: u32) -> [(String, ECImageFormat); 2] {
+    [
+        (ec_gump_path(gump_id, "tga"), ECImageFormat::TGA),
+        (ec_gump_path(gump_id, "dds"), ECImageFormat::DDS),
+    ]
+}
+
 fn cc_gump_paths(gump_id: u32) -> [String; 2] {
     [
         format!("build/gumpartlegacymul/{gump_id:08}.tga"),
@@ -503,8 +510,26 @@ fn ui_hue_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         }
     });
 
+    let hue_count = hues.len().min(u16::MAX as usize);
+    let page_count = hue_swatch_page_count(hue_count);
+    let mut page = hue_swatch_page_for_id(app.selected_hue_id, hue_count);
+    ui.horizontal(|ui| {
+        if ui.add_enabled(page > 0, egui::Button::new("Prev")).clicked() {
+            page -= 1;
+            app.selected_hue_id = hue_swatch_page_first_id(page);
+        }
+        ui.label(format!("Swatches {} / {}", page + 1, page_count.max(1)));
+        if ui
+            .add_enabled(page + 1 < page_count, egui::Button::new("Next"))
+            .clicked()
+        {
+            page += 1;
+            app.selected_hue_id = hue_swatch_page_first_id(page);
+        }
+    });
+
     ui.horizontal_wrapped(|ui| {
-        for hue in hues.iter().take(HUE_SWATCH_COUNT) {
+        for hue in hues.iter().skip(page * HUE_SWATCH_COUNT).take(HUE_SWATCH_COUNT) {
             let color = hue_swatch_color(hue);
             let selected = app.selected_hue_id == hue.id as u16;
             let text = if selected { format!("[{}]", hue.id) } else { hue.id.to_string() };
@@ -514,6 +539,24 @@ fn ui_hue_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+fn hue_swatch_page_count(hue_count: usize) -> usize {
+    hue_count.saturating_add(HUE_SWATCH_COUNT - 1) / HUE_SWATCH_COUNT
+}
+
+fn hue_swatch_page_for_id(hue_id: u16, hue_count: usize) -> usize {
+    let page_count = hue_swatch_page_count(hue_count);
+    if page_count == 0 || hue_id == 0 {
+        return 0;
+    }
+
+    let hue_index = hue_id.saturating_sub(1) as usize;
+    (hue_index / HUE_SWATCH_COUNT).min(page_count - 1)
+}
+
+fn hue_swatch_page_first_id(page: usize) -> u16 {
+    (page * HUE_SWATCH_COUNT + 1).min(u16::MAX as usize) as u16
 }
 
 fn hue_name(hue: &uocf::classic::hues::HueEntry) -> String {
@@ -532,10 +575,11 @@ fn hue_swatch_color(hue: &uocf::classic::hues::HueEntry) -> egui::Color32 {
 }
 
 fn select_or_load_ec_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool {
-    let path = ec_gump_path(gump_id, "tga");
-    let hash = hash_file_name_single(&path);
-    if app.select_raw_uop_entry("interface.uop", hash) {
-        return true;
+    for (path, _) in ec_gump_candidates(gump_id) {
+        let hash = hash_file_name_single(&path);
+        if app.select_raw_uop_entry("interface.uop", hash) {
+            return true;
+        }
     }
 
     let Some(ec_path) = app.settings.ec_path.clone() else {
@@ -549,7 +593,13 @@ fn select_or_load_ec_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool
     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
         Ok(package) => {
             app.uop_cache.add(uop_path, package);
-            app.select_raw_uop_entry("interface.uop", hash)
+            for (path, _) in ec_gump_candidates(gump_id) {
+                let hash = hash_file_name_single(&path);
+                if app.select_raw_uop_entry("interface.uop", hash) {
+                    return true;
+                }
+            }
+            false
         }
         Err(error) => {
             app.status_message = format!("Failed to open interface.uop lazily: {error}");
@@ -768,17 +818,7 @@ fn decode_ec_gump_rgba(
             continue;
         }
 
-        let candidates = [
-            (
-                format!("data/interface/default/textures/gumpart/{:08}.tga", gump_id),
-                ECImageFormat::TGA,
-            ),
-            (
-                format!("data/interface/default/textures/gumpart/{:08}.dds", gump_id),
-                ECImageFormat::DDS,
-            ),
-        ];
-        for (path, format) in candidates {
+        for (path, format) in ec_gump_candidates(gump_id) {
             let hash = hash_file_name_single(&path);
             if loaded.package.get_file_by_hash(hash).is_some() {
                 let data: Arc<[u8]> = loaded.package.unpack_file_by_hash(hash)?
@@ -904,6 +944,37 @@ mod tests {
     }
 
     #[test]
+    fn ec_gump_candidates_cover_tga_and_dds() {
+        let candidates = ec_gump_candidates(9504);
+
+        assert_eq!(
+            candidates[0],
+            (
+                "data/interface/default/textures/gumpart/00009504.tga".to_string(),
+                ECImageFormat::TGA,
+            )
+        );
+        assert_eq!(
+            candidates[1],
+            (
+                "data/interface/default/textures/gumpart/00009504.dds".to_string(),
+                ECImageFormat::DDS,
+            )
+        );
+    }
+
+    #[test]
+    fn cc_gump_paths_cover_eight_and_seven_digit_uop_names() {
+        assert_eq!(
+            cc_gump_paths(9504),
+            [
+                "build/gumpartlegacymul/00009504.tga".to_string(),
+                "build/gumpartlegacymul/0009504.tga".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn paperdoll_profiles_load_from_kdl() {
         let profiles = paperdoll_profiles();
         let male = profile_by_id(profiles, "human_male");
@@ -920,6 +991,18 @@ mod tests {
         assert_eq!(slot_label("head"), "Head (6)");
         assert_eq!(slot_label("outer_torso"), "Outer Torso (25)");
         assert_eq!(slot_label(""), "Any");
+    }
+
+    #[test]
+    fn hue_swatch_pages_follow_selected_hue() {
+        assert_eq!(hue_swatch_page_count(0), 0);
+        assert_eq!(hue_swatch_page_count(33), 2);
+        assert_eq!(hue_swatch_page_for_id(0, 100), 0);
+        assert_eq!(hue_swatch_page_for_id(1, 100), 0);
+        assert_eq!(hue_swatch_page_for_id(32, 100), 0);
+        assert_eq!(hue_swatch_page_for_id(33, 100), 1);
+        assert_eq!(hue_swatch_page_for_id(500, 100), 3);
+        assert_eq!(hue_swatch_page_first_id(2), 65);
     }
 
     #[test]
