@@ -35,6 +35,8 @@
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
+  ec_material_has_liquid_normal,
+  ec_liquid_perturbed_base_uv,
   sample_tile_albedo,
   sample_ec_material_albedo,
   sample_ec_material_albedo_at_world,
@@ -108,11 +110,7 @@ fn blend_ec_terrain_transitions(
   world_xz: vec2<f32>,
   uv_in_tile: vec2<f32>,
 ) -> vec3<f32> {
-  if (current_tile.texture_size != 2u || current_tile.is_wet == 1u) {
-    return base_color;
-  }
-
-  if ((current_tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u) {
+  if (current_tile.texture_size != 2u) {
     return base_color;
   }
 
@@ -294,7 +292,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // creating a gentle wavy appearance (faithful port of ClassicUO's formula).
   // Skipped at high zoom where individual tiles are sub-pixel (already gated above).
   let reviewed_liquid = (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
-  if (enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid)) {
+  let ec_liquid_normal = tile.texture_size == 2u && reviewed_liquid && ec_material_has_liquid_normal(tile);
+  if (enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && !ec_liquid_normal) {
     uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
   }
 
@@ -312,6 +311,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // uv_in_tile offset so water animation stays coherent with EC textures too.
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     sample_uv = ec_world_uv(world_xz, tile);
+    if (enable_water == 1u && ec_liquid_normal) {
+      sample_uv = ec_liquid_perturbed_base_uv(world_xz, sample_uv, tile, globals.time);
+    }
   }
 
   let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain

@@ -53,10 +53,11 @@ enum LandShaderAtlasSource<'a> {
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16_384;
-const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 3;
+const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
+const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
 
 fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAtlasImages {
     use bevy::render::render_resource::{
@@ -273,24 +274,18 @@ fn create_land_shader_images(
                 let layer0 = package.resolve_material_layer_slot(tile_id, 0);
                 let layer1 = package.resolve_material_layer_slot(tile_id, 1);
                 let layer2 = package.resolve_material_layer_slot(tile_id, 2);
-                let has_blend_layers = layer0
+                let layer3 = package.resolve_material_layer_slot(tile_id, 3);
+                let has_base_layer = layer0
                     .as_ref()
                     .and_then(|layer| layer.runtime_slot_id)
-                    .is_some()
-                    && layer1
-                        .as_ref()
-                        .and_then(|layer| layer.runtime_slot_id)
-                        .is_some()
-                    && layer2
-                        .as_ref()
-                        .and_then(|layer| layer.runtime_slot_id)
-                        .is_some();
+                    .is_some();
 
-                if has_blend_layers {
+                if has_base_layer {
                     for (role, layer) in [
                         (LAND_PAGE_LOOKUP_ROLE_BASE, layer0),
                         (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
                         (LAND_PAGE_LOOKUP_ROLE_MASK, layer2),
+                        (LAND_PAGE_LOOKUP_ROLE_NORMAL, layer3),
                     ] {
                         if let Some(layer) = layer {
                             if let Some(slot_id) = layer.runtime_slot_id {

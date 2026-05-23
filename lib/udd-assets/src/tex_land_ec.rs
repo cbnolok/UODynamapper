@@ -1090,6 +1090,8 @@ fn terrain_override_maps_from_entries(
         );
 
         for (layer_index, layer) in entry.layers.iter().enumerate() {
+            let semantic_layer_index =
+                terrain_override_role_layer_index(&layer.role).unwrap_or(layer_index as u32);
             texture_refs
                 .entry(material_id)
                 .or_default()
@@ -1097,7 +1099,7 @@ fn terrain_override_maps_from_entries(
                     material_id,
                     role: layer.role.clone(),
                     texture_id: layer.texture,
-                    layer_index: Some(layer_index as u32),
+                    layer_index: Some(semantic_layer_index),
                     texture_repetition: layer.stretch,
                 });
         }
@@ -1266,7 +1268,15 @@ fn parse_terrain_override_texture_refs_metadata(
                         material_id,
                         role,
                         texture_id,
-                        layer_index: Some(layer_index as u32),
+                        layer_index: Some(
+                            terrain_override_role_layer_index(
+                                layer
+                                    .get("role")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("layer"),
+                            )
+                            .unwrap_or(layer_index as u32),
+                        ),
                         texture_repetition: json_f32(layer, "stretch"),
                     });
             }
@@ -1340,7 +1350,18 @@ fn terrain_override_role_matches_layer(role: &str, layer_index: u32) -> bool {
         (0, "base" | "diffuse" | "albedo" | "t0")
             | (1, "detail" | "t1")
             | (2, "mask" | "alpha" | "t2")
+            | (3, "normal" | "normal_map" | "n")
     )
+}
+
+fn terrain_override_role_layer_index(role: &str) -> Option<u32> {
+    match role {
+        "base" | "diffuse" | "albedo" | "t0" => Some(0),
+        "detail" | "t1" => Some(1),
+        "mask" | "alpha" | "t2" => Some(2),
+        "normal" | "normal_map" | "n" => Some(3),
+        _ => None,
+    }
 }
 
 fn optional_texture_sort_key(value: u32, missing: u32) -> u32 {
@@ -1608,6 +1629,7 @@ mod tests {
 terrain 52 {
     policy "follow-center" code="reviewed_runtime_policy"
     layer "base" tex=2000510 stretch=7.0 code="reviewed_layer_texture"
+    layer "n" tex=2000520 stretch=12.0 code="reviewed_liquid_texture"
     texture 9999999 role="detail" code="missing_from_package"
 }
 "#,
@@ -1621,19 +1643,26 @@ terrain 52 {
         let layer = package
             .resolve_material_layer_slot(77, 0)
             .expect("loose layer override");
+        let normal_layer = package
+            .resolve_material_layer_slot(77, 3)
+            .expect("loose normal layer override");
         let override_slots = package.resolve_override_texture_slots(52);
 
         assert_eq!(summary.entry_count, 1);
-        assert_eq!(summary.action_count, 3);
-        assert_eq!(summary.texture_ref_count, 2);
-        assert_eq!(summary.resolved_texture_ref_count, 1);
+        assert_eq!(summary.action_count, 4);
+        assert_eq!(summary.texture_ref_count, 3);
+        assert_eq!(summary.resolved_texture_ref_count, 2);
         assert_eq!(summary.unresolved_texture_refs[0].texture_id, 9999999);
         assert_eq!(details.policies[0].policy, "follow-center");
         assert!(details.liquid.is_none());
         assert_eq!(layer.texture_id, 2000510);
         assert_eq!(layer.runtime_slot_id, Some(101));
         assert_eq!(layer.texture_repetition, 7.0);
+        assert_eq!(normal_layer.texture_id, 2000520);
+        assert_eq!(normal_layer.runtime_slot_id, Some(100));
+        assert_eq!(normal_layer.texture_repetition, 12.0);
         assert_eq!(override_slots[0].runtime_slot_id, Some(101));
-        assert_eq!(override_slots[1].runtime_slot_id, None);
+        assert_eq!(override_slots[1].runtime_slot_id, Some(100));
+        assert_eq!(override_slots[2].runtime_slot_id, None);
     }
 }

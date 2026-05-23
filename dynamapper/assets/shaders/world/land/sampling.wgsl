@@ -37,6 +37,8 @@ const CC_TILE_PX: f32 = 44.0;
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16384u;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
+const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;
+const TERRAIN_FLAG_FOLLOW_CENTER: u32 = 0x2u;
 
 struct LandLookupSlot {
   present: bool,
@@ -139,6 +141,26 @@ fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Tile
 
 fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform) -> vec3<f32> {
   return sample_ec_material_albedo(world_xz, ec_world_uv(world_xz, tile), tile);
+}
+
+fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
+  return read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL).present;
+}
+
+fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, time_seconds: f32) -> vec2<f32> {
+  let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
+  if (!normal.present) {
+    return base_uv;
+  }
+
+  let follow_center = (tile.terrain_flags & TERRAIN_FLAG_FOLLOW_CENTER) != 0u;
+  let wind_force = select(0.01, 0.1, follow_center);
+  let wave_height = select(0.24, 0.30, follow_center);
+  let moving_world_xz = vec2<f32>(world_xz.x, world_xz.y - time_seconds * wind_force * 10.0);
+  let normal_uv = ec_slot_world_uv(moving_world_xz, normal);
+  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal);
+  let perturbation = wave_height * (normal_sample.rg - vec2<f32>(0.5)) * 2.0;
+  return fract(base_uv + perturbation);
 }
 
 // ============================================================================
