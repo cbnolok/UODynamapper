@@ -204,10 +204,11 @@ pub fn reduce_entropy_bc7(
                     break;
                 }
                 let prev_blk = blocks[prev_block_index];
+                let dist = (block_index - prev_block_index) * 16;
+                let normal_dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
                 for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
-                    let dist = (block_index - prev_block_index) * 16;
-                    let normal_match_bits = compute_match_cost_estimate(dist as u32, len as u32) as f32;
+                    let normal_match_bits = normal_dist_bits + compute_match_len_cost(len as u32) as f32;
                     let normal_trial_bits_times_lambda =
                         ((16 - len) as f32 * LITERAL_BITS + normal_match_bits) * params.lambda;
 
@@ -279,8 +280,12 @@ pub fn reduce_entropy_bc7(
                 let prev_blk = blocks[prev_block_index];
 
                 let dist = (block_index - prev_block_index) * 16;
+                let dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
                 for len in 3..=(16 - best_match_len) {
-                    let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS + compute_match_cost_estimate(dist as u32, len as u32) as f32 + best_match_bits;
+                    let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS
+                        + dist_bits
+                        + compute_match_len_cost(len as u32) as f32
+                        + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
                     if trial_bits_times_lambda >= best_t {
                         continue;
@@ -520,7 +525,12 @@ fn compute_block_max_std_dev(pixels: &[[u8; 4]]) -> f32 {
 }
 
 fn compute_match_cost_estimate(dist: u32, match_len: u32) -> u32 {
-    let len_cost = if match_len >= 12 {
+    compute_match_len_cost(match_len) + compute_dist_cost_estimate(dist)
+}
+
+#[inline(always)]
+fn compute_match_len_cost(match_len: u32) -> u32 {
+    if match_len >= 12 {
         9
     } else if match_len >= 8 {
         8
@@ -528,8 +538,11 @@ fn compute_match_cost_estimate(dist: u32, match_len: u32) -> u32 {
         7
     } else {
         6
-    };
+    }
+}
 
+#[inline(always)]
+fn compute_dist_cost_estimate(dist: u32) -> u32 {
     let mut dist_cost = 5;
     if dist < 512 {
         dist_cost += SMALL_DIST_EXTRA[dist as usize & 511] as u32;
@@ -541,7 +554,7 @@ fn compute_match_cost_estimate(dist: u32, match_len: u32) -> u32 {
             d >>= 1;
         }
     }
-    len_cost + dist_cost
+    dist_cost
 }
 
 const SMALL_DIST_EXTRA: [u8; 512] = [
