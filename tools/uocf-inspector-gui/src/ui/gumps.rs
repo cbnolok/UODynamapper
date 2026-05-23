@@ -1,13 +1,18 @@
 use crate::app::{GumpSource, PaperdollEquipmentInput, UopInspectorApp};
 use eframe::egui;
+use knuffel::Decode;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
 
-#[derive(Clone, Copy)]
+const PAPERDOLL_PROFILE_KDL: &str =
+    include_str!("../../../../dynamapper/assets/cc_ec_convtables/PaperdollProfiles.kdl");
+
+#[derive(Clone)]
 struct PaperdollProfile {
-    id: &'static str,
-    label: &'static str,
+    id: String,
+    label: String,
     equipment_offset: u32,
     canvas_width: u32,
     canvas_height: u32,
@@ -17,33 +22,28 @@ struct PaperdollProfile {
     equipment_y: i32,
 }
 
-const PAPERDOLL_PROFILES: &[PaperdollProfile] = &[
-    PaperdollProfile::new("human_male", "Human Male", 50_000, 260, 300),
-    PaperdollProfile::new("human_female", "Human Female", 60_000, 260, 300),
-    PaperdollProfile::new("elf_male", "Elf Male", 50_000, 260, 300),
-    PaperdollProfile::new("elf_female", "Elf Female", 60_000, 260, 300),
-    PaperdollProfile::new("gargoyle_male", "Gargoyle Male", 50_000, 300, 340),
-    PaperdollProfile::new("gargoyle_female", "Gargoyle Female", 60_000, 300, 340),
-];
-
 impl PaperdollProfile {
-    const fn new(
-        id: &'static str,
-        label: &'static str,
+    fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
         equipment_offset: u32,
         canvas_width: u32,
         canvas_height: u32,
+        body_x: i32,
+        body_y: i32,
+        equipment_x: i32,
+        equipment_y: i32,
     ) -> Self {
         Self {
-            id,
-            label,
+            id: id.into(),
+            label: label.into(),
             equipment_offset,
             canvas_width,
             canvas_height,
-            body_x: 0,
-            body_y: 0,
-            equipment_x: 0,
-            equipment_y: 0,
+            body_x,
+            body_y,
+            equipment_x,
+            equipment_y,
         }
     }
 }
@@ -57,8 +57,54 @@ struct PaperdollLayer {
     y: i32,
 }
 
+#[derive(Decode)]
+struct PaperdollProfilesKdl {
+    #[knuffel(children(name = "profile"))]
+    profiles: Vec<PaperdollProfileKdl>,
+}
+
+#[derive(Decode)]
+struct PaperdollProfileKdl {
+    #[knuffel(argument)]
+    id: String,
+    #[knuffel(property)]
+    label: Option<String>,
+    #[knuffel(property(name = "equipment_offset"))]
+    equipment_offset: u32,
+    #[knuffel(property(name = "canvas_width"))]
+    canvas_width: Option<u32>,
+    #[knuffel(property(name = "canvas_height"))]
+    canvas_height: Option<u32>,
+    #[knuffel(property(name = "body_x"))]
+    body_x: Option<i32>,
+    #[knuffel(property(name = "body_y"))]
+    body_y: Option<i32>,
+    #[knuffel(property(name = "equipment_x"))]
+    equipment_x: Option<i32>,
+    #[knuffel(property(name = "equipment_y"))]
+    equipment_y: Option<i32>,
+}
+
+impl From<PaperdollProfileKdl> for PaperdollProfile {
+    fn from(value: PaperdollProfileKdl) -> Self {
+        Self {
+            label: value.label.unwrap_or_else(|| value.id.clone()),
+            id: value.id,
+            equipment_offset: value.equipment_offset,
+            canvas_width: value.canvas_width.unwrap_or(0),
+            canvas_height: value.canvas_height.unwrap_or(0),
+            body_x: value.body_x.unwrap_or(0),
+            body_y: value.body_y.unwrap_or(0),
+            equipment_x: value.equipment_x.unwrap_or(0),
+            equipment_y: value.equipment_y.unwrap_or(0),
+        }
+    }
+}
+
 pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::CentralPanel::default().show(ctx, |ui| {
+        let profiles = paperdoll_profiles();
+
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.selected_gump_source, GumpSource::Classic, "CC");
             ui.selectable_value(&mut app.selected_gump_source, GumpSource::Enhanced, "EC");
@@ -73,6 +119,32 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
         match parse_u32_field(&app.selected_gump_id) {
             Ok(gump_id) => {
+                ui.monospace(gump_source_detail(app.selected_gump_source, gump_id));
+                ui.horizontal(|ui| {
+                    if app.selected_gump_source == GumpSource::Enhanced
+                        && ui.button("Open raw entry").clicked()
+                    {
+                        let path = ec_gump_path(gump_id, "tga");
+                        let hash = hash_file_name_single(&path);
+                        if !app.select_raw_uop_entry("interface.uop", hash) {
+                            app.status_message = "interface.uop entry was not loaded.".to_string();
+                        }
+                    }
+                    if app.selected_gump_source == GumpSource::Classic
+                        && ui.button("Open CC UOP entry").clicked()
+                    {
+                        let selected = cc_gump_paths(gump_id)
+                            .iter()
+                            .any(|path| app.select_raw_uop_entry(
+                                "gumpartLegacyMUL.uop",
+                                hash_file_name_single(path),
+                            ));
+                        if !selected {
+                            app.status_message =
+                                "No matching gumpartLegacyMUL.uop entry was loaded.".to_string();
+                        }
+                    }
+                });
                 if let Some(handle) = app.get_gump_texture(ctx, app.selected_gump_source, gump_id) {
                     ui.label(format!("{}x{}", handle.size()[0], handle.size()[1]));
                     egui::ScrollArea::both()
@@ -94,16 +166,27 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
         ui.separator();
         ui.heading("Paperdoll");
         egui::ComboBox::from_label("Profile")
-            .selected_text(profile_by_id(&app.selected_paperdoll_profile).label)
+            .selected_text(profile_by_id(profiles, &app.selected_paperdoll_profile).label.as_str())
             .show_ui(ui, |ui| {
-                for profile in PAPERDOLL_PROFILES {
+                for profile in profiles {
                     ui.selectable_value(
                         &mut app.selected_paperdoll_profile,
-                        profile.id.to_string(),
-                        profile.label,
+                        profile.id.clone(),
+                        profile.label.as_str(),
                     );
                 }
             });
+        let selected_profile = profile_by_id(profiles, &app.selected_paperdoll_profile);
+        ui.monospace(format!(
+            "equipment_offset={} canvas={}x{} body=({}, {}) equipment=({}, {})",
+            selected_profile.equipment_offset,
+            selected_profile.canvas_width,
+            selected_profile.canvas_height,
+            selected_profile.body_x,
+            selected_profile.body_y,
+            selected_profile.equipment_x,
+            selected_profile.equipment_y,
+        ));
 
         ui.horizontal(|ui| {
             ui.label("Body:");
@@ -113,16 +196,23 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
 
         egui::Grid::new("uocf_inspector_paperdoll_equipment")
-            .num_columns(3)
+            .num_columns(4)
             .spacing([8.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Item ID");
                 ui.label("Hue");
+                ui.label("Derived");
                 ui.end_row();
 
+                let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
                 for row in &mut app.paperdoll_equipment {
                     ui.text_edit_singleline(&mut row.item_id);
                     ui.text_edit_singleline(&mut row.hue);
+                    ui.monospace(equipment_detail(
+                        tiledata.as_deref(),
+                        selected_profile,
+                        row.item_id.as_str(),
+                    ));
                     ui.end_row();
                 }
             });
@@ -155,12 +245,96 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn profile_by_id(id: &str) -> PaperdollProfile {
-    PAPERDOLL_PROFILES
+fn paperdoll_profiles() -> &'static [PaperdollProfile] {
+    static PROFILES: OnceLock<Vec<PaperdollProfile>> = OnceLock::new();
+    PROFILES.get_or_init(|| {
+        knuffel::parse::<PaperdollProfilesKdl>("PaperdollProfiles.kdl", PAPERDOLL_PROFILE_KDL)
+            .ok()
+            .map(|decoded| {
+                decoded
+                    .profiles
+                    .into_iter()
+                    .map(PaperdollProfile::from)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|profiles| !profiles.is_empty())
+            .unwrap_or_else(default_profiles)
+    })
+}
+
+fn default_profiles() -> Vec<PaperdollProfile> {
+    vec![
+        PaperdollProfile::new("human_male", "Human Male", 50_000, 260, 300, 0, 0, 0, 0),
+        PaperdollProfile::new("human_female", "Human Female", 60_000, 260, 300, 0, 0, 0, 0),
+        PaperdollProfile::new("elf_male", "Elf Male", 50_000, 260, 300, 0, 0, 0, 0),
+        PaperdollProfile::new("elf_female", "Elf Female", 60_000, 260, 300, 0, 0, 0, 0),
+        PaperdollProfile::new("gargoyle_male", "Gargoyle Male", 50_000, 300, 340, 0, 0, 0, 0),
+        PaperdollProfile::new("gargoyle_female", "Gargoyle Female", 60_000, 300, 340, 0, 0, 0, 0),
+    ]
+}
+
+fn profile_by_id<'a>(profiles: &'a [PaperdollProfile], id: &str) -> &'a PaperdollProfile {
+    profiles
         .iter()
-        .copied()
         .find(|profile| profile.id == id)
-        .unwrap_or(PAPERDOLL_PROFILES[0])
+        .unwrap_or(&profiles[0])
+}
+
+fn ec_gump_path(gump_id: u32, extension: &str) -> String {
+    format!("data/interface/default/textures/gumpart/{gump_id:08}.{extension}")
+}
+
+fn cc_gump_paths(gump_id: u32) -> [String; 2] {
+    [
+        format!("build/gumpartlegacymul/{gump_id:08}.tga"),
+        format!("build/gumpartlegacymul/{gump_id:07}.tga"),
+    ]
+}
+
+fn gump_source_detail(source: GumpSource, gump_id: u32) -> String {
+    match source {
+        GumpSource::Classic => {
+            let paths = cc_gump_paths(gump_id);
+            format!(
+                "CC source: gumpidx.mul/gumpart.mul or gumpartLegacyMUL.uop candidates {} / {}",
+                paths[0], paths[1]
+            )
+        }
+        GumpSource::Enhanced => {
+            let path = ec_gump_path(gump_id, "tga");
+            let hash = hash_file_name_single(&path);
+            format!("EC source: interface.uop {path} hash={hash:016X}")
+        }
+    }
+}
+
+fn equipment_detail(
+    tiledata: Option<&uocf::classic::tiledata::TileData>,
+    profile: &PaperdollProfile,
+    item_id: &str,
+) -> String {
+    if item_id.trim().is_empty() {
+        return String::new();
+    }
+
+    let Ok(item_id) = parse_u32_field(item_id) else {
+        return "invalid item id".to_string();
+    };
+    let Some(item) = tiledata.and_then(|tiledata| tiledata.item_tiles().get(item_id as usize)) else {
+        return "unknown item".to_string();
+    };
+    if item.anim_id == 0 {
+        return format!("{} anim_id=0", item.name_ascii());
+    }
+
+    format!(
+        "{} anim_id={} gump={} layer={} partial_hue={}",
+        item.name_ascii(),
+        item.anim_id,
+        item.anim_id as u32 + profile.equipment_offset,
+        item.quality,
+        item.flags.partialhue(),
+    )
 }
 
 fn render_paperdoll(
@@ -168,7 +342,7 @@ fn render_paperdoll(
     ctx: &egui::Context,
 ) -> color_eyre::eyre::Result<egui::TextureHandle> {
     let body_id = parse_u32_field(&app.paperdoll_body_id)?;
-    let profile = profile_by_id(&app.selected_paperdoll_profile);
+    let profile = profile_by_id(paperdoll_profiles(), &app.selected_paperdoll_profile);
     let mut layers = vec![PaperdollLayer {
         gump_id: body_id,
         hue_id: parse_optional_hue(&app.paperdoll_body_hue),
@@ -218,7 +392,7 @@ fn render_paperdoll(
 
 fn compose_paperdoll(
     app: &UopInspectorApp,
-    profile: PaperdollProfile,
+    profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
     let mut decoded_layers = Vec::with_capacity(layers.len());
@@ -412,4 +586,35 @@ fn parse_u32_field(text: &str) -> Result<u32, std::num::ParseIntError> {
 
 fn parse_optional_hue(text: &str) -> u16 {
     parse_u32_field(text).unwrap_or(0).min(u16::MAX as u32) as u16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ec_gump_path_uses_interface_gumpart_folder() {
+        assert_eq!(
+            ec_gump_path(9504, "tga"),
+            "data/interface/default/textures/gumpart/00009504.tga"
+        );
+    }
+
+    #[test]
+    fn paperdoll_profiles_load_from_kdl() {
+        let profiles = paperdoll_profiles();
+        let male = profile_by_id(profiles, "human_male");
+        let gargoyle = profile_by_id(profiles, "gargoyle_female");
+
+        assert_eq!(male.equipment_offset, 50_000);
+        assert_eq!(male.canvas_width, 260);
+        assert_eq!(gargoyle.equipment_offset, 60_000);
+        assert_eq!(gargoyle.canvas_height, 340);
+    }
+
+    #[test]
+    fn parse_u32_field_accepts_hex_and_decimal() {
+        assert_eq!(parse_u32_field("9504").unwrap(), 9504);
+        assert_eq!(parse_u32_field("0x2520").unwrap(), 9504);
+    }
 }

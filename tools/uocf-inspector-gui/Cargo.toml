@@ -16,6 +16,7 @@ rodio = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.5"
 color-eyre = "0.6"
+knuffel = "3"
 
 [dev-dependencies]
 udd-conv = { path = "../../lib/udd-conv" }
