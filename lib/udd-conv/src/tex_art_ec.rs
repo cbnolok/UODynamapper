@@ -29,7 +29,7 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
 use crate::bc7::{
-    encode_for_vram, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
+    encode_for_vram_with_bc7_rdo_lambda, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
@@ -74,6 +74,7 @@ pub struct TexArtEcAtlasOptions {
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
+    pub bc7_rdo_lambda: f32,
 }
 
 impl Default for TexArtEcAtlasOptions {
@@ -88,6 +89,7 @@ impl Default for TexArtEcAtlasOptions {
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
+            bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         }
     }
 }
@@ -350,7 +352,13 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram(&page.pixels, extent, RawImageFormat::Rgba8888, encoding)
+                    encode_for_vram_with_bc7_rdo_lambda(
+                        &page.pixels,
+                        extent,
+                        RawImageFormat::Rgba8888,
+                        encoding,
+                        options.bc7_rdo_lambda,
+                    )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
                         })?
@@ -1380,6 +1388,7 @@ pub fn encode_slot_manifest(
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
+            bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         },
     )
 }
@@ -1422,6 +1431,7 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,
+            bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(7, 3, 3)], &options).unwrap();

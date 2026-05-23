@@ -37,6 +37,7 @@ fn sparse_slots_keep_absent_records() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 4, 4),
@@ -80,6 +81,7 @@ fn packer_spills_to_multiple_pages() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 4, 4),
@@ -107,6 +109,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 6, 6),
@@ -135,6 +138,7 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
 
@@ -161,6 +165,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Static, 4, 4)];
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
@@ -230,6 +235,7 @@ fn alias_slots_reuse_canonical_page_location() {
         pixel_format: PagePixelFormat::Rgba8888,
         packing_mode: AtlasPackingMode::MaximumPacking,
         filtering_ready: false,
+            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];
 

@@ -76,6 +76,7 @@ impl UddConvApp {
                         "Classic Art",
                         "Classic items and land textures (art.mul)",
                         Some(&mut self.settings.opt_tex_art_cc),
+                        Some(&mut self.settings.bc7_rdo_lambda),
                         Some(&mut self.settings.packing_tex_art_cc),
                         Some(&mut self.settings.filtering_ready_tex_art_cc),
                         Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
@@ -89,6 +90,7 @@ impl UddConvApp {
                         "Classic Texmaps",
                         "Classic high-res terrain textures (texmaps.mul)",
                         Some(&mut self.settings.opt_tex_land_cc),
+                        Some(&mut self.settings.bc7_rdo_lambda),
                         Some(&mut self.settings.packing_tex_land_cc),
                         Some(&mut self.settings.filtering_ready_tex_land_cc),
                         None,
@@ -114,6 +116,7 @@ impl UddConvApp {
                         "Enhanced Art",
                         "Enhanced Client static items (worldart)",
                         Some(&mut self.settings.opt_tex_art_ec),
+                        Some(&mut self.settings.bc7_rdo_lambda),
                         Some(&mut self.settings.packing_tex_art_ec),
                         Some(&mut self.settings.filtering_ready_tex_art_ec),
                         Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
@@ -127,6 +130,7 @@ impl UddConvApp {
                         "Enhanced Land",
                         "Enhanced Client high-res terrain textures",
                         Some(&mut self.settings.opt_tex_land_ec),
+                        Some(&mut self.settings.bc7_rdo_lambda),
                         Some(&mut self.settings.packing_tex_land_ec),
                         Some(&mut self.settings.filtering_ready_tex_land_ec),
                         None,
@@ -151,6 +155,7 @@ impl UddConvApp {
                     None,
                     None,
                     None,
+                    None,
                     vec![],
                 ).0 {
                     self.convert_tilemeta();
@@ -165,6 +170,7 @@ fn draw_asset_card(
     title: &str,
     desc: &str,
     opt: Option<&mut TextureOptimization>,
+    bc7_rdo_lambda: Option<&mut f32>,
     packing_mode: Option<&mut AtlasPackingModeSetting>,
     filtering_ready: Option<&mut bool>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
@@ -205,7 +211,7 @@ fn draw_asset_card(
                     });
                 });
 
-                if opt.is_some() || filtering_ready.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
+                if opt.is_some() || bc7_rdo_lambda.is_some() || filtering_ready.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
                     ui.add_space(4.0);
                     ui.separator();
                     ui.add_space(4.0);
@@ -214,6 +220,7 @@ fn draw_asset_card(
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
 
                         if let Some(opt_val) = opt {
+                            let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new("Output Format:").size(12.5).weak());
                                 let current_fmt = match opt_val {
@@ -260,6 +267,20 @@ fn draw_asset_card(
                                     });
                             });
                             ui.add_space(25.0);
+
+                            if show_bc7_settings {
+                                if let Some(lambda) = bc7_rdo_lambda {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("RDO Lambda:").size(12.5).weak());
+                                        ui.add(
+                                            egui::DragValue::new(lambda)
+                                                .speed(0.01)
+                                                .range(0.0..=1.0),
+                                        );
+                                    });
+                                    ui.add_space(25.0);
+                                }
+                            }
                         }
 
                         if let Some(mode_val) = packing_mode {

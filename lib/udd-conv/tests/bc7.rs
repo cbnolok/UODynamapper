@@ -59,13 +59,29 @@ fn vram_texture_container_roundtrip_preserves_bc7_metadata() {
 }
 
 #[test]
+fn analytical_bc7_with_rdo_lambda_preserves_block_layout() {
+    let extent = ImageExtent::new(8, 4).unwrap();
+    let rgba = vec![128u8; extent.byte_len(RawImageFormat::Rgba8888)];
+    let bc7 = encode_to_bc7_with_rdo_lambda(
+        &rgba,
+        extent,
+        RawImageFormat::Rgba8888,
+        Bc7EncoderBackend::Analytical,
+        DEFAULT_BC7_RDO_LAMBDA,
+    )
+    .unwrap();
+
+    assert_eq!(bc7.blocks().len(), expected_bc7_byte_len(extent));
+}
+
+#[test]
 fn unavailable_backends_resolve_to_a_supported_backend_when_possible() {
     assert_eq!(
         resolve_bc7_encoder_backend(Bc7EncoderBackend::BlockCompression),
         if cfg!(feature = "block_compression") {
             Bc7EncoderBackend::BlockCompression
-        } else if Bc7EncoderBackend::Dds.is_available() {
-            Bc7EncoderBackend::Dds
+        } else if Bc7EncoderBackend::Analytical.is_available() {
+            Bc7EncoderBackend::Analytical
         } else if cfg!(feature = "ispc") {
             Bc7EncoderBackend::Ispc
         } else {
@@ -76,8 +92,8 @@ fn unavailable_backends_resolve_to_a_supported_backend_when_possible() {
         resolve_bc7_encoder_backend(Bc7EncoderBackend::Ispc),
         if cfg!(feature = "ispc") {
             Bc7EncoderBackend::Ispc
-        } else if Bc7EncoderBackend::Dds.is_available() {
-            Bc7EncoderBackend::Dds
+        } else if Bc7EncoderBackend::Analytical.is_available() {
+            Bc7EncoderBackend::Analytical
         } else if cfg!(feature = "block_compression") {
             Bc7EncoderBackend::BlockCompression
         } else {

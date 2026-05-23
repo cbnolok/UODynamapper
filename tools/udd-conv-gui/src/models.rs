@@ -30,6 +30,8 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
+    #[serde(default = "default_bc7_rdo_lambda")]
+    pub bc7_rdo_lambda: f32,
     pub packing_tex_art_cc: AtlasPackingModeSetting,
     pub packing_tex_land_cc: AtlasPackingModeSetting,
     pub packing_tex_art_ec: AtlasPackingModeSetting,
@@ -73,6 +75,7 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
+            bc7_rdo_lambda: default_bc7_rdo_lambda(),
             packing_tex_art_cc: AtlasPackingModeSetting::MaximumPacking,
             packing_tex_land_cc: AtlasPackingModeSetting::MaximumPacking,
             packing_tex_art_ec: AtlasPackingModeSetting::MaximumPacking,
@@ -97,6 +100,10 @@ impl Default for AppSettings {
             include_static_difs: false,
         }
     }
+}
+
+fn default_bc7_rdo_lambda() -> f32 {
+    udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA
 }
 
 pub struct LogMessage {

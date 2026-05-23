@@ -22,6 +22,7 @@ pub trait Bc7EncoderBackendExt {
 impl Bc7EncoderBackendExt for Bc7EncoderBackend {
     fn is_available(self) -> bool {
         match self {
+            Self::Analytical => true,
             Self::Dds => true,
             Self::BlockCompression => cfg!(feature = "block_compression"),
             Self::Ispc => cfg!(feature = "ispc"),
@@ -30,6 +31,7 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
 
     fn unavailable_reason(self) -> Option<&'static str> {
         match self {
+            Self::Analytical => None,
             Self::Dds => None,
             Self::BlockCompression if cfg!(feature = "block_compression") => None,
             Self::BlockCompression => Some(
@@ -52,9 +54,12 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
         backend
     } else {
         match backend {
+            Bc7EncoderBackend::Analytical => backend,
             Bc7EncoderBackend::Dds => backend,
             Bc7EncoderBackend::BlockCompression => {
-                if Bc7EncoderBackend::Dds.is_available() {
+                if Bc7EncoderBackend::Analytical.is_available() {
+                    Bc7EncoderBackend::Analytical
+                } else if Bc7EncoderBackend::Dds.is_available() {
                     Bc7EncoderBackend::Dds
                 } else if Bc7EncoderBackend::Ispc.is_available() {
                     Bc7EncoderBackend::Ispc
@@ -63,7 +68,9 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
                 }
             }
             Bc7EncoderBackend::Ispc => {
-                if Bc7EncoderBackend::Dds.is_available() {
+                if Bc7EncoderBackend::Analytical.is_available() {
+                    Bc7EncoderBackend::Analytical
+                } else if Bc7EncoderBackend::Dds.is_available() {
                     Bc7EncoderBackend::Dds
                 } else if Bc7EncoderBackend::BlockCompression.is_available() {
                     Bc7EncoderBackend::BlockCompression
@@ -76,14 +83,10 @@ pub fn resolve_bc7_encoder_backend(backend: Bc7EncoderBackend) -> Bc7EncoderBack
 }
 
 pub const fn preferred_bc7_encoder_backend() -> Bc7EncoderBackend {
-    if cfg!(feature = "block_compression") {
-        Bc7EncoderBackend::BlockCompression
-    } else if cfg!(feature = "ispc") {
-        Bc7EncoderBackend::Ispc
-    } else {
-        Bc7EncoderBackend::Dds
-    }
+    Bc7EncoderBackend::Analytical
 }
+
+pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VramTextureData {
@@ -359,18 +362,30 @@ pub fn encode_to_bc7(
     input_format: RawImageFormat,
     backend: Bc7EncoderBackend,
 ) -> Result<Bc7TextureData, UddconvError> {
+    encode_to_bc7_with_rdo_lambda(pixels, extent, input_format, backend, 0.0)
+}
+
+pub fn encode_to_bc7_with_rdo_lambda(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_lambda: f32,
+) -> Result<Bc7TextureData, UddconvError> {
     validate_input_len(pixels, extent, input_format)?;
     // All encoders work on RGBA8 input, so normalize once before dispatch.
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
     let backend = resolve_bc7_encoder_backend(backend);
 
-    let blocks = match backend {
+    let mut blocks = match backend {
+        Bc7EncoderBackend::Analytical => encode_with_analytical(rgba_pixels.as_ref(), extent),
         Bc7EncoderBackend::Dds => encode_with_dds(rgba_pixels.as_ref(), extent)?,
         Bc7EncoderBackend::BlockCompression => {
             encode_with_block_compression(rgba_pixels.as_ref(), extent)?
         }
         Bc7EncoderBackend::Ispc => encode_with_ispc(rgba_pixels.as_ref(), extent)?,
     };
+    apply_bc7_rdo(&mut blocks, rgba_pixels.as_ref(), extent, rdo_lambda);
 
     Bc7TextureData::new(extent, blocks)
 }
@@ -380,6 +395,16 @@ pub fn encode_for_vram(
     extent: ImageExtent,
     input_format: RawImageFormat,
     encoding: VramTextureEncoding,
+) -> Result<VramTextureData, UddconvError> {
+    encode_for_vram_with_bc7_rdo_lambda(pixels, extent, input_format, encoding, 0.0)
+}
+
+pub fn encode_for_vram_with_bc7_rdo_lambda(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_lambda: f32,
 ) -> Result<VramTextureData, UddconvError> {
     match encoding {
         VramTextureEncoding::Rgba8UnormSrgb => {
@@ -392,7 +417,13 @@ pub fn encode_for_vram(
             )
         }
         VramTextureEncoding::Bc7(backend) => {
-            Ok(encode_to_bc7(pixels, extent, input_format, backend)?.into())
+            Ok(encode_to_bc7_with_rdo_lambda(
+                pixels,
+                extent,
+                input_format,
+                backend,
+                bc7_rdo_lambda,
+            )?.into())
         }
     }
 }
@@ -603,6 +634,87 @@ fn bc7_block_byte_len(width: u32, height: u32) -> usize {
     }
 }
 
+fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
+    use image_postprocess::bc7_analytical::{
+        pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE,
+    };
+
+    let blocks_x = extent.blocks_wide() as usize;
+    let blocks_y = extent.blocks_high() as usize;
+    let mut blocks = vec![0u8; blocks_x * blocks_y * 16];
+    let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
+    let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE;
+
+    for block_index in 0..blocks_x * blocks_y {
+        let pixels: &[Pixel; 16] = rgba_blocks[block_index * 16..(block_index + 1) * 16]
+            .try_into()
+            .expect("BC7 block-order conversion always emits 16 pixels per block");
+        let block: &mut [u8; 16] = blocks[block_index * 16..(block_index + 1) * 16]
+            .as_mut()
+            .try_into()
+            .expect("BC7 block buffer is allocated in 16-byte blocks");
+        pack_bc7_rgba(block, pixels, flags);
+    }
+
+    blocks
+}
+
+fn apply_bc7_rdo(blocks: &mut [u8], rgba_pixels: &[u8], extent: ImageExtent, rdo_lambda: f32) {
+    if rdo_lambda <= 0.0 || !rdo_lambda.is_finite() {
+        return;
+    }
+
+    let mut block_arrays = Vec::with_capacity(blocks.len() / 16);
+    for block in blocks.chunks_exact(16) {
+        let mut block_array = [0u8; 16];
+        block_array.copy_from_slice(block);
+        block_arrays.push(block_array);
+    }
+
+    let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
+    let params = image_postprocess::bc7_rdo::Bc7RdoParams {
+        lambda: rdo_lambda,
+        ..Default::default()
+    };
+    image_postprocess::bc7_rdo::reduce_entropy_bc7(
+        &mut block_arrays,
+        &rgba_blocks,
+        extent.blocks_wide() as usize,
+        extent.blocks_high() as usize,
+        &params,
+    );
+
+    for (dst, src) in blocks.chunks_exact_mut(16).zip(block_arrays) {
+        dst.copy_from_slice(&src);
+    }
+}
+
+fn rgba_pixels_to_block_order(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<[u8; 4]> {
+    let blocks_x = extent.blocks_wide();
+    let blocks_y = extent.blocks_high();
+    let mut rgba_blocks = Vec::with_capacity((blocks_x * blocks_y * 16) as usize);
+
+    for block_y in 0..blocks_y {
+        for block_x in 0..blocks_x {
+            for y in 0..4 {
+                let src_y = (block_y * 4 + y).min(extent.height() - 1);
+                for x in 0..4 {
+                    let src_x = (block_x * 4 + x).min(extent.width() - 1);
+                    let offset = ((src_y * extent.width() + src_x) * 4) as usize;
+                    rgba_blocks.push([
+                        rgba_pixels[offset],
+                        rgba_pixels[offset + 1],
+                        rgba_pixels[offset + 2],
+                        rgba_pixels[offset + 3],
+                    ]);
+                }
+            }
+        }
+    }
+
+    rgba_blocks
+}
+
 fn encode_with_block_compression(
     rgba_pixels: &[u8],
     extent: ImageExtent,
@@ -686,5 +798,3 @@ fn encode_with_dds(
 
     Ok(blocks)
 }
-
-

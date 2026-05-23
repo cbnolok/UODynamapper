@@ -120,6 +120,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_art_cc),
                     filtering_ready: settings.filtering_ready_tex_art_cc,
+                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
             )?;
@@ -156,6 +157,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_cc),
                     filtering_ready: settings.filtering_ready_tex_land_cc,
+                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
             )?;
@@ -192,6 +194,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_art_ec),
                     filtering_ready: settings.filtering_ready_tex_art_ec,
+                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -229,6 +232,7 @@ impl UddConvApp {
                     },
                     packing_mode: atlas_packing_mode(settings.packing_tex_land_ec),
                     filtering_ready: settings.filtering_ready_tex_land_ec,
+                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
