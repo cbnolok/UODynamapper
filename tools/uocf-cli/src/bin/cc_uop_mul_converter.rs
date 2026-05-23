@@ -51,8 +51,7 @@ fn main() -> eyre::Result<()> {
             println!();
 
             if !path.exists() || !path.is_dir() {
-                eprintln!("Directory '{}' does not exist!", path.display());
-                return Ok(());
+                return Err(eyre::eyre!("Directory '{}' does not exist", path.display()));
             }
 
             let uop_dir = path;
@@ -125,7 +124,6 @@ fn main() -> eyre::Result<()> {
                 ];
 
                 for map_name in map_variants {
-                    total_count += 1;
                     let uop_names = [
                         format!("{}LegacyMUL.uop", map_name),
                         format!("{}.uop", map_name),
@@ -141,6 +139,7 @@ fn main() -> eyre::Result<()> {
                     }
 
                     if let Some(p) = found_path {
+                        total_count += 1;
                         if let Err(e) = LegacyMulFileConverter::from_uop(
                             &p,
                             &uop_dir.join(format!("{}.mul", map_name)),
@@ -165,8 +164,7 @@ fn main() -> eyre::Result<()> {
             println!();
 
             if !path.exists() || !path.is_dir() {
-                eprintln!("Directory '{}' does not exist!", path.display());
-                return Ok(());
+                return Err(eyre::eyre!("Directory '{}' does not exist", path.display()));
             }
 
             let mul_dir = path;
@@ -267,6 +265,14 @@ fn main() -> eyre::Result<()> {
     }
 
     print_results(success_count, total_count);
+
+    if success_count < total_count {
+        return Err(eyre::eyre!(
+            "{} of {} actions failed",
+            total_count - success_count,
+            total_count
+        ));
+    }
 
     Ok(())
 }
