@@ -225,6 +225,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn snow_terrain_transcode_overrides_parse() {
+        let content = include_str!(
+            "../../../dynamapper/assets/cc_ec_convtables/TerrainTranscodeSnowOverrides.kdl"
+        );
+        let stripped = strip_c_style_block_comments(content);
+        let stripped = strip_cpp_style_line_comments(&stripped);
+        let parsed: TerrainTranscode =
+            knuffel::parse("TerrainTranscodeSnowOverrides.kdl", &stripped)
+                .expect("parse snow terrain transcode overrides");
+        let map = parsed.to_map();
+
+        assert_eq!(parsed.entries.len(), 15);
+        assert_eq!(map.get(&3), Some(&8));
+        assert_eq!(map.get(&196), Some(&8));
+        assert_eq!(map.get(&36), Some(&63));
+        assert_eq!(map.get(&742), Some(&61));
+    }
+
+    #[test]
     fn terrain_definition_loader_accepts_header_block_comments() {
         let content = r#"
 /*
