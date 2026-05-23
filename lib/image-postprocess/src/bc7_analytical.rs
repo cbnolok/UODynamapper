@@ -1249,6 +1249,8 @@ const TRIVIAL_BLOCK_VAR: i32 = 20 * 16;   // below this → trivial mode 6
 const ORTHO_2SUBSET: f32 = 0.004;          // above this → try 2-subset modes
 const ORTHO_3SUBSET: f32 = 0.020;          // above this → also try 3-subset modes
 const DP_STRONG_CORR: f32 = 0.80;          // for dual-plane channel detection
+const PART2_SEARCH_CANDIDATES: usize = 12;
+const PART3_SEARCH_CANDIDATES: usize = 8;
 
 /// Solid-block fast path using Mode 5 — lossless for any RGBA value.
 ///
@@ -1345,6 +1347,105 @@ fn pick_best_part3(pixels: &[Pixel; 16], xr: f32, xg: f32, xb: f32) -> usize {
         if diff < best_diff { best_diff = diff; best_pat = p; }
     }
     best_pat
+}
+
+#[inline(always)]
+fn insert_partition_candidate<const N: usize>(
+    candidates: &mut [usize; N],
+    scores: &mut [u32; N],
+    count: &mut usize,
+    pat: usize,
+    score: u32,
+) {
+    if *count == N && score >= scores[N - 1] {
+        return;
+    }
+    let mut pos = 0usize;
+    while pos < *count && scores[pos] <= score {
+        pos += 1;
+    }
+    if pos == N {
+        return;
+    }
+    let end = (*count).min(N - 1);
+    for i in (pos..end).rev() {
+        candidates[i + 1] = candidates[i];
+        scores[i + 1] = scores[i];
+    }
+    candidates[pos] = pat;
+    scores[pos] = score;
+    *count = (*count + 1).min(N);
+}
+
+fn part2_candidates(
+    pixels: &[Pixel; 16],
+    xr: f32,
+    xg: f32,
+    xb: f32,
+) -> ([usize; PART2_SEARCH_CANDIDATES], usize) {
+    let mut dots = [0.0f32; 16];
+    let (mut mn, mut mx) = (f32::MAX, f32::MIN);
+    for i in 0..16 {
+        dots[i] = pixels[i][0] as f32*xr + pixels[i][1] as f32*xg + pixels[i][2] as f32*xb;
+        mn = mn.min(dots[i]); mx = mx.max(dots[i]);
+    }
+    let split = (mn + mx) * 0.5;
+    let mut desired = 0u16;
+    for i in 0..16 { if dots[i] > split { desired |= 1 << i; } }
+
+    let mut candidates = [0usize; PART2_SEARCH_CANDIDATES];
+    let mut scores = [u32::MAX; PART2_SEARCH_CANDIDATES];
+    let mut count = 0usize;
+    for pat in 0..64usize {
+        let diff = (part2_bitmask(pat) ^ desired).count_ones();
+        insert_partition_candidate(
+            &mut candidates,
+            &mut scores,
+            &mut count,
+            pat,
+            diff.min(16 - diff),
+        );
+    }
+    (candidates, count)
+}
+
+fn part3_candidates(
+    pixels: &[Pixel; 16],
+    xr: f32,
+    xg: f32,
+    xb: f32,
+) -> ([usize; PART3_SEARCH_CANDIDATES], usize) {
+    const PERMS: [[u8; 3]; 6] = [
+        [0, 1, 2], [0, 2, 1],
+        [1, 0, 2], [1, 2, 0],
+        [2, 0, 1], [2, 1, 0],
+    ];
+    let mut dots = [0.0f32; 16];
+    let (mut mn, mut mx) = (f32::MAX, f32::MIN);
+    for i in 0..16 {
+        dots[i] = pixels[i][0] as f32*xr + pixels[i][1] as f32*xg + pixels[i][2] as f32*xb;
+        mn = mn.min(dots[i]); mx = mx.max(dots[i]);
+    }
+    let range = (mx - mn).max(1e-8);
+    let mut desired = [0u8; 16];
+    for i in 0..16 {
+        let q = ((dots[i] - mn) / range * 2.999) as usize;
+        desired[i] = q.min(2) as u8;
+    }
+
+    let mut candidates = [0usize; PART3_SEARCH_CANDIDATES];
+    let mut scores = [u32::MAX; PART3_SEARCH_CANDIDATES];
+    let mut count = 0usize;
+    for pat in 0..64usize {
+        let pm = &BC7_PARTITION3[pat*16..pat*16+16];
+        let mut best_diff = u32::MAX;
+        for perm in PERMS {
+            let diff: u32 = (0..16).map(|i| (perm[pm[i] as usize] != desired[i]) as u32).sum();
+            best_diff = best_diff.min(diff);
+        }
+        insert_partition_candidate(&mut candidates, &mut scores, &mut count, pat, best_diff);
+    }
+    (candidates, count)
 }
 
 // ─── LS REFINEMENT HELPERS ───────────────────────────────────────────────────
@@ -1543,7 +1644,8 @@ pub fn pack_bc7_rgb(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
     if (flags & FLAG_USE_2SUBSETS) != 0 && block_max_var >= 64 * 16 && ortho_ratio > ORTHO_2SUBSET {
         // Try both Mode 1 (6-bit endpoints, 3-bit weights, shared p-bit)
         // and Mode 3 (7-bit endpoints, 2-bit weights, unique p-bits) for each partition.
-        for pat in 0..64usize {
+        let (partitions, partition_count) = part2_candidates(pixels, xr, xg, xb);
+        for &pat in partitions[..partition_count].iter() {
             let bmask = part2_bitmask(pat);
             let pm = &BC7_PARTITION2[pat * 16..pat * 16 + 16];
 
@@ -1642,7 +1744,8 @@ pub fn pack_bc7_rgb(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
     // These are expensive (64 partitions × 3 subsets × 2 modes) but give the
     // best quality for blocks with three distinct colour clusters.
     if (flags & FLAG_USE_3SUBSETS) != 0 && block_max_var >= 128 * 16 && ortho_ratio > ORTHO_3SUBSET {
-        for pat in 0..64usize {
+        let (partitions, partition_count) = part3_candidates(pixels, xr, xg, xb);
+        for &pat in partitions[..partition_count].iter() {
             let pm = &BC7_PARTITION3[pat * 16..pat * 16 + 16];
             let _anc1 = BC7_ANCHOR_THIRD_SUBSET1[pat] as usize;
             let _anc2 = BC7_ANCHOR_THIRD_SUBSET2[pat] as usize;
@@ -1879,7 +1982,8 @@ pub fn pack_bc7_rgba(block: &mut [u8; 16], pixels: &[Pixel; 16], flags: u32) {
         let cov_f = icov3.map(|v| v as f32);
         let (_slam, ortho_ratio) = estimate_slam_sse_3d(&cov_f, xr, xg, xb);
         if ortho_ratio > ORTHO_2SUBSET {
-            for pat in 0..64usize {
+            let (partitions, partition_count) = part2_candidates(pixels, xr, xg, xb);
+            for &pat in partitions[..partition_count].iter() {
                 let bmask = part2_bitmask(pat);
                 let pm = &BC7_PARTITION2[pat*16..pat*16+16];
                 let mut lr=[0u32;2];let mut lg=[0u32;2];let mut lb=[0u32;2];let mut la=[0u32;2];
