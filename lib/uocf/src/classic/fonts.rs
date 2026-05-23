@@ -6,7 +6,7 @@
 //! `width * height` little-endian `u16` pixels.
 //!
 //! Unicode font files use a dense 0x10000-entry `i32` offset table. Non-zero
-//! offsets point to `(offset_x: i8, offset_y: i8, width: i8, height: i8)` plus a
+//! offsets point to `(offset_x: i8, offset_y: i8, width: u8, height: u8)` plus a
 //! one-bit-per-pixel bitmap, row-major with each row padded to a full byte.
 
 crate::eyre_imports!();
@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use memmap2::Mmap;
+
+use crate::utils::color::color_lut;
 
 pub const ASCII_PRINTABLE_START: u8 = 32;
 pub const ASCII_GLYPH_COUNT: usize = 224;
@@ -33,9 +35,40 @@ pub struct AsciiFontGlyph {
     pub pixels: Vec<u16>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontRgbaImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 impl AsciiFontGlyph {
     pub fn pixel_count(&self) -> usize {
         self.width as usize * self.height as usize
+    }
+
+    pub fn to_rgba8(&self) -> eyre::Result<FontRgbaImage> {
+        if self.pixels.len() != self.pixel_count() {
+            eyre::bail!(
+                "ASCII font glyph has {} pixels, expected {} for {}x{}.",
+                self.pixels.len(),
+                self.pixel_count(),
+                self.width,
+                self.height
+            );
+        }
+
+        let lut = color_lut();
+        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
+        for pixel in &self.pixels {
+            rgba.extend_from_slice(&lut[*pixel as usize].to_le_bytes());
+        }
+
+        Ok(FontRgbaImage {
+            width: self.width as u32,
+            height: self.height as u32,
+            rgba,
+        })
     }
 }
 
@@ -71,6 +104,52 @@ impl UnicodeFontGlyph {
 
         let byte = self.bitmap.get(y * stride + x / 8)?;
         Some((byte & (1 << (7 - (x % 8)))) != 0)
+    }
+
+    pub fn to_rgba8(
+        &self,
+        foreground: [u8; 4],
+        background: Option<[u8; 4]>,
+    ) -> eyre::Result<FontRgbaImage> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let Some(stride) = self.row_stride_bytes() else {
+            return Ok(FontRgbaImage {
+                width: self.width as u32,
+                height: self.height as u32,
+                rgba: Vec::new(),
+            });
+        };
+        let expected_len = stride
+            .checked_mul(height)
+            .ok_or_else(|| eyre!("unicode font glyph bitmap length overflowed"))?;
+        if self.bitmap.len() != expected_len {
+            eyre::bail!(
+                "Unicode font glyph has {} bitmap bytes, expected {} for {}x{}.",
+                self.bitmap.len(),
+                expected_len,
+                self.width,
+                self.height
+            );
+        }
+
+        let background = background.unwrap_or([0, 0, 0, 0]);
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                if self.bit_at(x, y).unwrap_or(false) {
+                    rgba.extend_from_slice(&foreground);
+                } else {
+                    rgba.extend_from_slice(&background);
+                }
+            }
+        }
+
+        Ok(FontRgbaImage {
+            width: self.width as u32,
+            height: self.height as u32,
+            rgba,
+        })
     }
 }
 
@@ -393,5 +472,90 @@ impl ClassicFonts {
         }
 
         Ok(height)
+    }
+
+    pub fn unicode_text_rgba8(
+        &self,
+        font: usize,
+        text: &str,
+        foreground: [u8; 4],
+        background: Option<[u8; 4]>,
+    ) -> eyre::Result<FontRgbaImage> {
+        let mut glyphs = Vec::new();
+        let mut pen_x = 0i32;
+        let mut min_x = 0i32;
+        let mut min_y = 0i32;
+        let mut max_x = 0i32;
+        let mut max_y = 0i32;
+
+        for ch in text.chars() {
+            let Some(glyph) = self.unicode_glyph(font, ch as u16)? else {
+                continue;
+            };
+
+            let draw_x = pen_x + glyph.offset_x as i32;
+            let draw_y = glyph.offset_y as i32;
+            let glyph_width = glyph.width as i32;
+            let glyph_height = glyph.height as i32;
+
+            min_x = min_x.min(draw_x);
+            min_y = min_y.min(draw_y);
+            max_x = max_x.max(draw_x + glyph_width);
+            max_y = max_y.max(draw_y + glyph_height);
+            pen_x = draw_x + glyph_width;
+            glyphs.push((draw_x, draw_y, glyph));
+        }
+
+        let width = (max_x - min_x).max(0) as u32;
+        let height = (max_y - min_y).max(0) as u32;
+        let background = background.unwrap_or([0, 0, 0, 0]);
+        let mut rgba = Vec::new();
+        rgba.resize(width as usize * height as usize * 4, 0);
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&background);
+        }
+
+        for (draw_x, draw_y, glyph) in glyphs {
+            let glyph_image = glyph.to_rgba8(foreground, None)?;
+            let dst_x = (draw_x - min_x) as usize;
+            let dst_y = (draw_y - min_y) as usize;
+            blit_rgba(
+                &mut rgba,
+                width as usize,
+                dst_x,
+                dst_y,
+                glyph_image.width as usize,
+                glyph_image.height as usize,
+                &glyph_image.rgba,
+            );
+        }
+
+        Ok(FontRgbaImage {
+            width,
+            height,
+            rgba,
+        })
+    }
+}
+
+fn blit_rgba(
+    dst: &mut [u8],
+    dst_width: usize,
+    dst_x: usize,
+    dst_y: usize,
+    src_width: usize,
+    src_height: usize,
+    src: &[u8],
+) {
+    for y in 0..src_height {
+        for x in 0..src_width {
+            let src_start = (y * src_width + x) * 4;
+            if src[src_start + 3] == 0 {
+                continue;
+            }
+
+            let dst_start = ((dst_y + y) * dst_width + dst_x + x) * 4;
+            dst[dst_start..dst_start + 4].copy_from_slice(&src[src_start..src_start + 4]);
+        }
     }
 }

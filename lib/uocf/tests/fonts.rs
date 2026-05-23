@@ -11,6 +11,16 @@ fn push_ascii_glyph(bytes: &mut Vec<u8>, width: u8, height: u8, unknown: u8, pix
     }
 }
 
+fn rgba_at(pixel_data: &[u8], x: usize, y: usize, width: usize) -> [u8; 4] {
+    let offset = (y * width + x) * 4;
+    [
+        pixel_data[offset],
+        pixel_data[offset + 1],
+        pixel_data[offset + 2],
+        pixel_data[offset + 3],
+    ]
+}
+
 fn sample_ascii_font() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.push(0x42);
@@ -41,6 +51,22 @@ fn ascii_fonts_mul_decodes_complete_faces() {
     let glyph_a = &fonts[0].glyphs[ascii_index_for_char('A')];
     assert_eq!((glyph_a.width, glyph_a.height, glyph_a.unknown), (2, 1, 7));
     assert_eq!(glyph_a.pixels, [0x1111, 0x2222]);
+}
+
+#[test]
+fn ascii_glyph_converts_to_rgba8() {
+    let glyph = AsciiFontGlyph {
+        width: 2,
+        height: 1,
+        unknown: 0,
+        pixels: vec![0x7C00, 0],
+    };
+
+    let image = glyph.to_rgba8().unwrap();
+
+    assert_eq!((image.width, image.height), (2, 1));
+    assert_eq!(rgba_at(&image.rgba, 0, 0, 2), [248, 0, 0, 255]);
+    assert_eq!(rgba_at(&image.rgba, 1, 0, 2), [0, 0, 0, 255]);
 }
 
 #[test]
@@ -109,6 +135,12 @@ fn unicode_font_decodes_bitpacked_glyphs() {
         assert_eq!(glyph.bit_at(2, 1), Some(true));
         assert_eq!(glyph.bit_at(9, 0), None);
 
+        let image = glyph.to_rgba8([10, 20, 30, 255], Some([1, 2, 3, 4])).unwrap();
+        assert_eq!((image.width, image.height), (9, 2));
+        assert_eq!(rgba_at(&image.rgba, 0, 0, 9), [10, 20, 30, 255]);
+        assert_eq!(rgba_at(&image.rgba, 1, 0, 9), [1, 2, 3, 4]);
+        assert_eq!(rgba_at(&image.rgba, 2, 1, 9), [10, 20, 30, 255]);
+
         Ok(())
     })();
 
@@ -130,15 +162,15 @@ fn classic_fonts_unicode_metrics_include_offsets() {
     let result = (|| -> std::io::Result<()> {
         let path = dir.join("unifont.mul");
         let mut file = std::fs::File::create(&path)?;
-        file.set_len((0x10000 * 4 + 12) as u64)?;
+        file.set_len((0x10000 * 4 + 14) as u64)?;
 
         file.seek(SeekFrom::Start(('A' as u32 * 4) as u64))?;
         file.write_all(&(0x10000i32 * 4).to_le_bytes())?;
         file.seek(SeekFrom::Start(('B' as u32 * 4) as u64))?;
-        file.write_all(&((0x10000i32 * 4) + 6).to_le_bytes())?;
+        file.write_all(&((0x10000i32 * 4) + 8).to_le_bytes())?;
 
         file.seek(SeekFrom::Start((0x10000 * 4) as u64))?;
-        file.write_all(&[1u8, 2u8, 3u8, 4u8, 0u8, 0u8])?;
+        file.write_all(&[1u8, 2u8, 3u8, 4u8, 0b1000_0000, 0u8, 0u8, 0u8])?;
         file.write_all(&[255u8, 1u8, 5u8, 2u8, 0u8, 0u8])?;
 
         let fonts = ClassicFonts::load(&dir).unwrap();
@@ -147,6 +179,13 @@ fn classic_fonts_unicode_metrics_include_offsets() {
         assert!(fonts.unicode_font_exists(1));
         assert_eq!(fonts.unicode_text_width(0, "AB").unwrap(), 8);
         assert_eq!(fonts.unicode_text_height(0, "AB").unwrap(), 6);
+
+        let image = fonts
+            .unicode_text_rgba8(0, "AB", [20, 40, 60, 255], Some([1, 2, 3, 4]))
+            .unwrap();
+        assert_eq!((image.width, image.height), (8, 6));
+        assert_eq!(rgba_at(&image.rgba, 0, 0, image.width as usize), [1, 2, 3, 4]);
+        assert_eq!(rgba_at(&image.rgba, 1, 2, image.width as usize), [20, 40, 60, 255]);
 
         Ok(())
     })();
