@@ -11,6 +11,7 @@ hqx = { git = "https://github.com/CryZe/wasmboy-rs" }
 mmpx = "0.2.0"
 bcdec_rs = "0.2"
 wide = "1.4"
+rayon = "1.12.0"
 
 [package.metadata.cargo-machete]
 ignored = ["xbrz-rs"]

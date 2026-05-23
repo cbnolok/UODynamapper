@@ -6,7 +6,10 @@
 //! callers again.
 
 use crate::bc7_analytical::{pack_bc7_rgba, Pixel};
+use rayon::prelude::*;
 use wide::u8x16;
+
+const PARALLEL_BLOCK_THRESHOLD: usize = 256;
 
 pub fn pack_bc7_rgba_blocks_wide(
     blocks: &mut [u8],
@@ -22,39 +25,72 @@ pub fn pack_bc7_rgba_blocks_wide(
 
     let width = width as usize;
     let height = height as usize;
-    for block_y in 0..blocks_y {
-        for block_x in 0..blocks_x {
-            let mut pixels = [[0u8; 4]; 16];
-            for row in 0..4 {
-                let src_y = (block_y * 4 + row).min(height - 1);
-                let base_x = block_x * 4;
-                let row_vec = if base_x + 4 <= width {
-                    let offset = (src_y * width + base_x) * 4;
-                    let mut bytes = [0u8; 16];
-                    bytes.copy_from_slice(&rgba_pixels[offset..offset + 16]);
-                    u8x16::from(bytes)
-                } else {
-                    let mut bytes = [0u8; 16];
-                    for col in 0..4 {
-                        let src_x = (base_x + col).min(width - 1);
-                        let src = (src_y * width + src_x) * 4;
-                        bytes[col * 4..col * 4 + 4].copy_from_slice(&rgba_pixels[src..src + 4]);
-                    }
-                    u8x16::from(bytes)
-                };
-                let row_bytes = row_vec.to_array();
-                for col in 0..4 {
-                    pixels[row * 4 + col].copy_from_slice(&row_bytes[col * 4..col * 4 + 4]);
-                }
-            }
 
-            let block_index = block_y * blocks_x + block_x;
-            let block: &mut [u8; 16] = blocks[block_index * 16..(block_index + 1) * 16]
-                .as_mut()
-                .try_into()
-                .expect("BC7 block buffer is allocated in 16-byte blocks");
-            let pixels: &[Pixel; 16] = &pixels;
-            pack_bc7_rgba(block, pixels, flags);
+    if blocks_x * blocks_y >= PARALLEL_BLOCK_THRESHOLD {
+        blocks
+            .par_chunks_exact_mut(16)
+            .enumerate()
+            .for_each(|(block_index, block)| {
+                pack_one_block(
+                    block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                    rgba_pixels,
+                    width,
+                    height,
+                    blocks_x,
+                    block_index,
+                    flags,
+                );
+            });
+    } else {
+        for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
+            pack_one_block(
+                block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                rgba_pixels,
+                width,
+                height,
+                blocks_x,
+                block_index,
+                flags,
+            );
         }
     }
+}
+
+fn pack_one_block(
+    block: &mut [u8; 16],
+    rgba_pixels: &[u8],
+    width: usize,
+    height: usize,
+    blocks_x: usize,
+    block_index: usize,
+    flags: u32,
+) {
+    let block_y = block_index / blocks_x;
+    let block_x = block_index % blocks_x;
+    let mut pixels = [[0u8; 4]; 16];
+    for row in 0..4 {
+        let src_y = (block_y * 4 + row).min(height - 1);
+        let base_x = block_x * 4;
+        let row_vec = if base_x + 4 <= width {
+            let offset = (src_y * width + base_x) * 4;
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&rgba_pixels[offset..offset + 16]);
+            u8x16::from(bytes)
+        } else {
+            let mut bytes = [0u8; 16];
+            for col in 0..4 {
+                let src_x = (base_x + col).min(width - 1);
+                let src = (src_y * width + src_x) * 4;
+                bytes[col * 4..col * 4 + 4].copy_from_slice(&rgba_pixels[src..src + 4]);
+            }
+            u8x16::from(bytes)
+        };
+        let row_bytes = row_vec.to_array();
+        for col in 0..4 {
+            pixels[row * 4 + col].copy_from_slice(&row_bytes[col * 4..col * 4 + 4]);
+        }
+    }
+
+    let pixels: &[Pixel; 16] = &pixels;
+    pack_bc7_rgba(block, pixels, flags);
 }
