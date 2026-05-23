@@ -858,17 +858,9 @@ unsafe fn eval_m6_rgba_avx512(
         let pairs = _mm512_madd_epi16(adj, coef);
         let packed = select_m6_avx512(pairs, f);
 
-        let mut packed0 = 0u32;
-        let mut packed1 = 0u32;
-        for lane in 0..8 {
-            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
-            weights[i + lane] = sel as u8;
-            if lane < 4 {
-                packed0 |= sel << (lane * 8);
-            } else {
-                packed1 |= sel << ((lane - 4) * 8);
-            }
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        let packed0 = packed as u32;
+        let packed1 = (packed >> 32) as u32;
         sse += sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da);
         sse += sse_m6_rgba4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, la, dr, dg, db, da);
     }
@@ -920,17 +912,9 @@ unsafe fn eval_m6_rgb_avx512(
         let pairs = _mm512_madd_epi16(adj, coef);
         let packed = select_m6_avx512(pairs, f);
 
-        let mut packed0 = 0u32;
-        let mut packed1 = 0u32;
-        for lane in 0..8 {
-            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
-            weights[i + lane] = sel as u8;
-            if lane < 4 {
-                packed0 |= sel << (lane * 8);
-            } else {
-                packed1 |= sel << ((lane - 4) * 8);
-            }
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        let packed0 = packed as u32;
+        let packed1 = (packed >> 32) as u32;
         sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
         sse += sse_m6_rgb4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, dr, dg, db);
     }
@@ -989,17 +973,9 @@ unsafe fn eval_m6_rgba_avx2(
         let sel8 = _mm_packus_epi16(sel16, zero128);
         let packed = _mm_cvtsi128_si64(sel8) as u64;
 
-        let mut packed0 = 0u32;
-        let mut packed1 = 0u32;
-        for lane in 0..8 {
-            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
-            weights[i + lane] = sel as u8;
-            if lane < 4 {
-                packed0 |= sel << (lane * 8);
-            } else {
-                packed1 |= sel << ((lane - 4) * 8);
-            }
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        let packed0 = packed as u32;
+        let packed1 = (packed >> 32) as u32;
         sse += sse_m6_rgba4_sse41(px0, packed0, lr, lg, lb, la, dr, dg, db, da);
         sse += sse_m6_rgba4_sse41(px1, packed1, lr, lg, lb, la, dr, dg, db, da);
     }
@@ -1056,17 +1032,9 @@ unsafe fn eval_m6_rgb_avx2(
         let sel8 = _mm_packus_epi16(sel16, zero128);
         let packed = _mm_cvtsi128_si64(sel8) as u64;
 
-        let mut packed0 = 0u32;
-        let mut packed1 = 0u32;
-        for lane in 0..8 {
-            let sel = ((packed >> (lane * 8)) & 0xff) as u32;
-            weights[i + lane] = sel as u8;
-            if lane < 4 {
-                packed0 |= sel << (lane * 8);
-            } else {
-                packed1 |= sel << ((lane - 4) * 8);
-            }
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        let packed0 = packed as u32;
+        let packed1 = (packed >> 32) as u32;
         sse += sse_m6_rgb4_sse41(px0, packed0, lr, lg, lb, dr, dg, db);
         sse += sse_m6_rgb4_sse41(px1, packed1, lr, lg, lb, dr, dg, db);
     }
