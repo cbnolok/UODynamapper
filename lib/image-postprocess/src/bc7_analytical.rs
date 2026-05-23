@@ -643,14 +643,15 @@ unsafe fn eval_m6_rgb_neon(
         let prod1 = vmull_s16(vget_high_s16(lo), vget_high_s16(coef));
         let prod2 = vmull_s16(vget_low_s16(hi), vget_low_s16(coef));
         let prod3 = vmull_s16(vget_high_s16(hi), vget_high_s16(coef));
-        let mut sums = [[0i32; 4]; 4];
-        vst1q_s32(sums[0].as_mut_ptr(), prod0);
-        vst1q_s32(sums[1].as_mut_ptr(), prod1);
-        vst1q_s32(sums[2].as_mut_ptr(), prod2);
-        vst1q_s32(sums[3].as_mut_ptr(), prod3);
+        let dots = [
+            vaddvq_s32(prod0),
+            vaddvq_s32(prod1),
+            vaddvq_s32(prod2),
+            vaddvq_s32(prod3),
+        ];
 
         for lane in 0..4 {
-            let dot = sums[lane][0] + sums[lane][1] + sums[lane][2];
+            let dot = dots[lane];
             let sel = clamp_weight_sel((dot as f32 * f + 0.5) as i32, 15) as usize;
             weights[i + lane] = sel as u8;
             sse += sse3(&pixels[i + lane], lr, lg, lb, dr, dg, db, BC7_WEIGHTS4[sel]);
