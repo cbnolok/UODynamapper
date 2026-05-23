@@ -47,7 +47,7 @@ fn main() {
     }
 }
 
-fn rdo_cases() -> [RdoCase; 5] {
+fn rdo_cases() -> [RdoCase; 6] {
     [
         RdoCase {
             name: "rdo_default",
@@ -83,6 +83,14 @@ fn rdo_cases() -> [RdoCase; 5] {
             params: Bc7RdoParams {
                 lambda: 0.5,
                 try_two_matches: true,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_relative",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
                 ..Bc7RdoParams::default()
             },
         },
