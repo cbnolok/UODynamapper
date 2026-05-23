@@ -8,9 +8,14 @@ eframe = { version = "0.31.1", features = ["persistence", "glow"] }
 egui = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 uocf = { path = "../../lib/uocf" }
+udd-assets = { path = "../../lib/udd-assets" }
+udd-container = { path = "../../lib/udd-container" }
 rfd = { version = "0.15", features = ["xdg-portal"] }
 env_logger = "0.11"
 rodio = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 byteorder = "1.5"
 color-eyre = "0.6"
+
+[dev-dependencies]
+udd-conv = { path = "../../lib/udd-conv" }

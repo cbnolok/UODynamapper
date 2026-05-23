@@ -8296,6 +8296,9 @@ dependencies = [
  "rfd 0.15.4",
  "rodio",
  "serde",
+ "udd-assets",
+ "udd-container",
+ "udd-conv",
  "uocf",
 ]
 
