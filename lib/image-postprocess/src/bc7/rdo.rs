@@ -151,16 +151,14 @@ pub fn reduce_entropy_bc7(
             * params.max_allowed_rms_increase_ratio
             * cur_ms_err.max(1.0);
 
-        // ── Main search window ──
-        for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
-            if prev_block_index < first_block_to_check {
-                break;
-            }
-            let prev_blk = blocks[prev_block_index];
-
-            if params.allow_relative_movement {
+        if params.allow_relative_movement {
+            // ── Main search window: full relative-offset search ──
+            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+                if prev_block_index < first_block_to_check {
+                    break;
+                }
+                let prev_blk = blocks[prev_block_index];
                 for len in (3..=16).rev() {
-                    // Full relative-offset search: src and dst offsets may differ
                     for src_ofs in 0..=(16 - len) {
                         for dst_ofs in 0..=(16 - len) {
                             let dist = (block_index - prev_block_index) * 16 + dst_ofs - src_ofs;
@@ -198,7 +196,14 @@ pub fn reduce_entropy_bc7(
                         }
                     }
                 }
-            } else {
+            }
+        } else {
+            // ── Main search window: fixed-offset default path ──
+            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+                if prev_block_index < first_block_to_check {
+                    break;
+                }
+                let prev_blk = blocks[prev_block_index];
                 for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
                     let dist = (block_index - prev_block_index) * 16;
