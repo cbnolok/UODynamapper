@@ -125,10 +125,11 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
+                stats.original_block_skips,
                 stats.decode_trials,
                 stats.bounded_error_exits,
                 stats.accepted_matches,
