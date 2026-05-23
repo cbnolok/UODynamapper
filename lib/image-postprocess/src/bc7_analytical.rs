@@ -554,9 +554,7 @@ unsafe fn eval_m6_rgb_sse41(
         let sel8 = _mm_packus_epi16(sel16, zero);
         let packed = _mm_cvtsi128_si32(sel8) as u32;
 
-        for lane in 0..4 {
-            weights[i + lane] = ((packed >> (lane * 8)) & 0xff) as u8;
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed);
         sse += sse_m6_rgb4_sse41(px, packed, lr, lg, lb, dr, dg, db);
     }
 
@@ -605,9 +603,7 @@ unsafe fn eval_m6_rgba_sse41(
         let sel8 = _mm_packus_epi16(sel16, zero);
         let packed = _mm_cvtsi128_si32(sel8) as u32;
 
-        for lane in 0..4 {
-            weights[i + lane] = ((packed >> (lane * 8)) & 0xff) as u8;
-        }
+        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed);
         sse += sse_m6_rgba4_sse41(px, packed, lr, lg, lb, la, dr, dg, db, da);
     }
 
