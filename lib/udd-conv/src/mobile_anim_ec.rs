@@ -15,12 +15,15 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
 
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_dir_matching;
+use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::{resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
+    EcMobileAnimationsKdl,
     page_entry_path, MobileAnimEcAnimationRecord, MobileAnimEcFrameRecord,
-    MobileAnimEcPageRecord, ANIMATION_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
+    MobileAnimEcItemRecord, MobileAnimEcPageRecord, MobileAnimEcSourceHintRecord,
+    ANIMATION_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH, ITEM_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
+    SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -31,7 +34,23 @@ pub const DEFAULT_ATLAS_GUTTER: u16 = 4;
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MEPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
+const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
+const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
 const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 1;
+const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
+    "AnimationFrame1.uop",
+    "AnimationFrame2.uop",
+    "AnimationFrame3.uop",
+    "AnimationFrame4.uop",
+    "AnimationFrame5.uop",
+    "AnimationFrame6.uop",
+    "animationframe1.uop",
+    "animationframe2.uop",
+    "animationframe3.uop",
+    "animationframe4.uop",
+    "animationframe5.uop",
+    "animationframe6.uop",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcBuildSummary {
@@ -40,6 +59,9 @@ pub struct MobileAnimEcBuildSummary {
     pub frame_count: u32,
     pub packed_frame_count: u32,
     pub page_count: u32,
+    pub item_metadata_count: u32,
+    pub source_hint_count: u32,
+    pub source_uop_count: u32,
     pub atlas_width: u32,
     pub atlas_height: u32,
 }
@@ -99,26 +121,28 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<MobileAnimEcBuildSummary> {
     validate_options(options)?;
-    let client_dir = find_first_dir_matching(source_dirs, &[&["AnimationFrame.uop"], &["animationframe.uop"]])
+    let client_dir = find_first_dir_matching(source_dirs, &[&["AnimationFrame1.uop"], &["animationframe1.uop"]])
         .ok_or_else(|| eyre::eyre!(
-            "no EC animation sources found in any provided path: expected AnimationFrame.uop"
+            "no EC animation sources found in any provided path: expected AnimationFrame1.uop"
         ))?;
-    let animationframe_path = ["AnimationFrame.uop", "animationframe.uop"]
-        .iter()
-        .map(|name| client_dir.join(name))
-        .find(|path| path.is_file())
-        .context("missing AnimationFrame.uop")?;
+    let animationframe_paths = discover_animationframe_paths(&client_dir);
+    if animationframe_paths.is_empty() {
+        eyre::bail!("missing EC AnimationFrame1.uop..AnimationFrame6.uop in {}", client_dir.display());
+    }
+    let metadata_path = find_ec_mobile_animations_kdl(source_dirs)
+        .context("missing EcMobileAnimations.kdl for EC mobile animation metadata")?;
+    let metadata = EcMobileAnimationsKdl::load(&metadata_path)?;
+    let (items, source_hints) = build_item_metadata(&metadata)?;
 
     info!(
-        "Converting EC mobile animations from {} to {}",
-        animationframe_path.display(),
+        "Converting EC mobile animations from {} UOP files to {}",
+        animationframe_paths.len(),
         out_file.display()
     );
     println!("Using EC animation source dir: {}", client_dir.display());
+    println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
-    let animationframe_package = UopPackage::load(&animationframe_path)
-        .wrap_err_with(|| format!("load {}", animationframe_path.display()))?;
-    let decoded_by_body = decode_animationframe_package(&animationframe_package)?;
+    let decoded_by_body = decode_animationframe_packages(&animationframe_paths)?;
     let decoded_frames = decoded_by_body
         .values()
         .flat_map(|frames| frames.iter().cloned())
@@ -131,12 +155,16 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let animation_manifest = serialize_animation_manifest(&animations)?;
     let frame_manifest = serialize_frame_manifest(&frames)?;
+    let item_manifest = serialize_item_manifest(&items)?;
+    let source_hint_manifest = serialize_source_hint_manifest(&source_hints)?;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
         (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
         (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
+        (ITEM_MANIFEST_ENTRY_PATH, item_manifest.as_slice()),
+        (SOURCE_HINT_MANIFEST_ENTRY_PATH, source_hint_manifest.as_slice()),
     ] {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -178,6 +206,9 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
         frame_count: frames.len() as u32,
         packed_frame_count,
         page_count: pages.len() as u32,
+        item_metadata_count: items.len() as u32,
+        source_hint_count: source_hints.len() as u32,
+        source_uop_count: animationframe_paths.len() as u32,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
@@ -191,6 +222,103 @@ fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
         eyre::bail!("mobile_anim_ec currently supports RGBA8888 pages only");
     }
     Ok(())
+}
+
+fn discover_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
+    EC_ANIMATIONFRAME_FILES
+        .iter()
+        .map(|name| client_dir.join(name))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn find_ec_mobile_animations_kdl(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+    find_first_existing_file(source_dirs, &[
+        "EcMobileAnimations.kdl",
+        "cc_ec_convtables/EcMobileAnimations.kdl",
+        "dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl",
+    ])
+    .or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| find_first_existing_file(&[cwd], &[
+                "EcMobileAnimations.kdl",
+                "cc_ec_convtables/EcMobileAnimations.kdl",
+                "dynamapper/assets/cc_ec_convtables/EcMobileAnimations.kdl",
+            ]))
+    })
+}
+
+fn build_item_metadata(
+    metadata: &EcMobileAnimationsKdl,
+) -> eyre::Result<(Vec<MobileAnimEcItemRecord>, Vec<MobileAnimEcSourceHintRecord>)> {
+    let mut items = Vec::with_capacity(metadata.items.len());
+    let mut source_hints = Vec::new();
+    for item in &metadata.items {
+        if item.animations.len() > u16::MAX as usize {
+            eyre::bail!("EC mobile animation item {} has too many source hints", item.id);
+        }
+        let source_hint_start = source_hints.len() as u32;
+        for animation in &item.animations {
+            source_hints.push(MobileAnimEcSourceHintRecord {
+                item_id: item.id,
+                action_id: animation.action_id,
+                uop_index: animationframe_uop_index(&animation.uop)?,
+                block_index: animation.block,
+                file_index: animation.file,
+            });
+        }
+        items.push(MobileAnimEcItemRecord {
+            item_id: item.id,
+            item_type: item.item_type,
+            layer: item.layer,
+            flags: item.flags(),
+            name: item.name.clone(),
+            source_hint_start,
+            source_hint_count: item.animations.len() as u16,
+        });
+    }
+    Ok((items, source_hints))
+}
+
+fn animationframe_uop_index(name: &str) -> eyre::Result<u8> {
+    let lower = name.to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("animationframe")
+        .and_then(|value| value.strip_suffix(".uop"))
+    else {
+        eyre::bail!("invalid EC AnimationFrame UOP name in metadata: {name}");
+    };
+    let index = rest.parse::<u8>()
+        .wrap_err_with(|| format!("invalid EC AnimationFrame UOP index in metadata: {name}"))?;
+    if !(1..=6).contains(&index) {
+        eyre::bail!("unsupported EC AnimationFrame UOP index in metadata: {name}");
+    }
+    Ok(index)
+}
+
+fn decode_animationframe_packages(
+    paths: &[PathBuf],
+) -> eyre::Result<BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>> {
+    let mut decoded_by_body = BTreeMap::<u32, Vec<DecodedMobileAnimEcFrame>>::new();
+    for path in paths {
+        let package = UopPackage::load(path)
+            .wrap_err_with(|| format!("load {}", path.display()))?;
+        let decoded = decode_animationframe_package(&package)?;
+        for (body_id, mut frames) in decoded {
+            let existing = decoded_by_body.entry(body_id).or_default();
+            let offset = existing.len();
+            for frame in &mut frames {
+                let source_frame_index = offset + frame.source_frame_index as usize;
+                if source_frame_index > u16::MAX as usize {
+                    eyre::bail!("EC mobile animation {} has more than {} frames", body_id, u16::MAX);
+                }
+                frame.source_frame_index = source_frame_index as u16;
+            }
+            existing.append(&mut frames);
+        }
+    }
+    Ok(decoded_by_body)
 }
 
 fn decode_animationframe_package(
@@ -665,6 +793,53 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Res
     Ok(bytes)
 }
 
+pub fn serialize_item_manifest(items: &[MobileAnimEcItemRecord]) -> eyre::Result<Vec<u8>> {
+    let mut strings = Vec::new();
+    let mut names = Vec::with_capacity(items.len());
+    for item in items {
+        let name = item.name.as_bytes();
+        if name.len() > u16::MAX as usize {
+            eyre::bail!("EC mobile animation item {} name is too long", item.item_id);
+        }
+        let start = strings.len();
+        strings.extend_from_slice(name);
+        names.push((start as u32, name.len() as u16));
+    }
+
+    let mut bytes = Vec::with_capacity(16 + items.len() * 23 + strings.len());
+    bytes.extend_from_slice(&ITEM_MANIFEST_MAGIC);
+    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(items.len() as u32)?;
+    bytes.write_u32::<LittleEndian>(strings.len() as u32)?;
+    for (item, (name_start, name_len)) in items.iter().zip(names) {
+        bytes.write_i32::<LittleEndian>(item.item_id)?;
+        bytes.write_i16::<LittleEndian>(item.item_type)?;
+        bytes.write_i16::<LittleEndian>(item.layer)?;
+        bytes.push(item.flags);
+        bytes.write_u32::<LittleEndian>(name_start)?;
+        bytes.write_u16::<LittleEndian>(name_len)?;
+        bytes.write_u32::<LittleEndian>(item.source_hint_start)?;
+        bytes.write_u16::<LittleEndian>(item.source_hint_count)?;
+    }
+    bytes.extend_from_slice(&strings);
+    Ok(bytes)
+}
+
+pub fn serialize_source_hint_manifest(source_hints: &[MobileAnimEcSourceHintRecord]) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(12 + source_hints.len() * 15);
+    bytes.extend_from_slice(&SOURCE_HINT_MANIFEST_MAGIC);
+    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(source_hints.len() as u32)?;
+    for source_hint in source_hints {
+        bytes.write_i32::<LittleEndian>(source_hint.item_id)?;
+        bytes.write_u16::<LittleEndian>(source_hint.action_id)?;
+        bytes.push(source_hint.uop_index);
+        bytes.write_u32::<LittleEndian>(source_hint.block_index)?;
+        bytes.write_u32::<LittleEndian>(source_hint.file_index)?;
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,6 +898,25 @@ mod tests {
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frames).unwrap();
+        let (items, source_hints) = build_item_metadata(&EcMobileAnimationsKdl {
+            items: vec![udd_assets::mobile_anim_ec::EcMobileAnimationItemKdl {
+                id: 42,
+                name: "Test Body".to_string(),
+                item_type: 3,
+                layer: 0,
+                male: Some(true),
+                female: None,
+                gargoyle: None,
+                animations: vec![udd_assets::mobile_anim_ec::EcMobileAnimationSourceHintKdl {
+                    action_id: 0,
+                    uop: "AnimationFrame1.uop".to_string(),
+                    block: 2,
+                    file: 7,
+                }],
+            }],
+        }).unwrap();
+        let item_manifest = serialize_item_manifest(&items).unwrap();
+        let source_hint_manifest = serialize_source_hint_manifest(&source_hints).unwrap();
         let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
         let stored_page = crate::tex_art_cc::crop_rgba_page(
             &pages[0].pixels,
@@ -736,6 +930,8 @@ mod tests {
             (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
             (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
+            (ITEM_MANIFEST_ENTRY_PATH, item_manifest.as_slice(), DataType::Metadata),
+            (SOURCE_HINT_MANIFEST_ENTRY_PATH, source_hint_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest {
@@ -757,6 +953,8 @@ mod tests {
         assert_eq!(package.pages().len(), 1);
         assert_eq!(package.animation(42, 0, 0).unwrap().frame_count, 1);
         assert_eq!(package.animation_frames(package.animation(42, 0, 0).unwrap())[0].center_y, -1);
+        assert_eq!(package.item(42).unwrap().name, "Test Body");
+        assert_eq!(package.item_source_hints(package.item(42).unwrap())[0].file_index, 7);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
     }
 

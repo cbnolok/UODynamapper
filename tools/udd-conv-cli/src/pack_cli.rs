@@ -715,12 +715,15 @@ pub fn run() -> eyre::Result<()> {
                 },
             )?;
             println!(
-                "Wrote {} pages (RGBA8888) for {} packed frames out of {} logical frames across {} EC animations from {} bodies to '{}'.",
+                "Wrote {} pages (RGBA8888) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",
                 summary.page_count,
+                summary.source_uop_count,
                 summary.packed_frame_count,
                 summary.frame_count,
                 summary.animation_count,
                 summary.body_count,
+                summary.item_metadata_count,
+                summary.source_hint_count,
                 out_file.display()
             );
         }
