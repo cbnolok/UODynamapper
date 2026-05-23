@@ -275,17 +275,10 @@ fn waypoint_type_label(waypoint_type: u16) -> String {
 }
 
 fn resolve_localized_string(app: &UopInspectorApp, string_id: u32) -> String {
-    if let Some(text) = app
+    app
         .localized_strings
         .as_ref()
         .and_then(|package| package.files.iter().find_map(|file| file.strings.get(string_id)))
-    {
-        return text.to_string();
-    }
-
-    app.cliloc
-        .as_ref()
-        .and_then(|cliloc| cliloc.get(string_id as i32))
         .map(str::to_string)
         .unwrap_or_default()
 }
