@@ -232,22 +232,17 @@ fn main() -> eyre::Result<()> {
             let mut name_map = std::collections::HashMap::new();
             if let Some(dict_path) = dictionary {
                 println!("Loading dictionary: {}...", dict_path.display());
-                match uocf::enhanced::string_dictionary::UoStringDictionary::load(&dict_path) {
-                    Ok(dict) => {
-                        for i in 0.. {
-                            if let Some(s) = dict.get_string(i) {
-                                let h = uocf::uop_container::hash::hash_file_name_single(s);
-                                name_map.insert(h, s.to_string());
-                            } else {
-                                break;
-                            }
-                        }
-                        println!("Loaded {} strings from dictionary.", name_map.len());
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to load dictionary: {}", e);
+                let dict = uocf::enhanced::string_dictionary::UoStringDictionary::load(&dict_path)
+                    .with_context(|| format!("Failed to load dictionary: {}", dict_path.display()))?;
+                for i in 0.. {
+                    if let Some(s) = dict.get_string(i) {
+                        let h = uocf::uop_container::hash::hash_file_name_single(s);
+                        name_map.insert(h, s.to_string());
+                    } else {
+                        break;
                     }
                 }
+                println!("Loaded {} strings from dictionary.", name_map.len());
             }
 
             // TODO: add it only for Texture.uop

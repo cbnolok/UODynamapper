@@ -135,6 +135,36 @@ fn extract_rejects_malformed_uop() {
 }
 
 #[test]
+fn extract_rejects_bad_dictionary_argument() {
+    let temp = TempDir::new("extract-bad-dictionary");
+    let uop_path = temp.path().join("Texture.uop");
+    let out_dir = temp.path().join("out");
+    let dictionary_path = temp.path().join("bad-dictionary.uop");
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(
+            b"DDS test payload",
+            "build/worldart/00000042.dds",
+            CompressionFlag::None,
+        )
+        .expect("add uop fixture file");
+    package.finalize_and_save(&uop_path).expect("save uop fixture");
+    fs::write(&dictionary_path, b"not a dictionary").expect("write bad dictionary");
+
+    let output = uop_tool()
+        .arg("extract")
+        .arg(&uop_path)
+        .arg(&out_dir)
+        .arg("--dictionary")
+        .arg(&dictionary_path)
+        .output()
+        .expect("run uop-tool extract");
+
+    assert!(!output.status.success());
+}
+
+#[test]
 fn replace_updates_payload_without_fixed_temp_file() {
     let temp = TempDir::new("replace");
     let uop_path = temp.path().join("package.uop");
