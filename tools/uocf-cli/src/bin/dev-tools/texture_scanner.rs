@@ -1,10 +1,26 @@
 use byteorder::{LittleEndian, ReadBytesExt};
+use clap::Parser;
 use std::fs;
 use std::io::{self, Cursor, Read};
 use std::path::{Path, PathBuf};
 use uocf::uop_container::hash::hash_file_name_single;
 
-const CSV_PATH: &str = "/home/claudio/test/texture_info.csv";
+/// Scan unpacked DDS textures and write a CSV inventory.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Root directory containing unpacked DDS files.
+    #[arg(value_name = "INPUT_DIR")]
+    input_dir: PathBuf,
+
+    /// CSV inventory output path.
+    #[arg(short, long, value_name = "CSV")]
+    output: PathBuf,
+
+    /// Optional directory where square opaque land candidates are copied.
+    #[arg(long, value_name = "DIR")]
+    land_candidates_dir: Option<PathBuf>,
+}
 
 #[derive(Debug)]
 struct TextureInfo {
@@ -20,31 +36,41 @@ struct TextureInfo {
 }
 
 fn main() -> io::Result<()> {
-    let root = "/home/claudio/test/texture_uop_unpack";
-    let land_dir = "/home/claudio/test/land_candidates";
+    let cli = Cli::parse();
+    let root = cli.input_dir;
+    let land_dir = cli.land_candidates_dir;
     let mut infos = Vec::new();
 
-    println!("Debug tool!");
-    println!("Scanning {}...", root);
-    fs::create_dir_all(land_dir)?;
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("input directory does not exist: {}", root.display()),
+        ));
+    }
 
-    for entry in walkdir::WalkDir::new(root)
+    println!("Scanning {}...", root.display());
+    if let Some(land_dir) = &land_dir {
+        fs::create_dir_all(land_dir)?;
+    }
+
+    for entry in walkdir::WalkDir::new(&root)
         .into_iter()
         .filter_map(|e| e.ok())
     {
         if entry.file_type().is_file() {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "dds") {
-                match process_dds(path, root) {
+                match process_dds(path, &root) {
                     Ok(info) => {
                         if info.is_land_candidate == 1 {
                             // Copy to land candidates folder
-                            let target_path =
-                                PathBuf::from(land_dir).join(info.path.replace('/', "_"));
-                            if let Some(parent) = target_path.parent() {
-                                fs::create_dir_all(parent)?;
+                            if let Some(land_dir) = &land_dir {
+                                let target_path = land_dir.join(info.path.replace('/', "_"));
+                                if let Some(parent) = target_path.parent() {
+                                    fs::create_dir_all(parent)?;
+                                }
+                                fs::copy(path, target_path)?;
                             }
-                            fs::copy(path, target_path)?;
                         }
                         infos.push(info);
                     }
@@ -59,7 +85,12 @@ fn main() -> io::Result<()> {
     // Sort by width, then height
     infos.sort_by(|a, b| a.width.cmp(&b.width).then(a.height.cmp(&b.height)));
 
-    let mut wtr = csv::Writer::from_path(CSV_PATH)?;
+    if let Some(parent) = cli.output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    let mut wtr = csv::Writer::from_path(&cli.output)?;
 
     wtr.write_record(&[
         "path",
@@ -91,13 +122,17 @@ fn main() -> io::Result<()> {
 
     println!(
         "Done. CSV saved to {}. Land candidates copied to {}",
-        CSV_PATH, land_dir
+        cli.output.display(),
+        land_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "disabled".to_string())
     );
 
     Ok(())
 }
 
-fn process_dds(path: &Path, root: &str) -> io::Result<TextureInfo> {
+fn process_dds(path: &Path, root: &Path) -> io::Result<TextureInfo> {
     let mut file = fs::File::open(path)?;
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
@@ -106,11 +141,15 @@ fn process_dds(path: &Path, root: &str) -> io::Result<TextureInfo> {
 
     let rel_path = path
         .strip_prefix(root)
-        .unwrap()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?
         .to_string_lossy()
         .into_owned();
     let vpath_hash = if rel_path.starts_with("0x") {
-        rel_path.split('.').next().unwrap().to_string()
+        rel_path
+            .split('.')
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty texture path"))?
+            .to_string()
     } else {
         format!("0x{:016x}", hash_file_name_single(&rel_path))
     };
@@ -173,12 +212,15 @@ fn process_dds(path: &Path, root: &str) -> io::Result<TextureInfo> {
             let size = decoder.main_size();
             let rgba_len = (size.width * size.height * 4) as usize;
             let mut rgba = vec![0u8; rgba_len];
-            let image = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8).unwrap();
-            if decoder.read_surface(image).is_ok() {
-                for i in 0..(rgba_len / 4) {
-                    if rgba[i * 4 + 3] < 255 {
-                        is_opaque = 0;
-                        break;
+            if let Some(image) =
+                dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8)
+            {
+                if decoder.read_surface(image).is_ok() {
+                    for i in 0..(rgba_len / 4) {
+                        if rgba[i * 4 + 3] < 255 {
+                            is_opaque = 0;
+                            break;
+                        }
                     }
                 }
             }
