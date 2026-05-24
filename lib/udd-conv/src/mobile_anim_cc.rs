@@ -398,12 +398,19 @@ fn decode_present_animations(
 
     let pb = ProgressBar::new(candidates.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding mobile animations ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    pb.set_message("decoding mobile animations");
 
+    let mut active_source = String::new();
     for candidate in candidates {
         pb.inc(1);
+        let source_label = candidate_source_label(&candidate);
+        if source_label != active_source {
+            active_source = source_label;
+            pb.set_message(format!("decoding {active_source}"));
+        }
         let frames = match candidate.frames {
             PresentAnimationFrames::Mul => {
                 let Ok(frames) = anim_map.decode_animation_index(candidate.file_index, candidate.source_index) else {
@@ -451,6 +458,29 @@ fn decode_present_animations(
     Ok((decoded_frames, animation_records, frame_records))
 }
 
+fn candidate_source_label(candidate: &PresentAnimationCandidate) -> String {
+    match &candidate.frames {
+        PresentAnimationFrames::Mul => classic_anim_mul_name(candidate.file_index).to_string(),
+        PresentAnimationFrames::Decoded(_) => format!(
+            "AnimationFrame{}.uop anim_id {}",
+            candidate.file_index + 1,
+            candidate.source_index
+        ),
+    }
+}
+
+fn classic_anim_mul_name(file_index: u8) -> &'static str {
+    match file_index {
+        0 => "anim.mul",
+        1 => "anim2.mul",
+        2 => "anim3.mul",
+        3 => "anim4.mul",
+        4 => "anim5.mul",
+        5 => "anim6.mul",
+        _ => "anim*.mul",
+    }
+}
+
 fn collect_present_animation_candidates(anim_map: &AnimMap) -> Vec<PresentAnimationCandidate> {
     let mut candidates = Vec::new();
     for file_index in 0..MAX_ANIM_FILES {
@@ -494,7 +524,7 @@ fn decode_classic_animationframe_packages(
         let package = UopPackage::load(path)
             .wrap_err_with(|| format!("load {}", path.display()))?;
         let file_index = classic_animationframe_uop_index(path)? - 1;
-        let mut decoded = decode_classic_animationframe_package(&package, file_index)?;
+        let mut decoded = decode_classic_animationframe_package(&package, file_index, path)?;
         candidates.append(&mut decoded);
     }
     Ok(candidates)
@@ -503,13 +533,16 @@ fn decode_classic_animationframe_packages(
 fn decode_classic_animationframe_package(
     package: &UopPackage,
     file_index: u8,
+    path: &Path,
 ) -> eyre::Result<Vec<PresentAnimationCandidate>> {
     let files = package.iter_files().filter(|file| file.has_size()).collect::<Vec<_>>();
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("AnimationFrame*.uop");
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reading Classic AnimationFrame UOP ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    pb.set_message(format!("reading {file_name}"));
 
     let mut candidates = Vec::new();
     for file in files {
@@ -534,7 +567,7 @@ fn decode_classic_animationframe_package(
             frames: PresentAnimationFrames::Decoded(animation.frames),
         });
     }
-    pb.finish_with_message("Classic AnimationFrame UOP read");
+    pb.finish_with_message(format!("{file_name} read"));
     Ok(candidates)
 }
 
@@ -786,11 +819,19 @@ pub fn pack_frames_into_pages(
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<Vec<BuiltMobileAnimPage>> {
     let mut remaining = frames;
+    let total_frames = remaining.len() as u64;
     remaining.sort_by_key(|frame| frame.global_frame_index);
     let mut pages = Vec::new();
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_frames);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("packing mobile animation atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("packing mobile animation atlas page {page_index}"));
         let (page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_frames, frame_records, options)?;
         if page.record.frame_count == 0 {
@@ -801,12 +842,14 @@ pub fn pack_frames_into_pages(
             );
         }
 
+        pb.inc(page.record.frame_count as u64);
         pages.push(page);
         remaining = leftovers;
         remaining.extend(unplaced);
         remaining.sort_by_key(|frame| frame.global_frame_index);
         page_index += 1;
     }
+    pb.finish_with_message(format!("Mobile animation atlas pages packed ({page_index} pages)"));
 
     Ok(pages)
 }
