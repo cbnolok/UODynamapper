@@ -188,19 +188,8 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         })?;
     }
 
-    let encoded_pages = encode_mobile_anim_pages(&pages, options)?;
-    for (page_path, stored_page, width, height) in &encoded_pages {
-        package.add_file(AddFileRequest {
-            data_type: DataType::Texture as u8,
-            compression: options.compression,
-            width: *width,
-            height: *height,
-            virtual_path: Some(page_path),
-            path_hash64: None,
-            id: None,
-            data: stored_page,
-        })?;
-    }
+    let page_count = pages.len() as u32;
+    encode_and_add_mobile_anim_pages(&mut package, pages, options)?;
 
     build_and_write_package(&mut package, out_file)?;
 
@@ -208,7 +197,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         animation_count: animation_records.len() as u32,
         frame_count: frame_records.len() as u32,
         packed_frame_count,
-        page_count: pages.len() as u32,
+        page_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
@@ -334,10 +323,11 @@ fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn encode_mobile_anim_pages(
-    pages: &[BuiltMobileAnimPage],
+fn encode_and_add_mobile_anim_pages(
+    package: &mut UddpBuilder,
+    pages: Vec<BuiltMobileAnimPage>,
     options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
+) -> eyre::Result<()> {
     let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
     let progress_len = if use_bc7 {
         let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
@@ -359,7 +349,37 @@ fn encode_mobile_anim_pages(
         .progress_chars("#>-"));
     pb.set_message(progress_message);
 
-    let encoded_pages = if use_bc7 {
+    let chunk_size = rayon::current_num_threads().max(1);
+    let mut pages = pages.into_iter();
+    loop {
+        let chunk = pages.by_ref().take(chunk_size).collect::<Vec<_>>();
+        if chunk.is_empty() {
+            break;
+        }
+        let encoded_pages = encode_mobile_anim_page_chunk(&chunk, options, &pb)?;
+        for (page_path, stored_page, width, height) in &encoded_pages {
+            package.add_file(AddFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: options.compression,
+                width: *width,
+                height: *height,
+                virtual_path: Some(page_path),
+                path_hash64: None,
+                id: None,
+                data: stored_page,
+            })?;
+        }
+    }
+    pb.finish_with_message("Mobile animation atlas pages encoded");
+    Ok(())
+}
+
+fn encode_mobile_anim_page_chunk(
+    pages: &[BuiltMobileAnimPage],
+    options: &MobileAnimCcAtlasOptions,
+    pb: &ProgressBar,
+) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
+    if options.pixel_format == PagePixelFormat::Bc7 {
         let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
             .map_err(|e| eyre::eyre!("{e}"))?;
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
@@ -392,28 +412,26 @@ fn encode_mobile_anim_pages(
         for page in encoded_pages {
             resolved.push(page?);
         }
-        resolved
+        Ok(resolved)
     } else {
-        pages
+        Ok(pages
             .iter()
             .map(|page| {
                 pb.inc(1);
                 (
-                page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
-                crate::tex_art_cc::crop_rgba_page(
-                    &page.pixels,
-                    options.atlas_width,
+                    page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
+                    crate::tex_art_cc::crop_rgba_page(
+                        &page.pixels,
+                        options.atlas_width,
+                        page.record.used_width,
+                        page.record.used_height,
+                    ),
                     page.record.used_width,
                     page.record.used_height,
-                ),
-                page.record.used_width,
-                page.record.used_height,
                 )
             })
-            .collect()
-    };
-    pb.finish_with_message("Mobile animation atlas pages encoded");
-    Ok(encoded_pages)
+            .collect())
+    }
 }
 
 fn decode_present_animations(
