@@ -207,7 +207,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 std::slice::from_ref(&map_path),
             );
             let map_plane = MapPlane::load(map_path.clone(), map_plane_index)
-                .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
+                .unwrap_or_else(|error| panic!("Error initializing map plane {map_plane_index}: {error:#}"));
 
             let statics_file_name = format!("statics{map_plane_index}.uddp");
             let statics_path = resolve_optional_uddp_path(&udd_path, &statics_file_name);

@@ -364,7 +364,8 @@ impl Plugin for LandTextureCachePlugin {
                 Startup,
                 sys_setup_terrain_cache
                     .in_set(StartupSysSet::SetupSceneStage1)
-                    .after(StartupSysSet::LoadStartupUOFiles),
+                    .after(StartupSysSet::LoadStartupUOFiles)
+                    .run_if(resource_exists::<crate::core::uo_files_loader::TexMap2DRes>),
             );
 
         // Clear pending uploads at the start of each frame (First schedule), which runs BEFORE Update.
