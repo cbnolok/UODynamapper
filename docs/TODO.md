@@ -220,6 +220,24 @@ Current execution decisions:
   - transparent water final pass
 - Keep classic water as the baseline mode and treat enhanced procedural water as benchmark-first.
 
+### Static Light Source Follow-Up
+
+- Upgrade the current static-light support from light-mask quads plus approximate local response into a real projected decal path.
+- Keep using item metadata as the source of truth:
+  - `flags & 0x00800000` marks light-source statics
+  - `quality` selects the world light id
+  - placed static hue can tint the light mask through the configured hue source
+- Preserve the visible static-light mask rendering, but move it to a dedicated light-decal material instead of ordinary `StandardMaterial`.
+- Apply `light_decal_intensity` to the decal draw path, not only to approximate art and land shading response.
+- Feed additive light decals before tonemap and bloom so KR-style local lights can survive the dark material profile.
+- Replace fixed warm local-light response with sampled or projected light color where practical.
+- Improve land response beyond the current first-16-light uniform cap:
+  - nearest or strongest light selection
+  - tile/chunk-local light lists
+  - stable sorting to avoid flicker when visible-light order changes
+- Improve art response beyond per-instance accumulated intensity by considering projected mask coverage or screen-space/local UV coverage.
+- Validate against torch, window, brazier, and spell-light scenes in day, night, and cave presets.
+
 ### Future-Readiness Preservation
 
 - Preserve future blend candidates distinctly from generic support refs.
