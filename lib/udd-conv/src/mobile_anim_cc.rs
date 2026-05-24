@@ -151,7 +151,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         "Converting CC mobile animations from classic MUL format to {}",
         out_file.display()
     );
-    println!("Using CC animation source dir: {}", client_dir.display());
+    print_classic_animation_source_files(&client_dir);
 
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
@@ -212,6 +212,26 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
+}
+
+fn print_classic_animation_source_files(client_dir: &Path) {
+    for file_index in 0..MAX_ANIM_FILES {
+        let mul_name = classic_anim_mul_name(file_index);
+        let idx_name = if file_index == 0 {
+            "anim.idx".to_string()
+        } else {
+            format!("anim{}.idx", file_index + 1)
+        };
+        let idx_path = client_dir.join(idx_name);
+        let mul_path = client_dir.join(mul_name);
+        if idx_path.is_file() && mul_path.is_file() {
+            println!("Using CC animation index source file: {}", idx_path.display());
+            println!("Using CC animation source file (MUL): {}", mul_path.display());
+        }
+    }
+    for path in discover_classic_animationframe_paths(client_dir) {
+        println!("Using CC animation source file (UOP): {}", path.display());
+    }
 }
 
 fn build_body_resolve_records(client_dir: &Path) -> eyre::Result<Vec<MobileAnimCcBodyResolveRecord>> {

@@ -34,6 +34,7 @@ pub fn convert_hues_mul_to_hues_uddp_from_sources(
 ) -> eyre::Result<()> {
     let hues_path = find_first_existing_file(source_dirs, &["hues.mul"])
         .ok_or_else(|| eyre::eyre!("missing hues.mul"))?;
+    println!("Using CC hues source file: {}", hues_path.display());
     convert_hues_mul_to_hues_uddp(&hues_path, out_file, options)
 }
 

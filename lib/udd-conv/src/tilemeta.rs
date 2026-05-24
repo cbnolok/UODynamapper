@@ -317,6 +317,10 @@ fn build_tilemeta_tables_from_resolved_paths(
     if let Some(ref p) = radarcol_path {
         info!("Using radarcol.mul: {}", p.display());
     }
+    println!("Using CC tiledata source file: {}", tiledata_path.display());
+    if let Some(ref p) = radarcol_path {
+        println!("Using CC radar color source file: {}", p.display());
+    }
 
     info!("Converting Tile Metadata tables from MUL/UOP sources");
 

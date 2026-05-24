@@ -30,6 +30,34 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
     let source_root = find_first_existing_file(source_dirs, &["gumpidx.mul", "gumpartLegacyMUL.uop"])
         .and_then(|path| path.parent().map(Path::to_path_buf))
         .ok_or_else(|| eyre::eyre!("missing Classic gump source"))?;
+    let gump_idx_path = ["gumpidx.mul", "Gumpidx.mul"]
+        .iter()
+        .map(|name| source_root.join(name))
+        .find(|path| path.is_file());
+    let gump_mul_path = ["gumpart.mul", "Gumpart.mul"]
+        .iter()
+        .map(|name| source_root.join(name))
+        .find(|path| path.is_file());
+    let gump_uop_path = [
+        "gumpartLegacyMUL.uop",
+        "GumpartLegacyMUL.uop",
+        "gumpartlegacymul.uop",
+    ]
+    .iter()
+    .map(|name| source_root.join(name))
+    .find(|path| path.is_file());
+    if let (Some(idx_path), Some(mul_path)) = (&gump_idx_path, &gump_mul_path) {
+        println!("Using CC gump index source file: {}", idx_path.display());
+        println!("Using CC gump source file (MUL): {}", mul_path.display());
+    } else if let Some(uop_path) = &gump_uop_path {
+        println!("Using CC gump source file (UOP): {}", uop_path.display());
+    }
+    if gump_idx_path.is_some() && gump_mul_path.is_some() && gump_uop_path.is_some() {
+        println!(
+            "Using CC gump source preference: MUL first; UOP fallback available: {}",
+            gump_uop_path.as_ref().expect("checked above").display()
+        );
+    }
 
     let mut gumps = GumpMap::load(&source_root)
         .wrap_err_with(|| format!("load Classic gumps from {}", source_root.display()))?;

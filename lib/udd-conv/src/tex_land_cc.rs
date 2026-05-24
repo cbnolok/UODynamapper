@@ -143,6 +143,8 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
         .ok_or_else(|| eyre::eyre!("missing texidx.mul in {}", client_dir.display()))?;
 
     info!("Converting CC TexMaps to {}", out_file.display());
+    println!("Using CC texmap source file: {}", texmaps_path.display());
+    println!("Using CC texmap index source file: {}", texidx_path.display());
 
     let texmap_source = TexMap::load_with_verdata(
         texmaps_path,

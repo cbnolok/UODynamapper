@@ -155,6 +155,12 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
         if is_uop { "UOP" } else { "MUL" },
         output_path.display()
     );
+    println!(
+        "Using CC map{} source file ({}): {}",
+        map_id,
+        if is_uop { "UOP" } else { "MUL" },
+        map_path.display()
+    );
 
     let mut plane = if is_uop {
         MapPlane::init_uop(map_path, map_id)?

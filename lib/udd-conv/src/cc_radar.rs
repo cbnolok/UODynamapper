@@ -116,6 +116,11 @@ fn build_radar_rgba_pixels(
     let hues_path = find_first_existing_file(source_dirs, &["hues.mul"])
         .ok_or_else(|| eyre::eyre!("missing hues.mul"))?;
 
+    println!("Using CC radar map source file: {}", map_path.display());
+    println!("Using CC radar statics source file: {}", statics_path.display());
+    println!("Using CC radar staidx source file: {}", staidx_path.display());
+    println!("Using CC radar hues source file: {}", hues_path.display());
+
     println!("Loading tilemeta.uddp from {}...", tilemeta_path.display());
     let tilemeta = TileMetaPackage::load(tilemeta_path)?;
 

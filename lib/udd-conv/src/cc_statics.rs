@@ -81,6 +81,14 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
         map_id,
         output_path.display()
     );
+    println!(
+        "Using CC map{} source file for statics dimensions ({}): {}",
+        map_id,
+        if map_is_uop { "UOP" } else { "MUL" },
+        map_path.display()
+    );
+    println!("Using CC staidx{} source file: {}", map_id, idx_path.display());
+    println!("Using CC statics{} source file: {}", map_id, mul_path.display());
 
     // We use MapPlane just to resolve the map dimensions correctly.
     let plane = if map_is_uop {

@@ -183,9 +183,11 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
             "no art sources found in any provided path: expected artLegacyMUL.uop or art.mul/artidx.mul"
         ))?;
 
-    let has_uop = ["artlegacymul.uop", "artLegacyMUL.uop"]
+    let art_uop_path = ["artlegacymul.uop", "artLegacyMUL.uop"]
         .iter()
-        .any(|name| client_dir.join(name).is_file());
+        .map(|name| client_dir.join(name))
+        .find(|path| path.is_file());
+    let has_uop = art_uop_path.is_some();
 
     if has_uop {
         info!(
@@ -198,7 +200,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
             out_file.display()
         );
     }
-    println!("Using CC art source dir: {}", client_dir.display());
+    if let Some(path) = &art_uop_path {
+        println!("Using CC art source file (UOP): {}", path.display());
+    } else {
+        println!("Using CC art index source file: {}", client_dir.join("artidx.mul").display());
+        println!("Using CC art source file (MUL): {}", client_dir.join("art.mul").display());
+    }
 
     let mut art_map = ArtMap::load(&client_dir)
         .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
