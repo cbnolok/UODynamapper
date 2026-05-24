@@ -58,7 +58,7 @@ Shared conversion and packaging logic for UODynamapper runtime assets.
 Responsibilities:
 
 - Classic and Enhanced Client asset conversion
-- terrain/art classification
+- land/art classification
 - tile metadata packaging
 - `.uddp` package generation logic used by CLI and GUI frontends
 
@@ -91,13 +91,13 @@ Release packages are expected to ship `dynamapper` and each tool as separate bin
 All of these are built by the `uocf-cli` crate:
 
 - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
-- `cc-uop-mul-converter`: convert between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
+- `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
 - `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
-- `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
+- `texture-scanner`: identify and isolate land candidates from UO texture pools.
 - `sound-tool`: inspect or convert supported UO sound data.
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
-- `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
-- `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
+- `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
+- `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
 
 ### UOCF Graphical Frontends
 
@@ -124,13 +124,13 @@ General-purpose Ultima Online format tooling built around `uocf`.
 Included tools:
 
 - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild modern `.uop` packages.
-- `cc-uop-mul-converter`: convert between legacy `.mul`/`.idx` files and modern Classic Client `.uop` packages.
-- `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
+- `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern Classic Client `.uop` packages.
+- `texture-scanner`: identify and isolate land candidates from UO texture pools.
 - `uop-dict-populator-cli`: populate UOP hash dictionaries from templates or brute force.
 - `sound-tool`: inspect or convert supported UO sound data.
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
-- `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
-- `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
+- `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
+- `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
 
 ## GUI Tools
 

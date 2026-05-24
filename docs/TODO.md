@@ -80,7 +80,7 @@ Current execution decisions:
   - reason and confidence
 - Extend tileart parsing so `Textures`-style refs are preserved instead of collapsing into lossy fallback buckets.
 - Preserve raw path, normalized path, and `texture_stretch` for tileart-linked refs.
-- Promote multi-reference metadata to first-class runtime data for both item-owned and terrain-owned records.
+- Promote multi-reference metadata to first-class runtime data for both item-owned and land-owned records.
 - Preserve metadata-only manifests for non-image `EffectTexture.uop` resources.
 
 ### EC Packaging Boundaries
@@ -110,7 +110,7 @@ Current execution decisions:
 
 ### EC Runtime: Open Correctness Gaps
 
-- Finish runtime consumption of chosen-base metadata for terrain-owned, art-owned, and surface-like art paths.
+- Finish runtime consumption of chosen-base metadata for land-owned, art-owned, and surface-like art paths.
 - Resolve remaining surface-like static routing failures where tilemeta says `SurfaceLike` but runtime `ec_land` resolution is still missing.
   - Known samples: `1345`, `1395`, `1396`, `1397`, `1398`, `1399`.
   - `1345` points at `ec_texture_id=2000130` and appears to have `TerrainDefinition` matches.
@@ -198,9 +198,9 @@ Current execution decisions:
 - World-space repetition and stretch precedence:
   - make explicit metadata override texture-extent inference when warranted
   - keep the rule inspectable
-- Single-terrain material mode for materials that are truly one-base by evidence.
-- Solid-terrain blend mode for materials with credible `Base`, `SecondaryBase`, and `AlphaMask` support.
-- Terrain-owned liquid mode with explicit uncertainty handling for ripple-like or normal-like support inputs.
+- Single-land material mode for materials that are truly one-base by evidence.
+- Solid-land blend mode for materials with credible `Base`, `SecondaryBase`, and `AlphaMask` support.
+- Land-owned liquid mode with explicit uncertainty handling for ripple-like or normal-like support inputs.
 - Art-owned wet or liquid mode separate from terrain-liquid logic.
 - Extra-pass exploration only behind explicit feature gates and diagnostics.
 
@@ -237,7 +237,7 @@ Current execution decisions:
 ### Terrain Architecture Beyond Current EC Work
 
 - Keep the current threshold-based terrain scale and mesh path explicitly documented as transitional.
-- Design the clipmap terrain path as nested GPU terrain rings around the camera, with clear rules for ring size, update cadence, and metadata residency.
+- Design the clipmap land path as nested GPU land rings around the camera, with clear rules for ring size, update cadence, and metadata residency.
 - Replace discrete zoom mesh swapping with GPU clipmap rings.
 - Implement snapped world-space sampling in the vertex stage.
 - Use continuous LOD so zoom no longer depends on hard render-threshold swaps.
@@ -335,7 +335,7 @@ Current execution decisions:
 ## Known Open Constraints And Rules
 
 - `tileart.uop` ownership remains authoritative for art-owned wet and liquid entries even when support inputs come from `TerrainTexture.uop` or `EffectTexture.uop`.
-- `TerrainDefinition.uop` ownership remains authoritative for terrain materials.
+- `TerrainDefinition.uop` ownership remains authoritative for land materials.
 - `Texture.uop` is a mixed pool; package origin alone is not sufficient classification.
 - `ec_land` and `ec_art` may legitimately duplicate the same source image when semantics differ.
 - `tex_art_ec` must keep `TileType::Solid` admission; only the old liquid blanket exclusion was wrong.

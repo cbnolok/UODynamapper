@@ -1,4 +1,4 @@
-// Terrain shader live UI (Bevy 0.16 + egui)
+// Land shader live UI (Bevy 0.16 + egui)
 // - Controls LandEffectsUniform and LandLightingUniform as used by your WGSL
 // - Writes to material assets so Bevy re-uploads uniforms automatically
 // - Shading modes:
@@ -19,26 +19,26 @@ use bevy::pbr::MeshMaterial3d;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
-/// Resource that tracks whether the terrain shader panel is visible.
+/// Resource that tracks whether the land shader panel is visible.
 /// Toggled by the keybinding; also closed when egui's own close button is used.
 #[derive(Resource, Default)]
-pub struct TerrainShaderUiState {
+pub struct LandShaderUiState {
     pub open: bool,
     pub advanced_open: bool,
 }
 
 // Plugin that draws the UI and applies changes to materials.
-pub struct TerrainUiPlugin {
+pub struct LandUiPlugin {
     pub registered_by: &'static str,
 }
-impl_tracked_plugin!(TerrainUiPlugin);
+impl_tracked_plugin!(LandUiPlugin);
 
-impl Plugin for TerrainUiPlugin {
+impl Plugin for LandUiPlugin {
     fn build(&self, app: &mut App) {
         // Draw UI in the egui pass
-        app.init_resource::<TerrainShaderUiState>()
+        app.init_resource::<LandShaderUiState>()
             .add_observer(sys_shader_ui_toggle)
-            .add_systems(EguiPrimaryContextPass, terrain_ui_system)
+            .add_systems(EguiPrimaryContextPass, land_ui_system)
             // Push "dirty" values into GPU materials
             .add_systems(Update, push_uniforms_if_dirty);
     }
@@ -46,7 +46,7 @@ impl Plugin for TerrainUiPlugin {
 
 fn sys_shader_ui_toggle(
     _trigger: On<ActionToggleShaderSettings>,
-    mut state: ResMut<TerrainShaderUiState>,
+    mut state: ResMut<LandShaderUiState>,
 ) {
     state.open = !state.open;
 }
@@ -55,13 +55,13 @@ fn sys_shader_ui_toggle(
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
 
-pub fn terrain_ui_system(
+pub fn land_ui_system(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
     shader_presets: Res<LandShaderModePresets>,
     settings: ResMut<Settings>,
-    mut ui_state: ResMut<TerrainShaderUiState>,
+    mut ui_state: ResMut<LandShaderUiState>,
     mut was_open: Local<bool>,
 ) {
     // Early return if not open. We allow one extra pass if was_open was true 
@@ -75,7 +75,7 @@ pub fn terrain_ui_system(
     };
 
     let title = format!(
-        "Terrain Shader Controls [{:?}]",
+        "Land Shader Controls [{:?}]",
         settings.keybindings.shader_settings
     );
     let mut window_open = ui_state.open;
@@ -123,16 +123,16 @@ pub fn terrain_ui_system(
 
                 ui.separator();
 
-                let mut terrain_relief = if u.effects.normal_mode == 0 {
+                let mut land_relief = if u.effects.normal_mode == 0 {
                     0.0
                 } else {
                     0.5 + 0.5 * u.land_lighting.sharpness_mix.clamp(0.0, 1.0)
                 };
-                if slider_s(ui, "Terrain Relief", &mut terrain_relief, 0.0..=1.0) {
-                    u.effects.normal_mode = if terrain_relief > 0.15 { 1 } else { 0 };
-                    u.land_lighting.enable_bent = if terrain_relief > 0.55 { 1 } else { 0 };
-                    u.land_lighting.sharpness_mix = (terrain_relief * 0.55).clamp(0.0, 0.55);
-                    u.land_lighting.sharpness_factor = (1.0 + terrain_relief * 1.5).clamp(1.0, 3.0);
+                if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
+                    u.effects.normal_mode = if land_relief > 0.15 { 1 } else { 0 };
+                    u.land_lighting.enable_bent = if land_relief > 0.55 { 1 } else { 0 };
+                    u.land_lighting.sharpness_mix = (land_relief * 0.55).clamp(0.0, 0.55);
+                    u.land_lighting.sharpness_factor = (1.0 + land_relief * 1.5).clamp(1.0, 3.0);
                     changed = true;
                 }
 

@@ -2,7 +2,7 @@ pub mod keybindings_help;
 pub mod gump;
 pub mod preferences;
 pub mod teleport;
-pub mod terrain_shader;
+pub mod land_shader;
 
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::impl_tracked_plugin;
@@ -12,9 +12,9 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContextSettings, EguiContexts};
 use gump::GumpDialogPlugin;
 use keybindings_help::KeybindingsHelpPlugin;
+use land_shader::LandUiPlugin;
 use preferences::PreferencesDialogPlugin;
 use teleport::TeleportPlugin;
-use terrain_shader::TerrainUiPlugin;
 
 pub struct DialogsPlugin {
     pub registered_by: &'static str,
@@ -28,7 +28,7 @@ impl Plugin for DialogsPlugin {
             PreferencesDialogPlugin {
                 registered_by: "DialogsPlugin",
             },
-            TerrainUiPlugin {
+            LandUiPlugin {
                 registered_by: "DialogsPlugin",
             },
             KeybindingsHelpPlugin {

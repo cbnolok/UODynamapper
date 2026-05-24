@@ -121,7 +121,7 @@ pub struct LandUploadTelemetrySnapshot {
     pub pending_bytes: u64,
 }
 
-/// Shared telemetry for the terrain metadata-atlas upload path.
+/// Shared telemetry for the land metadata-atlas upload path.
 ///
 /// The main world populates the queued counters after dirty regions are gathered, while the
 /// render world updates the submitted and backlog counters after applying the per-frame caps.

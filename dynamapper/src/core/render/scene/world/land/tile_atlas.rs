@@ -20,11 +20,11 @@ pub const TERRAIN_SHADER_FLAG_FOLLOW_CENTER: u16 = 1 << 1;
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
 
 impl Rg16u {
-    /// Packs tile ID, height (Z), texture source mode, terrain flags, and is_wet into Rg16u.
+    /// Packs tile ID, height (Z), texture source mode, land flags, and is_wet into Rg16u.
     ///
     /// G channel high-byte layout (mirrored in atlas.wgsl):
     ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
-    ///   bits 4-6: `terrain_flags` (EC reviewed terrain policy/liquid hints)
+    ///   bits 4-6: `land_flags` (EC reviewed land policy/liquid hints)
     ///   bit  7:   `is_wet` (tile has the IsWet tiledata flag → animated water effect)
     ///
     /// This packing must be manually unrolled in the WGSL shader logic.
@@ -33,19 +33,19 @@ impl Rg16u {
         height_i8: i8,
         tex_size_bits: u16,
         is_wet: bool,
-        terrain_flags: u16,
+        land_flags: u16,
     ) -> Self {
         // g: low 8 bits: height_i8 + 128
-        // g: high 8 bits: lower nibble = tex_size_bits, bits 4-6 = terrain flags, bit 7 = is_wet
+        // g: high 8 bits: lower nibble = tex_size_bits, bits 4-6 = land flags, bit 7 = is_wet
         let height_biased = (height_i8 as i16 + 128).clamp(0, 255) as u8;
         let wet_bit: u16 = if is_wet { 0x80 } else { 0 };
-        let flags = (terrain_flags & 0x07) << 4;
+        let flags = (land_flags & 0x07) << 4;
         let g = (height_biased as u16) | (((tex_size_bits & 0x0F) | flags | wet_bit) << 8);
         Self { r: tile_id, g }
     }
 }
 
-/// Uniform parameters passed to the terrain shader to resolve world coordinates into atlas samples.
+/// Uniform parameters passed to the land shader to resolve world coordinates into atlas samples.
 /// This struct must be kept in sync with the shader's `AtlasParams` (including std140/std430 alignment).
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, ShaderType, PartialEq)]

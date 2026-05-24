@@ -205,7 +205,7 @@ pub struct LandMeshScratch {
     missing_tile_bits: [u64; LandTextureCache::TILE_BITSET_SIZE],
     ids: Vec<u16>,
     texture_lookup_cache: Vec<u32>,
-    terrain_shader_flags_cache: Vec<u16>,
+    land_shader_flags_cache: Vec<u16>,
     /// Reusable bitmask for deduplicating uncached block coordinates.
     dedup_bits: Vec<u64>,
 }
@@ -217,7 +217,7 @@ impl Default for LandMeshScratch {
             missing_tile_bits: [0u64; LandTextureCache::TILE_BITSET_SIZE],
             ids: Vec::new(),
             texture_lookup_cache: vec![u32::MAX; LandTextureCache::MAX_TILE_ID],
-            terrain_shader_flags_cache: vec![0; LandTextureCache::MAX_TILE_ID],
+            land_shader_flags_cache: vec![0; LandTextureCache::MAX_TILE_ID],
             dedup_bits: Vec::new(),
         }
     }
@@ -395,7 +395,7 @@ pub fn sys_draw_spawned_land_chunks(
         let _span = crate::tracy_span!("worldmap::chunk_draw_collect_targets");
         scratch.blocks_to_draw.clear();
         scratch.texture_lookup_cache.fill(u32::MAX);
-        scratch.terrain_shader_flags_cache.fill(0);
+        scratch.land_shader_flags_cache.fill(0);
         scratch.missing_tile_bits.fill(0);
         scratch.ids.clear();
 
@@ -679,7 +679,7 @@ pub fn sys_draw_spawned_land_chunks(
     let LandMeshScratch {
         missing_tile_bits,
         texture_lookup_cache,
-        terrain_shader_flags_cache,
+        land_shader_flags_cache,
         ids,
         ..
     } = &mut *scratch;
@@ -799,11 +799,11 @@ pub fn sys_draw_spawned_land_chunks(
                 texture_lookup_cache[id as usize] = (layer << 4) | mode;
             }
 
-            terrain_shader_flags_cache[id as usize] = match frame_pacing.settings.graphics.land_texture_source {
+            land_shader_flags_cache[id as usize] = match frame_pacing.settings.graphics.land_texture_source {
                 crate::configs::settings::ClientTextureSource::Ec => cache_r
                     .tex_land_ec
                     .as_ref()
-                    .map(|package| ec_terrain_shader_flags(package, id as u32))
+                    .map(|package| ec_land_shader_flags(package, id as u32))
                     .unwrap_or(0),
                 crate::configs::settings::ClientTextureSource::Cc => 0,
             };
@@ -868,7 +868,7 @@ pub fn sys_draw_spawned_land_chunks(
                 // Because the lookup caches are populated and read-only, we can share raw
                 // pointers to their data safely across async tasks.
                 let lookup_ptr = texture_lookup_cache.as_ptr() as usize;
-                let terrain_flags_ptr = terrain_shader_flags_cache.as_ptr() as usize;
+                let land_flags_ptr = land_shader_flags_cache.as_ptr() as usize;
                 let wet_ptr = wet_bits.as_ptr() as usize;
 
                 s.spawn(async move {
@@ -890,9 +890,9 @@ pub fn sys_draw_spawned_land_chunks(
                             LandTextureCache::MAX_TILE_ID,
                         )
                     };
-                    let terrain_flags_slice = unsafe {
+                    let land_flags_slice = unsafe {
                         std::slice::from_raw_parts(
-                            terrain_flags_ptr as *const u16,
+                            land_flags_ptr as *const u16,
                             LandTextureCache::MAX_TILE_ID,
                         )
                     };
@@ -942,7 +942,7 @@ pub fn sys_draw_spawned_land_chunks(
                                 // Look up whether this land tile has the IsWet flag.
                                 let is_wet =
                                     wet_slice.get(cell.id as usize).copied().unwrap_or(0) != 0;
-                                let terrain_flags = terrain_flags_slice
+                                let land_flags = land_flags_slice
                                     .get(cell.id as usize)
                                     .copied()
                                     .unwrap_or(0);
@@ -951,7 +951,7 @@ pub fn sys_draw_spawned_land_chunks(
                                     cell.z,
                                     mode as u16,
                                     is_wet,
-                                    terrain_flags,
+                                    land_flags,
                                 );
                                 texel_count += 1;
                             }
@@ -1150,7 +1150,7 @@ fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_ch
     });
 }
 
-fn ec_terrain_shader_flags(
+fn ec_land_shader_flags(
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
     tile_id: u32,
 ) -> u16 {

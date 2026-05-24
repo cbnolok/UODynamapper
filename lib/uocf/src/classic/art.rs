@@ -14,7 +14,7 @@
 //!
 //! ### `artlegacymul.uop`
 //!
-//! - A UOP package that contains art data, primarily for legacy items. The data is stored
+//! - A UOP package that contains art data, primarily for Classic Client items. The data is stored
 //!   as TGA files within the UOP package.
 //!
 //! ### Land Tiles (ID < 0x4000)

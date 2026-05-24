@@ -8,7 +8,7 @@ pub struct ActionToggleKeybindingsHelp;
 #[derive(Event)]
 pub struct ActionTogglePreferences;
 
-/// Action to toggle the terrain shader settings dialog (F3)
+/// Action to toggle the land shader settings dialog (F3)
 #[derive(Event)]
 pub struct ActionToggleShaderSettings;
 

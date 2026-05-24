@@ -39,25 +39,30 @@ main.rs → core.rs (Bevy app setup) → AppState machine
 | `dynamapper/src/main.rs` | Application entry point |
 | `dynamapper/src/core.rs` | Bevy app configuration, plugin registration |
 | `dynamapper/src/core/app_states.rs` | State machine (Startup → InGame) |
-| `assets/shaders/worldmap/land/main.wgsl` | Terrain shader |
+| `assets/shaders/world/land/main.wgsl` | Land shader |
 
 ---
 
 ## 3. Core Features
 
+### Naming
+- Use `land` for project-owned files, modules, UI labels, and documentation.
+- Preserve exact upstream resource names such as `TerrainDefinition.uop`, `TerrainTexture.uop`, and client-provided virtual paths when referring to those files directly.
+- The supported client families are Classic, Kingdom Reborn, and Enhanced.
+
 ### Rendering
 - **Three Shader Modes**: Classic 2D, Enhanced Classic, KR-like
-- **Paged Tile Atlas**: GPU-driven terrain metadata for massive maps
+- **Paged Tile Atlas**: GPU-driven land metadata for massive maps
 - **BC7 Compression**: 8x VRAM reduction (~160MB → ~20MB)
 - **Zoom-Driven Chunk Scaling**: Dynamic chunk coverage (8x8 up to 256x256)
 - **Exact Viewport Visibility**: Uses Bevy camera ray projection
 - **Hot-Reload**: Shader changes apply automatically
-- **EC Material Routing**: surface-like statics can route through terrain-style EC land slots when tile metadata and provenance support it
+- **EC Material Routing**: surface-like statics can route through land-style EC slots when tile metadata and provenance support it
 
 ### Current Runtime Decisions
 - **Map Chunking**: `32x32` for now
 - **Statics Chunking**: `32x32` for now
-- **Terrain Transport Unit**: prefer `64x64` UDDP decompression units while keeping render granularity independent
+- **Land Transport Unit**: prefer `64x64` UDDP decompression units while keeping render granularity independent
 - **Static Depth Port**: staged migration; current runtime is still mixed between interpolated sprite depth and early logical-depth work
 
 ### User Interface
@@ -112,7 +117,7 @@ The renderer merges base 8x8 blocks into larger "super-chunks" (up to 256x256) a
 ### 7.3 Enhanced Client Material Ownership
 The EC pipeline does not rely on one flat texture list. Current work uses:
 - `tileart.uop` for art and static ownership
-- `TerrainDefinition.uop` for terrain ownership and aliases
+- `TerrainDefinition.uop` for land ownership and aliases
 - `Texture.uop` and `LegacyTexture.uop` as shared mixed pools
 - `TerrainTexture.uop` and `EffectTexture.uop` as support-resource pools that must be preserved even when they are not directly renderable yet
 

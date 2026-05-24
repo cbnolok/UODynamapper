@@ -42,17 +42,17 @@ This explains why a land tile id is not enough to determine the final visual. Th
 
 ## 3. Why Transition Tiles Exist In `art.mul`
 
-The classic client could not fully synthesize visually pleasing transitions between terrain materials from the base tiled textures alone.
+The classic client could not fully synthesize visually pleasing transitions between land materials from the base tiled textures alone.
 
 As a result, `art.mul` contains land-art tiles for:
 
 - flat terrain renderings
 - terrain-to-terrain transitions
-- overlays used to hide abrupt seams between neighboring terrain materials
+- overlays used to hide abrupt seams between neighboring land materials
 
 These transition tiles were manually authored content. They were placed on top of the underlying textured ground to preserve the original game's intended appearance.
 
-This is why a renderer that uses only `texmaps.mul` can reproduce the base terrain material, but still miss fidelity-critical seam-hiding transition artwork.
+This is why a renderer that uses only `texmaps.mul` can reproduce the base land material, but still miss fidelity-critical seam-hiding transition artwork.
 
 ## 4. Implications For UODynamapper
 
@@ -68,10 +68,10 @@ Immediate consequence:
 
 Architectural consequence:
 
-- "Terrain" is not a single asset source.
+- "Land" is not a single asset source.
 - The runtime needs to treat these as separate but cooperating inputs:
-  - logical terrain ids and corner heights from the map
-  - repeatable terrain textures from `texmaps.mul`
+  - logical land ids and corner heights from the map
+  - repeatable land textures from `texmaps.mul`
   - transition and flat land art from `art.mul`
 
 ## 5. How This Helps Interpret EC Files
@@ -80,24 +80,24 @@ The classic split is a useful warning against simplistic assumptions in the EC p
 
 Important takeaways:
 
-- A low numeric id range does not automatically mean "terrain-only" visuals.
-- A terrain-related visual may live in a shared texture pool and still require metadata to classify it correctly.
-- The numeric vpath/id overlap between EC and CC is useful for locating payloads, but it is not sufficient to decide whether a tile belongs to terrain, static art, or a flat floor-like static render path.
+- A low numeric id range does not automatically mean "land-only" visuals.
+- A land-related visual may live in a shared texture pool and still require metadata to classify it correctly.
+- The numeric vpath/id overlap between EC and CC is useful for locating payloads, but it is not sufficient to decide whether a tile belongs to land, static art, or a flat floor-like static render path.
 
 Packages:
 
-- `Texture.uop` / `build/worldart/*.dds` is a mixed pool, not a pure terrain-only pool.
-- `LegacyTexture.uop` is part of the same source bundle and supplies the EC-side legacy-style image references.
+- `Texture.uop` / `build/worldart/*.dds` is a mixed pool, not a pure land-only pool.
+- `LegacyTexture.uop` is part of the same source bundle and supplies the EC-side classic-style image references.
 - `tileart.uop` is the authoritative EC static-art source for ownership, clipping windows, and item-side metadata.
 - `TerrainDefinition.uop` is the authoritative EC land source for material semantics, selected textures, alias chains, and canonical slot relationships.
 - `string_dictionary.uop` is a required support package for resolving virtual paths, but itself is not a visual source.
 - EC art and EC land are both semantic outputs from the same shared texture pools, so the same raw texture id can legitimately appear in both packages when ownership differs.
 
-That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` should be defined by terrain semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is terrain-owned.
+That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` should be defined by land semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is land-owned.
 
-## 5.1 KR And EC Terrain Relationship
+## 5.1 KR And EC Land Relationship
 
-Kingdom Reborn and Enhanced Client terrain evidence should be kept separate until a specific runtime mode intentionally merges them.
+Kingdom Reborn and Enhanced Client land evidence should be kept separate until a specific runtime mode intentionally merges them.
 
 Verified package relationship from `kr-ec-terrain-diff-tool` using:
 
@@ -111,8 +111,8 @@ Observed texture-pool containment:
 | Package | KR files | EC files | KR files absent from EC | Meaning |
 | ------- | -------- | -------- | ----------------------- | ------- |
 | `Texture.uop` | 9348 | 9798 | 0 | EC appears to be a superset of KR for this pool. |
-| `TerrainTexture.uop` | 20 | 38 | 0 | EC appears to be a superset of KR support terrain textures. |
-| `LegacyTexture.uop` | 16877 | 52430 | 2 | EC is nearly a superset; two KR legacy hashes need separate review if referenced. |
+| `TerrainTexture.uop` | 20 | 38 | 0 | EC appears to be a superset of KR support land textures. |
+| `LegacyTexture.uop` | 16877 | 52430 | 2 | EC is nearly a superset; two KR classic-style hashes need separate review if referenced. |
 
 Observed routing relationship:
 
@@ -124,7 +124,7 @@ Observed routing relationship:
 This means:
 
 - KR material routing is not just "EC routing with older packages".
-- EC texture packages are probably sufficient as a physical image pool for many KR terrain experiments.
+- EC texture packages are probably sufficient as a physical image pool for many KR land experiments.
 - A separate `tex_land_kr.uddp` should not be added until a report proves that KR uses visible texture refs or layer roles that cannot be represented by EC packages plus KR routing metadata.
 
 Recommended near-term KR model:
@@ -191,8 +191,8 @@ Use these sources as the first discriminator:
 | Source | Classify As | Why |
 | ------ | ----------- | --- |
 | `map*.mul` land ids + classic land tile table | `land` | Authoritative ground ownership |
-| `TileMetaLandTile` / `texture_id` | `land` | Current unified terrain path stores land material textures here |
-| `terrain.toml` / `TerrainDefinition` entries | `land` | Explicit terrain semantics for EC-style land rendering |
+| `TileMetaLandTile` / `texture_id` | `land` | Current unified land path stores land material textures here |
+| `terrain.toml` / `TerrainDefinition` entries | `land` | Explicit land semantics for EC-style land rendering |
 | classic item tiledata | `art` | Object/floor/bridge/static ownership |
 | EC `tileart.uop` -> `ArtData` | `art` | Tileart is item/static-oriented, even when the visual looks like terrain |
 | `TileMetaItemTile` / `ec_texture_id` / `cc_texture_id` | `art` | Current unified item path stores object art references here |
@@ -209,8 +209,8 @@ Additional EC source guidance:
 EC shader names are useful semantic hints, but they do not override ownership:
 
 - `UOWaterShader`: water-like visual semantics
-- `UOStaticTerrainShader`: terrain-like flat or ground-like object semantics
-- `UOSpriteShader`: sprite/static semantics, but some entries still need terrain-style flat rendering
+- `UOStaticTerrainShader`: land-like flat or ground-like object semantics
+- `UOSpriteShader`: sprite/static semantics, but some entries still need land-style flat rendering
 
 The verified rule in this repo is:
 
@@ -230,7 +230,7 @@ Current parser rule:
 
 This rule was derived from verified EC examples such as wood boards (`1211`), sandstone floor (`2077`), and palm-frond roof (`1510`): all are flat 44x44 classic-style tiles with zero offsets, all carry `Unused1`, and all must be treated as surface-like in the EC path even though they do not come through `UOStaticTerrainShader`.
 
-That avoids misclassifying bridge decks, suspended floors, under-terrain floors, roofs, and terrain-looking object overlays as map land while still keeping them out of the billboard/static path.
+That avoids misclassifying bridge decks, suspended floors, under-land floors, roofs, and land-looking object overlays as map land while still keeping them out of the billboard/static path.
 
 ### 6.4 Flag Interpretation Rules
 
@@ -250,7 +250,7 @@ Practical rule:
 - `surface` and `bridge` strongly suggest floor-like or deck-like object art when the owner is tileart/item data
 - `wet` plus water-oriented shader suggests liquid-style treatment, but still not necessarily map land if owned by tileart
 - `wall` and `roof` should rule out land classification immediately
-- `unused1` should be treated as a secondary EC render-mode hint, not as proof of terrain ownership
+- `unused1` should be treated as a secondary EC render-mode hint, not as proof of land ownership
 
 Flags are therefore best treated as:
 
@@ -260,15 +260,15 @@ Flags are therefore best treated as:
 
 They are not the primary source of truth for deciding `land` versus `art`.
 
-In other words: `Unused1` says "render this tileart entry like a flat surface", not "this texture belongs to the terrain material system".
+In other words: `Unused1` says "render this tileart entry like a flat surface", not "this texture belongs to the land material system".
 
 ### 6.5 Decision Table
 
 | Condition | Result | Notes |
 | --------- | ------ | ----- |
-| Referenced by map land id / `TileMetaLandTile` / `terrain.toml` | `land` | Authoritative terrain ownership |
-| Referenced by classic item tiledata or EC `ArtData` | `art` | Even if flat, floor-like, or terrain-looking |
-| EC tileart record with `UOStaticTerrainShader` | `art`, subtype `terrain-like floor art` | Do not promote to map land automatically |
+| Referenced by map land id / `TileMetaLandTile` / `terrain.toml` | `land` | Authoritative land ownership |
+| Referenced by classic item tiledata or EC `ArtData` | `art` | Even if flat, floor-like, or land-looking |
+| EC tileart record with `UOStaticTerrainShader` | `art`, subtype `land-like floor art` | Do not promote to map land automatically |
 | EC tileart record with `UOWaterShader` | `art`, subtype `liquid-like art` | Useful for special render handling, still item-owned |
 | EC tileart record with `UOSpriteShader` and `Unused1` | `art`, subtype `surface-like floor/roof art` | Covers flat boards, roofs, sandstone floor tiles, and similar EC land-like statics |
 | EC tileart record with `UOSpriteShader` and walkable/surface-like flags | `art`, subtype `floor or deck art` | Covers docks, platforms, suspended floors |
@@ -290,7 +290,7 @@ Those signals are insufficient on their own. They are compatible with:
 
 - suspended wooden floors
 - dock segments over water
-- under-terrain support floors
+- under-land support floors
 - transition overlays
 - ground-like decorative statics
 
@@ -300,7 +300,7 @@ The owner record must win.
 
 For future `tex_land_ec` and `tex_art_ec` packaging, use this policy:
 
-- `tex_land_ec`: package terrain-owned references only
+- `tex_land_ec`: package land-owned references only
 - `tex_art_ec`: package tileart/item-owned references only
 - if a texture id is referenced by both, duplication is acceptable, but semantic ownership must stay distinct
 
@@ -308,7 +308,7 @@ Long-term, a shared EC texture pool with separate semantic lookup tables would b
 
 Current branch direction:
 
-- keep terrain ownership anchored in `TerrainDefinition.uop`
+- keep land ownership anchored in `TerrainDefinition.uop`
 - keep item/static ownership anchored in `tileart.uop`
 - use EC `Unused1` plus shader/type to decide whether a tileart entry is surface-like and should avoid the billboard/static path
 - use `TerrainTranscode.kdl` as the starting point for the hand-tuned Classic land family table
@@ -319,11 +319,11 @@ That direction is specifically aimed at reconciling the shared EC texture pools 
 
 Recommended interpretation for future work:
 
-- Keep `texmaps.mul` as the primary source for textured terrain.
+- Keep `texmaps.mul` as the primary source for textured land.
 - Add classic `art.mul` land-art support for at least transition tiles.
-- Treat EC terrain extraction as a classification problem, not just a file-prefix or id-range problem.
+- Treat EC land extraction as a classification problem, not just a file-prefix or id-range problem.
 - Preserve the distinction between:
-  - terrain material textures
+  - land material textures
   - land art / transition overlays
   - static world art sprites
 

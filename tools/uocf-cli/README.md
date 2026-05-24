@@ -7,19 +7,19 @@ the `uocf` parser library.
 
 - `uop-tool`: hash UOP paths, brute-force hashes, extract packages, merge DIC
   dictionaries, replace package payloads, and rebuild packages.
-- `cc-uop-mul-converter`: convert supported Classic Client legacy `.mul`/`.idx`
+- `cc-uop-mul-converter`: convert supported Classic Client `.mul`/`.idx`
   files to and from modern `.uop` packages.
 - `uop-dict-populator-cli`: populate DIC hash dictionaries from configured UOP
   templates.
 - `texture-scanner`: scan unpacked DDS texture trees and write a CSV inventory.
 - `sound-tool`: export Classic Client sound entries.
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from images.
-- `facet-evidence-tool`: extract EC/KR facet terrain evidence into KDL.
-- `kr-ec-terrain-diff-tool`: compare KR terrain routing against EC evidence.
+- `facet-evidence-tool`: extract EC/KR facet land evidence into KDL.
+- `kr-ec-terrain-diff-tool`: compare KR land routing against EC evidence.
 
 ## Current Production Status
 
-The crate builds and has targeted tests for the highest-risk UOP and legacy
+The crate builds and has targeted tests for the highest-risk UOP and Classic Client
 MUL/UOP paths, but it should still be treated as production-candidate tooling
 rather than a fully exhaustive production surface.
 
@@ -39,10 +39,10 @@ Validated coverage currently includes:
   a generated tiny DDS fixture.
 - Safe extraction path handling for dictionary-resolved names.
 - Unique temporary paths for package rewrite operations.
-- Legacy MUL/UOP malformed chunk handling for truncated gump and multi payloads.
+- Classic Client MUL/UOP malformed chunk handling for truncated gump and multi payloads.
 - A synthetic `sound.mul`/`soundidx.mul` to `soundLegacyMUL.uop` round trip.
-- Synthetic art, gump, and one-block map legacy MUL/UOP round trips.
-- MultiCollection UOP-entry payload conversion into a legacy multi record.
+- Synthetic art, gump, and one-block map Classic Client MUL/UOP round trips.
+- MultiCollection UOP-entry payload conversion into a Classic Client multi record.
 
 ## Important Behavior
 

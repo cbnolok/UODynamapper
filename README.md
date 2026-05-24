@@ -2,14 +2,14 @@
 
 UODynamapper is a renderer for Ultima Online maps written in Rust and using the Bevy engine.
 
-The main application is `dynamapper`: an interactive map viewer that reads converted Ultima Online data, streams terrain and static-art assets, and renders the world with Classic, Enhanced Client, and Kingdom Reborn inspired visual modes. The broader workspace contains conversion tools, package readers, inspectors, and format libraries that support that renderer.
+The main application is `dynamapper`: an interactive map viewer that reads converted Ultima Online data, streams land and static-art assets, and renders the world with Classic, Enhanced Client, and Kingdom Reborn inspired visual modes. The broader workspace contains conversion tools, package readers, inspectors, and format libraries that support that renderer.
 
-The project is still early. Terrain rendering, multi-map support, BC7-compressed texture packages, modular shaders, and the first EC material-routing paths are in place. Static art, depth ordering, EC support resources, and packaging validation are still active work.
+The project is still early. Land rendering, multi-map support, BC7-compressed texture packages, modular shaders, and the first EC material-routing paths are in place. Static art, depth ordering, EC support resources, and packaging validation are still active work.
 
 ## What Dynamapper Does
 
-- Renders Ultima Online terrain from converted Classic Client map data.
-- Supports Classic 2D, Enhanced Classic, and KR-like terrain shader modes.
+- Renders Ultima Online land from converted Classic Client map data.
+- Supports Classic 2D, Enhanced Classic, and KR-like land shader modes.
 - Streams custom `.uddp` packages instead of reading every source client file at runtime.
 - Handles multiple maps and camera-controlled exploration.
 
@@ -22,17 +22,17 @@ Implemented:
 - Free camera movement, zoom, rotation, and teleport controls.
 - Experimental land-only perspective and isometric free camera modes (without statics, which are rendered via billboarding).
 - Modular TOML configuration under `dynamapper/assets/settings/`.
-- Shader hot reload for terrain work.
+- Shader hot reload for land work.
 - Conversion tooling for Classic and Enhanced Client source assets.
 - `.uddp` package inspection, extraction, diffing, and controlled metadata editing.
 
 In progress:
 
 - Production static-art rendering and explicit UO-style depth behavior.
-- Full KR terrain/art/support-resource routing.
-- Full EC terrain/art/support-resource routing.
+- Full KR land/art/support-resource routing.
+- Full EC land/art/support-resource routing.
 - More complete packaging validation and runtime diagnostics.
-- Future renderer work such as clipmap terrain, mobiles, paperdoll, and export tooling.
+- Future renderer work such as clipmap land, mobiles, paperdoll, and export tooling.
 
 See [docs/TODO.md](docs/TODO.md) for the working roadmap.
 
@@ -69,7 +69,7 @@ For conversion commands and package details, see [docs/ASSET_PIPELINE.md](docs/A
 | `Scroll Wheel` | Zoom in/out |
 | `F1` | Keybindings help |
 | `F2` | Options menu |
-| `F3` | Terrain shader controls |
+| `F3` | Land shader controls |
 | `Ctrl+G` | Teleport dialog |
 | `F11` / `Alt+Enter` | Toggle fullscreen |
 | `Esc` | Close dialogs |
@@ -88,12 +88,12 @@ Release builds should expose these binaries as separate executables.
   - `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
 - UOCF command-line tools
   - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
-  - `cc-uop-mul-converter`: convert between legacy Classic Client `.mul`/`.idx` files and modern `.uop` packages.
-  - `texture-scanner`: identify and isolate terrain or land candidates from UO texture pools.
+  - `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
+  - `texture-scanner`: identify and isolate land candidates from UO texture pools.
   - `sound-tool`: inspect or convert supported UO sound data.
   - `multimap-tool`: convert Classic Client `multimap.rle` files to and from BMP or PNG.
-  - `facet-evidence-tool`: gather facet evidence for EC/KR terrain and map analysis.
-  - `kr-ec-terrain-diff-tool`: compare KR and EC terrain evidence.
+  - `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
+  - `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
   - `uop-dict-populator-cli`: build and expand UOP hash dictionaries without the GUI.
 - UOCF graphical frontends
   - `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
@@ -106,13 +106,13 @@ Release builds should expose these binaries as separate executables.
     - map and statics files, art and land textures, tiledata, hues, lights, gumps, fonts, sounds, multis, radar colors, animation metadata, `body.def` / `bodyconv.def`, `verdata.mul`, map/statics DIFs, `multimap.rle`, and related `.mul` / `.idx` layouts.
   - Kingdom Reborn support:
     - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
-    - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR terrain/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
+    - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR land/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
     - This is format support for conversion, inspection, and evidence gathering. It does not mean the Dynamapper runtime already renders every KR-only material or visual rule as the original KR client did.
   - Enhanced Client support:
     - EC world maps and statics are also stored as compressed facet sectors inside `facet*.uop`, but with a slightly different format than KR one.
-    - `TerrainDefinition.uop` is parsed as the terrain/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields. In this context, a material is a semantic terrain definition, not just an image: it groups terrain ids or aliases with the texture references, shader hints, repetition/stretch values, and other metadata the client uses to render that terrain family.
+    - `TerrainDefinition.uop` is parsed as the land/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields. In this context, a material is a semantic land definition, not just an image: it groups land ids or aliases with the texture references, shader hints, repetition/stretch values, and other metadata the client uses to render that land family.
     - `tileart.uop` is parsed as the item/static ownership source: tile records, art windows, offsets, flags, shader/type hints, lighting fields, surface-like/liquid-like classification evidence, and linked texture refs.
-    - Supporting EC data includes texture package access, string dictionaries, localized strings, hues, multis, terrain config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
+    - Supporting EC data includes texture package access, string dictionaries, localized strings, hues, multis, land config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
     - As with KR, this is parser and conversion support. Dynamapper currently uses only the converted runtime packages and still has open work for full EC material routing, support textures, and static-art behavior.
   - Compatibility and custom-format work:
     - Michelangelo-style `.uop` handling, `.vd` codec support, and shared helpers used by inspectors and converters.

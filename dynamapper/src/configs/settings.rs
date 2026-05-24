@@ -106,10 +106,10 @@ fn default_enable_statics() -> bool {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct SectWorldMapShaderSimplification {
-    /// Forces a temporary minimal terrain shader configuration on the shared land material.
+    /// Forces a temporary minimal land shader configuration on the shared land material.
     #[serde(default)]
     pub force_minimal_shader: bool,
-    /// Forces the terrain fragment shader to return a flat debug color immediately.
+    /// Forces the land fragment shader to return a flat debug color immediately.
     #[serde(default)]
     pub force_flat_fragment_shader: bool,
 }
@@ -159,7 +159,7 @@ impl Default for SectWorldMapDiagnostics {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectLandStreaming {
-    /// Main-world terrain preparation budget measured in equivalent 8x8 map blocks.
+    /// Main-world land preparation budget measured in equivalent 8x8 map blocks.
     ///
     /// This limits how many ready chunks we are allowed to expand, precache and enqueue
     /// into the atlas in a single frame. Set to 0 to disable the cap entirely.

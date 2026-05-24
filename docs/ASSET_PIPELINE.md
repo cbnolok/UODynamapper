@@ -90,8 +90,8 @@ Ownership and linkage sources:
 Shared or support texture pools:
 
 - `Texture.uop`: shared texture pool used by both EC land and EC static-art classification.
-- `LegacyTexture.uop`: legacy-style shared texture pool.
-- `TerrainTexture.uop`: terrain support-resource pool. Package origin alone does not prove terrain ownership.
+- `LegacyTexture.uop`: classic-style shared texture pool.
+- `TerrainTexture.uop`: land support-resource pool. Package origin alone does not prove land ownership.
 - `EffectTexture.uop`: mixed effect-resource pool containing image and non-image resources.
 
 Important rule:
@@ -102,7 +102,7 @@ Important rule:
 
 - `Unused1` on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
 - `TerrainTranscode.kdl` is still the active loose override for mapping Classic Client land ids to EC material ids at runtime.
-- `TerrainDefinition.kdl` is legacy override data from before this repo parsed `TerrainDefinition.uop` correctly. It may still be loaded for inspection or backward compatibility, but it is no longer the authoritative source for EC land semantics.
+- `TerrainDefinition.kdl` is old override data from before this repo parsed `TerrainDefinition.uop` correctly. It may still be loaded for inspection or backward compatibility, but it is no longer the authoritative source for EC land semantics.
 - The current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.
 - The long-term direction is to keep shared source textures intact and let runtime sampling windows and semantic lookup tables choose the correct sub-rect or layer at render time.
 - `TerrainTranscode.json` is the semantic-family seed for Classic Client land normalization and is the right starting point for a hand-tuned translation table.

@@ -70,7 +70,7 @@ pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
 #[derive(Resource)]
 pub struct HuesPackageRes(pub Arc<udd_assets::HuesPackage>);
 
-/// Classic land-id routing table for Enhanced/KR terrain material ids.
+/// Classic land-id routing table for Enhanced/KR land material ids.
 #[derive(Resource)]
 pub struct EckrTerrainRoutingRes(pub Arc<HashMap<u32, u32>>);
 
@@ -157,7 +157,7 @@ fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_e
     let slot_table_len = package.slots().len();
 
     lg(&format!(
-        "Enhanced land package coverage: {populated_slot_count} populated terrain ids from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped terrain ids fall back to classic texmaps.mul.",
+        "Enhanced land package coverage: {populated_slot_count} populated land ids from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped land ids fall back to classic texmaps.mul.",
         slot_table_len.saturating_sub(1),
     ));
 }

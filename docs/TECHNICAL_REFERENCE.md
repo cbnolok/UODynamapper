@@ -30,7 +30,7 @@ Rust `#[uniform(10X)]` must **exactly match** WGSL `@binding(10X)`.
 
 > [!IMPORTANT]
 > `GlobalLightingUniforms` is designed for sharing across all geometry (Land, Statics, Mobiles).
-> `LandLightingUniforms` is specific to terrain requiring 3D surface normals.
+> `LandLightingUniforms` is specific to land requiring 3D surface normals.
 
 ### 1.3 Current Runtime Chunking Decisions
 
@@ -38,7 +38,7 @@ These are current implementation decisions, not long-term architecture limits.
 
 - Runtime map chunking: keep `32x32` chunks for now.
 - Runtime static chunking: keep `32x32` chunks for now.
-- Terrain package transport and decompression unit: keep `64x64` as the preferred UDDP unit unless telemetry proves otherwise.
+- Land package transport and decompression unit: keep `64x64` as the preferred UDDP unit unless telemetry proves otherwise.
 - Transport granularity and render granularity are intentionally separate and must not be conflated.
 
 ### 1.4 Static Art Depth And Routing Status
@@ -80,7 +80,7 @@ Stored in a layered `Rg16Uint` GPU texture array (4 bytes per tile).
 
 To navigate the asset resolution chain, it is critical to distinguish between three distinct ID spaces:
 
-1.  **Classic Client ID (CC ID)**: The 16-bit ID stored in legacy `map.mul` files (e.g., `168` for water).
+1.  **Classic Client ID (CC ID)**: The 16-bit ID stored in Classic `map.mul` files (e.g., `168` for water).
 2.  **EC Material ID**: A canonical category ID used by the EC Client to group related textures (e.g., Material `5` is "Water").
 3.  **UDDP Slot Index**: A direct index into the pre-computed `slots` table in a `.uddp` package. This is what the engine uses at runtime to find atlas coordinates.
 
@@ -90,13 +90,13 @@ The EC pipeline is driven by multiple ownership and resource packages. They are 
 
 Ownership and linkage sources:
 - `tileart.uop`: authoritative owner for EC art and static records, including surface-like and liquid-like art entries
-- `TerrainDefinition.uop`: authoritative owner for EC terrain materials, aliases, and layered relationships
+- `TerrainDefinition.uop`: authoritative owner for EC land materials, aliases, and layered relationships
 - `string_dictionary.uop`: path and shader-name resolution for EC ownership records
 
 Shared or support resource pools:
-- `Texture.uop`: mixed world-art pool, not terrain-only
-- `LegacyTexture.uop`: legacy-style fallback pool
-- `TerrainTexture.uop`: support-resource pool, not proof of terrain ownership by itself
+- `Texture.uop`: mixed world-art pool, not land-only
+- `LegacyTexture.uop`: classic-style fallback pool
+- `TerrainTexture.uop`: support-resource pool, not proof of land ownership by itself
 - `EffectTexture.uop`: mixed effect-resource pool containing image and non-image resources
 
 Important rule:
@@ -117,13 +117,13 @@ The resolution process is split into two phases to minimize runtime CPU overhead
 5. **Provenance**: Bake terrain provenance and item-side sidecars so runtime code can choose safe slots without rescanning UOP contents.
 
 #### Phase 2: Runtime (`dynamapper`)
-1. **Terrain Translation**: Classic terrain ids may translate through runtime overrides or terrain provenance before slot lookup.
-2. **Terrain Rule**: a direct populated `ec_land` slot wins; provenance fallback is only used if the direct slot is absent.
+1. **Land Translation**: Classic land ids may translate through runtime overrides or land provenance before slot lookup.
+2. **Land Rule**: a direct populated `ec_land` slot wins; provenance fallback is only used if the direct slot is absent.
 3. **Surface-Like Static Rule**: surface-like EC statics try land-style runtime resolution before falling back to the ordinary art path.
 4. **Slot Resolution**: resolve slot id to atlas coordinates.
 5. **GPU Use**: upload or read coordinates through the runtime lookup structures used by land and art rendering.
 
-**Safety Rule**: Do not use a naive `selected_texture_id -> canonical_slot_id` shortcut for ordinary statics; EC art texture ids can collide with unrelated terrain materials.
+**Safety Rule**: Do not use a naive `selected_texture_id -> canonical_slot_id` shortcut for ordinary statics; EC art texture ids can collide with unrelated land materials.
 
 ### 2.5 Current EC Packaging Split
 
@@ -266,7 +266,7 @@ All internal plugins must implement `TrackedPlugin` to maintain a visual registr
 
 | Dialog | Trigger | Purpose | Schedule |
 |--------|---------|---------|----------|
-| **Terrain Shader** | `F3` (Configurable) | Real-time uniform testing | `EguiPrimaryContextPass` |
+| **Land Shader** | `F3` (Configurable) | Real-time uniform testing | `EguiPrimaryContextPass` |
 | **Keybindings** | `F1` (Configurable) | Help reference | `EguiPrimaryContextPass` |
 | **Options Menu** | `F2` (Configurable) | Application settings | `EguiPrimaryContextPass` |
 | **Teleport** | `Ctrl+G` | Coordinate navigation | `EguiPrimaryContextPass` |
@@ -282,7 +282,7 @@ All internal plugins must implement `TrackedPlugin` to maintain a visual registr
 
 ### 7.1 Neighborhood Sampling (Bicubic)
 
-The terrain shader performs a 4x4 neighborhood read for bicubic normal reconstruction.
+The land shader performs a 4x4 neighborhood read for bicubic normal reconstruction.
 - **Implementation**: `textureLoad` reads from `tile_meta_atlas` using absolute world-tile coordinates.
 - **Boundary Handling**: Because the atlas is global/paged, sampling naturally crosses chunk boundaries without requiring per-chunk padding ("ghost tiles").
 
