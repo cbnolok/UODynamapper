@@ -15,6 +15,7 @@ const MATCH_REP0_BITS: f32 = 4.0;
 
 const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
+const RDO_PROGRESS_BLOCK_BATCH: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct Bc7RdoParams {
@@ -276,6 +277,7 @@ fn reduce_entropy_bc7_impl_with_progress(
     //   prev_rep0_dist:       byte distance of the last accepted match for cheap REP0 reuse.
     let mut prev_cont_window_ofs: i64 = -1;
     let mut prev_rep0_dist:       i64 = -1;
+    let mut pending_progress = 0usize;
 
     for block_index in 0..num_blocks {
         if (block_index & 0xFF) == 0 {
@@ -286,9 +288,7 @@ fn reduce_entropy_bc7_impl_with_progress(
         let p_pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
         let bc7_mode = block_modes[block_index];
         if bc7_mode == 8 {
-            if let Some(progress) = progress {
-                progress(1);
-            }
+            report_progress(progress, &mut pending_progress, 1);
             continue; // Invalid block or mode 8 (reserved)
         }
 
@@ -297,9 +297,7 @@ fn reduce_entropy_bc7_impl_with_progress(
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
             previous_blocks_by_mode[bc7_mode as usize].push(block_index);
-            if let Some(progress) = progress {
-                progress(1);
-            }
+            report_progress(progress, &mut pending_progress, 1);
             continue;
         }
 
@@ -660,12 +658,31 @@ fn reduce_entropy_bc7_impl_with_progress(
         if block_modes[block_index] < 8 {
             previous_blocks_by_mode[block_modes[block_index] as usize].push(block_index);
         }
-        if let Some(progress) = progress {
-            progress(1);
-        }
+        report_progress(progress, &mut pending_progress, 1);
     }
+    flush_progress(progress, &mut pending_progress);
 
     total_modified
+}
+
+#[inline]
+fn report_progress(progress: Option<&dyn Fn(usize)>, pending_progress: &mut usize, blocks: usize) {
+    if progress.is_some() {
+        *pending_progress += blocks;
+        if *pending_progress >= RDO_PROGRESS_BLOCK_BATCH {
+            flush_progress(progress, pending_progress);
+        }
+    }
+}
+
+#[inline]
+fn flush_progress(progress: Option<&dyn Fn(usize)>, pending_progress: &mut usize) {
+    if *pending_progress > 0 {
+        if let Some(progress) = progress {
+            progress(*pending_progress);
+        }
+        *pending_progress = 0;
+    }
 }
 
 #[inline(always)]

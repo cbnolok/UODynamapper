@@ -9,6 +9,7 @@ use super::analytical::{pack_bc7_rgb, pack_bc7_rgba, Pixel};
 use rayon::prelude::*;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;
+const PROGRESS_BLOCK_BATCH: usize = 64;
 
 pub fn pack_bc7_rgba_blocks_wide(
     blocks: &mut [u8],
@@ -28,19 +29,22 @@ pub fn pack_bc7_rgba_blocks_wide(
 
     if blocks_x * blocks_y >= PARALLEL_BLOCK_THRESHOLD {
         blocks
-            .par_chunks_exact_mut(16)
+            .par_chunks_mut(PROGRESS_BLOCK_BATCH * 16)
             .enumerate()
-            .for_each(|(block_index, block)| {
-                pack_one_block(
-                    block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
-                    rgba_pixels,
-                    width,
-                    height,
-                    blocks_x,
-                    block_index,
-                    flags,
-                    force_rgb,
-                );
+            .for_each(|(chunk_index, chunk)| {
+                let first_block_index = chunk_index * PROGRESS_BLOCK_BATCH;
+                for (local_block_index, block) in chunk.chunks_exact_mut(16).enumerate() {
+                    pack_one_block(
+                        block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                        rgba_pixels,
+                        width,
+                        height,
+                        blocks_x,
+                        first_block_index + local_block_index,
+                        flags,
+                        force_rgb,
+                    );
+                }
             });
     } else {
         for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
@@ -79,20 +83,23 @@ pub fn pack_bc7_rgba_blocks_wide_with_progress<F>(
 
     if blocks_x * blocks_y >= PARALLEL_BLOCK_THRESHOLD {
         blocks
-            .par_chunks_exact_mut(16)
+            .par_chunks_mut(PROGRESS_BLOCK_BATCH * 16)
             .enumerate()
-            .for_each(|(block_index, block)| {
-                pack_one_block(
-                    block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
-                    rgba_pixels,
-                    width,
-                    height,
-                    blocks_x,
-                    block_index,
-                    flags,
-                    force_rgb,
-                );
-                progress(1);
+            .for_each(|(chunk_index, chunk)| {
+                let first_block_index = chunk_index * PROGRESS_BLOCK_BATCH;
+                for (local_block_index, block) in chunk.chunks_exact_mut(16).enumerate() {
+                    pack_one_block(
+                        block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                        rgba_pixels,
+                        width,
+                        height,
+                        blocks_x,
+                        first_block_index + local_block_index,
+                        flags,
+                        force_rgb,
+                    );
+                }
+                progress(chunk.len() / 16);
             });
     } else {
         for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
@@ -106,8 +113,8 @@ pub fn pack_bc7_rgba_blocks_wide_with_progress<F>(
                 flags,
                 force_rgb,
             );
-            progress(1);
         }
+        progress(blocks_x * blocks_y);
     }
 }
 
