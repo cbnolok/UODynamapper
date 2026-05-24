@@ -223,20 +223,6 @@ fn static_tile_uses_tex_land_ec_surface_path(
     static_tile_is_surface_like(tilemeta)
 }
 
-fn static_tile_is_ec_liquid_surface_overlay(
-    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-) -> bool {
-    let Some(meta) = tilemeta else {
-        return false;
-    };
-
-    let name = meta.name_ascii();
-    meta.is_surface_like()
-        && meta.flags & TILE_FLAG_BACKGROUND != 0
-        && (meta.flags & TILE_FLAG_WET != 0 || meta.flags & TILE_FLAG_SURFACE != 0)
-        && (name.eq_ignore_ascii_case("water") || name.eq_ignore_ascii_case("swamp"))
-}
-
 pub(crate) fn resolve_static_depth_class(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> StaticDepthClass {
@@ -1290,11 +1276,6 @@ pub fn sys_collect_visible_statics(
                             let Some(art_source) = art_source else {
                                 continue;
                             };
-                            if matches!(art_source, ClientTextureSource::Ec)
-                                && static_tile_is_ec_liquid_surface_overlay(tilemeta)
-                            {
-                                continue;
-                            }
                             let visual_kind = resolve_static_visual_kind(
                                 art_source,
                                 render_tile.graphic,
@@ -1626,18 +1607,6 @@ mod tests {
         tile
     }
 
-    fn item_tile_with_name(
-        flags: u64,
-        visual_kind: udd_assets::tilemeta::TileMetaItemVisualKind,
-        name: &str,
-    ) -> udd_assets::tilemeta::TileMetaItemTile {
-        let mut tile = item_tile_with_flags(flags, visual_kind);
-        let bytes = name.as_bytes();
-        let len = bytes.len().min(tile.name.len());
-        tile.name[..len].copy_from_slice(&bytes[..len]);
-        tile
-    }
-
     fn texture_ref_with_role(
         texture_id: u32,
         role: udd_assets::tilemeta::EcMaterialStableRole,
@@ -1736,39 +1705,6 @@ mod tests {
             item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
         assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
-    }
-
-    #[test]
-    fn wet_surface_like_water_tiles_are_ec_liquid_overlay_skips() {
-        let tile = item_tile_with_name(
-            TILE_FLAG_BACKGROUND | TILE_FLAG_WET,
-            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
-            "water",
-        );
-
-        assert!(static_tile_is_ec_liquid_surface_overlay(Some(&tile)));
-    }
-
-    #[test]
-    fn swamp_surface_like_tiles_are_ec_liquid_overlay_skips() {
-        let tile = item_tile_with_name(
-            TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
-            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
-            "swamp",
-        );
-
-        assert!(static_tile_is_ec_liquid_surface_overlay(Some(&tile)));
-    }
-
-    #[test]
-    fn wet_non_liquid_named_surface_like_tiles_are_not_ec_overlay_skips() {
-        let tile = item_tile_with_name(
-            TILE_FLAG_BACKGROUND | TILE_FLAG_WET,
-            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
-            "lava",
-        );
-
-        assert!(!static_tile_is_ec_liquid_surface_overlay(Some(&tile)));
     }
 
     #[test]
