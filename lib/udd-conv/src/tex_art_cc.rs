@@ -40,7 +40,7 @@ use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
 use udd_container::xxh64_virtual_path;
-use uocf::classic::art::ArtMap;
+use uocf::classic::art::{ArtMap, ArtSource};
 
 use crate::upscale::UpscaleFilter;
 
@@ -208,8 +208,13 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
         }
     }
 
-    let slot_count = art_map.max_id();
-    let decoded_tiles = decode_present_tiles(&art_map, options)?;
+    let art_source = if has_uop {
+        ArtSource::CcUop
+    } else {
+        ArtSource::Mul
+    };
+    let slot_count = art_map.max_id_for_source(art_source);
+    let decoded_tiles = decode_present_tiles(&art_map, art_source, options)?;
     let populated_slot_count = decoded_tiles.len() as u32;
 
     let (pages, slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
@@ -375,6 +380,7 @@ fn validate_options(options: &TexArtCcAtlasOptions) -> eyre::Result<()> {
 
 fn decode_present_tiles(
     art_map: &ArtMap,
+    source: ArtSource,
     options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<DecodedArtTile>> {
     // Decode every occupied art slot up front so the packer can sort by area and
@@ -388,9 +394,9 @@ fn decode_present_tiles(
     let mut skipped_land_samples = Vec::new();
     let mut skipped_static_samples = Vec::new();
 
-    let max_id = art_map.max_id();
+    let max_id = art_map.max_id_for_source(source);
     let art_ids = (0..max_id)
-        .filter(|&art_id| art_map.has_id(art_id))
+        .filter(|&art_id| art_map.has_id_from_source(art_id, source))
         .collect::<Vec<_>>();
     let pb = ProgressBar::new(art_ids.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
@@ -417,7 +423,12 @@ fn decode_present_tiles(
             let outcome = match kind {
                 ArtTileKind::Land => {
                     let mut rgba = [0u8; 44 * 44 * 4];
-                    match art_map.decode_land_tile(art_id, &mut scratch_raw, &mut rgba) {
+                    match art_map.decode_land_tile_from_source(
+                        art_id,
+                        source,
+                        &mut scratch_raw,
+                        &mut rgba,
+                    ) {
                         Ok(()) => {
                             let (w, h, rgba) = options.upscale.apply(44, 44, &rgba);
                             DecodeOutcome::Decoded(DecodedArtTile {
@@ -431,7 +442,11 @@ fn decode_present_tiles(
                         Err(error) => DecodeOutcome::SkippedLand(format!("{art_id} ({error})")),
                     }
                 }
-                ArtTileKind::Static => match art_map.decode_static_tile(art_id, &mut scratch_raw) {
+                ArtTileKind::Static => match art_map.decode_static_tile_from_source(
+                    art_id,
+                    source,
+                    &mut scratch_raw,
+                ) {
                     Ok((width, height, rgba)) => {
                         let (w, h, rgba) =
                             options.upscale.apply(width as u32, height as u32, &rgba);

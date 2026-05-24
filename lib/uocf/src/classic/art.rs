@@ -52,6 +52,7 @@ use crate::uop_container::package::UopPackage;
 use crate::utils::color::color_lut;
 
 const ART_ITEM_ID_OFFSET: u32 = 0x4000;
+pub const ART_LEGACY_UOP_MAX_ID_EXCLUSIVE: u32 = 0x14000;
 pub const LAND_DIMENSION: usize = 44;
 const LAND_HALF_ROWS: usize = LAND_DIMENSION / 2;
 pub const LAND_DIAMOND_PIXEL_COUNT: usize = LAND_HALF_ROWS * (LAND_HALF_ROWS + 1) * 2;
@@ -484,25 +485,47 @@ impl ArtMap {
     }
 
     pub fn max_id(&self) -> u32 {
-        if let Some(idx) = &self.idx_file {
-            idx.element_count() as u32
+        self.max_id_for_source(ArtSource::Any)
+    }
+
+    pub fn max_id_for_source(&self, source: ArtSource) -> u32 {
+        let mul_max_id = self
+            .idx_file
+            .as_ref()
+            .map(|idx| idx.element_count() as u32)
+            .unwrap_or(0);
+        let uop_max_id = if self.uop_package.is_some()
+            && matches!(source, ArtSource::CcUop | ArtSource::EcUop | ArtSource::Any)
+        {
+            ART_LEGACY_UOP_MAX_ID_EXCLUSIVE
         } else {
-            // If only UOP is present, we don't have a dense index.
-            // Traditional art IDs go up to 0x10000.
-            0x10000
+            0
+        };
+
+        match source {
+            ArtSource::Mul => mul_max_id,
+            ArtSource::CcUop | ArtSource::EcUop => uop_max_id,
+            ArtSource::Any => mul_max_id.max(uop_max_id),
         }
     }
 
     pub fn has_id(&self, art_id: u32) -> bool {
+        self.has_id_from_source(art_id, ArtSource::Any)
+    }
+
+    pub fn has_id_from_source(&self, art_id: u32, source: ArtSource) -> bool {
         if let Some(verdata) = &self.verdata {
-            if let Some(entry) = verdata.entry(VerFileId::Art, art_id as i32) {
-                if classic_art_payload_is_structurally_valid(art_id, entry.length as u32) {
-                    return true;
+            if source == ArtSource::Mul || source == ArtSource::Any {
+                if let Some(entry) = verdata.entry(VerFileId::Art, art_id as i32) {
+                    if classic_art_payload_is_structurally_valid(art_id, entry.length as u32) {
+                        return true;
+                    }
                 }
             }
         }
 
-        if let Some(idx) = &self.idx_file {
+        if (source == ArtSource::Mul || source == ArtSource::Any) && self.idx_file.is_some() {
+            let idx = self.idx_file.as_ref().expect("checked above");
             if let Ok(entry) = idx.element(art_id as usize) {
                 let index_patch = self
                     .verdata
@@ -520,7 +543,7 @@ impl ArtMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            for name in uop_art_candidates(art_id, ArtSource::Any) {
+            for name in uop_art_candidates(art_id, source) {
                 if uop
                     .get_file_by_hash(crate::uop_container::hash::hash_file_name_single(&name))
                     .is_some()
