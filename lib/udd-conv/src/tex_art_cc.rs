@@ -82,7 +82,7 @@ impl Default for TexArtCcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
+            compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,

@@ -120,16 +120,16 @@ fn resolve_texture_output_format(
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, jxl, bc7, bc7_rdo) {
         (false, false, false, false) => Ok(TextureOutputFormat {
-            compression: CompressionFlag::ZstdNoDict,
+            compression: CompressionFlag::JpegXl,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
-            label: "RGBA8888",
+            label: "RGBA8888 JXL",
         }),
         (true, false, false, false) => Ok(TextureOutputFormat {
-            compression: CompressionFlag::ZstdNoDict,
+            compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
-            label: "RGBA8888",
+            label: "RGBA8888 raw",
         }),
         (false, true, false, false) => Ok(TextureOutputFormat {
             compression: CompressionFlag::JpegXl,
@@ -463,7 +463,7 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
@@ -507,7 +507,7 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_TEXMAPS_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
@@ -537,7 +537,7 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
@@ -561,7 +561,7 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
@@ -595,7 +595,7 @@ enum Commands {
         land_atlas_height: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
         land_gutter: u16,
-        #[arg(long, help = "Write EC land RGBA8888 atlas pages with package compression.")]
+        #[arg(long, help = "Write uncompressed EC RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
@@ -1655,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_defaults_texture_output_format_to_raw() {
+    fn cli_defaults_texture_output_format_to_jxl() {
         let cli = Cli::try_parse_from([
             "uddpack",
             "pack-art",
@@ -1664,7 +1664,7 @@ mod tests {
             "--output",
             "tex_art_cc.uddp",
         ])
-        .expect("texture pack commands default to raw output");
+        .expect("texture pack commands default to JXL output");
 
         match cli.command {
             Commands::PackArt {
@@ -1681,7 +1681,7 @@ mod tests {
                 let output_format =
                     resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
-                assert_eq!(output_format.compression, CompressionFlag::ZstdNoDict);
+                assert_eq!(output_format.compression, CompressionFlag::JpegXl);
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -1715,6 +1715,40 @@ mod tests {
                     resolve_mobile_anim_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
                 assert_eq!(output_format.compression, CompressionFlag::ZstdNoDict);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_selects_raw_as_uncompressed_rgba_payload() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-art",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "tex_art_cc.uddp",
+            "--raw",
+        ])
+        .expect("parse raw texture output");
+
+        match cli.command {
+            Commands::PackArt {
+                raw,
+                jxl,
+                bc7,
+                bc7_rdo,
+                ..
+            } => {
+                assert!(raw);
+                assert!(!jxl);
+                assert!(!bc7);
+                assert!(!bc7_rdo);
+                let output_format =
+                    resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
+                assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
+                assert_eq!(output_format.compression, CompressionFlag::None);
             }
             _ => panic!("unexpected command parsed"),
         }

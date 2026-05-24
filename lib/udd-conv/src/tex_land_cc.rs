@@ -66,7 +66,7 @@ impl Default for TexLandCcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
+            compression: CompressionFlag::JpegXl,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
             pixel_format: PagePixelFormat::Rgba8888,
