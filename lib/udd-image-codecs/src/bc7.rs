@@ -565,6 +565,45 @@ pub fn encode_to_bc7_with_rdo_lambda(
 }
 
 #[cfg(feature = "bc7-encode")]
+pub fn encode_to_bc7_with_rdo_lambda_and_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_lambda: f32,
+    progress: F,
+) -> Result<Bc7TextureData, TextureError>
+where
+    F: Fn(usize) + Sync,
+{
+    validate_input_len(pixels, extent, input_format)?;
+    let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
+    let backend = resolve_bc7_encoder_backend(backend);
+
+    let mut blocks = match backend {
+        Bc7EncoderBackend::Analytical => {
+            encode_with_analytical_and_progress(rgba_pixels.as_ref(), extent, &progress)
+        }
+        Bc7EncoderBackend::AnalyticalWide => {
+            encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &progress)
+        }
+    };
+    apply_bc7_rdo_with_progress(&mut blocks, rgba_pixels.as_ref(), extent, rdo_lambda, &progress);
+
+    Bc7TextureData::new(extent, blocks)
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn bc7_encode_progress_units(extent: ImageExtent, rdo_lambda: f32) -> usize {
+    let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
+    if rdo_lambda > 0.0 && rdo_lambda.is_finite() {
+        blocks * 2
+    } else {
+        blocks
+    }
+}
+
+#[cfg(feature = "bc7-encode")]
 pub fn encode_for_vram(
     pixels: &[u8],
     extent: ImageExtent,
@@ -599,6 +638,41 @@ pub fn encode_for_vram_with_bc7_rdo_lambda(
                 input_format,
                 backend,
                 bc7_rdo_lambda,
+            )?.into())
+        }
+    }
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_for_vram_with_bc7_rdo_lambda_and_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_lambda: f32,
+    progress: F,
+) -> Result<VramTextureData, TextureError>
+where
+    F: Fn(usize) + Sync,
+{
+    match encoding {
+        VramTextureEncoding::Rgba8UnormSrgb => {
+            validate_input_len(pixels, extent, input_format)?;
+            let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent).into_owned();
+            VramTextureData::new(
+                extent,
+                VramTextureFormat::Rgba8UnormSrgb,
+                Arc::from(rgba_pixels),
+            )
+        }
+        VramTextureEncoding::Bc7(backend) => {
+            Ok(encode_to_bc7_with_rdo_lambda_and_progress(
+                pixels,
+                extent,
+                input_format,
+                backend,
+                bc7_rdo_lambda,
+                progress,
             )?.into())
         }
     }
@@ -683,6 +757,7 @@ fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
     use crate::bc7_analytical::{
         pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
     };
+    use rayon::prelude::*;
 
     let blocks_x = extent.blocks_wide() as usize;
     let blocks_y = extent.blocks_high() as usize;
@@ -690,16 +765,55 @@ fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
     let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
     let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6;
 
-    for block_index in 0..blocks_x * blocks_y {
-        let pixels: &[Pixel; 16] = rgba_blocks[block_index * 16..(block_index + 1) * 16]
-            .try_into()
-            .expect("BC7 block-order conversion always emits 16 pixels per block");
-        let block: &mut [u8; 16] = blocks[block_index * 16..(block_index + 1) * 16]
-            .as_mut()
-            .try_into()
-            .expect("BC7 block buffer is allocated in 16-byte blocks");
-        pack_bc7_rgba(block, pixels, flags);
-    }
+    blocks
+        .par_chunks_exact_mut(16)
+        .zip(rgba_blocks.par_chunks_exact(16))
+        .for_each(|(block, pixels)| {
+            let pixels: &[Pixel; 16] = pixels
+                .try_into()
+                .expect("BC7 block-order conversion always emits 16 pixels per block");
+            let block: &mut [u8; 16] = block
+                .try_into()
+                .expect("BC7 block buffer is allocated in 16-byte blocks");
+            pack_bc7_rgba(block, pixels, flags);
+        });
+
+    blocks
+}
+
+#[cfg(feature = "bc7-encode")]
+fn encode_with_analytical_and_progress<F>(
+    rgba_pixels: &[u8],
+    extent: ImageExtent,
+    progress: &F,
+) -> Vec<u8>
+where
+    F: Fn(usize) + Sync,
+{
+    use crate::bc7_analytical::{
+        pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
+    };
+    use rayon::prelude::*;
+
+    let blocks_x = extent.blocks_wide() as usize;
+    let blocks_y = extent.blocks_high() as usize;
+    let mut blocks = vec![0u8; blocks_x * blocks_y * 16];
+    let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
+    let flags = FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6;
+
+    blocks
+        .par_chunks_exact_mut(16)
+        .zip(rgba_blocks.par_chunks_exact(16))
+        .for_each(|(block, pixels)| {
+            let pixels: &[Pixel; 16] = pixels
+                .try_into()
+                .expect("BC7 block-order conversion always emits 16 pixels per block");
+            let block: &mut [u8; 16] = block
+                .try_into()
+                .expect("BC7 block buffer is allocated in 16-byte blocks");
+            pack_bc7_rgba(block, pixels, flags);
+            progress(1);
+        });
 
     blocks
 }
@@ -715,6 +829,29 @@ fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u
         extent.width(),
         extent.height(),
         FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6,
+    );
+    blocks
+}
+
+#[cfg(feature = "bc7-encode")]
+fn encode_with_analytical_wide_and_progress<F>(
+    rgba_pixels: &[u8],
+    extent: ImageExtent,
+    progress: &F,
+) -> Vec<u8>
+where
+    F: Fn(usize) + Sync,
+{
+    use crate::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
+
+    let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
+    crate::bc7_analytical_wide::pack_bc7_rgba_blocks_wide_with_progress(
+        &mut blocks,
+        rgba_pixels,
+        extent.width(),
+        extent.height(),
+        FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6,
+        progress,
     );
     blocks
 }
@@ -737,12 +874,52 @@ fn apply_bc7_rdo(blocks: &mut [u8], rgba_pixels: &[u8], extent: ImageExtent, rdo
         lambda: rdo_lambda,
         ..Default::default()
     };
-    crate::bc7_rdo::reduce_entropy_bc7(
+    crate::bc7_rdo::reduce_entropy_bc7_parallel(
         &mut block_arrays,
         &rgba_blocks,
         extent.blocks_wide() as usize,
         extent.blocks_high() as usize,
         &params,
+    );
+
+    for (dst, src) in blocks.chunks_exact_mut(16).zip(block_arrays) {
+        dst.copy_from_slice(&src);
+    }
+}
+
+#[cfg(feature = "bc7-encode")]
+fn apply_bc7_rdo_with_progress<F>(
+    blocks: &mut [u8],
+    rgba_pixels: &[u8],
+    extent: ImageExtent,
+    rdo_lambda: f32,
+    progress: &F,
+) where
+    F: Fn(usize) + Sync,
+{
+    if rdo_lambda <= 0.0 || !rdo_lambda.is_finite() {
+        return;
+    }
+
+    let mut block_arrays = Vec::with_capacity(blocks.len() / 16);
+    for block in blocks.chunks_exact(16) {
+        let mut block_array = [0u8; 16];
+        block_array.copy_from_slice(block);
+        block_arrays.push(block_array);
+    }
+
+    let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
+    let params = crate::bc7_rdo::Bc7RdoParams {
+        lambda: rdo_lambda,
+        ..Default::default()
+    };
+    crate::bc7_rdo::reduce_entropy_bc7_parallel_with_progress(
+        &mut block_arrays,
+        &rgba_blocks,
+        extent.blocks_wide() as usize,
+        extent.blocks_high() as usize,
+        &params,
+        progress,
     );
 
     for (dst, src) in blocks.chunks_exact_mut(16).zip(block_arrays) {

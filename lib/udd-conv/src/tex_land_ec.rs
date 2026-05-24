@@ -32,8 +32,8 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_lambda, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
-    VramTextureEncoding,
+    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
+    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, resolve_packing_axis};
 use crate::package_progress::build_and_write_package;
@@ -537,33 +537,50 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
 
     let compression = options.compression;
 
-    let pb = ProgressBar::new(pages.len() as u64);
+    let bc7_extent = if use_bc7 {
+        Some(ImageExtent::new(options.atlas_width, options.atlas_height)
+            .map_err(|e| eyre::eyre!("{e}"))?)
+    } else {
+        None
+    };
+    let progress_len = if let Some(extent) = bc7_extent {
+        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
+    } else {
+        pages.len() as u64
+    };
+    let progress_message = if use_bc7 {
+        "compressing BC7 atlas blocks"
+    } else {
+        "encoding atlas pages"
+    };
+
+    let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} encoding atlas pages ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    pb.set_message(progress_message);
 
     let encoded_pages = if use_bc7 {
-        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
+        let extent = bc7_extent.expect("BC7 extent is initialized when BC7 output is selected");
         let encoded_pages = pages
             .par_iter()
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram_with_bc7_rdo_lambda(
+                    encode_for_vram_with_bc7_rdo_lambda_and_progress(
                         &page.pixels,
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
                         options.bc7_rdo_lambda,
+                        |units| pb.inc(units as u64),
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
                         })?
                         .into_bytes()
                         .to_vec();
-                pb.inc(1);
                 Ok((
                     page_path,
                     encoded,

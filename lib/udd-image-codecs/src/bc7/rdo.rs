@@ -2,6 +2,7 @@ use super::tables::{
     BC7_ANCHOR_SECOND_SUBSET, BC7_ANCHOR_THIRD_SUBSET1, BC7_ANCHOR_THIRD_SUBSET2,
     BC7_PARTITION2, BC7_PARTITION3,
 };
+use rayon::prelude::*;
 use std::cmp::max;
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
@@ -11,6 +12,9 @@ const LITERAL_BITS: f32 = 13.0;
 const MATCH_CONTINUE_BITS: f32 = 1.0;
 /// Reduced cost for a REP0 match (re-using the previous match distance).
 const MATCH_REP0_BITS: f32 = 4.0;
+
+const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
+const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
 
 #[derive(Debug, Clone)]
 pub struct Bc7RdoParams {
@@ -87,7 +91,7 @@ pub fn reduce_entropy_bc7(
     blocks_y: usize,
     params: &Bc7RdoParams,
 ) -> u32 {
-    reduce_entropy_bc7_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, None)
+    reduce_entropy_bc7_parallel_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, None)
 }
 
 pub fn reduce_entropy_bc7_with_stats(
@@ -101,6 +105,52 @@ pub fn reduce_entropy_bc7_with_stats(
     reduce_entropy_bc7_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, Some(stats))
 }
 
+pub fn reduce_entropy_bc7_with_progress<F>(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    progress: F,
+) -> u32
+where
+    F: Fn(usize),
+{
+    reduce_entropy_bc7_impl_with_progress(
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        None,
+        Some(&progress),
+    )
+}
+
+pub fn reduce_entropy_bc7_parallel(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+) -> u32 {
+    reduce_entropy_bc7_parallel_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, None)
+}
+
+pub fn reduce_entropy_bc7_parallel_with_progress<F>(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    progress: F,
+) -> u32
+where
+    F: Fn(usize) + Sync,
+{
+    reduce_entropy_bc7_parallel_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, Some(&progress))
+}
+
 fn reduce_entropy_bc7_impl(
     blocks: &mut [[u8; 16]],
     rgba_blocks: &[[u8; 4]],
@@ -108,6 +158,78 @@ fn reduce_entropy_bc7_impl(
     blocks_y: usize,
     params: &Bc7RdoParams,
     mut stats: Option<&mut Bc7RdoStats>,
+) -> u32 {
+    reduce_entropy_bc7_impl_with_progress(
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        stats.as_deref_mut(),
+        None,
+    )
+}
+
+fn reduce_entropy_bc7_parallel_impl(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    progress: Option<&(dyn Fn(usize) + Sync)>,
+) -> u32 {
+    let num_blocks = blocks.len();
+    debug_assert_eq!(num_blocks, blocks_x * blocks_y);
+    debug_assert_eq!(rgba_blocks.len(), num_blocks * 16);
+
+    if params.lambda <= 0.0 || num_blocks < PARALLEL_RDO_BLOCK_THRESHOLD || blocks_x == 0 {
+        return reduce_entropy_bc7_impl_with_progress(
+            blocks,
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params,
+            None,
+            progress.map(|progress| progress as &dyn Fn(usize)),
+        );
+    }
+
+    let lookback_blocks = max(1, params.lookback_window_size / 16);
+    let lookback_rows = lookback_blocks.div_ceil(blocks_x);
+    let target_parallel_blocks = (num_blocks / (rayon::current_num_threads() * 4).max(1)).max(1);
+    let chunk_blocks = max(
+        PARALLEL_RDO_MIN_CHUNK_BLOCKS,
+        max(lookback_blocks, target_parallel_blocks),
+    );
+    let chunk_rows = max(1, chunk_blocks.div_ceil(blocks_x).max(lookback_rows));
+    let chunk_blocks = chunk_rows * blocks_x;
+
+    blocks
+        .par_chunks_mut(chunk_blocks)
+        .zip(rgba_blocks.par_chunks(chunk_blocks * 16))
+        .map(|(block_chunk, rgba_chunk)| {
+            let chunk_blocks_y = block_chunk.len() / blocks_x;
+            reduce_entropy_bc7_impl_with_progress(
+                block_chunk,
+                rgba_chunk,
+                blocks_x,
+                chunk_blocks_y,
+                params,
+                None,
+                progress.map(|progress| progress as &dyn Fn(usize)),
+            )
+        })
+        .sum()
+}
+
+fn reduce_entropy_bc7_impl_with_progress(
+    blocks: &mut [[u8; 16]],
+    rgba_blocks: &[[u8; 4]],
+    blocks_x: usize,
+    blocks_y: usize,
+    params: &Bc7RdoParams,
+    mut stats: Option<&mut Bc7RdoStats>,
+    progress: Option<&dyn Fn(usize)>,
 ) -> u32 {
     if params.lambda <= 0.0 {
         return 0;
@@ -164,6 +286,9 @@ fn reduce_entropy_bc7_impl(
         let p_pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
         let bc7_mode = block_modes[block_index];
         if bc7_mode == 8 {
+            if let Some(progress) = progress {
+                progress(1);
+            }
             continue; // Invalid block or mode 8 (reserved)
         }
 
@@ -172,6 +297,9 @@ fn reduce_entropy_bc7_impl(
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
             previous_blocks_by_mode[bc7_mode as usize].push(block_index);
+            if let Some(progress) = progress {
+                progress(1);
+            }
             continue;
         }
 
@@ -531,6 +659,9 @@ fn reduce_entropy_bc7_impl(
         }
         if block_modes[block_index] < 8 {
             previous_blocks_by_mode[block_modes[block_index] as usize].push(block_index);
+        }
+        if let Some(progress) = progress {
+            progress(1);
         }
     }
 

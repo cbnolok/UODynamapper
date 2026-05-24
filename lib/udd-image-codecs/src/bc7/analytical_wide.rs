@@ -58,6 +58,59 @@ pub fn pack_bc7_rgba_blocks_wide(
     }
 }
 
+pub fn pack_bc7_rgba_blocks_wide_with_progress<F>(
+    blocks: &mut [u8],
+    rgba_pixels: &[u8],
+    width: u32,
+    height: u32,
+    flags: u32,
+    progress: F,
+) where
+    F: Fn(usize) + Sync,
+{
+    let blocks_x = width.div_ceil(4) as usize;
+    let blocks_y = height.div_ceil(4) as usize;
+    assert_eq!(blocks.len(), blocks_x * blocks_y * 16);
+    assert_eq!(rgba_pixels.len(), width as usize * height as usize * 4);
+
+    let width = width as usize;
+    let height = height as usize;
+    let force_rgb = rgba_pixels.chunks_exact(4).all(|pixel| pixel[3] == 255);
+
+    if blocks_x * blocks_y >= PARALLEL_BLOCK_THRESHOLD {
+        blocks
+            .par_chunks_exact_mut(16)
+            .enumerate()
+            .for_each(|(block_index, block)| {
+                pack_one_block(
+                    block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                    rgba_pixels,
+                    width,
+                    height,
+                    blocks_x,
+                    block_index,
+                    flags,
+                    force_rgb,
+                );
+                progress(1);
+            });
+    } else {
+        for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
+            pack_one_block(
+                block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                rgba_pixels,
+                width,
+                height,
+                blocks_x,
+                block_index,
+                flags,
+                force_rgb,
+            );
+            progress(1);
+        }
+    }
+}
+
 fn pack_one_block(
     block: &mut [u8; 16],
     rgba_pixels: &[u8],
