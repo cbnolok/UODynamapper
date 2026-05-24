@@ -12,6 +12,7 @@
 #import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
 #import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light, static_lights}
 #import "shaders/world/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
+#import "shaders/world/land/noise.wgsl"::hash
 
 // ============================================================================
 // Mode 0: Classic (Gouraud, vertex-lit)
@@ -147,6 +148,9 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   let slope_steepness = clamp(1.0 - normalize(Nw).y, 0.0, 1.0);
   let crease_shadow = smoothstep(0.08, 0.42, slope_steepness) * (0.35 + 0.65 * shadow_mask);
   color *= 1.0 - crease_shadow * 0.12;
+
+  let shadow_mottle = 0.82 + 0.18 * hash(floor(world_pos.xz * 1.15));
+  color *= 1.0 - shadow_mask * (1.0 - shadow_mottle) * 0.10;
 
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
