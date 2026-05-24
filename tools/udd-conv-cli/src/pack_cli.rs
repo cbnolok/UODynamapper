@@ -164,6 +164,9 @@ fn resolve_mobile_anim_output_format(
 }
 
 fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
+    validate_optional_source_dir(args.ccdir.as_ref(), "--ccdir")?;
+    validate_optional_source_dir(args.ecdir.as_ref(), "--ecdir")?;
+
     let dirs = gather_source_dirs(args.ccdir.as_ref(), args.ecdir.as_ref());
     if dirs.is_empty() {
         eyre::bail!("at least one source root must be provided via --ccdir or --ecdir");
@@ -172,10 +175,29 @@ fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
 }
 
 fn collect_ec_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
-    args.ecdir
+    let ecdir = args
+        .ecdir
         .as_ref()
-        .map(|path| vec![path.clone()])
-        .ok_or_else(|| eyre::eyre!("--ecdir is required for EC source files"))
+        .ok_or_else(|| eyre::eyre!("--ecdir is required for EC source files"))?;
+    validate_source_dir(ecdir, "--ecdir")?;
+    Ok(vec![ecdir.clone()])
+}
+
+fn validate_optional_source_dir(path: Option<&PathBuf>, arg_name: &str) -> eyre::Result<()> {
+    if let Some(path) = path {
+        validate_source_dir(path, arg_name)?;
+    }
+    Ok(())
+}
+
+fn validate_source_dir(path: &Path, arg_name: &str) -> eyre::Result<()> {
+    if !path.exists() {
+        eyre::bail!("{arg_name} does not exist: {}", path.display());
+    }
+    if !path.is_dir() {
+        eyre::bail!("{arg_name} is not a directory: {}", path.display());
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1461,6 +1483,17 @@ pub fn run() -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    fn temp_dir(test_name: &str) -> PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("udd_pack_cli_{test_name}_{timestamp}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn collect_source_dirs_rejects_missing_roots() {
@@ -1477,25 +1510,32 @@ mod tests {
 
     #[test]
     fn collect_source_dirs_deduplicates_same_root() {
-        let shared = PathBuf::from("/tmp/uo-client");
+        let shared = temp_dir("shared_root");
         let dirs = collect_source_dirs(&SourceDirArgs {
             ccdir: Some(shared.clone()),
-            ecdir: Some(shared),
+            ecdir: Some(shared.clone()),
         })
         .expect("collect source dirs");
 
-        assert_eq!(dirs, vec![PathBuf::from("/tmp/uo-client")]);
+        assert_eq!(dirs, vec![shared.clone()]);
+
+        let _ = fs::remove_dir_all(shared);
     }
 
     #[test]
     fn collect_ec_source_dirs_uses_only_ec_root() {
+        let ccdir = temp_dir("cc_root");
+        let ecdir = temp_dir("ec_root");
         let dirs = collect_ec_source_dirs(&SourceDirArgs {
-            ccdir: Some(PathBuf::from("/cc")),
-            ecdir: Some(PathBuf::from("/ec")),
+            ccdir: Some(ccdir.clone()),
+            ecdir: Some(ecdir.clone()),
         })
         .expect("collect ec dirs");
 
-        assert_eq!(dirs, vec![PathBuf::from("/ec")]);
+        assert_eq!(dirs, vec![ecdir.clone()]);
+
+        let _ = fs::remove_dir_all(ccdir);
+        let _ = fs::remove_dir_all(ecdir);
     }
 
     #[test]
@@ -1796,6 +1836,28 @@ mod tests {
                 static_difs: true,
             }
         );
+    }
+
+    #[test]
+    fn collect_source_dirs_rejects_missing_ccdir() {
+        let args = SourceDirArgs {
+            ccdir: Some(PathBuf::from("/definitely/missing/uo/client")),
+            ecdir: None,
+        };
+        let error = collect_source_dirs(&args).expect_err("missing ccdir should fail");
+
+        assert!(error.to_string().contains("--ccdir does not exist"));
+    }
+
+    #[test]
+    fn collect_ec_source_dirs_rejects_missing_ecdir() {
+        let args = SourceDirArgs {
+            ccdir: None,
+            ecdir: Some(PathBuf::from("/definitely/missing/ec/client")),
+        };
+        let error = collect_ec_source_dirs(&args).expect_err("missing ecdir should fail");
+
+        assert!(error.to_string().contains("--ecdir does not exist"));
     }
 
     #[test]

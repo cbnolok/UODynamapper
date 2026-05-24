@@ -2,6 +2,8 @@ use std::fs;
 
 use uocf::classic::map::{MapBlockRelPos, MapPlane, MapSizeCells};
 use uocf::classic::map_statics_diff::MapDiff;
+use uocf::uop_container::file::CompressionFlag;
+use uocf::uop_container::package::UopPackage;
 
 mod common;
 
@@ -37,6 +39,45 @@ fn mapdif_and_mapdifl_override_base_map_block() {
     let cell = block.cell(0, 0).unwrap();
     assert_eq!(cell.id, 55);
     assert_eq!(cell.z, -6);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mapx_legacy_uop_uses_base_map_internal_route() {
+    let dir = common::temp_dir("classic_mapx_legacy_uop");
+    let uop_path = dir.join("map0xLegacyMUL.uop");
+
+    let mut chunk = Vec::new();
+    chunk.extend_from_slice(&common::map_block(10, 1));
+    chunk.extend_from_slice(&common::map_block(77, -3));
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(
+            &chunk,
+            "build/map0legacymul/00000000.dat",
+            CompressionFlag::None,
+        )
+        .unwrap();
+    package.finalize_and_save(&uop_path).unwrap();
+
+    let mut plane = MapPlane::init_uop_with_size(
+        uop_path,
+        0,
+        Some(MapSizeCells {
+            width: 8,
+            height: 16,
+        }),
+    )
+    .unwrap();
+
+    let mut blocks = [MapBlockRelPos { x: 0, y: 1 }];
+    plane.load_blocks(&mut blocks).unwrap();
+    let block = plane.block_no_update(MapBlockRelPos { x: 0, y: 1 }).unwrap();
+    let cell = block.cell(0, 0).unwrap();
+    assert_eq!(cell.id, 77);
+    assert_eq!(cell.z, -3);
 
     let _ = fs::remove_dir_all(dir);
 }
