@@ -137,12 +137,13 @@ fn apply_art_surface_shading(
         let foot_contact_noise = 0.82 + 0.18 * hash(floor(world_pos.xz * 0.8 + uv_in_tile * 11.0));
         let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
         out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
+        let art_temperature_strength = clamp(effects.kr_art_temperature_strength, 0.0, 1.5);
         let sun_mask = smoothstep(0.34, 0.92, wrap) * (0.45 + 0.55 * top_catch);
         let shade_mask = clamp((1.0 - smoothstep(0.22, 0.72, lambert)) * (0.35 + 0.65 * contact), 0.0, 1.0);
         let shaded_luma = art_luminance(out_rgb);
-        out_rgb = mix(out_rgb, vec3<f32>(shaded_luma), shade_mask * shadow_strength * 0.14);
-        out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(0.84, 0.91, 1.08), shade_mask * 0.18);
-        out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(1.07, 1.02, 0.93), sun_mask * highlight_strength * 0.12);
+        out_rgb = mix(out_rgb, vec3<f32>(shaded_luma), shade_mask * shadow_strength * 0.14 * art_temperature_strength);
+        out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(0.84, 0.91, 1.08), shade_mask * 0.18 * art_temperature_strength);
+        out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(1.07, 1.02, 0.93), sun_mask * highlight_strength * 0.12 * art_temperature_strength);
         out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 

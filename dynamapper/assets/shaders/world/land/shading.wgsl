@@ -10,7 +10,7 @@
 
 
 #import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
-#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light, static_lights}
+#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, effects, global_light, land_light, static_lights}
 #import "shaders/world/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
 #import "shaders/world/land/noise.wgsl"::hash
 
@@ -136,21 +136,24 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
 
   // KR-style temperature separation: cooled, slightly compressed shadow
   // slopes against a restrained warm sun side.
+  let land_temperature_strength = clamp(effects.kr_land_temperature_strength, 0.0, 1.5);
   let sun_mask = smoothstep(0.22, 0.88, lam_shaped);
   let shadow_mask = 1.0 - smoothstep(0.10, 0.58, max(raw_ndotl, 0.0));
   let color_luma = luminance(color);
-  color = mix(color, vec3<f32>(color_luma), shadow_mask * 0.16);
-  color *= mix(vec3<f32>(1.0), vec3<f32>(0.82, 0.90, 1.06), shadow_mask * 0.20);
-  color *= mix(vec3<f32>(1.0), vec3<f32>(1.08, 1.03, 0.94), sun_mask * 0.14);
+  color = mix(color, vec3<f32>(color_luma), shadow_mask * 0.16 * land_temperature_strength);
+  color *= mix(vec3<f32>(1.0), vec3<f32>(0.82, 0.90, 1.06), shadow_mask * 0.20 * land_temperature_strength);
+  color *= mix(vec3<f32>(1.0), vec3<f32>(1.08, 1.03, 0.94), sun_mask * 0.14 * land_temperature_strength);
 
   // Terrain relief darkening: shaded steep slopes get a little extra weight
   // so heightfield creases do not flatten under the wrapped diffuse.
+  let relief_shadow_strength = clamp(effects.kr_land_relief_shadow_strength, 0.0, 1.5);
   let slope_steepness = clamp(1.0 - normalize(Nw).y, 0.0, 1.0);
   let crease_shadow = smoothstep(0.08, 0.42, slope_steepness) * (0.35 + 0.65 * shadow_mask);
-  color *= 1.0 - crease_shadow * 0.12;
+  color *= 1.0 - crease_shadow * 0.12 * relief_shadow_strength;
 
+  let shadow_mottle_strength = clamp(effects.kr_land_shadow_mottle_strength, 0.0, 1.5);
   let shadow_mottle = 0.82 + 0.18 * hash(floor(world_pos.xz * 1.15));
-  color *= 1.0 - shadow_mask * (1.0 - shadow_mottle) * 0.10;
+  color *= 1.0 - shadow_mask * (1.0 - shadow_mottle) * 0.10 * shadow_mottle_strength;
 
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {

@@ -37,6 +37,10 @@ struct LandEffectsUniform {
     enable_art_fake_normals: u32,
     art_contact_shadow_strength: f32,
     _pad_eff3: u32,
+    kr_land_temperature_strength: f32,
+    kr_land_relief_shadow_strength: f32,
+    kr_land_shadow_mottle_strength: f32,
+    kr_art_temperature_strength: f32,
 }
 
 // Global lighting parameters shared across all shader types (land, art tiles, etc.).

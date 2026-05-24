@@ -182,6 +182,16 @@ pub struct LandEffectsUniform {
     pub art_contact_shadow_strength: f32,
     #[serde(default)]
     pub _pad_eff3: u32,
+
+    // --- KR style controls (vec4 slot 5) ---
+    /// 0 disables KR land warm/cool split; 1 preserves the preset strength.
+    pub kr_land_temperature_strength: f32,
+    /// 0 disables KR land relief/crease darkening; 1 preserves the preset strength.
+    pub kr_land_relief_shadow_strength: f32,
+    /// 0 disables KR land shadow mottling; 1 preserves the preset strength.
+    pub kr_land_shadow_mottle_strength: f32,
+    /// 0 disables KR art warm/cool split; 1 preserves the preset strength.
+    pub kr_art_temperature_strength: f32,
 }
 
 fn default_art_shadow_strength() -> f32 {
