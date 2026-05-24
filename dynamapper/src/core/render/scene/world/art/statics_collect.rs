@@ -215,6 +215,20 @@ pub(crate) fn static_tile_is_surface_like(
     meta.is_surface_like() || meta.flags & (TILE_FLAG_SURFACE | TILE_FLAG_WET) != 0
 }
 
+fn static_tile_uses_tex_land_ec_surface_path(
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+) -> bool {
+    let Some(meta) = tilemeta else {
+        return false;
+    };
+
+    if meta.flags & TILE_FLAG_WET != 0 {
+        return false;
+    }
+
+    meta.is_surface_like() || meta.flags & TILE_FLAG_SURFACE != 0
+}
+
 pub(crate) fn resolve_static_depth_class(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> StaticDepthClass {
@@ -394,7 +408,7 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     let Some(meta) = tilemeta else {
         return None;
     };
-    if !static_tile_is_surface_like(tilemeta) {
+    if !static_tile_uses_tex_land_ec_surface_path(tilemeta) {
         return None;
     }
 
@@ -1638,6 +1652,25 @@ mod tests {
 
         approx_eq(anchor.0, 10.0 + EC_STATIC_TILE_TRANSLATION_X);
         approx_eq(anchor.1, 20.0 + EC_STATIC_TILE_TRANSLATION_Z);
+    }
+
+    #[test]
+    fn wet_surface_like_tiles_keep_surface_depth_without_land_redirection() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_WET,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+
+        assert!(static_tile_is_surface_like(Some(&tile)));
+        assert!(!static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+    }
+
+    #[test]
+    fn non_wet_surface_like_tiles_still_use_land_redirection() {
+        let tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+
+        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
     }
 
     #[test]
