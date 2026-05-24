@@ -1,0 +1,428 @@
+// Translated from EC/KR mainmisc_ec/data/wearables.xml.
+// Runtime paperdoll draw-order and wearable override rules.
+
+draworder "paperdoll" {
+    slot "riding" priority=100
+    slot "cape" priority=500
+    slot "face" priority=1000
+    slot "finger1" priority=2000
+    slot "ears" priority=3000
+    slot "feet" priority=5000
+    slot "legs" priority=6000
+    slot "torso" priority=7000
+    slot "talisman" priority=9000
+    slot "neck" priority=10000
+    slot "chest" priority=12000
+    slot "abovechest" priority=15000
+    slot "arms" priority=16000
+    slot "hands" priority=16500
+    slot "lwrist" priority=16750
+    slot "skirt" priority=17000
+    slot "dress" priority=18000
+    slot "waist" priority=18500
+    slot "feetlegs" priority=19000
+    slot "hair" priority=20000
+    slot "facialhair" priority=20750
+    slot "head" priority=21000
+    slot "backpack" priority=22000
+    slot "lefthand" priority=23000
+    slot "righthand" priority=24000
+    slot "drag" priority=25000
+}
+
+wearable "neck" items="4229,4232,4233,7944,7946,15285,41417,41418,41801,41802,41999,42025,42026" {
+    override priority=18100 {
+        when "dress" items="any"
+    }
+    override priority=18100 {
+        when "chest" items="any"
+    }
+    override priority=18100 {
+        when "abovechest" items="any"
+    }
+}
+
+wearable "legs" items="any" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+    override priority=4500 {
+        when "feet" items="5905,5906,5899,5900,8967,8968,10135,10210,12228,12666,30745,41613,41614"
+    }
+    override priority=0 {
+        when "dress" items="9859,9860,9863,12217,12218,7939"
+    }
+}
+
+wearable "legs" items="30764" {
+    override priority=0 {
+        when "dress" items="any"
+    }
+    override priority=0 {
+        when "skirt" items="any"
+    }
+    override priority=4500 {
+        when "feet" items="5905,5906,5899,5900,8967,8968,10135,10210,12228,12666,30745,41613,41614"
+    }
+}
+
+wearable "legs" items="5137,5146,44706,44721,44736,44751" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+    override priority=15000 {
+        when "dress" items="9859,9860,9863,12217,12218,7939"
+    }
+}
+
+wearable "legs" items="5202,5207" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+    override priority=6000 {
+        when "feet" items="5905,5906,5899,5900,8967,8968,10135,10210,12228,12666,30745,41613,41614"
+    }
+}
+
+wearable "legs" items="11115" {
+    override priority=0 {
+        when "dress" items="any"
+    }
+    override priority=6500 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+}
+
+wearable "feet" items="any" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+    override priority=0 {
+        when "legs" items="5137,5146"
+    }
+}
+
+wearable "legs" items="7176,7177,30758,30759" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+    override priority=17050 {
+        when "feet" items="5905,5906"
+    }
+}
+
+wearable "feetlegs" items="any" {
+    override priority=0 {
+        when "dress" items="30753"
+    }
+}
+
+wearable "head" items="any" {
+    override priority=24300 direction="southwest" {
+        when "righthand" items="any"
+    }
+    override priority=24300 direction="west" {
+        when "righthand" items="any"
+    }
+    override priority=24300 direction="northwest" {
+        when "lefthand" items="any"
+        when "righthand" items="any"
+    }
+    override priority=24300 direction="north" {
+        when "righthand" items="any"
+    }
+    override priority=24300 direction="northeast" {
+        when "righthand" items="any"
+    }
+    override priority=0 {
+        when "dress" items="8270,9861,9862"
+    }
+    override priority=0 {
+        when "dress" items="8271"
+    }
+    override priority=0 {
+        when "dress" items="9859,9860,9863"
+    }
+    override priority=0 {
+        when "dress" items="12217"
+    }
+    override priority=0 race="human" {
+        when "dress" items="19357"
+    }
+    override priority=0 race="elf" {
+        when "dress" items="19357"
+    }
+    override priority=0 race="human" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+    override priority=0 race="elf" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+    override priority=17900 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+}
+
+wearable "head" items="12216,5051" {
+    override priority=17900 {
+        when "dress" items="12217"
+    }
+    override priority=17900 {
+        when "dress" items="8270,9861,9862"
+    }
+    override priority=17900 {
+        when "dress" items="8271"
+    }
+    override priority=17900 {
+        when "dress" items="9859,9860,9863"
+    }
+    override priority=17900 {
+        when "dress" items="12217"
+    }
+    override priority=17900 race="human" {
+        when "dress" items="19357"
+    }
+    override priority=17900 race="elf" {
+        when "dress" items="19357"
+    }
+    override priority=17900 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+    override priority=17900 race="human" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+    override priority=17900 race="elf" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+}
+
+wearable "cape" items="any" {
+    override priority=150 direction="south" {
+        when "dress" items="any"
+        when "skirt" items="any"
+        when "waist" items="any"
+    }
+    override priority=150 direction="southeast" {
+        when "dress" items="any"
+        when "skirt" items="any"
+        when "waist" items="any"
+    }
+    override priority=150 direction="east" {
+        when "dress" items="any"
+        when "skirt" items="any"
+        when "waist" items="any"
+    }
+    override priority=24200 direction="northwest" {
+        when "lefthand" items="any"
+    }
+}
+
+wearable "torso" items="40699" {
+    override priority=12500 {
+        when "chest" items="any"
+    }
+}
+
+wearable "torso" items="any" {
+    override priority=0 {
+        when "chest" items="any"
+    }
+}
+
+wearable "abovechest" items="any" {
+    override priority=0 {
+        when "dress" items="any"
+    }
+    override priority=18200 {
+        when "dress" items="5136,44703,44718,44733,44748"
+    }
+    override priority=18100 {
+        when "dress" items="5441,42002,42752,42753,42754,42755,42756,42757,42758,42759"
+    }
+    override priority=15500 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+}
+
+wearable "arms" items="5136" {
+    override priority=15600 {
+        when "dress" items="5441,42002,42752,42753,42754,42755,42756,42757,42758,42759"
+    }
+}
+
+wearable "chest" items="30762,30763" {
+    override priority=0 {
+        when "abovechest" items="any"
+    }
+    override priority=0 {
+        when "dress" items="any"
+    }
+}
+
+wearable "chest" items="any" {
+    override priority=0 {
+        when "dress" items="any"
+    }
+    override priority=0 {
+        when "abovechest" items="8095,8096"
+    }
+    override priority=0 {
+        when "abovechest" items="8189,8190"
+    }
+    override priority=0 {
+        when "abovechest" items="8975,8976"
+    }
+    override priority=11900 {
+        when "belowchest" items="8097,8059,8189"
+    }
+    override priority=12500 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+}
+
+wearable "arms" items="any" {
+    override priority=10500 {
+        when "chest" items="any"
+    }
+    override priority=0 {
+        when "chest" items="5055"
+    }
+    override priority=10500 {
+        when "abovechest" items="any"
+    }
+    override priority=0 {
+        when "abovechest" items="8095,8096"
+    }
+    override priority=0 {
+        when "abovechest" items="8975,8976"
+    }
+    override priority=0 {
+        when "dress" items="any"
+    }
+    override priority=12000 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+    override priority=0 {
+        when "torso" items="40699"
+    }
+}
+
+wearable "lwrist" items="any" {
+    override priority=0 {
+        when "torso" items="40699"
+    }
+}
+
+wearable "hands" items="5140,5144,44704,44719,44734,44749" {
+    override priority=16100 {
+        when "arms" items="any"
+    }
+}
+
+wearable "hair" items="any" {
+    override priority=0 race="human" {
+        when "dress" items="19357"
+    }
+    override priority=0 race="elf" {
+        when "dress" items="19357"
+    }
+    override priority=0 race="human" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+    override priority=0 race="elf" {
+        when "dress" items="30742,41131,41132,41133,41134,41135"
+    }
+    override priority=0 {
+        when "dress" items="8270,9861,9862"
+    }
+    override priority=0 {
+        when "dress" items="8271"
+    }
+    override priority=0 {
+        when "dress" items="9859,9860,9863"
+    }
+    override priority=0 {
+        when "dress" items="12217"
+    }
+    override priority=0 {
+        when "head" items="7947,7948"
+    }
+    override priority=0 {
+        when "dress" items="9902"
+    }
+    override priority=16500 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+    override priority=0 {
+        when "head" items="5128,5132,44701,44716,44731,44746"
+    }
+    override priority=0 {
+        when "head" items="41962"
+    }
+    override priority=0 {
+        when "head" items="42027,42028"
+    }
+    override priority=0 {
+        when "head" items="42000,42001"
+    }
+    override priority=0 {
+        when "head" items="42974,42975"
+    }
+}
+
+wearable "skirt" items="any" {
+    override priority=11500 {
+        when "chest" items="5141,5142,44705,44720,44735,44750"
+    }
+}
+
+wearable "skirt" items="10138" {
+    override priority=0 {
+        when "dress" items="9859,9860,9863,12217,12218,7939"
+    }
+}
+
+wearable "facialhair" items="8254" {
+    override priority=18250 {
+        when "dress" items="7939"
+    }
+    override priority=0 {
+        when "head" items="5132,5128"
+    }
+    override priority=16500 {
+        when "dress" items="9859, 12217, 19357"
+    }
+    override priority=0 {
+        when "head" items="41962"
+    }
+    override priority=16400 {
+        when "dress" items="39301,39302,41674,41675"
+    }
+}
+
+wearable "lefthand" items="any" {
+    override priority=50 direction="north" {
+    }
+    override priority=50 direction="northwest" {
+    }
+    override priority=50 direction="northeast" {
+    }
+    override priority=50 direction="west" {
+    }
+    override priority=50 direction="southwest" {
+    }
+}
+
+wearable "lefthand" items="7026,7027,7028,7029,7030,7031,7032,7033,7034,7035,7107,7108,7109,7110,7111,9578,11009,2575,2576,2577,2580,2581,2582,2581,2582,2583,2584,2594,2595,2596,2597,3940,3947,5703,10153,10155,10157,10159,11558,16488,16896,16903,16897,16902,16898,16906,16899,16905,16900,16904,16901,16907,16940,16938,16937,16936,30743,30744,41995,42569,42570,42855,42856,42857,42858,42866,43057,43058,44710,44725,44740,44755" {
+    override priority=23000 direction="north" {
+    }
+    override priority=23000 direction="northwest" {
+    }
+    override priority=23000 direction="northeast" {
+    }
+    override priority=23000 direction="west" {
+    }
+    override priority=23000 direction="southwest" {
+    }
+}
+

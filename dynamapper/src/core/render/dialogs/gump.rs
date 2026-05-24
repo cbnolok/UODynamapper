@@ -1,7 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::core::uo_files_loader::{ClassicHuesRes, GumpMapRes, TileMetaPackageRes};
-use crate::configs::settings::Settings;
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
@@ -9,10 +8,9 @@ use crate::{
     prelude::*,
 };
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle};
 use knuffel::Decode;
-use regex::Regex;
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{collections::HashMap, path::Path};
 
 #[derive(Resource)]
 pub struct GumpDialogState {
@@ -32,6 +30,11 @@ struct OpenGump {
     height: u16,
     image: Handle<Image>,
     texture_id: egui::TextureId,
+}
+
+enum GumpOpenRequest {
+    GumpById,
+    Paperdoll,
 }
 
 #[derive(Clone)]
@@ -83,46 +86,134 @@ struct PaperdollWearableRules {
 impl PaperdollWearableRules {
     fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        Self::parse(&content)
+        Self::load_from_str(path.to_str().unwrap_or("WearableRules.kdl"), &content)
     }
 
-    fn parse(content: &str) -> color_eyre::eyre::Result<Self> {
-        let tag_re = Regex::new(r#"(?s)<(/?)(draworder|wearable|override)\b([^>]*)/?>"#)?;
-        let attr_re = Regex::new(r#"([A-Za-z0-9_]+)\s*=\s*"([^"]*)""#)?;
+    fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
+        use knuffel::ast::{Literal, Node, Value};
+        use knuffel::span::Span;
+
+        fn value_string(value: &Value<Span>, field: &str) -> color_eyre::eyre::Result<String> {
+            match &*value.literal {
+                Literal::String(value) => Ok(value.to_string()),
+                _ => color_eyre::eyre::bail!("{field}: expected string"),
+            }
+        }
+
+        fn value_u16(value: &Value<Span>, field: &str) -> color_eyre::eyre::Result<u16> {
+            match &*value.literal {
+                Literal::Int(value) => u16::try_from(value)
+                    .map_err(|_| color_eyre::eyre::eyre!("{field}: invalid u16")),
+                _ => color_eyre::eyre::bail!("{field}: expected integer"),
+            }
+        }
+
+        fn argument_string(node: &Node<Span>, index: usize, field: &str) -> color_eyre::eyre::Result<String> {
+            let value = node
+                .arguments
+                .get(index)
+                .ok_or_else(|| color_eyre::eyre::eyre!("{field}: missing argument"))?;
+            value_string(value, field)
+        }
+
+        fn property_string(node: &Node<Span>, name: &str) -> color_eyre::eyre::Result<Option<String>> {
+            node.properties
+                .iter()
+                .find(|(key, _)| key.as_ref() == name)
+                .map(|(_, value)| value_string(value, name))
+                .transpose()
+        }
+
+        fn property_u16(node: &Node<Span>, name: &str) -> color_eyre::eyre::Result<Option<u16>> {
+            node.properties
+                .iter()
+                .find(|(key, _)| key.as_ref() == name)
+                .map(|(_, value)| value_u16(value, name))
+                .transpose()
+        }
+
+        fn parse_when(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableCondition>> {
+            let slot = argument_string(node, 0, "when slot")?;
+            let Some(items) = property_string(node, "items")? else {
+                return Ok(None);
+            };
+            Ok(parse_wearable_items(&items).map(|items| WearableCondition { slot, items }))
+        }
+
+        fn parse_override(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableOverrideRule>> {
+            let Some(draw_order_priority) = property_u16(node, "priority")? else {
+                return Ok(None);
+            };
+            let mut conditions = Vec::new();
+            for child in node.children() {
+                if child.node_name.as_ref() == "when" {
+                    if let Some(condition) = parse_when(child)? {
+                        conditions.push(condition);
+                    }
+                }
+            }
+
+            Ok(Some(WearableOverrideRule {
+                draw_order_priority,
+                race: property_string(node, "race")?.map(|race| race.to_ascii_lowercase()),
+                direction: property_string(node, "direction")?
+                    .map(|direction| direction.to_ascii_lowercase()),
+                conditions,
+            }))
+        }
+
+        fn parse_wearable(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableRule>> {
+            let target_slot = argument_string(node, 0, "wearable slot")?;
+            let Some(items) = property_string(node, "items")? else {
+                return Ok(None);
+            };
+            let Some(target_items) = parse_wearable_items(&items) else {
+                return Ok(None);
+            };
+            let mut overrides = Vec::new();
+            for child in node.children() {
+                if child.node_name.as_ref() == "override" {
+                    if let Some(override_rule) = parse_override(child)? {
+                        overrides.push(override_rule);
+                    }
+                }
+            }
+
+            Ok(Some(WearableRule {
+                target_slot,
+                target_items,
+                overrides,
+            }))
+        }
+
+        fn parse_draworder(
+            node: &Node<Span>,
+            paperdoll_draw_order: &mut HashMap<String, u16>,
+        ) -> color_eyre::eyre::Result<()> {
+            if argument_string(node, 0, "draworder direction")? != "paperdoll" {
+                return Ok(());
+            }
+
+            for child in node.children() {
+                if child.node_name.as_ref() != "slot" {
+                    continue;
+                }
+                let slot = argument_string(child, 0, "draworder slot")?;
+                if let Some(priority) = property_u16(child, "priority")? {
+                    paperdoll_draw_order.insert(slot, priority);
+                }
+            }
+            Ok(())
+        }
+
+        let document = knuffel::parse_ast::<Span>(source_name, content)?;
         let mut paperdoll_draw_order = HashMap::new();
         let mut wearable_rules = Vec::new();
-        let mut current_wearable: Option<WearableRule> = None;
-
-        for capture in tag_re.captures_iter(content) {
-            let closing = capture.get(1).map_or("", |m| m.as_str()) == "/";
-            let tag_name = capture.get(2).map_or("", |m| m.as_str());
-            let attrs = parse_xml_attrs(capture.get(3).map_or("", |m| m.as_str()), &attr_re);
-
-            match (closing, tag_name) {
-                (false, "draworder") => {
-                    if attrs.get("direction").is_none_or(|direction| direction == "paperdoll") {
-                        for (key, value) in attrs {
-                            if key == "direction" {
-                                continue;
-                            }
-                            if let Ok(priority) = value.parse::<u16>() {
-                                paperdoll_draw_order.insert(key, priority);
-                            }
-                        }
-                    }
-                }
-                (false, "wearable") => {
-                    current_wearable = wearable_rule_from_attrs(attrs);
-                }
-                (false, "override") => {
-                    if let Some(rule) = current_wearable.as_mut() {
-                        if let Some(override_rule) = override_rule_from_attrs(attrs) {
-                            rule.overrides.push(override_rule);
-                        }
-                    }
-                }
-                (true, "wearable") => {
-                    if let Some(rule) = current_wearable.take() {
+        for node in document.nodes.iter() {
+            match node.node_name.as_ref() {
+                "draworder" => parse_draworder(node, &mut paperdoll_draw_order)?,
+                "wearable" => {
+                    if let Some(rule) = parse_wearable(node)? {
                         wearable_rules.push(rule);
                     }
                 }
@@ -159,6 +250,13 @@ impl PaperdollWearableRules {
 
             for override_rule in &rule.overrides {
                 if override_rule
+                    .direction
+                    .as_ref()
+                    .is_some_and(|direction| direction != "paperdoll")
+                {
+                    continue;
+                }
+                if override_rule
                     .race
                     .as_ref()
                     .is_some_and(|required_race| required_race != race)
@@ -175,6 +273,60 @@ impl PaperdollWearableRules {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_paperdoll_specs_parse() {
+        let profiles = knuffel::parse::<PaperdollProfilesKdl>(
+            "PaperdollProfiles.kdl",
+            include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
+        )
+        .expect("profiles parse");
+        assert!(!profiles.profiles.is_empty());
+
+        let rules = PaperdollWearableRules::load_from_str(
+            "WearableRules.kdl",
+            include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"),
+        )
+        .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"));
+        assert_eq!(rules.base_priority("cape", 0), 500);
+    }
+
+    #[test]
+    fn wearable_rules_apply_paperdoll_override_priority() {
+        let rules = PaperdollWearableRules::load_from_str(
+            "WearableRules.kdl",
+            include_str!("../../../../assets/runtime_specs/paperdoll/WearableRules.kdl"),
+        )
+        .unwrap_or_else(|error| panic!("wearable rules parse: {error:?}"));
+        let equipped = vec![
+            PaperdollEquippedItem {
+                item_id: 4232,
+                slot: "neck".to_string(),
+                gump_id: 0,
+                hue_id: 0,
+                partial_hue: false,
+                fallback_priority: 10,
+            },
+            PaperdollEquippedItem {
+                item_id: 5000,
+                slot: "chest".to_string(),
+                gump_id: 0,
+                hue_id: 0,
+                partial_hue: false,
+                fallback_priority: 20,
+            },
+        ];
+
+        assert_eq!(
+            rules.priority_for("neck", 4232, &equipped, "human", 10),
+            18100
+        );
+    }
+}
+
 #[derive(Clone)]
 struct WearableRule {
     target_slot: String,
@@ -186,6 +338,7 @@ struct WearableRule {
 struct WearableOverrideRule {
     draw_order_priority: u16,
     race: Option<String>,
+    direction: Option<String>,
     conditions: Vec<WearableCondition>,
 }
 
@@ -232,7 +385,7 @@ struct PaperdollEquippedItem {
 
 impl PaperdollProfilesRes {
     fn load() -> Self {
-        let path = constants::valid_asset_dir().join("cc_ec_convtables/PaperdollProfiles.kdl");
+        let path = constants::valid_asset_dir().join("runtime_specs/paperdoll/PaperdollProfiles.kdl");
         match Self::load_from_path(&path) {
             Ok(profiles) => profiles,
             Err(error) => {
@@ -364,50 +517,6 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
     }
 }
 
-fn parse_xml_attrs(attrs: &str, attr_re: &Regex) -> HashMap<String, String> {
-    attr_re
-        .captures_iter(attrs)
-        .filter_map(|capture| {
-            let key = capture.get(1)?.as_str().to_ascii_lowercase();
-            let value = capture.get(2)?.as_str().trim().to_string();
-            Some((key, value))
-        })
-        .collect()
-}
-
-fn wearable_rule_from_attrs(attrs: HashMap<String, String>) -> Option<WearableRule> {
-    let (target_slot, target_items) = attrs
-        .into_iter()
-        .find_map(|(slot, value)| parse_wearable_items(&value).map(|items| (slot, items)))?;
-
-    Some(WearableRule {
-        target_slot,
-        target_items,
-        overrides: Vec::new(),
-    })
-}
-
-fn override_rule_from_attrs(attrs: HashMap<String, String>) -> Option<WearableOverrideRule> {
-    let draw_order_priority = attrs.get("draworderpriority")?.parse::<u16>().ok()?;
-    let race = attrs.get("race").map(|race| race.to_ascii_lowercase());
-    let mut conditions = Vec::new();
-
-    for (slot, value) in attrs {
-        if slot == "draworderpriority" || slot == "direction" || slot == "race" {
-            continue;
-        }
-        if let Some(items) = parse_wearable_items(&value) {
-            conditions.push(WearableCondition { slot, items });
-        }
-    }
-
-    Some(WearableOverrideRule {
-        draw_order_priority,
-        race,
-        conditions,
-    })
-}
-
 fn parse_wearable_items(value: &str) -> Option<WearableItemMatcher> {
     if value.trim().eq_ignore_ascii_case("any") {
         return Some(WearableItemMatcher::Any);
@@ -481,38 +590,22 @@ impl Plugin for GumpDialogPlugin {
 }
 
 fn sys_load_paperdoll_wearable_rules(
-    settings: Res<Settings>,
     mut rules_res: ResMut<PaperdollWearableRulesRes>,
 ) {
-    let source_root = PathBuf::from(&settings.runtime_assets.udd_path);
-    let asset_root = constants::valid_asset_dir();
-    let candidates = [
-        asset_root.join("cc_ec_convtables/wearables.xml"),
-        source_root.join("data/wearables.xml"),
-        source_root.join("wearables.xml"),
-    ];
+    let path = constants::valid_asset_dir().join("runtime_specs/paperdoll/WearableRules.kdl");
 
-    for path in candidates {
-        if !path.is_file() {
-            continue;
+    match PaperdollWearableRules::load_from_path(&path) {
+        Ok(rules) => {
+            log::info!("Loaded paperdoll wearable rules from {}", path.display());
+            rules_res.rules = Some(rules);
         }
-
-        match PaperdollWearableRules::load_from_path(&path) {
-            Ok(rules) => {
-                log::info!("Loaded paperdoll wearable rules from {}", path.display());
-                rules_res.rules = Some(rules);
-                return;
-            }
-            Err(error) => {
-                log::warn!(
-                    "Failed to load paperdoll wearable rules from {}: {error}",
-                    path.display()
-                );
-            }
+        Err(error) => {
+            log::warn!(
+                "Failed to load paperdoll wearable rules from {}: {error}; using tiledata layer order only.",
+                path.display()
+            );
         }
     }
-
-    log::info!("No paperdoll wearable rules file selected; using tiledata layer order only.");
 }
 
 fn sys_gump_toggle(
@@ -541,54 +634,50 @@ fn sys_render_gump_dialog(
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     wearable_rules: Res<PaperdollWearableRulesRes>,
     mut images: ResMut<Assets<Image>>,
-    mut egui_user_textures: ResMut<EguiUserTextures>,
 ) {
     if !state.open && state.open_gumps.is_empty() {
         return;
     }
 
-    let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
-        return;
-    };
-
-    if state.open {
-        render_open_gump_dialog(
-            ctx,
-            &mut state,
-            gump_map.as_deref(),
-            tilemeta.as_deref(),
-            classic_hues.as_deref(),
-            &paperdoll_profiles,
-            &wearable_rules,
-            &mut images,
-            &mut egui_user_textures,
-        );
-    }
-
     let mut closed_images = Vec::new();
-    for open_gump in &state.open_gumps {
-        let mut open = true;
-        let mut right_clicked = false;
-        let image_size = egui::vec2(open_gump.width as f32, open_gump.height as f32);
-        egui::Window::new(open_gump.title.as_str())
-            .default_pos([
-                120.0 + (state.open_gumps.len() as f32 * 12.0),
-                120.0 + (state.open_gumps.len() as f32 * 12.0),
-            ])
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                let response = ui.add(egui::Image::new((open_gump.texture_id, image_size)));
-                if response.secondary_clicked() {
-                    right_clicked = true;
-                }
-            });
+    let open_request = {
+        let Some(ctx) =
+            dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
+            return;
+        };
 
-        if !open || right_clicked {
-            closed_images.push(open_gump.image.id());
+        let open_request = if state.open {
+            render_open_gump_dialog(ctx, &mut state, &paperdoll_profiles)
+        } else {
+            None
+        };
+
+        for open_gump in &state.open_gumps {
+            let mut open = true;
+            let mut right_clicked = false;
+            let image_size = egui::vec2(open_gump.width as f32, open_gump.height as f32);
+            egui::Window::new(open_gump.title.as_str())
+                .default_pos([
+                    120.0 + (state.open_gumps.len() as f32 * 12.0),
+                    120.0 + (state.open_gumps.len() as f32 * 12.0),
+                ])
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    let response = ui.add(egui::Image::new((open_gump.texture_id, image_size)));
+                    if response.secondary_clicked() {
+                        right_clicked = true;
+                    }
+                });
+
+            if !open || right_clicked {
+                closed_images.push(open_gump.image.id());
+            }
         }
-    }
+
+        open_request
+    };
 
     state.open_gumps.retain(|open_gump| {
         let close = closed_images.contains(&open_gump.image.id());
@@ -599,22 +688,37 @@ fn sys_render_gump_dialog(
     });
 
     for image_id in closed_images {
-        egui_user_textures.remove_image(image_id);
+        egui_contexts.remove_image(image_id);
+    }
+
+    match open_request {
+        Some(GumpOpenRequest::GumpById) => open_gump_by_id(
+            &mut state,
+            gump_map.as_deref(),
+            &mut images,
+            &mut egui_contexts,
+        ),
+        Some(GumpOpenRequest::Paperdoll) => open_paperdoll(
+            &mut state,
+            gump_map.as_deref(),
+            tilemeta.as_deref(),
+            classic_hues.as_deref(),
+            &paperdoll_profiles,
+            &wearable_rules,
+            &mut images,
+            &mut egui_contexts,
+        ),
+        None => {}
     }
 }
 
 fn render_open_gump_dialog(
     ctx: &mut egui::Context,
     state: &mut GumpDialogState,
-    gump_map: Option<&GumpMapRes>,
-    tilemeta: Option<&TileMetaPackageRes>,
-    classic_hues: Option<&ClassicHuesRes>,
     paperdoll_profiles: &PaperdollProfilesRes,
-    wearable_rules: &PaperdollWearableRulesRes,
-    images: &mut Assets<Image>,
-    egui_user_textures: &mut EguiUserTextures,
-) {
+) -> Option<GumpOpenRequest> {
     let mut window_open = state.open;
+    let mut open_request = None;
     egui::Window::new("Open Gump")
         .default_pos([400.0, 240.0])
         .default_size([300.0, 260.0])
@@ -629,7 +733,7 @@ fn render_open_gump_dialog(
             let submit = ui.button("Open").clicked()
                 || ui.input(|input| input.key_pressed(egui::Key::Enter));
             if submit {
-                open_gump_by_id(state, gump_map, images, egui_user_textures);
+                open_request = Some(GumpOpenRequest::GumpById);
             }
 
             ui.separator();
@@ -679,29 +783,21 @@ fn render_open_gump_dialog(
                         state.paperdoll_equipment.push(PaperdollEquipmentRow::default());
                     }
                     if ui.button("Open Paperdoll").clicked() {
-                        open_paperdoll(
-                            state,
-                            gump_map,
-                            tilemeta,
-                            classic_hues,
-                            paperdoll_profiles,
-                            wearable_rules,
-                            images,
-                            egui_user_textures,
-                        );
+                        open_request = Some(GumpOpenRequest::Paperdoll);
                     }
                 });
             }
         });
 
     state.open = window_open;
+    open_request
 }
 
 fn open_gump_by_id(
     state: &mut GumpDialogState,
     gump_map: Option<&GumpMapRes>,
     images: &mut Assets<Image>,
-    egui_user_textures: &mut EguiUserTextures,
+    egui_contexts: &mut EguiContexts,
 ) {
     let Some(gump_map) = gump_map else {
         ingame_sysmessage_logger::error("Classic gump source is not loaded.".to_string());
@@ -729,7 +825,7 @@ fn open_gump_by_id(
     );
     image.sampler = bevy::image::ImageSampler::nearest();
     let image = images.add(image);
-    let texture_id = egui_user_textures.add_image(EguiTextureHandle::Strong(image.clone()));
+    let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
     state.open_gumps.push(OpenGump {
         title: format!("Gump {id}"),
         width,
@@ -756,7 +852,7 @@ fn open_paperdoll(
     paperdoll_profiles: &PaperdollProfilesRes,
     wearable_rules: &PaperdollWearableRulesRes,
     images: &mut Assets<Image>,
-    egui_user_textures: &mut EguiUserTextures,
+    egui_contexts: &mut EguiContexts,
 ) {
     let Some(gump_map) = gump_map else {
         ingame_sysmessage_logger::error("Classic gump source is not loaded.".to_string());
@@ -863,7 +959,7 @@ fn open_paperdoll(
     let mut image = crate::util_lib::image::image_from_rgba8(width, height, &pixels);
     image.sampler = bevy::image::ImageSampler::nearest();
     let image = images.add(image);
-    let texture_id = egui_user_textures.add_image(EguiTextureHandle::Strong(image.clone()));
+    let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
     state.open_gumps.push(OpenGump {
         title: format!("Paperdoll ({})", profile.label),
         width: width as u16,
