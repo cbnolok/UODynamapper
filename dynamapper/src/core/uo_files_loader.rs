@@ -179,7 +179,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         )
     };
     let udd_path = PathBuf::from(&settings.runtime_assets.udd_path);
-    let lossy = settings.graphics.lossy_texture_compression;
 
     lg("Start loading UO Data.");
     lg(&format!(

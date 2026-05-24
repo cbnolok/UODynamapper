@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use udd_assets::bc7::{self, RawImageFormat, TextureUploadLayout};
+use udd_assets::bc7::{TextureUploadLayout, VramTextureFormat};
 use uocf::classic::land_texture::LandTextureSize;
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -52,15 +52,6 @@ const FALLBACK_BLACK_LAYER: u32 = 0;
 /// Number of textures to process per task in `precache_textures_parallel`.
 /// Larger batches reduce task scheduling overhead and channel sends.
 const PRECACHE_BATCH_SIZE: usize = 256;
-
-/// Runtime settings for the land texture cache, inserted at startup.
-/// Holds values read from `settings.toml` that affect how tiles are uploaded to the GPU.
-#[derive(Resource, Clone, Copy)]
-pub struct LandTextureCacheSettings {
-    /// When true, tiles are BC7-compressed on the CPU before uploading to the GPU.
-    /// Reduces VRAM from ~160 MB to ~20 MB at the cost of near-lossless quality.
-    pub lossy_texture_compression: bool,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct LandTextureEntry {
@@ -124,7 +115,7 @@ pub struct LandTextureCache {
     pub enhanced_terrain_transcode: Option<Arc<HashMap<u32, u32>>>,
 }
 
-pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) {
+pub fn sys_drain_texture_upload_tasks(mut cache: ResMut<LandTextureCache>) {
     let mut batch = Vec::new();
     {
         let receiver = cache.upload_receiver.lock().unwrap();
@@ -140,18 +131,10 @@ pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) 
 fn prepare_texture_upload_bytes(
     raw_rgba8: std::sync::Arc<[u8]>,
     texture_size: LandTextureSize,
-    compression: texture_array::TerrainTextureCompression,
 ) -> (std::sync::Arc<[u8]>, TextureUploadLayout) {
-    let texture = bc7::encode_for_vram_arc(
-        raw_rgba8,
-        texture_array::texture_extent(texture_size),
-        RawImageFormat::Rgba8888,
-        texture_array::terrain_texture_vram_encoding(compression),
-    )
-    .expect("terrain texture VRAM encoding failed");
-
-    let upload_layout = texture.upload_layout();
-    (texture.into_bytes(), upload_layout)
+    let upload_layout =
+        VramTextureFormat::Rgba8UnormSrgb.upload_layout(texture_array::texture_extent(texture_size));
+    (raw_rgba8, upload_layout)
 }
 
 fn try_load_cc_land_tile(
@@ -169,12 +152,11 @@ fn try_load_tile_from_packages_with_sources(
     _tex_art_cc: Option<&Arc<udd_assets::tex_art_cc::TexArtCcPackage>>,
     tex_land_cc: Option<&Arc<udd_assets::tex_land_cc::TexLandCcPackage>>,
     _tex_land_ec: Option<&Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
-    compression: texture_array::TerrainTextureCompression,
 ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
     if let Some(pkg) = tex_land_cc {
         if let Some(size) = pkg.get_texture_size(texture_id as u32) {
             if let Some(raw_rgba8) = pkg.get_pixel_data_arc(texture_id as u32) {
-                let (bytes, layout) = prepare_texture_upload_bytes(raw_rgba8, size, compression);
+                let (bytes, layout) = prepare_texture_upload_bytes(raw_rgba8, size);
                 return Some((size, bytes, layout));
             }
         }
@@ -291,7 +273,6 @@ impl LandTextureCache {
     pub fn try_load_tile_from_packages(
         &self,
         texture_id: u16,
-        compression: texture_array::TerrainTextureCompression,
     ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
         try_load_tile_from_packages_with_sources(
             texture_id,
@@ -299,7 +280,6 @@ impl LandTextureCache {
             self.tex_art_cc.as_ref(),
             self.tex_land_cc.as_ref(),
             self.tex_land_ec.as_ref(),
-            compression,
         )
     }
 
@@ -307,7 +287,6 @@ impl LandTextureCache {
         &mut self,
         plan: &TextureResidencyPlan<LandTextureSize>,
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         if !self.preloads_full_collection() {
@@ -323,7 +302,7 @@ impl LandTextureCache {
 
         // Phase 2: assign permanent GPU layers and schedule the corresponding uploads.
         self.assign_full_residency_layers(plan, now);
-        self.enqueue_full_residency_uploads(plan, texmap_2d, compression, now);
+        self.enqueue_full_residency_uploads(plan, texmap_2d, now);
     }
 
     fn assign_full_residency_layers(
@@ -355,7 +334,6 @@ impl LandTextureCache {
         &self,
         plan: &TextureResidencyPlan<LandTextureSize>,
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
@@ -389,7 +367,6 @@ impl LandTextureCache {
                                     tex_art_cc.as_ref(),
                                     tex_land_cc.as_ref(),
                                     tex_land_ec.as_ref(),
-                                    compression,
                                 ) {
                                 (bytes, layout)
                             } else {
@@ -398,7 +375,7 @@ impl LandTextureCache {
                                     &texmap_2d_arc,
                                     now,
                                 );
-                                prepare_texture_upload_bytes(rgba8, texture_size, compression)
+                                prepare_texture_upload_bytes(rgba8, texture_size)
                             };
                             let _ = sender.send(TextureArrayUpload {
                                 generation,
@@ -427,7 +404,6 @@ impl LandTextureCache {
         &mut self,
         texmap_2d: &Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
         texture_id: u16,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) -> (LandTextureSize, u32) {
         // If texture is already resident, just return its info.
@@ -446,7 +422,7 @@ impl LandTextureCache {
         }
 
         // Not resident: load metadata and attempt to allocate a cache layer.
-        let package_source = self.try_load_tile_from_packages(texture_id, compression);
+        let package_source = self.try_load_tile_from_packages(texture_id);
         let texture_size = if let Some((size, _, _)) = &package_source {
             *size
         } else {
@@ -477,7 +453,7 @@ impl LandTextureCache {
                 // Not in packages, fall back to TexMap2D (Classic .mul)
                 let (_, raw_rgba8) =
                     texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression)
+                prepare_texture_upload_bytes(raw_rgba8, texture_size)
             };
 
             let _ = sender.send(TextureArrayUpload {
@@ -495,13 +471,12 @@ impl LandTextureCache {
         (texture_size, layer)
     }
 
-    /// Optimized batch pre-caching with multithreaded BC7 compression.
+    /// Optimized batch pre-caching.
     /// Used during large scene loads to avoid main-thread stalls.
     pub fn precache_textures_parallel(
         &mut self,
         texture_ids: &[u16],
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         if self.preloads_full_collection() {
@@ -535,9 +510,8 @@ impl LandTextureCache {
             LogSev::Info,
             LogAbout::Performance,
             &format!(
-                "Pre-caching {} textures (Async BC7={})...",
-                to_upload.len(),
-                compression.lossy_backend().is_some()
+                "Pre-caching {} textures...",
+                to_upload.len()
             ),
         );
 
@@ -551,8 +525,7 @@ impl LandTextureCache {
                 for (id, size, layer) in chunk {
                     let (_, rgba8) =
                         super::texture_array::get_texmap_raw_data(id, &texmap_2d_arc, now);
-                    let (tile_bytes, upload_layout) =
-                        prepare_texture_upload_bytes(rgba8, size, compression);
+                    let (tile_bytes, upload_layout) = prepare_texture_upload_bytes(rgba8, size);
                     let _ = sender.send(TextureArrayUpload {
                         generation,
                         layer,
@@ -575,47 +548,6 @@ impl LandTextureCache {
                 ),
             );
         }
-    }
-
-    /// Checks if a texture is resident. If not, allocates a layer and loads its data,
-    /// returning a struct with all info needed to perform the upload and bookkeeping.
-    fn prepare_texture_residency(
-        &mut self,
-        texture_id: u16,
-        texmap_2d: &Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
-        now: Instant,
-    ) -> Option<TextureArrayUpload> {
-        // If resident, touch timestamp and return None as no upload is needed.
-        if let Some(entry) = &mut self.entry_by_id[texture_id as usize] {
-            entry.1.last_touch = now;
-            return None;
-        }
-
-        // --- If not resident, perform CPU-side metadata lookup ---
-        let texture_size = texture_array::get_texmap_size_only(texture_id, texmap_2d);
-        let layer = self.allocate_layer(texture_size)?;
-
-        let pool = AsyncComputeTaskPool::get();
-        let texmap_2d_arc = texmap_2d.clone();
-        let sender = self.upload_sender.clone();
-        let generation = self.upload_generation;
-        let task = pool.spawn(async move {
-            let (_, raw_rgba8) =
-                texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-            let (tile_bytes, upload_layout) =
-                prepare_texture_upload_bytes(raw_rgba8, texture_size, compression);
-            let _ = sender.send(TextureArrayUpload {
-                generation,
-                layer,
-                size: texture_size,
-                bytes: tile_bytes,
-                upload_layout,
-            });
-        });
-        task.detach();
-
-        None
     }
 
     /// Allocates a layer for a new texture, handling LRU eviction if the array is full.
@@ -790,7 +722,6 @@ impl LandTextureCache {
         &mut self,
         size: LandTextureSize,
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
@@ -819,7 +750,7 @@ impl LandTextureCache {
                     let (_, raw_rgba8) =
                         texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
                     let (tile_bytes, upload_layout) =
-                        prepare_texture_upload_bytes(raw_rgba8, size, compression);
+                        prepare_texture_upload_bytes(raw_rgba8, size);
                     let _ = sender.send(TextureArrayUpload {
                         generation,
                         layer,
@@ -836,7 +767,6 @@ impl LandTextureCache {
     pub fn reupload_all_resident_textures(
         &self,
         texmap_2d: Arc<udd_assets::tex_land_cc::TexLandCcPackage>,
-        compression: texture_array::TerrainTextureCompression,
         now: Instant,
     ) {
         let pool = AsyncComputeTaskPool::get();
@@ -870,13 +800,12 @@ impl LandTextureCache {
                             tex_art_cc.as_ref(),
                             Some(&texmap_2d_arc),
                             tex_land_ec.as_ref(),
-                            compression,
                         ) {
                         (bytes, layout)
                     } else {
                         let (_, raw_rgba8) =
                             texture_array::get_texmap_raw_data(texture_id, &texmap_2d_arc, now);
-                        prepare_texture_upload_bytes(raw_rgba8, size, compression)
+                        prepare_texture_upload_bytes(raw_rgba8, size)
                     };
 
                     let _ = sender.send(TextureArrayUpload {

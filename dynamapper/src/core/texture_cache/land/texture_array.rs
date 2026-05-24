@@ -1,7 +1,6 @@
 #![allow(unused)]
 
 use crate::{
-    configs::settings::{LossyTextureCompressionBackend, SectGraphics},
     core::texture_cache::TextureResidencyPlan,
     core::uo_files_loader::TexMap2DRes,
     prelude::*,
@@ -15,7 +14,7 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
-use udd_assets::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
+use udd_assets::bc7::{ImageExtent, VramTextureFormat};
 use uocf::classic::land_texture::LandTextureSize;
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;
@@ -34,12 +33,6 @@ use uocf::classic::land_texture::LandTextureSize;
 //   Uncompressed (Rgba8UnormSrgb):
 //     Small: 2048 layers × 64×64×4 B   =   32 MB
 //     Big:   2048 layers × 128×128×4 B = 128 MB
-//   BC7-compressed (Bc7RgbaUnormSrgb), ~8:1 lossless-quality ratio:
-//     Small: 2048 layers × 64×64/2 B   =    4 MB
-//     Big:   2048 layers × 128×128/2 B =   16 MB
-//
-// NOTE on GPU texture compression: BCn formats (BC1/BC7) are lossy and must be pre-compressed
-// offline or on-the-fly. UODynamapper routes BC7 conversion through the shared project encoder.
 // The tile-atlas (Rg16Uint) cannot be compressed at all (integer formats are not supported by BCn).
 // ── Texture Array sizing constants ──────────────────────────────────────────
 pub const TEXARRAY_SMALL_INITIAL_TILE_LAYERS: u32 = 256;
@@ -72,35 +65,6 @@ pub const RESOURCE_SHRINK_TIMEOUT_SECS: u64 = 120;
 /// Fraction of capacity below which we consider shrinking.
 pub const RESOURCE_SHRINK_THRESHOLD: f32 = 0.40;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TerrainTextureCompression {
-    Rgba8,
-    Bc7(LossyTextureCompressionBackend),
-}
-
-impl TerrainTextureCompression {
-    pub fn from_graphics_settings(graphics: &SectGraphics) -> Self {
-        match graphics.active_lossy_texture_compression_backend() {
-            Some(backend) => Self::Bc7(backend),
-            None => Self::Rgba8,
-        }
-    }
-
-    pub fn lossy_backend(self) -> Option<LossyTextureCompressionBackend> {
-        match self {
-            Self::Rgba8 => None,
-            Self::Bc7(backend) => Some(backend),
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Rgba8 => "RGBA8",
-            Self::Bc7(LossyTextureCompressionBackend::Analytical) => "BC7/analytical",
-        }
-    }
-}
-
 pub fn build_texture_residency_plan(
     texmap_2d_res: &udd_assets::tex_land_cc::TexLandCcPackage,
 ) -> TextureResidencyPlan<LandTextureSize> {
@@ -120,37 +84,20 @@ pub fn texture_extent(tex_size: LandTextureSize) -> ImageExtent {
     ImageExtent::new(width, height).expect("terrain textures must have valid size")
 }
 
-pub fn terrain_texture_vram_encoding(
-    compression: TerrainTextureCompression,
-) -> VramTextureEncoding {
-    match compression {
-        TerrainTextureCompression::Rgba8 => VramTextureEncoding::Rgba8UnormSrgb,
-        TerrainTextureCompression::Bc7(LossyTextureCompressionBackend::Analytical) => {
-            VramTextureEncoding::Bc7(Bc7EncoderBackend::Analytical)
-        }
-    }
+pub const fn terrain_texture_vram_format() -> VramTextureFormat {
+    VramTextureFormat::Rgba8UnormSrgb
 }
 
-pub fn terrain_texture_vram_format(compression: TerrainTextureCompression) -> VramTextureFormat {
-    terrain_texture_vram_encoding(compression).format()
-}
-
-/// Returns the GPU TextureFormat to use for terrain texture arrays, based on whether
-/// lossy BC7 compression has been requested by the user in the settings.
-///
-/// - Uncompressed (`Rgba8UnormSrgb`): ~160 MB VRAM total, highest quality.
-/// - BC7 compressed (`Bc7RgbaUnormSrgb`): ~20 MB VRAM total, near-lossless quality,
-///   but requires BC texture compression GPU support and CPU encoding time per tile.
-pub fn terrain_texarray_format(compression: TerrainTextureCompression) -> TextureFormat {
-    match terrain_texture_vram_format(compression) {
+pub fn terrain_texarray_format() -> TextureFormat {
+    match terrain_texture_vram_format() {
         VramTextureFormat::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
         VramTextureFormat::Bc7RgbaUnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
     }
 }
 
 /// Compute the byte size of a single layer in the texture array, for the chosen format.
-pub fn bytes_per_layer(tex_size: LandTextureSize, compression: TerrainTextureCompression) -> usize {
-    terrain_texture_vram_format(compression).expected_byte_len(texture_extent(tex_size))
+pub fn bytes_per_layer(tex_size: LandTextureSize) -> usize {
+    terrain_texture_vram_format().expected_byte_len(texture_extent(tex_size))
 }
 
 /// Create a GPU texture array (array texture) resource for a given size.
@@ -158,16 +105,15 @@ pub fn create_gpu_texture_array(
     label: &'static str,
     image_assets: &mut Assets<Image>,
     tex_size: LandTextureSize,
-    compression: TerrainTextureCompression,
     layers: u32,
 ) -> Handle<Image> {
     let (width, height) = tex_size.dimensions();
-    let format = terrain_texarray_format(compression);
+    let format = terrain_texarray_format();
 
     // Pre-allocate zeroed data to trigger a full initial GPU upload (clearing all layers).
     // This zero-initialises every layer so the shader always sees a valid (black) texture
     // even for layers that haven't been populated yet.
-    let data_bytes = bytes_per_layer(tex_size, compression) * layers as usize;
+    let data_bytes = bytes_per_layer(tex_size) * layers as usize;
 
     let mut array = Image {
         data: Some(vec![0u8; data_bytes]),

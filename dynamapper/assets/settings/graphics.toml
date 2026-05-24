@@ -1,6 +1,4 @@
 [graphics]
-lossy_texture_compression = false
-lossy_texture_compression_backend = "analytical"
 reduce_unfocused_fps = true
 vsync = false
 anti_aliasing = "off"

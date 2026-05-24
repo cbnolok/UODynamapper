@@ -416,7 +416,7 @@ impl Plugin for LandTextureCachePlugin {
         // First of the next frame, the previous frame's uploads have already been consumed by Extract.
         // Clearing here ensures Update fills a fresh list for the current frame.
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
-        app.add_systems(Update, cache::sys_drain_texture_compression_tasks);
+        app.add_systems(Update, cache::sys_drain_texture_upload_tasks);
         app.add_systems(Update, sys_apply_land_texture_settings_changes);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
@@ -750,8 +750,6 @@ pub fn sys_setup_terrain_cache(
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
-    let compression =
-        texture_array::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
     let residency_strategy = TextureResidencyStrategy::LruCache;
     let residency_plan = residency_strategy
         .preloads_full_collection()
@@ -780,14 +778,12 @@ pub fn sys_setup_terrain_cache(
         "land_small_texture_cache",
         &mut images,
         LandTextureSize::Small,
-        compression,
         small_layers,
     );
     let handle_big = texture_array::create_gpu_texture_array(
         "land_big_texture_cache",
         &mut images,
         LandTextureSize::Big,
-        compression,
         big_layers,
     );
     let mut land_texture_cache = cache::LandTextureCache::new(
@@ -809,7 +805,6 @@ pub fn sys_setup_terrain_cache(
         land_texture_cache.prime_full_file_residency(
             plan,
             texmap_2d_r.0.clone(),
-            compression,
             Instant::now(),
         );
         console_logger::one(
@@ -923,12 +918,10 @@ fn sys_apply_texture_array_expansion(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     shared_mat: Res<crate::core::render::scene::world::land::draw_mesh::SharedLandMaterial>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
-    settings: Res<crate::configs::settings::Settings>,
+    _settings: Res<crate::configs::settings::Settings>,
     time: Res<Time<Real>>,
 ) {
     let now = time.last_update().unwrap_or_else(|| Instant::now());
-    let compression =
-        texture_array::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
 
     let (small_req, big_req) = cache_r.take_resize_requests();
     if small_req.is_none() && big_req.is_none() {
@@ -948,7 +941,6 @@ fn sys_apply_texture_array_expansion(
                 "land_small_texture_cache",
                 &mut images,
                 LandTextureSize::Small,
-                compression,
                 new_layers,
             );
             handles_r.small = new_handle.clone();
@@ -956,7 +948,6 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Small,
                 texmap_2d_r.0.clone(),
-                compression,
                 now,
             );
             resized_small = Some(new_layers);
@@ -973,7 +964,6 @@ fn sys_apply_texture_array_expansion(
                 "land_big_texture_cache",
                 &mut images,
                 LandTextureSize::Big,
-                compression,
                 new_layers,
             );
             handles_r.big = new_handle.clone();
@@ -981,7 +971,6 @@ fn sys_apply_texture_array_expansion(
             cache_r.enqueue_reupload_for_size(
                 LandTextureSize::Big,
                 texmap_2d_r.0.clone(),
-                compression,
                 now,
             );
             resized_big = Some(new_layers);

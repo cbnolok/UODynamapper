@@ -37,7 +37,7 @@ pub struct ProcessMetrics {
     pub cpu_usage_one_core: f32,
     /// Latest RAM usage (MiB).
     pub mem_usage_mib: f32,
-    /// Estimated terrain texture-array VRAM usage (MiB), based on selected compression.
+    /// Estimated terrain texture-array VRAM usage (MiB).
     pub estimated_texture_vram_mib: f32,
     /// Estimated tile-meta-atlas VRAM usage (MiB).
     pub estimated_atlas_vram_mib: f32,
@@ -282,7 +282,7 @@ pub fn setup_overlay_performance(
 
 /// Polls the sysinfo library to get up-to-date CPU and RAM usage for the current process.
 pub fn sys_refresh_process_metrics(
-    settings: Res<Settings>,
+    _settings: Res<Settings>,
     mut metrics: ResMut<ProcessMetrics>,
     tex_cache: Res<crate::core::texture_cache::land::cache::LandTextureCache>,
     tile_atlas: Res<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
@@ -317,11 +317,9 @@ pub fn sys_refresh_process_metrics(
         metrics.mem_usage_mib = mem;
 
         // Use ACTUAL current layer counts, not theoretical maximums.
-        let compression =
-            tex_consts::TerrainTextureCompression::from_graphics_settings(&settings.graphics);
-        let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small, compression)
+        let small_bytes = tex_consts::bytes_per_layer(LandTextureSize::Small)
             * tex_cache.small.active_layers as usize;
-        let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big, compression)
+        let big_bytes = tex_consts::bytes_per_layer(LandTextureSize::Big)
             * tex_cache.big.active_layers as usize;
 
         // Tile metadata atlas: Rg16Uint = TILE_ATLAS_BYTES_PER_TEXEL bytes/texel.
@@ -395,9 +393,7 @@ pub fn update_performance_text(
         let entity_count = entities.len();
         let chunk_count = land_chunk_count.0;
         let upload_snapshot = land_upload_telemetry.snapshot();
-        let tex_mode =
-            tex_consts::TerrainTextureCompression::from_graphics_settings(&settings.graphics)
-                .label();
+        let tex_mode = "RGBA8";
 
         // Single-pass render diagnostic scanning
         let stats = BatchRenderStats::scan(&diagnostics);

@@ -741,9 +741,6 @@ pub fn sys_draw_spawned_land_chunks(
     }
 
     // `ids` contains textures dynamically required. Pinned tracking continues async.
-    let compression = crate::core::texture_cache::land::texture_array::TerrainTextureCompression::from_graphics_settings(
-        &frame_pacing.settings.graphics,
-    );
     {
         let use_land_page_atlas = match frame_pacing.settings.graphics.land_texture_source {
             crate::configs::settings::ClientTextureSource::Cc => cache_r.tex_land_cc.is_some(),
@@ -755,7 +752,6 @@ pub fn sys_draw_spawned_land_chunks(
             cache_r.precache_textures_parallel(
                 ids.as_slice(),
                 texmap_2d_r.0.clone(),
-                compression,
                 now,
             );
         }
@@ -797,7 +793,7 @@ pub fn sys_draw_spawned_land_chunks(
                 texture_lookup_cache[id as usize] = 3;
             } else {
                 let (size, layer) =
-                    cache_r.get_texture_size_layer(&texmap_2d_r.0, id, compression, now);
+                    cache_r.get_texture_size_layer(&texmap_2d_r.0, id, now);
                 let mode = match size {
                     LandTextureSize::Small => 0u32,
                     LandTextureSize::Big => 1u32,

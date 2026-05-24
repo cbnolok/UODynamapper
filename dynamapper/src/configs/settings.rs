@@ -248,8 +248,6 @@ pub struct SectPerformance {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectGraphics {
-    pub lossy_texture_compression: bool,
-    pub lossy_texture_compression_backend: LossyTextureCompressionBackend,
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
     pub anti_aliasing: AntiAliasingMode,
@@ -358,60 +356,6 @@ impl AntiAliasingMode {
             Self::Smaa => "SMAA",
             Self::Msaa2x => "MSAA 2x",
             Self::Msaa4x => "MSAA 4x",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum LossyTextureCompressionBackend {
-    #[default]
-    Analytical,
-}
-
-impl LossyTextureCompressionBackend {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Analytical => "analytical",
-        }
-    }
-}
-
-impl SectGraphics {
-    pub fn active_lossy_texture_compression_backend(
-        &self,
-    ) -> Option<LossyTextureCompressionBackend> {
-        if !self.lossy_texture_compression {
-            return None;
-        }
-
-        match self.lossy_texture_compression_backend {
-            LossyTextureCompressionBackend::Analytical => Some(LossyTextureCompressionBackend::Analytical),
-        }
-    }
-
-    pub fn texture_compression_log_status(&self) -> String {
-        match self.active_lossy_texture_compression_backend() {
-            Some(backend) => {
-                format!("ON. Utilizing BC7 backend: {}.", backend.label())
-            }
-            None => "OFF. Terrain textures will use uncompressed RGBA8.".to_string(),
-        }
-    }
-
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TextureCompressionLogState {
-    enabled: bool,
-    active_backend: Option<LossyTextureCompressionBackend>,
-}
-
-impl TextureCompressionLogState {
-    fn from_graphics(graphics: &SectGraphics) -> Self {
-        Self {
-            enabled: graphics.lossy_texture_compression,
-            active_backend: graphics.active_lossy_texture_compression_backend(),
         }
     }
 }
@@ -847,7 +791,6 @@ impl Plugin for SettingsPlugin {
             .add_message::<ToggleWireframe>()
             .add_systems(PreStartup, sys_startup_load_file)
             .add_systems(Startup, sys_apply)
-            .add_systems(Update, sys_log_texture_compression_status)
             .insert_resource(SettingsSaveTimer({
                 let mut t = Timer::from_seconds(1.0, TimerMode::Once);
                 t.pause();
@@ -914,29 +857,6 @@ fn sys_startup_load_file(mut commands: Commands) {
         LogAbout::Startup,
         "Loaded settings file for global access.",
     );
-}
-
-fn sys_log_texture_compression_status(
-    settings: Res<Settings>,
-    mut last_logged_state: Local<Option<TextureCompressionLogState>>,
-) {
-    let current_state = TextureCompressionLogState::from_graphics(&settings.graphics);
-    if last_logged_state.as_ref() == Some(&current_state) {
-        return;
-    }
-
-    let prefix = if last_logged_state.is_none() {
-        "Startup texture compression state"
-    } else {
-        "Texture compression state changed"
-    };
-    let message = format!(
-        "{prefix}: {}",
-        settings.graphics.texture_compression_log_status()
-    );
-    console_logger::one(LogSev::Info, LogAbout::Settings, &message);
-
-    *last_logged_state = Some(current_state);
 }
 
 fn sys_apply(
