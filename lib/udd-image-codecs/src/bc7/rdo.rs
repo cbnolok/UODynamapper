@@ -257,18 +257,18 @@ fn reduce_entropy_bc7_impl_with_progress(
 
     // 3. Adjust ultrasmooth scales with lambda and smooth_block_max_mse_scale
     if let Some(ref mut scales) = block_mse_scales {
-        for s in scales.iter_mut() {
+        scales.par_iter_mut().for_each(|s| {
             if *s > 0.0 {
                 *s = actual_params.smooth_block_max_mse_scale.max(*s * params.lambda.min(3.0));
             }
-        }
+        });
     }
 
     // 4. Main loop
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
-    let mut block_modes = blocks.iter().map(get_bc7_mode).collect::<Vec<_>>();
+    let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
     let mut previous_blocks_by_mode = vec![Vec::<usize>::new(); 8];
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
@@ -1534,9 +1534,10 @@ fn compute_block_mse_scales(
 
     let mut is_ultrasmooth = vec![false; total_blocks];
 
-    for by in 0..blocks_y {
-        for bx in 0..blocks_x {
-            let block_index = bx + by * blocks_x;
+    is_ultrasmooth
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(block_index, is_ultrasmooth)| {
             let pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
 
             let mut luma_sum = 0.0f64;
@@ -1555,17 +1556,20 @@ fn compute_block_mse_scales(
             }
 
             if yl == 0.0 {
-                is_ultrasmooth[block_index] = true;
+                *is_ultrasmooth = true;
             }
-        }
-    }
+        });
 
     let mut current_mask = is_ultrasmooth.clone();
 
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
     let mut next_mask = current_mask.clone();
-    for y in 0..blocks_y {
-        for x in 0..blocks_x {
+    next_mask
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(idx, next)| {
+            let x = idx % blocks_x;
+            let y = idx / blocks_x;
             let mut any_non_ultrasmooth = false;
             for dy in -1..=1 {
                 for dx in -1..=1 {
@@ -1581,18 +1585,21 @@ fn compute_block_mse_scales(
                 if any_non_ultrasmooth { break; }
             }
             if any_non_ultrasmooth {
-                next_mask[x + y * blocks_x] = false;
+                *next = false;
             }
-        }
-    }
+        });
     current_mask = next_mask;
 
     // 32 passes of "median-like" erosion
     for _ in 0..32 {
         let mut next_mask = current_mask.clone();
-        for y in 0..blocks_y {
-            for x in 0..blocks_x {
-                if current_mask[x + y * blocks_x] {
+        next_mask
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, next)| {
+                let x = idx % blocks_x;
+                let y = idx / blocks_x;
+                if current_mask[idx] {
                     let mut non_ultrasmooth_count = 0;
                     for dy in -1..=1 {
                         for dx in -1..=1 {
@@ -1606,11 +1613,10 @@ fn compute_block_mse_scales(
                         }
                     }
                     if non_ultrasmooth_count >= 5 {
-                        next_mask[x + y * blocks_x] = false;
+                        *next = false;
                     }
                 }
-            }
-        }
+            });
         current_mask = next_mask;
     }
 
@@ -1647,11 +1653,14 @@ fn compute_block_mse_scales(
         }
     }
 
-    for i in 0..total_blocks {
-        if final_mask[i] {
-            block_mse_scales[i] = ultrasmooth_block_mse_scale;
-        }
-    }
+    block_mse_scales
+        .par_iter_mut()
+        .zip(final_mask.par_iter())
+        .for_each(|(scale, is_ultrasmooth)| {
+            if *is_ultrasmooth {
+                *scale = ultrasmooth_block_mse_scale;
+            }
+        });
 
     block_mse_scales
 }
