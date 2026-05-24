@@ -395,6 +395,10 @@ fn decode_present_animations(
     let animationframe_candidates =
         decode_classic_animationframe_packages(&animationframe_paths)?;
     candidates.extend(animationframe_candidates);
+    println!(
+        "Classic mobile animation candidates: {}",
+        format_candidate_source_summary(&candidates)
+    );
 
     let pb = ProgressBar::new(candidates.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
@@ -467,6 +471,32 @@ fn candidate_source_label(candidate: &PresentAnimationCandidate) -> String {
             candidate.source_index
         ),
     }
+}
+
+fn candidate_source_summary_label(candidate: &PresentAnimationCandidate) -> String {
+    match &candidate.frames {
+        PresentAnimationFrames::Mul => classic_anim_mul_name(candidate.file_index).to_string(),
+        PresentAnimationFrames::Decoded(_) => {
+            format!("AnimationFrame{}.uop", candidate.file_index + 1)
+        }
+    }
+}
+
+fn format_candidate_source_summary(candidates: &[PresentAnimationCandidate]) -> String {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for candidate in candidates {
+        *counts
+            .entry(candidate_source_summary_label(candidate))
+            .or_insert(0) += 1;
+    }
+    if counts.is_empty() {
+        return "none".to_string();
+    }
+    counts
+        .into_iter()
+        .map(|(source, count)| format!("{source}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn classic_anim_mul_name(file_index: u8) -> &'static str {
