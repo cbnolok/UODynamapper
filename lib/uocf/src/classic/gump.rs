@@ -159,6 +159,11 @@ pub struct GumpMap {
     verdata: Option<Arc<Verdata>>,
 }
 
+enum RawGumpData<'a> {
+    Borrowed(GumpDimensions, &'a [u8]),
+    Scratch(GumpDimensions),
+}
+
 fn first_existing(client_path: &Path, candidates: &[&str]) -> Option<PathBuf> {
     for &name in candidates {
         let path = client_path.join(name);
@@ -270,6 +275,20 @@ impl GumpMap {
         gump_id: u32,
         scratch_buffer: &mut Vec<u8>,
     ) -> eyre::Result<GumpDimensions> {
+        match self.resolve_raw_gump_data(gump_id, scratch_buffer)? {
+            RawGumpData::Borrowed(dimensions, data) => {
+                scratch_buffer.extend_from_slice(data);
+                Ok(dimensions)
+            }
+            RawGumpData::Scratch(dimensions) => Ok(dimensions),
+        }
+    }
+
+    fn resolve_raw_gump_data<'a>(
+        &'a self,
+        gump_id: u32,
+        scratch_buffer: &mut Vec<u8>,
+    ) -> eyre::Result<RawGumpData<'a>> {
         scratch_buffer.clear();
 
         if let Some(verdata) = &self.verdata {
@@ -278,7 +297,7 @@ impl GumpMap {
                 if classic_gump_payload_is_structurally_valid(entry.length as u32, dimensions) {
                     let bytes = verdata.read_patch_data(entry)?;
                     scratch_buffer.extend_from_slice(&bytes);
-                    return Ok(dimensions);
+                    return Ok(RawGumpData::Scratch(dimensions));
                 }
             }
         }
@@ -297,7 +316,9 @@ impl GumpMap {
                     if classic_gump_payload_is_structurally_valid(size, dimensions) {
                         let lookup = lookup as usize;
                         let size = size as usize;
-                        let end = lookup + size;
+                        let end = lookup
+                            .checked_add(size)
+                            .ok_or_else(|| eyre!("Gump index range overflows for gump_id {}", gump_id))?;
 
                         if end > gump_mmap.len() {
                             eyre::bail!(
@@ -306,8 +327,7 @@ impl GumpMap {
                             );
                         }
 
-                        scratch_buffer.extend_from_slice(&gump_mmap[lookup..end]);
-                        return Ok(dimensions);
+                        return Ok(RawGumpData::Borrowed(dimensions, &gump_mmap[lookup..end]));
                     }
                 }
             }
@@ -319,7 +339,7 @@ impl GumpMap {
                 if let Some(uop_payload) = uop.unpack_file_by_hash(hash)? {
                     let (dimensions, rle_payload) = decode_uop_gump_header(&uop_payload)?;
                     scratch_buffer.extend_from_slice(rle_payload);
-                    return Ok(dimensions);
+                    return Ok(RawGumpData::Scratch(dimensions));
                 }
             }
         }
@@ -332,9 +352,13 @@ impl GumpMap {
         gump_id: u32,
         scratch_raw_buffer: &mut Vec<u8>,
     ) -> eyre::Result<(u16, u16, Vec<u8>)> {
-        let dimensions = self.get_raw_gump_data(gump_id, scratch_raw_buffer)?;
+        let resolved = self.resolve_raw_gump_data(gump_id, scratch_raw_buffer)?;
+        let (dimensions, raw_data) = match resolved {
+            RawGumpData::Borrowed(dimensions, data) => (dimensions, data),
+            RawGumpData::Scratch(dimensions) => (dimensions, scratch_raw_buffer.as_slice()),
+        };
         let pixel_data =
-            decode_gump_from_raw(scratch_raw_buffer, dimensions.width, dimensions.height)?;
+            decode_gump_from_raw(raw_data, dimensions.width, dimensions.height)?;
         Ok((dimensions.width, dimensions.height, pixel_data))
     }
 
