@@ -8,7 +8,7 @@ use crate::ec_material_audit::{
     write_ec_material_baseline_report, write_ec_terrain_override_candidates,
     write_ec_terrain_practical_review,
 };
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
@@ -96,6 +96,43 @@ impl From<ClassicPatchArgs> for ClassicPatchOptions {
             map_difs: value.include_map_difs,
             static_difs: value.include_static_difs,
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TextureOutputFormat {
+    compression: CompressionFlag,
+    pixel_format: PagePixelFormat,
+    bc7_rdo_lambda: f32,
+    label: &'static str,
+}
+
+fn resolve_texture_output_format(
+    raw: bool,
+    bc7: bool,
+    bc7_rdo: bool,
+    bc7_rdo_lambda: f32,
+) -> eyre::Result<TextureOutputFormat> {
+    match (raw, bc7, bc7_rdo) {
+        (true, false, false) => Ok(TextureOutputFormat {
+            compression: CompressionFlag::ZstdNoDict,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            label: "RGBA8888",
+        }),
+        (false, true, false) => Ok(TextureOutputFormat {
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: 0.0,
+            label: "BC7",
+        }),
+        (false, false, true) => Ok(TextureOutputFormat {
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda,
+            label: "BC7 RDO",
+        }),
+        _ => eyre::bail!("select exactly one output format: --raw, --bc7, or --bc7-rdo"),
     }
 }
 
@@ -355,6 +392,7 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
 #[derive(Subcommand)]
 enum Commands {
     /// Packs classic art.mul/artidx.mul into tex_art_cc.uddp atlas pages.
+    #[command(group(ArgGroup::new("output_format").required(true).args(["raw", "bc7", "bc7_rdo"])))]
     PackArt {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -368,12 +406,12 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(
-            long,
-            default_value_t = false,
-            help = "Use BC7 compression (VRAM optimization)."
-        )]
+        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        raw: bool,
+        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
         #[arg(long, default_value_t = false, help = "Extrude slot edge pixels into atlas gutters for linear/bilinear filtering.")]
@@ -396,6 +434,7 @@ enum Commands {
         upscale: CliUpscaleFilter,
     },
     /// Packs Classic texmaps.mul into tex_land_cc.uddp atlas pages.
+    #[command(group(ArgGroup::new("output_format").required(true).args(["raw", "bc7", "bc7_rdo"])))]
     PackTexmaps {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -409,12 +448,12 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_TEXMAPS_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(
-            long,
-            default_value_t = false,
-            help = "Use BC7 compression (VRAM optimization)."
-        )]
+        #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
+        raw: bool,
+        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
         bc7: bool,
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
         #[arg(long, default_value_t = false, help = "Extrude tile edge pixels into atlas gutters for linear/bilinear filtering.")]
@@ -451,6 +490,7 @@ enum Commands {
         gutter: u16,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
+    #[command(group(ArgGroup::new("output_format").required(true).args(["raw", "bc7", "bc7_rdo"])))]
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -472,12 +512,12 @@ enum Commands {
         land_atlas_height: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_GUTTER)]
         land_gutter: u16,
-        #[arg(
-            long,
-            default_value_t = false,
-            help = "Use BC7 compression for land (VRAM optimization)."
-        )]
-        land_bc7: bool,
+        #[arg(long, help = "Write EC land RGBA8888 atlas pages with package compression.")]
+        raw: bool,
+        #[arg(long, help = "Write EC land BC7 atlas pages without BC7 RDO.")]
+        bc7: bool,
+        #[arg(long = "bc7-rdo", help = "Write EC land BC7 atlas pages with BC7 RDO.")]
+        bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
         art_packing_mode: CliAtlasPackingMode,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Land atlas placement policy.")]
@@ -728,7 +768,9 @@ pub fn run() -> eyre::Result<()> {
             atlas_width,
             atlas_height,
             gutter,
+            raw,
             bc7,
+            bc7_rdo,
             packing_mode,
             filtering_ready,
             bc7_rdo_lambda,
@@ -742,11 +784,7 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let compression = if bc7 {
-                CompressionFlag::None
-            } else {
-                CompressionFlag::ZstdNoDict
-            };
+            let output_format = resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
@@ -754,23 +792,19 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width,
                     atlas_height,
                     gutter,
-                    compression,
+                    compression: output_format.compression,
                     upscale: upscale.into(),
-                    pixel_format: if bc7 {
-                        PagePixelFormat::Bc7
-                    } else {
-                        PagePixelFormat::Rgba8888
-                    },
+                    pixel_format: output_format.pixel_format,
                     packing_mode: packing_mode.into(),
                     filtering_ready,
-                    bc7_rdo_lambda,
+                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                 },
                 &classic_patches.into(),
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
                 summary.page_count,
-                if bc7 { "BC7" } else { "RGBA8888" },
+                output_format.label,
                 summary.populated_slot_count,
                 summary.slot_count,
                 out_file.display()
@@ -783,7 +817,9 @@ pub fn run() -> eyre::Result<()> {
             atlas_width,
             atlas_height,
             gutter,
+            raw,
             bc7,
+            bc7_rdo,
             packing_mode,
             filtering_ready,
             bc7_rdo_lambda,
@@ -791,11 +827,7 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let compression = if bc7 {
-                CompressionFlag::None
-            } else {
-                CompressionFlag::ZstdNoDict
-            };
+            let output_format = resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
@@ -803,7 +835,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width,
                     atlas_height,
                     gutter,
-                    compression,
+                    compression: output_format.compression,
                     upscale_64: udd_conv::upscale::UpscaleConfig {
                         target_size: 256,
                         filter: upscale.into(),
@@ -812,21 +844,17 @@ pub fn run() -> eyre::Result<()> {
                         target_size: 256,
                         filter: upscale.into(),
                     },
-                    pixel_format: if bc7 {
-                        PagePixelFormat::Bc7
-                    } else {
-                        PagePixelFormat::Rgba8888
-                    },
+                    pixel_format: output_format.pixel_format,
                     packing_mode: packing_mode.into(),
                     filtering_ready,
-                    bc7_rdo_lambda,
+                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                 },
                 &classic_patches.into(),
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
                 summary.page_count,
-                if bc7 { "BC7" } else { "RGBA8888" },
+                output_format.label,
                 summary.populated_slot_count,
                 summary.slot_count,
                 out_file.display()
@@ -905,7 +933,9 @@ pub fn run() -> eyre::Result<()> {
             land_atlas_width,
             land_atlas_height,
             land_gutter,
-            land_bc7,
+            raw,
+            bc7,
+            bc7_rdo,
             art_packing_mode,
             land_packing_mode,
             art_filtering_ready,
@@ -927,6 +957,8 @@ pub fn run() -> eyre::Result<()> {
             let land_out_file = resolve_output_path(&ec_paths, &land_output);
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
+            let land_output_format =
+                resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
@@ -964,11 +996,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width: land_atlas_width,
                     atlas_height: land_atlas_height,
                     gutter: land_gutter,
-                    compression: if land_bc7 {
-                        CompressionFlag::None
-                    } else {
-                        CompressionFlag::ZstdNoDict
-                    },
+                    compression: land_output_format.compression,
                     upscale_64: udd_conv::upscale::UpscaleConfig {
                         target_size: upscale_64_size,
                         filter: upscale_64_algo.into(),
@@ -985,14 +1013,10 @@ pub fn run() -> eyre::Result<()> {
                         target_size: upscale_512_size,
                         filter: upscale_512_algo.into(),
                     },
-                    pixel_format: if land_bc7 {
-                        PagePixelFormat::Bc7
-                    } else {
-                        PagePixelFormat::Rgba8888
-                    },
+                    pixel_format: land_output_format.pixel_format,
                     packing_mode: land_packing_mode.into(),
                     filtering_ready: land_filtering_ready,
-                    bc7_rdo_lambda,
+                    bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     transcode_kdl_path: land_transcode_kdl,
                 },
             )?;
@@ -1015,7 +1039,7 @@ pub fn run() -> eyre::Result<()> {
             println!(
                 "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
                 land_summary.page_count,
-                if land_bc7 { "BC7" } else { "RGBA8888" },
+                land_output_format.label,
                 land_summary.populated_slot_count,
                 land_summary.slot_count,
                 land_out_file.display()
@@ -1437,7 +1461,7 @@ mod tests {
             "tex_land_ec.uddp",
             "--land-transcode-kdl",
             "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
-            "--land-bc7",
+            "--bc7",
         ])
         .expect("parse unified ec texture args");
 
@@ -1447,7 +1471,9 @@ mod tests {
                 art_output,
                 land_output,
                 land_transcode_kdl,
-                land_bc7,
+                bc7,
+                bc7_rdo,
+                raw,
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
@@ -1459,10 +1485,50 @@ mod tests {
                         "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
                     ))
                 );
-                assert!(land_bc7);
+                assert!(bc7);
+                assert!(!bc7_rdo);
+                assert!(!raw);
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    #[test]
+    fn cli_requires_texture_output_format() {
+        let error = match Cli::try_parse_from([
+            "uddpack",
+            "pack-art",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "tex_art_cc.uddp",
+        ]) {
+            Ok(_) => panic!("texture pack commands must require an output format"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("--raw"));
+        assert!(error.to_string().contains("--bc7"));
+        assert!(error.to_string().contains("--bc7-rdo"));
+    }
+
+    #[test]
+    fn cli_rejects_multiple_texture_output_formats() {
+        let error = match Cli::try_parse_from([
+            "uddpack",
+            "pack-texmaps",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "tex_land_cc.uddp",
+            "--raw",
+            "--bc7",
+        ]) {
+            Ok(_) => panic!("texture output formats are mutually exclusive"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("cannot be used with"));
     }
 
     #[test]
