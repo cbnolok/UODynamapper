@@ -80,6 +80,15 @@ pub struct DecodedMobileAnimFrame {
     pub rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PresentAnimationCandidate {
+    body_id: u16,
+    action_id: u16,
+    direction: u8,
+    file_index: u8,
+    source_index: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct BuiltMobileAnimPage {
     pub record: MobileAnimCcPageRecord,
@@ -288,13 +297,59 @@ fn decode_present_animations(
     let mut decoded_frames = Vec::new();
     let mut animation_records = Vec::new();
     let mut frame_records = Vec::new();
-    let total_candidate_count = candidate_count(anim_map);
-    let pb = ProgressBar::new(total_candidate_count as u64);
+
+    let candidates = collect_present_animation_candidates(anim_map);
+    let pb = ProgressBar::new(candidates.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding mobile animations ({eta})")
         .unwrap()
         .progress_chars("#>-"));
 
+    for candidate in candidates {
+        pb.inc(1);
+        let Ok(frames) = anim_map.decode_animation_index(candidate.file_index, candidate.source_index) else {
+            continue;
+        };
+        if frames.is_empty() || frames.len() > u16::MAX as usize {
+            continue;
+        }
+
+        let animation_index = animation_records.len() as u32;
+        let frame_start = frame_records.len() as u32;
+        for (frame_index, frame) in frames.iter().enumerate() {
+            let global_frame_index = frame_records.len() as u32;
+            frame_records.push(empty_frame_record(
+                animation_index,
+                frame_index as u16,
+                frame,
+            ));
+            if frame.width != 0 && frame.height != 0 && !frame.data.is_empty() {
+                decoded_frames.push(DecodedMobileAnimFrame {
+                    global_frame_index,
+                    width: frame.width,
+                    height: frame.height,
+                    rgba: frame.data.clone(),
+                });
+            }
+        }
+        animation_records.push(MobileAnimCcAnimationRecord {
+            body_id: candidate.body_id,
+            action_id: candidate.action_id,
+            direction: candidate.direction,
+            file_index: candidate.file_index,
+            source_index: candidate.source_index,
+            frame_start,
+            frame_count: frames.len() as u16,
+            flags: 0,
+        });
+    }
+    pb.finish_with_message("Mobile animations decoded");
+
+    Ok((decoded_frames, animation_records, frame_records))
+}
+
+fn collect_present_animation_candidates(anim_map: &AnimMap) -> Vec<PresentAnimationCandidate> {
+    let mut candidates = Vec::new();
     for file_index in 0..MAX_ANIM_FILES {
         let Some(source_index_count) = anim_map.source_index_count(file_index) else {
             continue;
@@ -304,55 +359,24 @@ fn decode_present_animations(
             let action_count = action_count_for_body(file_index, body_id);
             for action_id in 0..action_count {
                 for direction in 0..5u8 {
-                    pb.inc(1);
                     let source_index = animation_source_index(file_index, body_id, action_id, direction);
                     if source_index as usize >= source_index_count
                         || !anim_map.has_anim(file_index, source_index)
                     {
                         continue;
                     }
-                    let Ok(frames) = anim_map.decode_animation_index(file_index, source_index) else {
-                        continue;
-                    };
-                    if frames.is_empty() || frames.len() > u16::MAX as usize {
-                        continue;
-                    }
-
-                    let animation_index = animation_records.len() as u32;
-                    let frame_start = frame_records.len() as u32;
-                    for (frame_index, frame) in frames.iter().enumerate() {
-                        let global_frame_index = frame_records.len() as u32;
-                        frame_records.push(empty_frame_record(
-                            animation_index,
-                            frame_index as u16,
-                            frame,
-                        ));
-                        if frame.width != 0 && frame.height != 0 && !frame.data.is_empty() {
-                            decoded_frames.push(DecodedMobileAnimFrame {
-                                global_frame_index,
-                                width: frame.width,
-                                height: frame.height,
-                                rgba: frame.data.clone(),
-                            });
-                        }
-                    }
-                    animation_records.push(MobileAnimCcAnimationRecord {
-                        body_id: body_id as u16,
-                        action_id: action_id as u16,
+                    candidates.push(PresentAnimationCandidate {
+                        body_id,
+                        action_id,
                         direction,
                         file_index,
                         source_index,
-                        frame_start,
-                        frame_count: frames.len() as u16,
-                        flags: 0,
                     });
                 }
             }
         }
     }
-    pb.finish_with_message("Mobile animations decoded");
-
-    Ok((decoded_frames, animation_records, frame_records))
+    candidates
 }
 
 fn empty_frame_record(
@@ -372,19 +396,6 @@ fn empty_frame_record(
         center_x: frame.center_x,
         center_y: frame.center_y,
     }
-}
-
-fn candidate_count(anim_map: &AnimMap) -> usize {
-    let mut count = 0usize;
-    for file_index in 0..MAX_ANIM_FILES {
-        if let Some(source_index_count) = anim_map.source_index_count(file_index) {
-            let body_count = body_count_for_source(file_index, source_index_count);
-            for body_id in 0..body_count {
-                count += action_count_for_body(file_index, body_id) as usize * 5;
-            }
-        }
-    }
-    count
 }
 
 pub fn animation_source_index(file_index: u8, body_id: u16, action_id: u16, direction: u8) -> u32 {
@@ -419,7 +430,7 @@ pub fn animation_source_index(file_index: u8, body_id: u16, action_id: u16, dire
             if body < 200 && !(file_index == 4 && body == 34) {
                 body * 110
             } else if body < 400 {
-                22000 + ((body - 200) * 65)
+                22000 + (body.saturating_sub(200) * 65)
             } else {
                 35000 + ((body - 400) * 175)
             }
@@ -870,6 +881,7 @@ mod tests {
         assert_eq!(animation_source_index(0, 200, 0, 0), 22000);
         assert_eq!(animation_source_index(0, 400, 0, 0), 35000);
         assert_eq!(animation_source_index(2, 300, 0, 0), 33000);
+        assert_eq!(animation_source_index(4, 34, 0, 0), 22000);
         assert_eq!(animation_source_index(0, 0, 2, 3), 13);
     }
 

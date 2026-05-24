@@ -14,6 +14,9 @@ use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
 
 pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
+const MAX_CLASSIC_ANIM_FRAME_DIMENSION: u16 = 2048;
+const MAX_CLASSIC_ANIM_FRAME_PIXELS: usize =
+    MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize * MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize;
 
 /// Represents a single decoded animation frame from a MUL file.
 #[derive(Debug, Clone)]
@@ -130,17 +133,27 @@ impl AnimMap {
         } else {
             None
         };
-        let lookup = index_patch
-            .map(|(lookup, _size, _extra)| lookup)
-            .or_else(|| entry.lookup())
-            .ok_or_else(|| eyre!("Animation {} not found in source {}", anim_id, file_idx))?
-            as usize;
+        let (lookup, size) = index_patch
+            .map(|(lookup, size, _extra)| (lookup, size))
+            .or_else(|| entry.lookup().zip(entry.len()))
+            .ok_or_else(|| eyre!("Animation {} not found in source {}", anim_id, file_idx))?;
+        let lookup = lookup as usize;
+        let size = size as usize;
+        let end = lookup
+            .checked_add(size)
+            .ok_or_else(|| eyre!("Animation {} range overflows source {}", anim_id, file_idx))?;
 
-        if lookup + 2 >= source.mul.len() {
-            eyre::bail!("Animation offset {} out of bounds", lookup);
+        if size == 0 || lookup + 2 >= source.mul.len() || end > source.mul.len() {
+            eyre::bail!(
+                "Animation {} range {}..{} out of bounds for source {}",
+                anim_id,
+                lookup,
+                end,
+                file_idx
+            );
         }
 
-        decode_animation_payload(&source.mul, lookup)
+        decode_animation_payload(&source.mul[lookup..end], 0)
     }
 }
 
@@ -199,6 +212,12 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
                     data: Vec::new(),
                 });
                 continue;
+            }
+            if width > MAX_CLASSIC_ANIM_FRAME_DIMENSION
+                || height > MAX_CLASSIC_ANIM_FRAME_DIMENSION
+                || width as usize * height as usize > MAX_CLASSIC_ANIM_FRAME_PIXELS
+            {
+                eyre::bail!("Suspicious animation frame dimensions: {}x{}", width, height);
             }
 
             let pixel_len = frame_pixel_len(width, height)?;
