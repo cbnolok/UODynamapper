@@ -74,8 +74,7 @@ pub fn build_and_write_package(builder: &mut UddpBuilder, out_file: &Path) -> ey
     bar.enable_steady_tick(Duration::from_millis(100));
     bar.set_message(format!("writing {}", out_file.display()));
     std::fs::write(out_file, bytes).wrap_err_with(|| format!("save {}", out_file.display()))?;
-    bar.finish_and_clear();
-    println!("saved {}", out_file.display());
+    bar.finish_with_message(format!("saved {}", out_file.display()));
 
     Ok(())
 }
