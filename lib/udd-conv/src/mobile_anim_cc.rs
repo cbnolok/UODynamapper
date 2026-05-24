@@ -14,6 +14,7 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
+use rayon::prelude::*;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::anim::{AnimFrame, AnimMap, MAX_ANIM_FILES};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
@@ -338,34 +339,46 @@ fn encode_mobile_anim_pages(
         .progress_chars("#>-"));
     pb.set_message(progress_message);
 
-    let mut encoded_pages = Vec::with_capacity(pages.len());
-    if use_bc7 {
+    let encoded_pages = if use_bc7 {
         let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
             .map_err(|e| eyre::eyre!("{e}"))?;
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
-        for page in pages {
-            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
-                &page.pixels,
-                extent,
-                RawImageFormat::Rgba8888,
-                encoding,
-                options.bc7_rdo_lambda,
-                |units| pb.inc(units as u64),
-            )
-            .map_err(|e| eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index))?
-            .into_bytes()
-            .to_vec();
-            encoded_pages.push((
-                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
-                encoded,
-                options.atlas_width,
-                options.atlas_height,
-            ));
+        let encoded_pages = pages
+            .par_iter()
+            .map(|page| {
+                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                    &page.pixels,
+                    extent,
+                    RawImageFormat::Rgba8888,
+                    encoding,
+                    options.bc7_rdo_lambda,
+                    |units| pb.inc(units as u64),
+                )
+                .map_err(|e| {
+                    eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
+                })?
+                .into_bytes()
+                .to_vec();
+                Ok((
+                    page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+                    encoded,
+                    options.atlas_width,
+                    options.atlas_height,
+                ))
+            })
+            .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
+
+        let mut resolved = Vec::with_capacity(encoded_pages.len());
+        for page in encoded_pages {
+            resolved.push(page?);
         }
+        resolved
     } else {
-        for page in pages {
-            pb.inc(1);
-            encoded_pages.push((
+        pages
+            .iter()
+            .map(|page| {
+                pb.inc(1);
+                (
                 page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
                 crate::tex_art_cc::crop_rgba_page(
                     &page.pixels,
@@ -375,9 +388,10 @@ fn encode_mobile_anim_pages(
                 ),
                 page.record.used_width,
                 page.record.used_height,
-            ));
-        }
-    }
+                )
+            })
+            .collect()
+    };
     pb.finish_with_message("Mobile animation atlas pages encoded");
     Ok(encoded_pages)
 }
