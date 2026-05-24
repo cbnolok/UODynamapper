@@ -97,7 +97,7 @@ When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
 
-Runtime static lights use this item metadata: `flags & 0x00800000` marks a light-source static, and `quality` is interpreted as the world light id for those records.
+Runtime static lights use this item metadata: `flags & 0x00800000` marks a light-source static, `quality` is interpreted as the world light id, and the placed static hue id can tint the light mask through the configured runtime hue source.
 
 ---
 
@@ -170,7 +170,7 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 ## 3. `world_lights.uddp`
 
-This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime.
+This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime unless the placed static has a nonzero hue id, in which case the runtime can recolor the mask from `hues.uddp` or `hues.mul`.
 
 **Virtual Files:**
 

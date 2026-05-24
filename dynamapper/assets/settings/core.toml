@@ -1,24 +1,17 @@
-# Core settings for UODynamapper
-# These are strictly engine/system level and usually don't change often.
-
 [core.world]
-# Default starting position in UO coordinates [X, Y, Z, MapID]
-#start_p = [1100, 1800, 20, 0]
-start_p = [1355, 1732, 20, 0]
-# Whether to hide the player cube on startup
-hide_player = false
+hide_player = true
+
+[core.world.start_p]
+x = 5722
+y = 2991
+z = 0
+m = 0
 
 [logging]
-# Minimum log level to display in terminal
-min_severity = "Debug" # "Info"
-
-# Emit flat per-plugin build lines (true to keep existing flat log lines)
+min_severity = "Debug"
 emit_flat_plugin_build = false
-
-# Emit Unicode tree view of plugin build hierarchy (true to print tree)
 emit_tree_plugin_build = true
 
-# Custom filters for specific modules or severities
 [[logging.filters]]
 sev = "Debug"
 suppress = false
@@ -32,14 +25,13 @@ about = "RenderWorldLand"
 suppress = false
 
 [[logging.filters]]
-about = "Startup"
 sev = "Debug"
+about = "Startup"
 suppress = true
 
-# Order is important! First more specific combinations, then more general ones.
 [[logging.filters]]
-about = "Performance"
 sev = "Debug"
+about = "Performance"
 suppress = true
 
 [[logging.filters]]

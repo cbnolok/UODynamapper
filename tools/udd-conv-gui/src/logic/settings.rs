@@ -100,6 +100,16 @@ mod tests {
     }
 
     #[test]
+    fn checked_in_default_config_deserializes() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CONFIG_FILE_NAME);
+
+        let settings = load_settings_from_path(&path).expect("load checked-in default settings");
+
+        assert_eq!(settings.input_uddp_dir, PathBuf::from("packages"));
+        assert_eq!(settings.output_uddp_dir, PathBuf::from("packages"));
+    }
+
+    #[test]
     fn invalid_settings_file_reports_error() {
         let path = temp_config_path("invalid");
         std::fs::write(&path, "not valid toml =").expect("write invalid config");

@@ -226,7 +226,7 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
             let chunk_index = chunk_x * height_chunks + chunk_y;
             builder.add_file(AddFileRequest {
                 data_type: DataType::Map as u8,
-                compression: CompressionFlag::ZstdNoDict,
+                compression: CompressionFlag::Auto,
                 width: 0,
                 height: 0,
                 virtual_path: None,

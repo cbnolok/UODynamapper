@@ -8,5 +8,5 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 zstd = "0.13"
 jpegxl-rs = { version = "0.10", features = ["vendored"] }
 byteorder = "1.5"
-rayon = "1.10"
+rayon = "1.12"
 memmap2 = "0.9"

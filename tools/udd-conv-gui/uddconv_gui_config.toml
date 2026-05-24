@@ -1,16 +1,19 @@
-cc_dir = "/mnt/dati/_proj_local/_uo_clients/Ultima Online Classic_7_0_20_0"
-ec_dir = "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced/"
-input_uddp_dir = "/home/claudio/test/uddp"
-output_uddp_dir = "/home/claudio/test/uddp"
+input_uddp_dir = "packages"
+output_uddp_dir = "packages"
 link_uddp_dirs = true
-opt_tex_art_cc = "Bc7Zstd"
-opt_tex_land_cc = "Bc7Zstd"
-opt_tex_art_ec = "Bc7Zstd"
-opt_tex_land_ec = "Bc7Zstd"
-packing_tex_art_cc = "Bc7Oriented"
-packing_tex_land_cc = "Bc7Oriented"
+opt_tex_art_cc = "None"
+opt_tex_land_cc = "None"
+opt_tex_art_ec = "None"
+opt_tex_land_ec = "None"
+bc7_rdo_lambda = 0.6
+packing_tex_art_cc = "MaximumPacking"
+packing_tex_land_cc = "MaximumPacking"
 packing_tex_art_ec = "MaximumPacking"
-packing_tex_land_ec = "Bc7Oriented"
+packing_tex_land_ec = "MaximumPacking"
+filtering_ready_tex_art_cc = false
+filtering_ready_tex_land_cc = false
+filtering_ready_tex_art_ec = false
+filtering_ready_tex_land_ec = false
 upscale_tex_art_cc = "None"
 upscale_tex_art_ec = "None"
 radar_format = "Bc7"
@@ -23,6 +26,9 @@ map_preferences = [
     "Mul",
     "Mul",
 ]
+include_verdata = false
+include_map_difs = false
+include_static_difs = false
 
 [upscale_tex_land_cc_64]
 target_size = 0

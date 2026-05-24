@@ -126,35 +126,6 @@ Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes with unifie
 
 ---
 
-## 8. Performance Targets
-- **60s Idle Eviction**: Automatic memory management for stale data.
-- **BC7 Compression**: 8x VRAM reduction.
-- **Zero-Copy Streaming**: Memory-mapped UDDP files.
-
----
-
-## 9. Current Status
-
-### Implemented ✓
-- [x] Land tile rendering with Paged Tile Atlas
-- [x] Three shader modes (Classic, Enhanced, KR-like)
-- [x] Multi-map discovery and support (map0-map5)
-- [x] BC7 compression & LRU eviction
-- [x] Zoom-based chunk scaling and LOD selection
-- [x] Exact camera-projected visibility computation
-- [x] Async asset streaming via Bevy task pools
-- [x] Tilemeta sidecar path for richer EC item texture references
-- [x] Surface-like EC static routing groundwork in the renderer and inspection tooling
-
-### Planned (docs/TODO.md)
-- [ ] Close remaining EC chosen-base, support-texture, and surface-like routing gaps
-- [ ] Finish the production static-art pipeline and explicit UO-style static depth follow-up
-- [ ] Harden UDDP packaging, streaming, and validation
-- [ ] Move from transitional terrain scaling toward clipmap-based terrain
-- [ ] Expand mobiles, paperdoll, and export tooling
-
----
-
 **Last Updated**: May 2026  
 **Bevy Version**: 0.18.1  
 **Rust Edition**: 2024

@@ -25,11 +25,6 @@ color-eyre = { version = "0.6", features = ["track-caller"] }
 #lru = "0.16"
 indexmap = "2.14.0"
 knuffel = "3"
-image = { version = "0.25", default-features = false, features = [
-  "bmp",
-  "png",
-  "dds",
-] }
 log = { version = "*", features = [
   "max_level_debug",
   "release_max_level_warn",
@@ -78,7 +73,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
   "tracing-log",
 ] }
 
-wgpu = { version = "27.0" }                             #, default-features = false, features = ["vulkan", "metal"] }
+wgpu = { version = "27.0", default-features = false, features = ["vulkan", "wgsl"] }
 wgpu-profiler = { version = "0.25.0", optional = true }
 
 
@@ -171,15 +166,15 @@ features = [
   #"statically-linked-dxc",  # Statically linked DXC shader compiler for DirectX 12
 
   # --- Asset File Format Support ---
-  "png",    # PNG image format support
-  "bmp",    # BMP image format support
+  #"png",    # PNG image format support
+  #"bmp",    # BMP image format support
   "dds",    # DDS compressed texture support
-  "ico",    # ICO image format support
-  "jpeg",   # JPEG image format support
+  #"ico",    # ICO image format support
+  #"jpeg",   # JPEG image format support
   "ktx2",   # KTX2 compressed texture support
   "zstd_c", # C Zstandard decompression for KTX2.
-  #"zstd_rust",          # Pure rust Zstandard decompression for KTX2.
-  "basis-universal", # Basis Universal compressed texture support
+  #"zstd_rust",       # Pure rust Zstandard decompression for KTX2.
+  #"basis-universal", # Basis Universal compressed texture support
   #"exr",                # EXR image format support
   #"ff",                 # Farbfeld image format support
   #"gif",                # GIF image format support

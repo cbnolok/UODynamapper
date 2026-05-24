@@ -1,16 +1,19 @@
 use super::statics_collect::StaticChunkBatchKey;
-use crate::configs::settings::Settings;
+use crate::configs::settings::{HueSourcePreference, Settings};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
-use crate::core::uo_files_loader::{TileMetaPackageRes, WorldLightsPackageRes};
+use crate::core::uo_files_loader::{
+    ClassicHuesRes, HuesPackageRes, TileMetaPackageRes, WorldLightsPackageRes,
+};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::collections::{HashMap, HashSet};
+use uocf::classic::hues::HueEntry;
 
 const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
 const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
@@ -18,10 +21,25 @@ const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, STATIC_LIGHT_ALPHA);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum StaticLightHueSourceKind {
+    StoredRgb,
+    Classic,
+    Enhanced,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StaticLightMaterialKey {
+    light_id: u32,
+    hue_id: u16,
+    hue_source: StaticLightHueSourceKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticLightInstance {
     pub key: StaticLightKey,
     pub light_id: u32,
+    pub hue_id: u16,
     pub world_x: f32,
     pub world_z: f32,
     pub world_y: f32,
@@ -37,6 +55,7 @@ pub struct StaticLightKey {
     pub z: i8,
     pub graphic: u16,
     pub light_id: u32,
+    pub hue_id: u16,
 }
 
 #[derive(Resource, Default)]
@@ -49,7 +68,9 @@ pub struct StaticLightDrawDebugState {
 
 #[derive(Resource, Default)]
 pub struct StaticLightMaterialCache {
-    materials_by_light_id: HashMap<u32, Handle<StandardMaterial>>,
+    materials_by_key: HashMap<StaticLightMaterialKey, Handle<StandardMaterial>>,
+    enhanced_hue_texture_bytes: Option<Vec<u8>>,
+    enhanced_hue_texture_failed: bool,
 }
 
 #[derive(Component)]
@@ -159,6 +180,7 @@ pub fn sys_collect_visible_static_lights(
                         z: tile.z,
                         graphic: tile.graphic,
                         light_id,
+                        hue_id: tile.hue,
                     };
                     if !seen.insert(key) {
                         continue;
@@ -167,6 +189,7 @@ pub fn sys_collect_visible_static_lights(
                     output.0.push(StaticLightInstance {
                         key,
                         light_id,
+                        hue_id: tile.hue,
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
                         world_y: (tile.z as f32) * 0.1 + STATIC_LIGHT_Y_BIAS,
@@ -192,6 +215,9 @@ pub fn sys_sync_static_light_entities(
     mut commands: Commands,
     instances: Res<RenderStaticLightInstances>,
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
+    classic_hues_res: Option<Res<ClassicHuesRes>>,
+    hues_package_res: Option<Res<HuesPackageRes>>,
+    settings: Res<Settings>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -222,7 +248,11 @@ pub fn sys_sync_static_light_entities(
     for instance in &instances.0 {
         let Some(material_handle) = static_light_material(
             instance.light_id,
+            instance.hue_id,
+            settings.graphics.hue_source,
             &world_lights.0,
+            classic_hues_res.as_deref(),
+            hues_package_res.as_deref(),
             &mut material_cache,
             &mut images,
             &mut materials,
@@ -256,17 +286,37 @@ pub fn sys_sync_static_light_entities(
 
 fn static_light_material(
     light_id: u32,
+    hue_id: u16,
+    hue_preference: HueSourcePreference,
     world_lights: &udd_assets::world_lights::WorldLightsPackage,
+    classic_hues: Option<&ClassicHuesRes>,
+    hues_package: Option<&HuesPackageRes>,
     material_cache: &mut StaticLightMaterialCache,
     images: &mut Assets<Image>,
     materials: &mut Assets<StandardMaterial>,
 ) -> Option<Handle<StandardMaterial>> {
-    if let Some(handle) = material_cache.materials_by_light_id.get(&light_id) {
+    let hue_source_kind = resolve_static_light_hue_source_kind(
+        hue_id,
+        hue_preference,
+        classic_hues,
+        hues_package,
+        material_cache,
+    );
+    let material_key = StaticLightMaterialKey {
+        light_id,
+        hue_id: if hue_source_kind == StaticLightHueSourceKind::StoredRgb {
+            0
+        } else {
+            hue_id
+        },
+        hue_source: hue_source_kind,
+    };
+    if let Some(handle) = material_cache.materials_by_key.get(&material_key) {
         return Some(handle.clone());
     }
 
     let slot = world_lights.present_slot(light_id)?;
-    let rgba = match world_lights.read_light_bytes(light_id) {
+    let mut rgba = match world_lights.read_light_bytes(light_id) {
         Ok(bytes) => bytes,
         Err(error) => {
             log::warn!("Failed to read static light mask {light_id}: {error}");
@@ -281,6 +331,17 @@ fn static_light_material(
             slot.height,
         );
         return None;
+    }
+
+    {
+        let hue_source = resolve_static_light_hue_source(
+            hue_id,
+            hue_preference,
+            classic_hues,
+            hues_package,
+            material_cache,
+        );
+        apply_static_light_hue(&mut rgba, hue_source);
     }
 
     let mut image = Image::new(
@@ -307,7 +368,233 @@ fn static_light_material(
         ..default()
     });
     material_cache
-        .materials_by_light_id
-        .insert(light_id, material_handle.clone());
+        .materials_by_key
+        .insert(material_key, material_handle.clone());
     Some(material_handle)
+}
+
+fn resolve_static_light_hue_source_kind(
+    hue_id: u16,
+    preference: HueSourcePreference,
+    classic_hues: Option<&ClassicHuesRes>,
+    hues_package: Option<&HuesPackageRes>,
+    material_cache: &mut StaticLightMaterialCache,
+) -> StaticLightHueSourceKind {
+    resolve_static_light_hue_source(
+        hue_id,
+        preference,
+        classic_hues,
+        hues_package,
+        material_cache,
+    )
+    .kind()
+}
+
+#[derive(Clone, Copy)]
+enum StaticLightHueSource<'a> {
+    StoredRgb,
+    Classic(&'a HueEntry),
+    Enhanced {
+        hue_id: u16,
+        texture_bytes: &'a [u8],
+    },
+}
+
+impl StaticLightHueSource<'_> {
+    const fn kind(self) -> StaticLightHueSourceKind {
+        match self {
+            Self::StoredRgb => StaticLightHueSourceKind::StoredRgb,
+            Self::Classic(_) => StaticLightHueSourceKind::Classic,
+            Self::Enhanced { .. } => StaticLightHueSourceKind::Enhanced,
+        }
+    }
+}
+
+fn resolve_static_light_hue_source<'a>(
+    hue_id: u16,
+    preference: HueSourcePreference,
+    classic_hues: Option<&'a ClassicHuesRes>,
+    hues_package: Option<&'a HuesPackageRes>,
+    material_cache: &'a mut StaticLightMaterialCache,
+) -> StaticLightHueSource<'a> {
+    if hue_id == 0 {
+        return StaticLightHueSource::StoredRgb;
+    }
+
+    match preference {
+        HueSourcePreference::Cc => classic_hue_source(hue_id, classic_hues),
+        HueSourcePreference::Ec => enhanced_hue_source(hue_id, hues_package, material_cache),
+        HueSourcePreference::Auto => enhanced_hue_source(hue_id, hues_package, material_cache)
+            .or_else(|| classic_hue_source(hue_id, classic_hues)),
+    }
+    .unwrap_or(StaticLightHueSource::StoredRgb)
+}
+
+fn classic_hue_source<'a>(
+    hue_id: u16,
+    classic_hues: Option<&'a ClassicHuesRes>,
+) -> Option<StaticLightHueSource<'a>> {
+    classic_hues
+        .and_then(|hues| hues.0.get(hue_id.saturating_sub(1) as usize))
+        .map(StaticLightHueSource::Classic)
+}
+
+fn enhanced_hue_source<'a>(
+    hue_id: u16,
+    hues_package: Option<&'a HuesPackageRes>,
+    material_cache: &'a mut StaticLightMaterialCache,
+) -> Option<StaticLightHueSource<'a>> {
+    let package = hues_package?;
+    package.0.texture_coord_for_hue(hue_id)?;
+    if material_cache.enhanced_hue_texture_bytes.is_none()
+        && !material_cache.enhanced_hue_texture_failed
+    {
+        match package.0.read_texture_bytes() {
+            Ok(bytes) => {
+                material_cache.enhanced_hue_texture_bytes = Some(bytes);
+            }
+            Err(error) => {
+                material_cache.enhanced_hue_texture_failed = true;
+                log::warn!("Failed to read hues.uddp texture for static light hues: {error}");
+            }
+        }
+    }
+
+    material_cache
+        .enhanced_hue_texture_bytes
+        .as_deref()
+        .map(|texture_bytes| StaticLightHueSource::Enhanced {
+            hue_id,
+            texture_bytes,
+        })
+}
+
+fn apply_static_light_hue(rgba: &mut [u8], source: StaticLightHueSource<'_>) {
+    match source {
+        StaticLightHueSource::StoredRgb => {}
+        StaticLightHueSource::Classic(hue) => {
+            apply_static_light_hue_with_sampler(rgba, |luma| {
+                let index = (luma >> 3).min(31) as usize;
+                argb1555_to_rgba8888(hue.color_table[index])
+            });
+        }
+        StaticLightHueSource::Enhanced {
+            hue_id,
+            texture_bytes,
+        } => {
+            apply_static_light_hue_with_sampler(rgba, |luma| {
+                sample_enhanced_hue(texture_bytes, hue_id, luma).unwrap_or([luma, luma, luma, 255])
+            });
+        }
+    }
+}
+
+fn apply_static_light_hue_with_sampler(
+    rgba: &mut [u8],
+    mut sample_color: impl FnMut(u8) -> [u8; 4],
+) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] == 0 {
+            continue;
+        }
+
+        let luma = linear_luma_u8(pixel[0], pixel[1], pixel[2]);
+        let color = sample_color(luma);
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
+        pixel[3] = ((u16::from(pixel[3]) * u16::from(color[3])) / 255) as u8;
+    }
+}
+
+fn sample_enhanced_hue(texture_bytes: &[u8], hue_id: u16, luma: u8) -> Option<[u8; 4]> {
+    let coord = uocf::enhanced::hues::atlas_coord_for_hue(hue_id)?;
+    let x = coord.x + u32::from(luma).min(udd_assets::hues::HUE_STRIP_WIDTH - 1);
+    let y = coord.y;
+    if x >= udd_assets::hues::HUES_TEXTURE_WIDTH || y >= udd_assets::hues::HUES_TEXTURE_HEIGHT {
+        return None;
+    }
+
+    let offset = ((y * udd_assets::hues::HUES_TEXTURE_WIDTH + x) * 4) as usize;
+    let end = offset.checked_add(4)?;
+    let color = texture_bytes.get(offset..end)?;
+    Some([color[0], color[1], color[2], color[3]])
+}
+
+fn linear_luma_u8(r: u8, g: u8, b: u8) -> u8 {
+    ((u32::from(r) * 54 + u32::from(g) * 183 + u32::from(b) * 19) / 256) as u8
+}
+
+fn argb1555_to_rgba8888(color16: u16) -> [u8; 4] {
+    let r5 = ((color16 >> 10) & 0x1F) as u32;
+    let g5 = ((color16 >> 5) & 0x1F) as u32;
+    let b5 = (color16 & 0x1F) as u32;
+    [
+        ((r5 * 255) / 31) as u8,
+        ((g5 * 255) / 31) as u8,
+        ((b5 * 255) / 31) as u8,
+        255,
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hue_entry_with_index_color(index: usize, color: u16) -> HueEntry {
+        let mut color_table = [0u16; 32];
+        color_table[index] = color;
+        HueEntry {
+            id: 1,
+            color_table,
+            table_start: 0,
+            table_end: 31,
+            name: [0; 20],
+        }
+    }
+
+    #[test]
+    fn classic_hue_source_recolors_light_by_luma() {
+        let hue = hue_entry_with_index_color(15, 0x7C00);
+        let mut rgba = vec![120, 120, 120, 200];
+
+        apply_static_light_hue(&mut rgba, StaticLightHueSource::Classic(&hue));
+
+        assert_eq!(&rgba, &[255, 0, 0, 200]);
+    }
+
+    #[test]
+    fn enhanced_hue_source_samples_packed_hue_row() {
+        let mut texture = vec![
+            0u8;
+            udd_assets::hues::HUES_TEXTURE_WIDTH as usize
+                * udd_assets::hues::HUES_TEXTURE_HEIGHT as usize
+                * 4
+        ];
+        let coord = uocf::enhanced::hues::atlas_coord_for_hue(1).expect("hue 1 coord");
+        let sample_x = coord.x + 128;
+        let offset =
+            ((coord.y * udd_assets::hues::HUES_TEXTURE_WIDTH + sample_x) * 4) as usize;
+        texture[offset..offset + 4].copy_from_slice(&[10, 20, 30, 128]);
+        let mut rgba = vec![128, 128, 128, 200];
+
+        apply_static_light_hue(
+            &mut rgba,
+            StaticLightHueSource::Enhanced {
+                hue_id: 1,
+                texture_bytes: &texture,
+            },
+        );
+
+        assert_eq!(&rgba, &[10, 20, 30, 100]);
+    }
+
+    #[test]
+    fn stored_rgb_source_keeps_colored_payload() {
+        let mut rgba = vec![1, 2, 3, 4];
+
+        apply_static_light_hue(&mut rgba, StaticLightHueSource::StoredRgb);
+
+        assert_eq!(&rgba, &[1, 2, 3, 4]);
+    }
 }
