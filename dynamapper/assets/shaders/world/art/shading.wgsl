@@ -83,31 +83,52 @@ fn apply_art_surface_shading(
 
         var depth_scale = 1.0;
         var contact_scale = 1.0;
+        var shadow_profile = 1.0;
+        var local_light_profile = 1.0;
+        var saturation_profile = 0.82;
+        var plane_catch_profile = 1.0;
+        let side_plane = smoothstep(0.18, 0.5, abs(uv_in_tile.x - 0.5));
+        let dapple = 0.75 + 0.50 * hash(floor(world_pos.xz * 1.7 + uv_in_tile * 17.0));
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
             depth_scale = 1.12;
             contact_scale = 1.28;
+            shadow_profile = 1.16;
+            local_light_profile = 0.78;
+            saturation_profile = 0.92;
+            plane_catch_profile = dapple;
         } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
             depth_scale = 0.92;
             contact_scale = 0.70;
+            shadow_profile = 0.86;
+            local_light_profile = 0.72;
+            saturation_profile = 0.74;
+            plane_catch_profile = 0.72;
         } else if (depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_scale = 0.78;
             contact_scale = 0.55;
+            shadow_profile = 0.76;
+            local_light_profile = 0.62;
+            saturation_profile = 0.78;
+            plane_catch_profile = 0.58;
+        } else if (!is_ground_art) {
+            shadow_profile = 1.04 + side_plane * 0.18;
+            plane_catch_profile = 1.0 + side_plane * 0.28;
         }
 
-        let warm_key = global_light.light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale;
+        let warm_key = global_light.light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale * plane_catch_profile;
         let cool_shadow = mix(vec3<f32>(1.0), global_light.atmosphere_tint, tint_strength * (0.45 + 0.35 * contact));
         let contact_shadow = ground_contact * contact_strength * contact_scale;
         let shadow_cut = 1.0 - (
-            shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise
+            shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise * shadow_profile
             + contact_shadow * (0.20 + 0.26 * (1.0 - lambert))
         );
-        let edge_catch = smoothstep(0.34, 0.5, abs(uv_in_tile.x - 0.5)) * (0.18 + 0.12 * top_catch);
+        let edge_catch = side_plane * (0.18 + 0.12 * top_catch) * plane_catch_profile;
 
         out_rgb = rgb * cool_shadow * shadow_cut;
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += global_light.light_color * edge_catch * highlight_strength * 0.22;
-        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * (0.18 + 0.62 * top_catch);
-        out_rgb = mix(out_rgb, art_saturate(out_rgb, 0.82), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
+        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
+        out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 
     return max(out_rgb, vec3<f32>(0.0));
