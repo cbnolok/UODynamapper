@@ -330,6 +330,19 @@ fn reduce_entropy_bc7_impl(
                     let normal_match_bits = normal_dist_bits + compute_match_len_cost(len as u32) as f32;
                     let normal_trial_bits_times_lambda =
                         ((16 - len) as f32 * LITERAL_BITS + normal_match_bits) * params.lambda;
+                    let continuation_possible = prev_block_index as i64 * 16 == prev_cont_window_ofs;
+                    let rep0_possible = prev_rep0_dist >= 0 && dist as i64 == prev_rep0_dist;
+                    if normal_trial_bits_times_lambda >= best_t
+                        && !continuation_possible
+                        && !rep0_possible
+                    {
+                        if let Some(stats) = stats.as_deref_mut() {
+                            let skipped_offsets = 17 - len;
+                            stats.candidate_checks += skipped_offsets as u64;
+                            stats.rate_skips += skipped_offsets as u64;
+                        }
+                        continue;
+                    }
 
                     for ofs in 0..=(16 - len) {
                         if let Some(stats) = stats.as_deref_mut() {
