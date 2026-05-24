@@ -9,6 +9,7 @@ mod ui;
 
 use app::InspectorApp;
 use models::ViewMode;
+use ui::mobile_anim::{ui_mobile_anim_cc, ui_mobile_anim_ec};
 use utils::{open_package_dialog};
 
 #[tokio::main]
@@ -66,6 +67,7 @@ impl eframe::App for InspectorApp {
         let selected_idx = match self.view_mode {
             ViewMode::Package => self.selected_idx,
             ViewMode::Virtual => self.selected_virtual_idx,
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => None,
         };
 
         // Right panel: Entry/Asset details (only shown if something is selected)
@@ -81,7 +83,11 @@ impl eframe::App for InspectorApp {
         // Central area: The big table
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.package.is_some() {
-                self.render_table(ctx, ui);
+                match self.view_mode {
+                    ViewMode::Package | ViewMode::Virtual => self.render_table(ctx, ui),
+                    ViewMode::MobileAnimCc => ui_mobile_anim_cc(self, ctx, ui),
+                    ViewMode::MobileAnimEc => ui_mobile_anim_ec(self, ctx, ui),
+                }
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("Select a .uddp file to begin inspection.");
@@ -123,25 +129,21 @@ impl InspectorApp {
         ui.add_space(10.0);
 
         // View Mode toggle (only if virtual entries were detected)
-        if !self.virtual_entries.is_empty() {
+        if !self.virtual_entries.is_empty()
+            || self.mobile_anim_cc_package.is_some()
+            || self.mobile_anim_ec_package.is_some()
+        {
             ui.heading("View Mode");
-            ui.horizontal(|ui| {
-                let mut virtual_mode = self.view_mode == ViewMode::Virtual;
-                if ui
-                    .checkbox(&mut virtual_mode, "Virtual View (per entry)")
-                    .changed()
-                {
-                    self.view_mode = if virtual_mode {
-                        ViewMode::Virtual
-                    } else {
-                        ViewMode::Package
-                    };
-                    self.selected_idx = None;
-                    self.selected_virtual_idx = None;
-                    self.preview_text = None;
-                    self.preview_texture = None;
-                }
-            });
+            ui.selectable_value(&mut self.view_mode, ViewMode::Package, "Package");
+            if !self.virtual_entries.is_empty() {
+                ui.selectable_value(&mut self.view_mode, ViewMode::Virtual, "Virtual");
+            }
+            if self.mobile_anim_cc_package.is_some() {
+                ui.selectable_value(&mut self.view_mode, ViewMode::MobileAnimCc, "CC Mobile Anim");
+            }
+            if self.mobile_anim_ec_package.is_some() {
+                ui.selectable_value(&mut self.view_mode, ViewMode::MobileAnimEc, "EC Mobile Anim");
+            }
             ui.add_space(10.0);
         }
 

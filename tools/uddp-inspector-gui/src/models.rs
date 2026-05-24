@@ -6,6 +6,8 @@ use udd_container::{Codec, FileKey};
 pub enum ViewMode {
     Package,
     Virtual,
+    MobileAnimCc,
+    MobileAnimEc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

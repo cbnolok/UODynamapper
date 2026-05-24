@@ -13,7 +13,6 @@ pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
 pub mod sounds;
-pub mod mobile_anim_cc;
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -21,10 +20,6 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.menu_button("File", |ui| {
                 if ui.button("Open UOP...").clicked() {
                     app.open_uop();
-                    ui.close_menu();
-                }
-                if ui.button("Open UDDP...").clicked() {
-                    app.open_uddp();
                     ui.close_menu();
                 }
                 if ui.button("Search Paths...").clicked() {
@@ -72,9 +67,6 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Gumps, "Gumps");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
-            if app.mobile_anim_cc_package.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::MobileAnimCc, "CC Mobile UDDP");
-            }
             if app.client_data.as_ref().and_then(|client| client.animdata.as_ref()).is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::AnimData, "AnimData");
             }
@@ -182,9 +174,6 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::Animations => {
             animations::ui_animations(app, ctx);
-        }
-        crate::app::ViewMode::MobileAnimCc => {
-            mobile_anim_cc::ui_mobile_anim_cc(app, ctx);
         }
         crate::app::ViewMode::Gumps => {
             gumps::ui_gumps(app, ctx);

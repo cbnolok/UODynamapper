@@ -18,10 +18,8 @@ use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
-use udd_assets::MobileAnimCcPackage;
-use color_eyre::eyre::WrapErr;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ViewMode {
@@ -32,7 +30,6 @@ pub enum ViewMode {
     TileMetadata,
     Animations,
     AnimData,
-    MobileAnimCc,
     Gumps,
     Multis,
     Hues,
@@ -209,10 +206,6 @@ pub struct UopInspectorApp {
     pub selected_ec_hue_hash: Option<u64>,
     pub selected_multi_uop_hash: Option<u64>,
     pub selected_localized_file_hash: Option<u64>,
-    pub mobile_anim_cc_package: Option<Arc<MobileAnimCcPackage>>,
-    pub mobile_anim_cc_path: Option<PathBuf>,
-    pub selected_mobile_anim_index: usize,
-    pub selected_mobile_anim_frame_index: usize,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -306,10 +299,6 @@ impl UopInspectorApp {
             selected_ec_hue_hash: None,
             selected_multi_uop_hash: None,
             selected_localized_file_hash: None,
-            mobile_anim_cc_package: None,
-            mobile_anim_cc_path: None,
-            selected_mobile_anim_index: 0,
-            selected_mobile_anim_frame_index: 0,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -381,10 +370,6 @@ impl UopInspectorApp {
         self.multi_collection = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
-        self.mobile_anim_cc_package = None;
-        self.mobile_anim_cc_path = None;
-        self.selected_mobile_anim_index = 0;
-        self.selected_mobile_anim_frame_index = 0;
         self.cc_sounds = None;
         self.cc_sound_entries = None;
         self.cc_gumps = None;
@@ -859,43 +844,6 @@ impl UopInspectorApp {
             }
         }
     }
-
-    pub fn open_uddp(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("UDDP Packages", &["uddp"])
-            .pick_file()
-        {
-            if let Err(error) = self.load_uddp_path(&path) {
-                self.status_message = format!("Failed to load UDDP: {}", error);
-            }
-        }
-    }
-
-    pub fn load_uddp_path(&mut self, path: &Path) -> color_eyre::eyre::Result<()> {
-        match MobileAnimCcPackage::load(path) {
-            Ok(package) => {
-                let animation_count = package.animations().len();
-                self.mobile_anim_cc_package = Some(Arc::new(package));
-                self.mobile_anim_cc_path = Some(path.to_path_buf());
-                self.selected_mobile_anim_index = 0;
-                self.selected_mobile_anim_frame_index = 0;
-                self.status_message = format!(
-                    "Loaded mobile_anim_cc package: {} animations from {}",
-                    animation_count,
-                    path.display()
-                );
-                self.view_mode = ViewMode::MobileAnimCc;
-                Ok(())
-            }
-            Err(error) => Err(error).wrap_err_with(|| {
-                format!(
-                    "{} is not a recognized mobile_anim_cc.uddp package",
-                    path.display()
-                )
-            }),
-        }
-    }
-
 
     pub fn get_uop_texture(
         &mut self,
@@ -1404,127 +1352,6 @@ impl eframe::App for UopInspectorApp {
 mod tests {
     use super::*;
 
-    fn write_test_file(name: &str, bytes: &[u8]) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "uocf_inspector_{name}_{}_{}.uddp",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
-        std::fs::write(&path, bytes).expect("write test package");
-        path
-    }
-
-    fn mobile_anim_cc_package_bytes() -> Vec<u8> {
-        use udd_assets::mobile_anim_cc::{
-            page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
-            MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord,
-            ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODY_DEF,
-            BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH,
-            FRAME_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX,
-            PAGE_MANIFEST_ENTRY_PATH,
-        };
-        use udd_assets::tex_art_cc::PagePixelFormat;
-        use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
-        use udd_conv::mobile_anim_cc::{
-            pack_frames_into_pages, serialize_animation_manifest,
-            serialize_body_resolve_manifest, serialize_body_type_manifest,
-            serialize_frame_manifest, serialize_page_manifest, DecodedMobileAnimFrame,
-            MobileAnimCcAtlasOptions,
-        };
-
-        let options = MobileAnimCcAtlasOptions {
-            atlas_width: 16,
-            atlas_height: 16,
-            gutter: 4,
-            compression: CompressionFlag::ZstdNoDict,
-            pixel_format: PagePixelFormat::Rgba8888,
-        };
-        let mut frame_records = vec![MobileAnimCcFrameRecord {
-            animation_index: 0,
-            frame_index: 0,
-            page_index: MISSING_PAGE_INDEX,
-            page_frame_index: MISSING_PAGE_FRAME_INDEX,
-            x: 0,
-            y: 0,
-            width: 4,
-            height: 4,
-            center_x: 2,
-            center_y: -2,
-        }];
-        let pages = pack_frames_into_pages(
-            vec![DecodedMobileAnimFrame {
-                global_frame_index: 0,
-                width: 4,
-                height: 4,
-                rgba: vec![255u8; 4 * 4 * 4],
-            }],
-            &mut frame_records,
-            &options,
-        )
-        .expect("pack test frame");
-        let animations = vec![MobileAnimCcAnimationRecord {
-            body_id: 7,
-            action_id: 2,
-            direction: 3,
-            file_index: 0,
-            source_index: 13,
-            frame_start: 0,
-            frame_count: 1,
-            flags: 0,
-        }];
-        let page_manifest = serialize_page_manifest(&pages, &options).expect("page manifest");
-        let animation_manifest =
-            serialize_animation_manifest(&animations).expect("animation manifest");
-        let frame_manifest = serialize_frame_manifest(&frame_records).expect("frame manifest");
-        let body_resolve_manifest = serialize_body_resolve_manifest(&[
-            MobileAnimCcBodyResolveRecord {
-                body_id: 7,
-                resolved_body_id: 8,
-                hue: 9,
-                file_index: 0,
-                mount_height: 0,
-                flags: BODY_RESOLVE_FLAG_BODY_DEF,
-            },
-        ]).expect("body resolve manifest");
-        let body_type_manifest = serialize_body_type_manifest(&[
-            MobileAnimCcBodyTypeRecord {
-                body_id: 7,
-                group_type: 3,
-                flags: 0x8000_0001,
-            },
-        ]).expect("body type manifest");
-        let stored_page = udd_conv::tex_art_cc::crop_rgba_page(
-            &pages[0].pixels,
-            options.atlas_width,
-            pages[0].record.used_width,
-            pages[0].record.used_height,
-        );
-        let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
-        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-        for (path, data, data_type) in [
-            (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice(), DataType::Metadata),
-            (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice(), DataType::Metadata),
-            (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
-            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice(), DataType::Metadata),
-            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice(), DataType::Metadata),
-            (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
-        ] {
-            builder
-                .add_file(AddFileRequest {
-                    data_type: data_type as u8,
-                    compression: CompressionFlag::ZstdNoDict,
-                    width: 0,
-                    height: 0,
-                    virtual_path: Some(path),
-                    path_hash64: None,
-                    id: None,
-                    data,
-                })
-                .expect("add test package file");
-        }
-        builder.build().expect("build test package")
-    }
-
     fn test_app() -> UopInspectorApp {
         UopInspectorApp {
             settings: AppSettings::default(),
@@ -1552,10 +1379,6 @@ mod tests {
             selected_ec_hue_hash: None,
             selected_multi_uop_hash: None,
             selected_localized_file_hash: None,
-            mobile_anim_cc_package: None,
-            mobile_anim_cc_path: None,
-            selected_mobile_anim_index: 0,
-            selected_mobile_anim_frame_index: 0,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
@@ -1625,32 +1448,6 @@ mod tests {
         assert_eq!(app.selected_file_hash, Some(0x1234));
         assert_eq!(app.find_hash_query, "0000000000001234");
         assert_eq!(app.view_mode, ViewMode::UopExplorer);
-    }
-
-    #[test]
-    fn load_uddp_path_recognizes_mobile_anim_cc_package() {
-        let path = write_test_file("mobile_anim_cc", &mobile_anim_cc_package_bytes());
-        let mut app = test_app();
-
-        app.load_uddp_path(&path).expect("load mobile_anim_cc package");
-
-        let package = app.mobile_anim_cc_package.as_ref().expect("package");
-        assert_eq!(app.mobile_anim_cc_path.as_deref(), Some(path.as_path()));
-        assert_eq!(app.view_mode, ViewMode::MobileAnimCc);
-        assert_eq!(package.animations().len(), 1);
-        assert_eq!(package.animation(7, 2, 3).unwrap().source_index, 13);
-        std::fs::remove_file(path).ok();
-    }
-
-    #[test]
-    fn load_uddp_path_rejects_non_mobile_anim_cc_package() {
-        let path = write_test_file("not_mobile_anim_cc", b"not an uddp");
-        let mut app = test_app();
-
-        assert!(app.load_uddp_path(&path).is_err());
-        assert!(app.mobile_anim_cc_package.is_none());
-        assert_eq!(app.view_mode, ViewMode::Home);
-        std::fs::remove_file(path).ok();
     }
 
     #[test]

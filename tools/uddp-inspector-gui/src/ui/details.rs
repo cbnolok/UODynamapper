@@ -26,6 +26,7 @@ impl InspectorApp {
         match self.view_mode {
             ViewMode::Package => self.ui_details_package(ctx, ui, idx),
             ViewMode::Virtual => self.ui_details_virtual(ctx, ui, idx),
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {}
         }
 
         ui.add_space(10.0);

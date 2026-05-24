@@ -1,6 +1,8 @@
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use udd_assets::{MobileAnimCcPackage, MobileAnimEcPackage};
 use udd_assets::tilemeta::{
     TileMetaItemTile, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
 };
@@ -32,6 +34,10 @@ pub struct InspectorApp {
     pub selected_idx: Option<usize>,
     pub filter: String,
     pub package_path: Option<PathBuf>,
+    pub mobile_anim_cc_package: Option<Arc<MobileAnimCcPackage>>,
+    pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
+    pub selected_mobile_anim_index: usize,
+    pub selected_mobile_anim_frame_index: usize,
 
     // Virtual View state
     pub view_mode: ViewMode,
@@ -62,6 +68,10 @@ impl InspectorApp {
             selected_idx: None,
             filter: String::new(),
             package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             selected_virtual_idx: None,
@@ -267,20 +277,20 @@ impl InspectorApp {
         let move_prev = move_prev || f3_prev;
         let _move_next = move_next || f3_next;
 
-        let filtered = if self.view_mode == ViewMode::Package {
-            self.filtered_package_indices()
-        } else {
-            self.filtered_virtual_indices()
+        let filtered = match self.view_mode {
+            ViewMode::Package => self.filtered_package_indices(),
+            ViewMode::Virtual => self.filtered_virtual_indices(),
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => return,
         };
 
         if filtered.is_empty() {
             return;
         }
 
-        let current = if self.view_mode == ViewMode::Package {
-            self.selected_idx
-        } else {
-            self.selected_virtual_idx
+        let current = match self.view_mode {
+            ViewMode::Package => self.selected_idx,
+            ViewMode::Virtual => self.selected_virtual_idx,
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => return,
         };
 
         let current_pos = current
@@ -294,10 +304,10 @@ impl InspectorApp {
         };
         let target_idx = filtered[target_pos];
 
-        if self.view_mode == ViewMode::Package {
-            self.select_entry(ctx, target_idx);
-        } else {
-            self.select_virtual_entry(ctx, target_idx);
+        match self.view_mode {
+            ViewMode::Package => self.select_entry(ctx, target_idx),
+            ViewMode::Virtual => self.select_virtual_entry(ctx, target_idx),
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {}
         }
     }
 
@@ -340,6 +350,10 @@ impl InspectorApp {
 
                 self.virtual_entries.clear();
                 self.atlas_pages.clear();
+                self.mobile_anim_cc_package = MobileAnimCcPackage::load(&path).ok().map(Arc::new);
+                self.mobile_anim_ec_package = MobileAnimEcPackage::load(&path).ok().map(Arc::new);
+                self.selected_mobile_anim_index = 0;
+                self.selected_mobile_anim_frame_index = 0;
                 self.detect_virtual_entries(&reader);
 
                 self.package = Some(reader);
@@ -347,7 +361,13 @@ impl InspectorApp {
                 self.selected_idx = None;
                 self.selected_virtual_idx = None;
                 self.clear_preview_state();
-                self.view_mode = ViewMode::Package;
+                self.view_mode = if self.mobile_anim_cc_package.is_some() {
+                    ViewMode::MobileAnimCc
+                } else if self.mobile_anim_ec_package.is_some() {
+                    ViewMode::MobileAnimEc
+                } else {
+                    ViewMode::Package
+                };
             }
             Err(e) => {
                 println!("Error opening package: {}", e);
@@ -947,6 +967,10 @@ mod tests {
             selected_idx: None,
             filter: String::new(),
             package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             selected_virtual_idx: None,
@@ -1009,6 +1033,10 @@ mod tests {
             selected_idx: None,
             filter: String::new(),
             package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             selected_virtual_idx: None,
@@ -1058,6 +1086,10 @@ mod tests {
             selected_idx: None,
             filter: String::new(),
             package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Virtual,
             virtual_entries: vec![
                 VirtualEntry {
@@ -1155,6 +1187,10 @@ mod tests {
             selected_idx: None,
             filter: String::new(),
             package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             selected_virtual_idx: None,
