@@ -642,13 +642,13 @@ fn page_prefix_fits(
     frames: &[DecodedMobileAnimEcFrame],
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<bool> {
-    let mut to_pack = frames.to_vec();
-    sort_frames_within_page(&mut to_pack, options);
+    let mut to_pack = frames.iter().collect::<Vec<_>>();
+    sort_frame_refs_within_page(&mut to_pack, options);
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
         options.atlas_height as i32,
     ));
-    for frame in &to_pack {
+    for frame in to_pack {
         let (width_axis, height_axis) = packing_axes(frame, options)?;
         if allocator
             .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
@@ -763,12 +763,27 @@ fn packing_axes(
 
 fn sort_frames_within_page(frames: &mut [DecodedMobileAnimEcFrame], options: &MobileAnimEcAtlasOptions) {
     frames.sort_by(|left, right| {
-        let left_area = sort_area(left, options);
-        let right_area = sort_area(right, options);
-        right_area
-            .cmp(&left_area)
-            .then_with(|| (left.body_id, left.source_frame_index).cmp(&(right.body_id, right.source_frame_index)))
+        compare_frames_for_page(left, right, options)
     });
+}
+
+fn sort_frame_refs_within_page<'a>(
+    frames: &mut [&'a DecodedMobileAnimEcFrame],
+    options: &MobileAnimEcAtlasOptions,
+) {
+    frames.sort_by(|left, right| compare_frames_for_page(left, right, options));
+}
+
+fn compare_frames_for_page(
+    left: &DecodedMobileAnimEcFrame,
+    right: &DecodedMobileAnimEcFrame,
+    options: &MobileAnimEcAtlasOptions,
+) -> std::cmp::Ordering {
+    let left_area = sort_area(left, options);
+    let right_area = sort_area(right, options);
+    right_area
+        .cmp(&left_area)
+        .then_with(|| (left.body_id, left.source_frame_index).cmp(&(right.body_id, right.source_frame_index)))
 }
 
 fn sort_area(frame: &DecodedMobileAnimEcFrame, options: &MobileAnimEcAtlasOptions) -> u32 {
