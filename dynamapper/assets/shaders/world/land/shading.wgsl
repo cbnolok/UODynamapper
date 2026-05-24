@@ -142,6 +142,12 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   color *= mix(vec3<f32>(1.0), vec3<f32>(0.82, 0.90, 1.06), shadow_mask * 0.20);
   color *= mix(vec3<f32>(1.0), vec3<f32>(1.08, 1.03, 0.94), sun_mask * 0.14);
 
+  // Terrain relief darkening: shaded steep slopes get a little extra weight
+  // so heightfield creases do not flatten under the wrapped diffuse.
+  let slope_steepness = clamp(1.0 - normalize(Nw).y, 0.0, 1.0);
+  let crease_shadow = smoothstep(0.08, 0.42, slope_steepness) * (0.35 + 0.65 * shadow_mask);
+  color *= 1.0 - crease_shadow * 0.12;
+
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
     let rim_power = max(0.1, land_light.rim_color.a);
