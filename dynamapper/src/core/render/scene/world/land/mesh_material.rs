@@ -172,8 +172,8 @@ pub struct LandEffectsUniform {
     /// Reserved for future texture normal-map atlas sampling.
     #[serde(default)]
     pub enable_normal_maps: u32,
-    #[serde(default)]
-    pub _pad_eff1: u32,
+    /// 1 = use KR-style fake normal lighting on 2D art sprites/ground art.
+    pub enable_art_fake_normals: u32,
     #[serde(default)]
     pub _pad_eff2: u32,
     #[serde(default)]

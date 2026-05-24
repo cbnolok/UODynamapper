@@ -18,7 +18,7 @@ _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -144,7 +144,7 @@ _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -270,7 +270,7 @@ _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [classic.night.lighting]
 enable_fog = 0
@@ -396,7 +396,7 @@ _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -522,7 +522,7 @@ _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -648,7 +648,7 @@ _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -774,7 +774,7 @@ _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -900,7 +900,7 @@ _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 0
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -1026,7 +1026,7 @@ _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 1
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -1152,7 +1152,7 @@ _pad_eff0 = 0
 grunge_strength = 0.79
 light_decal_intensity = 1.35
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 1
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -1278,7 +1278,7 @@ _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 1
 
 [kr.night.lighting]
 enable_fog = 1
@@ -1404,7 +1404,7 @@ _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
 enable_normal_maps = 0
-_pad_eff1 = 0
+enable_art_fake_normals = 1
 
 [kr.cave.lighting]
 enable_fog = 1

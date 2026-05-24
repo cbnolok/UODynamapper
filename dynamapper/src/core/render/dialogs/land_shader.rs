@@ -161,6 +161,7 @@ pub fn land_ui_system(
                     changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
                     changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
                     changed |= toggle_u32(ui, "Normal Maps", &mut u.effects.enable_normal_maps);
+                    changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
                 });
 
                 changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
@@ -551,6 +552,7 @@ pub fn land_ui_system(
                 changed |= toggle_u32(ui, "Linear Filtering", &mut u.effects.enable_linear_filtering);
                 changed |= slider_s(ui, "Sharpening Amount", &mut u.effects.sharpening_amount, 0.0..=2.0);
                 changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps);
+                changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
                 changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
