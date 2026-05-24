@@ -23,7 +23,7 @@ pub struct Settings {
     pub session_state: SectSessionState,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
-    pub maps: SectMaps,
+    pub maps: Option<SectMaps>,
     pub world_rendering: SectWorldRendering,
 }
 
@@ -483,12 +483,16 @@ pub fn load_from_files() -> Settings {
         "Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml",
     );
 
-    let maps_contents = std::fs::read_to_string(&maps_path).expect(
-        "Failed to read maps.toml — please ensure assets/settings/maps.toml exists and is valid",
-    );
-
-    let maps: SectMaps = toml::from_str(&maps_contents)
-        .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
+    let maps: Option<SectMaps> = if maps_path.exists() {
+        let maps_contents = std::fs::read_to_string(&maps_path).expect(
+            "Failed to read maps.toml — please ensure assets/settings/maps.toml is valid",
+        );
+        Some(toml::from_str(&maps_contents).expect(
+            "Failed to parse maps.toml — please fix the file in assets/settings/maps.toml",
+        ))
+    } else {
+        None
+    };
 
     let world_rendering_contents = std::fs::read_to_string(&world_rendering_path).expect(
         "Failed to read settings/world_rendering.toml — please ensure assets/settings/world_rendering.toml exists",
@@ -738,7 +742,11 @@ pub fn save_maps_settings(settings: &Settings) {
     let assets_path = crate::core::constants::valid_asset_dir();
     let path = assets_path.join(MAPS_CONFIG_FILE);
 
-    match toml::to_string_pretty(&settings.maps) {
+    let Some(maps) = settings.maps.as_ref() else {
+        return;
+    };
+
+    match toml::to_string_pretty(maps) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&path, toml_str) {
                 console_logger::one(
@@ -771,7 +779,7 @@ struct SettingsSaveSnapshot {
     core: SectCore,
     logging: SectLogging,
     runtime_assets: SectRuntimeAssets,
-    maps: SectMaps,
+    maps: Option<SectMaps>,
     world_rendering: SectWorldRendering,
 }
 

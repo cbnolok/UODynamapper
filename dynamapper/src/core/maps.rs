@@ -4,8 +4,9 @@ use color_eyre::eyre::{self, WrapErr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use udd_assets::map_metadata::{decode_map_package_metadata, MapPackageMetadata};
 use uocf::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapSizeBlocks, MapSizeCells};
-use udd_container::UddpReader;
+use udd_container::{unpack_type, DataType, FileKey, FileRecord, UddpReader};
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: usize = 32;
@@ -57,10 +58,18 @@ impl MapPlane {
                 .wrap_err_with(|| format!("Open map{map_index}.uddp"))?,
         );
 
-        let total_blocks = package.records().len() as u32;
-        let map_size_tiles = match map_size_tiles_override {
-            Some(size) => validate_map_size_override(size)?,
-            None => infer_map_size_tiles(map_index, total_blocks)?,
+        let records = package.records();
+        let package_metadata = read_map_package_metadata(&package, map_index, &records)?;
+        let total_blocks = package_metadata
+            .map(|metadata| metadata.chunk_count)
+            .unwrap_or(records.len() as u32);
+        let map_size_tiles = match (package_metadata, map_size_tiles_override) {
+            (Some(metadata), _) => validate_map_size_override(MapSizeCells {
+                width: metadata.width_tiles,
+                height: metadata.height_tiles,
+            })?,
+            (None, Some(size)) => validate_map_size_override(size)?,
+            (None, None) => infer_map_size_tiles(map_index, total_blocks)?,
         };
         let size_blocks = MapSizeBlocks {
             width: map_size_tiles.width / MapBlock::CELLS_PER_ROW,
@@ -232,6 +241,53 @@ pub fn load_blocks_from_package(
         blocks.push(decode_map_block_from_chunk(&bytes, pos)?);
     }
     Ok(blocks)
+}
+
+fn read_map_package_metadata(
+    package: &UddpReader,
+    map_index: u32,
+    records: &[FileRecord],
+) -> eyre::Result<Option<MapPackageMetadata>> {
+    let Some(record) = records.last() else {
+        return Ok(None);
+    };
+    if unpack_type(record.locator.meta32) != DataType::Metadata as u8 {
+        return Ok(None);
+    }
+
+    let FileKey::Id(id) = record.key else {
+        return Ok(None);
+    };
+    let expected_id = records.len().saturating_sub(1) as u32;
+    if id != expected_id {
+        return Ok(None);
+    }
+
+    let bytes = package
+        .read_file_by_dense_id(id)
+        .map_err(|error| eyre::eyre!("{error}"))
+        .wrap_err("read map package metadata")?;
+    let metadata = decode_map_package_metadata(&bytes)
+        .map_err(|error| eyre::eyre!("invalid map package metadata: {error}"))?;
+    if metadata.map_id != map_index {
+        return Err(eyre::eyre!(
+            "map package metadata is for map {}, expected map {}",
+            metadata.map_id,
+            map_index
+        ));
+    }
+    if metadata.chunk_count == 0 {
+        return Err(eyre::eyre!("map package metadata has zero chunks"));
+    }
+    if metadata.chunk_count + 1 != records.len() as u32 {
+        return Err(eyre::eyre!(
+            "map package metadata declares {} chunks, but package has {} records",
+            metadata.chunk_count,
+            records.len()
+        ));
+    }
+
+    Ok(Some(metadata))
 }
 
 fn validate_map_size_override(size: MapSizeCells) -> eyre::Result<MapSizeCells> {

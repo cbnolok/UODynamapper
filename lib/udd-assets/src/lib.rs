@@ -15,6 +15,7 @@ pub mod world_lights;
 pub mod hues;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
+pub mod map_metadata;
 
 pub use common::AtlasCacheOptions;
 pub use tex_art_cc::TexArtCcPackage;

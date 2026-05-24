@@ -210,7 +210,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             let map_size_override =
                 settings
                     .maps
-                    .map_size(map_plane_index)
+                    .as_ref()
+                    .and_then(|maps| maps.map_size(map_plane_index))
                     .map(|map_size| MapSizeCells {
                         width: map_size.width,
                         height: map_size.height,

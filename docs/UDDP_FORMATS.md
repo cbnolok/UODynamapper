@@ -13,7 +13,29 @@ For EC-specific content, remember that the UOP source set is mixed and semantic:
 
 ---
 
-## 1. `tilemeta.uddp`
+## 1. `mapN.uddp`
+
+Classic map packages use dense ids for 32x32-tile map chunks. New packages append one final dense-id metadata record after the chunk records.
+
+### 1.1 Map Metadata Record
+
+The final dense id has data type `Metadata` and stores:
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `magic` | ASCII `UMAP`. |
+| 0x04 | `u16` | `version` | Current value: `1`. |
+| 0x06 | `u16` | `_reserved` | Zero. |
+| 0x08 | `u32` | `map_id` | Facet id, matching `mapN.uddp`. |
+| 0x0C | `u32` | `width_tiles` | Map width in tiles. |
+| 0x10 | `u32` | `height_tiles` | Map height in tiles. |
+| 0x14 | `u32` | `chunk_count` | Number of 32x32 chunk records before the metadata record. |
+
+Runtime loading prefers this metadata, then falls back to optional legacy `maps.toml`, then known standard-size inference for older packages.
+
+---
+
+## 2. `tilemeta.uddp`
 
 This package merges Classic Client (CC) physical tile properties and Enhanced Client (EC) rendering definitions into a zero-copy, tightly packed binary.
 
@@ -25,7 +47,7 @@ The long-term schema direction is to keep CC and EC ownership/behavior separate 
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
 
-### 1.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
+### 2.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
 
 Represents terrain data.
 
@@ -39,7 +61,7 @@ Represents terrain data.
 | 0x10 | `[u8; 4]` | `radar_color` | RGBA values representing minimap colors. |
 | 0x14 | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 
-### 1.2 `TileMetaItemTile` Struct (80 Bytes, 8-Byte Aligned)
+### 2.2 `TileMetaItemTile` Struct (80 Bytes, 8-Byte Aligned)
 
 Represents static map items and artwork.
 

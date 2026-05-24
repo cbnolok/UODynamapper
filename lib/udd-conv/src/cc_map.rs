@@ -43,6 +43,7 @@ use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 use log::{info, warn};
 use uocf::classic::map::MapPlane;
+use udd_assets::map_metadata::{encode_map_package_metadata, MapPackageMetadata};
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 // We need Rg16u from dynamapper, but uddconv doesn't depend on dynamapper.
@@ -240,6 +241,23 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
     }
 
     pb.finish_with_message("Map chunks packed");
+
+    let metadata = encode_map_package_metadata(MapPackageMetadata::new(
+        map_id,
+        width_blocks * 8,
+        height_blocks * 8,
+        total_chunks,
+    ));
+    builder.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::None,
+        width: width_blocks * 8,
+        height: height_blocks * 8,
+        virtual_path: None,
+        path_hash64: None,
+        id: Some(total_chunks),
+        data: &metadata,
+    })?;
 
     build_and_write_package(&mut builder, output_path)?;
 
