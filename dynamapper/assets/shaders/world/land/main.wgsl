@@ -31,7 +31,7 @@
 #import "shaders/world/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
+#import "shaders/postprocess/grunge.wgsl"::{apply_shadow_aware_land_grunge}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
@@ -430,10 +430,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount);
     }
   }
-  if (effects.enable_grunge == 1u) {
-    base_albedo = apply_visual_grunge(base_albedo, in.world_position.xz, effects.grunge_strength, visual_profile);
-  }
-
   // ---- Normals ----
   // We already computed in the vertex shader and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.
@@ -451,6 +447,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Light & view vectors
   let L = scene.light_direction; // normalized by CPU
   let V = normalize(scene.camera_position - in.world_position.xyz);
+
+  if (effects.enable_grunge == 1u) {
+    let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
+    let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
+    let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
+    base_albedo = apply_shadow_aware_land_grunge(
+      base_albedo,
+      in.world_position.xz,
+      effects.grunge_strength,
+      visual_profile,
+      grunge_shadow,
+    );
+  }
 
   // ---- Shade ----
   var hdr_rgb = vec3<f32>(0.0);

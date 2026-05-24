@@ -54,3 +54,34 @@ fn apply_visual_grunge(rgb: vec3<f32>, world_xz: vec2<f32>, strength: f32, profi
   let profile_gain = select(0.40, 1.0, is_kr);
   return rgb * mix(vec3<f32>(1.0), tint, s * profile_gain);
 }
+
+fn apply_shadow_aware_land_grunge(
+  rgb: vec3<f32>,
+  world_xz: vec2<f32>,
+  strength: f32,
+  profile: u32,
+  shadow_factor: f32,
+) -> vec3<f32> {
+  if (profile != 2u) {
+    return apply_visual_grunge(rgb, world_xz, strength, profile);
+  }
+
+  let s = clamp(strength, 0.0, 1.0);
+  if (s <= 0.0001) {
+    return rgb;
+  }
+
+  let p = world_xz * 0.055 + vec2<f32>(41.0, 23.0);
+  let coarse = grunge_fbm(p);
+  let fine = grunge_fbm(p * 3.7 + vec2<f32>(9.2, -4.6));
+  let n = mix(coarse, fine, 0.35);
+  let shadow = clamp(shadow_factor, 0.0, 1.0);
+
+  let deposit = smoothstep(0.22, 0.90, n) * (0.35 + shadow * 0.75);
+  let highlight_protection = 1.0 - shadow * 0.55;
+  let grime_dark = vec3<f32>(0.62, 0.66, 0.74);
+  let dry_light = vec3<f32>(1.08, 1.06, 1.02);
+  let weather_tint = mix(dry_light, grime_dark, deposit);
+
+  return rgb * mix(vec3<f32>(1.0), weather_tint, s * highlight_protection);
+}
