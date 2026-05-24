@@ -50,11 +50,27 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcStaticsBuildSummary> {
     let map_file_name = format!("map{}.mul", map_id);
+    let map_uop_names = [
+        format!("map{}LegacyMUL.uop", map_id),
+        format!("map{}.uop", map_id),
+        format!("map{}xLegacyMUL.uop", map_id),
+        format!("map{}x.uop", map_id),
+    ];
     let idx_file_name = format!("staidx{}.mul", map_id);
     let mul_file_name = format!("statics{}.mul", map_id);
 
-    let map_path = find_first_existing_file(source_dirs, &[&map_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", map_file_name))?;
+    let (map_path, map_is_uop) = if let Some(path) =
+        find_first_existing_file(source_dirs, &[&map_file_name])
+    {
+        (path, false)
+    } else if let Some(path) = find_first_existing_file(
+        source_dirs,
+        &map_uop_names.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+    ) {
+        (path, true)
+    } else {
+        eyre::bail!("missing {} or map{} LegacyMUL UOP", map_file_name, map_id);
+    };
     let idx_path = find_first_existing_file(source_dirs, &[&idx_file_name])
         .ok_or_else(|| eyre::eyre!("missing {}", idx_file_name))?;
     let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
@@ -67,7 +83,11 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     );
 
     // We use MapPlane just to resolve the map dimensions correctly.
-    let plane = MapPlane::init(map_path, map_id)?;
+    let plane = if map_is_uop {
+        MapPlane::init_uop(map_path, map_id)?
+    } else {
+        MapPlane::init(map_path, map_id)?
+    };
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;
     let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
