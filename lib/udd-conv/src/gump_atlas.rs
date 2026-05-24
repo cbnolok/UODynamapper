@@ -453,6 +453,9 @@ fn serialize_slot_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use byteorder::ReadBytesExt;
+    use std::io::Cursor;
+    use udd_container::{LookupMode, UddpReader};
 
     #[test]
     fn paperdoll_equipment_range_matches_profile_offsets() {
@@ -494,5 +497,128 @@ mod tests {
         assert_eq!(slots.len(), 2);
         assert_eq!(&page_manifest[..4], &GUMP_ATLAS_PAGE_MANIFEST_MAGIC);
         assert_eq!(&slot_manifest[..4], &GUMP_ATLAS_SLOT_MANIFEST_MAGIC);
+    }
+
+    #[test]
+    fn gump_atlas_writes_reserved_sparse_entries() {
+        let options = GumpAtlasOptions {
+            atlas_width: 8,
+            atlas_height: 8,
+            gutter: 1,
+            compression: CompressionFlag::None,
+        };
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+
+        let packed_count = add_gump_atlas_files(
+            &mut builder,
+            vec![
+                solid_gump(50_001, 2, 2),
+                solid_gump(60_001, 1, 1),
+            ],
+            &options,
+        )
+        .expect("add atlas files");
+        let package = UddpReader::open(builder.build().expect("build package")).expect("open package");
+
+        assert_eq!(packed_count, 2);
+        assert_eq!(package.lookup_mode(), LookupMode::SparseId);
+        assert_eq!(
+            package
+                .find_by_sparse_id(GUMP_ATLAS_PAGE_MANIFEST_ID)
+                .expect("page manifest")
+                .data_type,
+            DataType::Metadata as u8
+        );
+        assert_eq!(
+            package
+                .find_by_sparse_id(GUMP_ATLAS_SLOT_MANIFEST_ID)
+                .expect("slot manifest")
+                .data_type,
+            DataType::Metadata as u8
+        );
+        assert_eq!(
+            package
+                .find_by_sparse_id(GUMP_ATLAS_PAGE_ID_BASE)
+                .expect("atlas page")
+                .data_type,
+            DataType::Texture as u8
+        );
+
+        let page_manifest = package
+            .read_file_by_sparse_id(GUMP_ATLAS_PAGE_MANIFEST_ID)
+            .expect("read page manifest");
+        let slot_manifest = package
+            .read_file_by_sparse_id(GUMP_ATLAS_SLOT_MANIFEST_ID)
+            .expect("read slot manifest");
+
+        assert_eq!(page_manifest_header(&page_manifest), (8, 8, 1, 1));
+        assert_eq!(slot_manifest_header(&slot_manifest), (8, 8, 1, 2));
+    }
+
+    #[test]
+    fn gump_atlas_splits_across_pages_when_needed() {
+        let options = GumpAtlasOptions {
+            atlas_width: 4,
+            atlas_height: 4,
+            gutter: 0,
+            compression: CompressionFlag::None,
+        };
+
+        let (pages, slots) = pack_gumps_into_pages(
+            vec![solid_gump(50_001, 3, 3), solid_gump(50_002, 3, 3)],
+            &options,
+        )
+        .expect("pack gumps");
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].page_index, 0);
+        assert_eq!(slots[1].page_index, 1);
+    }
+
+    #[test]
+    fn gump_atlas_rejects_gumps_larger_than_page() {
+        let options = GumpAtlasOptions {
+            atlas_width: 4,
+            atlas_height: 4,
+            gutter: 0,
+            compression: CompressionFlag::None,
+        };
+
+        let error = pack_gumps_into_pages(vec![solid_gump(50_001, 5, 4)], &options)
+            .expect_err("oversized gump should not fit");
+
+        assert!(error.to_string().contains("does not fit into atlas page"));
+    }
+
+    fn solid_gump(gump_id: u32, width: u16, height: u16) -> DecodedGump {
+        DecodedGump {
+            gump_id,
+            width,
+            height,
+            rgba: vec![255; width as usize * height as usize * 4],
+        }
+    }
+
+    fn page_manifest_header(bytes: &[u8]) -> (u32, u32, u32, u32) {
+        assert_eq!(&bytes[..4], &GUMP_ATLAS_PAGE_MANIFEST_MAGIC);
+        read_manifest_common_header(bytes)
+    }
+
+    fn slot_manifest_header(bytes: &[u8]) -> (u32, u32, u32, u32) {
+        assert_eq!(&bytes[..4], &GUMP_ATLAS_SLOT_MANIFEST_MAGIC);
+        read_manifest_common_header(bytes)
+    }
+
+    fn read_manifest_common_header(bytes: &[u8]) -> (u32, u32, u32, u32) {
+        let mut cursor = Cursor::new(&bytes[4..]);
+        let version = cursor.read_u32::<LittleEndian>().expect("version");
+        let width = cursor.read_u32::<LittleEndian>().expect("width");
+        let height = cursor.read_u32::<LittleEndian>().expect("height");
+        let gutter = cursor.read_u32::<LittleEndian>().expect("gutter");
+        let count = cursor.read_u32::<LittleEndian>().expect("count");
+
+        assert_eq!(version, GUMP_ATLAS_METADATA_VERSION);
+        (width, height, gutter, count)
     }
 }
