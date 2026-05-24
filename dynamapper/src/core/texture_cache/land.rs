@@ -812,6 +812,7 @@ pub fn sys_setup_terrain_cache(
                 effects_uniform: Default::default(),
                 global_lighting_uniform: Default::default(),
                 land_lighting_uniform: Default::default(),
+                static_light_uniform: Default::default(),
             },
         };
 

@@ -61,6 +61,10 @@ pub struct LandMaterialExtension {
     /// Terrain-specific lighting (bent normals, rim, specular, fill).
     #[uniform(108, visibility(vertex, fragment))]
     pub land_lighting_uniform: LandLightingUniforms,
+
+    /// Small visible static-light set for KR-style terrain light catch.
+    #[uniform(111, visibility(fragment))]
+    pub static_light_uniform: LandStaticLightUniform,
 }
 
 impl MaterialExtension for LandMaterialExtension {
@@ -286,6 +290,27 @@ pub struct LandLightingUniforms {
     pub fill_sky_color: Vec4,
     pub fill_ground_color: Vec4,
     pub rim_color: Vec4,
+}
+
+pub const LAND_STATIC_LIGHT_MAX: usize = 16;
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, ShaderType)]
+#[allow(dead_code)]
+pub struct LandStaticLightUniform {
+    /// xyz = world position, w = radius in world tiles.
+    pub lights: [Vec4; LAND_STATIC_LIGHT_MAX],
+    /// x = active light count, remaining lanes reserved.
+    pub params: UVec4,
+}
+
+impl Default for LandStaticLightUniform {
+    fn default() -> Self {
+        Self {
+            lights: [Vec4::ZERO; LAND_STATIC_LIGHT_MAX],
+            params: UVec4::ZERO,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

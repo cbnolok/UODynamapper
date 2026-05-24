@@ -10,7 +10,7 @@
 
 
 #import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
-#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light}
+#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light, static_lights}
 #import "shaders/world/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
 
 // ============================================================================
@@ -150,6 +150,26 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   if (specular_strength > 0.0001) {
     let spec_val = get_specular(Nw, L, V, 32.0);
     color += vec3<f32>(1.0) * spec_val * specular_strength;
+  }
+
+  let static_light_count = min(static_lights.params.x, 16u);
+  var static_light_accum = 0.0;
+  for (var i = 0u; i < 16u; i = i + 1u) {
+    if (i >= static_light_count) {
+      break;
+    }
+    let light = static_lights.lights[i];
+    let delta = world_pos - light.xyz;
+    let radius = max(light.w, 0.01);
+    let dist = length(vec3<f32>(delta.x, delta.y * 1.8, delta.z));
+    let falloff = max(1.0 - dist / radius, 0.0);
+    static_light_accum += falloff * falloff;
+  }
+
+  if (static_light_accum > 0.001) {
+    let local_light = min(static_light_accum, 1.0);
+    let local_warm = vec3<f32>(1.0, 0.72, 0.42);
+    color += base_albedo_in * local_warm * local_light * 0.32;
   }
 
   // Optional gloom

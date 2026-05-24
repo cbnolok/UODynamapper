@@ -60,6 +60,11 @@ struct LandLightingUniforms {
     rim_color: vec4<f32>,
 };
 
+struct LandStaticLightUniform {
+    lights: array<vec4<f32>, 16>,
+    params: vec4<u32>,
+};
+
 // ============================================================================
 // GPU resource bindings (group 3, matching Rust #[uniform(10X)] indices)
 // ============================================================================
@@ -75,6 +80,7 @@ struct LandLightingUniforms {
 @group(3) @binding(106) var<uniform> effects:      LandEffectsUniform;
 @group(3) @binding(107) var<uniform> global_light:  GlobalLightingUniforms;
 @group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
+@group(3) @binding(111) var<uniform> static_lights: LandStaticLightUniform;
 
 // ============================================================================
 // Grid / chunk constants

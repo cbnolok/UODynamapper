@@ -9,7 +9,7 @@ use crate::core::system_sets::*;
 use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
-use mesh_material::LandCustomMeshMaterial;
+use mesh_material::{LandCustomMeshMaterial, LandStaticLightUniform, LAND_STATIC_LIGHT_MAX};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -286,9 +286,11 @@ pub fn sys_update_shared_land_material(
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
+    static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
+    mut last_static_light_signature: Local<u64>,
 ) {
     let Some(shared_mat) = shared_mat else {
         return;
@@ -307,11 +309,14 @@ pub fn sys_update_shared_land_material(
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
+    let static_light_uniform = build_land_static_light_uniform(static_lights.as_deref());
+    let static_light_signature = land_static_light_signature(&static_light_uniform);
+    let static_lights_changed = static_light_signature != *last_static_light_signature;
 
     // ONLY call get_mut() when something actually changed.
     // This avoids triggering Bevy's asset change detection, which would force
     // re-extraction of the material bind group for all chunk entities.
-    if atlas_changed || lighting_meaningfully_changed || zoom_changed {
+    if atlas_changed || lighting_meaningfully_changed || zoom_changed || static_lights_changed {
         if let Some(mat) = materials.get_mut(&shared_mat.0) {
             /*
             console_logger::one(
@@ -340,8 +345,49 @@ pub fn sys_update_shared_land_material(
                 mat.extension.atlas_params = tile_atlas.params;
                 *last_atlas_params = Some(tile_atlas.params);
             }
+            if static_lights_changed {
+                mat.extension.static_light_uniform = static_light_uniform;
+                *last_static_light_signature = static_light_signature;
+            }
         }
     }
+}
+
+fn build_land_static_light_uniform(
+    static_lights: Option<&crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>,
+) -> LandStaticLightUniform {
+    let mut uniform = LandStaticLightUniform::default();
+    let Some(static_lights) = static_lights else {
+        return uniform;
+    };
+
+    let light_count = static_lights.0.len().min(LAND_STATIC_LIGHT_MAX);
+    for (dst, light) in uniform
+        .lights
+        .iter_mut()
+        .zip(static_lights.0.iter().take(light_count))
+    {
+        let radius = light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25;
+        *dst = Vec4::new(light.world_x, light.world_y, light.world_z, radius);
+    }
+    uniform.params = UVec4::new(light_count as u32, 0, 0, 0);
+    uniform
+}
+
+fn land_static_light_signature(uniform: &LandStaticLightUniform) -> u64 {
+    let mut signature = uniform.params.x as u64;
+    for light in uniform.lights.iter().take(uniform.params.x as usize) {
+        for value in [
+            (light.x * 100.0).round() as i32,
+            (light.y * 100.0).round() as i32,
+            (light.z * 100.0).round() as i32,
+            (light.w * 100.0).round() as i32,
+        ] {
+            signature ^= value as u32 as u64;
+            signature = signature.wrapping_mul(0x100000001b3);
+        }
+    }
+    signature
 }
 
 use bevy::time::common_conditions::on_real_timer;
