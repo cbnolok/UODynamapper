@@ -3,7 +3,7 @@
 //! This package targets classic `anim*.mul` / `anim*.idx` mobile-animation
 //! sources plus Classic `AnimationFrame*.uop` packages when present. The atlas
 //! packer uses 4-pixel-aligned content extents so the same metadata remains
-//! valid when page payloads gain BC7 support later.
+//! valid for both RGBA8888 and BC7 page payloads.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,6 +21,10 @@ use uocf::classic::body_def::BodyDef;
 use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::UopPackage;
 
+use crate::bc7::{
+    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
+    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
 use crate::{resolve_packing_axis, AtlasPackingMode};
@@ -75,6 +79,7 @@ pub struct MobileAnimCcAtlasOptions {
     pub gutter: u16,
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
+    pub bc7_rdo_lambda: f32,
 }
 
 impl Default for MobileAnimCcAtlasOptions {
@@ -83,8 +88,9 @@ impl Default for MobileAnimCcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
-            pixel_format: PagePixelFormat::Rgba8888,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: 0.0,
         }
     }
 }
@@ -181,23 +187,17 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         })?;
     }
 
-    for page in &pages {
-        let page_path = page_entry_path(page.record.page_index, options.pixel_format);
-        let stored_page = crate::tex_art_cc::crop_rgba_page(
-            &page.pixels,
-            options.atlas_width,
-            page.record.used_width,
-            page.record.used_height,
-        );
+    let encoded_pages = encode_mobile_anim_pages(&pages, options)?;
+    for (page_path, stored_page, width, height) in &encoded_pages {
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: options.compression,
-            width: 0,
-            height: 0,
-            virtual_path: Some(&page_path),
+            width: *width,
+            height: *height,
+            virtual_path: Some(page_path),
             path_hash64: None,
             id: None,
-            data: &stored_page,
+            data: stored_page,
         })?;
     }
 
@@ -310,10 +310,76 @@ fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("mobile animation atlas dimensions must be non-zero");
     }
-    if options.pixel_format != PagePixelFormat::Rgba8888 {
-        eyre::bail!("mobile_anim_cc currently supports RGBA8888 pages only");
-    }
     Ok(())
+}
+
+fn encode_mobile_anim_pages(
+    pages: &[BuiltMobileAnimPage],
+    options: &MobileAnimCcAtlasOptions,
+) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
+    let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
+    let progress_len = if use_bc7 {
+        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
+    } else {
+        pages.len() as u64
+    };
+    let progress_message = if use_bc7 {
+        "compressing mobile animation BC7 atlas blocks"
+    } else {
+        "encoding mobile animation atlas pages"
+    };
+
+    let pb = ProgressBar::new(progress_len);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message(progress_message);
+
+    let mut encoded_pages = Vec::with_capacity(pages.len());
+    if use_bc7 {
+        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+        for page in pages {
+            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                &page.pixels,
+                extent,
+                RawImageFormat::Rgba8888,
+                encoding,
+                options.bc7_rdo_lambda,
+                |units| pb.inc(units as u64),
+            )
+            .map_err(|e| eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index))?
+            .into_bytes()
+            .to_vec();
+            encoded_pages.push((
+                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+                encoded,
+                options.atlas_width,
+                options.atlas_height,
+            ));
+        }
+    } else {
+        for page in pages {
+            pb.inc(1);
+            encoded_pages.push((
+                page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
+                crate::tex_art_cc::crop_rgba_page(
+                    &page.pixels,
+                    options.atlas_width,
+                    page.record.used_width,
+                    page.record.used_height,
+                ),
+                page.record.used_width,
+                page.record.used_height,
+            ));
+        }
+    }
+    pb.finish_with_message("Mobile animation atlas pages encoded");
+    Ok(encoded_pages)
 }
 
 fn decode_present_animations(
@@ -1128,6 +1194,7 @@ mod tests {
             gutter: 0,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
         };
         let mut records = vec![
             MobileAnimCcFrameRecord {
@@ -1174,6 +1241,7 @@ mod tests {
             gutter: 4,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,

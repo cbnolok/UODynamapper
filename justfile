@@ -345,10 +345,10 @@ uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
     fi
     echo "Converting common world packages..."
     cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "{{output_dir}}/tilemeta.uddp"
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp" --bc7
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp" --bc7
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp"
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp"
     if [ -n "{{ecdir}}" ]; then
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir "{{ecdir}}" --art-output "{{output_dir}}/tex_art_ec.uddp" --land-output "{{output_dir}}/tex_land_ec.uddp" --bc7
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir "{{ecdir}}" --art-output "{{output_dir}}/tex_art_ec.uddp" --land-output "{{output_dir}}/tex_land_ec.uddp"
     fi
     cargo run -p udd-conv-cli --bin udd-pack -- pack-lights "${SOURCE_ARGS[@]}" --output "{{output_dir}}/world_lights.uddp"
     cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir "{{ccdir}}" --output "{{output_dir}}/hues.uddp"

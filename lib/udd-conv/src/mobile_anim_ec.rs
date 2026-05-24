@@ -14,6 +14,10 @@ use uocf::enhanced::animationframe::AnimationFrame;
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
 
+use crate::bc7::{
+    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
+    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::{resolve_packing_axis, AtlasPackingMode};
@@ -72,6 +76,7 @@ pub struct MobileAnimEcAtlasOptions {
     pub gutter: u16,
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
+    pub bc7_rdo_lambda: f32,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -80,8 +85,9 @@ impl Default for MobileAnimEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            compression: CompressionFlag::ZstdNoDict,
-            pixel_format: PagePixelFormat::Rgba8888,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: 0.0,
         }
     }
 }
@@ -178,23 +184,17 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
         })?;
     }
 
-    for page in &pages {
-        let page_path = page_entry_path(page.record.page_index, options.pixel_format);
-        let stored_page = crate::tex_art_cc::crop_rgba_page(
-            &page.pixels,
-            options.atlas_width,
-            page.record.used_width,
-            page.record.used_height,
-        );
+    let encoded_pages = encode_mobile_anim_pages(&pages, options)?;
+    for (page_path, stored_page, width, height) in &encoded_pages {
         package.add_file(AddFileRequest {
             data_type: DataType::Texture as u8,
             compression: options.compression,
-            width: 0,
-            height: 0,
-            virtual_path: Some(&page_path),
+            width: *width,
+            height: *height,
+            virtual_path: Some(page_path),
             path_hash64: None,
             id: None,
-            data: &stored_page,
+            data: stored_page,
         })?;
     }
 
@@ -218,10 +218,76 @@ fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
     if options.atlas_width == 0 || options.atlas_height == 0 {
         eyre::bail!("EC mobile animation atlas dimensions must be non-zero");
     }
-    if options.pixel_format != PagePixelFormat::Rgba8888 {
-        eyre::bail!("mobile_anim_ec currently supports RGBA8888 pages only");
-    }
     Ok(())
+}
+
+fn encode_mobile_anim_pages(
+    pages: &[BuiltMobileAnimEcPage],
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
+    let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
+    let progress_len = if use_bc7 {
+        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
+    } else {
+        pages.len() as u64
+    };
+    let progress_message = if use_bc7 {
+        "compressing EC mobile animation BC7 atlas blocks"
+    } else {
+        "encoding EC mobile animation atlas pages"
+    };
+
+    let pb = ProgressBar::new(progress_len);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message(progress_message);
+
+    let mut encoded_pages = Vec::with_capacity(pages.len());
+    if use_bc7 {
+        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+        for page in pages {
+            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                &page.pixels,
+                extent,
+                RawImageFormat::Rgba8888,
+                encoding,
+                options.bc7_rdo_lambda,
+                |units| pb.inc(units as u64),
+            )
+            .map_err(|e| eyre::eyre!("BC7 encode EC mobile animation page {}: {e}", page.record.page_index))?
+            .into_bytes()
+            .to_vec();
+            encoded_pages.push((
+                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+                encoded,
+                options.atlas_width,
+                options.atlas_height,
+            ));
+        }
+    } else {
+        for page in pages {
+            pb.inc(1);
+            encoded_pages.push((
+                page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
+                crate::tex_art_cc::crop_rgba_page(
+                    &page.pixels,
+                    options.atlas_width,
+                    page.record.used_width,
+                    page.record.used_height,
+                ),
+                page.record.used_width,
+                page.record.used_height,
+            ));
+        }
+    }
+    pb.finish_with_message("EC mobile animation atlas pages encoded");
+    Ok(encoded_pages)
 }
 
 fn discover_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
@@ -875,6 +941,7 @@ mod tests {
             gutter: 0,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -896,6 +963,7 @@ mod tests {
             gutter: 4,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
         };
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 4, 4)], &options).unwrap();
         let (animations, frames) = build_animation_records(
@@ -987,6 +1055,7 @@ mod tests {
             gutter: 4,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
         };
         let (_, placements) = pack_frames_into_pages(source_frames[&42].clone(), &options).unwrap();
         let (animations, frames) = build_animation_records(&source_frames, &placements, &HashMap::new()).unwrap();
