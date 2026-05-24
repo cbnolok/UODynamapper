@@ -167,7 +167,7 @@ fn reduce_entropy_bc7_impl(
             continue; // Invalid block or mode 8 (reserved)
         }
 
-        let cur_err = decode_bc7_error_bounded(&orig_blk, p_pixels, bc7_mode, u64::MAX, stats.as_deref_mut())
+        let cur_err = decode_bc7_error_bounded(&orig_blk, p_pixels, bc7_mode, true, u64::MAX, stats.as_deref_mut())
             .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
@@ -291,6 +291,7 @@ fn reduce_entropy_bc7_impl(
                                 &trial_blk,
                                 p_pixels,
                                 bc7_mode,
+                                false,
                                 max_trial_err,
                                 stats.as_deref_mut(),
                             ) else {
@@ -405,6 +406,7 @@ fn reduce_entropy_bc7_impl(
                             &trial_blk,
                             p_pixels,
                             bc7_mode,
+                            true,
                             max_trial_err,
                             stats.as_deref_mut(),
                         ) else {
@@ -480,6 +482,7 @@ fn reduce_entropy_bc7_impl(
                             &trial_blk,
                             p_pixels,
                             bc7_mode,
+                            !params.allow_relative_movement,
                             max_trial_err,
                             stats.as_deref_mut(),
                         ) else {
@@ -533,11 +536,17 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error
 fn decode_bc7_error_bounded(
     block: &[u8; 16],
     source: &[[u8; 4]],
-    _mode_hint: u32,
+    mode_hint: u32,
+    trust_mode_hint: bool,
     max_error: u64,
     mut stats: Option<&mut Bc7RdoStats>,
 ) -> Option<u64> {
-    let mode = get_bc7_mode(block);
+    let mode = if trust_mode_hint {
+        debug_assert_eq!(get_bc7_mode(block), mode_hint);
+        mode_hint
+    } else {
+        get_bc7_mode(block)
+    };
     if let Some(stats) = stats.as_deref_mut() {
         if mode < 8 {
             stats.decode_mode_trials[mode as usize] += 1;
@@ -1527,7 +1536,7 @@ mod tests {
         let mut sse = 0u64;
         for (block_index, block) in blocks.iter().enumerate() {
             let pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
-            sse += decode_bc7_error_bounded(block, pixels, get_bc7_mode(block), u64::MAX, None)
+            sse += decode_bc7_error_bounded(block, pixels, get_bc7_mode(block), true, u64::MAX, None)
                 .expect("RDO should only emit supported BC7 modes");
         }
         sse as f32 / (blocks.len() * 16 * 4) as f32
