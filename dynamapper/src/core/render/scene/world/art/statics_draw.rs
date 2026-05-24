@@ -82,6 +82,10 @@ pub struct ArtGroundMaterialExtension {
     #[texture(109, visibility(fragment))]
     #[sampler(108, visibility(fragment))]
     pub hues: Handle<Image>,
+    #[texture(111, dimension = "2d_array", visibility(fragment))]
+    pub land_page_atlas: Handle<Image>,
+    #[texture(112, sample_type = "u_int", visibility(fragment))]
+    pub land_page_lookup: Handle<Image>,
 }
 
 #[derive(Resource, Clone)]
@@ -96,6 +100,12 @@ pub struct ArtGroundRenderAssets {
     pub mesh: Handle<Mesh>,
     pub opaque_material: Handle<ArtGroundMaterial>,
     pub transparent_material: Handle<ArtGroundMaterial>,
+}
+
+#[derive(Clone)]
+struct LandPageBindingHandles {
+    atlas: Handle<Image>,
+    lookup: Handle<Image>,
 }
 
 #[derive(Resource, Default)]
@@ -403,6 +413,58 @@ fn create_hue_lookup_image(
     (images.add(image), hue_enabled)
 }
 
+fn create_blank_land_page_binding_images(images: &mut Assets<Image>) -> LandPageBindingHandles {
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    };
+
+    let mut atlas = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0u8; 4],
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    atlas.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let mut lookup = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0u8; 16],
+        TextureFormat::Rgba32Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+
+    LandPageBindingHandles {
+        atlas: images.add(atlas),
+        lookup: images.add(lookup),
+    }
+}
+
+fn land_page_binding_handles(
+    shared_land_material: Option<&world::land::draw_mesh::SharedLandMaterial>,
+    land_materials: &Assets<world::land::mesh_material::LandCustomMeshMaterial>,
+) -> Option<LandPageBindingHandles> {
+    let material = land_materials.get(&shared_land_material?.0)?;
+    Some(LandPageBindingHandles {
+        atlas: material.extension.land_page_atlas.clone(),
+        lookup: material.extension.land_page_lookup.clone(),
+    })
+}
+
 fn build_art_atlas(images: &mut Assets<Image>, spec: AtlasAllocationSpec) -> ArtPageAtlas {
     let handle = create_art_atlas_image(
         images,
@@ -598,9 +660,11 @@ pub fn sys_setup_art_page_atlas(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    land_materials: Res<Assets<world::land::mesh_material::LandCustomMeshMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
     settings: Res<Settings>,
+    shared_land_material: Option<Res<world::land::draw_mesh::SharedLandMaterial>>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
@@ -629,6 +693,9 @@ pub fn sys_setup_art_page_atlas(
     let ground_atlas_handle = ground_atlas.gpu_handle.clone();
     let (hue_lookup_handle, hue_enabled) =
         create_hue_lookup_image(&mut images, hues_package_res.as_deref());
+    let land_page_bindings =
+        land_page_binding_handles(shared_land_material.as_deref(), &land_materials)
+            .unwrap_or_else(|| create_blank_land_page_binding_images(&mut images));
 
     let initial_buffer = ShaderStorageBuffer::from(vec![SpriteInstance {
         world_x: 0.0,
@@ -729,7 +796,8 @@ pub fn sys_setup_art_page_atlas(
         texture_stretch: 0.0,
         hue_id: 0,
         hue_flags: 0,
-        _pad_hue: [0; 2],
+        material_payload: 0,
+        material_flags: 0,
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -760,6 +828,8 @@ pub fn sys_setup_art_page_atlas(
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
+            land_page_atlas: land_page_bindings.atlas.clone(),
+            land_page_lookup: land_page_bindings.lookup.clone(),
         },
     });
 
@@ -786,6 +856,8 @@ pub fn sys_setup_art_page_atlas(
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle,
+            land_page_atlas: land_page_bindings.atlas,
+            land_page_lookup: land_page_bindings.lookup,
         },
     });
 
@@ -1294,8 +1366,10 @@ pub fn sys_update_ground_instance_buffer(
 pub fn sys_update_art_materials(
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
     mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
+    land_materials: Res<Assets<world::land::mesh_material::LandCustomMeshMaterial>>,
     sprite_assets: Option<Res<ArtSpriteRenderAssets>>,
     ground_assets: Option<Res<ArtGroundRenderAssets>>,
+    shared_land_material: Option<Res<world::land::draw_mesh::SharedLandMaterial>>,
     render_zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
@@ -1309,6 +1383,19 @@ pub fn sys_update_art_materials(
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
     let uniforms_dirty = uniform_state.dirty;
+    let land_page_bindings =
+        land_page_binding_handles(shared_land_material.as_deref(), &land_materials);
+
+    if let (Some(assets), Some(bindings)) = (ground_assets.as_ref(), land_page_bindings.as_ref()) {
+        if let Some(mat) = ground_materials.get_mut(&assets.opaque_material) {
+            mat.extension.land_page_atlas = bindings.atlas.clone();
+            mat.extension.land_page_lookup = bindings.lookup.clone();
+        }
+        if let Some(mat) = ground_materials.get_mut(&assets.transparent_material) {
+            mat.extension.land_page_atlas = bindings.atlas.clone();
+            mat.extension.land_page_lookup = bindings.lookup.clone();
+        }
+    }
 
     if !lighting_meaningfully_changed && !zoom_changed && !uniforms_dirty {
         return;

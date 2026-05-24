@@ -24,7 +24,8 @@ struct GroundTileInstance {
     texture_stretch: f32,
     hue_id: u32,
     hue_flags: u32,
-    _pad_hue: vec2<u32>,
+    material_payload: u32,
+    material_flags: u32,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -48,6 +49,8 @@ struct SpriteParams {
 @group(3) @binding(107) var<uniform> global_light: GlobalLightingUniforms;
 @group(3) @binding(108) var hue_sampler: sampler;
 @group(3) @binding(109) var hue_texture: texture_2d<f32>;
+@group(3) @binding(111) var land_page_atlas: texture_2d_array<f32>;
+@group(3) @binding(112) var land_page_lookup: texture_2d<u32>;
 
 const HEIGHT_SCALE: f32 = 0.1;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;
@@ -58,3 +61,4 @@ const PASS_MODE_OPAQUE: u32 = 0u;
 const PASS_MODE_TRANSPARENT: u32 = 1u;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON: f32 = 0.000001;
+const GROUND_FLAG_EC_WATER_MATERIAL: u32 = 1u;

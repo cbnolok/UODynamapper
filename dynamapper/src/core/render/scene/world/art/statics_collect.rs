@@ -35,6 +35,7 @@ const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
+const GROUND_FLAG_EC_WATER_MATERIAL: u32 = 1;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
 
@@ -726,7 +727,8 @@ pub struct GroundTileInstance {
     pub texture_stretch: f32,
     pub hue_id: u32,
     pub hue_flags: u32,
-    pub _pad_hue: [u32; 2],
+    pub material_payload: u32,
+    pub material_flags: u32,
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4],
 }
@@ -1473,6 +1475,14 @@ pub fn sys_collect_visible_statics(
                                 if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
                                     chunk_stats.ground_land_tiles += 1;
                                     let bounds = resolve_surface_like_ground_quad_bounds();
+                                    let material_flags =
+                                        if is_wet_flags != 0 { GROUND_FLAG_EC_WATER_MATERIAL } else { 0 };
+                                    let material_payload =
+                                        if material_flags & GROUND_FLAG_EC_WATER_MATERIAL != 0 {
+                                            CLASSIC_WATER_LAND_TILE_ID
+                                        } else {
+                                            0
+                                        };
                                     chunk_ground_instances.push(GroundTileInstance {
                                         world_x: anchored_world_x,
                                         world_z: anchored_world_z,
@@ -1492,7 +1502,8 @@ pub fn sys_collect_visible_statics(
                                         texture_stretch,
                                         hue_id,
                                         hue_flags,
-                                        _pad_hue: [0; 2],
+                                        material_payload,
+                                        material_flags,
                                         local_light_rgba,
                                         color_rgba: [1.0, 1.0, 1.0, 1.0],
                                     });
