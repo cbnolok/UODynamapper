@@ -133,6 +133,15 @@ fn shade_mode2_kr_fragment(base_albedo_in: vec3<f32>,
   let hemi_gain = min(headroom, hemi_luma * hemi_chroma_tint);
   color += base_albedo_in * (hemi_chroma * hemi_gain);
 
+  // KR-style temperature separation: cooled, slightly compressed shadow
+  // slopes against a restrained warm sun side.
+  let sun_mask = smoothstep(0.22, 0.88, lam_shaped);
+  let shadow_mask = 1.0 - smoothstep(0.10, 0.58, max(raw_ndotl, 0.0));
+  let color_luma = luminance(color);
+  color = mix(color, vec3<f32>(color_luma), shadow_mask * 0.16);
+  color *= mix(vec3<f32>(1.0), vec3<f32>(0.82, 0.90, 1.06), shadow_mask * 0.20);
+  color *= mix(vec3<f32>(1.0), vec3<f32>(1.08, 1.03, 0.94), sun_mask * 0.14);
+
   // Rim (colored + neutral, headroom-gated)
   if (rim_strength > 0.001) {
     let rim_power = max(0.1, land_light.rim_color.a);
