@@ -9,7 +9,7 @@ use uocf::uop_container::package::{LoadMode, UopPackage};
 
 const HUE_SWATCH_COUNT: usize = 32;
 const PAPERDOLL_PROFILE_KDL: &str =
-    include_str!("../../../../dynamapper/assets/cc_ec_convtables/PaperdollProfiles.kdl");
+    include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/PaperdollProfiles.kdl");
 
 #[derive(Clone)]
 struct PaperdollProfile {

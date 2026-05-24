@@ -12,13 +12,12 @@ color-eyre = "0.6.5"
 udd-conv = { path = "../../lib/udd-conv" }
 udd-conv-ktx2 = { path = "../../lib/udd-conv-ktx2" }
 uocf = { path = "../../lib/uocf" }
-udd-assets = { path = "../../lib/udd-assets" }
 udd-conv-cli = { path = "../udd-conv-cli" }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }
 ktx2 = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "dds"] }
+image = { version = "0.25", default-features = false, features = ["png", "dds"] }
 zstd = "0.13"
 
 [features]

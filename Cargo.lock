@@ -8037,7 +8037,6 @@ dependencies = [
  "serde",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
- "udd-assets",
  "udd-conv",
  "udd-conv-cli",
  "udd-conv-ktx2",
@@ -8196,7 +8195,6 @@ dependencies = [
  "indicatif 0.17.11",
  "log",
  "serde",
- "serde_json",
  "toml 0.8.23",
  "uocf",
  "walkdir",
@@ -8206,7 +8204,6 @@ dependencies = [
 name = "uocf-inspector-gui"
 version = "0.1.0"
 dependencies = [
- "byteorder",
  "color-eyre",
  "eframe",
  "egui 0.31.1",
@@ -8235,7 +8232,6 @@ dependencies = [
  "env_logger",
  "rfd 0.15.4",
  "serde",
- "serde_json",
  "toml 0.8.23",
  "uocf",
 ]
