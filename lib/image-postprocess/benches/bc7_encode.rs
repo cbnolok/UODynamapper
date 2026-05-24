@@ -176,7 +176,7 @@ fn run_case(
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} modes={:?} fused_m1={} fused_m4={} fused_m6={} fused_m7={} fallback_decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} modes={:?} fused_m0={} fused_m1={} fused_m2={} fused_m3={} fused_m4={} fused_m5={} fused_m6={} fused_m7={} unsupported_modes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
@@ -186,11 +186,15 @@ fn run_case(
                 stats.original_block_skips,
                 stats.decode_trials,
                 stats.decode_mode_trials,
+                stats.fused_mode0_trials,
                 stats.fused_mode1_trials,
+                stats.fused_mode2_trials,
+                stats.fused_mode3_trials,
                 stats.fused_mode4_trials,
+                stats.fused_mode5_trials,
                 stats.fused_mode6_trials,
                 stats.fused_mode7_trials,
-                stats.fallback_decode_trials,
+                stats.unsupported_mode_trials,
                 stats.bounded_error_exits,
                 stats.accepted_matches,
                 stats.modified_blocks
