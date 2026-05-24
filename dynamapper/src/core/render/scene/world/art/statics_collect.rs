@@ -410,15 +410,15 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return None;
     };
 
+    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+        return Some(resolution);
+    }
+
     let main_ec_texture_id = tilemeta_package
         .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
         .map(|texture_ref| texture_ref.texture_id)
         .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
     let Some(main_ec_texture_id) = main_ec_texture_id else {
-        if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
-            return Some(resolution);
-        }
-
         return package
             .resolve_runtime_slot_id(meta.cc_texture_id)
             .map(|runtime_slot_id| {
@@ -466,10 +466,6 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return alias_slots.into_iter().next().map(|runtime_slot_id| {
             surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
         });
-    }
-
-    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
-        return Some(resolution);
     }
 
     package
@@ -525,11 +521,15 @@ fn surface_like_legacy_ec_texture_id_fallback(
     Some(tilemeta.ec_texture_id)
 }
 
+fn surface_like_prefers_water_material(tilemeta: &udd_assets::tilemeta::TileMetaItemTile) -> bool {
+    tilemeta.flags & TILE_FLAG_WET != 0
+}
+
 fn wet_surface_like_water_resolution(
     tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
-    if tilemeta.flags & TILE_FLAG_WET == 0 {
+    if !surface_like_prefers_water_material(tilemeta) {
         return None;
     }
 
@@ -1697,6 +1697,24 @@ mod tests {
 
         assert!(static_tile_is_surface_like(Some(&tile)));
         assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+    }
+
+    #[test]
+    fn wet_surface_like_tiles_prefer_water_material_over_tileart_refs() {
+        let tile = item_tile_with_flags(
+            TILE_FLAG_WET,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+
+        assert!(surface_like_prefers_water_material(&tile));
+    }
+
+    #[test]
+    fn dry_surface_like_tiles_do_not_force_water_material() {
+        let tile =
+            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+
+        assert!(!surface_like_prefers_water_material(&tile));
     }
 
     #[test]
