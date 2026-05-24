@@ -13,3 +13,8 @@ knuffel = "3"
 serde_json = "1"
 wgpu-types = "27"
 dds = "0.2"
+image-postprocess = { path = "../image-postprocess", optional = true }
+
+[features]
+default = []
+bc7-encode = ["dep:image-postprocess"]

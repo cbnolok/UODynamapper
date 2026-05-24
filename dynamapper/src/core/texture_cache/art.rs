@@ -14,7 +14,7 @@ use crate::{
     },
     prelude::*,
 };
-use udd_conv::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
+use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat};
 use udd_assets::{
     tex_art_cc::{TexArtCcPackage, PagePixelFormat},
     tex_art_ec::TexArtEcPackage,

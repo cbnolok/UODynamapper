@@ -15,7 +15,7 @@ use bevy::{
     },
 };
 use std::sync::OnceLock;
-use udd_conv::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
+use udd_assets::bc7::{Bc7EncoderBackend, ImageExtent, VramTextureEncoding, VramTextureFormat};
 use uocf::classic::land_texture::LandTextureSize;
 
 //pub const TEXTURE_UNUSED_ID: u32 = 0x007F;

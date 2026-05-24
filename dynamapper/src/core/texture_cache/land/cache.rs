@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use udd_conv::bc7::{self, RawImageFormat, TextureUploadLayout};
+use udd_assets::bc7::{self, RawImageFormat, TextureUploadLayout};
 use uocf::classic::land_texture::LandTextureSize;
 
 #[derive(Resource, Clone, ExtractResource)]

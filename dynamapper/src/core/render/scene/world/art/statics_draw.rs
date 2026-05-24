@@ -25,7 +25,7 @@ use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
 use bevy::render::storage::ShaderStorageBuffer;
 use std::collections::HashMap;
 use udd_assets::tex_art_cc::PagePixelFormat;
-use udd_conv::bc7::{ImageExtent, VramTextureFormat};
+use udd_assets::bc7::{ImageExtent, VramTextureFormat};
 
 #[derive(ShaderType, Clone)]
 pub struct SpriteParams {

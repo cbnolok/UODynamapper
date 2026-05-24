@@ -11,8 +11,7 @@ manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-udd-assets = { path = "../lib/udd-assets" }
-udd-conv = { path = "../lib/udd-conv" }
+udd-assets = { path = "../lib/udd-assets", features = ["bc7-encode"] }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
 bevy_framepace = { version = "0.21", default-features = false }
