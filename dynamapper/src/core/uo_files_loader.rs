@@ -15,7 +15,6 @@ use std::sync::Arc;
 use udd_assets::AtlasCacheOptions;
 use udd_assets::tilemeta::TileMetaPackage;
 use udd_container::{UddpReader, UddpReaderOptions};
-use uocf::classic::map::MapSizeCells;
 
 const MAX_MAP_INDEX: u32 = 5; // inclusive max, so map0..=map5
 
@@ -207,16 +206,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                 SourceContainerKind::Uddp,
                 std::slice::from_ref(&map_path),
             );
-            let map_size_override =
-                settings
-                    .maps
-                    .as_ref()
-                    .and_then(|maps| maps.map_size(map_plane_index))
-                    .map(|map_size| MapSizeCells {
-                        width: map_size.width,
-                        height: map_size.height,
-                    });
-            let map_plane = MapPlane::load(map_path.clone(), map_plane_index, map_size_override)
+            let map_plane = MapPlane::load(map_path.clone(), map_plane_index)
                 .unwrap_or_else(|_| panic!("Error initializing map plane {map_plane_index}"));
 
             let statics_file_name = format!("statics{map_plane_index}.uddp");

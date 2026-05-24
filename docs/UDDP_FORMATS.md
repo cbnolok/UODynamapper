@@ -31,7 +31,7 @@ The final dense id has data type `Metadata` and stores:
 | 0x10 | `u32` | `height_tiles` | Map height in tiles. |
 | 0x14 | `u32` | `chunk_count` | Number of 32x32 chunk records before the metadata record. |
 
-Runtime loading prefers this metadata, then falls back to optional legacy `maps.toml`, then known standard-size inference for older packages.
+Runtime loading requires this metadata; map dimensions are no longer configured through TOML.
 
 ---
 

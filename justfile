@@ -329,6 +329,66 @@ run-tool-release tool *args:
     {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin {{tool}} -- {{args}}
 
+# Convert all runtime UDDP packages from Classic and Enhanced Client sources
+[unix]
+uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{ccdir}}" ]; then
+        echo "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]"
+        exit 2
+    fi
+    mkdir -p "{{output_dir}}"
+    SOURCE_ARGS=(--ccdir "{{ccdir}}")
+    if [ -n "{{ecdir}}" ]; then
+        SOURCE_ARGS+=(--ecdir "{{ecdir}}")
+    fi
+    echo "Converting common world packages..."
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "{{output_dir}}/tilemeta.uddp"
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp" --bc7
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp" --bc7
+    if [ -n "{{ecdir}}" ]; then
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir "{{ecdir}}" --art-output "{{output_dir}}/tex_art_ec.uddp" --land-output "{{output_dir}}/tex_land_ec.uddp" --land-bc7
+    fi
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-lights "${SOURCE_ARGS[@]}" --output "{{output_dir}}/world_lights.uddp"
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir "{{ccdir}}" --output "{{output_dir}}/hues.uddp"
+    IFS=',' read -ra MAP_IDS <<< "{{maps}}"
+    for map_id in "${MAP_IDS[@]}"; do
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-map --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/map${map_id}.uddp"
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-statics --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/statics${map_id}.uddp"
+    done
+    just uddconv-animations "{{ccdir}}" "{{ecdir}}" "{{output_dir}}"
+    just uddconv-gumps "{{ccdir}}" "{{output_dir}}"
+
+# Convert only mobile animation packages
+[unix]
+uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{ccdir}}" ] && [ -z "{{ecdir}}" ]; then
+        echo "usage: just uddconv-animations [ccdir] [ecdir] [output_dir]"
+        exit 2
+    fi
+    mkdir -p "{{output_dir}}"
+    if [ -n "{{ccdir}}" ]; then
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-mobile-anims --ccdir "{{ccdir}}" --output "{{output_dir}}/mobile_anim_cc.uddp"
+    fi
+    if [ -n "{{ecdir}}" ]; then
+        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-mobile-anims --ecdir "{{ecdir}}" --output "{{output_dir}}/mobile_anim_ec.uddp"
+    fi
+
+# Convert only Classic gump packages
+[unix]
+uddconv-gumps ccdir="" output_dir="target/uddp":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{ccdir}}" ]; then
+        echo "usage: just uddconv-gumps <ccdir> [output_dir]"
+        exit 2
+    fi
+    mkdir -p "{{output_dir}}"
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir "{{ccdir}}" --output "{{output_dir}}/gumps_cc.uddp"
+
 
 # --- Maintenance ---
 

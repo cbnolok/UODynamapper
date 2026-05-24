@@ -13,6 +13,7 @@ use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
+    cc_gumps::{convert_gumps_to_uddp_from_sources_with_patches, GUMPS_CC_DEFAULT_OUTPUT},
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
     hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
@@ -704,6 +705,15 @@ enum Commands {
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
         no_compression: bool,
     },
+    /// Packs Classic gumpidx.mul/gumpart.mul or gumpartLegacyMUL.uop into gumps_cc.uddp.
+    PackGumps {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
+        #[arg(long, default_value = GUMPS_CC_DEFAULT_OUTPUT)]
+        output: PathBuf,
+    },
 }
 
 pub fn run() -> eyre::Result<()> {
@@ -1304,6 +1314,24 @@ pub fn run() -> eyre::Result<()> {
                 &HuesOptions { compression },
             )?;
             println!("Wrote hues.uddp to '{}'.", out_file.display());
+        }
+        Commands::PackGumps {
+            source_dirs: source_dir_args,
+            classic_patches,
+            output,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = convert_gumps_to_uddp_from_sources_with_patches(
+                &paths,
+                &out_file,
+                &classic_patches.into(),
+            )?;
+            println!(
+                "Wrote {} gumps to '{}'.",
+                summary.gump_count,
+                out_file.display()
+            );
         }
     }
 

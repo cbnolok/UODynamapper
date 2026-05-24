@@ -1,0 +1,84 @@
+//! Build-time support for `gumps_cc.uddp`.
+
+use byteorder::{LittleEndian, WriteBytesExt};
+use color_eyre::eyre::{self, WrapErr};
+use indicatif::{ProgressBar, ProgressStyle};
+use std::path::{Path, PathBuf};
+use uocf::classic::gump::GumpMap;
+use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
+use crate::package_progress::build_and_write_package;
+use crate::source_paths::find_first_existing_file;
+
+pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
+
+pub struct CcGumpsBuildSummary {
+    pub gump_count: u32,
+}
+
+pub fn convert_gumps_to_uddp_from_sources_with_patches(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<CcGumpsBuildSummary> {
+    let source_root = find_first_existing_file(source_dirs, &["gumpidx.mul", "gumpartLegacyMUL.uop"])
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .ok_or_else(|| eyre::eyre!("missing Classic gump source"))?;
+
+    let mut gumps = GumpMap::load(&source_root)
+        .wrap_err_with(|| format!("load Classic gumps from {}", source_root.display()))?;
+    if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+        gumps = gumps.with_verdata(verdata);
+    }
+
+    let max_id = gumps.max_id();
+    let pb = ProgressBar::new(u64::from(max_id) + 1);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} gumps ({eta})")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+
+    let mut builder = UddpBuilder::new(LookupMode::SparseId);
+    let mut scratch = Vec::new();
+    let mut gump_count = 0u32;
+
+    for gump_id in 0..=max_id {
+        pb.inc(1);
+        if !gumps.has_id(gump_id) {
+            continue;
+        }
+
+        let (width, height, rgba) = match gumps.decode_gump(gump_id, &mut scratch) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                log::warn!("Skipping gump {gump_id}: {error}");
+                continue;
+            }
+        };
+
+        let mut payload = Vec::with_capacity(8 + rgba.len());
+        payload.write_u32::<LittleEndian>(u32::from(width))?;
+        payload.write_u32::<LittleEndian>(u32::from(height))?;
+        payload.extend_from_slice(&rgba);
+
+        builder.add_file(AddFileRequest {
+            data_type: DataType::Gump as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: u32::from(width),
+            height: u32::from(height),
+            virtual_path: None,
+            path_hash64: None,
+            id: Some(gump_id),
+            data: &payload,
+        })?;
+        gump_count += 1;
+    }
+
+    pb.finish_with_message("Gumps packed");
+    build_and_write_package(&mut builder, output_path)?;
+
+    Ok(CcGumpsBuildSummary { gump_count })
+}

@@ -23,7 +23,6 @@ pub struct Settings {
     pub session_state: SectSessionState,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
-    pub maps: Option<SectMaps>,
     pub world_rendering: SectWorldRendering,
 }
 
@@ -97,11 +96,6 @@ pub struct SectWindow {
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
-}
-
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub struct SectMaps {
-    pub maps: Vec<SectMapSize>,
 }
 
 #[derive(Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -199,19 +193,6 @@ impl Default for SectLandStreaming {
             upload_max_bytes_per_frame: default_land_upload_max_bytes_per_frame(),
         }
     }
-}
-
-impl SectMaps {
-    pub fn map_size(&self, map_id: u32) -> Option<&SectMapSize> {
-        self.maps.iter().find(|map| map.id == map_id)
-    }
-}
-
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub struct SectMapSize {
-    pub id: u32,
-    pub width: u32,
-    pub height: u32,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -405,7 +386,6 @@ const USER_PREFERENCES_CONFIG_FILE: &str = "settings/user_preferences.toml";
 const SESSION_STATE_CONFIG_FILE: &str = "settings/session_state.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
-const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
 const WORLD_RENDERING_CONFIG_FILE: &str = "settings/world_rendering.toml";
 
 pub fn load_from_files() -> Settings {
@@ -415,7 +395,6 @@ pub fn load_from_files() -> Settings {
     let runtime_assets_path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
     let user_path = assets_path.join(USER_PREFERENCES_CONFIG_FILE);
     let session_state_path = assets_path.join(SESSION_STATE_CONFIG_FILE);
-    let maps_path = assets_path.join(MAPS_CONFIG_FILE);
     let world_rendering_path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
 
     let core_contents =
@@ -483,17 +462,6 @@ pub fn load_from_files() -> Settings {
         "Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml",
     );
 
-    let maps: Option<SectMaps> = if maps_path.exists() {
-        let maps_contents = std::fs::read_to_string(&maps_path).expect(
-            "Failed to read maps.toml — please ensure assets/settings/maps.toml is valid",
-        );
-        Some(toml::from_str(&maps_contents).expect(
-            "Failed to parse maps.toml — please fix the file in assets/settings/maps.toml",
-        ))
-    } else {
-        None
-    };
-
     let world_rendering_contents = std::fs::read_to_string(&world_rendering_path).expect(
         "Failed to read settings/world_rendering.toml — please ensure assets/settings/world_rendering.toml exists",
     );
@@ -511,7 +479,6 @@ pub fn load_from_files() -> Settings {
         session_state,
         logging: core_data.logging,
         keybindings,
-        maps,
         world_rendering,
     }
 }
@@ -738,38 +705,6 @@ pub fn save_runtime_assets_settings(settings: &Settings) {
     }
 }
 
-pub fn save_maps_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(MAPS_CONFIG_FILE);
-
-    let Some(maps) = settings.maps.as_ref() else {
-        return;
-    };
-
-    match toml::to_string_pretty(maps) {
-        Ok(toml_str) => {
-            if let Err(e) = std::fs::write(&path, toml_str) {
-                console_logger::one(
-                    LogSev::Error,
-                    LogAbout::Settings,
-                    &format!("Failed to save maps.toml: {}", e),
-                );
-            } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved maps.toml");
-            }
-        }
-        Err(e) => {
-            console_logger::one(
-                LogSev::Error,
-                LogAbout::Settings,
-                &format!("Failed to serialize maps settings: {}", e),
-            );
-        }
-    }
-}
-
-// ----
-
 #[derive(Clone, PartialEq)]
 struct SettingsSaveSnapshot {
     app: SectApp,
@@ -779,7 +714,6 @@ struct SettingsSaveSnapshot {
     core: SectCore,
     logging: SectLogging,
     runtime_assets: SectRuntimeAssets,
-    maps: Option<SectMaps>,
     world_rendering: SectWorldRendering,
 }
 
@@ -793,7 +727,6 @@ impl SettingsSaveSnapshot {
             core: settings.core.clone(),
             logging: settings.logging.clone(),
             runtime_assets: settings.runtime_assets.clone(),
-            maps: settings.maps.clone(),
             world_rendering: settings.world_rendering.clone(),
         }
     }
@@ -807,7 +740,6 @@ impl SettingsSaveSnapshot {
             core: self.core != other.core,
             logging: self.logging != other.logging,
             runtime_assets: self.runtime_assets != other.runtime_assets,
-            maps: self.maps != other.maps,
             world_rendering: self.world_rendering != other.world_rendering,
         }
     }
@@ -822,7 +754,6 @@ struct SettingsChangeSet {
     core: bool,
     logging: bool,
     runtime_assets: bool,
-    maps: bool,
     world_rendering: bool,
 }
 
@@ -835,7 +766,6 @@ impl SettingsChangeSet {
             || self.core
             || self.logging
             || self.runtime_assets
-            || self.maps
             || self.world_rendering
     }
 }
@@ -1108,10 +1038,6 @@ fn sys_debounced_save(
 
             if changes.runtime_assets {
                 save_runtime_assets_settings(&settings);
-            }
-
-            if changes.maps {
-                save_maps_settings(&settings);
             }
 
             if changes.world_rendering {

@@ -47,7 +47,6 @@ impl MapPlane {
     pub fn load(
         package_path: PathBuf,
         map_index: u32,
-        map_size_tiles_override: Option<MapSizeCells>,
     ) -> eyre::Result<Self> {
         let package_path = package_path
             .canonicalize()
@@ -60,17 +59,11 @@ impl MapPlane {
 
         let records = package.records();
         let package_metadata = read_map_package_metadata(&package, map_index, &records)?;
-        let total_blocks = package_metadata
-            .map(|metadata| metadata.chunk_count)
-            .unwrap_or(records.len() as u32);
-        let map_size_tiles = match (package_metadata, map_size_tiles_override) {
-            (Some(metadata), _) => validate_map_size_override(MapSizeCells {
-                width: metadata.width_tiles,
-                height: metadata.height_tiles,
-            })?,
-            (None, Some(size)) => validate_map_size_override(size)?,
-            (None, None) => infer_map_size_tiles(map_index, total_blocks)?,
-        };
+        let total_blocks = package_metadata.chunk_count;
+        let map_size_tiles = validate_map_size(MapSizeCells {
+            width: package_metadata.width_tiles,
+            height: package_metadata.height_tiles,
+        })?;
         let size_blocks = MapSizeBlocks {
             width: map_size_tiles.width / MapBlock::CELLS_PER_ROW,
             height: map_size_tiles.height / MapBlock::CELLS_PER_COLUMN,
@@ -247,20 +240,22 @@ fn read_map_package_metadata(
     package: &UddpReader,
     map_index: u32,
     records: &[FileRecord],
-) -> eyre::Result<Option<MapPackageMetadata>> {
-    let Some(record) = records.last() else {
-        return Ok(None);
-    };
+) -> eyre::Result<MapPackageMetadata> {
+    let record = records
+        .last()
+        .ok_or_else(|| eyre::eyre!("map package has no records"))?;
     if unpack_type(record.locator.meta32) != DataType::Metadata as u8 {
-        return Ok(None);
+        return Err(eyre::eyre!("map package is missing its final metadata record"));
     }
 
     let FileKey::Id(id) = record.key else {
-        return Ok(None);
+        return Err(eyre::eyre!("map package metadata record is not dense-id addressed"));
     };
     let expected_id = records.len().saturating_sub(1) as u32;
     if id != expected_id {
-        return Ok(None);
+        return Err(eyre::eyre!(
+            "map package metadata record id {id} does not match expected final id {expected_id}"
+        ));
     }
 
     let bytes = package
@@ -287,46 +282,14 @@ fn read_map_package_metadata(
         ));
     }
 
-    Ok(Some(metadata))
+    Ok(metadata)
 }
 
-fn validate_map_size_override(size: MapSizeCells) -> eyre::Result<MapSizeCells> {
+fn validate_map_size(size: MapSizeCells) -> eyre::Result<MapSizeCells> {
     if size.width % MapBlock::CELLS_PER_ROW != 0 || size.height % MapBlock::CELLS_PER_COLUMN != 0 {
-        Err(eyre::eyre!("Invalid manual map size"))
+        Err(eyre::eyre!("Invalid map package dimensions"))
     } else {
         Ok(size)
-    }
-}
-
-fn infer_map_size_tiles(map_index: u32, total_chunks: u32) -> eyre::Result<MapSizeCells> {
-    let candidates: &[(u32, u32)] = match map_index {
-        0..=1 => &[(6144, 4096), (7168, 4096)],
-        2 => &[(2304, 1600)],
-        3 => &[(2560, 2048)],
-        4 => &[(1448, 1448)],
-        5 => &[(1280, 4096)],
-        _ => return Err(eyre::eyre!("Invalid map number")),
-    };
-
-    let matches = candidates
-        .iter()
-        .filter_map(|&(width, height)| {
-            let width_blocks = width / MapBlock::CELLS_PER_ROW;
-            let height_blocks = height / MapBlock::CELLS_PER_COLUMN;
-            let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
-            let height_chunks = height_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
-            (width_chunks * height_chunks == total_chunks).then_some(MapSizeCells { width, height })
-        })
-        .collect::<Vec<_>>();
-
-    match matches.as_slice() {
-        [size] => Ok(*size),
-        [] => Err(eyre::eyre!(
-            "Unable to infer map {map_index} dimensions from {total_chunks} chunks"
-        )),
-        _ => Err(eyre::eyre!(
-            "Ambiguous map {map_index} dimensions for {total_chunks} chunks; set an explicit map size"
-        )),
     }
 }
 
