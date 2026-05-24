@@ -87,6 +87,7 @@ fn apply_art_surface_shading(
         var local_light_profile = 1.0;
         var saturation_profile = 0.82;
         var plane_catch_profile = 1.0;
+        var foot_contact_profile = 1.0;
         let side_plane = smoothstep(0.18, 0.5, abs(uv_in_tile.x - 0.5));
         let dapple = 0.75 + 0.50 * hash(floor(world_pos.xz * 1.7 + uv_in_tile * 17.0));
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
@@ -96,6 +97,7 @@ fn apply_art_surface_shading(
             local_light_profile = 0.78;
             saturation_profile = 0.92;
             plane_catch_profile = dapple;
+            foot_contact_profile = 1.18;
         } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
             depth_scale = 0.92;
             contact_scale = 0.70;
@@ -103,6 +105,7 @@ fn apply_art_surface_shading(
             local_light_profile = 0.72;
             saturation_profile = 0.74;
             plane_catch_profile = 0.72;
+            foot_contact_profile = 0.50;
         } else if (depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_scale = 0.78;
             contact_scale = 0.55;
@@ -110,9 +113,12 @@ fn apply_art_surface_shading(
             local_light_profile = 0.62;
             saturation_profile = 0.78;
             plane_catch_profile = 0.58;
+            foot_contact_profile = 0.42;
         } else if (!is_ground_art) {
             shadow_profile = 1.04 + side_plane * 0.18;
             plane_catch_profile = 1.0 + side_plane * 0.28;
+        } else {
+            foot_contact_profile = 0.55;
         }
 
         let warm_key = global_light.light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale * plane_catch_profile;
@@ -128,6 +134,9 @@ fn apply_art_surface_shading(
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += global_light.light_color * edge_catch * highlight_strength * 0.22;
         out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
+        let foot_contact_noise = 0.82 + 0.18 * hash(floor(world_pos.xz * 0.8 + uv_in_tile * 11.0));
+        let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
+        out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
         let sun_mask = smoothstep(0.34, 0.92, wrap) * (0.45 + 0.55 * top_catch);
         let shade_mask = clamp((1.0 - smoothstep(0.22, 0.72, lambert)) * (0.35 + 0.65 * contact), 0.0, 1.0);
         let shaded_luma = art_luminance(out_rgb);
