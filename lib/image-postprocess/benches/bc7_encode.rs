@@ -176,7 +176,7 @@ fn run_case(
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} modes={:?} fused_m1={} fused_m6={} fused_m7={} fallback_decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} modes={:?} fused_m1={} fused_m4={} fused_m6={} fused_m7={} fallback_decodes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
@@ -187,6 +187,7 @@ fn run_case(
                 stats.decode_trials,
                 stats.decode_mode_trials,
                 stats.fused_mode1_trials,
+                stats.fused_mode4_trials,
                 stats.fused_mode6_trials,
                 stats.fused_mode7_trials,
                 stats.fallback_decode_trials,

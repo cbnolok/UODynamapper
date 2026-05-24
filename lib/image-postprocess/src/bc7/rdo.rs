@@ -46,6 +46,7 @@ pub struct Bc7RdoStats {
     pub decode_trials: u64,
     pub decode_mode_trials: [u64; 8],
     pub fused_mode1_trials: u64,
+    pub fused_mode4_trials: u64,
     pub fused_mode6_trials: u64,
     pub fused_mode7_trials: u64,
     pub fallback_decode_trials: u64,
@@ -536,7 +537,7 @@ fn decode_bc7_error_bounded(
     max_error: u64,
     mut stats: Option<&mut Bc7RdoStats>,
 ) -> Option<u64> {
-    let mode = if stats.is_some() || matches!(mode_hint, 1 | 6 | 7) {
+    let mode = if stats.is_some() || matches!(mode_hint, 1 | 4 | 6 | 7) {
         get_bc7_mode(block)
     } else {
         mode_hint
@@ -551,6 +552,12 @@ fn decode_bc7_error_bounded(
             stats.fused_mode1_trials += 1;
         }
         return decode_bc7_mode1_error_bounded(block, source, max_error);
+    }
+    if mode == 4 {
+        if let Some(stats) = stats.as_deref_mut() {
+            stats.fused_mode4_trials += 1;
+        }
+        return decode_bc7_mode4_error_bounded(block, source, max_error);
     }
     if mode == 6 {
         if let Some(stats) = stats.as_deref_mut() {
@@ -571,6 +578,69 @@ fn decode_bc7_error_bounded(
     let mut decoded = [[0u8; 4]; 16];
     unpack_bc7(block, &mut decoded);
     block_error_bounded(source, &decoded, max_error)
+}
+
+fn decode_bc7_mode4_error_bounded(
+    block: &[u8; 16],
+    source: &[[u8; 4]],
+    max_error: u64,
+) -> Option<u64> {
+    let rotation = ((block[0] >> 5) & 0x03) as usize;
+    let index_flag = (block[0] >> 7) != 0;
+    let mut x_bytes = [0u8; 8];
+    x_bytes[0..5].copy_from_slice(&block[1..6]);
+    let y_low = u32::from_le_bytes(block[6..10].try_into().expect("mode 4 y bytes")) as u64;
+    let mut z_bytes = [0u8; 8];
+    z_bytes[0..6].copy_from_slice(&block[10..16]);
+    let z = u64::from_le_bytes(z_bytes);
+    let x = u64::from_le_bytes(x_bytes) | ((y_low & 0x03) << 40);
+
+    let lr = expand_5_endpoint(x & 0x1F);
+    let hr = expand_5_endpoint((x >> 5) & 0x1F);
+    let lg = expand_5_endpoint((x >> 10) & 0x1F);
+    let hg = expand_5_endpoint((x >> 15) & 0x1F);
+    let lb = expand_5_endpoint((x >> 20) & 0x1F);
+    let hb = expand_5_endpoint((x >> 25) & 0x1F);
+    let la = expand_6_endpoint((x >> 30) & 0x3F);
+    let ha = expand_6_endpoint((x >> 36) & 0x3F);
+
+    let p2_stream = y_low | ((z & 1) << 32);
+    let p3_stream = z >> 1;
+    let mut p2_bit_ofs = 2usize;
+    let mut p3_bit_ofs = 0usize;
+    let mut err = 0u64;
+
+    for i in 0..16 {
+        let p2_bits = if i == 0 { 1 } else { 2 };
+        let p3_bits = if i == 0 { 2 } else { 3 };
+        let p2_index = ((p2_stream >> p2_bit_ofs) & ((1u64 << p2_bits) - 1)) as usize;
+        let p3_index = ((p3_stream >> p3_bit_ofs) & ((1u64 << p3_bits) - 1)) as usize;
+        p2_bit_ofs += p2_bits;
+        p3_bit_ofs += p3_bits;
+
+        let (rgb_weight, scalar_weight) = if index_flag {
+            (BC7_WEIGHTS3[p3_index] as i32, BC7_WEIGHTS2[p2_index] as i32)
+        } else {
+            (BC7_WEIGHTS2[p2_index] as i32, BC7_WEIGHTS3[p3_index] as i32)
+        };
+        let mut decoded = [
+            interpolate_bc7(lr, hr, rgb_weight),
+            interpolate_bc7(lg, hg, rgb_weight),
+            interpolate_bc7(lb, hb, rgb_weight),
+            interpolate_bc7(la, ha, scalar_weight),
+        ];
+        unrotate_mode45_pixel(&mut decoded, rotation);
+
+        for c in 0..4 {
+            let d = source[i][c] as i32 - decoded[c];
+            err += (d * d) as u64;
+        }
+        if err >= max_error {
+            return None;
+        }
+    }
+
+    Some(err)
 }
 
 fn decode_bc7_mode1_error_bounded(
@@ -779,6 +849,26 @@ fn expand_mode1_endpoint(v: u64, p: u32) -> i32 {
 fn expand_mode7_endpoint(v: u64, p: u32) -> i32 {
     let x = ((v as u32) << 1) | p;
     ((x << 2) | (x >> 4)) as i32
+}
+
+#[inline(always)]
+fn expand_5_endpoint(v: u64) -> i32 {
+    let v = v as u32;
+    ((v << 3) | (v >> 2)) as i32
+}
+
+#[inline(always)]
+fn expand_6_endpoint(v: u64) -> i32 {
+    let v = v as u32;
+    ((v << 2) | (v >> 4)) as i32
+}
+
+#[inline(always)]
+fn unrotate_mode45_pixel(pixel: &mut [i32; 4], rotation: usize) {
+    if rotation != 0 {
+        let dp_chan = rotation - 1;
+        pixel.swap(dp_chan, 3);
+    }
 }
 
 #[inline(always)]
@@ -1312,6 +1402,46 @@ mod tests {
             .expect("unbounded block error should not early-exit");
         let actual = decode_bc7_mode1_error_bounded(&block, &pixels, u64::MAX)
             .expect("unbounded fused mode 1 error should not early-exit");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn mode4_fused_error_matches_bcdec() {
+        let mut block = [0u8; 16];
+        let w3 = [0, 1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7, 0];
+        let w2 = [0, 1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 1, 0, 3, 2, 1];
+        crate::bc7::analytical::encode_mode4(
+            &mut block,
+            3,
+            8,
+            13,
+            9,
+            21,
+            25,
+            29,
+            47,
+            &w3,
+            &w2,
+            1,
+            1,
+        );
+        let mut pixels = [[0u8; 4]; 16];
+        for i in 0..16 {
+            pixels[i] = [
+                (i as u8).wrapping_mul(17).wrapping_add(5),
+                (i as u8).wrapping_mul(11).wrapping_add(9),
+                (i as u8).wrapping_mul(23).wrapping_add(13),
+                (i as u8).wrapping_mul(29).wrapping_add(3),
+            ];
+        }
+
+        let mut decoded = [[0u8; 4]; 16];
+        unpack_bc7(&block, &mut decoded);
+        let expected = block_error_bounded(&pixels, &decoded, u64::MAX)
+            .expect("unbounded block error should not early-exit");
+        let actual = decode_bc7_mode4_error_bounded(&block, &pixels, u64::MAX)
+            .expect("unbounded fused mode 4 error should not early-exit");
 
         assert_eq!(actual, expected);
     }
