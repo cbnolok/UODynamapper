@@ -1,6 +1,7 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::scene::camera::UiCameraResource;
 use crate::core::uo_files_loader::{ClassicHuesRes, GumpMapRes, TileMetaPackageRes};
+use crate::configs::settings::Settings;
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
@@ -10,7 +11,8 @@ use crate::{
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures};
 use knuffel::Decode;
-use std::path::Path;
+use regex::Regex;
+use std::{collections::HashMap, path::{Path, PathBuf}};
 
 #[derive(Resource)]
 pub struct GumpDialogState {
@@ -65,6 +67,167 @@ impl Default for GumpDialogState {
 #[derive(Resource, Clone)]
 struct PaperdollProfilesRes {
     profiles: Vec<PaperdollProfile>,
+}
+
+#[derive(Resource, Default, Clone)]
+struct PaperdollWearableRulesRes {
+    rules: Option<PaperdollWearableRules>,
+}
+
+#[derive(Clone, Default)]
+struct PaperdollWearableRules {
+    paperdoll_draw_order: HashMap<String, u16>,
+    wearable_rules: Vec<WearableRule>,
+}
+
+impl PaperdollWearableRules {
+    fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        Self::parse(&content)
+    }
+
+    fn parse(content: &str) -> color_eyre::eyre::Result<Self> {
+        let tag_re = Regex::new(r#"(?s)<(/?)(draworder|wearable|override)\b([^>]*)/?>"#)?;
+        let attr_re = Regex::new(r#"([A-Za-z0-9_]+)\s*=\s*"([^"]*)""#)?;
+        let mut paperdoll_draw_order = HashMap::new();
+        let mut wearable_rules = Vec::new();
+        let mut current_wearable: Option<WearableRule> = None;
+
+        for capture in tag_re.captures_iter(content) {
+            let closing = capture.get(1).map_or("", |m| m.as_str()) == "/";
+            let tag_name = capture.get(2).map_or("", |m| m.as_str());
+            let attrs = parse_xml_attrs(capture.get(3).map_or("", |m| m.as_str()), &attr_re);
+
+            match (closing, tag_name) {
+                (false, "draworder") => {
+                    if attrs.get("direction").is_none_or(|direction| direction == "paperdoll") {
+                        for (key, value) in attrs {
+                            if key == "direction" {
+                                continue;
+                            }
+                            if let Ok(priority) = value.parse::<u16>() {
+                                paperdoll_draw_order.insert(key, priority);
+                            }
+                        }
+                    }
+                }
+                (false, "wearable") => {
+                    current_wearable = wearable_rule_from_attrs(attrs);
+                }
+                (false, "override") => {
+                    if let Some(rule) = current_wearable.as_mut() {
+                        if let Some(override_rule) = override_rule_from_attrs(attrs) {
+                            rule.overrides.push(override_rule);
+                        }
+                    }
+                }
+                (true, "wearable") => {
+                    if let Some(rule) = current_wearable.take() {
+                        wearable_rules.push(rule);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Self {
+            paperdoll_draw_order,
+            wearable_rules,
+        })
+    }
+
+    fn base_priority(&self, slot: &str, fallback: u16) -> u16 {
+        self.paperdoll_draw_order
+            .get(slot)
+            .copied()
+            .unwrap_or(fallback)
+    }
+
+    fn priority_for(
+        &self,
+        target_slot: &str,
+        target_item_id: u32,
+        equipped: &[PaperdollEquippedItem],
+        race: &str,
+        fallback: u16,
+    ) -> u16 {
+        let mut priority = self.base_priority(target_slot, fallback);
+        for rule in &self.wearable_rules {
+            if rule.target_slot != target_slot || !rule.target_items.matches(target_item_id) {
+                continue;
+            }
+
+            for override_rule in &rule.overrides {
+                if override_rule
+                    .race
+                    .as_ref()
+                    .is_some_and(|required_race| required_race != race)
+                {
+                    continue;
+                }
+                if override_rule.matches_equipped(equipped) {
+                    priority = override_rule.draw_order_priority;
+                }
+            }
+        }
+
+        priority
+    }
+}
+
+#[derive(Clone)]
+struct WearableRule {
+    target_slot: String,
+    target_items: WearableItemMatcher,
+    overrides: Vec<WearableOverrideRule>,
+}
+
+#[derive(Clone)]
+struct WearableOverrideRule {
+    draw_order_priority: u16,
+    race: Option<String>,
+    conditions: Vec<WearableCondition>,
+}
+
+impl WearableOverrideRule {
+    fn matches_equipped(&self, equipped: &[PaperdollEquippedItem]) -> bool {
+        self.conditions.iter().all(|condition| {
+            equipped.iter().any(|item| {
+                item.slot == condition.slot && condition.items.matches(item.item_id)
+            })
+        })
+    }
+}
+
+#[derive(Clone)]
+struct WearableCondition {
+    slot: String,
+    items: WearableItemMatcher,
+}
+
+#[derive(Clone)]
+enum WearableItemMatcher {
+    Any,
+    Ids(Vec<u32>),
+}
+
+impl WearableItemMatcher {
+    fn matches(&self, item_id: u32) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Ids(ids) => ids.contains(&item_id),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PaperdollEquippedItem {
+    item_id: u32,
+    slot: String,
+    gump_id: u32,
+    hue_id: u16,
+    partial_hue: bool,
+    fallback_priority: u16,
 }
 
 impl PaperdollProfilesRes {
@@ -201,6 +364,101 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
     }
 }
 
+fn parse_xml_attrs(attrs: &str, attr_re: &Regex) -> HashMap<String, String> {
+    attr_re
+        .captures_iter(attrs)
+        .filter_map(|capture| {
+            let key = capture.get(1)?.as_str().to_ascii_lowercase();
+            let value = capture.get(2)?.as_str().trim().to_string();
+            Some((key, value))
+        })
+        .collect()
+}
+
+fn wearable_rule_from_attrs(attrs: HashMap<String, String>) -> Option<WearableRule> {
+    let (target_slot, target_items) = attrs
+        .into_iter()
+        .find_map(|(slot, value)| parse_wearable_items(&value).map(|items| (slot, items)))?;
+
+    Some(WearableRule {
+        target_slot,
+        target_items,
+        overrides: Vec::new(),
+    })
+}
+
+fn override_rule_from_attrs(attrs: HashMap<String, String>) -> Option<WearableOverrideRule> {
+    let draw_order_priority = attrs.get("draworderpriority")?.parse::<u16>().ok()?;
+    let race = attrs.get("race").map(|race| race.to_ascii_lowercase());
+    let mut conditions = Vec::new();
+
+    for (slot, value) in attrs {
+        if slot == "draworderpriority" || slot == "direction" || slot == "race" {
+            continue;
+        }
+        if let Some(items) = parse_wearable_items(&value) {
+            conditions.push(WearableCondition { slot, items });
+        }
+    }
+
+    Some(WearableOverrideRule {
+        draw_order_priority,
+        race,
+        conditions,
+    })
+}
+
+fn parse_wearable_items(value: &str) -> Option<WearableItemMatcher> {
+    if value.trim().eq_ignore_ascii_case("any") {
+        return Some(WearableItemMatcher::Any);
+    }
+
+    let ids = value
+        .split(',')
+        .filter_map(|part| parse_u32_field(part.trim()).ok())
+        .collect::<Vec<_>>();
+    (!ids.is_empty()).then_some(WearableItemMatcher::Ids(ids))
+}
+
+fn paperdoll_slot_from_tiledata_layer(layer: u8) -> &'static str {
+    match layer {
+        1 => "righthand",
+        2 => "lefthand",
+        3 => "feet",
+        4 => "legs",
+        5 => "chest",
+        6 => "head",
+        7 => "hands",
+        8 => "finger1",
+        10 => "neck",
+        11 => "hair",
+        12 => "waist",
+        13 => "torso",
+        14 => "lwrist",
+        16 => "facialhair",
+        17 => "abovechest",
+        18 => "ears",
+        19 => "arms",
+        20 => "cape",
+        22 => "skirt",
+        23 => "legs",
+        24 => "riding",
+        25 => "drag",
+        26 => "backpack",
+        _ => "drag",
+    }
+}
+
+fn race_from_profile_id(profile_id: &str) -> &'static str {
+    if profile_id.contains("elf") {
+        "elf"
+    } else if profile_id.contains("gargoyle") {
+        "gargoyle"
+    } else {
+        "human"
+    }
+}
+
 pub struct GumpDialogPlugin {
     pub registered_by: &'static str,
 }
@@ -210,14 +468,51 @@ impl Plugin for GumpDialogPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
         app.insert_resource(PaperdollProfilesRes::load())
+            .init_resource::<PaperdollWearableRulesRes>()
             .init_resource::<GumpDialogState>()
             .add_observer(sys_gump_toggle)
             .add_observer(sys_gump_close)
+            .add_systems(Startup, sys_load_paperdoll_wearable_rules)
             .add_systems(
                 EguiPrimaryContextPass,
                 sys_render_gump_dialog.run_if(in_state(AppState::InGame)),
             );
     }
+}
+
+fn sys_load_paperdoll_wearable_rules(
+    settings: Res<Settings>,
+    mut rules_res: ResMut<PaperdollWearableRulesRes>,
+) {
+    let source_root = PathBuf::from(&settings.runtime_assets.udd_path);
+    let asset_root = constants::valid_asset_dir();
+    let candidates = [
+        asset_root.join("cc_ec_convtables/wearables.xml"),
+        source_root.join("data/wearables.xml"),
+        source_root.join("wearables.xml"),
+    ];
+
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+
+        match PaperdollWearableRules::load_from_path(&path) {
+            Ok(rules) => {
+                log::info!("Loaded paperdoll wearable rules from {}", path.display());
+                rules_res.rules = Some(rules);
+                return;
+            }
+            Err(error) => {
+                log::warn!(
+                    "Failed to load paperdoll wearable rules from {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    log::info!("No paperdoll wearable rules file selected; using tiledata layer order only.");
 }
 
 fn sys_gump_toggle(
@@ -244,6 +539,7 @@ fn sys_render_gump_dialog(
     tilemeta: Option<Res<TileMetaPackageRes>>,
     classic_hues: Option<Res<ClassicHuesRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
+    wearable_rules: Res<PaperdollWearableRulesRes>,
     mut images: ResMut<Assets<Image>>,
     mut egui_user_textures: ResMut<EguiUserTextures>,
 ) {
@@ -263,6 +559,7 @@ fn sys_render_gump_dialog(
             tilemeta.as_deref(),
             classic_hues.as_deref(),
             &paperdoll_profiles,
+            &wearable_rules,
             &mut images,
             &mut egui_user_textures,
         );
@@ -313,6 +610,7 @@ fn render_open_gump_dialog(
     tilemeta: Option<&TileMetaPackageRes>,
     classic_hues: Option<&ClassicHuesRes>,
     paperdoll_profiles: &PaperdollProfilesRes,
+    wearable_rules: &PaperdollWearableRulesRes,
     images: &mut Assets<Image>,
     egui_user_textures: &mut EguiUserTextures,
 ) {
@@ -387,6 +685,7 @@ fn render_open_gump_dialog(
                             tilemeta,
                             classic_hues,
                             paperdoll_profiles,
+                            wearable_rules,
                             images,
                             egui_user_textures,
                         );
@@ -455,6 +754,7 @@ fn open_paperdoll(
     tilemeta: Option<&TileMetaPackageRes>,
     classic_hues: Option<&ClassicHuesRes>,
     paperdoll_profiles: &PaperdollProfilesRes,
+    wearable_rules: &PaperdollWearableRulesRes,
     images: &mut Assets<Image>,
     egui_user_textures: &mut EguiUserTextures,
 ) {
@@ -488,6 +788,7 @@ fn open_paperdoll(
         y: profile.body_y,
     }];
 
+    let mut equipped = Vec::new();
     for row in &state.paperdoll_equipment {
         if row.item_id.trim().is_empty() {
             continue;
@@ -508,11 +809,42 @@ fn open_paperdoll(
             return;
         }
 
-        layers.push(PaperdollLayer {
+        let slot = paperdoll_slot_from_tiledata_layer(item.quality).to_string();
+        equipped.push(PaperdollEquippedItem {
+            item_id,
+            slot,
             gump_id: item.anim_id as u32 + profile.equipment_offset,
             hue_id: parse_optional_hue(&row.hue),
             partial_hue: (item.flags & 0x40000) != 0,
-            sort_key: u16::from(item.quality),
+            fallback_priority: u16::from(item.quality),
+        });
+    }
+
+    let race = race_from_profile_id(&profile.id);
+    for item in &equipped {
+        let sort_key = wearable_rules
+            .rules
+            .as_ref()
+            .map(|rules| {
+                rules.priority_for(
+                    &item.slot,
+                    item.item_id,
+                    &equipped,
+                    race,
+                    item.fallback_priority,
+                )
+            })
+            .unwrap_or(item.fallback_priority);
+
+        if sort_key == 0 {
+            continue;
+        }
+
+        layers.push(PaperdollLayer {
+            gump_id: item.gump_id,
+            hue_id: item.hue_id,
+            partial_hue: item.partial_hue,
+            sort_key,
             x: profile.equipment_x,
             y: profile.equipment_y,
         });
