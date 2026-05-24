@@ -35,18 +35,6 @@ pub struct GumpDimensions {
     pub height: u16,
 }
 
-fn read_u16_le(bytes: &[u8], offset: usize) -> eyre::Result<u16> {
-    let end = offset + std::mem::size_of::<u16>();
-    if end > bytes.len() {
-        eyre::bail!(
-            "Unexpected end of gump data while reading u16 at byte offset {}.",
-            offset
-        );
-    }
-
-    Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
-}
-
 fn read_u32_le(bytes: &[u8], offset: usize) -> eyre::Result<u32> {
     let end = offset + std::mem::size_of::<u32>();
     if end > bytes.len() {
@@ -62,6 +50,16 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> eyre::Result<u32> {
         bytes[offset + 2],
         bytes[offset + 3],
     ]))
+}
+
+#[inline(always)]
+fn read_u32_le_prechecked(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
 }
 
 fn dimensions_from_extra(extra: u32) -> eyre::Result<GumpDimensions> {
@@ -94,12 +92,16 @@ pub fn decode_gump_from_raw(
         eyre::bail!("Gump lookup table extends past the raw payload.");
     }
 
-    let mut pixel_data_out = vec![0u8; width_usize * height_usize * RGBA_BYTES_PER_PIXEL];
+    let pixel_bytes = width_usize
+        .checked_mul(height_usize)
+        .and_then(|pixels| pixels.checked_mul(RGBA_BYTES_PER_PIXEL))
+        .ok_or_else(|| eyre!("Gump dimensions overflow decoded RGBA size."))?;
+    let mut pixel_data_out = vec![0u8; pixel_bytes];
     let pixel_words = cast_slice_mut::<u8, u32>(pixel_data_out.as_mut_slice());
     let lut = color_lut();
 
     for y in 0..height_usize {
-        let lookup = read_u32_le(raw_data, y * LOOKUP_ENTRY_BYTES)? as usize;
+        let lookup = read_u32_le_prechecked(raw_data, y * LOOKUP_ENTRY_BYTES) as usize;
         let mut row_offset = lookup
             .checked_mul(RLE_ENTRY_BYTES)
             .ok_or_else(|| eyre!("Gump row {} lookup offset overflowed.", y))?;
@@ -115,10 +117,10 @@ pub fn decode_gump_from_raw(
                 eyre::bail!("Gump row {} is truncated in the RLE stream.", y);
             }
 
-            let color = read_u16_le(raw_data, row_offset)?;
-            row_offset += std::mem::size_of::<u16>();
-            let run = read_u16_le(raw_data, row_offset)? as usize;
-            row_offset += std::mem::size_of::<u16>();
+            let rle_pair = read_u32_le_prechecked(raw_data, row_offset);
+            row_offset += RLE_ENTRY_BYTES;
+            let color = rle_pair as u16;
+            let run = (rle_pair >> 16) as usize;
 
             if run == 0 {
                 eyre::bail!("Gump row {} contains a zero-length run.", y);
@@ -138,9 +140,7 @@ pub fn decode_gump_from_raw(
 
             if color != 0 {
                 let rgba = lut[color as usize];
-                for pixel in &mut pixel_words[row_start + x..row_start + run_end] {
-                    *pixel = rgba;
-                }
+                pixel_words[row_start + x..row_start + run_end].fill(rgba);
             }
 
             x = run_end;
