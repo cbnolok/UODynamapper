@@ -252,7 +252,7 @@ fn reduce_entropy_bc7_impl(
                             }
 
                             // Hash check to skip redundant trials
-                            let hs = hash_hsieh(&prev_blk[src_ofs..src_ofs + len], dst_ofs as u32);
+                            let hs = hash_hsieh_bc7_segment(&prev_blk, src_ofs, len, dst_ofs as u32);
                             let hash_check = hash_table[hs as usize & hash_mask];
                             if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                 && (hash_check >> 8) == (hs >> 8) {
@@ -356,7 +356,7 @@ fn reduce_entropy_bc7_impl(
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
-                                let hs = hash_hsieh(&prev_blk[ofs..ofs + len], ofs as u32);
+                                let hs = hash_hsieh_bc7_segment(&prev_blk, ofs, len, ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                     && (hash_check >> 8) == (hs >> 8) {
@@ -1206,17 +1206,17 @@ const BC7_WEIGHTS4: [u8; 16] = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51,
 const BC7_WEIGHTS3: [u8; 8] = [0, 9, 18, 27, 37, 46, 55, 64];
 const BC7_WEIGHTS2: [u8; 4] = [0, 21, 43, 64];
 
-fn hash_hsieh(buf: &[u8], salt: u32) -> u32 {
-    let len = buf.len();
-    if len == 0 { return 0; }
-
+#[inline(always)]
+fn hash_hsieh_bc7_segment(block: &[u8; 16], ofs: usize, len: usize, salt: u32) -> u32 {
+    debug_assert!(len > 0);
+    debug_assert!(ofs + len <= 16);
     let mut h = (len as u32).wrapping_add(salt << 16);
-    let mut i = 0;
+    let mut i = ofs;
     let mut rem = len;
 
     while rem >= 4 {
-        let w0 = u16::from_le_bytes([buf[i], buf[i+1]]) as u32;
-        let w1 = u16::from_le_bytes([buf[i+2], buf[i+3]]) as u32;
+        let w0 = u16::from_le_bytes([block[i], block[i+1]]) as u32;
+        let w1 = u16::from_le_bytes([block[i+2], block[i+3]]) as u32;
         
         h = h.wrapping_add(w0);
         let t = (w1 << 11) ^ h;
@@ -1229,18 +1229,18 @@ fn hash_hsieh(buf: &[u8], salt: u32) -> u32 {
 
     match rem {
         3 => {
-            h = h.wrapping_add(u16::from_le_bytes([buf[i], buf[i+1]]) as u32);
+            h = h.wrapping_add(u16::from_le_bytes([block[i], block[i+1]]) as u32);
             h ^= h << 16;
-            h ^= (buf[i+2] as i8 as u32) << 18;
+            h ^= (block[i+2] as i8 as u32) << 18;
             h = h.wrapping_add(h >> 11);
         }
         2 => {
-            h = h.wrapping_add(u16::from_le_bytes([buf[i], buf[i+1]]) as u32);
+            h = h.wrapping_add(u16::from_le_bytes([block[i], block[i+1]]) as u32);
             h ^= h << 11;
             h = h.wrapping_add(h >> 17);
         }
         1 => {
-            h = h.wrapping_add(buf[i] as i8 as u32);
+            h = h.wrapping_add(block[i] as i8 as u32);
             h ^= h << 10;
             h = h.wrapping_add(h >> 1);
         }
