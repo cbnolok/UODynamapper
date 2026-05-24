@@ -1,5 +1,4 @@
-#![allow(unused)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use color_eyre::eyre::{self, Context};
@@ -8,7 +7,8 @@ use libktx_rs::sinks::StreamSink;
 use libktx_rs::sources::{CommonCreateInfo, Ktx2CreateInfo};
 use libktx_rs::stream::RustKtxStream;
 use libktx_rs::texture::Texture;
-use udd_conv::bc7::Bc7TextureData;
+
+use crate::bc7::Bc7TextureData;
 
 const VK_FORMAT_BC7_UNORM_BLOCK: u32 = 145;
 
@@ -78,41 +78,5 @@ pub fn write_ktx2_bc7_zstd(
         .write_to(&mut sink)
         .map_err(|error| eyre::eyre!("libktx write error: {:?}", error))?;
 
-    Ok(())
-}
-
-pub fn build_facet_radar_ktx2(
-    source_dirs: &[PathBuf],
-    tilemeta_path: &Path,
-    output_path: &Path,
-    map_id: u32,
-    zstd_level: i32,
-) -> eyre::Result<()> {
-    build_facet_radar_ktx2_with_patches(
-        source_dirs,
-        tilemeta_path,
-        output_path,
-        map_id,
-        zstd_level,
-        &udd_conv::classic_patches::ClassicPatchOptions::NONE,
-    )
-}
-
-pub fn build_facet_radar_ktx2_with_patches(
-    source_dirs: &[PathBuf],
-    tilemeta_path: &Path,
-    output_path: &Path,
-    map_id: u32,
-    zstd_level: i32,
-    patch_options: &udd_conv::classic_patches::ClassicPatchOptions,
-) -> eyre::Result<()> {
-    let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
-        source_dirs,
-        tilemeta_path,
-        map_id,
-        patch_options,
-    )?;
-    write_ktx2_bc7_zstd(bc7_data, output_path, zstd_level)?;
-    println!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
     Ok(())
 }

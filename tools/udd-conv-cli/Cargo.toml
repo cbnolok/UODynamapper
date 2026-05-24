@@ -18,7 +18,7 @@ serde_json = "1.0"
 udd-assets = { path = "../../lib/udd-assets" }
 udd-container = { path = "../../lib/udd-container" }
 udd-conv = { path = "../../lib/udd-conv" }
-udd-conv-ktx2 = { path = "../../lib/udd-conv-ktx2" }
+udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 
 [features]

@@ -1,5 +1,5 @@
 pub mod common;
-pub mod bc7;
+pub use udd_image_codecs::bc7;
 pub mod tex_art_cc;
 pub mod tex_land_cc;
 pub mod tex_art_ec;

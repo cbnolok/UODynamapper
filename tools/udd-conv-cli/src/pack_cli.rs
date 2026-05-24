@@ -1240,14 +1240,14 @@ pub fn run() -> eyre::Result<()> {
             let tilemeta_path = find_raw_tilemeta_package(&uddp_dir)?;
 
             if radar_format == udd_conv::cc_radar::RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
                     &paths,
                     &tilemeta_path,
-                    &out_file,
                     map_id,
-                    zstd_level,
                     &classic_patches.into(),
                 )?;
+                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
+                println!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
             } else {
                 udd_conv::cc_radar::build_facet_radar_dds(
                     &paths,

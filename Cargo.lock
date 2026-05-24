@@ -4476,9 +4476,7 @@ dependencies = [
  "hqx",
  "image",
  "mmpx",
- "rayon",
  "serde",
- "wide",
  "xbrz-rs",
 ]
 
@@ -7960,12 +7958,11 @@ dependencies = [
  "byteorder",
  "color-eyre",
  "dds",
- "image-postprocess",
  "knuffel",
  "serde_json",
  "udd-container",
+ "udd-image-codecs",
  "uocf",
- "wgpu-types 27.0.1",
 ]
 
 [[package]]
@@ -7998,6 +7995,7 @@ dependencies = [
  "serde_json",
  "udd-assets",
  "udd-container",
+ "udd-image-codecs",
  "uocf",
  "wgpu-types 27.0.1",
 ]
@@ -8019,7 +8017,7 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "udd-conv",
- "udd-conv-ktx2",
+ "udd-image-codecs",
  "uocf",
 ]
 
@@ -8039,19 +8037,22 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "udd-conv",
  "udd-conv-cli",
- "udd-conv-ktx2",
+ "udd-image-codecs",
  "uocf",
  "zstd",
 ]
 
 [[package]]
-name = "udd-conv-ktx2"
+name = "udd-image-codecs"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "dds",
  "libktx-rs",
- "udd-conv",
+ "rayon",
  "vk2dfd",
+ "wgpu-types 27.0.1",
+ "wide",
 ]
 
 [[package]]

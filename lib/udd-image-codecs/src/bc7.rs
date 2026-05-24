@@ -3,6 +3,19 @@ use std::borrow::Cow;
 use std::{error::Error, fmt, sync::Arc};
 pub use wgpu_types::TextureFormat;
 
+#[cfg(feature = "bc7-encode")]
+#[path = "bc7/analytical.rs"]
+pub mod analytical;
+#[cfg(feature = "bc7-encode")]
+#[path = "bc7/analytical_wide.rs"]
+pub mod analytical_wide;
+#[cfg(feature = "bc7-encode")]
+#[path = "bc7/rdo.rs"]
+pub mod rdo;
+#[cfg(feature = "bc7-encode")]
+#[path = "bc7/tables.rs"]
+pub(crate) mod tables;
+
 // Simple container used to persist pre-encoded VRAM textures on disk.
 // Layout: magic(4) | version(2) | format(2) | width(4) | height(4) | payload_len(4)
 const VRAM_TEXTURE_CONTAINER_MAGIC: [u8; 4] = *b"UDT1";
@@ -44,7 +57,7 @@ impl Bc7EncoderBackendExt for Bc7EncoderBackend {
         if self.is_available() {
             None
         } else {
-            Some("udd-assets was built without the bc7-encode feature")
+            Some("udd-image-codecs was built without the bc7-encode feature")
         }
     }
 }
@@ -667,7 +680,7 @@ fn rgba8888_to_rgb888(rgba: &[u8]) -> Vec<u8> {
 
 #[cfg(feature = "bc7-encode")]
 fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
-    use image_postprocess::bc7_analytical::{
+    use crate::bc7_analytical::{
         pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
     };
 
@@ -693,10 +706,10 @@ fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
 
 #[cfg(feature = "bc7-encode")]
 fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> Vec<u8> {
-    use image_postprocess::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
+    use crate::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
 
     let mut blocks = vec![0u8; expected_bc7_byte_len(extent)];
-    image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
+    crate::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
         &mut blocks,
         rgba_pixels,
         extent.width(),
@@ -720,11 +733,11 @@ fn apply_bc7_rdo(blocks: &mut [u8], rgba_pixels: &[u8], extent: ImageExtent, rdo
     }
 
     let rgba_blocks = rgba_pixels_to_block_order(rgba_pixels, extent);
-    let params = image_postprocess::bc7_rdo::Bc7RdoParams {
+    let params = crate::bc7_rdo::Bc7RdoParams {
         lambda: rdo_lambda,
         ..Default::default()
     };
-    image_postprocess::bc7_rdo::reduce_entropy_bc7(
+    crate::bc7_rdo::reduce_entropy_bc7(
         &mut block_arrays,
         &rgba_blocks,
         extent.blocks_wide() as usize,

@@ -1,9 +1,9 @@
-use image_postprocess::bc7_analytical::{
+use udd_image_codecs::bc7_analytical::{
     pack_bc7_rgba, Pixel, FLAG_PBIT_OPT, FLAG_PBIT_OPT_M6, FLAG_USE_2SUBSETS, FLAG_USE_3SUBSETS,
     FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
 };
-use image_postprocess::bc7_analytical_wide::pack_bc7_rgba_blocks_wide;
-use image_postprocess::bc7_rdo::{
+use udd_image_codecs::bc7_analytical_wide::pack_bc7_rgba_blocks_wide;
+use udd_image_codecs::bc7_rdo::{
     reduce_entropy_bc7, reduce_entropy_bc7_with_stats, Bc7RdoParams, Bc7RdoStats,
 };
 use std::hint::black_box;

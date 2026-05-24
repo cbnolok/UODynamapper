@@ -4,7 +4,7 @@ members = [
     "dynamapper",
     "lib/uocf",
     "lib/udd-conv",
-    "lib/udd-conv-ktx2",
+    "lib/udd-image-codecs",
     "lib/udd-container",
     "lib/udd-assets",
     "lib/image-postprocess",
@@ -74,7 +74,7 @@ opt-level = 3
 #[profile.profiling.package.udd-conv-cli]
 #[profile.profiling.package.udd-conv-gui]
 #[profile.profiling.package.uddp-inspector-gui]
-#[profile.profiling.package.udd-conv-ktx2]
+#[profile.profiling.package.udd-image-codecs]
 #[profile.profiling.package.uocf-cli]
 #[profile.profiling.package.uocf-inspector-gui]
 #[profile.profiling.package.uop-dict-populator-gui]
@@ -159,7 +159,7 @@ debug = true
 debug-assertions = true
 strip = false
 
-[profile.dev.package.udd-conv-ktx2]
+[profile.dev.package.udd-image-codecs]
 opt-level = 3
 codegen-units = 1
 debug = true

@@ -378,13 +378,16 @@ impl UddConvApp {
             ensure_output_parent(&output)?;
 
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
                     &sources,
                     &tilemeta_path,
-                    &output,
                     map_id,
-                    settings.radar_zstd,
                     &classic_patch_options(&settings),
+                )?;
+                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
+                    bc7_data,
+                    &output,
+                    settings.radar_zstd,
                 )?;
             } else {
                 build_facet_radar_dds(
@@ -444,13 +447,16 @@ impl UddConvApp {
                 settings.radar_format.extension()
             ));
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                udd_conv_ktx2::build_facet_radar_ktx2_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
                     &sources,
                     &tilemeta_path,
-                    &radar_output,
                     map_id,
-                    settings.radar_zstd,
                     &classic_patch_options(&settings),
+                )?;
+                udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
+                    bc7_data,
+                    &radar_output,
+                    settings.radar_zstd,
                 )?;
             } else {
                 build_facet_radar_dds(
