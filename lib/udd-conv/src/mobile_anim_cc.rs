@@ -1,9 +1,9 @@
 //! Build-time support for `mobile_anim_cc.uddp`.
 //!
-//! This first package version targets the classic `anim*.mul` / `anim*.idx`
-//! mobile-animation sources. The atlas packer uses 4-pixel-aligned content
-//! extents so the same metadata remains valid when page payloads gain BC7
-//! support later.
+//! This package targets classic `anim*.mul` / `anim*.idx` mobile-animation
+//! sources plus Classic `AnimationFrame*.uop` packages when present. The atlas
+//! packer uses 4-pixel-aligned content extents so the same metadata remains
+//! valid when page payloads gain BC7 support later.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,8 +16,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::anim::{AnimFrame, AnimMap, MAX_ANIM_FILES};
+use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
 use uocf::classic::bodyconv_def::BodyConvDef;
+use uocf::uop_container::package::UopPackage;
 
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_dir_matching;
@@ -41,6 +43,20 @@ const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
 const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
 const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 2;
+const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
+    "AnimationFrame1.uop",
+    "AnimationFrame2.uop",
+    "AnimationFrame3.uop",
+    "AnimationFrame4.uop",
+    "AnimationFrame5.uop",
+    "AnimationFrame6.uop",
+    "animationframe1.uop",
+    "animationframe2.uop",
+    "animationframe3.uop",
+    "animationframe4.uop",
+    "animationframe5.uop",
+    "animationframe6.uop",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcBuildSummary {
@@ -80,13 +96,20 @@ pub struct DecodedMobileAnimFrame {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PresentAnimationCandidate {
     body_id: u16,
     action_id: u16,
     direction: u8,
     file_index: u8,
     source_index: u32,
+    frames: PresentAnimationFrames,
+}
+
+#[derive(Debug, Clone)]
+enum PresentAnimationFrames {
+    Mul,
+    Decoded(Vec<AnimFrame>),
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +147,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
     let (decoded_frames, mut animation_records, mut frame_records) =
-        decode_present_animations(&anim_map)?;
+        decode_present_animations(&client_dir, &anim_map)?;
     let packed_frame_count = decoded_frames.len() as u32;
     let pages = pack_frames_into_pages(decoded_frames, &mut frame_records, options)?;
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
@@ -292,13 +315,19 @@ fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
 }
 
 fn decode_present_animations(
+    client_dir: &Path,
     anim_map: &AnimMap,
 ) -> eyre::Result<(Vec<DecodedMobileAnimFrame>, Vec<MobileAnimCcAnimationRecord>, Vec<MobileAnimCcFrameRecord>)> {
     let mut decoded_frames = Vec::new();
     let mut animation_records = Vec::new();
     let mut frame_records = Vec::new();
 
-    let candidates = collect_present_animation_candidates(anim_map);
+    let mut candidates = collect_present_animation_candidates(anim_map);
+    let animationframe_paths = discover_classic_animationframe_paths(client_dir);
+    let animationframe_candidates =
+        decode_classic_animationframe_packages(&animationframe_paths)?;
+    candidates.extend(animationframe_candidates);
+
     let pb = ProgressBar::new(candidates.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding mobile animations ({eta})")
@@ -307,8 +336,14 @@ fn decode_present_animations(
 
     for candidate in candidates {
         pb.inc(1);
-        let Ok(frames) = anim_map.decode_animation_index(candidate.file_index, candidate.source_index) else {
-            continue;
+        let frames = match candidate.frames {
+            PresentAnimationFrames::Mul => {
+                let Ok(frames) = anim_map.decode_animation_index(candidate.file_index, candidate.source_index) else {
+                    continue;
+                };
+                frames
+            }
+            PresentAnimationFrames::Decoded(frames) => frames,
         };
         if frames.is_empty() || frames.len() > u16::MAX as usize {
             continue;
@@ -371,12 +406,92 @@ fn collect_present_animation_candidates(anim_map: &AnimMap) -> Vec<PresentAnimat
                         direction,
                         file_index,
                         source_index,
+                        frames: PresentAnimationFrames::Mul,
                     });
                 }
             }
         }
     }
     candidates
+}
+
+fn discover_classic_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
+    CLASSIC_ANIMATIONFRAME_FILES
+        .iter()
+        .map(|name| client_dir.join(name))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn decode_classic_animationframe_packages(
+    paths: &[PathBuf],
+) -> eyre::Result<Vec<PresentAnimationCandidate>> {
+    let mut candidates = Vec::new();
+    for path in paths {
+        let package = UopPackage::load(path)
+            .wrap_err_with(|| format!("load {}", path.display()))?;
+        let file_index = classic_animationframe_uop_index(path)? - 1;
+        let mut decoded = decode_classic_animationframe_package(&package, file_index)?;
+        candidates.append(&mut decoded);
+    }
+    Ok(candidates)
+}
+
+fn decode_classic_animationframe_package(
+    package: &UopPackage,
+    file_index: u8,
+) -> eyre::Result<Vec<PresentAnimationCandidate>> {
+    let files = package.iter_files().filter(|file| file.has_size()).collect::<Vec<_>>();
+    let pb = ProgressBar::new(files.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reading Classic AnimationFrame UOP ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+
+    let mut candidates = Vec::new();
+    for file in files {
+        pb.inc(1);
+        let Ok(data) = file.unpack() else { continue; };
+        let Ok(animation) = AnimationFrameCc::parse(&data) else { continue; };
+        if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
+            continue;
+        }
+        let Some((body_id, action_id, direction)) =
+            animation_layout_from_source_index(file_index, animation.anim_id)
+        else {
+            continue;
+        };
+        candidates.push(PresentAnimationCandidate {
+            body_id,
+            action_id,
+            direction,
+            file_index,
+            source_index: animation.anim_id,
+            frames: PresentAnimationFrames::Decoded(animation.frames),
+        });
+    }
+    pb.finish_with_message("Classic AnimationFrame UOP read");
+    Ok(candidates)
+}
+
+fn classic_animationframe_uop_index(path: &Path) -> eyre::Result<u8> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        eyre::bail!("invalid Classic AnimationFrame UOP path: {}", path.display());
+    };
+    let lower = file_name.to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("animationframe")
+        .and_then(|value| value.strip_suffix(".uop"))
+    else {
+        eyre::bail!("invalid Classic AnimationFrame UOP name: {file_name}");
+    };
+    let index = rest
+        .parse::<u8>()
+        .wrap_err_with(|| format!("invalid Classic AnimationFrame UOP index in {file_name}"))?;
+    if !(1..=MAX_ANIM_FILES).contains(&index) {
+        eyre::bail!("unsupported Classic AnimationFrame UOP index in {file_name}");
+    }
+    Ok(index)
 }
 
 fn empty_frame_record(
@@ -440,6 +555,80 @@ pub fn animation_source_index(file_index: u8, body_id: u16, action_id: u16, dire
     index += action_id as u32 * 5;
     index += direction.min(4) as u32;
     index
+}
+
+fn animation_layout_from_source_index(
+    file_index: u8,
+    source_index: u32,
+) -> Option<(u16, u16, u8)> {
+    if file_index == 4 {
+        if let Some(layout) = animation_layout_from_group(source_index, 34, 35, 22000, 22) {
+            return Some(layout);
+        }
+    }
+
+    match file_index {
+        0 => animation_layout_from_groups(source_index, &[
+            (0, 200, 0, 22),
+            (200, 400, 22000, 13),
+            (400, u16::MAX, 35000, 35),
+        ]),
+        1 => animation_layout_from_groups(source_index, &[
+            (0, 200, 0, 22),
+            (200, u16::MAX, 22000, 13),
+        ]),
+        2 => animation_layout_from_groups(source_index, &[
+            (0, 300, 0, 13),
+            (300, 400, 33000, 22),
+            (400, u16::MAX, 35000, 35),
+        ]),
+        _ => animation_layout_from_groups(source_index, &[
+            (0, 200, 0, 22),
+            (200, 400, 22000, 13),
+            (400, u16::MAX, 35000, 35),
+        ]),
+    }
+}
+
+fn animation_layout_from_groups(
+    source_index: u32,
+    groups: &[(u16, u16, u32, u16)],
+) -> Option<(u16, u16, u8)> {
+    for &(body_start, body_end, source_start, action_count) in groups {
+        if let Some(layout) = animation_layout_from_group(
+            source_index,
+            body_start,
+            body_end,
+            source_start,
+            action_count,
+        ) {
+            return Some(layout);
+        }
+    }
+    None
+}
+
+fn animation_layout_from_group(
+    source_index: u32,
+    body_start: u16,
+    body_end: u16,
+    source_start: u32,
+    action_count: u16,
+) -> Option<(u16, u16, u8)> {
+    if source_index < source_start || body_end <= body_start {
+        return None;
+    }
+    let stride = action_count as u32 * 5;
+    let body_count = body_end as u32 - body_start as u32;
+    let rel = source_index - source_start;
+    if rel >= body_count * stride {
+        return None;
+    }
+    let body = body_start as u32 + rel / stride;
+    let within_body = rel % stride;
+    let action = within_body / 5;
+    let direction = within_body % 5;
+    Some((body as u16, action as u16, direction as u8))
 }
 
 fn body_count_for_source(file_index: u8, source_index_count: usize) -> u16 {
@@ -883,6 +1072,24 @@ mod tests {
         assert_eq!(animation_source_index(2, 300, 0, 0), 33000);
         assert_eq!(animation_source_index(4, 34, 0, 0), 22000);
         assert_eq!(animation_source_index(0, 0, 2, 3), 13);
+    }
+
+    #[test]
+    fn source_index_reverse_mapping_matches_classic_layout() {
+        for &(file_index, body_id, action_id, direction) in &[
+            (0, 0, 0, 0),
+            (0, 1, 0, 0),
+            (0, 200, 0, 0),
+            (0, 400, 0, 0),
+            (2, 300, 0, 0),
+            (0, 0, 2, 3),
+        ] {
+            let source_index = animation_source_index(file_index, body_id, action_id, direction);
+            assert_eq!(
+                animation_layout_from_source_index(file_index, source_index),
+                Some((body_id, action_id, direction))
+            );
+        }
     }
 
     #[test]
