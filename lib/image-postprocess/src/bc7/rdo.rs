@@ -291,7 +291,7 @@ fn reduce_entropy_bc7_impl(
                                 &trial_blk,
                                 p_pixels,
                                 bc7_mode,
-                                false,
+                                dst_ofs > 0,
                                 max_trial_err,
                                 stats.as_deref_mut(),
                             ) else {
@@ -495,7 +495,7 @@ fn reduce_entropy_bc7_impl(
                             &trial_blk,
                             p_pixels,
                             bc7_mode,
-                            !params.allow_relative_movement,
+                            !params.allow_relative_movement || ofs > 0,
                             max_trial_err,
                             stats.as_deref_mut(),
                         ) else {
