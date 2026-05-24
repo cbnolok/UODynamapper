@@ -77,6 +77,14 @@ impl Plugin for ShaderPresetsPlugin {
 }
 
 pub fn load_from_file() -> LandShaderModePresets {
+    if let Some(saved) = load_shader_settings() {
+        return saved;
+    }
+
+    load_factory_presets()
+}
+
+fn load_factory_presets() -> LandShaderModePresets {
     let presets_with_rel_path: PathBuf =
         crate::core::constants::valid_asset_dir().join(SHADER_PRESETS_FILE_NAME);
 
@@ -243,18 +251,14 @@ fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
 fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderModePresets>) {
     log_system_add_startup::<ShaderPresetsPlugin>(StartupSysSet::LoadStartupUOFiles, fname!());
 
-    // Try loading user-saved settings first, fall back to factory defaults.
-    let (source, preset_key) = if let Some(saved) = load_shader_settings() {
-        let key = saved.default_preset.clone();
-        // Merge saved presets into the resource so the UI preset buttons work.
-        // We use the saved data as the source of truth.
-        (saved, key)
-    } else {
-        let key = shader_presets.default_preset.clone();
-        (clone_presets(&shader_presets), key)
-    };
+    let state = uniform_state_from_presets(&shader_presets);
 
-    let preset = get_preset_slot(&source, &preset_key).unwrap_or_else(|| {
+    commands.insert_resource(state);
+}
+
+fn uniform_state_from_presets(source: &LandShaderModePresets) -> UniformState {
+    let preset_key = source.default_preset.clone();
+    let preset = get_preset_slot(source, &preset_key).unwrap_or_else(|| {
         let msg = format!(
             "Invalid active preset '{}', falling back to classic.morning",
             preset_key
@@ -263,7 +267,7 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
         &source.classic.morning
     });
 
-    let state = UniformState {
+    UniformState {
         effects: preset.effects,
         lighting: preset.lighting,
         land_lighting: preset.land_lighting,
@@ -276,7 +280,71 @@ fn setup_uniform_state(mut commands: Commands, shader_presets: Res<LandShaderMod
             global_lighting: preset.global_lighting,
         }),
         active_preset: preset_key,
-    };
+    }
+}
 
-    commands.insert_resource(state);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slot(mode: u32, global_lighting: f32, exposure: f32) -> LandMaterialUniformsPresets {
+        let mut effects = LandEffectsUniform::default();
+        effects.shading_mode = mode;
+
+        let mut lighting = GlobalLightingUniforms::default();
+        lighting.exposure = exposure;
+
+        LandMaterialUniformsPresets {
+            global_lighting,
+            effects,
+            lighting,
+            land_lighting: LandLightingUniforms::default(),
+        }
+    }
+
+    fn mode(base_mode: u32, base_global: f32) -> LandRenderStylePresetsPerMode {
+        LandRenderStylePresetsPerMode {
+            morning: slot(base_mode, base_global, 1.0),
+            afternoon: slot(base_mode, base_global + 0.1, 1.1),
+            night: slot(base_mode, base_global + 0.2, 1.2),
+            cave: slot(base_mode, base_global + 0.3, 1.3),
+        }
+    }
+
+    fn presets() -> LandShaderModePresets {
+        LandShaderModePresets {
+            classic: mode(0, 1.0),
+            enhanced: mode(1, 2.0),
+            kr: mode(2, 3.0),
+            default_preset: "kr.afternoon".to_string(),
+        }
+    }
+
+    #[test]
+    fn uniform_state_uses_effective_preset_resource() {
+        let source = presets();
+        let state = uniform_state_from_presets(&source);
+
+        assert_eq!(state.active_preset, "kr.afternoon");
+        assert_eq!(state.effects.shading_mode, 2);
+        assert_eq!(state.global_lighting, 3.1);
+        assert_eq!(state.lighting.exposure, 1.1);
+    }
+
+    #[test]
+    fn saving_active_slot_preserves_other_effective_preset_slots() {
+        let source = presets();
+        let mut state = uniform_state_from_presets(&source);
+        state.active_preset = "classic.morning".to_string();
+        state.global_lighting = 0.25;
+        state.lighting.exposure = 0.75;
+
+        let saved = build_save_presets(&state, &source);
+
+        assert_eq!(saved.classic.morning.global_lighting, 0.25);
+        assert_eq!(saved.classic.morning.lighting.exposure, 0.75);
+        assert_eq!(saved.kr.afternoon.global_lighting, 3.1);
+        assert_eq!(saved.kr.afternoon.lighting.exposure, 1.1);
+        assert_eq!(saved.default_preset, "classic.morning");
+    }
 }
