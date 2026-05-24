@@ -46,7 +46,7 @@ pub fn sys_spawn_player_entity(
 
     // Store handles in a resource for dynamic toggling or just let the system handle it
 
-    let start_p = settings.core.world.start_p;
+    let start_p = settings.session_state.world.last_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
     let mut player_entity = commands.spawn((

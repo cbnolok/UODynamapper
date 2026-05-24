@@ -218,7 +218,7 @@ Guidance:
 - Preferred paths are:
   - automatic instancing with shared mesh and material plus index indirection
   - or a fully custom render pipeline and command path
-- Static rendering must respect `settings.worldmap_rendering.enable_statics` and `graphics.art_texture_source`.
+- Static rendering must respect `settings.world_rendering.enable_statics` and `graphics.art_texture_source`.
 
 ---
 

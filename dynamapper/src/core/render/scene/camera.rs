@@ -121,7 +121,7 @@ fn sys_setup_cam(
     //println!("Ortographic camera width={ortho_width}, height={ortho_height}");
 
     // Find player start position for focus (if needed).
-    let start_p = settings.core.world.start_p;
+    let start_p = settings.session_state.world.last_p;
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
     let projection = if settings.app.window.perspective_camera {

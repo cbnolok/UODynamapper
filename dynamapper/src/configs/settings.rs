@@ -20,10 +20,11 @@ pub struct Settings {
     pub graphics: SectGraphics,
     pub runtime_assets: SectRuntimeAssets,
     pub app: SectApp,
+    pub session_state: SectSessionState,
     pub logging: SectLogging,
     pub keybindings: SectKeybindings,
     pub maps: SectMaps,
-    pub worldmap_rendering: SectWorldMapRendering,
+    pub world_rendering: SectWorldRendering,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -49,6 +50,24 @@ pub struct SectApp {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct SectSessionState {
+    pub world: SectSessionWorld,
+    pub window: SectSessionWindow,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct SectSessionWorld {
+    pub last_p: UOVec4,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct SectSessionWindow {
+    pub height: f32,
+    pub width: f32,
+    pub zoom: f32,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectRuntimeAssets {
     pub udd_path: String,
 }
@@ -61,9 +80,6 @@ pub struct SectInput {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectWindow {
-    pub height: f32,
-    pub width: f32,
-    pub zoom: f32,
     pub ui_scale: f32,
     /// Per-overlay scale for the player position overlay.
     pub player_position_scale: f32,
@@ -89,15 +105,15 @@ pub struct SectMaps {
 }
 
 #[derive(Clone, Deserialize, Serialize, Default, PartialEq)]
-pub struct SectWorldMapRendering {
+pub struct SectWorldRendering {
     #[serde(default = "default_enable_statics")]
     pub enable_statics: bool,
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
     #[serde(default)]
-    pub diagnostics: SectWorldMapDiagnostics,
+    pub diagnostics: SectWorldRenderingDiagnostics,
     #[serde(default)]
-    pub shader_simplification: SectWorldMapShaderSimplification,
+    pub shader_simplification: SectWorldRenderingShaderSimplification,
 }
 
 fn default_enable_statics() -> bool {
@@ -105,7 +121,7 @@ fn default_enable_statics() -> bool {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
-pub struct SectWorldMapShaderSimplification {
+pub struct SectWorldRenderingShaderSimplification {
     /// Forces a temporary minimal land shader configuration on the shared land material.
     #[serde(default)]
     pub force_minimal_shader: bool,
@@ -115,7 +131,7 @@ pub struct SectWorldMapShaderSimplification {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
-pub struct SectWorldMapDiagnostics {
+pub struct SectWorldRenderingDiagnostics {
     /// Enables Bevy's low-level render diagnostics plugin.
     ///
     /// This gathers GPU pass timings and pipeline statistics. It is useful when profiling, but
@@ -143,7 +159,7 @@ pub struct SectWorldMapDiagnostics {
     pub highlight_hovered_static_object: bool,
 }
 
-impl Default for SectWorldMapDiagnostics {
+impl Default for SectWorldRenderingDiagnostics {
     fn default() -> Self {
         Self {
             enable_render_diagnostics: default_worldmap_diagnostics_enable_render_diagnostics(),
@@ -385,20 +401,22 @@ pub struct ToggleWireframe;
 
 const CORE_CONFIG_FILE: &str = "settings/core.toml";
 const RUNTIME_ASSETS_CONFIG_FILE: &str = "settings/runtime_assets.toml";
-const USER_CONFIG_FILE: &str = "settings/preferences.toml";
+const USER_PREFERENCES_CONFIG_FILE: &str = "settings/user_preferences.toml";
+const SESSION_STATE_CONFIG_FILE: &str = "settings/session_state.toml";
 const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
 const MAPS_CONFIG_FILE: &str = "settings/maps.toml";
-const WORLDMAP_RENDERING_CONFIG_FILE: &str = "settings/core_worldmap_rendering.toml";
+const WORLD_RENDERING_CONFIG_FILE: &str = "settings/world_rendering.toml";
 
 pub fn load_from_files() -> Settings {
     let assets_path = crate::core::constants::valid_asset_dir();
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let runtime_assets_path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
-    let user_path = assets_path.join(USER_CONFIG_FILE);
+    let user_path = assets_path.join(USER_PREFERENCES_CONFIG_FILE);
+    let session_state_path = assets_path.join(SESSION_STATE_CONFIG_FILE);
     let maps_path = assets_path.join(MAPS_CONFIG_FILE);
-    let worldmap_rendering_path = assets_path.join(WORLDMAP_RENDERING_CONFIG_FILE);
+    let world_rendering_path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
 
     let core_contents =
         std::fs::read_to_string(&core_path).expect("Failed to read settings/core.toml");
@@ -421,10 +439,16 @@ pub fn load_from_files() -> Settings {
 
     // User preferences file contains SectApp fields directly at top level
     let user_contents = std::fs::read_to_string(&user_path)
-        .expect("Failed to read settings/preferences.toml — please ensure assets/settings/preferences.toml exists and is valid");
+        .expect("Failed to read settings/user_preferences.toml — please ensure assets/settings/user_preferences.toml exists and is valid");
 
     let user_app: SectApp = toml::from_str(&user_contents)
-        .expect("Failed to parse settings/preferences.toml — please fix the file in assets/settings/preferences.toml");
+        .expect("Failed to parse settings/user_preferences.toml — please fix the file in assets/settings/user_preferences.toml");
+
+    let session_state_contents = std::fs::read_to_string(&session_state_path)
+        .expect("Failed to read settings/session_state.toml — please ensure assets/settings/session_state.toml exists and is valid");
+
+    let session_state: SectSessionState = toml::from_str(&session_state_contents)
+        .expect("Failed to parse settings/session_state.toml — please fix the file in assets/settings/session_state.toml");
 
     // Graphics settings loader (assets/settings/graphics.toml)
     let gfx_path = assets_path.join(GRAPHICS_CONFIG_FILE);
@@ -466,13 +490,13 @@ pub fn load_from_files() -> Settings {
     let maps: SectMaps = toml::from_str(&maps_contents)
         .expect("Failed to parse maps.toml — please fix the file in assets/settings/maps.toml");
 
-    let worldmap_rendering_contents = std::fs::read_to_string(&worldmap_rendering_path).expect(
-        "Failed to read settings/core_worldmap_rendering.toml — please ensure assets/settings/core_worldmap_rendering.toml exists",
+    let world_rendering_contents = std::fs::read_to_string(&world_rendering_path).expect(
+        "Failed to read settings/world_rendering.toml — please ensure assets/settings/world_rendering.toml exists",
     );
 
-    let worldmap_rendering: SectWorldMapRendering = toml::from_str(&worldmap_rendering_contents)
+    let world_rendering: SectWorldRendering = toml::from_str(&world_rendering_contents)
         .expect(
-            "Failed to parse settings/core_worldmap_rendering.toml — please fix the file in assets/settings/core_worldmap_rendering.toml",
+            "Failed to parse settings/world_rendering.toml — please fix the file in assets/settings/world_rendering.toml",
         );
 
     Settings {
@@ -480,10 +504,11 @@ pub fn load_from_files() -> Settings {
         graphics,
         runtime_assets,
         app: user_app,
+        session_state,
         logging: core_data.logging,
         keybindings,
         maps,
-        worldmap_rendering,
+        world_rendering,
     }
 }
 
@@ -505,7 +530,7 @@ pub fn apply_logging_settings(logging: &SectLogging) {
 
 pub fn save_app_settings(settings: &Settings) {
     let assets_path = crate::core::constants::valid_asset_dir();
-    let user_path = assets_path.join(USER_CONFIG_FILE);
+    let user_path = assets_path.join(USER_PREFERENCES_CONFIG_FILE);
 
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
@@ -513,10 +538,14 @@ pub fn save_app_settings(settings: &Settings) {
                 console_logger::one(
                     LogSev::Error,
                     LogAbout::Settings,
-                    &format!("Failed to save preferences.toml: {}", e),
+                    &format!("Failed to save user_preferences.toml: {}", e),
                 );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved preferences.toml");
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::Settings,
+                    "Saved user_preferences.toml",
+                );
             }
         }
         Err(e) => {
@@ -524,6 +553,32 @@ pub fn save_app_settings(settings: &Settings) {
                 LogSev::Error,
                 LogAbout::Settings,
                 &format!("Failed to serialize user preferences: {}", e),
+            );
+        }
+    }
+}
+
+pub fn save_session_state_settings(settings: &Settings) {
+    let assets_path = crate::core::constants::valid_asset_dir();
+    let path = assets_path.join(SESSION_STATE_CONFIG_FILE);
+
+    match toml::to_string_pretty(&settings.session_state) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&path, toml_str) {
+                console_logger::one(
+                    LogSev::Error,
+                    LogAbout::Settings,
+                    &format!("Failed to save session_state.toml: {}", e),
+                );
+            } else {
+                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved session_state.toml");
+            }
+        }
+        Err(e) => {
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Settings,
+                &format!("Failed to serialize session state: {}", e),
             );
         }
     }
@@ -623,23 +678,23 @@ pub fn save_core_settings(settings: &Settings) {
     }
 }
 
-pub fn save_worldmap_rendering_settings(settings: &Settings) {
+pub fn save_world_rendering_settings(settings: &Settings) {
     let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(WORLDMAP_RENDERING_CONFIG_FILE);
+    let path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
 
-    match toml::to_string_pretty(&settings.worldmap_rendering) {
+    match toml::to_string_pretty(&settings.world_rendering) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&path, toml_str) {
                 console_logger::one(
                     LogSev::Error,
                     LogAbout::Settings,
-                    &format!("Failed to save core_worldmap_rendering.toml: {}", e),
+                    &format!("Failed to save world_rendering.toml: {}", e),
                 );
             } else {
                 console_logger::one(
                     LogSev::Info,
                     LogAbout::Settings,
-                    "Saved core_worldmap_rendering.toml",
+                    "Saved world_rendering.toml",
                 );
             }
         }
@@ -647,7 +702,7 @@ pub fn save_worldmap_rendering_settings(settings: &Settings) {
             console_logger::one(
                 LogSev::Error,
                 LogAbout::Settings,
-                &format!("Failed to serialize worldmap rendering settings: {}", e),
+                &format!("Failed to serialize world rendering settings: {}", e),
             );
         }
     }
@@ -710,39 +765,42 @@ pub fn save_maps_settings(settings: &Settings) {
 #[derive(Clone, PartialEq)]
 struct SettingsSaveSnapshot {
     app: SectApp,
+    session_state: SectSessionState,
     graphics: SectGraphics,
     keybindings: SectKeybindings,
     core: SectCore,
     logging: SectLogging,
     runtime_assets: SectRuntimeAssets,
     maps: SectMaps,
-    worldmap_rendering: SectWorldMapRendering,
+    world_rendering: SectWorldRendering,
 }
 
 impl SettingsSaveSnapshot {
     fn from_settings(settings: &Settings) -> Self {
         Self {
             app: settings.app.clone(),
+            session_state: settings.session_state.clone(),
             graphics: settings.graphics.clone(),
             keybindings: settings.keybindings.clone(),
             core: settings.core.clone(),
             logging: settings.logging.clone(),
             runtime_assets: settings.runtime_assets.clone(),
             maps: settings.maps.clone(),
-            worldmap_rendering: settings.worldmap_rendering.clone(),
+            world_rendering: settings.world_rendering.clone(),
         }
     }
 
     fn changes_from(&self, other: &Self) -> SettingsChangeSet {
         SettingsChangeSet {
             app: self.app != other.app,
+            session_state: self.session_state != other.session_state,
             graphics: self.graphics != other.graphics,
             keybindings: self.keybindings != other.keybindings,
             core: self.core != other.core,
             logging: self.logging != other.logging,
             runtime_assets: self.runtime_assets != other.runtime_assets,
             maps: self.maps != other.maps,
-            worldmap_rendering: self.worldmap_rendering != other.worldmap_rendering,
+            world_rendering: self.world_rendering != other.world_rendering,
         }
     }
 }
@@ -750,25 +808,27 @@ impl SettingsSaveSnapshot {
 #[derive(Default)]
 struct SettingsChangeSet {
     app: bool,
+    session_state: bool,
     graphics: bool,
     keybindings: bool,
     core: bool,
     logging: bool,
     runtime_assets: bool,
     maps: bool,
-    worldmap_rendering: bool,
+    world_rendering: bool,
 }
 
 impl SettingsChangeSet {
     fn any(&self) -> bool {
         self.app
+            || self.session_state
             || self.graphics
             || self.keybindings
             || self.core
             || self.logging
             || self.runtime_assets
             || self.maps
-            || self.worldmap_rendering
+            || self.world_rendering
     }
 }
 
@@ -809,26 +869,26 @@ fn sys_sync_resources_to_settings(
     player_q: Query<&Player>,
 ) {
     // Zoom
-    if (settings.app.window.zoom - zoom.0).abs() > 0.001 {
-        settings.app.window.zoom = zoom.0;
+    if (settings.session_state.window.zoom - zoom.0).abs() > 0.001 {
+        settings.session_state.window.zoom = zoom.0;
     }
 
     // Window size
     if let Some(window) = windows.iter().next() {
         let res = &window.resolution;
-        if (settings.app.window.width - res.width()).abs() > 1.0 {
-            settings.app.window.width = res.width();
+        if (settings.session_state.window.width - res.width()).abs() > 1.0 {
+            settings.session_state.window.width = res.width();
         }
-        if (settings.app.window.height - res.height()).abs() > 1.0 {
-            settings.app.window.height = res.height();
+        if (settings.session_state.window.height - res.height()).abs() > 1.0 {
+            settings.session_state.window.height = res.height();
         }
     }
 
     // Player position
     if let Some(player) = player_q.iter().next() {
         if let Some(pos) = player.current_pos {
-            if settings.core.world.start_p != pos {
-                settings.core.world.start_p = pos;
+            if settings.session_state.world.last_p != pos {
+                settings.session_state.world.last_p = pos;
             }
         }
     }
@@ -860,11 +920,11 @@ fn sys_apply(
 ) {
     let mut w = windows_q.single_mut().unwrap();
     w.resolution = WindowResolution::new(
-        settings_res.app.window.width as u32,
-        settings_res.app.window.height as u32,
+        settings_res.session_state.window.width as u32,
+        settings_res.session_state.window.height as u32,
     );
 
-    zoom_res.write_val(settings_res.app.window.zoom);
+    zoom_res.write_val(settings_res.session_state.window.zoom);
 }
 
 // ----
@@ -984,6 +1044,9 @@ fn sys_debounced_save(
             if changes.app {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
             }
+            if changes.session_state {
+                console_logger::one(LogSev::Debug, LogAbout::Settings, "Session state changed");
+            }
             if changes.graphics {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
             }
@@ -993,11 +1056,11 @@ fn sys_debounced_save(
             if changes.core {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Core settings changed");
             }
-            if changes.worldmap_rendering {
+            if changes.world_rendering {
                 console_logger::one(
                     LogSev::Debug,
                     LogAbout::Settings,
-                    "Worldmap rendering settings changed",
+                    "World rendering settings changed",
                 );
             }
             *pending_save = Some(current.clone());
@@ -1017,6 +1080,10 @@ fn sys_debounced_save(
 
             if changes.app {
                 save_app_settings(&settings);
+            }
+
+            if changes.session_state {
+                save_session_state_settings(&settings);
             }
 
             if changes.graphics {
@@ -1039,8 +1106,8 @@ fn sys_debounced_save(
                 save_maps_settings(&settings);
             }
 
-            if changes.worldmap_rendering {
-                save_worldmap_rendering_settings(&settings);
+            if changes.world_rendering {
+                save_world_rendering_settings(&settings);
             }
 
             *last_saved = Some(pending.clone());

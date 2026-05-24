@@ -211,8 +211,8 @@ pub fn run_bevy_app() -> ExitCode {
     );
 
     let window_size: (f32, f32) = (
-        settings_data.app.window.width,
-        settings_data.app.window.height,
+        settings_data.session_state.window.width,
+        settings_data.session_state.window.height,
     );
     let wireframe_enabled: bool = settings_data.app.debug.map_render_wireframe;
 
@@ -346,7 +346,7 @@ pub fn run_bevy_app() -> ExitCode {
     app.add_plugins(LogGpuPreprocessingModePlugin);
 
     // Manually add complex plugins or plugin tuples.
-    add_diagnostics_plugins(&mut app, &settings_data.worldmap_rendering.diagnostics);
+    add_diagnostics_plugins(&mut app, &settings_data.world_rendering.diagnostics);
 
     let result = app.run();
 

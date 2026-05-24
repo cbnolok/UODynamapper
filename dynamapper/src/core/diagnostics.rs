@@ -10,7 +10,7 @@ use bevy::{
 use parking_lot::Mutex;
 
 use crate::{
-    configs::settings::{SectWorldMapDiagnostics, Settings},
+    configs::settings::{SectWorldRenderingDiagnostics, Settings},
     console_logger::{self, LogAbout, LogSev},
     core::app_states::AppState,
 };
@@ -370,7 +370,7 @@ impl Default for DiagnosticDumpState {
     }
 }
 
-pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldMapDiagnostics) {
+pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldRenderingDiagnostics) {
     let cross_app_diagnostics = WorldmapCrossAppDiagnostics::default();
     app.insert_resource(cross_app_diagnostics.clone());
     if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
@@ -559,7 +559,7 @@ fn sys_dump_configurable_diagnostics(
     land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,
     mut dump_state: ResMut<DiagnosticDumpState>,
 ) {
-    let config = &settings.worldmap_rendering.diagnostics;
+    let config = &settings.world_rendering.diagnostics;
     let interval_sec = config.dump_interval_sec.max(0.1);
     if (dump_state.interval_sec - interval_sec).abs() > f32::EPSILON {
         dump_state.interval_sec = interval_sec;

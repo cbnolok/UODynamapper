@@ -125,7 +125,7 @@ fn sys_sync_settings_to_state(
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
         state.perspective_camera = settings.app.window.perspective_camera;
-        state.enable_statics = settings.worldmap_rendering.enable_statics;
+        state.enable_statics = settings.world_rendering.enable_statics;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -201,8 +201,8 @@ pub fn sys_render_preferences_dialog(
         if settings.as_ref().app.window.perspective_camera != state.perspective_camera {
             settings.app.window.perspective_camera = state.perspective_camera;
         }
-        if settings.as_ref().worldmap_rendering.enable_statics != state.enable_statics {
-            settings.worldmap_rendering.enable_statics = state.enable_statics;
+        if settings.as_ref().world_rendering.enable_statics != state.enable_statics {
+            settings.world_rendering.enable_statics = state.enable_statics;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;

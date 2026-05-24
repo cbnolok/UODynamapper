@@ -315,7 +315,7 @@ pub fn update_cursor_behavior_text(
                             let map_id = player
                                 .current_pos
                                 .map(|p| p.m)
-                                .unwrap_or(settings.core.world.start_p.m);
+                                .unwrap_or(settings.session_state.world.last_p.m);
                             let cursor_z =
                                 resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
                                     .unwrap_or(0);
@@ -562,7 +562,7 @@ fn sys_draw_hovered_static_highlight(
     mut gizmos: Gizmos,
 ) {
     if !settings
-        .worldmap_rendering
+        .world_rendering
         .diagnostics
         .highlight_hovered_static_object
     {
@@ -1042,7 +1042,7 @@ fn resolve_cursor_tile_coords(
     let map_id = player
         .current_pos
         .map(|p| p.m)
-        .unwrap_or(settings.core.world.start_p.m);
+        .unwrap_or(settings.session_state.world.last_p.m);
     Some((map_id, cursor_x, cursor_y))
 }
 
@@ -1319,7 +1319,7 @@ fn sys_teleport_on_click(
         let map = player
             .current_pos
             .map(|p| p.m)
-            .unwrap_or(settings.core.world.start_p.m);
+            .unwrap_or(settings.session_state.world.last_p.m);
 
         let (max_x, max_y) = if let Some(meta) = world_geo_data.maps.get(&(map as u32)) {
             (meta.width, meta.height)

@@ -194,7 +194,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         .collect::<Vec<_>>();
 
     for map_plane_index in 0..=MAX_MAP_INDEX {
-        if map_plane_index != settings.core.world.start_p.m as u32 {
+        if map_plane_index != settings.session_state.world.last_p.m as u32 {
             continue;
         }
 

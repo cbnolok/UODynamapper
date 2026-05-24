@@ -1044,7 +1044,7 @@ pub fn sys_collect_visible_statics(
     // We can iterate over existing land chunk entities to find which blocks to draw.
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
 ) {
-    if !settings.worldmap_rendering.enable_statics {
+    if !settings.world_rendering.enable_statics {
         return;
     }
 

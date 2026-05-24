@@ -66,7 +66,7 @@ impl Default for LandUploadBudget {
 
 impl LandUploadBudget {
     pub fn from_settings(settings: &crate::configs::settings::Settings) -> Self {
-        let land_streaming = &settings.worldmap_rendering.land_streaming;
+        let land_streaming = &settings.world_rendering.land_streaming;
         Self {
             prepare_max_blocks_per_frame: land_streaming.prepare_max_blocks_per_frame,
             upload_max_ops_per_frame: land_streaming.upload_max_ops_per_frame,
@@ -200,9 +200,9 @@ fn sys_apply_land_shader_simplification_override(
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
     shared_mat: Option<Res<draw_mesh::SharedLandMaterial>>,
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
-    mut last_override: Local<Option<crate::configs::settings::SectWorldMapShaderSimplification>>,
+    mut last_override: Local<Option<crate::configs::settings::SectWorldRenderingShaderSimplification>>,
 ) {
-    let override_config = settings.worldmap_rendering.shader_simplification.clone();
+    let override_config = settings.world_rendering.shader_simplification.clone();
     let force_changed = *last_override != Some(override_config.clone());
     let force_minimal = override_config.force_minimal_shader;
     let force_flat_fragment = override_config.force_flat_fragment_shader;

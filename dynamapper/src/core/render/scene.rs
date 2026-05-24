@@ -123,11 +123,11 @@ pub fn sys_update_scene_on_window_resize(
     }
 
     if saw_resize {
-        if (settings.app.window.width - last_size.0).abs() > 0.001 {
-            settings.app.window.width = last_size.0;
+        if (settings.session_state.window.width - last_size.0).abs() > 0.001 {
+            settings.session_state.window.width = last_size.0;
         }
-        if (settings.app.window.height - last_size.1).abs() > 0.001 {
-            settings.app.window.height = last_size.1;
+        if (settings.session_state.window.height - last_size.1).abs() > 0.001 {
+            settings.session_state.window.height = last_size.1;
         }
         writer.write(RecomputeVisibleChunksEvent {});
     }
