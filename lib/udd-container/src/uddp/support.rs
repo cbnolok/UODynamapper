@@ -129,16 +129,18 @@ pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Resu
 /// Jxl compression helper.
 pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     use jpegxl_rs::encoder_builder;
-    use jpegxl_rs::encode::EncoderSpeed;
+    use jpegxl_rs::encode::{EncoderFrame, EncoderSpeed};
 
     let mut encoder = encoder_builder()
         .has_alpha(true)
         .lossless(true)
+        .uses_original_profile(true)
         .speed(EncoderSpeed::Falcon)
         .build()
         .map_err(|e| e.to_string())?;
 
-    let encoded = encoder.encode::<u8, u8>(data, width, height)
+    let frame = EncoderFrame::new(data).num_channels(4);
+    let encoded = encoder.encode_frame::<u8, u8>(&frame, width, height)
         .map_err(|e| e.to_string())?;
 
     let mut final_payload = Vec::with_capacity(encoded.len() + 8);
@@ -435,5 +437,4 @@ pub fn read_package(
 ) -> Result<super::reader::UddpReader, Box<dyn std::error::Error>> {
     Ok(super::reader::UddpReader::load(path)?)
 }
-
 

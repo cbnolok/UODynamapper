@@ -113,53 +113,61 @@ struct TextureOutputFormat {
 
 fn resolve_texture_output_format(
     raw: bool,
+    jxl: bool,
     bc7: bool,
     bc7_rdo: bool,
     bc7_rdo_lambda: f32,
 ) -> eyre::Result<TextureOutputFormat> {
-    match (raw, bc7, bc7_rdo) {
-        (false, false, false) => Ok(TextureOutputFormat {
+    match (raw, jxl, bc7, bc7_rdo) {
+        (false, false, false, false) => Ok(TextureOutputFormat {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             label: "RGBA8888",
         }),
-        (true, false, false) => Ok(TextureOutputFormat {
+        (true, false, false, false) => Ok(TextureOutputFormat {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             label: "RGBA8888",
         }),
-        (false, true, false) => Ok(TextureOutputFormat {
+        (false, true, false, false) => Ok(TextureOutputFormat {
+            compression: CompressionFlag::JpegXl,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            label: "RGBA8888 JXL",
+        }),
+        (false, false, true, false) => Ok(TextureOutputFormat {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             label: "BC7",
         }),
-        (false, false, true) => Ok(TextureOutputFormat {
+        (false, false, false, true) => Ok(TextureOutputFormat {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda,
             label: "BC7 RDO",
         }),
-        _ => eyre::bail!("select at most one output format: --raw, --bc7, or --bc7-rdo"),
+        _ => eyre::bail!("select at most one output format: --raw, --jxl, --bc7, or --bc7-rdo"),
     }
 }
 
 fn resolve_mobile_anim_output_format(
     raw: bool,
+    jxl: bool,
     bc7: bool,
     bc7_rdo: bool,
     bc7_rdo_lambda: f32,
 ) -> eyre::Result<TextureOutputFormat> {
-    match (raw, bc7, bc7_rdo) {
-        (false, false, false) => Ok(TextureOutputFormat {
+    match (raw, jxl, bc7, bc7_rdo) {
+        (false, false, false, false) => Ok(TextureOutputFormat {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             label: "BC7",
         }),
-        _ => resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda),
+        _ => resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda),
     }
 }
 
@@ -441,7 +449,7 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
 #[derive(Subcommand)]
 enum Commands {
     /// Packs classic art.mul/artidx.mul into tex_art_cc.uddp atlas pages.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackArt {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -457,6 +465,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
+        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        jxl: bool,
         #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
@@ -483,7 +493,7 @@ enum Commands {
         upscale: CliUpscaleFilter,
     },
     /// Packs Classic texmaps.mul into tex_land_cc.uddp atlas pages.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackTexmaps {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -499,6 +509,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
+        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        jxl: bool,
         #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
@@ -513,7 +525,7 @@ enum Commands {
         upscale: CliUpscaleFilter,
     },
     /// Packs classic anim*.mul/anim*.idx mobile animations into mobile_anim_cc.uddp atlas pages.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackMobileAnims {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -527,6 +539,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
+        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        jxl: bool,
         #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO. This is the default.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
@@ -535,7 +549,7 @@ enum Commands {
         bc7_rdo_lambda: f32,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcMobileAnims {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -549,6 +563,8 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
+        #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        jxl: bool,
         #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO. This is the default.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
@@ -557,7 +573,7 @@ enum Commands {
         bc7_rdo_lambda: f32,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
-    #[command(group(ArgGroup::new("output_format").args(["raw", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -581,6 +597,8 @@ enum Commands {
         land_gutter: u16,
         #[arg(long, help = "Write EC land RGBA8888 atlas pages with package compression.")]
         raw: bool,
+        #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
+        jxl: bool,
         #[arg(long, help = "Write EC land BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write EC land BC7 atlas pages with package compression and BC7 RDO.")]
@@ -845,6 +863,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             raw,
+            jxl,
             bc7,
             bc7_rdo,
             packing_mode,
@@ -860,7 +879,7 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let output_format = resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
+            let output_format = resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
@@ -894,6 +913,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             raw,
+            jxl,
             bc7,
             bc7_rdo,
             packing_mode,
@@ -903,7 +923,7 @@ pub fn run() -> eyre::Result<()> {
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let output_format = resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
+            let output_format = resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
@@ -943,6 +963,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             raw,
+            jxl,
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
@@ -950,7 +971,7 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let output_format =
-                resolve_mobile_anim_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
+                resolve_mobile_anim_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -980,6 +1001,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_height,
             gutter,
             raw,
+            jxl,
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
@@ -987,7 +1009,7 @@ pub fn run() -> eyre::Result<()> {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let output_format =
-                resolve_mobile_anim_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
+                resolve_mobile_anim_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -1026,6 +1048,7 @@ pub fn run() -> eyre::Result<()> {
             land_atlas_height,
             land_gutter,
             raw,
+            jxl,
             bc7,
             bc7_rdo,
             art_packing_mode,
@@ -1049,7 +1072,7 @@ pub fn run() -> eyre::Result<()> {
             let land_out_file = resolve_output_path(&ec_paths, &land_output);
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
-            let output_format = resolve_texture_output_format(raw, bc7, bc7_rdo, bc7_rdo_lambda)?;
+            let output_format = resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
@@ -1610,6 +1633,7 @@ mod tests {
                 bc7,
                 bc7_rdo,
                 raw,
+                jxl,
                 ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
@@ -1624,6 +1648,7 @@ mod tests {
                 assert!(bc7);
                 assert!(!bc7_rdo);
                 assert!(!raw);
+                assert!(!jxl);
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -1644,15 +1669,17 @@ mod tests {
         match cli.command {
             Commands::PackArt {
                 raw,
+                jxl,
                 bc7,
                 bc7_rdo,
                 ..
             } => {
                 assert!(!raw);
+                assert!(!jxl);
                 assert!(!bc7);
                 assert!(!bc7_rdo);
                 let output_format =
-                    resolve_texture_output_format(raw, bc7, bc7_rdo, 1.0).unwrap();
+                    resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(output_format.compression, CompressionFlag::ZstdNoDict);
             }
@@ -1675,17 +1702,53 @@ mod tests {
         match cli.command {
             Commands::PackMobileAnims {
                 raw,
+                jxl,
                 bc7,
                 bc7_rdo,
                 ..
             } => {
                 assert!(!raw);
+                assert!(!jxl);
                 assert!(!bc7);
                 assert!(!bc7_rdo);
                 let output_format =
-                    resolve_mobile_anim_output_format(raw, bc7, bc7_rdo, 1.0).unwrap();
+                    resolve_mobile_anim_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
                 assert_eq!(output_format.compression, CompressionFlag::ZstdNoDict);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_selects_jxl_as_raw_rgba_payload_compression() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-art",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "tex_art_cc.uddp",
+            "--jxl",
+        ])
+        .expect("parse jxl texture output");
+
+        match cli.command {
+            Commands::PackArt {
+                raw,
+                jxl,
+                bc7,
+                bc7_rdo,
+                ..
+            } => {
+                assert!(!raw);
+                assert!(jxl);
+                assert!(!bc7);
+                assert!(!bc7_rdo);
+                let output_format =
+                    resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, 1.0).unwrap();
+                assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
+                assert_eq!(output_format.compression, CompressionFlag::JpegXl);
             }
             _ => panic!("unexpected command parsed"),
         }

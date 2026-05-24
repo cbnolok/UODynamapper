@@ -80,6 +80,40 @@ fn path_hash_package_roundtrip_reads_entries() {
 }
 
 #[test]
+fn path_hash_package_roundtrip_reads_jpegxl_rgba_entry() {
+    let width = 32u32;
+    let height = 32u32;
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            rgba.extend_from_slice(&[(x * 3) as u8, (y * 5) as u8, 128, 255]);
+        }
+    }
+
+    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: CompressionFlag::JpegXl,
+            width,
+            height,
+            virtual_path: Some("pages/0000.rgba8888"),
+            path_hash64: None,
+            id: None,
+            data: &rgba,
+        })
+        .expect("add jxl texture file");
+
+    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
+    assert_eq!(
+        reader
+            .read_file_by_path_hash(xxh64_virtual_path("pages/0000.rgba8888"))
+            .expect("read jxl texture"),
+        rgba
+    );
+}
+
+#[test]
 fn dense_id_package_roundtrip_reads_entries() {
     let mut builder = UddpBuilder::new(LookupMode::DenseId);
     builder
