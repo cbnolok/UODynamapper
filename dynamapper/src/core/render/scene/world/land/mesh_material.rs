@@ -174,8 +174,8 @@ pub struct LandEffectsUniform {
     pub enable_normal_maps: u32,
     /// 1 = use KR-style fake normal lighting on 2D art sprites/ground art.
     pub enable_art_fake_normals: u32,
-    #[serde(default)]
-    pub _pad_eff2: u32,
+    /// KR-style contact darkening for static art bases, walls, foliage, and ground art.
+    pub art_contact_shadow_strength: f32,
     #[serde(default)]
     pub _pad_eff3: u32,
 }

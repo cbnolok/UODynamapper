@@ -55,6 +55,7 @@ fn apply_art_surface_shading(
     let shadow_strength = clamp(effects.art_shadow_strength, 0.0, 1.0);
     let highlight_strength = clamp(effects.art_highlight_strength, 0.0, 1.0);
     let tint_strength = clamp(effects.art_depth_tint_strength, 0.0, 1.0);
+    let contact_strength = clamp(effects.art_contact_shadow_strength, 0.0, 1.0);
     let light_static = clamp(effects.light_decal_intensity, 0.0, 2.0);
 
     let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
@@ -74,19 +75,32 @@ fn apply_art_surface_shading(
         let wrap = max(lambert * 0.75 + 0.25, 0.0);
         let top_catch = pow(max(1.0 - uv_in_tile.y, 0.0), 1.7);
         let contact = smoothstep(0.38, 1.0, uv_in_tile.y);
+        let ground_contact = select(
+            smoothstep(0.62, 1.0, uv_in_tile.y),
+            1.0 - smoothstep(0.0, 0.28, min(min(uv_in_tile.x, 1.0 - uv_in_tile.x), min(uv_in_tile.y, 1.0 - uv_in_tile.y))),
+            is_ground_art || depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR,
+        );
 
         var depth_scale = 1.0;
+        var contact_scale = 1.0;
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
             depth_scale = 1.12;
+            contact_scale = 1.28;
         } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
             depth_scale = 0.92;
+            contact_scale = 0.70;
         } else if (depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_scale = 0.78;
+            contact_scale = 0.55;
         }
 
         let warm_key = global_light.light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale;
         let cool_shadow = mix(vec3<f32>(1.0), global_light.atmosphere_tint, tint_strength * (0.45 + 0.35 * contact));
-        let shadow_cut = 1.0 - shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise;
+        let contact_shadow = ground_contact * contact_strength * contact_scale;
+        let shadow_cut = 1.0 - (
+            shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise
+            + contact_shadow * (0.20 + 0.26 * (1.0 - lambert))
+        );
         let edge_catch = smoothstep(0.34, 0.5, abs(uv_in_tile.x - 0.5)) * (0.18 + 0.12 * top_catch);
 
         out_rgb = rgb * cool_shadow * shadow_cut;

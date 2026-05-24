@@ -76,6 +76,7 @@ grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -127,6 +128,7 @@ grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -178,6 +180,7 @@ grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [classic.night.lighting]
 enable_fog = 0
@@ -229,6 +232,7 @@ grunge_strength = 0.0
 light_decal_intensity = 1.0
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -285,6 +289,7 @@ grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -335,6 +340,7 @@ grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -385,6 +391,7 @@ grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -435,6 +442,7 @@ grunge_strength = 0.18
 light_decal_intensity = 0.75
 enable_normal_maps = 0
 enable_art_fake_normals = 0
+art_contact_shadow_strength = 0.0
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -494,6 +502,7 @@ art_highlight_strength = 0.38
 art_depth_tint_strength = 0.28
 enable_normal_maps = 0
 enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.42
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -547,6 +556,7 @@ art_highlight_strength = 0.42
 art_depth_tint_strength = 0.30
 enable_normal_maps = 0
 enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.48
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -600,6 +610,7 @@ art_highlight_strength = 0.28
 art_depth_tint_strength = 0.42
 enable_normal_maps = 0
 enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.55
 
 [kr.night.lighting]
 enable_fog = 1
@@ -653,6 +664,7 @@ art_highlight_strength = 0.24
 art_depth_tint_strength = 0.48
 enable_normal_maps = 0
 enable_art_fake_normals = 1
+art_contact_shadow_strength = 0.62
 
 [kr.cave.lighting]
 enable_fog = 1

@@ -35,7 +35,7 @@ struct LandEffectsUniform {
     art_depth_tint_strength: f32,
     enable_normal_maps: u32,
     enable_art_fake_normals: u32,
-    _pad_eff2: u32,
+    art_contact_shadow_strength: f32,
     _pad_eff3: u32,
 }
 

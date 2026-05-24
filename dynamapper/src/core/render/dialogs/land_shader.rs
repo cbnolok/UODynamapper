@@ -153,6 +153,7 @@ pub fn land_ui_system(
                 ui.separator();
 
                 changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
 
@@ -555,6 +556,7 @@ pub fn land_ui_system(
                 changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
                 changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
 
