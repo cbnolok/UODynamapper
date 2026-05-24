@@ -57,7 +57,8 @@
 // ============================================================================
 
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
-const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.34;
+const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.82;
+const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 
 fn ec_transition_edge_weight(edge_distance: f32) -> f32 {
   return 1.0 - smoothstep(0.0, EC_TERRAIN_TRANSITION_WIDTH, edge_distance);
@@ -103,6 +104,12 @@ fn ec_transition_neighbor_color(
   return vec4<f32>(sample_ec_material_albedo_at_world(world_xz, neighbor_tile), weight);
 }
 
+fn ec_transition_diagonal_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f32 {
+  let x_weight = ec_transition_neighbor_weight(vec2<i32>(offset.x, 0), uv_in_tile);
+  let y_weight = ec_transition_neighbor_weight(vec2<i32>(0, offset.y), uv_in_tile);
+  return min(x_weight, y_weight) * 0.75;
+}
+
 fn blend_ec_terrain_transitions(
   base_color: vec3<f32>,
   current_tile: TileUniform,
@@ -114,13 +121,17 @@ fn blend_ec_terrain_transitions(
     return base_color;
   }
 
-  var accum = base_color;
-  var total_weight = 1.0;
+  var accum = base_color * EC_TERRAIN_TRANSITION_BASE_WEIGHT;
+  var total_weight = EC_TERRAIN_TRANSITION_BASE_WEIGHT;
 
   let west_offset = vec2<i32>(-1, 0);
   let east_offset = vec2<i32>(1, 0);
   let north_offset = vec2<i32>(0, -1);
   let south_offset = vec2<i32>(0, 1);
+  let northwest_offset = vec2<i32>(-1, -1);
+  let northeast_offset = vec2<i32>(1, -1);
+  let southwest_offset = vec2<i32>(-1, 1);
+  let southeast_offset = vec2<i32>(1, 1);
 
   let west = ec_transition_neighbor_color(
     current_tile,
@@ -161,6 +172,46 @@ fn blend_ec_terrain_transitions(
   );
   accum += south.rgb * south.a;
   total_weight += south.a;
+
+  let northwest = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x - 1, world_tile.y - 1),
+    world_xz,
+    base_color,
+    ec_transition_diagonal_weight(northwest_offset, uv_in_tile),
+  );
+  accum += northwest.rgb * northwest.a;
+  total_weight += northwest.a;
+
+  let northeast = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x + 1, world_tile.y - 1),
+    world_xz,
+    base_color,
+    ec_transition_diagonal_weight(northeast_offset, uv_in_tile),
+  );
+  accum += northeast.rgb * northeast.a;
+  total_weight += northeast.a;
+
+  let southwest = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x - 1, world_tile.y + 1),
+    world_xz,
+    base_color,
+    ec_transition_diagonal_weight(southwest_offset, uv_in_tile),
+  );
+  accum += southwest.rgb * southwest.a;
+  total_weight += southwest.a;
+
+  let southeast = ec_transition_neighbor_color(
+    current_tile,
+    atlas_read_meta(world_tile.x + 1, world_tile.y + 1),
+    world_xz,
+    base_color,
+    ec_transition_diagonal_weight(southeast_offset, uv_in_tile),
+  );
+  accum += southeast.rgb * southeast.a;
+  total_weight += southeast.a;
 
   return accum / max(total_weight, 0.0001);
 }
