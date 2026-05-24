@@ -1009,13 +1009,14 @@ rim_color = [
 ]
 
 [kr.morning]
-global_lighting = 1.1
+global_lighting = 1.02
 
 [kr.morning.effects]
 shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+art_shadow_strength = 0.34
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1025,6 +1026,8 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
+art_highlight_strength = 0.38
+art_depth_tint_strength = 0.28
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 
@@ -1045,8 +1048,8 @@ atmosphere_tint = [
     0.29,
 ]
 _pad1_ = 0.0
-exposure = 1.05
-ambient_strength = 0.22
+exposure = 1.0
+ambient_strength = 0.28
 grade_warm_color = [
     1.08,
     0.98,
@@ -1066,15 +1069,15 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.35,
-    1.1,
-    1.08,
+    0.42,
+    1.16,
+    1.14,
     0.9,
 ]
 gloom_params = [
-    0.35,
+    0.32,
     0.008,
-    0.6,
+    0.68,
     0.0,
 ]
 fog_color = [
@@ -1107,10 +1110,10 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 1.1
-specular_strength = 0.015
-rim_strength = 0.08
-fill_strength = 0.42
+diffuse_strength = 1.28
+specular_strength = 0.035
+rim_strength = 0.13
+fill_strength = 0.34
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
@@ -1135,22 +1138,25 @@ rim_color = [
 ]
 
 [kr.afternoon]
-global_lighting = 0.85
+global_lighting = 1.04
 
 [kr.afternoon.effects]
 shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+art_shadow_strength = 0.38
 sharpening_amount = 0.0
 blur_strength = 0.27
-blur_radius = 3.7
+blur_radius = 0.005
 enable_water_animation = 1
-post_process_profile = 0
+post_process_profile = 2
 enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.79
 light_decal_intensity = 1.35
+art_highlight_strength = 0.42
+art_depth_tint_strength = 0.30
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 
@@ -1171,8 +1177,8 @@ atmosphere_tint = [
     0.28,
 ]
 _pad1_ = 0.0
-exposure = 1.48
-ambient_strength = 1.38
+exposure = 1.0
+ambient_strength = 0.30
 grade_warm_color = [
     1.08,
     0.98,
@@ -1186,21 +1192,21 @@ grade_cool_color = [
     0.0,
 ]
 grade_params = [
-    0.22,
-    0.25,
-    0.26,
+    1.0,
+    0.15,
+    0.4,
     1.0,
 ]
 grade_extra = [
-    0.3,
-    1.05,
-    1.08,
-    0.98,
+    0.50,
+    1.18,
+    1.16,
+    1.0,
 ]
 gloom_params = [
-    0.2,
+    0.28,
     0.007,
-    0.55,
+    0.66,
     0.0,
 ]
 fog_color = [
@@ -1233,11 +1239,11 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 1.88
-specular_strength = 0.11
-rim_strength = 0.19
-fill_strength = 0.3
-sharpness_factor = 1.85
+diffuse_strength = 1.35
+specular_strength = 0.04
+rim_strength = 0.15
+fill_strength = 0.36
+sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
 _pad4_ = 0.0
@@ -1261,13 +1267,14 @@ rim_color = [
 ]
 
 [kr.night]
-global_lighting = 0.75
+global_lighting = 0.72
 
 [kr.night.effects]
 shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+art_shadow_strength = 0.42
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1277,6 +1284,8 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
+art_highlight_strength = 0.28
+art_depth_tint_strength = 0.42
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 
@@ -1359,10 +1368,10 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 0.45
-specular_strength = 0.01
-rim_strength = 0.1
-fill_strength = 0.2
+diffuse_strength = 0.58
+specular_strength = 0.025
+rim_strength = 0.16
+fill_strength = 0.18
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.2
@@ -1387,13 +1396,14 @@ rim_color = [
 ]
 
 [kr.cave]
-global_lighting = 0.52
+global_lighting = 0.50
 
 [kr.cave.effects]
 shading_mode = 2
 normal_mode = 1
 enable_blur = 1
 enable_linear_filtering = 1
+art_shadow_strength = 0.48
 sharpening_amount = 0.0
 blur_strength = 0.28
 blur_radius = 0.005
@@ -1403,6 +1413,8 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.75
 light_decal_intensity = 1.35
+art_highlight_strength = 0.24
+art_depth_tint_strength = 0.48
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 
@@ -1485,9 +1497,9 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 0.4
-specular_strength = 0.01
-rim_strength = 0.06
+diffuse_strength = 0.48
+specular_strength = 0.02
+rim_strength = 0.11
 fill_strength = 0.14
 sharpness_factor = 2.0
 sharpness_mix = 0.55
