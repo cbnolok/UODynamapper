@@ -112,7 +112,7 @@
 // Liquid texture notes:
 // - The current reviewed liquid layer choices mirror the third-party
 //   UOClient-stefanomerotta terrain data:
-//   - water:       t0=01000017 stretch=30, n=01000013 stretch=16
+//   - water:       t0=02000051 stretch=4,  n=01000013 stretch=16
 //   - lava:        t0=02000100 stretch=6,  n=01000012 stretch=12
 //   - acid:        t0=02000490 stretch=8,  n=01000012 stretch=12
 //   - swamp water: t0=02000702 stretch=20, n=02000703 stretch=16
@@ -121,7 +121,7 @@ terrain 5 {
     policy "smooth" code="reviewed_runtime_policy"
     policy "follow-center" code="reviewed_runtime_policy"
     liquid waveheight=0.3 code="reviewed_liquid_motion"
-    layer "t0" tex=1000017 stretch=30.0 code="reviewed_liquid_texture"
+    layer "t0" tex=2000051 stretch=4.0 code="reviewed_liquid_texture"
     layer "n" tex=1000013 stretch=16.0 code="reviewed_liquid_texture"
 }
 
