@@ -427,16 +427,14 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
     lg("Done loading UO Data.");
 
-    // Load CC-EC/KR conversion tables from KDL
+    // Load CC-EC conversion table from KDL.
     let asset_root = crate::core::constants::valid_asset_dir();
-    let terrain_routing = settings.graphics.enhanced_terrain_routing;
-    let transcode_filename = terrain_routing.kdl_filename();
+    let transcode_filename = "TerrainTranscode.kdl";
     let transcode_path = asset_root.join("cc_ec_convtables").join(transcode_filename);
 
     if transcode_path.exists() {
         lg(&format!(
-            "Loading {} terrain routing from: {}",
-            terrain_routing.label(),
+            "Loading terrain routing from: {}",
             transcode_path.display()
         ));
         match udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&transcode_path) {

@@ -140,10 +140,10 @@ Recommended evidence files:
 
 - `KrFacetTranscode.generated.kdl`: generated KR dictionary/facet evidence; use compact `t cc=... kr=...` rows.
 - `EcFacetTranscode.generated.kdl`: generated EC facet and TerrainDefinition evidence; use compact `t cc=... ec=...` rows plus material/layer evidence.
-- `KrTerrainRouting.generated.kdl`: generated runtime routing grouped as `t KR_MATERIAL_ID CC_LAND_ID...`.
+- `KrTerrainRouting.generated.kdl`: generated review evidence grouped as `t KR_MATERIAL_ID CC_LAND_ID...`; it is not an active runtime routing mode while it remains equivalent to `TerrainTranscode.kdl` for overlapping ids.
 - `KrEcTerrainDiff.generated.csv`: generated comparison report; do not hand-edit as runtime policy.
 
-Recommended runtime-facing KR routing KDL shape:
+If future evidence proves a meaningful runtime KR split, use this KDL shape:
 
 ```kdl
 // Generated or reviewed KR routing. Grouped rows keep the runtime table compact.

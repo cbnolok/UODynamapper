@@ -10,10 +10,7 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 use color_eyre::eyre;
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use udd_assets::{
     tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
@@ -51,10 +48,7 @@ struct LandPageAtlasImages {
 
 enum LandShaderAtlasSource<'a> {
     Cc(&'a TexLandCcPackage),
-    Ec {
-        package: &'a TexLandEcPackage,
-        transcode: Option<&'a HashMap<u32, u32>>,
-    },
+    Ec(&'a TexLandEcPackage),
 }
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
@@ -186,43 +180,6 @@ fn land_lookup_values_from_ec_slot(
         .unwrap_or([0, 0, 0, 0])
 }
 
-fn resolve_ec_material_layer_slot(
-    package: &TexLandEcPackage,
-    transcode: Option<&HashMap<u32, u32>>,
-    tile_id: u32,
-    layer_index: u32,
-) -> Option<udd_assets::tex_land_ec::TexLandEcResolvedMaterialLayer> {
-    if let Some(transcode) = transcode {
-        package.resolve_material_layer_slot_with_transcode(tile_id, layer_index, transcode)
-    } else {
-        package.resolve_material_layer_slot(tile_id, layer_index)
-    }
-}
-
-fn resolve_ec_material_decision(
-    package: &TexLandEcPackage,
-    transcode: Option<&HashMap<u32, u32>>,
-    tile_id: u32,
-) -> udd_assets::tex_land_ec::TexLandEcMaterialDecision {
-    if let Some(transcode) = transcode {
-        package.resolve_material_decision_with_transcode(tile_id, transcode)
-    } else {
-        package.resolve_material_decision(tile_id)
-    }
-}
-
-fn resolve_ec_effective_runtime_slot_id(
-    package: &TexLandEcPackage,
-    transcode: Option<&HashMap<u32, u32>>,
-    tile_id: u32,
-) -> Option<u32> {
-    if let Some(transcode) = transcode {
-        package.resolve_effective_runtime_slot_id_with_transcode(tile_id, transcode)
-    } else {
-        package.resolve_effective_runtime_slot_id(tile_id)
-    }
-}
-
 fn write_land_lookup_entry(
     bytes: &mut [u8],
     tile_id: u32,
@@ -256,7 +213,7 @@ fn create_land_shader_images(
             package.atlas_width().max(1),
             package.atlas_height().max(1),
         ),
-        LandShaderAtlasSource::Ec { package, .. } => (
+        LandShaderAtlasSource::Ec(package) => (
             package.pages().len().max(1) as u32,
             package.atlas_width().max(1),
             package.atlas_height().max(1),
@@ -268,7 +225,7 @@ fn create_land_shader_images(
     for page_index in 0..page_count {
         let rgba = match source {
             LandShaderAtlasSource::Cc(package) => decode_tex_land_cc_page_rgba(package, page_index)?,
-            LandShaderAtlasSource::Ec { package, .. } => decode_tex_land_ec_page_rgba(package, page_index)?,
+            LandShaderAtlasSource::Ec(package) => decode_tex_land_ec_page_rgba(package, page_index)?,
         };
         atlas_bytes.extend_from_slice(&rgba);
     }
@@ -313,11 +270,11 @@ fn create_land_shader_images(
                     );
                 }
             }
-            LandShaderAtlasSource::Ec { package, transcode } => {
-                let layer0 = resolve_ec_material_layer_slot(package, transcode, tile_id, 0);
-                let layer1 = resolve_ec_material_layer_slot(package, transcode, tile_id, 1);
-                let layer2 = resolve_ec_material_layer_slot(package, transcode, tile_id, 2);
-                let layer3 = resolve_ec_material_layer_slot(package, transcode, tile_id, 3);
+            LandShaderAtlasSource::Ec(package) => {
+                let layer0 = package.resolve_material_layer_slot(tile_id, 0);
+                let layer1 = package.resolve_material_layer_slot(tile_id, 1);
+                let layer2 = package.resolve_material_layer_slot(tile_id, 2);
+                let layer3 = package.resolve_material_layer_slot(tile_id, 3);
                 let has_base_layer = layer0
                     .as_ref()
                     .and_then(|layer| layer.runtime_slot_id)
@@ -341,11 +298,13 @@ fn create_land_shader_images(
                             }
                         }
                     }
-                } else if let Some(slot_id) = resolve_ec_effective_runtime_slot_id(package, transcode, tile_id) {
-                    let texture_repetition = resolve_ec_material_decision(package, transcode, tile_id)
+                } else if let Some(slot_id) = package.resolve_effective_runtime_slot_id(tile_id) {
+                    let texture_repetition = package
+                        .resolve_material_decision(tile_id)
                         .primary_layer_index
                         .and_then(|layer_index| {
-                            resolve_ec_material_layer_slot(package, transcode, tile_id, layer_index)
+                            package
+                                .resolve_material_layer_slot(tile_id, layer_index)
                                 .map(|layer| layer.texture_repetition)
                         })
                         .unwrap_or(0.0);
@@ -389,10 +348,7 @@ fn land_shader_source_from_cache<'a>(
             cache.tex_land_cc.as_deref().map(LandShaderAtlasSource::Cc)
         }
         crate::configs::settings::ClientTextureSource::Ec => {
-            cache.tex_land_ec.as_deref().map(|package| LandShaderAtlasSource::Ec {
-                package,
-                transcode: cache.enhanced_terrain_transcode.as_deref(),
-            })
+            cache.tex_land_ec.as_deref().map(LandShaderAtlasSource::Ec)
         }
     }
 }
@@ -417,7 +373,7 @@ impl Plugin for LandTextureCachePlugin {
         // Clearing here ensures Update fills a fresh list for the current frame.
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
         app.add_systems(Update, cache::sys_drain_texture_upload_tasks);
-        app.add_systems(Update, sys_apply_land_texture_settings_changes);
+        app.add_systems(Update, sys_apply_land_texture_source_changes);
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
             return;
@@ -611,22 +567,7 @@ fn sys_evict_idle_land_cache(
     }
 }
 
-fn load_enhanced_terrain_routing(
-    routing: crate::configs::settings::EnhancedTerrainRouting,
-) -> Option<std::collections::HashMap<u32, u32>> {
-    let asset_root = crate::core::constants::valid_asset_dir();
-    let filename = routing.kdl_filename();
-    let path = asset_root.join("cc_ec_convtables").join(filename);
-    match udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&path) {
-        Ok(routing) => Some(routing.to_map()),
-        Err(error) => {
-            bevy::log::error!("Failed to load {filename} from {}: {error}", path.display());
-            None
-        }
-    }
-}
-
-fn sys_apply_land_texture_settings_changes(
+fn sys_apply_land_texture_source_changes(
     mut commands: Commands,
     settings: Res<crate::configs::settings::Settings>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
@@ -638,10 +579,7 @@ fn sys_apply_land_texture_settings_changes(
     chunks: Query<Entity, With<crate::core::render::scene::world::land::LCMesh>>,
 ) {
     let desired_source = settings.graphics.land_texture_source;
-    let desired_routing = settings.graphics.enhanced_terrain_routing;
-    let source_changed = cache_r.preferred_source() != desired_source;
-    let routing_changed = cache_r.enhanced_terrain_routing() != desired_routing;
-    if !source_changed && !routing_changed {
+    if cache_r.preferred_source() == desired_source {
         return;
     }
 
@@ -661,33 +599,7 @@ fn sys_apply_land_texture_settings_changes(
         );
     }
 
-    let active_ec_changes = desired_source == crate::configs::settings::ClientTextureSource::Ec
-        && (source_changed || routing_changed);
-
-    if routing_changed {
-        if cache_r.tex_land_ec.is_some() {
-            if let Some(transcode) = load_enhanced_terrain_routing(desired_routing) {
-                let filename = desired_routing.kdl_filename();
-                cache_r.set_enhanced_terrain_transcode(transcode);
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::General,
-                    &format!("Applied {} terrain routing from {filename}.", desired_routing.label()),
-                );
-            }
-        } else {
-            console_logger::one(
-                LogSev::Warn,
-                LogAbout::General,
-                "Enhanced terrain routing changed, but tex_land_ec.uddp is not loaded.",
-            );
-        }
-        cache_r.set_enhanced_terrain_routing(desired_routing);
-    }
-
-    cache_r.set_preferred_source(desired_source);
-
-    if !source_changed && !active_ec_changes {
+    if !cache_r.set_preferred_source(desired_source) {
         return;
     }
 
@@ -704,16 +616,14 @@ fn sys_apply_land_texture_settings_changes(
         mat.extension.land_page_lookup = shader_images.lookup;
     }
 
-    if source_changed {
-        console_logger::one(
-            LogSev::Info,
-            LogAbout::General,
-            &format!(
-                "Switched land texture source to {}.",
-                desired_source.land_label()
-            ),
-        );
-    }
+    console_logger::one(
+        LogSev::Info,
+        LogAbout::General,
+        &format!(
+            "Switched land texture source to {}.",
+            desired_source.land_label()
+        ),
+    );
 
     // ── TEMPORARY EC package diagnostic ─────────────────────────────────────
     if desired_source == crate::configs::settings::ClientTextureSource::Ec {
@@ -729,12 +639,10 @@ fn sys_apply_land_texture_settings_changes(
     }
     // ── END TEMPORARY EC package diagnostic ─────────────────────────────────
 
-    if active_ec_changes {
-        for entity in chunks.iter() {
-            commands
-                .entity(entity)
-                .insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
-        }
+    for entity in chunks.iter() {
+        commands
+            .entity(entity)
+            .insert(crate::core::render::scene::world::land::draw_mesh::PendingTextureBake);
     }
 }
 
@@ -793,7 +701,6 @@ pub fn sys_setup_terrain_cache(
         big_layers,
         residency_strategy,
         settings.graphics.land_texture_source,
-        settings.graphics.enhanced_terrain_routing,
     );
 
     land_texture_cache.tex_art_cc = tex_art_cc_r.map(|r| r.0.clone());

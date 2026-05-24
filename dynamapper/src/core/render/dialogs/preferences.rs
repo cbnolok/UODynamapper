@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
-    configs::settings::{AntiAliasingMode, ClientTextureSource, EnhancedTerrainRouting},
+    configs::settings::{AntiAliasingMode, ClientTextureSource},
     core::render::{dialogs, scene::camera::UiCameraResource},
     prelude::*,
 };
@@ -33,7 +33,6 @@ pub struct PreferencesDialogState {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: ClientTextureSource,
-    pub enhanced_terrain_routing: EnhancedTerrainRouting,
     pub perspective_camera: bool,
     pub enable_statics: bool,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
@@ -65,7 +64,6 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
             land_texture_source: ClientTextureSource::default(),
-            enhanced_terrain_routing: EnhancedTerrainRouting::default(),
             perspective_camera: false,
             enable_statics: true,
             apply_timer: {
@@ -126,7 +124,6 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
-        state.enhanced_terrain_routing = settings.graphics.enhanced_terrain_routing;
         state.perspective_camera = settings.app.window.perspective_camera;
         state.enable_statics = settings.worldmap_rendering.enable_statics;
 
@@ -391,21 +388,6 @@ pub fn sys_render_preferences_dialog(
                         });
                     if settings.graphics.land_texture_source != state.land_texture_source {
                         settings.graphics.land_texture_source = state.land_texture_source;
-                    }
-
-                    egui::ComboBox::from_label("Enhanced Terrain Routing")
-                        .selected_text(state.enhanced_terrain_routing.label())
-                        .show_ui(ui, |ui| {
-                            for routing in EnhancedTerrainRouting::ALL {
-                                ui.selectable_value(
-                                    &mut state.enhanced_terrain_routing,
-                                    routing,
-                                    routing.label(),
-                                );
-                            }
-                        });
-                    if settings.graphics.enhanced_terrain_routing != state.enhanced_terrain_routing {
-                        settings.graphics.enhanced_terrain_routing = state.enhanced_terrain_routing;
                     }
 
                     ui.add_space(4.0);
