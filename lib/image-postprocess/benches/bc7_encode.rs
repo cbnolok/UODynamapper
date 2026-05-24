@@ -54,8 +54,8 @@ fn main() {
     }
 }
 
-fn rdo_cases() -> [RdoCase; 10] {
-    [
+fn rdo_cases() -> Vec<RdoCase> {
+    vec![
         RdoCase {
             name: "rdo_default",
             params: Bc7RdoParams {
@@ -94,6 +94,14 @@ fn rdo_cases() -> [RdoCase; 10] {
             },
         },
         RdoCase {
+            name: "rdo_fixed_b64",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                lookback_window_size: 64 * 16,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
             name: "rdo_relative",
             params: Bc7RdoParams {
                 lambda: 0.5,
@@ -124,6 +132,36 @@ fn rdo_cases() -> [RdoCase; 10] {
             params: Bc7RdoParams {
                 lambda: 0.5,
                 allow_relative_movement: true,
+                relative_movement_min_match_len: 6,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_rel_d4_b64",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_offset_delta: 4,
+                relative_movement_max_previous_blocks: 64,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_rel_d4_l6",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_offset_delta: 4,
+                relative_movement_min_match_len: 6,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
+            name: "rdo_rel_b64_l6",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                allow_relative_movement: true,
+                relative_movement_max_previous_blocks: 64,
                 relative_movement_min_match_len: 6,
                 ..Bc7RdoParams::default()
             },
