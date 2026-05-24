@@ -389,9 +389,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             }
                             hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
 
-                            let mut trial_blk = orig_blk;
-                            trial_blk[dst_ofs..dst_ofs + len].copy_from_slice(&prev_blk[src_ofs..src_ofs + len]);
-                            if trial_blk == orig_blk {
+                            if prev_blk[src_ofs..src_ofs + len] == orig_blk[dst_ofs..dst_ofs + len] {
                                 if let Some(stats) = stats.as_deref_mut() {
                                     stats.original_block_skips += 1;
                                 }
@@ -399,7 +397,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 if trial_ms_err < thresh_ms_err {
                                     let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                     if t < best_t {
-                                        best_t = t; best_block = trial_blk;
+                                        best_t = t; best_block = orig_blk;
                                         best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                         best_match_bits = mb;
                                         if let Some(stats) = stats.as_deref_mut() {
@@ -409,6 +407,8 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 }
                                 continue;
                             }
+                            let mut trial_blk = orig_blk;
+                            trial_blk[dst_ofs..dst_ofs + len].copy_from_slice(&prev_blk[src_ofs..src_ofs + len]);
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.decode_trials += 1;
                             }
@@ -515,9 +515,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             continue;
                         }
 
-                        let mut trial_blk = orig_blk;
-                        trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
-                        if trial_blk == orig_blk {
+                        if prev_blk[ofs..ofs + len] == orig_blk[ofs..ofs + len] {
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.original_block_skips += 1;
                             }
@@ -525,7 +523,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_block = trial_blk;
+                                    best_t = t; best_block = orig_blk;
                                     best_match_len = len; best_match_dst_block_ofs = ofs;
                                     best_match_bits = trial_match_bits;
                                     prev_cont_window_ofs = src_win_ofs + len as i64;
@@ -537,6 +535,8 @@ fn reduce_entropy_bc7_impl_with_progress(
                             }
                             continue;
                         }
+                        let mut trial_blk = orig_blk;
+                        trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
                         if let Some(stats) = stats.as_deref_mut() {
                             stats.decode_trials += 1;
                         }
