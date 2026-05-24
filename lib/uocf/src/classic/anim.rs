@@ -201,7 +201,8 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
                 continue;
             }
 
-            let mut pixel_data = vec![0u8; width as usize * height as usize * 4];
+            let pixel_len = frame_pixel_len(width, height)?;
+            let mut pixel_data = vec![0u8; pixel_len];
 
             // RLE Decoding
             loop {
@@ -235,7 +236,7 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
                         if final_x >= 0 && final_x < width as i32 {
                             let palette_index = frame_ptr.read_u8()? as usize;
                             let color = rgba_palette[palette_index];
-                            let pixel_idx = ((y * width as i32 + final_x) * 4) as usize;
+                            let pixel_idx = frame_pixel_offset(y, final_x, width)?;
                             pixel_data[pixel_idx..pixel_idx + 4].copy_from_slice(&color);
                         } else {
                             // Skip the byte even if out of bounds
@@ -260,6 +261,22 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
         }
 
         Ok(frames)
+}
+
+fn frame_pixel_len(width: u16, height: u16) -> eyre::Result<usize> {
+    (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| eyre!("Animation frame dimensions {}x{} overflow RGBA size", width, height))
+}
+
+fn frame_pixel_offset(y: i32, x: i32, width: u16) -> eyre::Result<usize> {
+    let y = usize::try_from(y).map_err(|_| eyre!("negative animation frame y offset {}", y))?;
+    let x = usize::try_from(x).map_err(|_| eyre!("negative animation frame x offset {}", x))?;
+    y.checked_mul(width as usize)
+        .and_then(|row| row.checked_add(x))
+        .and_then(|pixel| pixel.checked_mul(4))
+        .ok_or_else(|| eyre!("Animation frame pixel offset overflow at {},{}", x, y))
 }
 
 /// Handles AnimationDefinition.uop parsing for Body ID redirects (aliasing).
@@ -299,5 +316,18 @@ impl AnimationDefinition {
     /// Resolves a Body ID to its redirected ID, if any.
     pub fn resolve(&self, body_id: u32) -> u32 {
         *self.redirects.get(&body_id).unwrap_or(&body_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_pixel_offset_handles_i32_overflow_boundary() {
+        let offset = frame_pixel_offset(32768, 0, u16::MAX)
+            .expect("large decoded coordinates should use usize arithmetic");
+
+        assert_eq!(offset, 32768usize * u16::MAX as usize * 4);
     }
 }
