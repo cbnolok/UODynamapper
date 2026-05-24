@@ -102,6 +102,14 @@ fn rdo_cases() -> Vec<RdoCase> {
             },
         },
         RdoCase {
+            name: "rdo_fixed_b256",
+            params: Bc7RdoParams {
+                lambda: 0.5,
+                lookback_window_size: 256 * 16,
+                ..Bc7RdoParams::default()
+            },
+        },
+        RdoCase {
             name: "rdo_relative",
             params: Bc7RdoParams {
                 lambda: 0.5,
