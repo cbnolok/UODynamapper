@@ -131,13 +131,13 @@ fn resolve_texture_output_format(
             label: "RGBA8888",
         }),
         (false, true, false) => Ok(TextureOutputFormat {
-            compression: CompressionFlag::None,
+            compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             label: "BC7",
         }),
         (false, false, true) => Ok(TextureOutputFormat {
-            compression: CompressionFlag::None,
+            compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda,
             label: "BC7 RDO",
@@ -154,7 +154,7 @@ fn resolve_mobile_anim_output_format(
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, bc7, bc7_rdo) {
         (false, false, false) => Ok(TextureOutputFormat {
-            compression: CompressionFlag::None,
+            compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             label: "BC7",
@@ -457,9 +457,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
+        #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
@@ -499,9 +499,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO.")]
+        #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
         packing_mode: CliAtlasPackingMode,
@@ -527,9 +527,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO. This is the default.")]
+        #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO. This is the default.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
@@ -549,9 +549,9 @@ enum Commands {
         gutter: u16,
         #[arg(long, help = "Write RGBA8888 atlas pages with package compression.")]
         raw: bool,
-        #[arg(long, help = "Write BC7 atlas pages without BC7 RDO. This is the default.")]
+        #[arg(long, help = "Write BC7 atlas pages with package compression and without BC7 RDO. This is the default.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
@@ -581,9 +581,9 @@ enum Commands {
         land_gutter: u16,
         #[arg(long, help = "Write EC land RGBA8888 atlas pages with package compression.")]
         raw: bool,
-        #[arg(long, help = "Write EC land BC7 atlas pages without BC7 RDO.")]
+        #[arg(long, help = "Write EC land BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write EC land BC7 atlas pages with BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write EC land BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
         art_packing_mode: CliAtlasPackingMode,
@@ -1685,7 +1685,7 @@ mod tests {
                 let output_format =
                     resolve_mobile_anim_output_format(raw, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
-                assert_eq!(output_format.compression, CompressionFlag::None);
+                assert_eq!(output_format.compression, CompressionFlag::ZstdNoDict);
             }
             _ => panic!("unexpected command parsed"),
         }

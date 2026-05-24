@@ -84,7 +84,7 @@ impl Default for TexArtEcAtlasOptions {
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
             crop_transparent_bounds: false,
-            compression: CompressionFlag::None,
+            compression: CompressionFlag::ZstdNoDict,
             upscale: UpscaleFilter::default(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
