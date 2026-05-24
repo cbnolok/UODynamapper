@@ -33,6 +33,8 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 const GROUND_ART_Y_BIAS: f32 = 0.0;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
+const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
+const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
 
@@ -218,15 +220,7 @@ pub(crate) fn static_tile_is_surface_like(
 fn static_tile_uses_tex_land_ec_surface_path(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> bool {
-    let Some(meta) = tilemeta else {
-        return false;
-    };
-
-    if meta.flags & TILE_FLAG_WET != 0 {
-        return false;
-    }
-
-    meta.is_surface_like() || meta.flags & TILE_FLAG_SURFACE != 0
+    static_tile_is_surface_like(tilemeta)
 }
 
 pub(crate) fn resolve_static_depth_class(
@@ -421,6 +415,10 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         .map(|texture_ref| texture_ref.texture_id)
         .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
     let Some(main_ec_texture_id) = main_ec_texture_id else {
+        if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+            return Some(resolution);
+        }
+
         return package
             .resolve_runtime_slot_id(meta.cc_texture_id)
             .map(|runtime_slot_id| {
@@ -468,6 +466,10 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return alias_slots.into_iter().next().map(|runtime_slot_id| {
             surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
         });
+    }
+
+    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+        return Some(resolution);
     }
 
     package
@@ -521,6 +523,38 @@ fn surface_like_legacy_ec_texture_id_fallback(
     }
 
     Some(tilemeta.ec_texture_id)
+}
+
+fn wet_surface_like_water_resolution(
+    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+    package: &udd_assets::tex_land_ec::TexLandEcPackage,
+) -> Option<SurfaceLikeTexLandEcResolution> {
+    if tilemeta.flags & TILE_FLAG_WET == 0 {
+        return None;
+    }
+
+    if let Some(layer) =
+        package.resolve_material_layer_slot(CLASSIC_WATER_LAND_TILE_ID, EC_WATER_BASE_LAYER_INDEX)
+    {
+        if let Some(runtime_slot_id) = layer.runtime_slot_id {
+            return Some(SurfaceLikeTexLandEcResolution {
+                runtime_slot_id,
+                texture_repetition: valid_texture_repetition(layer.texture_repetition),
+            });
+        }
+    }
+
+    package
+        .resolve_runtime_slot_id(CLASSIC_WATER_LAND_TILE_ID)
+        .map(|runtime_slot_id| surface_like_tex_land_ec_resolution(package, runtime_slot_id, None))
+}
+
+fn valid_texture_repetition(repetition: f32) -> f32 {
+    if repetition.is_finite() && repetition > 0.0 {
+        repetition
+    } else {
+        1.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1655,14 +1689,14 @@ mod tests {
     }
 
     #[test]
-    fn wet_surface_like_tiles_keep_surface_depth_without_land_redirection() {
+    fn wet_surface_like_tiles_keep_surface_depth_and_land_redirection() {
         let tile = item_tile_with_flags(
             TILE_FLAG_WET,
             udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
         );
 
         assert!(static_tile_is_surface_like(Some(&tile)));
-        assert!(!static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
     }
 
     #[test]
@@ -1671,6 +1705,13 @@ mod tests {
             item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
         assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+    }
+
+    #[test]
+    fn valid_texture_repetition_rejects_invalid_values() {
+        assert_eq!(valid_texture_repetition(4.0), 4.0);
+        assert_eq!(valid_texture_repetition(0.0), 1.0);
+        assert_eq!(valid_texture_repetition(f32::NAN), 1.0);
     }
 
     #[test]
