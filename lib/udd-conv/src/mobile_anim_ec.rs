@@ -305,20 +305,29 @@ fn decode_animationframe_packages(
         let package = UopPackage::load(path)
             .wrap_err_with(|| format!("load {}", path.display()))?;
         let decoded = decode_animationframe_package(&package)?;
-        for (body_id, mut frames) in decoded {
-            let existing = decoded_by_body.entry(body_id).or_default();
-            let offset = existing.len();
-            for frame in &mut frames {
-                let source_frame_index = offset + frame.source_frame_index as usize;
-                if source_frame_index > u16::MAX as usize {
-                    eyre::bail!("EC mobile animation {} has more than {} frames", body_id, u16::MAX);
-                }
-                frame.source_frame_index = source_frame_index as u16;
-            }
-            existing.append(&mut frames);
+        for (body_id, frames) in decoded {
+            append_decoded_body_frames(&mut decoded_by_body, body_id, frames)?;
         }
     }
     Ok(decoded_by_body)
+}
+
+fn append_decoded_body_frames(
+    decoded_by_body: &mut BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>,
+    body_id: u32,
+    mut frames: Vec<DecodedMobileAnimEcFrame>,
+) -> eyre::Result<()> {
+    let existing = decoded_by_body.entry(body_id).or_default();
+    let offset = existing.len();
+    for frame in &mut frames {
+        let source_frame_index = offset + frame.source_frame_index as usize;
+        if source_frame_index > u16::MAX as usize {
+            eyre::bail!("EC mobile animation {} has more than {} frames", body_id, u16::MAX);
+        }
+        frame.source_frame_index = source_frame_index as u16;
+    }
+    existing.append(&mut frames);
+    Ok(())
 }
 
 fn decode_animationframe_package(
@@ -352,7 +361,7 @@ fn decode_animationframe_package(
                 rgba: decoded.data,
             });
         }
-        decoded_by_body.insert(animation.animation_id, frames);
+        append_decoded_body_frames(&mut decoded_by_body, animation.animation_id, frames)?;
     }
     pb.finish_with_message("EC mobile animations decoded");
     Ok(decoded_by_body)
@@ -987,5 +996,26 @@ mod tests {
         assert_eq!(frames[1].source_frame_index, 1);
         assert_eq!(frames[1].page_index, MISSING_PAGE_INDEX);
         assert_eq!(frames[1].page_frame_index, MISSING_PAGE_FRAME_INDEX);
+    }
+
+    #[test]
+    fn appending_duplicate_body_frames_preserves_all_frames() {
+        let mut decoded_by_body = BTreeMap::new();
+
+        append_decoded_body_frames(&mut decoded_by_body, 42, vec![frame(42, 0, 4, 4)]).unwrap();
+        append_decoded_body_frames(
+            &mut decoded_by_body,
+            42,
+            vec![frame(42, 0, 5, 5), frame(42, 1, 6, 6)],
+        )
+        .unwrap();
+
+        let frames = &decoded_by_body[&42];
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].source_frame_index, 0);
+        assert_eq!(frames[1].source_frame_index, 1);
+        assert_eq!(frames[2].source_frame_index, 2);
+        assert_eq!(frames[1].width, 5);
+        assert_eq!(frames[2].width, 6);
     }
 }

@@ -43,6 +43,7 @@ const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
 const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
 const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 2;
+const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
@@ -103,6 +104,7 @@ struct PresentAnimationCandidate {
     direction: u8,
     file_index: u8,
     source_index: u32,
+    flags: u16,
     frames: PresentAnimationFrames,
 }
 
@@ -375,7 +377,7 @@ fn decode_present_animations(
             source_index: candidate.source_index,
             frame_start,
             frame_count: frames.len() as u16,
-            flags: 0,
+            flags: candidate.flags,
         });
     }
     pb.finish_with_message("Mobile animations decoded");
@@ -389,27 +391,22 @@ fn collect_present_animation_candidates(anim_map: &AnimMap) -> Vec<PresentAnimat
         let Some(source_index_count) = anim_map.source_index_count(file_index) else {
             continue;
         };
-        let body_count = body_count_for_source(file_index, source_index_count);
-        for body_id in 0..body_count {
-            let action_count = action_count_for_body(file_index, body_id);
-            for action_id in 0..action_count {
-                for direction in 0..5u8 {
-                    let source_index = animation_source_index(file_index, body_id, action_id, direction);
-                    if source_index as usize >= source_index_count
-                        || !anim_map.has_anim(file_index, source_index)
-                    {
-                        continue;
-                    }
-                    candidates.push(PresentAnimationCandidate {
-                        body_id,
-                        action_id,
-                        direction,
-                        file_index,
-                        source_index,
-                        frames: PresentAnimationFrames::Mul,
-                    });
-                }
+        for source_index in 0..source_index_count {
+            let source_index = source_index as u32;
+            if !anim_map.has_anim(file_index, source_index) {
+                continue;
             }
+            let (body_id, action_id, direction, flags) =
+                animation_identity_from_source_index(file_index, source_index);
+            candidates.push(PresentAnimationCandidate {
+                body_id,
+                action_id,
+                direction,
+                file_index,
+                source_index,
+                flags,
+                frames: PresentAnimationFrames::Mul,
+            });
         }
     }
     candidates
@@ -467,6 +464,7 @@ fn decode_classic_animationframe_package(
             direction,
             file_index,
             source_index: animation.anim_id,
+            flags: 0,
             frames: PresentAnimationFrames::Decoded(animation.frames),
         });
     }
@@ -588,6 +586,24 @@ fn animation_layout_from_source_index(
             (400, u16::MAX, 35000, 35),
         ]),
     }
+}
+
+fn animation_identity_from_source_index(
+    file_index: u8,
+    source_index: u32,
+) -> (u16, u16, u8, u16) {
+    if let Some((body_id, action_id, direction)) =
+        animation_layout_from_source_index(file_index, source_index)
+    {
+        return (body_id, action_id, direction, 0);
+    }
+
+    (
+        (source_index & 0xFFFF) as u16,
+        (source_index >> 16) as u16,
+        file_index,
+        MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX,
+    )
 }
 
 fn animation_layout_from_groups(
@@ -1090,6 +1106,18 @@ mod tests {
                 Some((body_id, action_id, direction))
             );
         }
+    }
+
+    #[test]
+    fn unmapped_source_index_keeps_original_index_identity() {
+        let source_index = 0xFFFF_FFFE;
+        let (body_id, action_id, direction, flags) =
+            animation_identity_from_source_index(1, source_index);
+
+        assert_eq!(body_id, 0xFFFE);
+        assert_eq!(action_id, 0xFFFF);
+        assert_eq!(direction, 1);
+        assert_eq!(flags, MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX);
     }
 
     #[test]

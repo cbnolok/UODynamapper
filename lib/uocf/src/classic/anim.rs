@@ -178,6 +178,10 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
             }
         }
 
+        let frame_offset_base = lookup
+            .checked_add(512)
+            .ok_or_else(|| eyre!("Animation frame offset base overflows"))?;
+
         let frame_count = mul_ptr.read_u32::<LittleEndian>()?;
         if frame_count > 1000 {
             eyre::bail!("Suspiciously high frame count: {}", frame_count);
@@ -191,7 +195,9 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
         let mut frames = Vec::with_capacity(frame_count as usize);
         for i in 0..frame_count {
             let offset = frame_offsets[i as usize] as usize;
-            let frame_start = lookup + offset;
+            let frame_start = frame_offset_base
+                .checked_add(offset)
+                .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;
             if frame_start >= data.len() {
                 eyre::bail!("Frame offset {} out of bounds", frame_start);
             }
@@ -348,5 +354,29 @@ mod tests {
             .expect("large decoded coordinates should use usize arithmetic");
 
         assert_eq!(offset, 32768usize * u16::MAX as usize * 4);
+    }
+
+    #[test]
+    fn decode_animation_payload_uses_palette_relative_frame_offsets() {
+        let mut data = vec![0u8; 512 + 8 + 8 + 4 + 1 + 4];
+        data[2..4].copy_from_slice(&0x7FFFu16.to_le_bytes());
+        data[512..516].copy_from_slice(&1u32.to_le_bytes());
+        data[516..520].copy_from_slice(&8u32.to_le_bytes());
+        data[520..522].copy_from_slice(&0i16.to_le_bytes());
+        data[522..524].copy_from_slice(&0i16.to_le_bytes());
+        data[524..526].copy_from_slice(&1u16.to_le_bytes());
+        data[526..528].copy_from_slice(&1u16.to_le_bytes());
+
+        let header = 1u32 | (0x3FFu32 << 12);
+        data[528..532].copy_from_slice(&header.to_le_bytes());
+        data[532] = 1;
+        data[533..537].copy_from_slice(&0x7FFF7FFFu32.to_le_bytes());
+
+        let frames = decode_animation_payload(&data, 0).expect("payload should decode");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].width, 1);
+        assert_eq!(frames[0].height, 1);
+        assert_eq!(frames[0].data, vec![248, 248, 248, 255]);
     }
 }
