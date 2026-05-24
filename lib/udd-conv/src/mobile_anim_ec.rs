@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -496,7 +497,15 @@ fn load_animation_sequences(
     let package = UopPackage::load(&sequence_path)
         .wrap_err_with(|| format!("load {}", sequence_path.display()))?;
     let mut sequences = HashMap::new();
+    let pb = ProgressBar::new(body_ids.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("loading EC mobile animation sequences");
+    pb.enable_steady_tick(Duration::from_millis(100));
     for body_id in body_ids {
+        pb.inc(1);
         for path in [
             format!("data/animationsequence/{body_id:06}.bin"),
             format!("build/animationsequence/{body_id:08}.bin"),
@@ -512,6 +521,7 @@ fn load_animation_sequences(
             }
         }
     }
+    pb.finish_with_message(format!("EC mobile animation sequences loaded ({})", sequences.len()));
     Ok(sequences)
 }
 
@@ -626,12 +636,21 @@ pub(crate) fn pack_frames_into_pages(
         .into_iter()
         .filter(|frame| frame.width != 0 && frame.height != 0 && !frame.rgba.is_empty())
         .collect::<Vec<_>>();
+    let pb = ProgressBar::new(remaining.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("packing EC mobile animation atlas pages");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
     remaining.sort_by_key(|frame| (frame.body_id, frame.source_frame_index));
     let mut pages = Vec::new();
     let mut placements = HashMap::new();
     let mut page_index = 0u32;
 
     while !remaining.is_empty() {
+        pb.set_message(format!("packing EC mobile animation atlas page {}", page_index + 1));
         let (page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_frames, &mut placements, options)?;
         if page.record.frame_count == 0 {
@@ -641,6 +660,7 @@ pub(crate) fn pack_frames_into_pages(
                 options.atlas_height
             );
         }
+        pb.inc(page.record.frame_count as u64);
         pages.push(page);
         remaining = leftovers;
         remaining.extend(unplaced);
@@ -648,6 +668,7 @@ pub(crate) fn pack_frames_into_pages(
         page_index += 1;
     }
 
+    pb.finish_with_message(format!("EC mobile animation atlas pages packed ({})", pages.len()));
     Ok((pages, placements))
 }
 
