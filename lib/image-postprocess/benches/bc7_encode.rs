@@ -30,8 +30,12 @@ struct RdoCase {
 }
 
 fn main() {
-    let quick = std::env::args().any(|arg| arg == "--quick");
-    let rdo_stats = std::env::args().any(|arg| arg == "--rdo-stats");
+    let args = std::env::args().collect::<Vec<_>>();
+    let quick = args.iter().any(|arg| arg == "--quick");
+    let rdo_stats = args.iter().any(|arg| arg == "--rdo-stats");
+    let rdo_case_filter = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--rdo-case="));
     let min_duration = if quick {
         Duration::from_millis(80)
     } else {
@@ -46,7 +50,7 @@ fn main() {
     println!("bc7_encode benchmark");
     println!("profile={} min_duration_ms={}", profile_name(), min_duration.as_millis());
     for case in &cases {
-        run_case(case, min_duration, &rdo_cases(), rdo_stats);
+        run_case(case, min_duration, &rdo_cases(), rdo_stats, rdo_case_filter);
     }
 }
 
@@ -138,7 +142,13 @@ fn rdo_cases() -> [RdoCase; 10] {
     ]
 }
 
-fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stats: bool) {
+fn run_case(
+    case: &Case,
+    min_duration: Duration,
+    rdo_cases: &[RdoCase],
+    rdo_stats: bool,
+    rdo_case_filter: Option<&str>,
+) {
     let blocks = case.width.div_ceil(4) as usize * case.height.div_ceil(4) as usize;
     let scalar = bench_scalar(case, min_duration);
     let wide = bench_wide(case, min_duration);
@@ -154,6 +164,9 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
         wide.checksum
     );
     for rdo_case in rdo_cases {
+        if rdo_case_filter.is_some_and(|filter| filter != rdo_case.name) {
+            continue;
+        }
         let rdo = bench_rdo(case, min_duration, &rdo_case.params, rdo_stats);
         println!(
             "  {:<16} rdo={:>10.2} blk/s checksum={:016x}",
@@ -163,7 +176,7 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
         );
         if let Some(stats) = rdo.stats {
             println!(
-                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} bounded_exits={} accepted={} modified={}",
+                "    stats candidates={} rate_skips={} hash_skips={} rel_offset_skips={} rel_prev_hits={} rel_len_skips={} orig_blocks={} decodes={} modes={:?} fused_m1={} fused_m6={} fused_m7={} fallback_decodes={} bounded_exits={} accepted={} modified={}",
                 stats.candidate_checks,
                 stats.rate_skips,
                 stats.hash_skips,
@@ -172,6 +185,11 @@ fn run_case(case: &Case, min_duration: Duration, rdo_cases: &[RdoCase], rdo_stat
                 stats.relative_length_skips,
                 stats.original_block_skips,
                 stats.decode_trials,
+                stats.decode_mode_trials,
+                stats.fused_mode1_trials,
+                stats.fused_mode6_trials,
+                stats.fused_mode7_trials,
+                stats.fallback_decode_trials,
                 stats.bounded_error_exits,
                 stats.accepted_matches,
                 stats.modified_blocks

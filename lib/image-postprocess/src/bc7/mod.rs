@@ -7,4 +7,4 @@
 pub mod analytical;
 pub mod analytical_wide;
 pub mod rdo;
-mod tables;
+pub(crate) mod tables;
