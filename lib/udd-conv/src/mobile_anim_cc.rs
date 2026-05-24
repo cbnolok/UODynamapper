@@ -391,14 +391,8 @@ fn encode_mobile_anim_page_chunk(
             .map(|page| {
                 let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
                     .map_err(|e| eyre::eyre!("{e}"))?;
-                let cropped = crate::tex_art_cc::crop_rgba_page(
-                    &page.pixels,
-                    options.atlas_width,
-                    page.record.used_width,
-                    page.record.used_height,
-                );
                 let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
-                    &cropped,
+                    &page.pixels,
                     extent,
                     RawImageFormat::Rgba8888,
                     encoding,
@@ -431,12 +425,7 @@ fn encode_mobile_anim_page_chunk(
                 pb.inc(1);
                 (
                     page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
-                    crate::tex_art_cc::crop_rgba_page(
-                        &page.pixels,
-                        options.atlas_width,
-                        page.record.used_width,
-                        page.record.used_height,
-                    ),
+                    page.pixels.clone(),
                     page.record.used_width,
                     page.record.used_height,
                 )
@@ -1063,6 +1052,13 @@ fn build_page(
         }
     }
 
+    let pixels = crate::tex_art_cc::crop_rgba_page(
+        &pixels,
+        options.atlas_width,
+        used_width,
+        used_height,
+    );
+
     Ok((
         BuiltMobileAnimPage {
             record: MobileAnimCcPageRecord {
@@ -1437,12 +1433,7 @@ mod tests {
         let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records).unwrap();
         let body_type_manifest = serialize_body_type_manifest(&body_type_records).unwrap();
         let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
-        let stored_page = crate::tex_art_cc::crop_rgba_page(
-            &pages[0].pixels,
-            options.atlas_width,
-            pages[0].record.used_width,
-            pages[0].record.used_height,
-        );
+        let stored_page = pages[0].pixels.clone();
 
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         for (path, data, data_type) in [
