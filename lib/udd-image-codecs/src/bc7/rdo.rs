@@ -266,6 +266,8 @@ fn reduce_entropy_bc7_impl_with_progress(
 
     // 4. Main loop
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
+    let match_len_bits = compute_match_len_bits();
+    let literal_bits_by_match_len = compute_literal_bits_by_match_len();
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
     let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
@@ -318,6 +320,7 @@ fn reduce_entropy_bc7_impl_with_progress(
 
         let mut best_block = orig_blk;
         let mut best_t = cur_t;
+        let mut best_ms_err = cur_ms_err;
         let mut best_match_len = 0usize;
         let mut best_match_dst_block_ofs = 0usize;
         let mut best_match_bits = 0.0f32;
@@ -354,7 +357,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                     }
                 }
                 for len in (min_relative_match_len..=16).rev() {
-                    let len_bits = compute_match_len_cost(len as u32) as f32;
+                    let len_bits = match_len_bits[len];
                     for src_ofs in 0usize..=(16 - len) {
                         let full_dst_count = 17 - len;
                         let dst_start = src_ofs.saturating_sub(max_relative_delta);
@@ -368,7 +371,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             }
                             let relative_dist_index = (dst_ofs as i32 - src_ofs as i32 + 15) as usize;
                             let mb = relative_dist_bits[relative_dist_index] as f32 + len_bits;
-                            let trial_bits = (16 - len) as f32 * LITERAL_BITS + mb;
+                            let trial_bits = literal_bits_by_match_len[len] + mb;
                             let trial_bits_times_lambda = trial_bits * params.lambda;
                             if trial_bits_times_lambda >= best_t {
                                 if let Some(stats) = stats.as_deref_mut() {
@@ -398,6 +401,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                     if t < best_t {
                                         best_t = t; best_block = orig_blk;
+                                        best_ms_err = trial_ms_err;
                                         best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                         best_match_bits = mb;
                                         if let Some(stats) = stats.as_deref_mut() {
@@ -431,6 +435,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
                                     best_t = t; best_block = trial_blk;
+                                    best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
                                     if let Some(stats) = stats.as_deref_mut() {
@@ -453,9 +458,9 @@ fn reduce_entropy_bc7_impl_with_progress(
                 let normal_dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
                 for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
-                    let normal_match_bits = normal_dist_bits + compute_match_len_cost(len as u32) as f32;
+                    let normal_match_bits = normal_dist_bits + match_len_bits[len];
                     let normal_trial_bits_times_lambda =
-                        ((16 - len) as f32 * LITERAL_BITS + normal_match_bits) * params.lambda;
+                        (literal_bits_by_match_len[len] + normal_match_bits) * params.lambda;
                     let continuation_possible = prev_block_index as i64 * 16 == prev_cont_window_ofs;
                     let rep0_possible = prev_rep0_dist >= 0 && dist as i64 == prev_rep0_dist;
                     if normal_trial_bits_times_lambda >= best_t
@@ -481,11 +486,11 @@ fn reduce_entropy_bc7_impl_with_progress(
                         let (trial_match_bits, trial_bits_times_lambda) =
                             if src_win_ofs == prev_cont_window_ofs && ofs == 0 {
                                 // Continuation: the match continues directly from the previous block's match
-                                let tb = (16 - len) as f32 * LITERAL_BITS + MATCH_CONTINUE_BITS;
+                                let tb = literal_bits_by_match_len[len] + MATCH_CONTINUE_BITS;
                                 (MATCH_CONTINUE_BITS, tb * params.lambda)
                             } else if prev_rep0_dist >= 0 && src_win_ofs == dst_win_ofs - prev_rep0_dist {
                                 // REP0: re-using the last accepted match distance costs only MATCH_REP0_BITS
-                                let tb = (16 - len) as f32 * LITERAL_BITS + MATCH_REP0_BITS;
+                                let tb = literal_bits_by_match_len[len] + MATCH_REP0_BITS;
                                 (MATCH_REP0_BITS, tb * params.lambda)
                             } else {
                                 if normal_trial_bits_times_lambda >= best_t {
@@ -524,6 +529,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
                                     best_t = t; best_block = orig_blk;
+                                    best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = ofs;
                                     best_match_bits = trial_match_bits;
                                     prev_cont_window_ofs = src_win_ofs + len as i64;
@@ -559,6 +565,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
                                 best_t = t; best_block = trial_blk;
+                                best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = ofs;
                                 best_match_bits = trial_match_bits;
                                 // Update continuation/REP0 state for the next block
@@ -577,6 +584,7 @@ fn reduce_entropy_bc7_impl_with_progress(
         // Try a second non-overlapping match — only attempted when the first was accepted (best_t < cur_t)
         if params.try_two_matches && best_t < cur_t && best_match_len > 0 && best_match_len <= (16 - 3) {
             let orig_best_block = best_block;
+            let orig_best_ms_err = best_ms_err;
             let best_match_end = best_match_dst_block_ofs + best_match_len;
 
             for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
@@ -590,7 +598,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                 for len in 3..=(16 - best_match_len) {
                     let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS
                         + dist_bits
-                        + compute_match_len_cost(len as u32) as f32
+                        + match_len_bits[len]
                         + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
                     if trial_bits_times_lambda >= best_t {
@@ -610,33 +618,37 @@ fn reduce_entropy_bc7_impl_with_progress(
                             continue;
                         }
 
-                        let mut trial_blk = orig_best_block;
-                        trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
+                        let (trial_block, trial_ms_err) =
+                            if prev_blk[ofs..ofs + len] == orig_best_block[ofs..ofs + len] {
+                                (orig_best_block, orig_best_ms_err)
+                            } else {
+                                let mut trial_blk = orig_best_block;
+                                trial_blk[ofs..ofs + len].copy_from_slice(&prev_blk[ofs..ofs + len]);
 
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.decode_trials += 1;
-                        }
-                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
-                        let Some(trial_err) = decode_bc7_error_bounded(
-                            &trial_blk,
-                            p_pixels,
-                            bc7_mode,
-                            !params.allow_relative_movement || ofs > 0,
-                            max_trial_err,
-                            stats.as_deref_mut(),
-                        ) else {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.bounded_error_exits += 1;
-                            }
-                            continue;
-                        };
-
-                        let trial_ms_err = trial_err as f32 / 64.0;
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.decode_trials += 1;
+                                }
+                                let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                                let Some(trial_err) = decode_bc7_error_bounded(
+                                    &trial_blk,
+                                    p_pixels,
+                                    bc7_mode,
+                                    !params.allow_relative_movement || ofs > 0,
+                                    max_trial_err,
+                                    stats.as_deref_mut(),
+                                ) else {
+                                    if let Some(stats) = stats.as_deref_mut() {
+                                        stats.bounded_error_exits += 1;
+                                    }
+                                    continue;
+                                };
+                                (trial_blk, trial_err as f32 / 64.0)
+                            };
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
                                 best_t = t;
-                                best_block = trial_blk;
+                                best_block = trial_block;
                                 if let Some(stats) = stats.as_deref_mut() {
                                     stats.accepted_matches += 1;
                                 }
@@ -1498,6 +1510,22 @@ fn relative_offset_candidate_count(len: usize, max_relative_delta: usize) -> usi
         count += dst_end - dst_start + 1;
     }
     count
+}
+
+fn compute_match_len_bits() -> [f32; 17] {
+    let mut bits = [0.0f32; 17];
+    for len in 0..=16 {
+        bits[len] = compute_match_len_cost(len as u32) as f32;
+    }
+    bits
+}
+
+fn compute_literal_bits_by_match_len() -> [f32; 17] {
+    let mut bits = [0.0f32; 17];
+    for len in 0..=16 {
+        bits[len] = (16 - len) as f32 * LITERAL_BITS;
+    }
+    bits
 }
 
 const SMALL_DIST_EXTRA: [u8; 512] = [
