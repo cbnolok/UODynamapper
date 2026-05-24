@@ -12,6 +12,9 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
+use crate::gump_atlas::{
+    add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 
@@ -34,6 +37,8 @@ impl Default for EcGumpsOptions {
 
 pub struct EcGumpsBuildSummary {
     pub gump_count: u32,
+    pub single_gump_count: u32,
+    pub atlas_gump_count: u32,
     pub skipped_count: u32,
 }
 
@@ -68,6 +73,8 @@ fn convert_ec_gumps_from_interface_uop(
         .wrap_err_with(|| format!("load {}", interface_uop.display()))?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
+    let mut single_gump_count = 0u32;
+    let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
     let pb = ProgressBar::new(u64::from(options.max_id) + 1);
@@ -84,8 +91,16 @@ fn convert_ec_gumps_from_interface_uop(
             continue;
         };
 
-        match add_decoded_ec_gump(&mut builder, gump_id, format, &payload, options.compression) {
-            Ok(()) => gump_count += 1,
+        match decode_ec_gump_payload(gump_id, format, &payload) {
+            Ok(decoded) => {
+                if is_paperdoll_equipment_gump_id(gump_id) {
+                    atlas_gumps.push(decoded);
+                } else {
+                    add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
+                    single_gump_count += 1;
+                }
+                gump_count += 1;
+            }
             Err(error) => {
                 skipped_count += 1;
                 log::warn!("Skipping EC gump {gump_id}: {error}");
@@ -93,11 +108,15 @@ fn convert_ec_gumps_from_interface_uop(
         }
     }
 
+    let atlas_gump_count =
+        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
     pb.finish_with_message("EC gumps packed");
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
         gump_count,
+        single_gump_count,
+        atlas_gump_count,
         skipped_count,
     })
 }
@@ -110,6 +129,8 @@ fn convert_ec_gumps_from_extracted_dir(
     let sources = collect_extracted_gumps(gumpart_dir)?;
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut gump_count = 0u32;
+    let mut single_gump_count = 0u32;
+    let mut atlas_gumps = Vec::new();
     let mut skipped_count = 0u32;
 
     let pb = ProgressBar::new(sources.len() as u64);
@@ -131,14 +152,17 @@ fn convert_ec_gumps_from_extracted_dir(
             }
         };
 
-        match add_decoded_ec_gump(
-            &mut builder,
-            gump_id,
-            source.format,
-            &payload,
-            options.compression,
-        ) {
-            Ok(()) => gump_count += 1,
+        let format = infer_ec_image_format(&payload, source.format);
+        match decode_ec_gump_payload(gump_id, format, &payload) {
+            Ok(decoded) => {
+                if is_paperdoll_equipment_gump_id(gump_id) {
+                    atlas_gumps.push(decoded);
+                } else {
+                    add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
+                    single_gump_count += 1;
+                }
+                gump_count += 1;
+            }
             Err(error) => {
                 skipped_count += 1;
                 log::warn!("Skipping EC gump {gump_id}: {error}");
@@ -146,11 +170,15 @@ fn convert_ec_gumps_from_extracted_dir(
         }
     }
 
+    let atlas_gump_count =
+        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
     pb.finish_with_message("EC gumps packed");
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
         gump_count,
+        single_gump_count,
+        atlas_gump_count,
         skipped_count,
     })
 }
@@ -165,42 +193,40 @@ fn unpack_ec_gump_payload(
             let payload = package
                 .unpack_file_by_hash(hash)?
                 .ok_or_else(|| eyre::eyre!("EC gump entry disappeared from interface.uop"))?;
-            return Ok(Some((format, payload)));
+            return Ok(Some((infer_ec_image_format(&payload, format), payload)));
         }
     }
     Ok(None)
 }
 
-fn add_decoded_ec_gump(
+fn add_single_decoded_ec_gump(
     builder: &mut UddpBuilder,
-    gump_id: u32,
-    format: ECImageFormat,
-    source_payload: &[u8],
+    decoded: &DecodedGump,
     compression: CompressionFlag,
 ) -> eyre::Result<()> {
-    let (width, height, rgba) = decode_ec_gump_payload(format, source_payload)?;
-    let mut payload = Vec::with_capacity(8 + rgba.len());
-    payload.write_u32::<LittleEndian>(width)?;
-    payload.write_u32::<LittleEndian>(height)?;
-    payload.extend_from_slice(&rgba);
+    let mut payload = Vec::with_capacity(8 + decoded.rgba.len());
+    payload.write_u32::<LittleEndian>(u32::from(decoded.width))?;
+    payload.write_u32::<LittleEndian>(u32::from(decoded.height))?;
+    payload.extend_from_slice(&decoded.rgba);
 
     builder.add_file(AddFileRequest {
         data_type: DataType::Gump as u8,
         compression,
-        width,
-        height,
+        width: u32::from(decoded.width),
+        height: u32::from(decoded.height),
         virtual_path: None,
         path_hash64: None,
-        id: Some(gump_id),
+        id: Some(decoded.gump_id),
         data: &payload,
     })?;
     Ok(())
 }
 
 fn decode_ec_gump_payload(
+    gump_id: u32,
     format: ECImageFormat,
     source_payload: &[u8],
-) -> eyre::Result<(u32, u32, Vec<u8>)> {
+) -> eyre::Result<DecodedGump> {
     let tex_file = TextureFile {
         metadata: TextureItem::absent(),
         is_ec: true,
@@ -210,7 +236,17 @@ fn decode_ec_gump_payload(
     };
     let image = tex_file.decode_to_rgba()?;
     let rgba = image.to_rgba8();
-    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+    let width = rgba.width();
+    let height = rgba.height();
+    if width > u16::MAX as u32 || height > u16::MAX as u32 {
+        eyre::bail!("EC gump {gump_id} dimensions exceed u16 metadata bounds: {width}x{height}");
+    }
+    Ok(DecodedGump {
+        gump_id,
+        width: width as u16,
+        height: height as u16,
+        rgba: rgba.into_raw(),
+    })
 }
 
 fn find_ec_gumpart_dir(source_dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -286,6 +322,25 @@ fn ec_image_format_from_path(path: &Path) -> Option<ECImageFormat> {
     }
 }
 
+fn infer_ec_image_format(payload: &[u8], fallback: ECImageFormat) -> ECImageFormat {
+    if payload.starts_with(b"DDS ") {
+        ECImageFormat::DDS
+    } else if is_probably_tga(payload) {
+        ECImageFormat::TGA
+    } else {
+        fallback
+    }
+}
+
+fn is_probably_tga(payload: &[u8]) -> bool {
+    if payload.len() < 18 {
+        return false;
+    }
+
+    let image_type = payload[2];
+    (image_type == 2 || image_type == 10) && payload[1] <= 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +379,13 @@ mod tests {
             Some(ECImageFormat::DDS)
         );
         assert_eq!(ec_image_format_from_path(Path::new("00009504.png")), None);
+    }
+
+    #[test]
+    fn infer_ec_image_format_prefers_payload_magic_over_extension() {
+        assert_eq!(infer_ec_image_format(b"DDS payload", ECImageFormat::TGA), ECImageFormat::DDS);
+        let mut tga = vec![0u8; 18];
+        tga[2] = 2;
+        assert_eq!(infer_ec_image_format(&tga, ECImageFormat::DDS), ECImageFormat::TGA);
     }
 }

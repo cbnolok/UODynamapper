@@ -8,6 +8,7 @@ pub mod cc_tex_land_ec_transcode {
 pub mod cc_map;
 pub mod cc_gumps;
 pub mod ec_gumps;
+mod gump_atlas;
 pub mod cc_radar;
 pub mod cc_statics;
 pub mod classic_patches;

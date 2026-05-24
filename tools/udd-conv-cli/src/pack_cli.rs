@@ -1365,9 +1365,11 @@ pub fn run() -> eyre::Result<()> {
                 &classic_patches.into(),
             )?;
             println!(
-                "Wrote {} gumps to '{}'.",
+                "Wrote {} Classic gumps to '{}' ({} single, {} atlas).",
                 summary.gump_count,
-                out_file.display()
+                out_file.display(),
+                summary.single_gump_count,
+                summary.atlas_gump_count
             );
         }
         Commands::PackEcGumps {
@@ -1386,9 +1388,11 @@ pub fn run() -> eyre::Result<()> {
                 },
             )?;
             println!(
-                "Wrote {} EC gumps to '{}' ({} skipped).",
+                "Wrote {} EC gumps to '{}' ({} single, {} atlas, {} skipped).",
                 summary.gump_count,
                 out_file.display(),
+                summary.single_gump_count,
+                summary.atlas_gump_count,
                 summary.skipped_count
             );
         }

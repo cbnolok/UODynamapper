@@ -8,6 +8,9 @@ use uocf::classic::gump::GumpMap;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
+use crate::gump_atlas::{
+    add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
+};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
 
@@ -15,6 +18,8 @@ pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
 
 pub struct CcGumpsBuildSummary {
     pub gump_count: u32,
+    pub single_gump_count: u32,
+    pub atlas_gump_count: u32,
 }
 
 pub fn convert_gumps_to_uddp_from_sources_with_patches(
@@ -44,6 +49,8 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut scratch = Vec::new();
     let mut gump_count = 0u32;
+    let mut single_gump_count = 0u32;
+    let mut atlas_gumps = Vec::new();
 
     for gump_id in 0..=max_id {
         pb.inc(1);
@@ -59,26 +66,53 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
             }
         };
 
-        let mut payload = Vec::with_capacity(8 + rgba.len());
-        payload.write_u32::<LittleEndian>(u32::from(width))?;
-        payload.write_u32::<LittleEndian>(u32::from(height))?;
-        payload.extend_from_slice(&rgba);
-
-        builder.add_file(AddFileRequest {
-            data_type: DataType::Gump as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: u32::from(width),
-            height: u32::from(height),
-            virtual_path: None,
-            path_hash64: None,
-            id: Some(gump_id),
-            data: &payload,
-        })?;
+        if is_paperdoll_equipment_gump_id(gump_id) {
+            atlas_gumps.push(DecodedGump {
+                gump_id,
+                width,
+                height,
+                rgba,
+            });
+        } else {
+            add_single_gump(&mut builder, gump_id, u32::from(width), u32::from(height), &rgba)?;
+            single_gump_count += 1;
+        }
         gump_count += 1;
     }
 
+    let atlas_gump_count =
+        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
     pb.finish_with_message("Gumps packed");
     build_and_write_package(&mut builder, output_path)?;
 
-    Ok(CcGumpsBuildSummary { gump_count })
+    Ok(CcGumpsBuildSummary {
+        gump_count,
+        single_gump_count,
+        atlas_gump_count,
+    })
+}
+
+fn add_single_gump(
+    builder: &mut UddpBuilder,
+    gump_id: u32,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> eyre::Result<()> {
+    let mut payload = Vec::with_capacity(8 + rgba.len());
+    payload.write_u32::<LittleEndian>(width)?;
+    payload.write_u32::<LittleEndian>(height)?;
+    payload.extend_from_slice(rgba);
+
+    builder.add_file(AddFileRequest {
+        data_type: DataType::Gump as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width,
+        height,
+        virtual_path: None,
+        path_hash64: None,
+        id: Some(gump_id),
+        data: &payload,
+    })?;
+    Ok(())
 }
