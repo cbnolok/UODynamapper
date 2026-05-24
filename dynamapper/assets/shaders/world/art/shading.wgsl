@@ -49,6 +49,7 @@ fn apply_art_surface_shading(
     light_direction: vec3<f32>,
     effects: LandEffectsUniform,
     global_light: GlobalLightingUniforms,
+    local_light_rgba: vec4<f32>,
     is_ground_art: bool,
 ) -> vec3<f32> {
     let shadow_strength = clamp(effects.art_shadow_strength, 0.0, 1.0);
@@ -91,6 +92,7 @@ fn apply_art_surface_shading(
         out_rgb = rgb * cool_shadow * shadow_cut;
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += global_light.light_color * edge_catch * highlight_strength * 0.22;
+        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * (0.18 + 0.62 * top_catch);
         out_rgb = mix(out_rgb, art_saturate(out_rgb, 0.82), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 

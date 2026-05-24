@@ -49,11 +49,11 @@ impl Plugin for DrawStaticSpritesPlugin {
                statics_draw::sys_apply_pending_art_page_atlas_resizes,
                crate::core::texture_cache::art::sys_stage_sprite_art_page_uploads,
                crate::core::texture_cache::art::sys_stage_ground_art_page_uploads,
+               static_lights::sys_collect_visible_static_lights
+                   .after(SceneRenderLandSysSet::RenderLandChunks),
                statics_collect::sys_collect_visible_statics
                    .in_set(SceneRenderArtSysSet::CollectVisibleStatics)
-                   .after(SceneRenderLandSysSet::RenderLandChunks),
-               static_lights::sys_collect_visible_static_lights
-                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
+                   .after(static_lights::sys_collect_visible_static_lights),
                statics_draw::sys_sync_static_sprite_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_transparent_entities

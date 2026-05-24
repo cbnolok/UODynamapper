@@ -26,6 +26,7 @@ struct SpriteInstance {
     hue_flags: u32,
     _pad_inst: u32,
     _pad_hue: vec2<u32>,
+    local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
 
@@ -50,6 +51,7 @@ struct GroundTileInstance {
     hue_id: u32,
     hue_flags: u32,
     _pad_hue: vec2<u32>,
+    local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
 

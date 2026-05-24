@@ -152,6 +152,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         scene.light_direction,
         effects,
         global_light,
+        inst.local_light_rgba,
         false,
     ), shaded.a);
     if (effects.enable_grunge == 1u) {

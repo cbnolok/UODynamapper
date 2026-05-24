@@ -699,6 +699,7 @@ pub struct SpriteInstance {
     pub hue_flags: u32,
     pub _pad_inst: u32,
     pub _pad_hue: [u32; 2],
+    pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
 
@@ -726,6 +727,7 @@ pub struct GroundTileInstance {
     pub hue_id: u32,
     pub hue_flags: u32,
     pub _pad_hue: [u32; 2],
+    pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4],
 }
 
@@ -763,6 +765,7 @@ struct StaticChunkCacheConfig {
     art_source: Option<ClientTextureSource>,
     sprite_atlas_mapping_revision: u64,
     ground_atlas_mapping_revision: u64,
+    static_light_signature: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -869,6 +872,59 @@ fn log_static_collect_stats(
         }
         debug_state.last = Some(stats);
     }
+}
+
+fn static_light_signature(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+) -> u64 {
+    let mut signature = 0xcbf29ce484222325u64;
+    for light in lights.0.iter().filter(|light| light.key.map_id == map_id) {
+        for value in [
+            light.key.tile_x,
+            light.key.tile_y,
+            light.light_id,
+            (light.world_y * 100.0).round().max(0.0) as u32,
+            (light.width_world * 100.0).round().max(0.0) as u32,
+            (light.height_world * 100.0).round().max(0.0) as u32,
+        ] {
+            signature ^= value as u64;
+            signature = signature.wrapping_mul(0x100000001b3);
+        }
+    }
+    signature
+}
+
+fn static_local_light_rgba(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    world_y: f32,
+) -> [f32; 4] {
+    let mut intensity = 0.0f32;
+    for light in lights.0.iter().filter(|light| light.key.map_id == map_id) {
+        let radius = light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25;
+        let dx = world_x - light.world_x;
+        let dz = world_z - light.world_z;
+        let dy = (world_y - light.world_y).abs() * 1.8;
+        let distance = (dx * dx + dz * dz + dy * dy).sqrt();
+        if distance >= radius {
+            continue;
+        }
+
+        let falloff = 1.0 - distance / radius;
+        let area_scale = (light.width_world * light.height_world).sqrt().clamp(1.0, 5.0) / 5.0;
+        intensity += falloff * falloff * (0.45 + area_scale * 0.55);
+    }
+
+    let intensity = intensity.clamp(0.0, 1.0);
+    [
+        1.0 * intensity,
+        0.72 * intensity,
+        0.42 * intensity,
+        intensity,
+    ]
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1040,6 +1096,7 @@ pub fn sys_collect_visible_statics(
     ),
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
+    static_lights: Res<super::static_lights::RenderStaticLightInstances>,
     // TODO: Need a way to get the currently visible chunks from the terrain system.
     // We can iterate over existing land chunk entities to find which blocks to draw.
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
@@ -1075,6 +1132,7 @@ pub fn sys_collect_visible_statics(
         art_source,
         sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
         ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
+        static_light_signature: static_light_signature(&static_lights, map_id),
     };
     let visible_tick = outputs.3.begin_frame();
     let config_changed = outputs.3.sync_config(cache_config);
@@ -1231,9 +1289,16 @@ pub fn sys_collect_visible_statics(
                             let is_wet_flags = tilemeta.map_or(0, |m| {
                                 if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
                             });
+                            let base_world_y = (render_tile.z as f32) * height_scale;
+                            let local_light_rgba = static_local_light_rgba(
+                                &static_lights,
+                                map_id,
+                                world_x,
+                                world_z,
+                                base_world_y,
+                            );
 
                             if is_dot_mode {
-                                let base_world_y = (render_tile.z as f32) * height_scale;
                                 let priority_z_units =
                                     resolve_priority_z_units(render_tile.z, tilemeta, depth_class);
                                 let bias = depth_class_y_bias(depth_class);
@@ -1262,6 +1327,7 @@ pub fn sys_collect_visible_statics(
                                         hue_flags: 0,
                                         _pad_inst: 0,
                                         _pad_hue: [0; 2],
+                                        local_light_rgba,
                                         color_rgba: [
                                             color[2] as f32 / 255.0,
                                             color[1] as f32 / 255.0,
@@ -1292,7 +1358,6 @@ pub fn sys_collect_visible_statics(
                                     depth_class_y_bias(depth_class)
                                 };
                             let encoded_depth_class = depth_class.encoded();
-                            let base_world_y = (render_tile.z as f32) * height_scale;
                             let priority_z_units =
                                 resolve_priority_z_units(render_tile.z, tilemeta, depth_class);
                             let world_y = base_world_y + bias;
@@ -1395,6 +1460,13 @@ pub fn sys_collect_visible_statics(
 
                             let (anchored_world_x, anchored_world_z) =
                                 surface_like_static_world_anchor(visual_kind, world_x, world_z);
+                            let local_light_rgba = static_local_light_rgba(
+                                &static_lights,
+                                map_id,
+                                anchored_world_x,
+                                anchored_world_z,
+                                base_world_y,
+                            );
 
                             if let Some(resolved) = resolved_sprite {
                                 chunk_stats.atlas_hits += 1;
@@ -1421,6 +1493,7 @@ pub fn sys_collect_visible_statics(
                                         hue_id,
                                         hue_flags,
                                         _pad_hue: [0; 2],
+                                        local_light_rgba,
                                         color_rgba: [1.0, 1.0, 1.0, 1.0],
                                     });
                                 } else {
@@ -1452,6 +1525,7 @@ pub fn sys_collect_visible_statics(
                                         hue_flags,
                                         _pad_inst: 0,
                                         _pad_hue: [0; 2],
+                                        local_light_rgba,
                                         color_rgba: [1.0, 1.0, 1.0, 1.0],
                                     });
                                 }
@@ -2087,6 +2161,7 @@ mod tests {
             hue_flags: 0,
             _pad_inst: 0,
             _pad_hue: [0; 2],
+            local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };
         let mut instances = vec![
@@ -2114,12 +2189,12 @@ mod tests {
 
     #[test]
     fn sprite_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<SpriteInstance>(), 112);
+        assert_eq!(std::mem::size_of::<SpriteInstance>(), 128);
     }
 
     #[test]
     fn ground_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 112);
+        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 128);
     }
 
     #[test]
@@ -2131,6 +2206,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            static_light_signature: 0,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -2148,6 +2224,27 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 1,
             ground_atlas_mapping_revision: 0,
+            static_light_signature: 0,
+        });
+
+        assert!(cache.chunks.is_empty());
+
+        cache.chunks.insert(
+            StaticChunkBatchKey {
+                map_id: 1,
+                gx: 0,
+                gy: 0,
+                scale: 1,
+            },
+            CachedStaticChunk::default(),
+        );
+        cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 1,
+            ground_atlas_mapping_revision: 0,
+            static_light_signature: 1,
         });
 
         assert!(cache.chunks.is_empty());

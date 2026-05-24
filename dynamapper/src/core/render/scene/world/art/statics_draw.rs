@@ -650,6 +650,7 @@ pub fn sys_setup_art_page_atlas(
         hue_flags: 0,
         _pad_inst: 0,
         _pad_hue: [0; 2],
+        local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
 
@@ -729,6 +730,7 @@ pub fn sys_setup_art_page_atlas(
         hue_id: 0,
         hue_flags: 0,
         _pad_hue: [0; 2],
+        local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
     let ground_buffer_handle = storage_buffers.add(initial_ground_buffer);
