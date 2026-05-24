@@ -776,8 +776,7 @@ pub fn sys_draw_spawned_land_chunks(
                             } else {
                                 package.resolve_effective_runtime_slot_id(id as u32)
                             }
-                        })
-                        .map(|_| id as u32),
+                        }),
                 }
             } else {
                 None
