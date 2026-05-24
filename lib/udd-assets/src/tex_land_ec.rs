@@ -466,7 +466,16 @@ impl TexLandEcPackage {
         cc_tile_id: u32,
         layer_index: u32,
     ) -> Option<TexLandEcResolvedMaterialLayer> {
-        let decision = self.resolve_material_decision(cc_tile_id);
+        self.resolve_material_layer_slot_with_transcode(cc_tile_id, layer_index, &self.transcode)
+    }
+
+    pub fn resolve_material_layer_slot_with_transcode(
+        &self,
+        cc_tile_id: u32,
+        layer_index: u32,
+        transcode: &HashMap<u32, u32>,
+    ) -> Option<TexLandEcResolvedMaterialLayer> {
+        let decision = self.resolve_material_decision_with_transcode(cc_tile_id, transcode);
         let material_id = decision.material_id?;
         self.resolve_material_layer_slot_by_material(material_id, cc_tile_id, layer_index)
     }
@@ -566,7 +575,15 @@ impl TexLandEcPackage {
     }
 
     pub fn resolve_runtime_slot_id(&self, cc_tile_id: u32) -> Option<u32> {
-        if let Some(&material_id) = self.transcode.get(&cc_tile_id) {
+        self.resolve_runtime_slot_id_with_transcode(cc_tile_id, &self.transcode)
+    }
+
+    pub fn resolve_runtime_slot_id_with_transcode(
+        &self,
+        cc_tile_id: u32,
+        transcode: &HashMap<u32, u32>,
+    ) -> Option<u32> {
+        if let Some(&material_id) = transcode.get(&cc_tile_id) {
             let material_records = self
                 .terrain_provenance
                 .iter()
@@ -595,7 +612,15 @@ impl TexLandEcPackage {
     }
 
     pub fn resolve_material_decision(&self, cc_tile_id: u32) -> TexLandEcMaterialDecision {
-        let mut material_id = self.transcode.get(&cc_tile_id).copied();
+        self.resolve_material_decision_with_transcode(cc_tile_id, &self.transcode)
+    }
+
+    pub fn resolve_material_decision_with_transcode(
+        &self,
+        cc_tile_id: u32,
+        transcode: &HashMap<u32, u32>,
+    ) -> TexLandEcMaterialDecision {
+        let mut material_id = transcode.get(&cc_tile_id).copied();
         let mut material_records = if let Some(material_id) = material_id {
             self.terrain_provenance
                 .iter()
@@ -613,7 +638,7 @@ impl TexLandEcPackage {
             records
         };
 
-        let (runtime_slot_id, runtime_slot_source) = if self.transcode.contains_key(&cc_tile_id) {
+        let (runtime_slot_id, runtime_slot_source) = if transcode.contains_key(&cc_tile_id) {
             self.resolve_material_runtime_slot(&material_records)
         } else if let Some(slot_id) = self.resolve_alias_runtime_slot(&material_records) {
             (Some(slot_id), Some(TexLandEcRuntimeSlotSource::DirectAlias))
@@ -661,7 +686,15 @@ impl TexLandEcPackage {
     }
 
     pub fn resolve_effective_runtime_slot_id(&self, cc_tile_id: u32) -> Option<u32> {
-        let decision = self.resolve_material_decision(cc_tile_id);
+        self.resolve_effective_runtime_slot_id_with_transcode(cc_tile_id, &self.transcode)
+    }
+
+    pub fn resolve_effective_runtime_slot_id_with_transcode(
+        &self,
+        cc_tile_id: u32,
+        transcode: &HashMap<u32, u32>,
+    ) -> Option<u32> {
+        let decision = self.resolve_material_decision_with_transcode(cc_tile_id, transcode);
         if let Some(material_id) = decision.material_id {
             if let Some(slot_id) = self
                 .resolve_override_texture_slots(material_id)

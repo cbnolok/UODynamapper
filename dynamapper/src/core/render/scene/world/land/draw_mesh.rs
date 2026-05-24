@@ -772,8 +772,14 @@ pub fn sys_draw_spawned_land_chunks(
                         .tex_land_ec
                         .as_ref()
                         .and_then(|package| {
-                            package
-                                .resolve_effective_runtime_slot_id(id as u32)
+                            if let Some(transcode) = cache_r.enhanced_terrain_transcode.as_deref() {
+                                package.resolve_effective_runtime_slot_id_with_transcode(
+                                    id as u32,
+                                    transcode,
+                                )
+                            } else {
+                                package.resolve_effective_runtime_slot_id(id as u32)
+                            }
                         })
                         .map(|_| id as u32),
                 }
@@ -803,7 +809,13 @@ pub fn sys_draw_spawned_land_chunks(
                 crate::configs::settings::ClientTextureSource::Ec => cache_r
                     .tex_land_ec
                     .as_ref()
-                    .map(|package| ec_land_shader_flags(package, id as u32))
+                    .map(|package| {
+                        ec_land_shader_flags(
+                            package,
+                            cache_r.enhanced_terrain_transcode.as_deref(),
+                            id as u32,
+                        )
+                    })
                     .unwrap_or(0),
                 crate::configs::settings::ClientTextureSource::Cc => 0,
             };
@@ -1152,9 +1164,15 @@ fn sort_construction_targets(chunks: &mut [LandChunkConstructionData], camera_ch
 
 fn ec_land_shader_flags(
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
+    transcode: Option<&std::collections::HashMap<u32, u32>>,
     tile_id: u32,
 ) -> u16 {
-    let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
+    let decision = if let Some(transcode) = transcode {
+        package.resolve_material_decision_with_transcode(tile_id, transcode)
+    } else {
+        package.resolve_material_decision(tile_id)
+    };
+    let Some(material_id) = decision.material_id else {
         return 0;
     };
     let Some(details) = package.terrain_override_details_for(material_id) else {

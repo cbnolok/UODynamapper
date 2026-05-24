@@ -5,7 +5,7 @@
 
 use super::texture_array;
 use crate::{
-    configs::settings::ClientTextureSource,
+    configs::settings::{ClientTextureSource, EnhancedTerrainRouting},
     console_logger::{self, LogAbout, LogSev},
     core::texture_cache::{
         visit_grouped_layer_assignments, visit_grouped_texture_ids, TextureResidencyPlan,
@@ -22,7 +22,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 use bevy::tasks::AsyncComputeTaskPool;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -105,6 +105,7 @@ impl LandTextureArrayWrapper {
 pub struct LandTextureCache {
     residency_strategy: TextureResidencyStrategy,
     preferred_source: ClientTextureSource,
+    enhanced_terrain_routing: EnhancedTerrainRouting,
     upload_generation: u64,
     pub small: LandTextureArrayWrapper,
     pub big: LandTextureArrayWrapper,
@@ -120,6 +121,7 @@ pub struct LandTextureCache {
     pub tex_land_cc: Option<Arc<udd_assets::tex_land_cc::TexLandCcPackage>>,
     pub tex_art_ec: Option<Arc<udd_assets::tex_art_ec::TexArtEcPackage>>,
     pub tex_land_ec: Option<Arc<udd_assets::tex_land_ec::TexLandEcPackage>>,
+    pub enhanced_terrain_transcode: Option<Arc<HashMap<u32, u32>>>,
 }
 
 pub fn sys_drain_texture_compression_tasks(mut cache: ResMut<LandTextureCache>) {
@@ -199,11 +201,13 @@ impl LandTextureCache {
         big_initial_layers: u32,
         residency_strategy: TextureResidencyStrategy,
         preferred_source: ClientTextureSource,
+        enhanced_terrain_routing: EnhancedTerrainRouting,
     ) -> Self {
         let (upload_sender, upload_receiver) = std::sync::mpsc::channel();
         Self {
             residency_strategy,
             preferred_source,
+            enhanced_terrain_routing,
             upload_generation: 0,
             small: LandTextureArrayWrapper::new(
                 small_tex_image_handle,
@@ -225,6 +229,7 @@ impl LandTextureCache {
             tex_land_cc: None,
             tex_art_ec: None,
             tex_land_ec: None,
+            enhanced_terrain_transcode: None,
         }
     }
 
@@ -236,6 +241,10 @@ impl LandTextureCache {
         self.preferred_source
     }
 
+    pub fn enhanced_terrain_routing(&self) -> EnhancedTerrainRouting {
+        self.enhanced_terrain_routing
+    }
+
     pub fn set_preferred_source(&mut self, source: ClientTextureSource) -> bool {
         if self.preferred_source == source {
             return false;
@@ -243,6 +252,19 @@ impl LandTextureCache {
 
         self.preferred_source = source;
         true
+    }
+
+    pub fn set_enhanced_terrain_routing(&mut self, routing: EnhancedTerrainRouting) -> bool {
+        if self.enhanced_terrain_routing == routing {
+            return false;
+        }
+
+        self.enhanced_terrain_routing = routing;
+        true
+    }
+
+    pub fn set_enhanced_terrain_transcode(&mut self, transcode: HashMap<u32, u32>) {
+        self.enhanced_terrain_transcode = Some(Arc::new(transcode));
     }
 
     pub fn preloads_full_collection(&self) -> bool {
