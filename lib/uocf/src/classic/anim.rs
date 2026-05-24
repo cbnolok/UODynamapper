@@ -9,6 +9,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
+use wide::{u16x8, u8x16};
 
 use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
@@ -166,17 +167,7 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
             palette[i] = mul_ptr.read_u16::<LittleEndian>()?;
         }
 
-        // Convert palette to RGBA8888
-        let mut rgba_palette = [[0u8; 4]; 256];
-        for i in 0..256 {
-            let c = palette[i];
-            if c != 0 {
-                let r = (((c >> 10) & 0x1F) << 3) as u8;
-                let g = (((c >> 5) & 0x1F) << 3) as u8;
-                let b = ((c & 0x1F) << 3) as u8;
-                rgba_palette[i] = [r, g, b, 255];
-            }
-        }
+        let rgba_palette = rgb555_palette_to_rgba(&palette);
 
         let frame_offset_base = lookup
             .checked_add(512)
@@ -229,52 +220,15 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
             let pixel_len = frame_pixel_len(width, height)?;
             let mut pixel_data = vec![0u8; pixel_len];
 
-            // RLE Decoding
-            loop {
-                let header = match frame_ptr.read_u32::<LittleEndian>() {
-                    Ok(h) => h,
-                    Err(_) => break,
-                };
-
-                if header == 0x7FFF7FFF {
-                    break;
-                }
-
-                let x_run = (header & 0xFFF) as usize;
-                let mut x_offset = ((header >> 22) & 0x3FF) as i32;
-                let mut y_offset = ((header >> 12) & 0x3FF) as i32;
-
-                // Sign-extend 10-bit values
-                if (x_offset & 0x200) != 0 {
-                    x_offset |= !0x3FF;
-                }
-                if (y_offset & 0x200) != 0 {
-                    y_offset |= !0x3FF;
-                }
-
-                let x = (x_offset + center_x as i32) as i32;
-                let y = (y_offset + center_y as i32 + height as i32) as i32;
-
-                if y >= 0 && y < height as i32 {
-                    for k in 0..x_run {
-                        let final_x = x + k as i32;
-                        if final_x >= 0 && final_x < width as i32 {
-                            let palette_index = frame_ptr.read_u8()? as usize;
-                            let color = rgba_palette[palette_index];
-                            let pixel_idx = frame_pixel_offset(y, final_x, width)?;
-                            pixel_data[pixel_idx..pixel_idx + 4].copy_from_slice(&color);
-                        } else {
-                            // Skip the byte even if out of bounds
-                            frame_ptr.read_u8()?;
-                        }
-                    }
-                } else {
-                    // Skip the bytes for this run
-                    for _ in 0..x_run {
-                        frame_ptr.read_u8()?;
-                    }
-                }
-            }
+            decode_classic_rle_frame(
+                &mut pixel_data,
+                &mut frame_ptr,
+                width,
+                height,
+                center_x,
+                center_y,
+                &rgba_palette,
+            )?;
 
             frames.push(AnimFrame {
                 width,
@@ -286,6 +240,113 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
         }
 
         Ok(frames)
+}
+
+pub(crate) fn rgb555_palette_to_rgba(palette: &[u16; 256]) -> [[u8; 4]; 256] {
+    let mut rgba_palette = [[0u8; 4]; 256];
+    let mask = u16x8::splat(0x1F);
+    for (chunk_index, chunk) in palette.chunks_exact(8).enumerate() {
+        let colors = u16x8::from([
+            chunk[0], chunk[1], chunk[2], chunk[3],
+            chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+        let r = (((colors >> 10_u32) & mask) << 3_u32).to_array();
+        let g = (((colors >> 5_u32) & mask) << 3_u32).to_array();
+        let b = ((colors & mask) << 3_u32).to_array();
+        let base = chunk_index * 8;
+        for lane in 0..8 {
+            if chunk[lane] != 0 {
+                rgba_palette[base + lane] = [r[lane] as u8, g[lane] as u8, b[lane] as u8, 255];
+            }
+        }
+    }
+    rgba_palette
+}
+
+pub(crate) fn decode_classic_rle_frame(
+    pixel_data: &mut [u8],
+    data: &mut &[u8],
+    width: u16,
+    height: u16,
+    center_x: i16,
+    center_y: i16,
+    rgba_palette: &[[u8; 4]; 256],
+) -> eyre::Result<()> {
+    loop {
+        let header = match data.read_u32::<LittleEndian>() {
+            Ok(h) => h,
+            Err(_) => break,
+        };
+
+        if header == 0x7FFF7FFF {
+            break;
+        }
+
+        let x_run = (header & 0xFFF) as usize;
+        if data.len() < x_run {
+            eyre::bail!("Animation RLE run exceeds remaining frame data");
+        }
+        let (run, rest) = data.split_at(x_run);
+        *data = rest;
+
+        let mut x_offset = ((header >> 22) & 0x3FF) as i32;
+        let mut y_offset = ((header >> 12) & 0x3FF) as i32;
+
+        if (x_offset & 0x200) != 0 {
+            x_offset |= !0x3FF;
+        }
+        if (y_offset & 0x200) != 0 {
+            y_offset |= !0x3FF;
+        }
+
+        let x = x_offset + center_x as i32;
+        let y = y_offset + center_y as i32 + height as i32;
+
+        if y < 0 || y >= height as i32 {
+            continue;
+        }
+
+        let start_x = x.max(0);
+        let end_x = (x + x_run as i32).min(width as i32);
+        if start_x >= end_x {
+            continue;
+        }
+
+        let src_start = (start_x - x) as usize;
+        let src_end = (end_x - x) as usize;
+        let dst_start = frame_pixel_offset(y, start_x, width)?;
+        write_palette_run_rgba(
+            &mut pixel_data[dst_start..dst_start + (src_end - src_start) * 4],
+            &run[src_start..src_end],
+            rgba_palette,
+        );
+    }
+    Ok(())
+}
+
+fn write_palette_run_rgba(dst: &mut [u8], indices: &[u8], rgba_palette: &[[u8; 4]; 256]) {
+    let mut dst_chunks = dst.chunks_exact_mut(16);
+    let mut index_chunks = indices.chunks_exact(4);
+    for (dst_chunk, index_chunk) in dst_chunks.by_ref().zip(index_chunks.by_ref()) {
+        let c0 = rgba_palette[index_chunk[0] as usize];
+        let c1 = rgba_palette[index_chunk[1] as usize];
+        let c2 = rgba_palette[index_chunk[2] as usize];
+        let c3 = rgba_palette[index_chunk[3] as usize];
+        let packed = u8x16::from([
+            c0[0], c0[1], c0[2], c0[3],
+            c1[0], c1[1], c1[2], c1[3],
+            c2[0], c2[1], c2[2], c2[3],
+            c3[0], c3[1], c3[2], c3[3],
+        ]);
+        dst_chunk.copy_from_slice(&packed.to_array());
+    }
+
+    for (pixel, &palette_index) in dst_chunks.into_remainder()
+        .chunks_exact_mut(4)
+        .zip(index_chunks.remainder())
+    {
+        pixel.copy_from_slice(&rgba_palette[palette_index as usize]);
+    }
 }
 
 fn frame_pixel_len(width: u16, height: u16) -> eyre::Result<usize> {

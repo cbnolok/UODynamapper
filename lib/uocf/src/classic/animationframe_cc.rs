@@ -8,7 +8,7 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Seek, SeekFrom};
 
-use crate::classic::anim::AnimFrame;
+use crate::classic::anim::{decode_classic_rle_frame, rgb555_palette_to_rgba, AnimFrame};
 
 /// Represents the data inside a single CC AnimationFrame entry.
 pub struct AnimationFrameCc {
@@ -56,17 +56,7 @@ impl AnimationFrameCc {
             let mut palette = [0u16; 256];
             reader.read_u16_into::<LittleEndian>(&mut palette)?;
 
-            // Convert palette to RGBA8888
-            let mut rgba_palette = [[0u8; 4]; 256];
-            for i in 0..256 {
-                let c = palette[i];
-                if c != 0 {
-                    let r = (((c >> 10) & 0x1F) << 3) as u8;
-                    let g = (((c >> 5) & 0x1F) << 3) as u8;
-                    let b = ((c & 0x1F) << 3) as u8;
-                    rgba_palette[i] = [r, g, b, 255];
-                }
-            }
+            let rgba_palette = rgb555_palette_to_rgba(&palette);
 
             let center_x = reader.read_i16::<LittleEndian>()?;
             let center_y = reader.read_i16::<LittleEndian>()?;
@@ -86,49 +76,20 @@ impl AnimationFrameCc {
 
             let mut pixel_data = vec![0u8; width as usize * height as usize * 4];
 
-            // RLE Decoding (Same as MUL)
-            loop {
-                let header = match reader.read_u32::<LittleEndian>() {
-                    Ok(h) => h,
-                    Err(_) => break,
-                };
-
-                if header == 0x7FFF7FFF {
-                    break;
-                }
-
-                let x_run = (header & 0xFFF) as usize;
-                let mut x_offset = ((header >> 22) & 0x3FF) as i32;
-                let mut y_offset = ((header >> 12) & 0x3FF) as i32;
-
-                if (x_offset & 0x200) != 0 {
-                    x_offset |= !0x3FF;
-                }
-                if (y_offset & 0x200) != 0 {
-                    y_offset |= !0x3FF;
-                }
-
-                let x = (x_offset + center_x as i32) as i32;
-                let y = (y_offset + center_y as i32 + height as i32) as i32;
-
-                if y >= 0 && y < height as i32 {
-                    for k in 0..x_run {
-                        let final_x = x + k as i32;
-                        if final_x >= 0 && final_x < width as i32 {
-                            let palette_index = reader.read_u8()? as usize;
-                            let color = rgba_palette[palette_index];
-                            let pixel_idx = ((y * width as i32 + final_x) * 4) as usize;
-                            pixel_data[pixel_idx..pixel_idx + 4].copy_from_slice(&color);
-                        } else {
-                            reader.read_u8()?;
-                        }
-                    }
-                } else {
-                    for _ in 0..x_run {
-                        reader.read_u8()?;
-                    }
-                }
+            let rle_start = reader.position() as usize;
+            if rle_start > data.len() {
+                eyre::bail!("Classic AnimationFrame RLE offset out of bounds");
             }
+            let mut frame_ptr = &data[rle_start..];
+            decode_classic_rle_frame(
+                &mut pixel_data,
+                &mut frame_ptr,
+                width,
+                height,
+                center_x,
+                center_y,
+                &rgba_palette,
+            )?;
 
             frames.push(AnimFrame {
                 width,
