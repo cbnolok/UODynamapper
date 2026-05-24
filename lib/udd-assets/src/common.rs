@@ -5,7 +5,10 @@ use color_eyre::eyre::{self, WrapErr};
 use bytemuck::Pod;
 use udd_container::UddpReader;
 
-use crate::bc7::{decode_bc7_to_rgba8888, extract_bc7_subrect, extract_rgba8_subrect, ImageExtent};
+use crate::bc7::{
+    decode_bc7_to_rgba8888, expected_bc7_byte_len, extract_bc7_subrect, extract_rgba8_subrect,
+    ImageExtent,
+};
 use crate::tex_art_cc::PagePixelFormat;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -100,11 +103,10 @@ pub(crate) fn decode_atlas_page_rgba(
     match pixel_format {
         PagePixelFormat::Rgba8888 => Ok(page_bytes.to_vec()),
         PagePixelFormat::Bc7 => {
-            let extent = ImageExtent::new(atlas_width, atlas_height)
-                .map_err(|error| eyre::eyre!("invalid page extent {atlas_width}x{atlas_height}: {error}"))?;
+            let extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
             let decoded = decode_bc7_to_rgba8888(page_bytes, extent)
-                .map_err(|error| eyre::eyre!("decode BC7 page {atlas_width}x{atlas_height}: {error}"))?;
-            Ok(extract_rgba8_subrect(&decoded, atlas_width, 0, 0, used_width, used_height))
+                .map_err(|error| eyre::eyre!("decode BC7 page {}x{}: {error}", extent.width(), extent.height()))?;
+            Ok(extract_rgba8_subrect(&decoded, extent.width(), 0, 0, used_width, used_height))
         }
     }
 }
@@ -145,8 +147,7 @@ pub(crate) fn extract_atlas_subrect_rgba(
     match pixel_format {
         PagePixelFormat::Rgba8888 => Ok(extract_rgba8_subrect(page_bytes, used_width, x, y, width, height)),
         PagePixelFormat::Bc7 => {
-            let page_extent = ImageExtent::new(atlas_width, atlas_height)
-                .map_err(|error| eyre::eyre!("invalid page extent {atlas_width}x{atlas_height}: {error}"))?;
+            let page_extent = bc7_payload_extent(page_bytes, atlas_width, atlas_height, used_width, used_height)?;
 
             let aligned_x = (x / 4) * 4;
             let aligned_y = (y / 4) * 4;
@@ -174,6 +175,39 @@ pub(crate) fn extract_atlas_subrect_rgba(
             ))
         }
     }
+}
+
+fn bc7_payload_extent(
+    page_bytes: &[u8],
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+) -> eyre::Result<ImageExtent> {
+    let used_extent = ImageExtent::new(used_width, used_height)
+        .map_err(|error| eyre::eyre!("invalid used BC7 page extent {used_width}x{used_height}: {error}"))?;
+    let used_len = expected_bc7_byte_len(used_extent);
+    if page_bytes.len() == used_len {
+        return Ok(used_extent);
+    }
+
+    let atlas_extent = ImageExtent::new(atlas_width, atlas_height)
+        .map_err(|error| eyre::eyre!("invalid atlas BC7 page extent {atlas_width}x{atlas_height}: {error}"))?;
+    let atlas_len = expected_bc7_byte_len(atlas_extent);
+    if page_bytes.len() == atlas_len {
+        return Ok(atlas_extent);
+    }
+
+    eyre::bail!(
+        "BC7 page byte length {} does not match used extent {}x{} ({} bytes) or atlas extent {}x{} ({} bytes)",
+        page_bytes.len(),
+        used_width,
+        used_height,
+        used_len,
+        atlas_width,
+        atlas_height,
+        atlas_len
+    );
 }
 
 pub fn read_pod_vec<T: Pod>(bytes: &[u8], entry_path: &str) -> eyre::Result<Vec<T>> {
@@ -281,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_bc7_page_uses_full_atlas_extent_before_cropping() {
+    fn decode_bc7_page_accepts_legacy_full_atlas_payload_before_cropping() {
         let atlas_width = 8;
         let atlas_height = 8;
         let used_width = 4;
@@ -308,5 +342,49 @@ mod tests {
         .unwrap();
 
         assert_eq!(decoded.len(), (used_width * used_height * 4) as usize);
+    }
+
+    #[test]
+    fn decode_bc7_page_accepts_cropped_used_payload() {
+        let atlas_width = 8;
+        let atlas_height = 8;
+        let used_width = 4;
+        let used_height = 4;
+        let mut rgba = vec![0u8; (used_width * used_height * 4) as usize];
+        for chunk in rgba.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&[90, 12, 44, 255]);
+        }
+
+        let image = ImageView::new(&rgba, Size::new(used_width, used_height), ColorFormat::RGBA_U8).unwrap();
+        let mut encoded = Vec::new();
+        let mut options = EncodeOptions::default();
+        options.quality = CompressionQuality::Normal;
+        dds::encode(&mut encoded, image, Format::BC7_UNORM, None, &options).unwrap();
+
+        let decoded = decode_atlas_page_rgba(
+            &encoded,
+            PagePixelFormat::Bc7,
+            atlas_width,
+            atlas_height,
+            used_width,
+            used_height,
+        )
+        .unwrap();
+        let actual = extract_atlas_subrect_rgba(
+            &encoded,
+            PagePixelFormat::Bc7,
+            atlas_width,
+            atlas_height,
+            used_width,
+            used_height,
+            1,
+            1,
+            2,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(decoded.len(), (used_width * used_height * 4) as usize);
+        assert_eq!(actual.len(), 2 * 2 * 4);
     }
 }

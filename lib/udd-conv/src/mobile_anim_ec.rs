@@ -218,9 +218,14 @@ fn encode_and_add_mobile_anim_pages(
 ) -> eyre::Result<()> {
     let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
     let progress_len = if use_bc7 {
-        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
-        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
+        pages
+            .iter()
+            .map(|page| {
+                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                Ok(bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64)
+            })
+            .sum::<eyre::Result<u64>>()?
     } else {
         pages.len() as u64
     };
@@ -268,14 +273,20 @@ fn encode_mobile_anim_page_chunk(
     pb: &ProgressBar,
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
     if options.pixel_format == PagePixelFormat::Bc7 {
-        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
         let encoded_pages = pages
             .par_iter()
             .map(|page| {
-                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                let cropped = crate::tex_art_cc::crop_rgba_page(
                     &page.pixels,
+                    options.atlas_width,
+                    page.record.used_width,
+                    page.record.used_height,
+                );
+                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                    &cropped,
                     extent,
                     RawImageFormat::Rgba8888,
                     encoding,
@@ -290,8 +301,8 @@ fn encode_mobile_anim_page_chunk(
                 Ok((
                     page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
                     encoded,
-                    options.atlas_width,
-                    options.atlas_height,
+                    page.record.used_width,
+                    page.record.used_height,
                 ))
             })
             .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
@@ -402,7 +413,7 @@ fn decode_animationframe_packages(
     for path in paths {
         let package = UopPackage::load(path)
             .wrap_err_with(|| format!("load {}", path.display()))?;
-        let decoded = decode_animationframe_package(&package)?;
+        let decoded = decode_animationframe_package(&package, path)?;
         for (body_id, frames) in decoded {
             append_decoded_body_frames(&mut decoded_by_body, body_id, frames)?;
         }
@@ -430,13 +441,19 @@ fn append_decoded_body_frames(
 
 fn decode_animationframe_package(
     package: &UopPackage,
+    path: &Path,
 ) -> eyre::Result<BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>> {
     let files = package.iter_files().filter(|file| file.has_size()).collect::<Vec<_>>();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("AnimationFrame UOP");
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding EC mobile animations ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    pb.set_message(format!("decoding EC mobile animations from {file_name}"));
 
     let mut decoded_by_body = BTreeMap::<u32, Vec<DecodedMobileAnimEcFrame>>::new();
     for file in files {
@@ -461,7 +478,7 @@ fn decode_animationframe_package(
         }
         append_decoded_body_frames(&mut decoded_by_body, animation.animation_id, frames)?;
     }
-    pb.finish_with_message("EC mobile animations decoded");
+    pb.finish_with_message(format!("EC mobile animations decoded from {file_name}"));
     Ok(decoded_by_body)
 }
 

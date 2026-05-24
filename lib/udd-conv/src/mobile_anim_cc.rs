@@ -330,9 +330,14 @@ fn encode_and_add_mobile_anim_pages(
 ) -> eyre::Result<()> {
     let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
     let progress_len = if use_bc7 {
-        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
-        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
+        pages
+            .iter()
+            .map(|page| {
+                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                Ok(bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64)
+            })
+            .sum::<eyre::Result<u64>>()?
     } else {
         pages.len() as u64
     };
@@ -380,14 +385,20 @@ fn encode_mobile_anim_page_chunk(
     pb: &ProgressBar,
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
     if options.pixel_format == PagePixelFormat::Bc7 {
-        let extent = ImageExtent::new(options.atlas_width, options.atlas_height)
-            .map_err(|e| eyre::eyre!("{e}"))?;
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
         let encoded_pages = pages
             .par_iter()
             .map(|page| {
-                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                let cropped = crate::tex_art_cc::crop_rgba_page(
                     &page.pixels,
+                    options.atlas_width,
+                    page.record.used_width,
+                    page.record.used_height,
+                );
+                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                    &cropped,
                     extent,
                     RawImageFormat::Rgba8888,
                     encoding,
@@ -402,8 +413,8 @@ fn encode_mobile_anim_page_chunk(
                 Ok((
                     page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
                     encoded,
-                    options.atlas_width,
-                    options.atlas_height,
+                    page.record.used_width,
+                    page.record.used_height,
                 ))
             })
             .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
@@ -447,9 +458,10 @@ fn decode_present_animations(
     let animationframe_candidates =
         decode_classic_animationframe_packages(&animationframe_paths)?;
     candidates.extend(animationframe_candidates);
+    let source_summary = format_candidate_source_summary(&candidates);
     println!(
         "Classic mobile animation candidates: {}",
-        format_candidate_source_summary(&candidates)
+        source_summary
     );
 
     let pb = ProgressBar::new(candidates.len() as u64);
@@ -509,7 +521,7 @@ fn decode_present_animations(
             flags: candidate.flags,
         });
     }
-    pb.finish_with_message("Mobile animations decoded");
+    pb.finish_with_message(format!("Classic mobile animations decoded from {source_summary}"));
 
     Ok((decoded_frames, animation_records, frame_records))
 }
