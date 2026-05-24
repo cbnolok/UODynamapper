@@ -16,6 +16,10 @@ use udd_conv::{
     cc_gumps::{convert_gumps_to_uddp_from_sources_with_patches, GUMPS_CC_DEFAULT_OUTPUT},
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
+    ec_gumps::{
+        convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
+        GUMPS_EC_DEFAULT_OUTPUT,
+    },
     hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
     mobile_anim_cc::{
         convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
@@ -754,6 +758,15 @@ enum Commands {
         #[arg(long, default_value = GUMPS_CC_DEFAULT_OUTPUT)]
         output: PathBuf,
     },
+    /// Packs EC interface.uop gumpart into gumps_ec.uddp.
+    PackEcGumps {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = GUMPS_EC_DEFAULT_OUTPUT)]
+        output: PathBuf,
+        #[arg(long, default_value_t = EC_GUMP_DEFAULT_MAX_ID, help = "Highest numeric gump id to probe when reading interface.uop.")]
+        max_id: u32,
+    },
 }
 
 pub fn run() -> eyre::Result<()> {
@@ -1357,6 +1370,28 @@ pub fn run() -> eyre::Result<()> {
                 out_file.display()
             );
         }
+        Commands::PackEcGumps {
+            source_dirs: source_dir_args,
+            output,
+            max_id,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = convert_ec_gumps_to_uddp_from_sources(
+                &paths,
+                &out_file,
+                &EcGumpsOptions {
+                    max_id,
+                    compression: CompressionFlag::ZstdNoDict,
+                },
+            )?;
+            println!(
+                "Wrote {} EC gumps to '{}' ({} skipped).",
+                summary.gump_count,
+                out_file.display(),
+                summary.skipped_count
+            );
+        }
     }
 
     Ok(())
@@ -1607,6 +1642,34 @@ mod tests {
             Commands::PackHues { source_dirs, output, .. } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(output, PathBuf::from("hues.uddp"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_ec_gumps() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-gumps",
+            "--ecdir",
+            "/ec",
+            "--output",
+            "gumps_ec.uddp",
+            "--max-id",
+            "12345",
+        ])
+        .expect("parse ec gump args");
+
+        match cli.command {
+            Commands::PackEcGumps {
+                source_dirs,
+                output,
+                max_id,
+            } => {
+                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert_eq!(output, PathBuf::from("gumps_ec.uddp"));
+                assert_eq!(max_id, 12345);
             }
             _ => panic!("unexpected command parsed"),
         }

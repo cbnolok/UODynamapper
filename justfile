@@ -359,6 +359,9 @@ uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
     done
     just uddconv-animations "{{ccdir}}" "{{ecdir}}" "{{output_dir}}"
     just uddconv-gumps "{{ccdir}}" "{{output_dir}}"
+    if [ -n "{{ecdir}}" ]; then
+        just uddconv-ec-gumps "{{ecdir}}" "{{output_dir}}"
+    fi
 
 # Convert only mobile animation packages
 [unix]
@@ -388,6 +391,18 @@ uddconv-gumps ccdir="" output_dir="target/uddp":
     fi
     mkdir -p "{{output_dir}}"
     cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir "{{ccdir}}" --output "{{output_dir}}/gumps_cc.uddp"
+
+# Convert only Enhanced Client gump packages
+[unix]
+uddconv-ec-gumps ecdir="" output_dir="target/uddp":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{ecdir}}" ]; then
+        echo "usage: just uddconv-ec-gumps <ecdir> [output_dir]"
+        exit 2
+    fi
+    mkdir -p "{{output_dir}}"
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-gumps --ecdir "{{ecdir}}" --output "{{output_dir}}/gumps_ec.uddp"
 
 
 # --- Maintenance ---
