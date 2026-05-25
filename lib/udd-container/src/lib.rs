@@ -5,6 +5,7 @@ pub mod uddp;
 
 pub use uddp::{
     AddFileRequest,
+    AddOwnedFileRequest,
     BuildProgress,
     BuildProgressPhase,
     Codec,

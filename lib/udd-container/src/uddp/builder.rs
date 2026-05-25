@@ -120,19 +120,56 @@ impl UddpBuilder {
     /// is rebuilding packages from a package image that never stored original
     /// path strings.
     pub fn add_file(&mut self, req: AddFileRequest<'_>) -> Result<(), BuildError> {
-        if req.data_type as usize >= MAX_TYPES {
-            return Err(BuildError::InvalidType(req.data_type));
+        self.add_pending_file(
+            req.data_type,
+            req.compression,
+            req.width,
+            req.height,
+            req.virtual_path,
+            req.path_hash64,
+            req.id,
+            req.data.to_vec(),
+        )
+    }
+
+    /// Add one owned logical file to the package without copying the payload.
+    pub fn add_owned_file(&mut self, req: AddOwnedFileRequest) -> Result<(), BuildError> {
+        self.add_pending_file(
+            req.data_type,
+            req.compression,
+            req.width,
+            req.height,
+            req.virtual_path.as_deref(),
+            req.path_hash64,
+            req.id,
+            req.data,
+        )
+    }
+
+    fn add_pending_file(
+        &mut self,
+        data_type: u8,
+        compression: CompressionFlag,
+        width: u32,
+        height: u32,
+        virtual_path: Option<&str>,
+        path_hash64: Option<u64>,
+        id: Option<u32>,
+        raw_data: Vec<u8>,
+    ) -> Result<(), BuildError> {
+        if data_type as usize >= MAX_TYPES {
+            return Err(BuildError::InvalidType(data_type));
         }
 
-        if req.data.len() > MAX_RAW_FILE_SIZE as usize {
-            return Err(BuildError::FileTooLarge(req.data.len() as u64));
+        if raw_data.len() > MAX_RAW_FILE_SIZE as usize {
+            return Err(BuildError::FileTooLarge(raw_data.len() as u64));
         }
 
         let key = match self.lookup_mode {
             LookupMode::VirtualPathHash => {
-                let hash = if let Some(hash) = req.path_hash64 {
+                let hash = if let Some(hash) = path_hash64 {
                     hash
-                } else if let Some(path) = req.virtual_path {
+                } else if let Some(path) = virtual_path {
                     xxh64_virtual_path(path)
                 } else {
                     return Err(BuildError::MissingPathForPathMode);
@@ -140,20 +177,20 @@ impl UddpBuilder {
                 PendingKey::PathHash(hash)
             }
             LookupMode::DenseId => {
-                let id = req.id.unwrap_or(self.next_dense_id);
+                let id = id.unwrap_or(self.next_dense_id);
                 self.next_dense_id = id.saturating_add(1);
                 PendingKey::Id(id)
             }
-            LookupMode::SparseId => PendingKey::Id(req.id.ok_or(BuildError::MissingIdForSparseMode)?),
+            LookupMode::SparseId => PendingKey::Id(id.ok_or(BuildError::MissingIdForSparseMode)?),
         };
 
         self.files.push(PendingFile {
             key,
-            data_type: req.data_type,
-            compression: req.compression,
-            width: req.width,
-            height: req.height,
-            raw_data: req.data.to_vec(),
+            data_type,
+            compression,
+            width,
+            height,
+            raw_data,
         });
 
         Ok(())

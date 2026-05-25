@@ -179,6 +179,9 @@ pub enum CompressionFlag {
 
     /// Force Jpeg XL lossless.
     JpegXl,
+
+    /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload.
+    JpegXlZstd,
 }
 
 /// Convenience starter type ids.
@@ -548,6 +551,18 @@ pub struct AddFileRequest<'a> {
     pub path_hash64: Option<u64>,
     pub id: Option<u32>,
     pub data: &'a [u8],
+}
+
+#[derive(Debug, Clone)]
+pub struct AddOwnedFileRequest {
+    pub data_type: u8,
+    pub compression: CompressionFlag,
+    pub width: u32,
+    pub height: u32,
+    pub virtual_path: Option<String>,
+    pub path_hash64: Option<u64>,
+    pub id: Option<u32>,
+    pub data: Vec<u8>,
 }
 
 // Reader, builder, patch, and low-level support logic live in child modules.
