@@ -111,6 +111,14 @@ struct TextureOutputFormat {
     label: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TextureOutputFormatArgs {
+    raw: bool,
+    jxl: bool,
+    bc7: bool,
+    bc7_rdo: bool,
+}
+
 fn resolve_texture_output_format(
     raw: bool,
     jxl: bool,
@@ -151,6 +159,13 @@ fn resolve_texture_output_format(
         }),
         _ => eyre::bail!("select at most one output format: --raw, --jxl, --bc7, or --bc7-rdo"),
     }
+}
+
+fn resolve_texture_output_format_args(
+    args: TextureOutputFormatArgs,
+    bc7_rdo_lambda: f32,
+) -> eyre::Result<TextureOutputFormat> {
+    resolve_texture_output_format(args.raw, args.jxl, args.bc7, args.bc7_rdo, bc7_rdo_lambda)
 }
 
 fn resolve_mobile_anim_output_format(
@@ -589,6 +604,8 @@ enum Commands {
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
+    #[command(group(ArgGroup::new("art_output_format").args(["art_raw", "art_jxl", "art_bc7", "art_bc7_rdo"])))]
+    #[command(group(ArgGroup::new("land_output_format").args(["land_raw", "land_jxl", "land_bc7", "land_bc7_rdo"])))]
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -614,10 +631,26 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long, help = "Write EC land BC7 atlas pages with package compression and without BC7 RDO.")]
+        #[arg(long, help = "Write EC BC7 atlas pages with package compression and without BC7 RDO.")]
         bc7: bool,
-        #[arg(long = "bc7-rdo", help = "Write EC land BC7 atlas pages with package compression and BC7 RDO.")]
+        #[arg(long = "bc7-rdo", help = "Write EC BC7 atlas pages with package compression and BC7 RDO.")]
         bc7_rdo: bool,
+        #[arg(long, help = "Write EC art atlas pages as uncompressed RGBA8888, overriding the shared format flags.")]
+        art_raw: bool,
+        #[arg(long, help = "Write EC art atlas pages as RGBA8888 with lossless JPEG XL payload compression, overriding the shared format flags.")]
+        art_jxl: bool,
+        #[arg(long, help = "Write EC art atlas pages as BC7 with package compression and without BC7 RDO, overriding the shared format flags.")]
+        art_bc7: bool,
+        #[arg(long = "art-bc7-rdo", help = "Write EC art atlas pages as BC7 with package compression and BC7 RDO, overriding the shared format flags.")]
+        art_bc7_rdo: bool,
+        #[arg(long, help = "Write EC land atlas pages as uncompressed RGBA8888, overriding the shared format flags.")]
+        land_raw: bool,
+        #[arg(long, help = "Write EC land atlas pages as RGBA8888 with lossless JPEG XL payload compression, overriding the shared format flags.")]
+        land_jxl: bool,
+        #[arg(long, help = "Write EC land atlas pages as BC7 with package compression and without BC7 RDO, overriding the shared format flags.")]
+        land_bc7: bool,
+        #[arg(long = "land-bc7-rdo", help = "Write EC land atlas pages as BC7 with package compression and BC7 RDO, overriding the shared format flags.")]
+        land_bc7_rdo: bool,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
         art_packing_mode: CliAtlasPackingMode,
         #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Land atlas placement policy.")]
@@ -1084,6 +1117,14 @@ pub fn run() -> eyre::Result<()> {
             jxl,
             bc7,
             bc7_rdo,
+            art_raw,
+            art_jxl,
+            art_bc7,
+            art_bc7_rdo,
+            land_raw,
+            land_jxl,
+            land_bc7,
+            land_bc7_rdo,
             art_packing_mode,
             land_packing_mode,
             art_filtering_ready,
@@ -1105,7 +1146,30 @@ pub fn run() -> eyre::Result<()> {
             let land_out_file = resolve_output_path(&ec_paths, &land_output);
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
-            let output_format = resolve_texture_output_format(raw, jxl, bc7, bc7_rdo, bc7_rdo_lambda)?;
+            let shared_output_format = TextureOutputFormatArgs {
+                raw,
+                jxl,
+                bc7,
+                bc7_rdo,
+            };
+            let art_output_format = resolve_texture_output_format_args(
+                TextureOutputFormatArgs {
+                    raw: art_raw || shared_output_format.raw,
+                    jxl: art_jxl || shared_output_format.jxl,
+                    bc7: art_bc7 || shared_output_format.bc7,
+                    bc7_rdo: art_bc7_rdo || shared_output_format.bc7_rdo,
+                },
+                bc7_rdo_lambda,
+            )?;
+            let land_output_format = resolve_texture_output_format_args(
+                TextureOutputFormatArgs {
+                    raw: land_raw || shared_output_format.raw,
+                    jxl: land_jxl || shared_output_format.jxl,
+                    bc7: land_bc7 || shared_output_format.bc7,
+                    bc7_rdo: land_bc7_rdo || shared_output_format.bc7_rdo,
+                },
+                bc7_rdo_lambda,
+            )?;
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
                 &art_out_file,
@@ -1114,18 +1178,18 @@ pub fn run() -> eyre::Result<()> {
                     atlas_height: art_atlas_height,
                     gutter: art_gutter,
                     crop_transparent_bounds: false,
-                    compression: output_format.compression,
+                    compression: art_output_format.compression,
                     upscale: upscale_filter,
-                    pixel_format: output_format.pixel_format,
+                    pixel_format: art_output_format.pixel_format,
                     packing_mode: art_packing_mode.into(),
                     filtering_ready: art_filtering_ready,
-                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
                 },
             )?;
             println!(
                 "Wrote {} pages ({}) for {} populated art slots out of {} total slots to '{}'.",
                 art_summary.page_count,
-                output_format.label,
+                art_output_format.label,
                 art_summary.populated_slot_count,
                 art_summary.slot_count,
                 art_out_file.display()
@@ -1144,7 +1208,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width: land_atlas_width,
                     atlas_height: land_atlas_height,
                     gutter: land_gutter,
-                    compression: output_format.compression,
+                    compression: land_output_format.compression,
                     upscale_64: udd_conv::upscale::UpscaleConfig {
                         target_size: upscale_64_size,
                         filter: upscale_64_algo.into(),
@@ -1161,10 +1225,10 @@ pub fn run() -> eyre::Result<()> {
                         target_size: upscale_512_size,
                         filter: upscale_512_algo.into(),
                     },
-                    pixel_format: output_format.pixel_format,
+                    pixel_format: land_output_format.pixel_format,
                     packing_mode: land_packing_mode.into(),
                     filtering_ready: land_filtering_ready,
-                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     transcode_kdl_path: land_transcode_kdl,
                 },
             )?;
@@ -1187,7 +1251,7 @@ pub fn run() -> eyre::Result<()> {
             println!(
                 "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
                 land_summary.page_count,
-                output_format.label,
+                land_output_format.label,
                 land_summary.populated_slot_count,
                 land_summary.slot_count,
                 land_out_file.display()
@@ -1682,6 +1746,39 @@ mod tests {
                 assert!(!bc7_rdo);
                 assert!(!raw);
                 assert!(!jxl);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_ec_textures_with_separate_output_formats() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-textures",
+            "--ecdir",
+            "/ec",
+            "--art-jxl",
+            "--land-bc7-rdo",
+        ])
+        .expect("parse separate ec texture output args");
+
+        match cli.command {
+            Commands::PackEcTextures {
+                art_jxl,
+                land_bc7_rdo,
+                raw,
+                jxl,
+                bc7,
+                bc7_rdo,
+                ..
+            } => {
+                assert!(art_jxl);
+                assert!(land_bc7_rdo);
+                assert!(!raw);
+                assert!(!jxl);
+                assert!(!bc7);
+                assert!(!bc7_rdo);
             }
             _ => panic!("unexpected command parsed"),
         }

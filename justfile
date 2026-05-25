@@ -345,16 +345,23 @@ uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
     fi
     echo "Converting common world packages..."
     cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "{{output_dir}}/tilemeta.uddp"
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp"
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp"
+    echo
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --raw --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp"
+    echo
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --raw --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp"
     if [ -n "{{ecdir}}" ]; then
+        echo
         cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir "{{ecdir}}" --art-output "{{output_dir}}/tex_art_ec.uddp" --land-output "{{output_dir}}/tex_land_ec.uddp"
     fi
+    echo
     cargo run -p udd-conv-cli --bin udd-pack -- pack-lights "${SOURCE_ARGS[@]}" --output "{{output_dir}}/world_lights.uddp"
+    echo
     cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir "{{ccdir}}" --output "{{output_dir}}/hues.uddp"
     IFS=',' read -ra MAP_IDS <<< "{{maps}}"
     for map_id in "${MAP_IDS[@]}"; do
+        echo
         cargo run -p udd-conv-cli --bin udd-pack -- pack-map --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/map${map_id}.uddp"
+        echo
         cargo run -p udd-conv-cli --bin udd-pack -- pack-statics --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/statics${map_id}.uddp"
     done
     just uddconv-animations "{{ccdir}}" "{{ecdir}}" "{{output_dir}}"
@@ -362,6 +369,47 @@ uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
     if [ -n "{{ecdir}}" ]; then
         just uddconv-ec-gumps "{{ecdir}}" "{{output_dir}}"
     fi
+
+[windows]
+uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
+    @powershell -NoProfile -Command " \
+    if ('{{ccdir}}' -eq '') { Write-Host 'usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]'; exit 2 }; \
+    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
+    $sourceArgs = @('--ccdir', '{{ccdir}}'); \
+    if ('{{ecdir}}' -ne '') { $sourceArgs += @('--ecdir', '{{ecdir}}') }; \
+    Write-Host 'Converting common world packages...'; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta @sourceArgs --output '{{output_dir}}/tilemeta.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --raw --ccdir '{{ccdir}}' --output '{{output_dir}}/tex_art_cc.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --raw --ccdir '{{ccdir}}' --output '{{output_dir}}/tex_land_cc.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    if ('{{ecdir}}' -ne '') { \
+      Write-Host ''; \
+      cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir '{{ecdir}}' --art-output '{{output_dir}}/tex_art_ec.uddp' --land-output '{{output_dir}}/tex_land_ec.uddp'; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+    }; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-lights @sourceArgs --output '{{output_dir}}/world_lights.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir '{{ccdir}}' --output '{{output_dir}}/hues.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    foreach ($mapId in '{{maps}}'.Split(',')) { \
+      Write-Host ''; \
+      cargo run -p udd-conv-cli --bin udd-pack -- pack-map --ccdir '{{ccdir}}' --map-id $mapId --output \"{{output_dir}}/map$mapId.uddp\"; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+      Write-Host ''; \
+      cargo run -p udd-conv-cli --bin udd-pack -- pack-statics --ccdir '{{ccdir}}' --map-id $mapId --output \"{{output_dir}}/statics$mapId.uddp\"; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+    }; \
+    just uddconv-animations '{{ccdir}}' '{{ecdir}}' '{{output_dir}}'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    just uddconv-gumps '{{ccdir}}' '{{output_dir}}'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+    if ('{{ecdir}}' -ne '') { just uddconv-ec-gumps '{{ecdir}}' '{{output_dir}}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }"
 
 # Convert only mobile animation packages
 [unix]
@@ -374,11 +422,29 @@ uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
     fi
     mkdir -p "{{output_dir}}"
     if [ -n "{{ccdir}}" ]; then
+        echo
         cargo run -p udd-conv-cli --bin udd-pack -- pack-mobile-anims --ccdir "{{ccdir}}" --output "{{output_dir}}/mobile_anim_cc.uddp"
     fi
     if [ -n "{{ecdir}}" ]; then
+        echo
         cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-mobile-anims --ecdir "{{ecdir}}" --output "{{output_dir}}/mobile_anim_ec.uddp"
     fi
+
+[windows]
+uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
+    @powershell -NoProfile -Command " \
+    if ('{{ccdir}}' -eq '' -and '{{ecdir}}' -eq '') { Write-Host 'usage: just uddconv-animations [ccdir] [ecdir] [output_dir]'; exit 2 }; \
+    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
+    if ('{{ccdir}}' -ne '') { \
+      Write-Host ''; \
+      cargo run -p udd-conv-cli --bin udd-pack -- pack-mobile-anims --ccdir '{{ccdir}}' --output '{{output_dir}}/mobile_anim_cc.uddp'; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+    }; \
+    if ('{{ecdir}}' -ne '') { \
+      Write-Host ''; \
+      cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-mobile-anims --ecdir '{{ecdir}}' --output '{{output_dir}}/mobile_anim_ec.uddp'; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+    }"
 
 # Convert only Classic gump packages
 [unix]
@@ -390,7 +456,17 @@ uddconv-gumps ccdir="" output_dir="target/uddp":
         exit 2
     fi
     mkdir -p "{{output_dir}}"
+    echo
     cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir "{{ccdir}}" --output "{{output_dir}}/gumps_cc.uddp"
+
+[windows]
+uddconv-gumps ccdir="" output_dir="target/uddp":
+    @powershell -NoProfile -Command " \
+    if ('{{ccdir}}' -eq '') { Write-Host 'usage: just uddconv-gumps <ccdir> [output_dir]'; exit 2 }; \
+    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir '{{ccdir}}' --output '{{output_dir}}/gumps_cc.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
 
 # Convert only Enhanced Client gump packages
 [unix]
@@ -402,7 +478,17 @@ uddconv-ec-gumps ecdir="" output_dir="target/uddp":
         exit 2
     fi
     mkdir -p "{{output_dir}}"
+    echo
     cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-gumps --ecdir "{{ecdir}}" --output "{{output_dir}}/gumps_ec.uddp"
+
+[windows]
+uddconv-ec-gumps ecdir="" output_dir="target/uddp":
+    @powershell -NoProfile -Command " \
+    if ('{{ecdir}}' -eq '') { Write-Host 'usage: just uddconv-ec-gumps <ecdir> [output_dir]'; exit 2 }; \
+    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
+    Write-Host ''; \
+    cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-gumps --ecdir '{{ecdir}}' --output '{{output_dir}}/gumps_ec.uddp'; \
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
 
 
 # --- Maintenance ---
