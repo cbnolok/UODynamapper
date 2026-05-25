@@ -962,7 +962,6 @@ fn pack_planned_frames_into_package(
     let mut placements = HashMap::new();
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
-    let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
     let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
@@ -987,7 +986,6 @@ fn pack_planned_frames_into_package(
             page_frames,
             &mut placements,
             options,
-            &mut page_pixels,
             &mut animationframe_package_cache,
             &mut decoded_source_cache,
             &mut decoded_source_order,
@@ -1382,7 +1380,6 @@ fn build_planned_page(
     mut frames: Vec<PlannedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
-    pixels: &mut Vec<u8>,
     animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>,
     decoded_source_order: &mut VecDeque<PlannedMobileAnimEcSource>,
@@ -1391,9 +1388,6 @@ fn build_planned_page(
         page_size.width as i32,
         page_size.height as i32,
     ));
-    let page_len = page_size.width as usize * page_size.height as usize * 4;
-    pixels.clear();
-    pixels.resize(page_len, 0);
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
@@ -1506,11 +1500,12 @@ fn build_planned_page(
         })
         .collect::<Vec<_>>();
 
+    let mut pixels = vec![0u8; used_width as usize * used_height as usize * 4];
     for prepared in prepared_blits {
         let prepared = prepared?;
         blit_rgba_frame(
-            pixels,
-            page_size.width,
+            &mut pixels,
+            used_width,
             prepared.inner_x,
             prepared.inner_y,
             prepared.width,
@@ -1523,13 +1518,6 @@ fn build_planned_page(
             prepared.source_frame_index
         ))?;
     }
-
-    let pixels = crate::tex_art_cc::crop_rgba_page(
-        pixels,
-        page_size.width,
-        used_width,
-        used_height,
-    );
 
     Ok((
         BuiltMobileAnimEcPage {
