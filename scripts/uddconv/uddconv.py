@@ -26,12 +26,17 @@ def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> Non
     )
 
 
-def format_args_from_namespace(args: argparse.Namespace, *, prefix: str = "") -> list[str]:
+def format_args_from_namespace(
+    args: argparse.Namespace,
+    *,
+    prefix: str = "",
+    cli_prefix: str = "",
+) -> list[str]:
     option_prefix = prefix.replace("-", "_") + "format"
     selected = getattr(args, option_prefix, None)
     if selected is None:
         return []
-    return [f"--{prefix}{selected}"]
+    return [f"--{cli_prefix}{selected}"]
 
 
 def require_value(value: str, usage: str) -> str:
@@ -185,8 +190,8 @@ def main() -> int:
             format_args_from_namespace(args, prefix="cc-land-"),
             format_args_from_namespace(args, prefix="cc-anim-"),
             format_args_from_namespace(args, prefix="ec-anim-"),
-            format_args_from_namespace(args, prefix="art-"),
-            format_args_from_namespace(args, prefix="land-"),
+            format_args_from_namespace(args, prefix="art-", cli_prefix="art-"),
+            format_args_from_namespace(args, prefix="land-", cli_prefix="land-"),
         )
     elif args.command == "animations":
         run_animations(
