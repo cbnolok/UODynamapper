@@ -7,9 +7,10 @@
 
 use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -55,6 +56,7 @@ const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
 const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 3;
 const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
+const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
@@ -187,6 +189,11 @@ struct PagePackCandidate<Key> {
     width_axis: crate::PackingAxis,
     height_axis: crate::PackingAxis,
     alloc_area: u32,
+}
+
+struct CachedPlannedAnimation {
+    frames: Vec<AnimFrame>,
+    last_used: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -480,6 +487,7 @@ fn encode_mobile_anim_page_chunk(
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
     if options.pixel_format == PagePixelFormat::Bc7 {
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+        let pending_progress = AtomicU64::new(0);
         let encoded_pages = pages
             .par_iter()
             .map(|page| {
@@ -492,9 +500,7 @@ fn encode_mobile_anim_page_chunk(
                     encoding,
                     options.bc7_rdo_lambda,
                     |units| {
-                        if let Some(pb) = pb {
-                            pb.inc(units as u64);
-                        }
+                        add_bc7_progress(pb, &pending_progress, units as u64);
                     },
                 )
                 .map_err(|e| {
@@ -510,6 +516,7 @@ fn encode_mobile_anim_page_chunk(
                 ))
             })
             .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
+        flush_bc7_progress(pb, &pending_progress);
 
         let mut resolved = Vec::with_capacity(encoded_pages.len());
         for page in encoded_pages {
@@ -528,6 +535,28 @@ fn encode_mobile_anim_page_chunk(
                 )
             })
             .collect())
+    }
+}
+
+fn add_bc7_progress(pb: Option<&ProgressBar>, pending: &AtomicU64, units: u64) {
+    let Some(pb) = pb else {
+        return;
+    };
+    let pending_units = pending.fetch_add(units, Ordering::Relaxed) + units;
+    if pending_units >= BC7_PROGRESS_FLUSH_UNITS {
+        let flush_units = pending.swap(0, Ordering::AcqRel);
+        if flush_units != 0 {
+            pb.inc(flush_units);
+        }
+    }
+}
+
+fn flush_bc7_progress(pb: Option<&ProgressBar>, pending: &AtomicU64) {
+    if let Some(pb) = pb {
+        let flush_units = pending.swap(0, Ordering::AcqRel);
+        if flush_units != 0 {
+            pb.inc(flush_units);
+        }
     }
 }
 
@@ -715,26 +744,34 @@ fn cached_decode_planned_animation_source<'a>(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
     animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
-    cache: &'a mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
-    order: &mut VecDeque<PlannedAnimationSource>,
+    cache: &'a mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
+    use_tick: &mut u64,
 ) -> eyre::Result<&'a Vec<AnimFrame>> {
+    *use_tick = use_tick.saturating_add(1);
     if !cache.contains_key(source) {
         let decoded = decode_planned_animation_source(source, anim_map, animationframe_packages)?;
-        cache.insert(source.clone(), decoded);
-        order.push_back(source.clone());
+        cache.insert(source.clone(), CachedPlannedAnimation {
+            frames: decoded,
+            last_used: *use_tick,
+        });
         while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
-            let Some(oldest) = order.pop_front() else { break; };
-            if &oldest == source {
-                order.push_back(oldest);
+            let Some(oldest) = cache
+                .iter()
+                .filter(|(key, _)| *key != source)
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
                 break;
-            }
+            };
             cache.remove(&oldest);
         }
     }
 
-    Ok(cache
-        .get(source)
-        .expect("planned mobile animation source was just cached"))
+    let entry = cache
+        .get_mut(source)
+        .expect("planned mobile animation source was just cached");
+    entry.last_used = *use_tick;
+    Ok(&entry.frames)
 }
 
 fn decode_classic_animationframe_uop_frames_from_package(
@@ -865,32 +902,42 @@ fn decode_classic_animationframe_package(
         .progress_chars("#>-"));
     pb.set_message(format!("extracting {file_name}"));
 
+    let parsed = file_hashes
+        .par_iter()
+        .map(|&file_hash| {
+            pb.inc(1);
+            let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else {
+                return None;
+            };
+            let Ok(animation) = AnimationFrameCc::parse_metadata(&data) else {
+                return None;
+            };
+            if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
+                return None;
+            }
+            let Some((body_id, action_id, direction)) =
+                animation_layout_from_source_index(file_index, animation.anim_id)
+            else {
+                return None;
+            };
+            Some(PresentAnimationCandidate {
+                body_id,
+                action_id,
+                direction,
+                file_index,
+                source_index: animation.anim_id,
+                flags: 0,
+                frames: PresentAnimationFrames::AnimationFrameUop {
+                    path: path.to_path_buf(),
+                    file_hash,
+                    frame_metadata: animation.frames,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
     let mut candidates = Vec::new();
-    for file_hash in file_hashes {
-        pb.inc(1);
-        let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else { continue; };
-        let Ok(animation) = AnimationFrameCc::parse_metadata(&data) else { continue; };
-        if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
-            continue;
-        }
-        let Some((body_id, action_id, direction)) =
-            animation_layout_from_source_index(file_index, animation.anim_id)
-        else {
-            continue;
-        };
-        candidates.push(PresentAnimationCandidate {
-            body_id,
-            action_id,
-            direction,
-            file_index,
-            source_index: animation.anim_id,
-            flags: 0,
-            frames: PresentAnimationFrames::AnimationFrameUop {
-                path: path.to_path_buf(),
-                file_hash,
-                frame_metadata: animation.frames,
-            },
-        });
+    for candidate in parsed.into_iter().flatten() {
+        candidates.push(candidate);
     }
     pb.finish_with_message(format!("{file_name} extracted"));
     Ok(candidates)
@@ -1285,8 +1332,8 @@ fn pack_planned_frames_into_package(
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
     let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
-    let mut decoded_source_cache = HashMap::<PlannedAnimationSource, Vec<AnimFrame>>::new();
-    let mut decoded_source_order = VecDeque::<PlannedAnimationSource>::new();
+    let mut decoded_source_cache = HashMap::<PlannedAnimationSource, CachedPlannedAnimation>::new();
+    let mut decoded_source_use_tick = 0u64;
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1316,7 +1363,7 @@ fn pack_planned_frames_into_package(
             options,
             &mut animationframe_package_cache,
             &mut decoded_source_cache,
-            &mut decoded_source_order,
+            &mut decoded_source_use_tick,
         )?;
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -1730,8 +1777,8 @@ fn build_planned_page(
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
     animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
-    decoded_sources: &mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
-    decoded_source_order: &mut VecDeque<PlannedAnimationSource>,
+    decoded_sources: &mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
+    decoded_source_use_tick: &mut u64,
 ) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
@@ -1776,7 +1823,7 @@ fn build_planned_page(
                 anim_map,
                 animationframe_packages,
                 decoded_sources,
-                decoded_source_order,
+                decoded_source_use_tick,
             )?;
             let Some(decoded_frame) = decoded_frames.get(frame.source_frame_index as usize) else {
                 eyre::bail!(
