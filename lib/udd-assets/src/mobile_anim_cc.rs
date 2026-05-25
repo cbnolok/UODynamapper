@@ -25,12 +25,15 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
 const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
-const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 2;
+const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 3;
+const MOBILE_ANIM_CC_METADATA_VERSION_DYNAMIC_PAGES: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimCcPageRecord {
     pub page_index: u32,
     pub frame_count: u32,
+    pub atlas_width: u32,
+    pub atlas_height: u32,
     pub used_width: u32,
     pub used_height: u32,
     pub pixel_format: PagePixelFormat,
@@ -230,8 +233,8 @@ impl MobileAnimCcPackage {
         decode_atlas_page_rgba(
             &page_bytes,
             page.pixel_format,
-            self.atlas_width,
-            self.atlas_height,
+            page.atlas_width,
+            page.atlas_height,
             page.used_width,
             page.used_height,
         )
@@ -244,7 +247,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation page magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+    if !is_supported_metadata_version(version) {
         eyre::bail!("invalid mobile animation page manifest version");
     }
     let width = cursor.read_u32::<LittleEndian>()?;
@@ -260,6 +263,16 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
         pages.push(MobileAnimCcPageRecord {
             page_index: cursor.read_u32::<LittleEndian>()?,
             frame_count: cursor.read_u32::<LittleEndian>()?,
+            atlas_width: if version >= MOBILE_ANIM_CC_METADATA_VERSION_DYNAMIC_PAGES {
+                cursor.read_u32::<LittleEndian>()?
+            } else {
+                width
+            },
+            atlas_height: if version >= MOBILE_ANIM_CC_METADATA_VERSION_DYNAMIC_PAGES {
+                cursor.read_u32::<LittleEndian>()?
+            } else {
+                height
+            },
             used_width: cursor.read_u32::<LittleEndian>()?,
             used_height: cursor.read_u32::<LittleEndian>()?,
             pixel_format,
@@ -274,7 +287,7 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcAnimat
     cursor.read_exact(&mut magic)?;
     if magic != ANIMATION_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation manifest magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+    if !is_supported_metadata_version(version) {
         eyre::bail!("invalid mobile animation manifest version");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
@@ -300,7 +313,7 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcFrameRecor
     cursor.read_exact(&mut magic)?;
     if magic != FRAME_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation frame magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+    if !is_supported_metadata_version(version) {
         eyre::bail!("invalid mobile animation frame manifest version");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
@@ -328,7 +341,7 @@ fn parse_body_resolve_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBod
     cursor.read_exact(&mut magic)?;
     if magic != BODY_RESOLVE_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation body resolve magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+    if !is_supported_metadata_version(version) {
         eyre::bail!("invalid mobile animation body resolve manifest version");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
@@ -352,7 +365,7 @@ fn parse_body_type_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBodyTy
     cursor.read_exact(&mut magic)?;
     if magic != BODY_TYPE_MANIFEST_MAGIC { eyre::bail!("invalid mobile animation body type magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != MOBILE_ANIM_CC_METADATA_VERSION {
+    if !is_supported_metadata_version(version) {
         eyre::bail!("invalid mobile animation body type manifest version");
     }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
@@ -365,6 +378,10 @@ fn parse_body_type_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBodyTy
         });
     }
     Ok(records)
+}
+
+fn is_supported_metadata_version(version: u32) -> bool {
+    version == 2 || version == MOBILE_ANIM_CC_METADATA_VERSION
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
@@ -390,6 +407,8 @@ mod tests {
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 1).unwrap();
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 0).unwrap();
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 1).unwrap();
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 8).unwrap();
+            byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 8).unwrap();
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 4).unwrap();
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 4).unwrap();
             bytes

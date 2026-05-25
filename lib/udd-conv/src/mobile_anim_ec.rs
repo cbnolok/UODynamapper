@@ -42,7 +42,7 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
-const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 1;
+const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 2;
 const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
@@ -124,6 +124,18 @@ pub(crate) struct FramePlacement {
 pub struct BuiltMobileAnimEcPage {
     pub record: MobileAnimEcPageRecord,
     pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtlasPageSize {
+    width: u32,
+    height: u32,
+}
+
+impl AtlasPageSize {
+    fn area(self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -687,8 +699,8 @@ pub(crate) fn pack_frames_into_pages(
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
-        let (page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
-        let (page, unplaced) = build_page(page_index, page_frames, &mut placements, options)?;
+        let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
+        let (page, unplaced) = build_page(page_index, page_size, page_frames, &mut placements, options)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -711,8 +723,8 @@ pub(crate) fn pack_frames_into_pages(
 fn take_page_frame_prefix(
     frames: Vec<DecodedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
-) -> eyre::Result<(Vec<DecodedMobileAnimEcFrame>, Vec<DecodedMobileAnimEcFrame>)> {
-    let prefix_len = max_fitting_page_prefix_len(&frames, options)?;
+) -> eyre::Result<(AtlasPageSize, Vec<DecodedMobileAnimEcFrame>, Vec<DecodedMobileAnimEcFrame>)> {
+    let (page_size, prefix_len) = select_page_bucket(&frames, options)?;
     if prefix_len == 0 {
         eyre::bail!(
             "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -722,11 +734,69 @@ fn take_page_frame_prefix(
     }
     let mut leftovers = frames;
     let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
-    Ok((selected, leftovers))
+    Ok((page_size, selected, leftovers))
+}
+
+fn select_page_bucket(
+    frames: &[DecodedMobileAnimEcFrame],
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(AtlasPageSize, usize)> {
+    let mut best = None::<(AtlasPageSize, usize, u64)>;
+    for page_size in atlas_page_buckets(options) {
+        let prefix_len = max_fitting_page_prefix_len(frames, page_size, options)?;
+        if prefix_len == 0 {
+            continue;
+        }
+        let alloc_area = page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+        let replace = best
+            .map(|(best_size, best_len, best_area)| {
+                alloc_area * best_size.area() > best_area * page_size.area()
+                    || (alloc_area * best_size.area() == best_area * page_size.area()
+                        && (prefix_len > best_len
+                            || (prefix_len == best_len && page_size.area() < best_size.area())))
+            })
+            .unwrap_or(true);
+        if replace {
+            best = Some((page_size, prefix_len, alloc_area));
+        }
+    }
+    best.map(|(page_size, prefix_len, _)| (page_size, prefix_len))
+        .ok_or_else(|| eyre::eyre!(
+            "could not fit any EC mobile animation frame into atlas page {}x{}",
+            options.atlas_width,
+            options.atlas_height
+        ))
+}
+
+fn atlas_page_buckets(options: &MobileAnimEcAtlasOptions) -> Vec<AtlasPageSize> {
+    let mut buckets = Vec::new();
+    for (width, height) in [
+        (512, 512),
+        (1024, 512),
+        (512, 1024),
+        (1024, 1024),
+        (2048, 1024),
+        (1024, 2048),
+        (2048, 2048),
+    ] {
+        if width <= options.atlas_width && height <= options.atlas_height {
+            buckets.push(AtlasPageSize { width, height });
+        }
+    }
+    let max_size = AtlasPageSize {
+        width: options.atlas_width,
+        height: options.atlas_height,
+    };
+    if !buckets.contains(&max_size) {
+        buckets.push(max_size);
+    }
+    buckets.sort_by_key(|size| size.area());
+    buckets
 }
 
 fn max_fitting_page_prefix_len(
     frames: &[DecodedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<usize> {
     let mut low = 1usize;
@@ -734,7 +804,7 @@ fn max_fitting_page_prefix_len(
     let mut best = 0usize;
     while low <= high {
         let mid = low + (high - low) / 2;
-        if page_prefix_fits(&frames[..mid], options)? {
+        if page_prefix_fits(&frames[..mid], page_size, options)? {
             best = mid;
             low = mid + 1;
         } else {
@@ -746,16 +816,17 @@ fn max_fitting_page_prefix_len(
 
 fn page_prefix_fits(
     frames: &[DecodedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<bool> {
     let mut to_pack = frames.iter().collect::<Vec<_>>();
-    sort_frame_refs_within_page(&mut to_pack, options);
+    sort_frame_refs_within_page(&mut to_pack, page_size, options);
     let mut allocator = AtlasAllocator::new(size2(
-        options.atlas_width as i32,
-        options.atlas_height as i32,
+        page_size.width as i32,
+        page_size.height as i32,
     ));
     for frame in to_pack {
-        let (width_axis, height_axis) = packing_axes(frame, options)?;
+        let (width_axis, height_axis) = packing_axes(frame, page_size, options)?;
         if allocator
             .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
             .is_none()
@@ -766,26 +837,38 @@ fn page_prefix_fits(
     Ok(true)
 }
 
+fn page_prefix_alloc_area(
+    frames: &[DecodedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<u64> {
+    frames.iter().try_fold(0u64, |total, frame| {
+        let (width_axis, height_axis) = packing_axes(frame, page_size, options)?;
+        Ok(total + width_axis.alloc_extent as u64 * height_axis.alloc_extent as u64)
+    })
+}
+
 fn build_page(
     page_index: u32,
+    page_size: AtlasPageSize,
     mut frames: Vec<DecodedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<DecodedMobileAnimEcFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
-        options.atlas_width as i32,
-        options.atlas_height as i32,
+        page_size.width as i32,
+        page_size.height as i32,
     ));
-    let mut pixels = vec![0u8; options.atlas_width as usize * options.atlas_height as usize * 4];
+    let mut pixels = vec![0u8; page_size.width as usize * page_size.height as usize * 4];
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
 
-    sort_frames_within_page(&mut frames, options);
+    sort_frames_within_page(&mut frames, page_size, options);
 
     for frame in frames {
-        let (width_axis, height_axis) = packing_axes(&frame, options)?;
+        let (width_axis, height_axis) = packing_axes(&frame, page_size, options)?;
         if let Some(allocation) = allocator.allocate(size2(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
@@ -794,7 +877,7 @@ fn build_page(
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
             blit_rgba_frame(
                 &mut pixels,
-                options.atlas_width,
+                page_size.width,
                 inner_x as u32,
                 inner_y as u32,
                 frame.width as u32,
@@ -821,7 +904,7 @@ fn build_page(
 
     let pixels = crate::tex_art_cc::crop_rgba_page(
         &pixels,
-        options.atlas_width,
+        page_size.width,
         used_width,
         used_height,
     );
@@ -831,6 +914,8 @@ fn build_page(
             record: MobileAnimEcPageRecord {
                 page_index,
                 frame_count: page_frame_index as u32,
+                atlas_width: page_size.width,
+                atlas_height: page_size.height,
                 used_width,
                 used_height,
                 pixel_format: options.pixel_format,
@@ -843,18 +928,19 @@ fn build_page(
 
 fn packing_axes(
     frame: &DecodedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(crate::PackingAxis, crate::PackingAxis)> {
     let width_axis = resolve_packing_axis(
         frame.width as u32,
-        options.atlas_width,
+        page_size.width,
         options.gutter,
         AtlasPackingMode::Bc7Oriented,
         false,
     );
     let height_axis = resolve_packing_axis(
         frame.height as u32,
-        options.atlas_height,
+        page_size.height,
         options.gutter,
         AtlasPackingMode::Bc7Oriented,
         false,
@@ -867,41 +953,51 @@ fn packing_axes(
             frame.source_frame_index,
             frame.width,
             frame.height,
-            options.atlas_width,
-            options.atlas_height,
+            page_size.width,
+            page_size.height,
             options.gutter
         ),
     }
 }
 
-fn sort_frames_within_page(frames: &mut [DecodedMobileAnimEcFrame], options: &MobileAnimEcAtlasOptions) {
+fn sort_frames_within_page(
+    frames: &mut [DecodedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) {
     frames.sort_by(|left, right| {
-        compare_frames_for_page(left, right, options)
+        compare_frames_for_page(left, right, page_size, options)
     });
 }
 
 fn sort_frame_refs_within_page<'a>(
     frames: &mut [&'a DecodedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) {
-    frames.sort_by(|left, right| compare_frames_for_page(left, right, options));
+    frames.sort_by(|left, right| compare_frames_for_page(left, right, page_size, options));
 }
 
 fn compare_frames_for_page(
     left: &DecodedMobileAnimEcFrame,
     right: &DecodedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> std::cmp::Ordering {
-    let left_area = sort_area(left, options);
-    let right_area = sort_area(right, options);
+    let left_area = sort_area(left, page_size, options);
+    let right_area = sort_area(right, page_size, options);
     right_area
         .cmp(&left_area)
         .then_with(|| (left.body_id, left.source_frame_index).cmp(&(right.body_id, right.source_frame_index)))
 }
 
-fn sort_area(frame: &DecodedMobileAnimEcFrame, options: &MobileAnimEcAtlasOptions) -> u32 {
+fn sort_area(
+    frame: &DecodedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> u32 {
     let (width_axis, height_axis) =
-        packing_axes(frame, options).unwrap_or_else(|_| unreachable!("validated before placement"));
+        packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
     width_axis.alloc_extent * height_axis.alloc_extent
 }
 
@@ -939,7 +1035,7 @@ pub fn serialize_page_manifest(
     pages: &[BuiltMobileAnimEcPage],
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(26 + pages.len() * 16);
+    let mut bytes = Vec::with_capacity(26 + pages.len() * 24);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -951,6 +1047,8 @@ pub fn serialize_page_manifest(
     for page in pages {
         bytes.write_u32::<LittleEndian>(page.record.page_index)?;
         bytes.write_u32::<LittleEndian>(page.record.frame_count)?;
+        bytes.write_u32::<LittleEndian>(page.record.atlas_width)?;
+        bytes.write_u32::<LittleEndian>(page.record.atlas_height)?;
         bytes.write_u32::<LittleEndian>(page.record.used_width)?;
         bytes.write_u32::<LittleEndian>(page.record.used_height)?;
     }
@@ -1081,6 +1179,25 @@ mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(placements[&(42, 0)].x % 4, 0);
         assert_eq!(placements[&(42, 1)].x % 4, 0);
+    }
+
+    #[test]
+    fn packer_uses_smallest_effective_bucket() {
+        let options = MobileAnimEcAtlasOptions {
+            atlas_width: 2048,
+            atlas_height: 2048,
+            gutter: 4,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+        };
+
+        let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].record.atlas_width, 512);
+        assert_eq!(pages[0].record.atlas_height, 512);
+        assert_eq!(placements[&(42, 0)].page_index, 0);
     }
 
     #[test]
