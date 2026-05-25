@@ -1147,7 +1147,9 @@ fn page_prefix_fits(
         page_size.height as i32,
     ));
     for frame in to_pack {
-        let (width_axis, height_axis) = packing_axes(frame, page_size, options)?;
+        let Ok((width_axis, height_axis)) = packing_axes(frame, page_size, options) else {
+            return Ok(false);
+        };
         if allocator
             .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
             .is_none()
@@ -1170,7 +1172,9 @@ fn planned_page_prefix_fits(
         page_size.height as i32,
     ));
     for frame in to_pack {
-        let (width_axis, height_axis) = planned_packing_axes(frame, page_size, options)?;
+        let Ok((width_axis, height_axis)) = planned_packing_axes(frame, page_size, options) else {
+            return Ok(false);
+        };
         if allocator
             .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
             .is_none()
@@ -1519,9 +1523,9 @@ fn sort_area(
     page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> u32 {
-    let (width_axis, height_axis) =
-        packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
-    width_axis.alloc_extent * height_axis.alloc_extent
+    packing_axes(frame, page_size, options)
+        .map(|(width_axis, height_axis)| width_axis.alloc_extent * height_axis.alloc_extent)
+        .unwrap_or(0)
 }
 
 fn compare_planned_frames_for_page(
@@ -1542,9 +1546,9 @@ fn planned_sort_area(
     page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> u32 {
-    let (width_axis, height_axis) =
-        planned_packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
-    width_axis.alloc_extent * height_axis.alloc_extent
+    planned_packing_axes(frame, page_size, options)
+        .map(|(width_axis, height_axis)| width_axis.alloc_extent * height_axis.alloc_extent)
+        .unwrap_or(0)
 }
 
 fn blit_rgba_frame(

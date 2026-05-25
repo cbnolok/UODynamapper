@@ -25,6 +25,7 @@ pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
 pub struct EcGumpsOptions {
     pub max_id: u32,
     pub compression: CompressionFlag,
+    pub atlas_compression: CompressionFlag,
     pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
     pub single_upscale_passes: Vec<UpscaleFilter>,
 }
@@ -34,6 +35,7 @@ impl Default for EcGumpsOptions {
         Self {
             max_id: EC_GUMP_DEFAULT_MAX_ID,
             compression: CompressionFlag::ZstdNoDict,
+            atlas_compression: CompressionFlag::ZstdNoDict,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
         }
@@ -152,7 +154,7 @@ fn convert_ec_gumps_from_interface_uop(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
-            compression: options.compression,
+            compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
     )?;
@@ -225,7 +227,7 @@ fn convert_ec_gumps_from_extracted_dir(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
-            compression: options.compression,
+            compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
     )?;

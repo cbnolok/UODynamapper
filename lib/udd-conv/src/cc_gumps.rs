@@ -25,6 +25,7 @@ pub struct CcGumpsBuildSummary {
 
 pub struct CcGumpsOptions {
     pub compression: CompressionFlag,
+    pub atlas_compression: CompressionFlag,
     pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
     pub single_upscale_passes: Vec<UpscaleFilter>,
 }
@@ -33,6 +34,7 @@ impl Default for CcGumpsOptions {
     fn default() -> Self {
         Self {
             compression: CompressionFlag::ZstdNoDict,
+            atlas_compression: CompressionFlag::ZstdNoDict,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
         }
@@ -164,7 +166,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
         &mut builder,
         atlas_gumps,
         &GumpAtlasOptions {
-            compression: options.compression,
+            compression: options.atlas_compression,
             ..GumpAtlasOptions::default()
         },
     )?;

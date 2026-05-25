@@ -9,6 +9,7 @@ from pathlib import Path
 
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
+DEFAULT_GUMP_ARGS = ["--jxl"]
 DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 
 
@@ -126,6 +127,10 @@ def default_or_requested_zstd(args: argparse.Namespace) -> list[str]:
     return zstd_args_from_namespace(args) or DEFAULT_ZSTD_ARGS
 
 
+def default_or_requested_gump_args(args: argparse.Namespace) -> list[str]:
+    return zstd_args_from_namespace(args) or DEFAULT_GUMP_ARGS
+
+
 def require_value(value: str, usage: str) -> str:
     if value:
         return value
@@ -156,16 +161,16 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
         run_pack("pack-ec-mobile-anims", *ec_format, "--tables", tables, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
 
 
-def run_gumps(ccdir: str, output_dir: str, zstd_args: list[str] | None = None) -> None:
+def run_gumps(ccdir: str, output_dir: str, format_args: list[str] | None = None) -> None:
     require_value(ccdir, "usage: just uddconv-gumps <ccdir> [output_dir]")
     ensure_output_dir(output_dir)
-    run_pack("pack-gumps", "--raw", *(zstd_args or DEFAULT_ZSTD_ARGS), "--ccdir", ccdir, "--output", f"{output_dir}/gumps_cc.uddp")
+    run_pack("pack-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ccdir", ccdir, "--output", f"{output_dir}/gumps_cc.uddp")
 
 
-def run_ec_gumps(ecdir: str, output_dir: str, zstd_args: list[str] | None = None) -> None:
+def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = None) -> None:
     require_value(ecdir, "usage: just uddconv-ec-gumps <ecdir> [output_dir]")
     ensure_output_dir(output_dir)
-    run_pack("pack-ec-gumps", "--raw", *(zstd_args or DEFAULT_ZSTD_ARGS), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
+    run_pack("pack-ec-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
 
 
 def run_all(
@@ -181,7 +186,7 @@ def run_all(
     ec_land_format: list[str],
     tables: str,
     non_texture_zstd: list[str],
-    gump_zstd: list[str],
+    gump_args: list[str],
 ) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
     ensure_output_dir(output_dir)
@@ -235,9 +240,9 @@ def run_all(
             f"{output_dir}/statics{map_id}.uddp",
         )
     run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, tables)
-    run_gumps(ccdir, output_dir, gump_zstd)
+    run_gumps(ccdir, output_dir, gump_args)
     if ecdir:
-        run_ec_gumps(ecdir, output_dir, gump_zstd)
+        run_ec_gumps(ecdir, output_dir, gump_args)
 
 
 def main() -> int:
@@ -289,21 +294,21 @@ def main() -> int:
     if args.command == "all":
         global_zstd = zstd_args_from_namespace(args)
         non_texture_zstd = default_or_requested_zstd(args)
-        gump_zstd = non_texture_zstd
+        gump_args = default_or_requested_gump_args(args)
         run_all(
             args.ccdir,
             args.ecdir,
             args.output_dir,
             args.maps,
-            format_and_zstd_args(args, prefix="cc-art-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="cc-land-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="cc-anim-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="ec-anim-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-art-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-land-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-anim-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="ec-anim-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="jxl", global_zstd=global_zstd),
             args.tables,
             non_texture_zstd,
-            gump_zstd,
+            gump_args,
         )
     elif args.command == "animations":
         global_zstd = zstd_args_from_namespace(args)
@@ -311,14 +316,14 @@ def main() -> int:
             args.ccdir,
             args.ecdir,
             args.output_dir,
-            format_and_zstd_args(args, prefix="cc-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
-            format_and_zstd_args(args, prefix="ec-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-", default_format="jxl", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="ec-", default_format="jxl", global_zstd=global_zstd),
             args.tables,
         )
     elif args.command == "gumps":
-        run_gumps(args.ccdir, args.output_dir, default_or_requested_zstd(args))
+        run_gumps(args.ccdir, args.output_dir, default_or_requested_gump_args(args))
     else:
-        run_ec_gumps(args.ecdir, args.output_dir, default_or_requested_zstd(args))
+        run_ec_gumps(args.ecdir, args.output_dir, default_or_requested_gump_args(args))
     return 0
 
 

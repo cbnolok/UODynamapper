@@ -1007,6 +1007,8 @@ enum Commands {
         output: PathBuf,
         #[arg(long, help = "Store decoded RGBA8888 gump pixels. This is the only gump payload format currently written.")]
         raw: bool,
+        #[arg(long, help = "Write paperdoll equipment gump atlas pages with lossless JPEG XL payload compression. Single gump payloads remain raw RGBA8888.")]
+        jxl: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
@@ -1024,6 +1026,8 @@ enum Commands {
         max_id: u32,
         #[arg(long, help = "Store decoded RGBA8888 gump pixels. This is the only gump payload format currently written.")]
         raw: bool,
+        #[arg(long, help = "Write paperdoll equipment gump atlas pages with lossless JPEG XL payload compression. Single gump payloads remain raw RGBA8888.")]
+        jxl: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
@@ -1734,6 +1738,7 @@ pub fn run() -> eyre::Result<()> {
             classic_patches,
             output,
             raw: _,
+            jxl,
             zstd,
             paperdoll_upscale_passes,
             single_upscale_passes,
@@ -1745,7 +1750,18 @@ pub fn run() -> eyre::Result<()> {
                 &out_file,
                 &classic_patches.into(),
                 &CcGumpsOptions {
-                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    compression: if let Some(level) = zstd {
+                        zstd_compression(level)
+                    } else if jxl {
+                        CompressionFlag::None
+                    } else {
+                        CompressionFlag::ZstdNoDict
+                    },
+                    atlas_compression: if jxl {
+                        zstd.map(jxl_zstd_compression).unwrap_or(CompressionFlag::JpegXl)
+                    } else {
+                        zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict)
+                    },
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
                 },
@@ -1763,6 +1779,7 @@ pub fn run() -> eyre::Result<()> {
             output,
             max_id,
             raw: _,
+            jxl,
             zstd,
             paperdoll_upscale_passes,
             single_upscale_passes,
@@ -1774,7 +1791,18 @@ pub fn run() -> eyre::Result<()> {
                 &out_file,
                 &EcGumpsOptions {
                     max_id,
-                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    compression: if let Some(level) = zstd {
+                        zstd_compression(level)
+                    } else if jxl {
+                        CompressionFlag::None
+                    } else {
+                        CompressionFlag::ZstdNoDict
+                    },
+                    atlas_compression: if jxl {
+                        zstd.map(jxl_zstd_compression).unwrap_or(CompressionFlag::JpegXl)
+                    } else {
+                        zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict)
+                    },
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
                 },
@@ -2082,6 +2110,7 @@ mod tests {
             "pack-gumps",
             "--ccdir",
             "/cc",
+            "--jxl",
             "--paperdoll-upscale-pass",
             "nedi2x",
             "--single-upscale-pass",
@@ -2091,10 +2120,12 @@ mod tests {
 
         match cli.command {
             Commands::PackGumps {
+                jxl,
                 paperdoll_upscale_passes,
                 single_upscale_passes,
                 ..
             } => {
+                assert!(jxl);
                 assert_eq!(paperdoll_upscale_passes, vec![CliUpscaleFilter::Nedi2x]);
                 assert_eq!(single_upscale_passes, vec![CliUpscaleFilter::FsrEasu3x]);
             }
