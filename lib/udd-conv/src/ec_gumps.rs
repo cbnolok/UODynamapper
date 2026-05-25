@@ -16,7 +16,6 @@ use crate::gump_atlas::{
     add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
 
 pub const GUMPS_EC_DEFAULT_OUTPUT: &str = "gumps_ec.uddp";
 pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
@@ -53,15 +52,37 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     output_path: &Path,
     options: &EcGumpsOptions,
 ) -> eyre::Result<EcGumpsBuildSummary> {
-    if let Some(interface_uop) = find_first_existing_file(source_dirs, &["interface.uop"]) {
+    if let Some(interface_uop) = find_interface_uop(source_dirs) {
         convert_ec_gumps_from_interface_uop(&interface_uop, output_path, options)
     } else if let Some(gumpart_dir) = find_ec_gumpart_dir(source_dirs) {
         convert_ec_gumps_from_extracted_dir(&gumpart_dir, output_path, options)
     } else {
         eyre::bail!(
-            "missing EC gump source: expected interface.uop or data/interface/default/textures/gumpart"
+            "missing EC gump source: expected Interface.uop/interface.uop, or an extracted data/interface/default/textures/gumpart directory"
         );
     }
+}
+
+fn find_interface_uop(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+    source_dirs.iter().find_map(|dir| {
+        ["Interface.uop", "interface.uop", "INTERFACE.UOP"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file())
+            .or_else(|| {
+                fs::read_dir(dir)
+                    .ok()?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.eq_ignore_ascii_case("interface.uop"))
+                            .unwrap_or(false)
+                            && path.is_file()
+                    })
+            })
+    })
 }
 
 fn convert_ec_gumps_from_interface_uop(
@@ -344,6 +365,7 @@ fn is_probably_tga(payload: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn ec_gump_candidates_use_interface_gumpart_paths() {
@@ -387,5 +409,25 @@ mod tests {
         let mut tga = vec![0u8; 18];
         tga[2] = 2;
         assert_eq!(infer_ec_image_format(&tga, ECImageFormat::DDS), ECImageFormat::TGA);
+    }
+
+    #[test]
+    fn find_interface_uop_accepts_client_casing() {
+        let root = unique_temp_dir("ec-interface-uop-case");
+        fs::create_dir_all(&root).expect("create temp root");
+        fs::write(root.join("Interface.uop"), b"not a real uop").expect("write marker");
+
+        let found = find_interface_uop(&[root.clone()]).expect("find Interface.uop");
+
+        assert_eq!(found.file_name().and_then(|name| name.to_str()), Some("Interface.uop"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{label}-{}-{nanos}", std::process::id()))
     }
 }
