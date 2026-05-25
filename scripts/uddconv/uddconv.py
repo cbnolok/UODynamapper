@@ -18,6 +18,27 @@ def run_pack(*args: str) -> None:
     run(["cargo", "run", "-p", "udd-conv-cli", "--bin", "udd-pack", "--", *args])
 
 
+def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
+    parser.add_argument(f"--{prefix}raw", action="store_true")
+    parser.add_argument(f"--{prefix}jxl", action="store_true")
+    parser.add_argument(f"--{prefix}bc7", action="store_true")
+    parser.add_argument(f"--{prefix}bc7-rdo", dest=f"{prefix.replace('-', '_')}bc7_rdo", action="store_true")
+
+
+def format_args_from_namespace(args: argparse.Namespace, *, prefix: str = "") -> list[str]:
+    option_prefix = prefix.replace("-", "_")
+    selected = []
+    if getattr(args, f"{option_prefix}raw", False):
+        selected.append("--" + prefix + "raw")
+    if getattr(args, f"{option_prefix}jxl", False):
+        selected.append("--" + prefix + "jxl")
+    if getattr(args, f"{option_prefix}bc7", False):
+        selected.append("--" + prefix + "bc7")
+    if getattr(args, f"{option_prefix}bc7_rdo", False):
+        selected.append("--" + prefix + "bc7-rdo")
+    return selected
+
+
 def require_value(value: str, usage: str) -> str:
     if value:
         return value
@@ -37,15 +58,15 @@ def ensure_output_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
-def run_animations(ccdir: str, ecdir: str, output_dir: str) -> None:
+def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str], ec_format: list[str]) -> None:
     if not ccdir and not ecdir:
         print("usage: just uddconv-animations [ccdir] [ecdir] [output_dir]", file=sys.stderr)
         raise SystemExit(2)
     ensure_output_dir(output_dir)
     if ccdir:
-        run_pack("pack-mobile-anims", "--ccdir", ccdir, "--output", f"{output_dir}/mobile_anim_cc.uddp")
+        run_pack("pack-mobile-anims", *cc_format, "--ccdir", ccdir, "--output", f"{output_dir}/mobile_anim_cc.uddp")
     if ecdir:
-        run_pack("pack-ec-mobile-anims", "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
+        run_pack("pack-ec-mobile-anims", *ec_format, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
 
 
 def run_gumps(ccdir: str, output_dir: str) -> None:
@@ -60,7 +81,18 @@ def run_ec_gumps(ecdir: str, output_dir: str) -> None:
     run_pack("pack-ec-gumps", "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
 
 
-def run_all(ccdir: str, ecdir: str, output_dir: str, maps: str) -> None:
+def run_all(
+    ccdir: str,
+    ecdir: str,
+    output_dir: str,
+    maps: str,
+    cc_art_format: list[str],
+    cc_land_format: list[str],
+    cc_anim_format: list[str],
+    ec_anim_format: list[str],
+    ec_art_format: list[str],
+    ec_land_format: list[str],
+) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
     ensure_output_dir(output_dir)
     map_ids = parse_map_ids(maps)
@@ -83,11 +115,13 @@ def run_all(ccdir: str, ecdir: str, output_dir: str, maps: str) -> None:
         "--output",
         f"{output_dir}/tilemeta.uddp",
     ])
-    run_pack("pack-art", "--raw", "--ccdir", ccdir, "--output", f"{output_dir}/tex_art_cc.uddp")
-    run_pack("pack-texmaps", "--raw", "--ccdir", ccdir, "--output", f"{output_dir}/tex_land_cc.uddp")
+    run_pack("pack-art", *cc_art_format, "--ccdir", ccdir, "--output", f"{output_dir}/tex_art_cc.uddp")
+    run_pack("pack-texmaps", *cc_land_format, "--ccdir", ccdir, "--output", f"{output_dir}/tex_land_cc.uddp")
     if ecdir:
         run_pack(
             "pack-ec-textures",
+            *ec_art_format,
+            *ec_land_format,
             "--ecdir",
             ecdir,
             "--art-output",
@@ -108,7 +142,7 @@ def run_all(ccdir: str, ecdir: str, output_dir: str, maps: str) -> None:
             "--output",
             f"{output_dir}/statics{map_id}.uddp",
         )
-    run_animations(ccdir, ecdir, output_dir)
+    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format)
     run_gumps(ccdir, output_dir)
     if ecdir:
         run_ec_gumps(ecdir, output_dir)
@@ -123,11 +157,19 @@ def main() -> int:
     all_parser.add_argument("--ecdir", default="")
     all_parser.add_argument("--output-dir", default="target/uddp")
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
+    add_format_args(all_parser, prefix="cc-art-")
+    add_format_args(all_parser, prefix="cc-land-")
+    add_format_args(all_parser, prefix="cc-anim-")
+    add_format_args(all_parser, prefix="ec-anim-")
+    add_format_args(all_parser, prefix="art-")
+    add_format_args(all_parser, prefix="land-")
 
     animations_parser = subparsers.add_parser("animations")
     animations_parser.add_argument("--ccdir", default="")
     animations_parser.add_argument("--ecdir", default="")
     animations_parser.add_argument("--output-dir", default="target/uddp")
+    add_format_args(animations_parser, prefix="cc-")
+    add_format_args(animations_parser, prefix="ec-")
 
     gumps_parser = subparsers.add_parser("gumps")
     gumps_parser.add_argument("--ccdir", default="")
@@ -139,9 +181,26 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "all":
-        run_all(args.ccdir, args.ecdir, args.output_dir, args.maps)
+        run_all(
+            args.ccdir,
+            args.ecdir,
+            args.output_dir,
+            args.maps,
+            format_args_from_namespace(args, prefix="cc-art-"),
+            format_args_from_namespace(args, prefix="cc-land-"),
+            format_args_from_namespace(args, prefix="cc-anim-"),
+            format_args_from_namespace(args, prefix="ec-anim-"),
+            format_args_from_namespace(args, prefix="art-"),
+            format_args_from_namespace(args, prefix="land-"),
+        )
     elif args.command == "animations":
-        run_animations(args.ccdir, args.ecdir, args.output_dir)
+        run_animations(
+            args.ccdir,
+            args.ecdir,
+            args.output_dir,
+            format_args_from_namespace(args, prefix="cc-"),
+            format_args_from_namespace(args, prefix="ec-"),
+        )
     elif args.command == "gumps":
         run_gumps(args.ccdir, args.output_dir)
     else:

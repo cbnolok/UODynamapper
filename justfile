@@ -113,6 +113,12 @@ build-local-dynamapper-debug *args:
 build-local-tools-debug *args:
     cargo build {{tool_packages}} --bins {{args}}
 
+# Build udd-pack locally in debug mode using the same package selection as the uddconv runtime path.
+build-local-udd-pack-debug *args:
+    @echo "Running {{os}} udd-pack debug build..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    cargo build -p udd-conv-cli --bin udd-pack {{args}}
+
 # Build the workspace locally in release mode (stable toolchain)
 # Purpose: Production build using the stable toolchain. Includes LTO and basic stripping.
 # Linker: Uses mold/wild on Linux for speed, default on other platforms.
