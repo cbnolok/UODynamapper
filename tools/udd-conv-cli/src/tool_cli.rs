@@ -323,6 +323,8 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 y: row.y,
                 width: row.width,
                 height: row.height,
+                upscale_factor: existing.upscale_factor,
+                upscale_algorithm: existing.upscale_algorithm,
             };
         }
         let manifest = encode_cc_slot_manifest(
@@ -367,6 +369,8 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 y: row.y,
                 width: row.width,
                 height: row.height,
+                upscale_factor: existing.upscale_factor,
+                upscale_algorithm: existing.upscale_algorithm,
             };
         }
         let manifest = encode_tex_art_ec_slot_manifest(

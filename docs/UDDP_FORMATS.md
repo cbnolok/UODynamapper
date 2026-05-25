@@ -141,7 +141,7 @@ It also explains why `tileart.uop` must be treated as the source of entry-local 
 | 0x08 | `u32` | `used_width` | Maximum X extent used in the page. |
 | 0x0C | `u32` | `used_height`| Maximum Y extent used in the page. |
 
-**Slot Record (20 Bytes)**
+**Slot Record (24 Bytes)**
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
@@ -153,8 +153,16 @@ It also explains why `tileart.uop` must be treated as the source of entry-local 
 | 0x0E | `u16` | `y` | Y coordinate in the atlas page. |
 | 0x10 | `u16` | `width` | Width of the tile. |
 | 0x12 | `u16` | `height` | Height of the tile. |
+| 0x14 | `u16` | `upscale_factor` | Per-slot pixel upscale factor. Atlas coordinates and dimensions are physical pixels; renderer placement uses `width / upscale_factor` and `height / upscale_factor` in source-logical pixels. |
+| 0x16 | `u16` | `upscale_algorithm` | Per-slot upscale algorithm code. `0` means none/native; nonzero values identify the build-time upscaler family. |
 
-### 2.2 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
+`upscale_factor` and `upscale_algorithm` are intentionally stored per slot because art packages may mix native, 2x, 3x, and 4x assets. Missing or non-upscaled slots use factor `1` and algorithm `0`.
+
+### 2.2 Gump Atlas Metadata
+
+`gumps_cc.uddp` and `gumps_ec.uddp` can store paperdoll equipment gumps in atlas pages. Their atlas slot records also carry a per-slot `upscale_factor`. The stored page rectangle remains physical pixels; UI and paperdoll placement use logical dimensions derived by dividing physical width/height by the factor. Single-gump payloads without atlas slot metadata are treated as `upscale_factor = 1`.
+
+### 2.3 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
 The `tex_land_ec.uddp` pipeline commonly utilizes **BC7** block compression. The original EC `Texture.uop` generally contains textures encoded in **DXT1 (BC1)** (4 bits per pixel), with some relying on **DXT5 (BC3)** (8 bits per pixel) for alpha transparency.
 

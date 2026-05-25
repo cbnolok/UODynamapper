@@ -50,6 +50,8 @@ pub struct ResolvedArtSprite {
     pub uv_max: Vec2,
     pub pixel_width: u16,
     pub pixel_height: u16,
+    pub logical_width: f32,
+    pub logical_height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +248,8 @@ impl ArtPageAtlas {
             slot.y,
             slot.width,
             slot.height,
+            slot.logical_width(),
+            slot.logical_height(),
             tex_art_cc.atlas_width(),
             tex_art_cc.atlas_height(),
             tex_art_cc.pages().get(slot.page_index as usize)?.used_width,
@@ -263,6 +267,8 @@ impl ArtPageAtlas {
             slot.y,
             slot.width,
             slot.height,
+            slot.logical_width(),
+            slot.logical_height(),
             tex_art_ec.atlas_width(),
             tex_art_ec.atlas_height(),
             tex_art_ec.pages().get(slot.page_index as usize)?.used_width,
@@ -284,6 +290,8 @@ impl ArtPageAtlas {
             slot.y,
             slot.width,
             slot.height,
+            slot.width as f32,
+            slot.height as f32,
             tex_land_ec.atlas_width(),
             tex_land_ec.atlas_height(),
             tex_land_ec.pages().get(slot.page_index as usize)?.used_width,
@@ -300,6 +308,8 @@ impl ArtPageAtlas {
         y: u16,
         width: u16,
         height: u16,
+        logical_width: f32,
+        logical_height: f32,
         atlas_width: u32,
         atlas_height: u32,
         used_width: u32,
@@ -376,6 +386,8 @@ impl ArtPageAtlas {
             uv_max: Vec2::new((x + width) as f32 / self.page_width as f32, (y + height) as f32 / self.page_height as f32),
             pixel_width: width,
             pixel_height: height,
+            logical_width,
+            logical_height,
         })
     }
 

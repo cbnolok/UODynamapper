@@ -4,7 +4,7 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
 use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
-use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelFormat};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
@@ -17,7 +17,7 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
-const TEX_ART_EC_METADATA_VERSION: u32 = 3;
+const TEX_ART_EC_METADATA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexArtEcCropAdjustment {
@@ -44,6 +44,8 @@ pub struct TexArtEcSlotRecord {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
+    pub upscale_algorithm: u16,
 }
 
 impl TexArtEcSlotRecord {
@@ -57,6 +59,8 @@ impl TexArtEcSlotRecord {
             y: 0,
             width: 0,
             height: 0,
+            upscale_factor: 1,
+            upscale_algorithm: 0,
         }
     }
 
@@ -70,6 +74,18 @@ impl TexArtEcSlotRecord {
 
     pub fn is_static(self) -> bool {
         (self.flags & SLOT_FLAG_STATIC) != 0
+    }
+
+    pub fn logical_width(self) -> f32 {
+        self.width as f32 / f32::from(self.upscale_factor.max(1))
+    }
+
+    pub fn logical_height(self) -> f32 {
+        self.height as f32 / f32::from(self.upscale_factor.max(1))
+    }
+
+    pub fn upscale_algorithm_name(self) -> &'static str {
+        upscale_algorithm_name(self.upscale_algorithm)
     }
 }
 
@@ -275,6 +291,8 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
             y: cursor.read_u16::<LittleEndian>()?,
             width: cursor.read_u16::<LittleEndian>()?,
             height: cursor.read_u16::<LittleEndian>()?,
+            upscale_factor: cursor.read_u16::<LittleEndian>()?.max(1),
+            upscale_algorithm: cursor.read_u16::<LittleEndian>()?,
         });
     }
     Ok((w, h, g, packing_mode, slots))

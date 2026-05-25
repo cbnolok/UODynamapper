@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use eframe::egui;
 
 use crate::app::InspectorApp;
@@ -62,6 +64,10 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         ui.label(format!("Atlas: {}x{} gutter {}", package.atlas_width(), package.atlas_height(), package.gutter()));
         ui.separator();
         ui.label(format!("Pages: {}", package.pages().len()));
+        ui.separator();
+        ui.label(format!("Page buckets: {}", page_bucket_summary(package.pages().iter().map(|page| {
+            (page.atlas_width, page.atlas_height, page.frame_count)
+        }))));
         ui.separator();
         ui.label(format!("Animations: {}", package.animations().len()));
         ui.separator();
@@ -163,6 +169,10 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         ui.separator();
         ui.label(format!("Pages: {}", package.pages().len()));
         ui.separator();
+        ui.label(format!("Page buckets: {}", page_bucket_summary(package.pages().iter().map(|page| {
+            (page.atlas_width, page.atlas_height, page.frame_count)
+        }))));
+        ui.separator();
         ui.label(format!("Animations: {}", package.animations().len()));
         ui.separator();
         ui.label(format!("Frames: {}", package.frames().len()));
@@ -254,6 +264,12 @@ fn show_cc_frame(
         .iter()
         .find(|page| page.page_index == frame.page_index)
         .map(|page| page.used_width);
+    let page_size = package
+        .pages()
+        .iter()
+        .find(|page| page.page_index == frame.page_index)
+        .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
+    show_page_size_metadata(ui, page_size);
     show_frame_image(ui, ctx, app, "mobile_anim_cc", page_width, frame.page_index, frame.x, frame.y, frame.width, frame.height, || {
         package.read_page_rgba(frame.page_index).ok()
     });
@@ -284,9 +300,46 @@ fn show_ec_frame(
         .iter()
         .find(|page| page.page_index == frame.page_index)
         .map(|page| page.used_width);
+    let page_size = package
+        .pages()
+        .iter()
+        .find(|page| page.page_index == frame.page_index)
+        .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
+    show_page_size_metadata(ui, page_size);
     show_frame_image(ui, ctx, app, "mobile_anim_ec", page_width, frame.page_index, frame.x, frame.y, frame.width, frame.height, || {
         package.read_page_rgba(frame.page_index).ok()
     });
+}
+
+fn page_bucket_summary(pages: impl Iterator<Item = (u32, u32, u32)>) -> String {
+    let mut buckets = BTreeMap::<(u32, u32), (u32, u32)>::new();
+    for (width, height, frame_count) in pages {
+        let entry = buckets.entry((width, height)).or_default();
+        entry.0 += 1;
+        entry.1 += frame_count;
+    }
+    if buckets.is_empty() {
+        return "none".to_string();
+    }
+    buckets
+        .into_iter()
+        .map(|((width, height), (page_count, frame_count))| {
+            format!("{width}x{height}: {page_count} pages / {frame_count} frames")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn show_page_size_metadata(
+    ui: &mut egui::Ui,
+    page_size: Option<(u32, u32, u32, u32)>,
+) {
+    if let Some((atlas_width, atlas_height, used_width, used_height)) = page_size {
+        ui.label(format!(
+            "Page size: {}x{} atlas, {}x{} used",
+            atlas_width, atlas_height, used_width, used_height
+        ));
+    }
 }
 
 fn show_frame_metadata(
@@ -446,6 +499,20 @@ mod tests {
                 2, 0, 0, 255, 3, 0, 0, 255,
                 5, 0, 0, 255, 6, 0, 0, 255,
             ]
+        );
+    }
+
+    #[test]
+    fn page_bucket_summary_groups_pages_and_frames_by_atlas_size() {
+        let summary = page_bucket_summary([
+            (512, 512, 10),
+            (2048, 1024, 5),
+            (512, 512, 3),
+        ].into_iter());
+
+        assert_eq!(
+            summary,
+            "512x512: 2 pages / 13 frames; 2048x1024: 1 pages / 5 frames"
         );
     }
 }

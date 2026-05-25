@@ -53,11 +53,12 @@ use uocf::enhanced::{
 };
 
 use crate::upscale::UpscaleFilter;
+use crate::tex_art_cc::upscale_algorithm_code;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_EC_METADATA_VERSION: u32 = 3;
+const TEX_ART_EC_METADATA_VERSION: u32 = 5;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -143,6 +144,8 @@ pub struct DecodedArtTile {
     pub kind: ArtTileKind,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
+    pub upscale_algorithm: u16,
     pub rgba: Vec<u8>,
 }
 
@@ -161,6 +164,8 @@ struct DecodedArtDecodeGroup {
     kind: ArtTileKind,
     width: u16,
     height: u16,
+    upscale_factor: u16,
+    upscale_algorithm: u16,
     rgba: Vec<u8>,
     crop_adjustment: TexArtEcCropAdjustment,
     alias_art_ids: Vec<u32>,
@@ -227,6 +232,8 @@ pub struct PlacedTile {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
+    pub upscale_algorithm: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -684,6 +691,8 @@ fn decode_present_tiles(
                 kind: group.kind,
                 width,
                 height,
+                upscale_factor: options.upscale.scale_factor() as u16,
+                upscale_algorithm: upscale_algorithm_code(options.upscale),
                 rgba,
                 crop_adjustment,
                 alias_art_ids: group.alias_art_ids.clone(),
@@ -715,6 +724,8 @@ fn decode_present_tiles(
                 kind: decoded_group.kind,
                 width: decoded_group.width,
                 height: decoded_group.height,
+                upscale_factor: decoded_group.upscale_factor,
+                upscale_algorithm: decoded_group.upscale_algorithm,
                 rgba: decoded_group.rgba,
             });
         }
@@ -1055,6 +1066,8 @@ pub fn pack_tiles_into_pages(
                 y: placed.y,
                 width: placed.width,
                 height: placed.height,
+                upscale_factor: placed.upscale_factor,
+                upscale_algorithm: placed.upscale_algorithm,
             };
         }
 
@@ -1289,6 +1302,8 @@ fn build_page(
                 y: inner_y as u16,
                 width: tile.width,
                 height: tile.height,
+                upscale_factor: tile.upscale_factor,
+                upscale_algorithm: tile.upscale_algorithm,
             });
         } else {
             leftovers.push(tile);
@@ -1391,7 +1406,7 @@ pub fn serialize_slot_manifest(
     slots: &[TexArtEcSlotRecord],
     options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(25 + slots.len() * 20);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 24);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -1408,6 +1423,8 @@ pub fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.y)?;
         bytes.write_u16::<LittleEndian>(slot.width)?;
         bytes.write_u16::<LittleEndian>(slot.height)?;
+        bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
+        bytes.write_u16::<LittleEndian>(slot.upscale_algorithm)?;
     }
     Ok(bytes)
 }
@@ -1445,6 +1462,8 @@ mod tests {
             kind: ArtTileKind::Static,
             width,
             height,
+            upscale_factor: 1,
+            upscale_algorithm: 0,
             rgba: vec![255; width as usize * height as usize * 4],
         }
     }

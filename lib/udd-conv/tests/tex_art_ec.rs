@@ -21,6 +21,8 @@ fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Decoded
         kind,
         width,
         height,
+        upscale_factor: 1,
+        upscale_algorithm: 0,
         rgba: vec![255u8; width as usize * height as usize * 4],
     }
 }
@@ -167,7 +169,10 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
-    let tiles = vec![rgba_tile(0, ArtTileKind::Static, 4, 4)];
+    let mut tile = rgba_tile(0, ArtTileKind::Static, 4, 4);
+    tile.upscale_factor = 2;
+    tile.upscale_algorithm = 6;
+    let tiles = vec![tile];
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
@@ -218,7 +223,12 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         TexArtEcPackage::from_uddp_package(UddpReader::open(package.build().unwrap()).unwrap())
             .unwrap();
     assert_eq!(package.pages().len(), 1);
-    assert!(package.present_slot(0).unwrap().is_static());
+    let slot = package.present_slot(0).unwrap();
+    assert!(slot.is_static());
+    assert_eq!(slot.upscale_factor, 2);
+    assert_eq!(slot.upscale_algorithm_name(), "FsrEasu");
+    assert_eq!(slot.logical_width(), 2.0);
+    assert_eq!(slot.logical_height(), 2.0);
     let page = &package.pages()[0];
     assert_eq!(package.read_page_bytes(0).unwrap().len(), (page.used_width * page.used_height * 4) as usize);
 }

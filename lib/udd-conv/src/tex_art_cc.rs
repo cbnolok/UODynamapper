@@ -123,6 +123,8 @@ pub struct DecodedArtTile {
     pub kind: ArtTileKind,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
+    pub upscale_algorithm: u16,
     pub rgba: Vec<u8>,
 }
 
@@ -135,6 +137,8 @@ pub struct PlacedTile {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
+    pub upscale_algorithm: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +153,30 @@ pub struct BuiltPage {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_CC_METADATA_VERSION: u32 = 3;
+const TEX_ART_CC_METADATA_VERSION: u32 = 5;
+
+pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
+    match filter {
+        UpscaleFilter::None => 0,
+        UpscaleFilter::Nearest2x | UpscaleFilter::Nearest3x | UpscaleFilter::Nearest4x => 1,
+        UpscaleFilter::Bilinear2x | UpscaleFilter::Bilinear3x | UpscaleFilter::Bilinear4x => 2,
+        UpscaleFilter::CatmullRom2x | UpscaleFilter::CatmullRom3x | UpscaleFilter::CatmullRom4x => 3,
+        UpscaleFilter::Lanczos3_2x | UpscaleFilter::Lanczos3_3x | UpscaleFilter::Lanczos3_4x => 4,
+        UpscaleFilter::SuperSai2x => 5,
+        UpscaleFilter::FsrEasu2x | UpscaleFilter::FsrEasu3x | UpscaleFilter::FsrEasu4x => 6,
+        UpscaleFilter::FsrEasuRcas2x | UpscaleFilter::FsrEasuRcas3x | UpscaleFilter::FsrEasuRcas4x => 7,
+        UpscaleFilter::Depixelize2x | UpscaleFilter::Depixelize3x | UpscaleFilter::Depixelize4x => 8,
+        UpscaleFilter::Nedi2x => 9,
+        UpscaleFilter::TwoSai2x => 10,
+        UpscaleFilter::SuperEagle2x => 11,
+        UpscaleFilter::Lq2x | UpscaleFilter::Lq3x | UpscaleFilter::Lq4x => 12,
+        UpscaleFilter::Hq2x | UpscaleFilter::Hq3x | UpscaleFilter::Hq4x => 13,
+        UpscaleFilter::Hq2xTrue | UpscaleFilter::Hq3xTrue | UpscaleFilter::Hq4xTrue => 14,
+        UpscaleFilter::Epx2x | UpscaleFilter::Epx3x | UpscaleFilter::Epx4x => 15,
+        UpscaleFilter::Xbr2x | UpscaleFilter::Xbr3x | UpscaleFilter::Xbr4x => 16,
+        UpscaleFilter::Mmpx2x | UpscaleFilter::Mmpx4x => 17,
+    }
+}
 
 pub fn convert_art_mul_to_tex_art_cc_uddp(
     client_dir: &Path,
@@ -453,6 +480,8 @@ fn decode_present_tiles(
                                 kind,
                                 width: w as u16,
                                 height: h as u16,
+                                upscale_factor: options.upscale.scale_factor() as u16,
+                                upscale_algorithm: upscale_algorithm_code(options.upscale),
                                 rgba,
                             })
                         }
@@ -472,6 +501,8 @@ fn decode_present_tiles(
                             kind,
                             width: w as u16,
                             height: h as u16,
+                            upscale_factor: options.upscale.scale_factor() as u16,
+                            upscale_algorithm: upscale_algorithm_code(options.upscale),
                             rgba,
                         })
                     }
@@ -582,6 +613,8 @@ pub fn pack_tiles_into_pages(
                 y: placed.y,
                 width: placed.width,
                 height: placed.height,
+                upscale_factor: placed.upscale_factor,
+                upscale_algorithm: placed.upscale_algorithm,
             };
         }
 
@@ -815,6 +848,8 @@ fn build_page(
                 y: inner_y as u16,
                 width: tile.width,
                 height: tile.height,
+                upscale_factor: tile.upscale_factor,
+                upscale_algorithm: tile.upscale_algorithm,
             });
         } else {
             leftovers.push(tile);
@@ -922,7 +957,7 @@ pub fn serialize_slot_manifest(
     slots: &[TexArtCcSlotRecord],
     options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(25 + slots.len() * 20);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 24);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -939,6 +974,8 @@ pub fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.y)?;
         bytes.write_u16::<LittleEndian>(slot.width)?;
         bytes.write_u16::<LittleEndian>(slot.height)?;
+        bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
+        bytes.write_u16::<LittleEndian>(slot.upscale_algorithm)?;
     }
     Ok(bytes)
 }
@@ -975,6 +1012,8 @@ mod tests {
             kind: ArtTileKind::Static,
             width,
             height,
+            upscale_factor: 1,
+            upscale_algorithm: 0,
             rgba: vec![255; width as usize * height as usize * 4],
         }
     }

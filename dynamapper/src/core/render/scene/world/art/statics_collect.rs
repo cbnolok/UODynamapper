@@ -73,15 +73,15 @@ pub(crate) fn resolve_static_billboard_bounds(
     source: ClientTextureSource,
     offset_x_pixels: i16,
     offset_y_pixels: i16,
-    pixel_width: u16,
-    pixel_height: u16,
+    logical_width: f32,
+    logical_height: f32,
 ) -> StaticBillboardBounds {
     let world_xz_per_pixel = static_world_xz_per_pixel(source);
     let world_y_per_pixel = static_world_y_per_pixel(source);
     let local_min_x = offset_x_pixels as f32 * world_xz_per_pixel;
-    let local_max_x = local_min_x + pixel_width as f32 * world_xz_per_pixel;
+    let local_max_x = local_min_x + logical_width * world_xz_per_pixel;
     let local_min_y = -(offset_y_pixels as f32 * world_y_per_pixel);
-    let local_max_y = local_min_y + pixel_height as f32 * world_y_per_pixel;
+    let local_max_y = local_min_y + logical_height * world_y_per_pixel;
 
     StaticBillboardBounds {
         local_min_x,
@@ -1512,8 +1512,8 @@ pub fn sys_collect_visible_statics(
                                         billboard_source,
                                         offset_x_pixels,
                                         offset_y_pixels,
-                                        resolved.pixel_width,
-                                        resolved.pixel_height,
+                                        resolved.logical_width,
+                                        resolved.logical_height,
                                     );
 
                                     chunk_sprite_instances.push(SpriteInstance {
@@ -1708,7 +1708,7 @@ mod tests {
 
     #[test]
     fn classic_billboard_bounds_keep_existing_scale() {
-        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44, 88);
+        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44.0, 88.0);
 
         approx_eq(bounds.local_min_x, 11.0 * CC_WORLD_XZ_PER_PIXEL);
         approx_eq(bounds.local_max_x, (11.0 + 44.0) * CC_WORLD_XZ_PER_PIXEL);
@@ -1718,8 +1718,8 @@ mod tests {
 
     #[test]
     fn enhanced_billboard_bounds_normalize_to_classic_world_footprint() {
-        let cc_bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 0, 0, 44, 44);
-        let ec_bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 0, 0, 64, 64);
+        let cc_bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 0, 0, 44.0, 44.0);
+        let ec_bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 0, 0, 64.0, 64.0);
 
         approx_eq(
             ec_bounds.local_max_x - ec_bounds.local_min_x,
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn enhanced_billboard_offsets_use_enhanced_pixel_ratio() {
-        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 64, 32, 64, 64);
+        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 64, 32, 64.0, 64.0);
 
         approx_eq(bounds.local_min_x, ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS);
         approx_eq(bounds.local_min_y, -(32.0 * EC_WORLD_Y_PER_PIXEL));

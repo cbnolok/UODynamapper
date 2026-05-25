@@ -819,8 +819,8 @@ fn resolve_hovered_static_geometry(
                 crate::configs::settings::ClientTextureSource::Cc,
                 tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0),
                 tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0),
-                slot.width,
-                slot.height,
+                slot.logical_width(),
+                slot.logical_height(),
             );
             Some((
                 HoveredObjectKind::Sprite,
@@ -882,8 +882,8 @@ fn resolve_hovered_static_geometry(
                 crate::configs::settings::ClientTextureSource::Ec,
                 tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0),
                 tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0),
-                slot.width,
-                slot.height,
+                slot.logical_width(),
+                slot.logical_height(),
             );
             Some((
                 HoveredObjectKind::Sprite,

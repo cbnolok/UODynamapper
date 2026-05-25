@@ -131,13 +131,46 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
         let Ok(height) = cursor.read_u16::<LittleEndian>() else {
             break;
         };
+        let (upscale_factor, upscale_algorithm) = if matches!(kind, "CC Art" | "EC Art") && version >= 4 {
+            let Ok(upscale_factor) = cursor.read_u16::<LittleEndian>() else {
+                break;
+            };
+            let upscale_algorithm = if version >= 5 {
+                let Ok(upscale_algorithm) = cursor.read_u16::<LittleEndian>() else {
+                    break;
+                };
+                upscale_algorithm
+            } else {
+                0
+            };
+            (upscale_factor.max(1), upscale_algorithm)
+        } else {
+            (1, 0)
+        };
 
         if (flags & 1) != 0 {
+            let summary = if matches!(kind, "CC Art" | "EC Art") {
+                let logical_width = width as f32 / f32::from(upscale_factor);
+                let logical_height = height as f32 / f32::from(upscale_factor);
+                format!(
+                    "{}x{} at {},{}; logical {:.1}x{:.1}; upscale {} {}x",
+                    width,
+                    height,
+                    x,
+                    y,
+                    logical_width,
+                    logical_height,
+                    upscale_algorithm_name(upscale_algorithm),
+                    upscale_factor
+                )
+            } else {
+                format!("{}x{} at {},{}", width, height, x, y)
+            };
             entries.push(VirtualEntry {
                 id,
                 _data_type: if kind == "EC Land" || kind == "CC Texmaps" { 9 } else { 1 },
                 kind: kind.to_string(),
-                summary: format!("{}x{} at {},{}", width, height, x, y),
+                summary,
                 location: format!("page {}", page_index),
                 data: VirtualEntryData::AtlasRect {
                     page_index,
@@ -152,6 +185,30 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
     }
 
     entries
+}
+
+fn upscale_algorithm_name(code: u16) -> &'static str {
+    match code {
+        0 => "None",
+        1 => "Nearest",
+        2 => "Bilinear",
+        3 => "CatmullRom",
+        4 => "Lanczos3",
+        5 => "SuperSai",
+        6 => "FsrEasu",
+        7 => "FsrEasuRcas",
+        8 => "Depixelize",
+        9 => "Nedi",
+        10 => "TwoSai",
+        11 => "SuperEagle",
+        12 => "Lq",
+        13 => "Hq",
+        14 => "HqTrue",
+        15 => "Epx",
+        16 => "Xbr",
+        17 => "Mmpx",
+        _ => "Unknown",
+    }
 }
 
 #[cfg(test)]
@@ -178,6 +235,12 @@ mod tests {
         bytes.write_u16::<LittleEndian>(22).unwrap();
         bytes.write_u16::<LittleEndian>(33).unwrap();
         bytes.write_u16::<LittleEndian>(44).unwrap();
+        if matches!(magic, b"CASL" | b"EASL") && version >= 4 {
+            bytes.write_u16::<LittleEndian>(2).unwrap();
+            if version >= 5 {
+                bytes.write_u16::<LittleEndian>(6).unwrap();
+            }
+        }
         bytes
     }
 
@@ -249,6 +312,17 @@ mod tests {
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_virtual_entries_reports_art_upscale_metadata() {
+        let manifest = build_slot_manifest(b"EASL", 5, Some(1), 1);
+        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "EC Art");
+        assert!(entries[0].summary.contains("logical 16.5x22.0"));
+        assert!(entries[0].summary.contains("upscale FsrEasu 2x"));
     }
 
     #[test]

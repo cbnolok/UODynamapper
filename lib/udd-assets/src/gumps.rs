@@ -295,10 +295,12 @@ mod tests {
     fn package_reads_atlas_gump_payload() {
         let package = GumpsPackage::from_uddp_package(build_test_package(true)).unwrap();
 
-        let (width, height, rgba) = package.read_gump_rgba(50_001).unwrap();
+        let image = package.read_gump_image(50_001).unwrap();
 
-        assert_eq!((width, height), (2, 1));
-        assert_eq!(rgba, vec![9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!((image.physical_width, image.physical_height), (2, 1));
+        assert_eq!((image.logical_width, image.logical_height), (1, 1));
+        assert_eq!(image.upscale_factor, 2);
+        assert_eq!(image.rgba, vec![9, 10, 11, 12, 13, 14, 15, 16]);
     }
 
     fn build_test_package(include_atlas: bool) -> UddpReader {
@@ -373,7 +375,7 @@ mod tests {
         bytes.write_u16::<LittleEndian>(0).unwrap();
         bytes.write_u16::<LittleEndian>(2).unwrap();
         bytes.write_u16::<LittleEndian>(1).unwrap();
-        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(2).unwrap();
         bytes
     }
 

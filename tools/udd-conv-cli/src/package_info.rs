@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
-use udd_assets::{HuesPackage, TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
+use udd_assets::{
+    HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage,
+    TexLandEcPackage, TileMetaPackage,
+};
 use udd_container::{
     reconstruct_stored_size, unpack_codec, unpack_type, Codec, LookupMode, UDDP_MAGIC, UDPI_MAGIC,
     UddpReader,
@@ -56,6 +59,44 @@ fn page_pixel_format_name(byte_len: usize, width: u32, height: u32) -> &'static 
     }
 }
 
+fn art_upscale_summary<'a>(
+    slots: impl Iterator<Item = (&'a str, u16)>,
+) -> String {
+    let mut buckets = BTreeMap::<(&'a str, u16), u32>::new();
+    for (algorithm, factor) in slots {
+        *buckets.entry((algorithm, factor.max(1))).or_default() += 1;
+    }
+    if buckets.is_empty() {
+        return "none".to_string();
+    }
+    buckets
+        .into_iter()
+        .map(|((algorithm, factor), count)| format!("{algorithm} {factor}x={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn mobile_anim_page_bucket_summary(
+    pages: impl Iterator<Item = (u32, u32, u32)>,
+) -> String {
+    let mut buckets = BTreeMap::<(u32, u32), (u32, u32)>::new();
+    for (width, height, frame_count) in pages {
+        let entry = buckets.entry((width, height)).or_default();
+        entry.0 += 1;
+        entry.1 += frame_count;
+    }
+    if buckets.is_empty() {
+        return "none".to_string();
+    }
+    buckets
+        .into_iter()
+        .map(|((width, height), (page_count, frame_count))| {
+            format!("{width}x{height}: {page_count} pages / {frame_count} frames")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
     if let Ok(package) = TexArtCcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
@@ -74,6 +115,12 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.pages().len(),
             package.slots().len(),
             populated_slots
+        );
+        println!(
+            "Upscale: {}",
+            art_upscale_summary(package.slots().iter().filter(|slot| slot.is_present()).map(|slot| {
+                (slot.upscale_algorithm_name(), slot.upscale_factor)
+            }))
         );
         if let Some((page, byte_len)) = first_page_format {
             println!(
@@ -97,6 +144,58 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.pages().len(),
             package.slots().len(),
             populated_slots
+        );
+        println!(
+            "Upscale: {}",
+            art_upscale_summary(package.slots().iter().filter(|slot| slot.is_present()).map(|slot| {
+                (slot.upscale_algorithm_name(), slot.upscale_factor)
+            }))
+        );
+        return Ok(true);
+    }
+
+    if let Ok(package) = MobileAnimCcPackage::from_uddp_package(package.clone()) {
+        println!("Recognized package: mobile_anim_cc");
+        println!("Known logical files: metadata=5, textures={}", package.pages().len());
+        println!(
+            "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
+            package.atlas_width(),
+            package.atlas_height(),
+            package.gutter(),
+            package.pages().len(),
+            mobile_anim_page_bucket_summary(package.pages().iter().map(|page| {
+                (page.atlas_width, page.atlas_height, page.frame_count)
+            }))
+        );
+        println!(
+            "Animations: {}, frames={}, body_maps={}, body_types={}",
+            package.animations().len(),
+            package.frames().len(),
+            package.body_resolve().len(),
+            package.body_types().len()
+        );
+        return Ok(true);
+    }
+
+    if let Ok(package) = MobileAnimEcPackage::from_uddp_package(package.clone()) {
+        println!("Recognized package: mobile_anim_ec");
+        println!("Known logical files: metadata=5, textures={}", package.pages().len());
+        println!(
+            "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
+            package.atlas_width(),
+            package.atlas_height(),
+            package.gutter(),
+            package.pages().len(),
+            mobile_anim_page_bucket_summary(package.pages().iter().map(|page| {
+                (page.atlas_width, page.atlas_height, page.frame_count)
+            }))
+        );
+        println!(
+            "Animations: {}, frames={}, items={}, source_hints={}",
+            package.animations().len(),
+            package.frames().len(),
+            package.items().len(),
+            package.source_hints().len()
         );
         return Ok(true);
     }
