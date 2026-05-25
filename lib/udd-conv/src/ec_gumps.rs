@@ -139,8 +139,14 @@ fn convert_ec_gumps_from_interface_uop(
         }
     }
 
-    let atlas_gump_count =
-        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
+    let atlas_gump_count = add_gump_atlas_files(
+        &mut builder,
+        atlas_gumps,
+        &GumpAtlasOptions {
+            compression: options.compression,
+            ..GumpAtlasOptions::default()
+        },
+    )?;
     pb.finish_with_message("EC gumps extracted from Interface.uop");
     build_and_write_package(&mut builder, output_path)?;
 
@@ -202,8 +208,14 @@ fn convert_ec_gumps_from_extracted_dir(
         }
     }
 
-    let atlas_gump_count =
-        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
+    let atlas_gump_count = add_gump_atlas_files(
+        &mut builder,
+        atlas_gumps,
+        &GumpAtlasOptions {
+            compression: options.compression,
+            ..GumpAtlasOptions::default()
+        },
+    )?;
     pb.finish_with_message("EC gumps extracted from extracted files");
     build_and_write_package(&mut builder, output_path)?;
 

@@ -22,10 +22,36 @@ pub struct CcGumpsBuildSummary {
     pub atlas_gump_count: u32,
 }
 
+pub struct CcGumpsOptions {
+    pub compression: CompressionFlag,
+}
+
+impl Default for CcGumpsOptions {
+    fn default() -> Self {
+        Self {
+            compression: CompressionFlag::ZstdNoDict,
+        }
+    }
+}
+
 pub fn convert_gumps_to_uddp_from_sources_with_patches(
     source_dirs: &[PathBuf],
     output_path: &Path,
     patch_options: &ClassicPatchOptions,
+) -> eyre::Result<CcGumpsBuildSummary> {
+    convert_gumps_to_uddp_from_sources_with_patches_and_options(
+        source_dirs,
+        output_path,
+        patch_options,
+        &CcGumpsOptions::default(),
+    )
+}
+
+pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    patch_options: &ClassicPatchOptions,
+    options: &CcGumpsOptions,
 ) -> eyre::Result<CcGumpsBuildSummary> {
     let source_root = find_first_existing_file(source_dirs, &["gumpidx.mul", "gumpartLegacyMUL.uop"])
         .and_then(|path| path.parent().map(Path::to_path_buf))
@@ -104,14 +130,27 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
                 rgba,
             });
         } else {
-            add_single_gump(&mut builder, gump_id, u32::from(width), u32::from(height), &rgba)?;
+            add_single_gump(
+                &mut builder,
+                gump_id,
+                u32::from(width),
+                u32::from(height),
+                &rgba,
+                options.compression,
+            )?;
             single_gump_count += 1;
         }
         gump_count += 1;
     }
 
-    let atlas_gump_count =
-        add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
+    let atlas_gump_count = add_gump_atlas_files(
+        &mut builder,
+        atlas_gumps,
+        &GumpAtlasOptions {
+            compression: options.compression,
+            ..GumpAtlasOptions::default()
+        },
+    )?;
     pb.finish_with_message("CC gumps extracted");
     build_and_write_package(&mut builder, output_path)?;
 
@@ -128,6 +167,7 @@ fn add_single_gump(
     width: u32,
     height: u32,
     rgba: &[u8],
+    compression: CompressionFlag,
 ) -> eyre::Result<()> {
     let mut payload = Vec::with_capacity(8 + rgba.len());
     payload.write_u32::<LittleEndian>(width)?;
@@ -136,7 +176,7 @@ fn add_single_gump(
 
     builder.add_file(AddFileRequest {
         data_type: DataType::Gump as u8,
-        compression: CompressionFlag::ZstdNoDict,
+        compression,
         width,
         height,
         virtual_path: None,

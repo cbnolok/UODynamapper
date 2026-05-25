@@ -13,7 +13,10 @@ use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
-    cc_gumps::{convert_gumps_to_uddp_from_sources_with_patches, GUMPS_CC_DEFAULT_OUTPUT},
+    cc_gumps::{
+        convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
+        GUMPS_CC_DEFAULT_OUTPUT,
+    },
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
     ec_gumps::{
@@ -452,15 +455,15 @@ pub enum CliUpscaleFilter {
     FsrEasuRcas2x,
     FsrEasuRcas3x,
     FsrEasuRcas4x,
-    Depixelize2x,
-    Depixelize3x,
-    Depixelize4x,
+    KLDepixelize2x,
+    KLDepixelize3x,
+    KLDepixelize4x,
     Nedi2x,
     TwoSai2x,
     SuperEagle2x,
-    Hq2x,
-    Hq3x,
-    Hq4x,
+    Hq2xSimple,
+    Hq3xSimple,
+    Hq4xSimple,
     Epx2x,
     Epx3x,
     Epx4x,
@@ -511,15 +514,15 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::FsrEasuRcas2x => UpscaleFilter::FsrEasuRcas2x,
             CliUpscaleFilter::FsrEasuRcas3x => UpscaleFilter::FsrEasuRcas3x,
             CliUpscaleFilter::FsrEasuRcas4x => UpscaleFilter::FsrEasuRcas4x,
-            CliUpscaleFilter::Depixelize2x => UpscaleFilter::Depixelize2x,
-            CliUpscaleFilter::Depixelize3x => UpscaleFilter::Depixelize3x,
-            CliUpscaleFilter::Depixelize4x => UpscaleFilter::Depixelize4x,
+            CliUpscaleFilter::KLDepixelize2x => UpscaleFilter::KLDepixelize2x,
+            CliUpscaleFilter::KLDepixelize3x => UpscaleFilter::KLDepixelize3x,
+            CliUpscaleFilter::KLDepixelize4x => UpscaleFilter::KLDepixelize4x,
             CliUpscaleFilter::Nedi2x => UpscaleFilter::Nedi2x,
             CliUpscaleFilter::TwoSai2x => UpscaleFilter::TwoSai2x,
             CliUpscaleFilter::SuperEagle2x => UpscaleFilter::SuperEagle2x,
-            CliUpscaleFilter::Hq2x => UpscaleFilter::Hq2x,
-            CliUpscaleFilter::Hq3x => UpscaleFilter::Hq3x,
-            CliUpscaleFilter::Hq4x => UpscaleFilter::Hq4x,
+            CliUpscaleFilter::Hq2xSimple => UpscaleFilter::Hq2xSimple,
+            CliUpscaleFilter::Hq3xSimple => UpscaleFilter::Hq3xSimple,
+            CliUpscaleFilter::Hq4xSimple => UpscaleFilter::Hq4xSimple,
             CliUpscaleFilter::Epx2x => UpscaleFilter::Epx2x,
             CliUpscaleFilter::Epx3x => UpscaleFilter::Epx3x,
             CliUpscaleFilter::Epx4x => UpscaleFilter::Epx4x,
@@ -876,6 +879,8 @@ enum Commands {
         classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tilemeta.uddp")]
         output: PathBuf,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; tilemeta currently keeps its internal package compression policy.")]
+        zstd: Option<i32>,
         #[arg(long, default_value_t = false)]
         ec_art_cropped: bool,
         #[arg(long, default_value_t = false)]
@@ -914,6 +919,8 @@ enum Commands {
         output: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         uop: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; map packing currently keeps its internal package compression policy.")]
+        zstd: Option<i32>,
     },
     /// Packs Classic staticsX.mul into staticsX.uddp blocks.
     PackStatics {
@@ -925,6 +932,8 @@ enum Commands {
         map_id: u32,
         #[arg(long)]
         output: Option<PathBuf>,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; static packing currently keeps its internal package compression policy.")]
+        zstd: Option<i32>,
     },
     /// Packs CC and EC lighting textures into world_lights.uddp.
     PackLights {
@@ -936,6 +945,8 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
         no_compression: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
     },
     /// Packs Classic hues.mul into hues.uddp.
     PackHues {
@@ -945,6 +956,8 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
         no_compression: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
     },
     /// Packs Classic gumpidx.mul/gumpart.mul or gumpartLegacyMUL.uop into gumps_cc.uddp.
     PackGumps {
@@ -954,6 +967,10 @@ enum Commands {
         classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = GUMPS_CC_DEFAULT_OUTPUT)]
         output: PathBuf,
+        #[arg(long, help = "Store decoded RGBA8888 gump pixels. This is the only gump payload format currently written.")]
+        raw: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
     },
     /// Packs EC interface.uop gumpart into gumps_ec.uddp.
     PackEcGumps {
@@ -963,6 +980,10 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value_t = EC_GUMP_DEFAULT_MAX_ID, help = "Highest numeric gump id to probe when reading interface.uop.")]
         max_id: u32,
+        #[arg(long, help = "Store decoded RGBA8888 gump pixels. This is the only gump payload format currently written.")]
+        raw: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
     },
 }
 
@@ -1458,6 +1479,7 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             classic_patches,
             output,
+            zstd: _,
             ec_art_cropped,
             use_ec_radarcol,
         } => {
@@ -1484,6 +1506,7 @@ pub fn run() -> eyre::Result<()> {
             map_id,
             output,
             uop,
+            zstd: _,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("map{}.uddp", map_id));
@@ -1513,6 +1536,7 @@ pub fn run() -> eyre::Result<()> {
             classic_patches,
             map_id,
             output,
+            zstd: _,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
@@ -1591,11 +1615,14 @@ pub fn run() -> eyre::Result<()> {
             classic_patches,
             output,
             no_compression,
+            zstd,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let compression = if no_compression {
                 CompressionFlag::None
+            } else if let Some(level) = zstd {
+                zstd_compression(level)
             } else {
                 CompressionFlag::ZstdNoDict
             };
@@ -1614,11 +1641,14 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
             no_compression,
+            zstd,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let compression = if no_compression {
                 CompressionFlag::None
+            } else if let Some(level) = zstd {
+                zstd_compression(level)
             } else {
                 CompressionFlag::ZstdNoDict
             };
@@ -1633,13 +1663,18 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             classic_patches,
             output,
+            raw: _,
+            zstd,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let summary = convert_gumps_to_uddp_from_sources_with_patches(
+            let summary = convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &paths,
                 &out_file,
                 &classic_patches.into(),
+                &CcGumpsOptions {
+                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                },
             )?;
             println!(
                 "Wrote {} Classic gumps to '{}' ({} single, {} atlas).",
@@ -1653,6 +1688,8 @@ pub fn run() -> eyre::Result<()> {
             source_dirs: source_dir_args,
             output,
             max_id,
+            raw: _,
+            zstd,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1661,7 +1698,7 @@ pub fn run() -> eyre::Result<()> {
                 &out_file,
                 &EcGumpsOptions {
                     max_id,
-                    compression: CompressionFlag::ZstdNoDict,
+                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
                 },
             )?;
             println!(
@@ -1768,6 +1805,7 @@ mod tests {
                 output,
                 ec_art_cropped,
                 use_ec_radarcol,
+                ..
             } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
@@ -2293,6 +2331,7 @@ mod tests {
                 source_dirs,
                 output,
                 max_id,
+                ..
             } => {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("gumps_ec.uddp"));

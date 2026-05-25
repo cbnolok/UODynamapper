@@ -46,9 +46,9 @@ pub enum UpscaleFilter {
     FsrEasuRcas3x,
     FsrEasuRcas4x,
     /// Kopf-Lischinski Depixelization variants.
-    Depixelize2x,
-    Depixelize3x,
-    Depixelize4x,
+    KLDepixelize2x,
+    KLDepixelize3x,
+    KLDepixelize4x,
     
     // New algorithms
     Nedi2x,
@@ -57,9 +57,9 @@ pub enum UpscaleFilter {
     Lq2x,
     Lq3x,
     Lq4x,
-    Hq2x,
-    Hq3x,
-    Hq4x,
+    Hq2xSimple,
+    Hq3xSimple,
+    Hq4xSimple,
     Hq2xTrue,
     Hq3xTrue,
     Hq4xTrue,
@@ -96,12 +96,12 @@ impl UpscaleFilter {
             Self::FsrEasu2x | Self::FsrEasuRcas2x => 2,
             Self::FsrEasu3x | Self::FsrEasuRcas3x => 3,
             Self::FsrEasu4x | Self::FsrEasuRcas4x => 4,
-            Self::Depixelize2x => 2,
-            Self::Depixelize3x => 3,
-            Self::Depixelize4x => 4,
-            Self::Hq2x | Self::Hq2xTrue => 2,
-            Self::Hq3x | Self::Hq3xTrue => 3,
-            Self::Hq4x | Self::Hq4xTrue => 4,
+            Self::KLDepixelize2x => 2,
+            Self::KLDepixelize3x => 3,
+            Self::KLDepixelize4x => 4,
+            Self::Hq2xSimple | Self::Hq2xTrue => 2,
+            Self::Hq3xSimple | Self::Hq3xTrue => 3,
+            Self::Hq4xSimple | Self::Hq4xTrue => 4,
             Self::Epx2x => 2,
             Self::Epx3x => 3,
             Self::Epx4x => 4,
@@ -174,7 +174,7 @@ impl UpscaleFilter {
                 let (_, _, easu_rgba) = fsr::apply_easu(width, height, rgba, target_width, target_height);
                 fsr::apply_rcas(target_width, target_height, &easu_rgba, 0.0)
             }
-            Self::Depixelize2x | Self::Depixelize3x | Self::Depixelize4x => {
+            Self::KLDepixelize2x | Self::KLDepixelize3x | Self::KLDepixelize4x => {
                 let scale = (target_width / width).max(1);
                 depixelize::apply_depixelize(width, height, rgba, scale).2
             }
@@ -182,7 +182,7 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 lq::apply_lq(width, height, rgba, scale).2
             }
-            Self::Hq2x | Self::Hq3x | Self::Hq4x => {
+            Self::Hq2xSimple | Self::Hq3xSimple | Self::Hq4xSimple => {
                 let scale = (target_width / width).max(1);
                 hqx::apply_hqx(width, height, rgba, scale).2
             }
