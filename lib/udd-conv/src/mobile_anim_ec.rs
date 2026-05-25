@@ -15,7 +15,7 @@ use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
 };
 use uocf::animation_sequence::AnimationSequence;
-use uocf::enhanced::animationframe::{AnimationFrame, FrameEntry};
+use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, FrameEntry};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
@@ -614,7 +614,7 @@ fn plan_animationframe_package(
     for file_hash in file_hashes {
         pb.inc(1);
         let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else { continue; };
-        let Ok(animation) = AnimationFrame::load(&data) else { continue; };
+        let Ok(animation) = AnimationFrame::load_metadata(&data) else { continue; };
         let mut frames = Vec::with_capacity(animation.frames.len());
         for (index, entry) in animation.frames.iter().enumerate() {
             if index > u16::MAX as usize {
@@ -635,7 +635,7 @@ fn plan_animationframe_package(
 }
 
 fn planned_frame_from_entry(
-    animation: &AnimationFrame,
+    animation: &AnimationFrameMetadata,
     entry: &FrameEntry,
     source_entry_index: u16,
     path: PathBuf,

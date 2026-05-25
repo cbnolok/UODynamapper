@@ -22,7 +22,7 @@ pub struct DecodedFrame {
 }
 
 /// Represents a single frame entry optimized for memory layout.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameEntry {
     pub frame: u16,
     pub unknown: u16,
@@ -80,6 +80,20 @@ pub struct AnimationFrame {
     pub frames: Vec<FrameEntry>,
     /// The raw image data payload
     pub image_data: Arc<[u8]>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnimationFrameMetadata {
+    pub version: u32,
+    pub total_size: u32,
+    pub animation_id: u32,
+    pub init_coords_x: i16,
+    pub init_coords_y: i16,
+    pub end_coords_x: i16,
+    pub end_coords_y: i16,
+    pub frames_count: u32,
+    pub frames_offset: u32,
+    pub frames: Vec<FrameEntry>,
 }
 
 impl AnimationFrame {
@@ -154,6 +168,58 @@ impl AnimationFrame {
             colours,
             frames,
             image_data,
+        })
+    }
+
+    pub fn load_metadata(data: &[u8]) -> eyre::Result<AnimationFrameMetadata> {
+        if data.len() < std::mem::size_of::<AnimationFrameHeader>() {
+            eyre::bail!("Data too small to contain AnimationFrame header");
+        }
+
+        let header: &AnimationFrameHeader =
+            bytemuck::from_bytes(&data[0..std::mem::size_of::<AnimationFrameHeader>()]);
+
+        if &header.signature[0..3] != b"AMO" {
+            eyre::bail!("Invalid animation frame signature");
+        }
+
+        let frames_offset = header.frames_offset as usize;
+        let frames_count = header.frames_count as usize;
+        let expected_frames_end =
+            frames_offset + frames_count * std::mem::size_of::<RawFrameEntry>();
+        if data.len() < expected_frames_end {
+            eyre::bail!("Data too small for frames entries");
+        }
+
+        let frames_slice = &data[frames_offset..expected_frames_end];
+        let raw_frames: &[RawFrameEntry] = bytemuck::cast_slice(frames_slice);
+
+        let mut frames = Vec::with_capacity(frames_count);
+        for (i, raw) in raw_frames.iter().enumerate() {
+            frames.push(FrameEntry {
+                frame: u16::from_le(raw.frame),
+                unknown: u16::from_le(raw.unknown),
+                init_coords_x: i16::from_le(raw.init_coords_x),
+                init_coords_y: i16::from_le(raw.init_coords_y),
+                end_coords_x: i16::from_le(raw.end_coords_x),
+                end_coords_y: i16::from_le(raw.end_coords_y),
+                data_offset: (header.frames_offset
+                    + (i as u32) * 16
+                    + u32::from_le(raw.data_offset)),
+            });
+        }
+
+        Ok(AnimationFrameMetadata {
+            version: u32::from_le(header.version),
+            total_size: u32::from_le(header.total_size),
+            animation_id: u32::from_le(header.animation_id),
+            init_coords_x: i16::from_le(header.init_coords_x),
+            init_coords_y: i16::from_le(header.init_coords_y),
+            end_coords_x: i16::from_le(header.end_coords_x),
+            end_coords_y: i16::from_le(header.end_coords_y),
+            frames_count: u32::from_le(header.frames_count),
+            frames_offset: u32::from_le(header.frames_offset),
+            frames,
         })
     }
 
@@ -384,6 +450,7 @@ mod tests {
         let payload = single_frame_payload(5, 6, 3, 4, 5, 5, &[130, 0, 0, 1]);
 
         let animation = AnimationFrame::load(&payload).unwrap();
+        let metadata = AnimationFrame::load_metadata(&payload).unwrap();
 
         assert_eq!(animation.version, 4);
         assert_eq!(animation.total_size, payload.len() as u32);
@@ -393,6 +460,10 @@ mod tests {
         assert_eq!(animation.frames[0].frame, 9);
         assert_eq!(animation.frames[0].unknown, 11);
         assert_eq!(animation.frames[0].data_offset, 64);
+        assert_eq!(metadata.version, animation.version);
+        assert_eq!(metadata.total_size, animation.total_size);
+        assert_eq!(metadata.animation_id, animation.animation_id);
+        assert_eq!(metadata.frames, animation.frames);
     }
 
     #[test]
