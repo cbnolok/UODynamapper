@@ -372,9 +372,15 @@ fn encode_and_add_mobile_anim_pages(
         pages.len() as u64
     };
     let progress_message = if use_bc7 {
-        "compressing mobile animation BC7 atlas blocks"
+        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
+            "BC7-compressing mobile animation atlas pages; RDO pass follows"
+        } else {
+            "BC7-compressing mobile animation atlas pages"
+        }
+    } else if options.compression == CompressionFlag::JpegXl {
+        "registering mobile animation atlas pages for JPEG XL package compression"
     } else {
-        "encoding mobile animation atlas pages"
+        "registering uncompressed mobile animation atlas pages"
     };
 
     let pb = ProgressBar::new(progress_len);
@@ -405,7 +411,18 @@ fn encode_and_add_mobile_anim_pages(
             })?;
         }
     }
-    pb.finish_with_message("Mobile animation atlas pages encoded");
+    let finish_message = if use_bc7 {
+        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
+            "Mobile animation atlas pages BC7-compressed with RDO"
+        } else {
+            "Mobile animation atlas pages BC7-compressed"
+        }
+    } else if options.compression == CompressionFlag::JpegXl {
+        "Mobile animation atlas pages registered for JPEG XL package compression"
+    } else {
+        "Mobile animation atlas pages registered uncompressed"
+    };
+    pb.finish_with_message(finish_message);
     Ok(())
 }
 
@@ -488,7 +505,7 @@ fn decode_present_animations(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    pb.set_message("decoding mobile animations");
+    pb.set_message("extracting mobile animations");
 
     let mut active_source = String::new();
     for candidate in candidates {
@@ -496,7 +513,7 @@ fn decode_present_animations(
         let source_label = candidate_source_label(&candidate);
         if source_label != active_source {
             active_source = source_label;
-            pb.set_message(format!("decoding {active_source}"));
+            pb.set_message(format!("extracting {active_source}"));
         }
         let frames = match candidate.frames {
             PresentAnimationFrames::Mul => {
@@ -540,7 +557,7 @@ fn decode_present_animations(
             flags: candidate.flags,
         });
     }
-    pb.finish_with_message(format!("Classic mobile animations decoded from {source_summary}"));
+    pb.finish_with_message(format!("Classic mobile animations extracted from {source_summary}"));
 
     Ok((decoded_frames, animation_records, frame_records))
 }
@@ -655,7 +672,7 @@ fn decode_classic_animationframe_package(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    pb.set_message(format!("reading {file_name}"));
+    pb.set_message(format!("extracting {file_name}"));
 
     let mut candidates = Vec::new();
     for file in files {
@@ -680,7 +697,7 @@ fn decode_classic_animationframe_package(
             frames: PresentAnimationFrames::Decoded(animation.frames),
         });
     }
-    pb.finish_with_message(format!("{file_name} read"));
+    pb.finish_with_message(format!("{file_name} extracted"));
     Ok(candidates)
 }
 
@@ -941,10 +958,10 @@ pub fn pack_frames_into_pages(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    pb.set_message("packing mobile animation atlas pages");
+    pb.set_message("creating mobile animation atlas pages");
 
     while !remaining.is_empty() {
-        pb.set_message(format!("packing mobile animation atlas page {page_index}"));
+        pb.set_message(format!("creating mobile animation atlas page {page_index}"));
         let (page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_frames, frame_records, options)?;
         if page.record.frame_count == 0 {
@@ -962,7 +979,7 @@ pub fn pack_frames_into_pages(
         remaining.sort_by_key(|frame| frame.global_frame_index);
         page_index += 1;
     }
-    pb.finish_with_message(format!("Mobile animation atlas pages packed ({page_index} pages)"));
+    pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
 
     Ok(pages)
 }

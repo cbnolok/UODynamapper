@@ -261,9 +261,15 @@ fn encode_and_add_mobile_anim_pages(
         pages.len() as u64
     };
     let progress_message = if use_bc7 {
-        "compressing EC mobile animation BC7 atlas blocks"
+        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
+            "BC7-compressing EC mobile animation atlas pages; RDO pass follows"
+        } else {
+            "BC7-compressing EC mobile animation atlas pages"
+        }
+    } else if options.compression == CompressionFlag::JpegXl {
+        "registering EC mobile animation atlas pages for JPEG XL package compression"
     } else {
-        "encoding EC mobile animation atlas pages"
+        "registering uncompressed EC mobile animation atlas pages"
     };
 
     let pb = ProgressBar::new(progress_len);
@@ -294,7 +300,18 @@ fn encode_and_add_mobile_anim_pages(
             })?;
         }
     }
-    pb.finish_with_message("EC mobile animation atlas pages encoded");
+    let finish_message = if use_bc7 {
+        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
+            "EC mobile animation atlas pages BC7-compressed with RDO"
+        } else {
+            "EC mobile animation atlas pages BC7-compressed"
+        }
+    } else if options.compression == CompressionFlag::JpegXl {
+        "EC mobile animation atlas pages registered for JPEG XL package compression"
+    } else {
+        "EC mobile animation atlas pages registered uncompressed"
+    };
+    pb.finish_with_message(finish_message);
     Ok(())
 }
 
@@ -473,7 +490,7 @@ fn decode_animationframe_package(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    pb.set_message(format!("decoding EC mobile animations from {file_name}"));
+    pb.set_message(format!("extracting EC mobile animations from {file_name}"));
 
     let mut decoded_by_body = BTreeMap::<u32, Vec<DecodedMobileAnimEcFrame>>::new();
     for file in files {
@@ -498,7 +515,7 @@ fn decode_animationframe_package(
         }
         append_decoded_body_frames(&mut decoded_by_body, animation.animation_id, frames)?;
     }
-    pb.finish_with_message(format!("EC mobile animations decoded from {file_name}"));
+    pb.finish_with_message(format!("EC mobile animations extracted from {file_name}"));
     Ok(decoded_by_body)
 }
 
@@ -660,7 +677,7 @@ pub(crate) fn pack_frames_into_pages(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    pb.set_message("packing EC mobile animation atlas pages");
+    pb.set_message("creating EC mobile animation atlas pages");
     pb.enable_steady_tick(Duration::from_millis(100));
 
     remaining.sort_by_key(|frame| (frame.body_id, frame.source_frame_index));
@@ -669,7 +686,7 @@ pub(crate) fn pack_frames_into_pages(
     let mut page_index = 0u32;
 
     while !remaining.is_empty() {
-        pb.set_message(format!("packing EC mobile animation atlas page {}", page_index + 1));
+        pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
         let (page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_frames, &mut placements, options)?;
         if page.record.frame_count == 0 {
@@ -687,7 +704,7 @@ pub(crate) fn pack_frames_into_pages(
         page_index += 1;
     }
 
-    pb.finish_with_message(format!("EC mobile animation atlas pages packed ({})", pages.len()));
+    pb.finish_with_message(format!("EC mobile animation atlas pages created ({})", pages.len()));
     Ok((pages, placements))
 }
 

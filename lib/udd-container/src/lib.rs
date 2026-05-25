@@ -8,6 +8,7 @@ pub use uddp::{
     BuildProgress,
     BuildProgressPhase,
     Codec,
+    CompressionSummary,
     CompressionFlag,
     DataType,
     FileKey,

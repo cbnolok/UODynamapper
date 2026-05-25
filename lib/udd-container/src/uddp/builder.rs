@@ -70,6 +70,15 @@ pub struct BuildProgress {
     pub total: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompressionSummary {
+    pub raw: usize,
+    pub zstd_no_dict: usize,
+    pub zstd_dict: usize,
+    pub jpeg_xl: usize,
+    pub auto: usize,
+}
+
 /// Builder for runtime `.uddp` containers.
 ///
 /// The builder collects logical files first and decides on physical encoding
@@ -148,6 +157,20 @@ impl UddpBuilder {
         });
 
         Ok(())
+    }
+
+    pub fn compression_summary(&self) -> CompressionSummary {
+        let mut summary = CompressionSummary::default();
+        for file in &self.files {
+            match file.compression {
+                CompressionFlag::None => summary.raw += 1,
+                CompressionFlag::ZstdNoDict => summary.zstd_no_dict += 1,
+                CompressionFlag::ZstdDict => summary.zstd_dict += 1,
+                CompressionFlag::JpegXl => summary.jpeg_xl += 1,
+                CompressionFlag::Auto => summary.auto += 1,
+            }
+        }
+        summary
     }
 
     /// Build the final package image.
