@@ -20,11 +20,11 @@ use uocf::classic::anim::{AnimFrame, AnimMap, MAX_ANIM_FILES};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
 use uocf::classic::bodyconv_def::BodyConvDef;
-use uocf::uop_container::package::UopPackage;
+use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
-    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
+    encode_for_vram_with_bc7_rdo_lambda_and_progress, preferred_bc7_encoder_backend, ImageExtent,
+    RawImageFormat, VramTextureEncoding,
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, source_path_label};
@@ -130,6 +130,11 @@ pub struct BuiltMobileAnimPage {
     pub pixels: Vec<u8>,
 }
 
+struct PackedMobileAnimPages {
+    records: Vec<MobileAnimCcPageRecord>,
+    stats: MobileAnimPageStats,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AtlasPageSize {
     width: u32,
@@ -177,20 +182,21 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
 
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
-    let (decoded_frames, mut animation_records, mut frame_records) =
+    let (decoded_frames, animation_records, mut frame_records) =
         decode_present_animations(&client_dir, &anim_map)?;
     let packed_frame_count = decoded_frames.len() as u32;
-    let pages = pack_frames_into_pages(decoded_frames, &mut frame_records, options)?;
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let body_type_records = build_body_type_records(&client_dir)?;
 
-    let page_manifest = serialize_page_manifest(&pages, options)?;
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    let packed_pages = pack_frames_into_package(&mut package, decoded_frames, &mut frame_records, options)?;
+
+    let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animation_records)?;
     let frame_manifest = serialize_frame_manifest(&frame_records)?;
     let body_resolve_manifest = serialize_body_resolve_manifest(&body_resolve_records)?;
     let body_type_manifest = serialize_body_type_manifest(&body_type_records)?;
 
-    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
         (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
@@ -210,20 +216,16 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         })?;
     }
 
-    let page_count = pages.len() as u32;
-    let page_stats = summarize_mobile_anim_pages(&pages);
-    encode_and_add_mobile_anim_pages(&mut package, pages, options)?;
-
     build_and_write_package(&mut package, out_file)?;
 
     Ok(MobileAnimCcBuildSummary {
         animation_count: animation_records.len() as u32,
         frame_count: frame_records.len() as u32,
         packed_frame_count,
-        page_count,
-        used_page_pixel_count: page_stats.used_page_pixel_count,
-        filled_pixel_count: page_stats.filled_pixel_count,
-        empty_pixel_count: page_stats.empty_pixel_count,
+        page_count: packed_pages.records.len() as u32,
+        used_page_pixel_count: packed_pages.stats.used_page_pixel_count,
+        filled_pixel_count: packed_pages.stats.filled_pixel_count,
+        empty_pixel_count: packed_pages.stats.empty_pixel_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
@@ -232,17 +234,23 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimPage]) -> MobileAnimPageStats {
     let mut stats = MobileAnimPageStats::default();
     for page in pages {
+        stats.add_page(page);
+    }
+    stats
+}
+
+impl MobileAnimPageStats {
+    fn add_page(&mut self, page: &BuiltMobileAnimPage) {
         let used_pixels = page.record.used_width as u64 * page.record.used_height as u64;
         let filled_pixels = page
             .pixels
             .chunks_exact(4)
             .filter(|pixel| pixel[3] != 0)
             .count() as u64;
-        stats.used_page_pixel_count += used_pixels;
-        stats.filled_pixel_count += filled_pixels;
-        stats.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
+        self.used_page_pixel_count += used_pixels;
+        self.filled_pixel_count += filled_pixels;
+        self.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
     }
-    stats
 }
 
 fn print_classic_animation_source_files(client_dir: &Path) {
@@ -365,25 +373,8 @@ fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn encode_and_add_mobile_anim_pages(
-    package: &mut UddpBuilder,
-    pages: Vec<BuiltMobileAnimPage>,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<()> {
-    let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
-    let progress_len = if use_bc7 {
-        pages
-            .iter()
-            .map(|page| {
-                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
-                    .map_err(|e| eyre::eyre!("{e}"))?;
-                Ok(bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64)
-            })
-            .sum::<eyre::Result<u64>>()?
-    } else {
-        pages.len() as u64
-    };
-    let progress_message = if use_bc7 {
+fn mobile_anim_page_progress_message(options: &MobileAnimCcAtlasOptions) -> &'static str {
+    if options.pixel_format == PagePixelFormat::Bc7 {
         if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
             "BC7-compressing mobile animation atlas pages; RDO pass follows"
         } else {
@@ -393,37 +384,11 @@ fn encode_and_add_mobile_anim_pages(
         "registering mobile animation atlas pages for JPEG XL package compression"
     } else {
         "registering uncompressed mobile animation atlas pages"
-    };
-
-    let pb = ProgressBar::new(progress_len);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
-    pb.set_message(progress_message);
-
-    let chunk_size = rayon::current_num_threads().max(1);
-    let mut pages = pages.into_iter();
-    loop {
-        let chunk = pages.by_ref().take(chunk_size).collect::<Vec<_>>();
-        if chunk.is_empty() {
-            break;
-        }
-        let encoded_pages = encode_mobile_anim_page_chunk(&chunk, options, &pb)?;
-        for (page_path, stored_page, width, height) in &encoded_pages {
-            package.add_file(AddFileRequest {
-                data_type: DataType::Texture as u8,
-                compression: options.compression,
-                width: *width,
-                height: *height,
-                virtual_path: Some(page_path),
-                path_hash64: None,
-                id: None,
-                data: stored_page,
-            })?;
-        }
     }
-    let finish_message = if use_bc7 {
+}
+
+fn mobile_anim_page_finish_message(options: &MobileAnimCcAtlasOptions) -> &'static str {
+    if options.pixel_format == PagePixelFormat::Bc7 {
         if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
             "Mobile animation atlas pages BC7-compressed with RDO"
         } else {
@@ -433,8 +398,28 @@ fn encode_and_add_mobile_anim_pages(
         "Mobile animation atlas pages registered for JPEG XL package compression"
     } else {
         "Mobile animation atlas pages registered uncompressed"
-    };
-    pb.finish_with_message(finish_message);
+    }
+}
+
+fn encode_and_add_mobile_anim_page_chunk(
+    package: &mut UddpBuilder,
+    pages: &[BuiltMobileAnimPage],
+    options: &MobileAnimCcAtlasOptions,
+    pb: &ProgressBar,
+) -> eyre::Result<()> {
+    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, pb)?;
+    for (page_path, stored_page, width, height) in &encoded_pages {
+        package.add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: options.compression,
+            width: *width,
+            height: *height,
+            virtual_path: Some(page_path),
+            path_hash64: None,
+            id: None,
+            data: stored_page,
+        })?;
+    }
     Ok(())
 }
 
@@ -663,7 +648,7 @@ fn decode_classic_animationframe_packages(
 ) -> eyre::Result<Vec<PresentAnimationCandidate>> {
     let mut candidates = Vec::new();
     for path in paths {
-        let package = UopPackage::load(path)
+        let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
             .wrap_err_with(|| format!("load {}", path.display()))?;
         let file_index = classic_animationframe_uop_index(path)? - 1;
         let mut decoded = decode_classic_animationframe_package(&package, file_index, path)?;
@@ -677,9 +662,13 @@ fn decode_classic_animationframe_package(
     file_index: u8,
     path: &Path,
 ) -> eyre::Result<Vec<PresentAnimationCandidate>> {
-    let files = package.iter_files().filter(|file| file.has_size()).collect::<Vec<_>>();
+    let file_hashes = package
+        .iter_files()
+        .filter(|file| file.has_size())
+        .map(|file| file.filename_hash())
+        .collect::<Vec<_>>();
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("AnimationFrame*.uop");
-    let pb = ProgressBar::new(files.len() as u64);
+    let pb = ProgressBar::new(file_hashes.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
@@ -687,9 +676,9 @@ fn decode_classic_animationframe_package(
     pb.set_message(format!("extracting {file_name}"));
 
     let mut candidates = Vec::new();
-    for file in files {
+    for file_hash in file_hashes {
         pb.inc(1);
-        let Ok(data) = file.unpack() else { continue; };
+        let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else { continue; };
         let Ok(animation) = AnimationFrameCc::parse(&data) else { continue; };
         if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
             continue;
@@ -994,6 +983,68 @@ pub fn pack_frames_into_pages(
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
 
     Ok(pages)
+}
+
+fn pack_frames_into_package(
+    package: &mut UddpBuilder,
+    frames: Vec<DecodedMobileAnimFrame>,
+    frame_records: &mut [MobileAnimCcFrameRecord],
+    options: &MobileAnimCcAtlasOptions,
+) -> eyre::Result<PackedMobileAnimPages> {
+    let mut remaining = frames;
+    let total_frames = remaining.len() as u64;
+    remaining.sort_by_key(|frame| frame.global_frame_index);
+    let mut records = Vec::new();
+    let mut stats = MobileAnimPageStats::default();
+    let mut page_index = 0u32;
+    let mut pending_pages = Vec::new();
+    let chunk_size = rayon::current_num_threads().max(1);
+
+    let pb = ProgressBar::new(total_frames);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating mobile animation atlas pages");
+
+    let encode_pb = ProgressBar::new_spinner();
+    encode_pb.set_message(mobile_anim_page_progress_message(options));
+
+    while !remaining.is_empty() {
+        pb.set_message(format!("creating mobile animation atlas page {page_index}"));
+        let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
+        let (page, unplaced) = build_page(page_index, page_size, page_frames, frame_records, options)?;
+        if page.record.frame_count == 0 {
+            eyre::bail!(
+                "could not fit any mobile animation frame into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
+        }
+
+        pb.inc(page.record.frame_count as u64);
+        stats.add_page(&page);
+        records.push(page.record);
+        pending_pages.push(page);
+        if pending_pages.len() >= chunk_size {
+            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+            pending_pages.clear();
+        }
+
+        remaining = leftovers;
+        remaining.extend(unplaced);
+        remaining.sort_by_key(|frame| frame.global_frame_index);
+        page_index += 1;
+    }
+
+    if !pending_pages.is_empty() {
+        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+    }
+
+    pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
+    encode_pb.finish_with_message(mobile_anim_page_finish_message(options));
+
+    Ok(PackedMobileAnimPages { records, stats })
 }
 
 fn take_page_frame_prefix(
@@ -1322,7 +1373,15 @@ pub fn serialize_page_manifest(
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(26 + pages.len() * 24);
+    let records = pages.iter().map(|page| page.record).collect::<Vec<_>>();
+    serialize_page_record_manifest(&records, options)
+}
+
+fn serialize_page_record_manifest(
+    records: &[MobileAnimCcPageRecord],
+    options: &MobileAnimCcAtlasOptions,
+) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(26 + records.len() * 24);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -1330,14 +1389,14 @@ pub fn serialize_page_manifest(
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
     bytes.push(options.pixel_format as u8);
     bytes.push(AtlasPackingMode::Bc7Oriented as u8);
-    bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
-    for page in pages {
-        bytes.write_u32::<LittleEndian>(page.record.page_index)?;
-        bytes.write_u32::<LittleEndian>(page.record.frame_count)?;
-        bytes.write_u32::<LittleEndian>(page.record.atlas_width)?;
-        bytes.write_u32::<LittleEndian>(page.record.atlas_height)?;
-        bytes.write_u32::<LittleEndian>(page.record.used_width)?;
-        bytes.write_u32::<LittleEndian>(page.record.used_height)?;
+    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
+    for record in records {
+        bytes.write_u32::<LittleEndian>(record.page_index)?;
+        bytes.write_u32::<LittleEndian>(record.frame_count)?;
+        bytes.write_u32::<LittleEndian>(record.atlas_width)?;
+        bytes.write_u32::<LittleEndian>(record.atlas_height)?;
+        bytes.write_u32::<LittleEndian>(record.used_width)?;
+        bytes.write_u32::<LittleEndian>(record.used_height)?;
     }
     Ok(bytes)
 }
@@ -1678,6 +1737,81 @@ mod tests {
         assert_eq!(package.body_resolve_record(7).unwrap().file_index, 2);
         assert_eq!(package.body_type_record(7).unwrap().flags, 0x8000_0001);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
+    }
+
+    #[test]
+    fn streaming_packer_writes_package_pages_without_retaining_page_pixels() {
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 4,
+            compression: CompressionFlag::ZstdNoDict,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+        };
+        let mut frame_records = vec![MobileAnimCcFrameRecord {
+            animation_index: 0,
+            frame_index: 0,
+            page_index: MISSING_PAGE_INDEX,
+            page_frame_index: MISSING_PAGE_FRAME_INDEX,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            center_x: 0,
+            center_y: 0,
+        }];
+        let animations = vec![MobileAnimCcAnimationRecord {
+            body_id: 1,
+            action_id: 0,
+            direction: 0,
+            file_index: 0,
+            source_index: 0,
+            frame_start: 0,
+            frame_count: 1,
+            flags: 0,
+        }];
+
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        let packed_pages =
+            pack_frames_into_package(&mut builder, vec![frame(0, 4, 4)], &mut frame_records, &options).unwrap();
+        let page_manifest = serialize_page_record_manifest(&packed_pages.records, &options).unwrap();
+        let animation_manifest = serialize_animation_manifest(&animations).unwrap();
+        let frame_manifest = serialize_frame_manifest(&frame_records).unwrap();
+        let body_resolve_manifest = serialize_body_resolve_manifest(&[]).unwrap();
+        let body_type_manifest = serialize_body_type_manifest(&[]).unwrap();
+
+        for (path, data) in [
+            (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
+            (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
+            (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
+            (BODY_RESOLVE_MANIFEST_ENTRY_PATH, body_resolve_manifest.as_slice()),
+            (BODY_TYPE_MANIFEST_ENTRY_PATH, body_type_manifest.as_slice()),
+        ] {
+            builder.add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: 0,
+                height: 0,
+                virtual_path: Some(path),
+                path_hash64: None,
+                id: None,
+                data,
+            }).unwrap();
+        }
+
+        let package = MobileAnimCcPackage::from_uddp_package(
+            UddpReader::open(builder.build().unwrap()).unwrap(),
+        ).unwrap();
+
+        assert_eq!(packed_pages.records.len(), 1);
+        assert_eq!(package.pages().len(), 1);
+        assert_eq!(package.animation(1, 0, 0).unwrap().frame_count, 1);
+        let page = package.pages()[0];
+        assert_eq!(
+            package.read_page_bytes(0).unwrap().len(),
+            page.used_width as usize * page.used_height as usize * 4
+        );
     }
 
     #[test]
