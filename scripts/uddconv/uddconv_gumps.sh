@@ -2,4 +2,4 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec just --justfile "$ROOT_DIR/justfile" --working-directory "$ROOT_DIR" uddconv-gumps "$@"
+exec python "$ROOT_DIR/scripts/uddconv/uddconv.py" gumps "$@"
