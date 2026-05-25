@@ -663,9 +663,18 @@ fn planned_frame_from_entry(
     }
 }
 
-fn decode_planned_animation_source(source: &PlannedMobileAnimEcSource) -> eyre::Result<AnimationFrame> {
-    let package = UopPackage::load_with_mode(&source.path, LoadMode::Lazy)
-        .wrap_err_with(|| format!("load {}", source.path.display()))?;
+fn decode_planned_animation_source(
+    source: &PlannedMobileAnimEcSource,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+) -> eyre::Result<AnimationFrame> {
+    if !animationframe_packages.contains_key(&source.path) {
+        let package = UopPackage::load_with_mode(&source.path, LoadMode::Lazy)
+            .wrap_err_with(|| format!("load {}", source.path.display()))?;
+        animationframe_packages.insert(source.path.clone(), package);
+    }
+    let package = animationframe_packages
+        .get(&source.path)
+        .expect("EC AnimationFrame UOP package was just cached");
     let data = package
         .unpack_file_by_hash(source.file_hash)?
         .ok_or_else(|| eyre::eyre!(
@@ -678,11 +687,12 @@ fn decode_planned_animation_source(source: &PlannedMobileAnimEcSource) -> eyre::
 
 fn cached_decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     cache: &mut HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>,
     order: &mut VecDeque<PlannedMobileAnimEcSource>,
 ) -> eyre::Result<Arc<AnimationFrame>> {
     if !cache.contains_key(source) {
-        let decoded = Arc::new(decode_planned_animation_source(source)?);
+        let decoded = Arc::new(decode_planned_animation_source(source, animationframe_packages)?);
         cache.insert(source.clone(), decoded);
         order.push_back(source.clone());
         while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
@@ -955,6 +965,7 @@ fn pack_planned_frames_into_package(
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
+    let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, Arc<AnimationFrame>>::new();
     let mut decoded_source_order = VecDeque::<PlannedMobileAnimEcSource>::new();
 
@@ -977,6 +988,7 @@ fn pack_planned_frames_into_package(
             &mut placements,
             options,
             &mut page_pixels,
+            &mut animationframe_package_cache,
             &mut decoded_source_cache,
             &mut decoded_source_order,
         )?;
@@ -1371,6 +1383,7 @@ fn build_planned_page(
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
     pixels: &mut Vec<u8>,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>,
     decoded_source_order: &mut VecDeque<PlannedMobileAnimEcSource>,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>)> {
@@ -1418,6 +1431,7 @@ fn build_planned_page(
         )) {
             let animation = cached_decode_planned_animation_source(
                 &frame.source,
+                animationframe_packages,
                 decoded_sources,
                 decoded_source_order,
             )?;

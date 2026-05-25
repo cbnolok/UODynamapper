@@ -5,6 +5,7 @@
 //! packer uses 4-pixel-aligned content extents so the same metadata remains
 //! valid for both RGBA8888 and BC7 page payloads.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -131,6 +132,7 @@ enum PresentAnimationFrames {
     AnimationFrameUop {
         path: PathBuf,
         file_hash: u64,
+        frame_metadata: Vec<AnimFrameInfo>,
     },
 }
 
@@ -604,7 +606,7 @@ fn planned_animation_source(candidate: &PresentAnimationCandidate) -> PlannedAni
             file_index: candidate.file_index,
             source_index: candidate.source_index,
         },
-        PresentAnimationFrames::AnimationFrameUop { path, file_hash } => {
+        PresentAnimationFrames::AnimationFrameUop { path, file_hash, .. } => {
             PlannedAnimationSource::AnimationFrameUop {
                 path: path.clone(),
                 file_hash: *file_hash,
@@ -661,16 +663,18 @@ fn scale_i16(value: i16, scale: u32, label: &str) -> eyre::Result<i16> {
     Ok(scaled as i16)
 }
 
-fn decode_candidate_animation_frame_metadata(
-    candidate: &PresentAnimationCandidate,
+fn decode_candidate_animation_frame_metadata<'a>(
+    candidate: &'a PresentAnimationCandidate,
     anim_map: &AnimMap,
-) -> eyre::Result<Vec<AnimFrameInfo>> {
+) -> eyre::Result<Cow<'a, [AnimFrameInfo]>> {
     match &candidate.frames {
         PresentAnimationFrames::Mul => {
-            anim_map.decode_animation_index_metadata(candidate.file_index, candidate.source_index)
+            anim_map
+                .decode_animation_index_metadata(candidate.file_index, candidate.source_index)
+                .map(Cow::Owned)
         }
-        PresentAnimationFrames::AnimationFrameUop { path, file_hash } => {
-            decode_classic_animationframe_uop_frame_metadata(path, *file_hash)
+        PresentAnimationFrames::AnimationFrameUop { frame_metadata, .. } => {
+            Ok(Cow::Borrowed(frame_metadata))
         }
     }
 }
@@ -678,13 +682,22 @@ fn decode_candidate_animation_frame_metadata(
 fn decode_planned_animation_source(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
 ) -> eyre::Result<Vec<AnimFrame>> {
     match source {
         PlannedAnimationSource::Mul { file_index, source_index } => {
             anim_map.decode_animation_index(*file_index, *source_index)
         }
         PlannedAnimationSource::AnimationFrameUop { path, file_hash } => {
-            decode_classic_animationframe_uop_frames(path, *file_hash)
+            if !animationframe_packages.contains_key(path) {
+                let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
+                    .wrap_err_with(|| format!("load {}", path.display()))?;
+                animationframe_packages.insert(path.clone(), package);
+            }
+            let package = animationframe_packages
+                .get(path)
+                .expect("Classic AnimationFrame UOP package was just cached");
+            decode_classic_animationframe_uop_frames_from_package(package, path, *file_hash)
         }
     }
 }
@@ -692,11 +705,12 @@ fn decode_planned_animation_source(
 fn cached_decode_planned_animation_source<'a>(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     cache: &'a mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
     order: &mut VecDeque<PlannedAnimationSource>,
 ) -> eyre::Result<&'a Vec<AnimFrame>> {
     if !cache.contains_key(source) {
-        let decoded = decode_planned_animation_source(source, anim_map)?;
+        let decoded = decode_planned_animation_source(source, anim_map, animationframe_packages)?;
         cache.insert(source.clone(), decoded);
         order.push_back(source.clone());
         while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
@@ -714,23 +728,15 @@ fn cached_decode_planned_animation_source<'a>(
         .expect("planned mobile animation source was just cached"))
 }
 
-fn decode_classic_animationframe_uop_frames(path: &Path, file_hash: u64) -> eyre::Result<Vec<AnimFrame>> {
-    let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
-        .wrap_err_with(|| format!("load {}", path.display()))?;
+fn decode_classic_animationframe_uop_frames_from_package(
+    package: &UopPackage,
+    path: &Path,
+    file_hash: u64,
+) -> eyre::Result<Vec<AnimFrame>> {
     let data = package
         .unpack_file_by_hash(file_hash)?
         .ok_or_else(|| eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display()))?;
     let animation = AnimationFrameCc::parse(&data)?;
-    Ok(animation.frames)
-}
-
-fn decode_classic_animationframe_uop_frame_metadata(path: &Path, file_hash: u64) -> eyre::Result<Vec<AnimFrameInfo>> {
-    let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
-        .wrap_err_with(|| format!("load {}", path.display()))?;
-    let data = package
-        .unpack_file_by_hash(file_hash)?
-        .ok_or_else(|| eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display()))?;
-    let animation = AnimationFrameCc::parse_metadata(&data)?;
     Ok(animation.frames)
 }
 
@@ -873,6 +879,7 @@ fn decode_classic_animationframe_package(
             frames: PresentAnimationFrames::AnimationFrameUop {
                 path: path.to_path_buf(),
                 file_hash,
+                frame_metadata: animation.frames,
             },
         });
     }
@@ -1269,6 +1276,7 @@ fn pack_planned_frames_into_package(
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
+    let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedAnimationSource, Vec<AnimFrame>>::new();
     let mut decoded_source_order = VecDeque::<PlannedAnimationSource>::new();
 
@@ -1299,6 +1307,7 @@ fn pack_planned_frames_into_package(
             anim_map,
             options,
             &mut page_pixels,
+            &mut animationframe_package_cache,
             &mut decoded_source_cache,
             &mut decoded_source_order,
         )?;
@@ -1693,6 +1702,7 @@ fn build_planned_page(
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
     pixels: &mut Vec<u8>,
+    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     decoded_sources: &mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
     decoded_source_order: &mut VecDeque<PlannedAnimationSource>,
 ) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>)> {
@@ -1740,6 +1750,7 @@ fn build_planned_page(
             let decoded_frames = cached_decode_planned_animation_source(
                 &frame.source,
                 anim_map,
+                animationframe_packages,
                 decoded_sources,
                 decoded_source_order,
             )?;
