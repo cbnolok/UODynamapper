@@ -171,6 +171,21 @@ fn resolve_mobile_anim_output_format(
     }
 }
 
+fn percent_string(part: u64, total: u64) -> String {
+    if total == 0 {
+        "0.00%".to_string()
+    } else {
+        format!("{:.2}%", part as f64 * 100.0 / total as f64)
+    }
+}
+
+fn estimated_bc7_bytes(pixel_count: u64, pixel_format: PagePixelFormat) -> u64 {
+    match pixel_format {
+        PagePixelFormat::Bc7 => pixel_count,
+        PagePixelFormat::Rgba8888 => pixel_count * 4,
+    }
+}
+
 fn collect_source_dirs(args: &SourceDirArgs) -> eyre::Result<Vec<PathBuf>> {
     validate_optional_source_dir(args.ccdir.as_ref(), "--ccdir")?;
     validate_optional_source_dir(args.ecdir.as_ref(), "--ecdir")?;
@@ -993,6 +1008,15 @@ pub fn run() -> eyre::Result<()> {
                 summary.animation_count,
                 out_file.display()
             );
+            println!(
+                "Mobile animation atlas usage: {} used pixels, {} filled ({}) and {} empty ({}); estimated uncompressed page payload {} bytes.",
+                summary.used_page_pixel_count,
+                summary.filled_pixel_count,
+                percent_string(summary.filled_pixel_count, summary.used_page_pixel_count),
+                summary.empty_pixel_count,
+                percent_string(summary.empty_pixel_count, summary.used_page_pixel_count),
+                estimated_bc7_bytes(summary.used_page_pixel_count, output_format.pixel_format),
+            );
         }
         Commands::PackEcMobileAnims {
             source_dirs: source_dir_args,
@@ -1034,6 +1058,15 @@ pub fn run() -> eyre::Result<()> {
                 summary.item_metadata_count,
                 summary.source_hint_count,
                 out_file.display()
+            );
+            println!(
+                "EC mobile animation atlas usage: {} used pixels, {} filled ({}) and {} empty ({}); estimated uncompressed page payload {} bytes.",
+                summary.used_page_pixel_count,
+                summary.filled_pixel_count,
+                percent_string(summary.filled_pixel_count, summary.used_page_pixel_count),
+                summary.empty_pixel_count,
+                percent_string(summary.empty_pixel_count, summary.used_page_pixel_count),
+                estimated_bc7_bytes(summary.used_page_pixel_count, output_format.pixel_format),
             );
         }
         Commands::PackEcTextures {

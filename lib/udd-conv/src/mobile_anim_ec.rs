@@ -65,6 +65,9 @@ pub struct MobileAnimEcBuildSummary {
     pub frame_count: u32,
     pub packed_frame_count: u32,
     pub page_count: u32,
+    pub used_page_pixel_count: u64,
+    pub filled_pixel_count: u64,
+    pub empty_pixel_count: u64,
     pub item_metadata_count: u32,
     pub source_hint_count: u32,
     pub source_uop_count: u32,
@@ -121,6 +124,13 @@ pub(crate) struct FramePlacement {
 pub struct BuiltMobileAnimEcPage {
     pub record: MobileAnimEcPageRecord,
     pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct MobileAnimPageStats {
+    used_page_pixel_count: u64,
+    filled_pixel_count: u64,
+    empty_pixel_count: u64,
 }
 
 pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
@@ -187,6 +197,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     }
 
     let page_count = pages.len() as u32;
+    let page_stats = summarize_mobile_anim_pages(&pages);
     encode_and_add_mobile_anim_pages(&mut package, pages, options)?;
 
     build_and_write_package(&mut package, out_file)?;
@@ -197,12 +208,31 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
         frame_count: frames.len() as u32,
         packed_frame_count,
         page_count,
+        used_page_pixel_count: page_stats.used_page_pixel_count,
+        filled_pixel_count: page_stats.filled_pixel_count,
+        empty_pixel_count: page_stats.empty_pixel_count,
         item_metadata_count: items.len() as u32,
         source_hint_count: source_hints.len() as u32,
         source_uop_count: animationframe_paths.len() as u32,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
+}
+
+fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimEcPage]) -> MobileAnimPageStats {
+    let mut stats = MobileAnimPageStats::default();
+    for page in pages {
+        let used_pixels = page.record.used_width as u64 * page.record.used_height as u64;
+        let filled_pixels = page
+            .pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] != 0)
+            .count() as u64;
+        stats.used_page_pixel_count += used_pixels;
+        stats.filled_pixel_count += filled_pixels;
+        stats.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
+    }
+    stats
 }
 
 fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
