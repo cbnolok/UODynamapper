@@ -12,7 +12,7 @@ use crate::gump_atlas::{
     add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
+use crate::source_paths::{find_first_existing_file, source_path_label};
 
 pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
 
@@ -47,15 +47,15 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
     .map(|name| source_root.join(name))
     .find(|path| path.is_file());
     if let (Some(idx_path), Some(mul_path)) = (&gump_idx_path, &gump_mul_path) {
-        println!("Using CC gump index source file: {}", idx_path.display());
-        println!("Using CC gump source file (MUL): {}", mul_path.display());
+        println!("Using CC gump index source file: {}", source_path_label(&source_root, idx_path));
+        println!("Using CC gump source file (MUL): {}", source_path_label(&source_root, mul_path));
     } else if let Some(uop_path) = &gump_uop_path {
-        println!("Using CC gump source file (UOP): {}", uop_path.display());
+        println!("Using CC gump source file (UOP): {}", source_path_label(&source_root, uop_path));
     }
     if gump_idx_path.is_some() && gump_mul_path.is_some() && gump_uop_path.is_some() {
         println!(
             "Using CC gump source preference: MUL first; UOP fallback available: {}",
-            gump_uop_path.as_ref().expect("checked above").display()
+            source_path_label(&source_root, gump_uop_path.as_ref().expect("checked above"))
         );
     }
 
@@ -69,10 +69,11 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
     let pb = ProgressBar::new(u64::from(max_id) + 1);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} gumps ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
             .unwrap()
             .progress_chars("#>-"),
     );
+    pb.set_message("extracting CC gumps");
 
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
     let mut scratch = Vec::new();
@@ -99,6 +100,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
                 gump_id,
                 width,
                 height,
+                upscale_factor: 1,
                 rgba,
             });
         } else {
@@ -110,7 +112,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches(
 
     let atlas_gump_count =
         add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
-    pb.finish_with_message("Gumps packed");
+    pb.finish_with_message("CC gumps extracted");
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(CcGumpsBuildSummary {

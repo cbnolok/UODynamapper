@@ -791,6 +791,11 @@ fn decode_gump_rgba(
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
     match source {
         GumpSource::Classic => {
+            if let Some(package) = &app.cc_gumps_package {
+                if let Ok(gump) = package.read_gump_rgba(gump_id) {
+                    return Ok(gump);
+                }
+            }
             let gumps = app
                 .cc_gumps
                 .as_ref()
@@ -807,6 +812,12 @@ fn decode_ec_gump_rgba(
     app: &UopInspectorApp,
     gump_id: u32,
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
+    if let Some(package) = &app.ec_gumps_package {
+        if let Ok(gump) = package.read_gump_rgba(gump_id) {
+            return Ok(gump);
+        }
+    }
+
     for loaded in &app.uop_cache.loaded_uops {
         let is_interface = loaded
             .path

@@ -8,6 +8,7 @@ eframe = { version = "0.31.1", features = ["persistence", "glow"] }
 egui = "0.31.1"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+udd-assets = { path = "../../lib/udd-assets" }
 uocf = { path = "../../lib/uocf" }
 rfd = { version = "0.15", features = ["xdg-portal"] }
 env_logger = "0.11"

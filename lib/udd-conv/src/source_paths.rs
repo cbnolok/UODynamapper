@@ -34,6 +34,22 @@ pub fn find_first_dir_matching(source_dirs: &[PathBuf], required_file_sets: &[&[
     })
 }
 
+pub fn source_path_label(source_root: &Path, path: &Path) -> String {
+    path.strip_prefix(source_root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+pub fn source_path_label_from_dirs(source_dirs: &[PathBuf], path: &Path) -> String {
+    source_dirs
+        .iter()
+        .find_map(|dir| path.strip_prefix(dir).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
 pub fn resolve_output_path(source_dirs: &[PathBuf], output: &Path) -> PathBuf {
     if output.is_absolute() {
         output.to_path_buf()

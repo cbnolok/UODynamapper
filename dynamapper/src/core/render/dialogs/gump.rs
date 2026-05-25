@@ -810,7 +810,7 @@ fn open_gump_by_id(
     };
 
     let mut scratch = Vec::new();
-    let (width, height, pixels) = match gump_map.0.decode_gump(id, &mut scratch) {
+    let gump = match gump_map.decode_gump(id, &mut scratch) {
         Ok(gump) => gump,
         Err(error) => {
             ingame_sysmessage_logger::error(format!("Could not open gump {id}: {error}"));
@@ -819,17 +819,17 @@ fn open_gump_by_id(
     };
 
     let mut image = crate::util_lib::image::image_from_rgba8(
-        width as u32,
-        height as u32,
-        &pixels,
+        gump.physical_width,
+        gump.physical_height,
+        &gump.rgba,
     );
     image.sampler = bevy::image::ImageSampler::nearest();
     let image = images.add(image);
     let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
     state.open_gumps.push(OpenGump {
         title: format!("Gump {id}"),
-        width,
-        height,
+        width: gump.logical_width.min(u16::MAX as u32) as u16,
+        height: gump.logical_height.min(u16::MAX as u32) as u16,
         image,
         texture_id,
     });
@@ -948,7 +948,7 @@ fn open_paperdoll(
 
     layers[1..].sort_by_key(|layer| layer.sort_key);
 
-    let (width, height, pixels) = match compose_paperdoll(gump_map, classic_hues, profile, &layers) {
+    let gump = match compose_paperdoll(gump_map, classic_hues, profile, &layers) {
         Ok(composed) => composed,
         Err(error) => {
             ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
@@ -956,14 +956,18 @@ fn open_paperdoll(
         }
     };
 
-    let mut image = crate::util_lib::image::image_from_rgba8(width, height, &pixels);
+    let mut image = crate::util_lib::image::image_from_rgba8(
+        gump.physical_width,
+        gump.physical_height,
+        &gump.rgba,
+    );
     image.sampler = bevy::image::ImageSampler::nearest();
     let image = images.add(image);
     let texture_id = egui_contexts.add_image(EguiTextureHandle::Strong(image.clone()));
     state.open_gumps.push(OpenGump {
         title: format!("Paperdoll ({})", profile.label),
-        width: width as u16,
-        height: height as u16,
+        width: gump.logical_width.min(u16::MAX as u32) as u16,
+        height: gump.logical_height.min(u16::MAX as u32) as u16,
         image,
         texture_id,
     });
@@ -987,7 +991,7 @@ fn compose_paperdoll(
     classic_hues: Option<&ClassicHuesRes>,
     profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
-) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
+) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
     let mut decoded_layers = Vec::with_capacity(layers.len());
     let mut scratch = Vec::new();
     let mut min_x = 0i32;
@@ -996,34 +1000,84 @@ fn compose_paperdoll(
     let mut max_y = profile.canvas_height as i32;
 
     for layer in layers {
-        let (layer_width, layer_height, mut pixels) =
-            gump_map.0.decode_gump(layer.gump_id, &mut scratch)?;
+        let mut gump = gump_map.decode_gump(layer.gump_id, &mut scratch)?;
         if layer.hue_id > 0 {
-            apply_hue(&mut pixels, classic_hues, layer.hue_id, layer.partial_hue)?;
+            apply_hue(&mut gump.rgba, classic_hues, layer.hue_id, layer.partial_hue)?;
         }
         min_x = min_x.min(layer.x);
         min_y = min_y.min(layer.y);
-        max_x = max_x.max(layer.x + layer_width as i32);
-        max_y = max_y.max(layer.y + layer_height as i32);
-        decoded_layers.push((layer.x, layer.y, layer_width as u32, layer_height as u32, pixels));
+        max_x = max_x.max(layer.x + gump.logical_width as i32);
+        max_y = max_y.max(layer.y + gump.logical_height as i32);
+        decoded_layers.push((layer.x, layer.y, gump));
     }
 
-    let width = (max_x - min_x).max(1) as u32;
-    let height = (max_y - min_y).max(1) as u32;
+    let logical_width = (max_x - min_x).max(1) as u32;
+    let logical_height = (max_y - min_y).max(1) as u32;
+    let output_scale = decoded_layers
+        .iter()
+        .map(|(_, _, gump)| u32::from(gump.upscale_factor.max(1)))
+        .max()
+        .unwrap_or(1);
+    let width = logical_width * output_scale;
+    let height = logical_height * output_scale;
     let mut canvas = vec![0u8; width as usize * height as usize * 4];
-    for (x, y, layer_width, layer_height, pixels) in decoded_layers {
+    for (x, y, gump) in decoded_layers {
+        let layer_width = gump.logical_width * output_scale;
+        let layer_height = gump.logical_height * output_scale;
+        let pixels = if gump.physical_width == layer_width && gump.physical_height == layer_height {
+            gump.rgba
+        } else {
+            resize_rgba_nearest(
+                gump.physical_width,
+                gump.physical_height,
+                &gump.rgba,
+                layer_width,
+                layer_height,
+            )
+        };
         alpha_blend_at(
             &mut canvas,
             width,
-            x - min_x,
-            y - min_y,
+            (x - min_x) * output_scale as i32,
+            (y - min_y) * output_scale as i32,
             layer_width,
             layer_height,
             &pixels,
         );
     }
 
-    Ok((width, height, canvas))
+    Ok(udd_assets::gumps::GumpImage {
+        physical_width: width,
+        physical_height: height,
+        logical_width,
+        logical_height,
+        upscale_factor: output_scale.min(u16::MAX as u32) as u16,
+        rgba: canvas,
+    })
+}
+
+fn resize_rgba_nearest(
+    src_width: u32,
+    src_height: u32,
+    src: &[u8],
+    dst_width: u32,
+    dst_height: u32,
+) -> Vec<u8> {
+    if src_width == 0 || src_height == 0 || dst_width == 0 || dst_height == 0 {
+        return Vec::new();
+    }
+
+    let mut dst = vec![0u8; dst_width as usize * dst_height as usize * 4];
+    for y in 0..dst_height {
+        let src_y = (y as u64 * src_height as u64 / dst_height as u64) as usize;
+        for x in 0..dst_width {
+            let src_x = (x as u64 * src_width as u64 / dst_width as u64) as usize;
+            let src_i = (src_y * src_width as usize + src_x) * 4;
+            let dst_i = (y as usize * dst_width as usize + x as usize) * 4;
+            dst[dst_i..dst_i + 4].copy_from_slice(&src[src_i..src_i + 4]);
+        }
+    }
+    dst
 }
 
 fn apply_hue(

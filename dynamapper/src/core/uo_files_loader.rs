@@ -53,9 +53,52 @@ pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
 
-/// Optional Classic Client gump art source.
+/// Optional gump art source. UDDP packages are preferred, legacy Classic sources are fallback.
 #[derive(Resource)]
-pub struct GumpMapRes(pub Arc<uocf::classic::gump::GumpMap>);
+pub struct GumpMapRes {
+    package: Option<Arc<udd_assets::GumpsPackage>>,
+    classic: Option<Arc<uocf::classic::gump::GumpMap>>,
+}
+
+impl GumpMapRes {
+    pub fn from_package(package: udd_assets::GumpsPackage) -> Self {
+        Self {
+            package: Some(Arc::new(package)),
+            classic: None,
+        }
+    }
+
+    pub fn from_classic(classic: uocf::classic::gump::GumpMap) -> Self {
+        Self {
+            package: None,
+            classic: Some(Arc::new(classic)),
+        }
+    }
+
+    pub fn decode_gump(
+        &self,
+        gump_id: u32,
+        scratch: &mut Vec<u8>,
+    ) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
+        if let Some(package) = &self.package {
+            return package.read_gump_image(gump_id);
+        }
+
+        let classic = self
+            .classic
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("gump source is not loaded"))?;
+        let (width, height, pixels) = classic.decode_gump(gump_id, scratch)?;
+        Ok(udd_assets::gumps::GumpImage {
+            physical_width: u32::from(width),
+            physical_height: u32::from(height),
+            logical_width: u32::from(width),
+            logical_height: u32::from(height),
+            upscale_factor: 1,
+            rgba: pixels,
+        })
+    }
+}
 
 /// Optional Classic Client hues.
 #[derive(Resource)]
@@ -350,18 +393,39 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
-    let gump_map = match uocf::classic::gump::GumpMap::load(&udd_path) {
+    let load_classic_gumps = || match uocf::classic::gump::GumpMap::load(&udd_path) {
         Ok(gump_map) => {
             lg("Loaded Classic Client gump art source.");
-            Some(gump_map)
+            Some(GumpMapRes::from_classic(gump_map))
         }
         Err(error) => {
             lg_err(&format!(
-                "No Classic Client gump source selected from {}: {error}",
+                "No Classic gump source selected from {}: {error}",
                 udd_path.display()
             ));
             None
         }
+    };
+    let gump_package_path = resolve_optional_uddp_paths(&udd_path, &["gumps_cc.uddp", "gumps_ec.uddp"]);
+    let gump_map = if let Some(gump_package_path) = gump_package_path {
+        log_source_choice(
+            &lg,
+            "gumps",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&gump_package_path),
+        );
+        match udd_assets::GumpsPackage::load(&gump_package_path) {
+            Ok(package) => Some(GumpMapRes::from_package(package)),
+            Err(error) => {
+                lg_err(&format!(
+                    "Failed to load gump package {}: {error}",
+                    gump_package_path.display()
+                ));
+                load_classic_gumps()
+            }
+        }
+    } else {
+        load_classic_gumps()
     };
 
     let hues_path = resolve_optional_uddp_path(&udd_path, "hues.mul");
@@ -529,7 +593,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         commands.insert_resource(WorldLightsPackageRes(Arc::new(world_lights_package)));
     }
     if let Some(gump_map) = gump_map {
-        commands.insert_resource(GumpMapRes(Arc::new(gump_map)));
+        commands.insert_resource(gump_map);
     }
     if let Some(classic_hues) = classic_hues {
         commands.insert_resource(ClassicHuesRes(Arc::new(classic_hues)));

@@ -1,7 +1,9 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
 use eframe::egui;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use udd_assets::GumpsPackage;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
@@ -19,7 +21,6 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTex
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ViewMode {
@@ -178,6 +179,29 @@ fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
     entries
 }
 
+fn load_optional_gumps_package(
+    base_path: &Path,
+    file_name: &str,
+    mut log: impl FnMut(String),
+) -> Option<GumpsPackage> {
+    let package_path = base_path.join(file_name);
+    if !package_path.exists() {
+        return None;
+    }
+
+    log(format!("Loading gump package from {}", package_path.display()));
+    match GumpsPackage::load(&package_path) {
+        Ok(package) => {
+            log(format!("Successfully loaded {file_name}."));
+            Some(package)
+        }
+        Err(error) => {
+            log(format!("Failed to load {file_name}: {error}"));
+            None
+        }
+    }
+}
+
 pub struct UopInspectorApp {
     pub settings: AppSettings,
     pub logs: Vec<String>,
@@ -191,6 +215,8 @@ pub struct UopInspectorApp {
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
+    pub cc_gumps_package: Option<Arc<GumpsPackage>>,
+    pub ec_gumps_package: Option<Arc<GumpsPackage>>,
     pub cc_gumps: Option<Arc<GumpMap>>,
     pub cc_sounds: Option<Arc<SoundMap>>,
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
@@ -285,6 +311,8 @@ impl UopInspectorApp {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_gumps_package: None,
+            ec_gumps_package: None,
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
@@ -372,6 +400,8 @@ impl UopInspectorApp {
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
         self.cc_sound_entries = None;
+        self.cc_gumps_package = None;
+        self.ec_gumps_package = None;
         self.cc_gumps = None;
         self.cc_multimap = None;
         self.cc_multimap_path = None;
@@ -384,6 +414,9 @@ impl UopInspectorApp {
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
             self.log(format!("Trying to load CC assets from {}", path.display()));
+            if let Some(package) = load_optional_gumps_package(&path, "gumps_cc.uddp", |msg| self.log(msg)) {
+                self.cc_gumps_package = Some(Arc::new(package));
+            }
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
             match GumpMap::load(&path) {
@@ -528,6 +561,9 @@ impl UopInspectorApp {
                 "Trying to load EC assets from {}",
                 ec_base_path.display()
             ));
+            if let Some(package) = load_optional_gumps_package(&ec_base_path, "gumps_ec.uddp", |msg| self.log(msg)) {
+                self.ec_gumps_package = Some(Arc::new(package));
+            }
 
             // Try load string dictionary
             let sd_path = ec_base_path.join("string_dictionary.uop");
@@ -971,9 +1007,22 @@ impl UopInspectorApp {
             return Some(handle.clone());
         }
 
-        let gumps = Arc::clone(self.cc_gumps.as_ref()?);
-        let mut scratch = Vec::new();
-        let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
+        let (width, height, pixels) = if let Some(package) = &self.cc_gumps_package {
+            match package.read_gump_rgba(gump_id) {
+                Ok(gump) => gump,
+                Err(_) => {
+                    let gumps = Arc::clone(self.cc_gumps.as_ref()?);
+                    let mut scratch = Vec::new();
+                    let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
+                    (u32::from(width), u32::from(height), pixels)
+                }
+            }
+        } else {
+            let gumps = Arc::clone(self.cc_gumps.as_ref()?);
+            let mut scratch = Vec::new();
+            let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
+            (u32::from(width), u32::from(height), pixels)
+        };
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
             &pixels,
@@ -988,6 +1037,22 @@ impl UopInspectorApp {
         ctx: &egui::Context,
         gump_id: u32,
     ) -> Option<egui::TextureHandle> {
+        if let Some(package) = &self.ec_gumps_package {
+            if let Ok((width, height, pixels)) = package.read_gump_rgba(gump_id) {
+                let key = 0x6E00000000000000 | gump_id as u64;
+                if let Some(handle) = self.texture_previews.get(&key) {
+                    return Some(handle.clone());
+                }
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [width as usize, height as usize],
+                    &pixels,
+                );
+                let handle = ctx.load_texture(format!("ec_gump_{gump_id}"), image, Default::default());
+                self.texture_previews.insert(key, handle.clone());
+                return Some(handle);
+            }
+        }
+
         let loaded_uops = self.uop_cache.loaded_uops.clone();
         for loaded in &loaded_uops {
             let is_interface = loaded
@@ -1365,6 +1430,8 @@ mod tests {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_gumps_package: None,
+            ec_gumps_package: None,
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,

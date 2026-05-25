@@ -54,7 +54,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
             }
-            if app.cc_gumps.is_some()
+            if app.cc_gumps_package.is_some()
+                || app.ec_gumps_package.is_some()
+                || app.cc_gumps.is_some()
                 || app.uop_cache.loaded_uops.iter().any(|loaded| {
                     loaded
                         .path

@@ -1,6 +1,7 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre;
 use guillotiere::{size2, AtlasAllocator};
+use indicatif::{ProgressBar, ProgressStyle};
 use udd_container::{AddFileRequest, CompressionFlag, DataType, UddpBuilder};
 
 use crate::tex_art_cc::crop_rgba_page;
@@ -11,7 +12,7 @@ pub const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 pub const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
 pub const GUMP_ATLAS_PAGE_MANIFEST_MAGIC: [u8; 4] = *b"GAPG";
 pub const GUMP_ATLAS_SLOT_MANIFEST_MAGIC: [u8; 4] = *b"GASL";
-pub const GUMP_ATLAS_METADATA_VERSION: u32 = 1;
+pub const GUMP_ATLAS_METADATA_VERSION: u32 = 2;
 
 pub const DEFAULT_GUMP_ATLAS_WIDTH: u32 = 2048;
 pub const DEFAULT_GUMP_ATLAS_HEIGHT: u32 = 2048;
@@ -44,6 +45,7 @@ pub struct DecodedGump {
     pub gump_id: u32,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
     pub rgba: Vec<u8>,
 }
 
@@ -64,6 +66,7 @@ pub struct GumpAtlasSlotRecord {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    pub upscale_factor: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +77,7 @@ struct PlacedGump {
     y: u16,
     width: u16,
     height: u16,
+    upscale_factor: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -161,10 +165,18 @@ fn pack_gumps_into_pages(
     let mut pages = Vec::new();
     let mut slots = Vec::new();
     let mut remaining = gumps;
+    let total_gumps = remaining.len() as u64;
     remaining.sort_by_key(|gump| gump.gump_id);
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_gumps);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating gump atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("creating gump atlas page {page_index}"));
         let (page_gumps, leftovers) = take_page_gump_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_gumps, options)?;
         if page.placed_gumps.is_empty() {
@@ -183,12 +195,16 @@ fn pack_gumps_into_pages(
             y: placed.y,
             width: placed.width,
             height: placed.height,
+            upscale_factor: placed.upscale_factor,
         }));
 
+        pb.inc(page.placed_gumps.len() as u64);
         pages.push(page);
         remaining = merge_unplaced_tiles(leftovers, unplaced, |gump| gump.gump_id);
         page_index += 1;
     }
+
+    pb.finish_with_message(format!("Gump atlas pages created ({page_index} pages)"));
 
     Ok((pages, slots))
 }
@@ -343,6 +359,7 @@ fn build_page(
                 y: inner_y as u16,
                 width: gump.width,
                 height: gump.height,
+                upscale_factor: gump.upscale_factor,
             });
         } else {
             leftovers.push(gump);
@@ -445,7 +462,7 @@ fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.y)?;
         bytes.write_u16::<LittleEndian>(slot.width)?;
         bytes.write_u16::<LittleEndian>(slot.height)?;
-        bytes.write_u16::<LittleEndian>(0)?;
+        bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
     }
     Ok(bytes)
 }
@@ -473,12 +490,14 @@ mod tests {
                 gump_id: 50_001,
                 width: 2,
                 height: 2,
+                upscale_factor: 1,
                 rgba: vec![255; 16],
             },
             DecodedGump {
                 gump_id: 60_001,
                 width: 1,
                 height: 1,
+                upscale_factor: 1,
                 rgba: vec![255; 4],
             },
         ];
@@ -596,6 +615,7 @@ mod tests {
             gump_id,
             width,
             height,
+            upscale_factor: 1,
             rgba: vec![255; width as usize * height as usize * 4],
         }
     }

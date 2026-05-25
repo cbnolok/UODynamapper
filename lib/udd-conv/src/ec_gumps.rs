@@ -16,6 +16,7 @@ use crate::gump_atlas::{
     add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
 use crate::package_progress::build_and_write_package;
+use crate::source_paths::source_path_label_from_dirs;
 
 pub const GUMPS_EC_DEFAULT_OUTPUT: &str = "gumps_ec.uddp";
 pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
@@ -53,8 +54,16 @@ pub fn convert_ec_gumps_to_uddp_from_sources(
     options: &EcGumpsOptions,
 ) -> eyre::Result<EcGumpsBuildSummary> {
     if let Some(interface_uop) = find_interface_uop(source_dirs) {
+        println!(
+            "Using EC gump source file (UOP): {}",
+            source_path_label_from_dirs(source_dirs, &interface_uop)
+        );
         convert_ec_gumps_from_interface_uop(&interface_uop, output_path, options)
     } else if let Some(gumpart_dir) = find_ec_gumpart_dir(source_dirs) {
+        println!(
+            "Using EC gump extracted source directory: {}",
+            source_path_label_from_dirs(source_dirs, &gumpart_dir)
+        );
         convert_ec_gumps_from_extracted_dir(&gumpart_dir, output_path, options)
     } else {
         eyre::bail!(
@@ -101,10 +110,11 @@ fn convert_ec_gumps_from_interface_uop(
     let pb = ProgressBar::new(u64::from(options.max_id) + 1);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} EC gump ids ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
             .unwrap()
             .progress_chars("#>-"),
     );
+    pb.set_message("extracting EC gumps from Interface.uop");
 
     for gump_id in 0..=options.max_id {
         pb.inc(1);
@@ -131,7 +141,7 @@ fn convert_ec_gumps_from_interface_uop(
 
     let atlas_gump_count =
         add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
-    pb.finish_with_message("EC gumps packed");
+    pb.finish_with_message("EC gumps extracted from Interface.uop");
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
@@ -157,10 +167,11 @@ fn convert_ec_gumps_from_extracted_dir(
     let pb = ProgressBar::new(sources.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} EC gumps ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
             .unwrap()
             .progress_chars("#>-"),
     );
+    pb.set_message("extracting EC gumps from extracted files");
 
     for (gump_id, source) in sources {
         pb.inc(1);
@@ -193,7 +204,7 @@ fn convert_ec_gumps_from_extracted_dir(
 
     let atlas_gump_count =
         add_gump_atlas_files(&mut builder, atlas_gumps, &GumpAtlasOptions::default())?;
-    pb.finish_with_message("EC gumps packed");
+    pb.finish_with_message("EC gumps extracted from extracted files");
     build_and_write_package(&mut builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
@@ -266,6 +277,7 @@ fn decode_ec_gump_payload(
         gump_id,
         width: width as u16,
         height: height as u16,
+        upscale_factor: 1,
         rgba: rgba.into_raw(),
     })
 }
