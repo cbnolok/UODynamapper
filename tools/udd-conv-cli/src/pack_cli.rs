@@ -688,6 +688,10 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, help = "Directory containing EcMobileAnimations.kdl, or the KDL file itself.")]
+        tables: Option<PathBuf>,
+        #[arg(long = "ec-mobile-animations-kdl", help = "Exact EcMobileAnimations.kdl path.")]
+        ec_mobile_animations_kdl: Option<PathBuf>,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
     },
@@ -1205,6 +1209,8 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            tables,
+            ec_mobile_animations_kdl,
             upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
@@ -1222,6 +1228,8 @@ pub fn run() -> eyre::Result<()> {
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     upscale_passes: convert_upscale_passes(upscale_passes),
+                    metadata_path: ec_mobile_animations_kdl,
+                    tables_dir: tables,
                 },
             )?;
             println!(
@@ -2458,6 +2466,36 @@ mod tests {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(output, PathBuf::from("gumps_ec.uddp"));
                 assert_eq!(max_id, 12345);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_ec_mobile_animation_tables_path() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-mobile-anims",
+            "--ecdir",
+            "/ec",
+            "--tables",
+            "/tables",
+            "--ec-mobile-animations-kdl",
+            "/tables/EcMobileAnimations.kdl",
+        ])
+        .expect("parse ec mobile animation metadata paths");
+
+        match cli.command {
+            Commands::PackEcMobileAnims {
+                tables,
+                ec_mobile_animations_kdl,
+                ..
+            } => {
+                assert_eq!(tables, Some(PathBuf::from("/tables")));
+                assert_eq!(
+                    ec_mobile_animations_kdl,
+                    Some(PathBuf::from("/tables/EcMobileAnimations.kdl"))
+                );
             }
             _ => panic!("unexpected command parsed"),
         }

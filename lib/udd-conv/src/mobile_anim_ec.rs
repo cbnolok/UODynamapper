@@ -86,6 +86,8 @@ pub struct MobileAnimEcAtlasOptions {
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub upscale_passes: Vec<UpscaleFilter>,
+    pub metadata_path: Option<PathBuf>,
+    pub tables_dir: Option<PathBuf>,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -98,6 +100,8 @@ impl Default for MobileAnimEcAtlasOptions {
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
             upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
         }
     }
 }
@@ -187,7 +191,11 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     if animationframe_paths.is_empty() {
         eyre::bail!("missing EC AnimationFrame1.uop..AnimationFrame6.uop in {}", client_dir.display());
     }
-    let metadata_path = find_ec_mobile_animations_kdl(source_dirs)
+    let metadata_path = find_ec_mobile_animations_kdl(
+        source_dirs,
+        options.metadata_path.as_deref(),
+        options.tables_dir.as_deref(),
+    )
         .context("missing EcMobileAnimations.kdl for EC mobile animation metadata")?;
     let metadata = EcMobileAnimationsKdl::load(&metadata_path)?;
     let (items, source_hints) = build_item_metadata(&metadata)?;
@@ -401,7 +409,26 @@ fn discover_animationframe_paths(client_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn find_ec_mobile_animations_kdl(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+fn find_ec_mobile_animations_kdl(
+    source_dirs: &[PathBuf],
+    explicit_path: Option<&Path>,
+    tables_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(path) = explicit_path {
+        if path.is_file() {
+            return Some(path.to_path_buf());
+        }
+    }
+    if let Some(dir) = tables_dir {
+        let path = if dir.is_file() {
+            dir.to_path_buf()
+        } else {
+            dir.join("EcMobileAnimations.kdl")
+        };
+        if path.is_file() {
+            return Some(path);
+        }
+    }
     find_first_existing_file(source_dirs, &[
         "EcMobileAnimations.kdl",
         "cc_ec_convtables/EcMobileAnimations.kdl",
@@ -1696,6 +1723,8 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -1719,6 +1748,8 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -1739,6 +1770,8 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
         };
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 4, 4)], &options).unwrap();
         let (animations, frames) = build_animation_records(
@@ -1827,6 +1860,8 @@ mod tests {
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
             upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
         };
         let (_, placements) = pack_frames_into_pages(source_frames[&42].clone(), &options).unwrap();
         let (animations, frames) = build_animation_records(&source_frames, &placements, &HashMap::new()).unwrap();

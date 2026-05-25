@@ -9,6 +9,7 @@ from pathlib import Path
 
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
+DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 
 
 def run(command: list[str]) -> None:
@@ -144,7 +145,7 @@ def ensure_output_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
-def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str], ec_format: list[str]) -> None:
+def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str], ec_format: list[str], tables: str = DEFAULT_TABLES_DIR) -> None:
     if not ccdir and not ecdir:
         print("usage: just uddconv-animations [ccdir] [ecdir] [output_dir]", file=sys.stderr)
         raise SystemExit(2)
@@ -152,7 +153,7 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
     if ccdir:
         run_pack("pack-mobile-anims", *cc_format, "--ccdir", ccdir, "--output", f"{output_dir}/mobile_anim_cc.uddp")
     if ecdir:
-        run_pack("pack-ec-mobile-anims", *ec_format, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
+        run_pack("pack-ec-mobile-anims", *ec_format, "--tables", tables, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
 
 
 def run_gumps(ccdir: str, output_dir: str, zstd_args: list[str] | None = None) -> None:
@@ -178,6 +179,7 @@ def run_all(
     ec_anim_format: list[str],
     ec_art_format: list[str],
     ec_land_format: list[str],
+    tables: str,
     non_texture_zstd: list[str],
     gump_zstd: list[str],
 ) -> None:
@@ -232,7 +234,7 @@ def run_all(
             "--output",
             f"{output_dir}/statics{map_id}.uddp",
         )
-    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format)
+    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, tables)
     run_gumps(ccdir, output_dir, gump_zstd)
     if ecdir:
         run_ec_gumps(ecdir, output_dir, gump_zstd)
@@ -247,6 +249,7 @@ def main() -> int:
     all_parser.add_argument("--ecdir", default="")
     all_parser.add_argument("--output-dir", default="target/uddp")
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
+    all_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
     add_zstd_arg(all_parser)
     add_format_args(all_parser, prefix="cc-art-")
     add_zstd_arg(all_parser, prefix="cc-art-")
@@ -265,6 +268,7 @@ def main() -> int:
     animations_parser.add_argument("--ccdir", default="")
     animations_parser.add_argument("--ecdir", default="")
     animations_parser.add_argument("--output-dir", default="target/uddp")
+    animations_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
     add_zstd_arg(animations_parser)
     add_format_args(animations_parser, prefix="cc-")
     add_zstd_arg(animations_parser, prefix="cc-")
@@ -297,6 +301,7 @@ def main() -> int:
             format_and_zstd_args(args, prefix="ec-anim-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
+            args.tables,
             non_texture_zstd,
             gump_zstd,
         )
@@ -308,6 +313,7 @@ def main() -> int:
             args.output_dir,
             format_and_zstd_args(args, prefix="cc-", default_format="raw", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="ec-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
+            args.tables,
         )
     elif args.command == "gumps":
         run_gumps(args.ccdir, args.output_dir, default_or_requested_zstd(args))

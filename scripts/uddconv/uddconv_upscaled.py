@@ -9,6 +9,7 @@ from pathlib import Path
 
 DEFAULT_ZSTD_VALUE = ""
 DEFAULT_ZSTD_ARGS = ["--zstd"]
+DEFAULT_TABLES_DIR = str(Path(__file__).resolve().parents[2] / "dynamapper/assets/cc_ec_convtables")
 CC_ART_UPSCALE = ["kl-depixelize2x", "hq2x-true"]
 CC_LAND_64_UPSCALE = ["xbr4x"]
 CC_LAND_128_UPSCALE = ["xbr2x"]
@@ -193,6 +194,7 @@ def run_animations(
     ec_format: list[str],
     cc_upscale: list[str],
     ec_upscale: list[str],
+    tables: str = DEFAULT_TABLES_DIR,
 ) -> None:
     if not ccdir and not ecdir:
         print("usage: just uddconv-animations [ccdir] [ecdir] [output_dir]", file=sys.stderr)
@@ -201,7 +203,7 @@ def run_animations(
     if ccdir:
         run_pack("pack-mobile-anims", *cc_format, *cc_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/mobile_anim_cc.uddp")
     if ecdir:
-        run_pack("pack-ec-mobile-anims", *ec_format, *ec_upscale, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
+        run_pack("pack-ec-mobile-anims", *ec_format, *ec_upscale, "--tables", tables, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
 
 
 def run_gumps(
@@ -241,6 +243,7 @@ def run_all(
     ec_land_format: list[str],
     non_texture_zstd: list[str],
     gump_zstd: list[str],
+    tables: str,
     cc_art_upscale: list[str],
     cc_land_upscale: list[str],
     ec_art_upscale: list[str],
@@ -305,7 +308,7 @@ def run_all(
             "--output",
             f"{output_dir}/statics{map_id}.uddp",
         )
-    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, cc_anim_upscale, ec_anim_upscale)
+    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, cc_anim_upscale, ec_anim_upscale, tables)
     run_gumps(ccdir, output_dir, gump_zstd, cc_gump_paperdoll_upscale, cc_gump_single_upscale)
     if ecdir:
         run_ec_gumps(ecdir, output_dir, gump_zstd, ec_gump_paperdoll_upscale, ec_gump_single_upscale)
@@ -320,6 +323,7 @@ def main() -> int:
     all_parser.add_argument("--ecdir", default="")
     all_parser.add_argument("--output-dir", default="target/uddp")
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
+    all_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
     add_zstd_arg(all_parser)
     add_format_args(all_parser, prefix="cc-art-")
     add_zstd_arg(all_parser, prefix="cc-art-")
@@ -352,6 +356,7 @@ def main() -> int:
     animations_parser.add_argument("--ccdir", default="")
     animations_parser.add_argument("--ecdir", default="")
     animations_parser.add_argument("--output-dir", default="target/uddp")
+    animations_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
     add_zstd_arg(animations_parser)
     add_format_args(animations_parser, prefix="cc-")
     add_zstd_arg(animations_parser, prefix="cc-")
@@ -392,6 +397,7 @@ def main() -> int:
             format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             non_texture_zstd,
             gump_zstd,
+            args.tables,
             upscale_args_from_namespace(args, prefix="cc-art-", defaults=CC_ART_UPSCALE),
             [
                 *upscale_args_from_namespace(args, prefix="cc-land-64-", cli_option="upscale-64-pass", defaults=CC_LAND_64_UPSCALE),
@@ -421,6 +427,7 @@ def main() -> int:
             format_and_zstd_args(args, prefix="ec-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             upscale_args_from_namespace(args, prefix="cc-", defaults=CC_ANIM_UPSCALE),
             upscale_args_from_namespace(args, prefix="ec-", defaults=EC_ANIM_UPSCALE),
+            args.tables,
         )
     elif args.command == "gumps":
         run_gumps(
