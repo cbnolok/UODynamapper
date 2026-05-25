@@ -37,8 +37,10 @@ use crate::bc7::{
 };
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
-use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_dir_matching;
+use crate::package_progress::{
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+};
+use crate::source_paths::{find_first_dir_matching, source_path_label};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
 
@@ -201,10 +203,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
         );
     }
     if let Some(path) = &art_uop_path {
-        println!("Using CC art source file (UOP): {}", path.display());
+        println!("Using CC art source file (UOP): {}", source_path_label(&client_dir, path));
     } else {
-        println!("Using CC art index source file: {}", client_dir.join("artidx.mul").display());
-        println!("Using CC art source file (MUL): {}", client_dir.join("art.mul").display());
+        let artidx_path = client_dir.join("artidx.mul");
+        let art_path = client_dir.join("art.mul");
+        println!("Using CC art index source file: {}", source_path_label(&client_dir, &artidx_path));
+        println!("Using CC art source file (MUL): {}", source_path_label(&client_dir, &art_path));
     }
 
     let mut art_map = ArtMap::load(&client_dir)
@@ -278,11 +282,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
     } else {
         pages.len() as u64
     };
-    let progress_message = if use_bc7 {
-        "compressing BC7 atlas blocks"
-    } else {
-        "encoding atlas pages"
-    };
+    let progress_message = atlas_payload_progress_message(
+        "CC art atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    );
 
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
@@ -357,7 +362,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
             data: &encoded,
         })?;
     }
-    pb.finish_with_message("Atlas pages encoded");
+    pb.finish_with_message(atlas_payload_finish_message(
+        "CC art atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    ));
 
     build_and_write_package(&mut package, out_file)?;
 
@@ -407,7 +417,7 @@ fn decode_present_tiles(
         .collect::<Vec<_>>();
     let pb = ProgressBar::new(art_ids.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding tiles ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting CC art tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
 
@@ -496,10 +506,10 @@ fn decode_present_tiles(
         let land_summary = format_skip_summary(skipped_land_tiles, &skipped_land_samples);
         let static_summary = format_skip_summary(skipped_static_tiles, &skipped_static_samples);
         pb.finish_with_message(format!(
-            "Tiles decoded (skipped {skipped_tiles} malformed entries; land: {land_summary}; static: {static_summary})"
+            "CC art tiles extracted (skipped {skipped_tiles} malformed entries; land: {land_summary}; static: {static_summary})"
         ));
     } else {
-        pb.finish_with_message("Tiles decoded");
+        pb.finish_with_message("CC art tiles extracted");
     }
 
     decoded_tiles.sort_by(|left, right| {
@@ -537,10 +547,18 @@ pub fn pack_tiles_into_pages(
         .map(TexArtCcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    let total_tiles = remaining.len() as u64;
     remaining.sort_by_key(|tile| tile.art_id);
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_tiles);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating CC art atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("creating CC art atlas page {page_index}"));
         let (page_tiles, leftovers) = take_page_tile_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_tiles, options)?;
         if page.placed_tiles.is_empty() {
@@ -567,10 +585,13 @@ pub fn pack_tiles_into_pages(
             };
         }
 
+        pb.inc(page.placed_tiles.len() as u64);
         pages.push(page);
         remaining = merge_unplaced_tiles(leftovers, unplaced, |tile| tile.art_id);
         page_index += 1;
     }
+
+    pb.finish_with_message(format!("CC art atlas pages created ({page_index} pages)"));
 
     Ok((pages, slot_records))
 }

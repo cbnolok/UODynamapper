@@ -36,8 +36,10 @@ use crate::bc7::{
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, resolve_packing_axis};
-use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
+use crate::package_progress::{
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+};
+use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use udd_assets::tex_land_ec::{
     TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord,
@@ -294,13 +296,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
     );
     println!(
         "Using TerrainDefinition.uop: {}",
-        terrain_definition_path.display()
+        source_path_label_from_dirs(source_dirs, &terrain_definition_path)
     );
     if let Some(path) = texture_uop_path.as_ref() {
-        println!("Using Texture.uop: {}", path.display());
+        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
     if let Some(path) = legacy_texture_uop_path.as_ref() {
-        println!("Using LegacyTexture.uop: {}", path.display());
+        println!("Using LegacyTexture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
 
     let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
@@ -453,13 +455,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     );
     println!(
         "Using TerrainDefinition.uop: {}",
-        terrain_definition_path.display()
+        source_path_label_from_dirs(source_dirs, terrain_definition_path)
     );
     if let Some(path) = texture_uop_path {
-        println!("Using Texture.uop: {}", path.display());
+        println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
     if let Some(path) = legacy_texture_uop_path {
-        println!("Using LegacyTexture.uop: {}", path.display());
+        println!("Using LegacyTexture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -548,11 +550,12 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     } else {
         pages.len() as u64
     };
-    let progress_message = if use_bc7 {
-        "compressing BC7 atlas blocks"
-    } else {
-        "encoding atlas pages"
-    };
+    let progress_message = atlas_payload_progress_message(
+        "EC land atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    );
 
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
@@ -627,7 +630,12 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
             data: &encoded,
         })?;
     }
-    pb.finish_with_message("Atlas pages encoded");
+    pb.finish_with_message(atlas_payload_finish_message(
+        "EC land atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    ));
 
     build_and_write_package(&mut package, out_file)?;
 
@@ -1064,7 +1072,7 @@ fn decode_present_tiles(
 
     let texture_pb = ProgressBar::new(texture_ids.len() as u64);
     texture_pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding unique land textures ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting unique EC land textures ({eta})")
         .unwrap()
         .progress_chars("#>-"));
     let decoded_textures = texture_ids
@@ -1078,7 +1086,7 @@ fn decode_present_tiles(
             },
         )
         .collect::<Vec<_>>();
-    texture_pb.finish_with_message("Unique land textures decoded");
+    texture_pb.finish_with_message("Unique EC land textures extracted");
 
     let mut decoded_texture_cache = HashMap::with_capacity(decoded_textures.len());
     for decoded_texture in decoded_textures {
@@ -1302,9 +1310,17 @@ pub fn pack_tiles_into_pages(
         .map(TexLandEcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    let total_tiles = remaining.len() as u64;
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_tiles);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating EC land atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("creating EC land atlas page {page_index}"));
         let (page, leftovers) = build_page(page_index, remaining, options)?;
         if page.placed_tiles.is_empty() {
             eyre::bail!(
@@ -1330,10 +1346,13 @@ pub fn pack_tiles_into_pages(
             };
         }
 
+        pb.inc(page.placed_tiles.len() as u64);
         pages.push(page);
         remaining = leftovers;
         page_index += 1;
     }
+
+    pb.finish_with_message(format!("EC land atlas pages created ({page_index} pages)"));
 
     Ok((pages, slot_records))
 }

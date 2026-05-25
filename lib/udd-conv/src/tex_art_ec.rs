@@ -33,8 +33,10 @@ use crate::bc7::{
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
-use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
+use crate::package_progress::{
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+};
+use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use udd_assets::tex_art_ec::{
     TexArtEcCropAdjustment, TexArtEcPageRecord, TexArtEcSlotRecord, MISSING_PAGE_INDEX,
@@ -239,6 +241,12 @@ fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     find_first_existing_file(source_dirs, &["string_dictionary.uop"])
 }
 
+fn source_file_label(path: &Path) -> String {
+    path.parent()
+        .map(|parent| source_path_label(parent, path))
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp(
     client_dir: &Path,
     out_file: &Path,
@@ -268,20 +276,20 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
         "Converting EC Art from Texture.uop / LegacyTexture.uop to {}",
         out_file.display()
     );
-    println!("Using tileart.uop: {}", sources.tileart_path.display());
+    println!("Using tileart.uop: {}", source_file_label(&sources.tileart_path));
     println!(
         "Using TerrainDefinition.uop: {}",
-        sources.terrain_definition_path.display()
+        source_file_label(&sources.terrain_definition_path)
     );
     println!(
         "Using string dictionary: {}",
-        sources.stringdict_path.display()
+        source_file_label(&sources.stringdict_path)
     );
     if let Some(path) = sources.texture_uop_path.as_ref() {
-        println!("Using Texture.uop: {}", path.display());
+        println!("Using Texture.uop: {}", source_file_label(path));
     }
     if let Some(path) = sources.legacy_texture_uop_path.as_ref() {
-        println!("Using LegacyTexture.uop: {}", path.display());
+        println!("Using LegacyTexture.uop: {}", source_file_label(path));
     }
 
     let slot_count = 0x10000_u32; // 65536 max art items in EC
@@ -349,11 +357,12 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
     } else {
         pages.len() as u64
     };
-    let progress_message = if use_bc7 {
-        "compressing BC7 atlas blocks"
-    } else {
-        "encoding atlas pages"
-    };
+    let progress_message = atlas_payload_progress_message(
+        "EC art atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    );
 
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
@@ -428,7 +437,12 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
             data: &encoded,
         })?;
     }
-    pb.finish_with_message("Atlas pages encoded");
+    pb.finish_with_message(atlas_payload_finish_message(
+        "EC art atlas pages",
+        use_bc7,
+        compression,
+        options.bc7_rdo_lambda,
+    ));
 
     build_and_write_package(&mut package, out_file)?;
 
@@ -564,7 +578,7 @@ fn decode_present_tiles(
 
     let resolve_pb = ProgressBar::new(art_ids.len() as u64);
     resolve_pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} resolving art tile sources ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting EC art tile sources ({eta})")
         .unwrap()
         .progress_chars("#>-"));
     let mut decode_groups: Vec<PreparedArtDecodeGroup> = Vec::new();
@@ -635,11 +649,11 @@ fn decode_present_tiles(
             });
         }
     }
-    resolve_pb.finish_with_message("Art tile sources resolved");
+    resolve_pb.finish_with_message("EC art tile sources extracted");
 
     let decode_pb = ProgressBar::new(decode_groups.len() as u64);
     decode_pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding unique art tiles ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting unique EC art tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
     let decoded_groups = decode_groups
@@ -676,7 +690,7 @@ fn decode_present_tiles(
             })
         })
         .collect::<Vec<_>>();
-    decode_pb.finish_with_message("Unique art tiles decoded");
+    decode_pb.finish_with_message("Unique EC art tiles extracted");
 
     for decoded_group in decoded_groups {
         let decoded_group = decoded_group?;
@@ -1006,10 +1020,18 @@ pub fn pack_tiles_into_pages(
         .map(TexArtEcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    let total_tiles = remaining.len() as u64;
     remaining.sort_by_key(|tile| tile.art_id);
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_tiles);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating EC art atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("creating EC art atlas page {page_index}"));
         let (page_tiles, leftovers) = take_page_tile_prefix(remaining, options)?;
         let (page, unplaced) = build_page(page_index, page_tiles, options)?;
         if page.placed_tiles.is_empty() {
@@ -1036,10 +1058,13 @@ pub fn pack_tiles_into_pages(
             };
         }
 
+        pb.inc(page.placed_tiles.len() as u64);
         pages.push(page);
         remaining = merge_unplaced_tiles(leftovers, unplaced, |tile| tile.art_id);
         page_index += 1;
     }
+
+    pb.finish_with_message(format!("EC art atlas pages created ({page_index} pages)"));
 
     Ok((pages, slot_records))
 }

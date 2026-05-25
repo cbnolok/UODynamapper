@@ -26,8 +26,10 @@ use crate::bc7::{
 };
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
-use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
+use crate::package_progress::{
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+};
+use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_land_cc::{
     page_entry_path, TexLandCcPageRecord, TexLandCcSlotRecord, MISSING_PAGE_INDEX,
@@ -143,8 +145,8 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
         .ok_or_else(|| eyre::eyre!("missing texidx.mul in {}", client_dir.display()))?;
 
     info!("Converting CC TexMaps to {}", out_file.display());
-    println!("Using CC texmap source file: {}", texmaps_path.display());
-    println!("Using CC texmap index source file: {}", texidx_path.display());
+    println!("Using CC texmap source file: {}", source_path_label(client_dir, &texmaps_path));
+    println!("Using CC texmap index source file: {}", source_path_label(client_dir, &texidx_path));
 
     let texmap_source = TexMap::load_with_verdata(
         texmaps_path,
@@ -207,11 +209,12 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
     } else {
         pages.len() as u64
     };
-    let progress_message = if use_bc7 {
-        "compressing BC7 atlas blocks"
-    } else {
-        "encoding atlas pages"
-    };
+    let progress_message = atlas_payload_progress_message(
+        "CC texmap atlas pages",
+        use_bc7,
+        options.compression,
+        options.bc7_rdo_lambda,
+    );
 
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
@@ -282,7 +285,12 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
             data: &encoded,
         })?;
     }
-    pb.finish_with_message("Atlas pages encoded");
+    pb.finish_with_message(atlas_payload_finish_message(
+        "CC texmap atlas pages",
+        use_bc7,
+        options.compression,
+        options.bc7_rdo_lambda,
+    ));
 
     build_and_write_package(&mut package, out_file)?;
 
@@ -305,7 +313,7 @@ fn decode_present_tiles(
 
     let pb = ProgressBar::new(max_id as u64);
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} decoding texmaps ({eta})")
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting CC texmaps ({eta})")
         .unwrap()
         .progress_chars("#>-"));
 
@@ -330,7 +338,7 @@ fn decode_present_tiles(
         }
         pb.inc(1);
     }
-    pb.finish_with_message("Texmaps decoded");
+    pb.finish_with_message("CC texmaps extracted");
 
     // Sort by area descending for better packing
     decoded_tiles.sort_by(|a, b| {
@@ -376,9 +384,17 @@ fn pack_tiles_into_pages(
         .map(TexLandCcSlotRecord::absent)
         .collect::<Vec<_>>();
     let mut remaining = tiles;
+    let total_tiles = remaining.len() as u64;
     let mut page_index = 0u32;
+    let pb = ProgressBar::new(total_tiles);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating CC texmap atlas pages");
 
     while !remaining.is_empty() {
+        pb.set_message(format!("creating CC texmap atlas page {page_index}"));
         let prefix_len = max_fitting_page_prefix_len(&remaining, options)?;
         if prefix_len == 0 {
             eyre::bail!("could not fit any texmap tile into atlas page");
@@ -400,10 +416,13 @@ fn pack_tiles_into_pages(
             };
         }
 
+        pb.inc(page.placed_tiles.len() as u64);
         pages.push(page);
         remaining = merge_unplaced_tiles(remaining, unplaced, |tile| tile.id);
         page_index += 1;
     }
+
+    pb.finish_with_message(format!("CC texmap atlas pages created ({page_index} pages)"));
 
     Ok((pages, slot_records))
 }

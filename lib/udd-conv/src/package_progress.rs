@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
-use udd_container::{BuildProgress, BuildProgressPhase, CompressionSummary, UddpBuilder};
+use udd_container::{BuildProgress, BuildProgressPhase, CompressionFlag, CompressionSummary, UddpBuilder};
 
 fn spinner_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
@@ -51,6 +51,56 @@ fn phase_message(phase: BuildProgressPhase, compression_summary: CompressionSumm
         BuildProgressPhase::TrainingDictionaries => "training compression dictionaries".to_string(),
         BuildProgressPhase::CompressingFiles => compression_message(compression_summary),
         BuildProgressPhase::Assembling => "assembling package bytes".to_string(),
+    }
+}
+
+pub fn atlas_payload_progress_message(
+    subject: &str,
+    use_bc7: bool,
+    compression: CompressionFlag,
+    bc7_rdo_lambda: f32,
+) -> String {
+    if use_bc7 {
+        if bc7_rdo_lambda > 0.0 && bc7_rdo_lambda.is_finite() {
+            format!("BC7-compressing {subject}; RDO pass follows")
+        } else {
+            format!("BC7-compressing {subject}")
+        }
+    } else {
+        match compression {
+            CompressionFlag::JpegXl => {
+                format!("registering {subject} for JPEG XL package compression")
+            }
+            CompressionFlag::None => format!("registering uncompressed {subject}"),
+            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdDict | CompressionFlag::Auto => {
+                format!("registering {subject} for package compression")
+            }
+        }
+    }
+}
+
+pub fn atlas_payload_finish_message(
+    subject: &str,
+    use_bc7: bool,
+    compression: CompressionFlag,
+    bc7_rdo_lambda: f32,
+) -> String {
+    if use_bc7 {
+        if bc7_rdo_lambda > 0.0 && bc7_rdo_lambda.is_finite() {
+            format!("{subject} BC7-compressed with RDO")
+        } else {
+            format!("{subject} BC7-compressed")
+        }
+    } else {
+        match compression {
+            CompressionFlag::JpegXl => {
+                format!("{subject} registered for JPEG XL package compression")
+            }
+            CompressionFlag::None => format!("{subject} registered uncompressed"),
+            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdDict | CompressionFlag::Auto => {
+                format!("{subject} registered for package compression")
+            }
+        }
     }
 }
 
