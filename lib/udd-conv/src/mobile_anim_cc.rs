@@ -1098,6 +1098,12 @@ fn page_prefix_fits(
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<bool> {
+    for frame in frames {
+        if packing_axes(frame, page_size, options).is_err() {
+            return Ok(false);
+        }
+    }
+
     let mut to_pack = frames.iter().collect::<Vec<_>>();
     sort_frame_refs_within_page(&mut to_pack, page_size, options);
 
@@ -1554,6 +1560,37 @@ mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].record.atlas_width, 512);
         assert_eq!(pages[0].record.atlas_height, 512);
+    }
+
+    #[test]
+    fn packer_skips_buckets_that_cannot_fit_candidate_frame() {
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: 2048,
+            atlas_height: 2048,
+            gutter: 4,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+        };
+        let mut records = vec![MobileAnimCcFrameRecord {
+            animation_index: 0,
+            frame_index: 0,
+            page_index: MISSING_PAGE_INDEX,
+            page_frame_index: MISSING_PAGE_FRAME_INDEX,
+            x: 0,
+            y: 0,
+            width: 768,
+            height: 768,
+            center_x: 0,
+            center_y: 0,
+        }];
+
+        let pages = pack_frames_into_pages(vec![frame(0, 768, 768)], &mut records, &options).unwrap();
+
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].record.atlas_width >= 1024);
+        assert!(pages[0].record.atlas_height >= 1024);
+        assert_eq!(records[0].page_index, 0);
     }
 
     #[test]
