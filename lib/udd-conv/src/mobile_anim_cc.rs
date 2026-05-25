@@ -524,22 +524,23 @@ fn decode_present_animations(
         if frames.is_empty() || frames.len() > u16::MAX as usize {
             continue;
         }
+        let frame_count = frames.len() as u16;
 
         let animation_index = animation_records.len() as u32;
         let frame_start = frame_records.len() as u32;
-        for (frame_index, frame) in frames.iter().enumerate() {
+        for (frame_index, frame) in frames.into_iter().enumerate() {
             let global_frame_index = frame_records.len() as u32;
             frame_records.push(empty_frame_record(
                 animation_index,
                 frame_index as u16,
-                frame,
+                &frame,
             ));
             if frame.width != 0 && frame.height != 0 && !frame.data.is_empty() {
                 decoded_frames.push(DecodedMobileAnimFrame {
                     global_frame_index,
                     width: frame.width,
                     height: frame.height,
-                    rgba: frame.data.clone(),
+                    rgba: frame.data,
                 });
             }
         }
@@ -550,7 +551,7 @@ fn decode_present_animations(
             file_index: candidate.file_index,
             source_index: candidate.source_index,
             frame_start,
-            frame_count: frames.len() as u16,
+            frame_count,
             flags: candidate.flags,
         });
     }
