@@ -1,7 +1,8 @@
 //! Build-time support for `mobile_anim_ec.uddp`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -46,6 +47,7 @@ const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
 const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 2;
+const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
 const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
     "AnimationFrame1.uop",
     "AnimationFrame2.uop",
@@ -674,6 +676,32 @@ fn decode_planned_animation_source(source: &PlannedMobileAnimEcSource) -> eyre::
     AnimationFrame::load(&data)
 }
 
+fn cached_decode_planned_animation_source(
+    source: &PlannedMobileAnimEcSource,
+    cache: &mut HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>,
+    order: &mut VecDeque<PlannedMobileAnimEcSource>,
+) -> eyre::Result<Arc<AnimationFrame>> {
+    if !cache.contains_key(source) {
+        let decoded = Arc::new(decode_planned_animation_source(source)?);
+        cache.insert(source.clone(), decoded);
+        order.push_back(source.clone());
+        while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
+            let Some(oldest) = order.pop_front() else { break; };
+            if &oldest == source {
+                order.push_back(oldest);
+                break;
+            }
+            cache.remove(&oldest);
+        }
+    }
+
+    Ok(Arc::clone(
+        cache
+            .get(source)
+            .expect("planned EC mobile animation source was just cached"),
+    ))
+}
+
 fn planned_frame_indices_by_body(
     planned_by_body: &BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
 ) -> BTreeMap<u32, Vec<u16>> {
@@ -927,6 +955,8 @@ fn pack_planned_frames_into_package(
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
+    let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, Arc<AnimationFrame>>::new();
+    let mut decoded_source_order = VecDeque::<PlannedMobileAnimEcSource>::new();
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
@@ -947,6 +977,8 @@ fn pack_planned_frames_into_package(
             &mut placements,
             options,
             &mut page_pixels,
+            &mut decoded_source_cache,
+            &mut decoded_source_order,
         )?;
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -1318,6 +1350,8 @@ fn build_planned_page(
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
     pixels: &mut Vec<u8>,
+    decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>,
+    decoded_source_order: &mut VecDeque<PlannedMobileAnimEcSource>,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
@@ -1327,10 +1361,31 @@ fn build_planned_page(
     pixels.clear();
     pixels.resize(page_len, 0);
     let mut leftovers = Vec::new();
-    let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, AnimationFrame>::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
+    let mut pending_blits = Vec::new();
+
+    struct PendingPlannedBlit {
+        body_id: u32,
+        source_frame_index: u16,
+        inner_x: u32,
+        inner_y: u32,
+        expected_width: u16,
+        expected_height: u16,
+        animation: Arc<AnimationFrame>,
+        source_entry: FrameEntry,
+    }
+
+    struct PreparedPlannedBlit {
+        body_id: u32,
+        source_frame_index: u16,
+        inner_x: u32,
+        inner_y: u32,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    }
 
     sort_planned_frames_within_page(&mut frames, page_size, options);
 
@@ -1340,14 +1395,12 @@ fn build_planned_page(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
         )) {
-            let animation = match decoded_sources.entry(frame.source.clone()) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let decoded = decode_planned_animation_source(&frame.source)?;
-                    entry.insert(decoded)
-                }
-            };
-            let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize) else {
+            let animation = cached_decode_planned_animation_source(
+                &frame.source,
+                decoded_sources,
+                decoded_source_order,
+            )?;
+            let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize).copied() else {
                 eyre::bail!(
                     "planned EC mobile animation body {} frame {} missing source entry {}",
                     frame.body_id,
@@ -1355,36 +1408,18 @@ fn build_planned_page(
                     frame.source_entry_index
                 );
             };
-            let decoded = animation.decode_frame(source_entry)?;
-            let (decoded_width, decoded_height, decoded_rgba, _, _) = apply_filter_passes(
-                decoded.width as u32,
-                decoded.height as u32,
-                &decoded.data,
-                &options.upscale_passes,
-            );
-            if decoded_width as u16 != frame.width || decoded_height as u16 != frame.height {
-                eyre::bail!(
-                    "planned EC mobile animation body {} frame {} changed dimensions: planned {}x{}, decoded {}x{}",
-                    frame.body_id,
-                    frame.source_frame_index,
-                    frame.width,
-                    frame.height,
-                    decoded_width,
-                    decoded_height
-                );
-            }
-
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
-            blit_rgba_frame(
-                pixels,
-                page_size.width,
-                inner_x as u32,
-                inner_y as u32,
-                decoded_width,
-                decoded_height,
-                &decoded_rgba,
-            )?;
+            pending_blits.push(PendingPlannedBlit {
+                body_id: frame.body_id,
+                source_frame_index: frame.source_frame_index,
+                inner_x: inner_x as u32,
+                inner_y: inner_y as u32,
+                expected_width: frame.width,
+                expected_height: frame.height,
+                animation,
+                source_entry,
+            });
             used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
             used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
             placements.insert((frame.body_id, frame.source_frame_index), FramePlacement {
@@ -1401,6 +1436,57 @@ fn build_planned_page(
         } else {
             leftovers.push(frame);
         }
+    }
+
+    let prepared_blits = pending_blits
+        .into_par_iter()
+        .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
+            let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+            let (width, height, rgba, _, _) = apply_filter_passes(
+                decoded.width as u32,
+                decoded.height as u32,
+                &decoded.data,
+                &options.upscale_passes,
+            );
+            if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
+                eyre::bail!(
+                    "planned EC mobile animation body {} frame {} changed dimensions: planned {}x{}, decoded {}x{}",
+                    pending.body_id,
+                    pending.source_frame_index,
+                    pending.expected_width,
+                    pending.expected_height,
+                    width,
+                    height
+                );
+            }
+            Ok(PreparedPlannedBlit {
+                body_id: pending.body_id,
+                source_frame_index: pending.source_frame_index,
+                inner_x: pending.inner_x,
+                inner_y: pending.inner_y,
+                width,
+                height,
+                rgba,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for prepared in prepared_blits {
+        let prepared = prepared?;
+        blit_rgba_frame(
+            pixels,
+            page_size.width,
+            prepared.inner_x,
+            prepared.inner_y,
+            prepared.width,
+            prepared.height,
+            &prepared.rgba,
+        )
+        .wrap_err_with(|| format!(
+            "blit EC mobile animation body {} frame {}",
+            prepared.body_id,
+            prepared.source_frame_index
+        ))?;
     }
 
     let pixels = crate::tex_art_cc::crop_rgba_page(

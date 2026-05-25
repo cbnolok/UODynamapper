@@ -5,7 +5,7 @@
 //! packer uses 4-pixel-aligned content extents so the same metadata remains
 //! valid for both RGBA8888 and BC7 page payloads.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -52,6 +52,7 @@ const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MAFR";
 const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
 const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 3;
+const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
     "AnimationFrame1.uop",
@@ -688,6 +689,31 @@ fn decode_planned_animation_source(
     }
 }
 
+fn cached_decode_planned_animation_source<'a>(
+    source: &PlannedAnimationSource,
+    anim_map: &AnimMap,
+    cache: &'a mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
+    order: &mut VecDeque<PlannedAnimationSource>,
+) -> eyre::Result<&'a Vec<AnimFrame>> {
+    if !cache.contains_key(source) {
+        let decoded = decode_planned_animation_source(source, anim_map)?;
+        cache.insert(source.clone(), decoded);
+        order.push_back(source.clone());
+        while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
+            let Some(oldest) = order.pop_front() else { break; };
+            if &oldest == source {
+                order.push_back(oldest);
+                break;
+            }
+            cache.remove(&oldest);
+        }
+    }
+
+    Ok(cache
+        .get(source)
+        .expect("planned mobile animation source was just cached"))
+}
+
 fn decode_classic_animationframe_uop_frames(path: &Path, file_hash: u64) -> eyre::Result<Vec<AnimFrame>> {
     let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
         .wrap_err_with(|| format!("load {}", path.display()))?;
@@ -1233,6 +1259,8 @@ fn pack_planned_frames_into_package(
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
+    let mut decoded_source_cache = HashMap::<PlannedAnimationSource, Vec<AnimFrame>>::new();
+    let mut decoded_source_order = VecDeque::<PlannedAnimationSource>::new();
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1261,6 +1289,8 @@ fn pack_planned_frames_into_package(
             anim_map,
             options,
             &mut page_pixels,
+            &mut decoded_source_cache,
+            &mut decoded_source_order,
         )?;
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -1653,6 +1683,8 @@ fn build_planned_page(
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
     pixels: &mut Vec<u8>,
+    decoded_sources: &mut HashMap<PlannedAnimationSource, Vec<AnimFrame>>,
+    decoded_source_order: &mut VecDeque<PlannedAnimationSource>,
 ) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
@@ -1662,7 +1694,6 @@ fn build_planned_page(
     pixels.clear();
     pixels.resize(page_len, 0);
     let mut leftovers = Vec::new();
-    let mut decoded_sources = HashMap::<PlannedAnimationSource, Vec<AnimFrame>>::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
@@ -1696,13 +1727,12 @@ fn build_planned_page(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
         )) {
-            let decoded_frames = match decoded_sources.entry(frame.source.clone()) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let decoded = decode_planned_animation_source(&frame.source, anim_map)?;
-                    entry.insert(decoded)
-                }
-            };
+            let decoded_frames = cached_decode_planned_animation_source(
+                &frame.source,
+                anim_map,
+                decoded_sources,
+                decoded_source_order,
+            )?;
             let Some(decoded_frame) = decoded_frames.get(frame.source_frame_index as usize) else {
                 eyre::bail!(
                     "planned mobile animation frame {} missing source frame {}",
