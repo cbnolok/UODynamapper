@@ -62,21 +62,22 @@ linux_linker_base := if has_mold != "" {
     ""
 }
 
-# Specific GNU ld / ELF linker flags, not supported by windows cl.exe
-linux_flags := linux_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+# Specific GNU ld / ELF linker flags for optimized Linux builds, not supported by windows cl.exe
+linux_optimized_flags := linux_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
 
-export RUSTFLAGS := if is_linux == "true" { linux_flags } else { "" }
+export RUSTFLAGS := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_optimized_common_nightly      := " -Zshare-generics=y -Zlocation-detail=none"
 rustflags_optimized_common_stable       := ""
-export RUSTFLAGS_RELEASE_NIGHTLY        := RUSTFLAGS + rustflags_optimized_common_nightly + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_RELEASE_STABLE         := RUSTFLAGS + rustflags_optimized_common_stable  + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_PROFILE_NIGHTLY        := RUSTFLAGS + rustflags_optimized_common_nightly + " -Cforce-frame-pointers=yes"
-export RUSTFLAGS_PROFILE_STABLE         := RUSTFLAGS + rustflags_optimized_common_stable  + " -Cforce-frame-pointers=yes"
+linux_optimized_rustflags               := if is_linux == "true" { linux_optimized_flags } else { "" }
+export RUSTFLAGS_RELEASE_NIGHTLY        := linux_optimized_rustflags + rustflags_optimized_common_nightly + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+export RUSTFLAGS_RELEASE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+export RUSTFLAGS_PROFILE_NIGHTLY        := linux_optimized_rustflags + rustflags_optimized_common_nightly + " -Cforce-frame-pointers=yes"
+export RUSTFLAGS_PROFILE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Cforce-frame-pointers=yes"
 export CARGO_FLAGS_NIGHTLY              := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
@@ -329,166 +330,20 @@ run-tool-release tool *args:
     {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin {{tool}} -- {{args}}
 
-# Convert all runtime UDDP packages from Classic and Enhanced Client sources
-[unix]
 uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "{{ccdir}}" ]; then
-        echo "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]"
-        exit 2
-    fi
-    mkdir -p "{{output_dir}}"
-    SOURCE_ARGS=(--ccdir "{{ccdir}}")
-    if [ -n "{{ecdir}}" ]; then
-        SOURCE_ARGS+=(--ecdir "{{ecdir}}")
-    fi
-    echo "Converting common world packages..."
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta "${SOURCE_ARGS[@]}" --output "{{output_dir}}/tilemeta.uddp"
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --raw --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_art_cc.uddp"
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --raw --ccdir "{{ccdir}}" --output "{{output_dir}}/tex_land_cc.uddp"
-    if [ -n "{{ecdir}}" ]; then
-        echo
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir "{{ecdir}}" --art-output "{{output_dir}}/tex_art_ec.uddp" --land-output "{{output_dir}}/tex_land_ec.uddp"
-    fi
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-lights "${SOURCE_ARGS[@]}" --output "{{output_dir}}/world_lights.uddp"
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir "{{ccdir}}" --output "{{output_dir}}/hues.uddp"
-    IFS=',' read -ra MAP_IDS <<< "{{maps}}"
-    for map_id in "${MAP_IDS[@]}"; do
-        echo
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-map --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/map${map_id}.uddp"
-        echo
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-statics --ccdir "{{ccdir}}" --map-id "$map_id" --output "{{output_dir}}/statics${map_id}.uddp"
-    done
-    just uddconv-animations "{{ccdir}}" "{{ecdir}}" "{{output_dir}}"
-    just uddconv-gumps "{{ccdir}}" "{{output_dir}}"
-    if [ -n "{{ecdir}}" ]; then
-        just uddconv-ec-gumps "{{ecdir}}" "{{output_dir}}"
-    fi
-
-[windows]
-uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
-    @powershell -NoProfile -Command " \
-    if ('{{ccdir}}' -eq '') { Write-Host 'usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]'; exit 2 }; \
-    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
-    $sourceArgs = @('--ccdir', '{{ccdir}}'); \
-    if ('{{ecdir}}' -ne '') { $sourceArgs += @('--ecdir', '{{ecdir}}') }; \
-    Write-Host 'Converting common world packages...'; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-tilemeta @sourceArgs --output '{{output_dir}}/tilemeta.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-art --raw --ccdir '{{ccdir}}' --output '{{output_dir}}/tex_art_cc.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-texmaps --raw --ccdir '{{ccdir}}' --output '{{output_dir}}/tex_land_cc.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    if ('{{ecdir}}' -ne '') { \
-      Write-Host ''; \
-      cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-textures --ecdir '{{ecdir}}' --art-output '{{output_dir}}/tex_art_ec.uddp' --land-output '{{output_dir}}/tex_land_ec.uddp'; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-    }; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-lights @sourceArgs --output '{{output_dir}}/world_lights.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-hues --ccdir '{{ccdir}}' --output '{{output_dir}}/hues.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    foreach ($mapId in '{{maps}}'.Split(',')) { \
-      Write-Host ''; \
-      cargo run -p udd-conv-cli --bin udd-pack -- pack-map --ccdir '{{ccdir}}' --map-id $mapId --output \"{{output_dir}}/map$mapId.uddp\"; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-      Write-Host ''; \
-      cargo run -p udd-conv-cli --bin udd-pack -- pack-statics --ccdir '{{ccdir}}' --map-id $mapId --output \"{{output_dir}}/statics$mapId.uddp\"; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-    }; \
-    just uddconv-animations '{{ccdir}}' '{{ecdir}}' '{{output_dir}}'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    just uddconv-gumps '{{ccdir}}' '{{output_dir}}'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-    if ('{{ecdir}}' -ne '') { just uddconv-ec-gumps '{{ecdir}}' '{{output_dir}}'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }"
+    python scripts/uddconv/uddconv.py all --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}" --maps "{{maps}}"
 
 # Convert only mobile animation packages
-[unix]
 uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "{{ccdir}}" ] && [ -z "{{ecdir}}" ]; then
-        echo "usage: just uddconv-animations [ccdir] [ecdir] [output_dir]"
-        exit 2
-    fi
-    mkdir -p "{{output_dir}}"
-    if [ -n "{{ccdir}}" ]; then
-        echo
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-mobile-anims --ccdir "{{ccdir}}" --output "{{output_dir}}/mobile_anim_cc.uddp"
-    fi
-    if [ -n "{{ecdir}}" ]; then
-        echo
-        cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-mobile-anims --ecdir "{{ecdir}}" --output "{{output_dir}}/mobile_anim_ec.uddp"
-    fi
-
-[windows]
-uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
-    @powershell -NoProfile -Command " \
-    if ('{{ccdir}}' -eq '' -and '{{ecdir}}' -eq '') { Write-Host 'usage: just uddconv-animations [ccdir] [ecdir] [output_dir]'; exit 2 }; \
-    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
-    if ('{{ccdir}}' -ne '') { \
-      Write-Host ''; \
-      cargo run -p udd-conv-cli --bin udd-pack -- pack-mobile-anims --ccdir '{{ccdir}}' --output '{{output_dir}}/mobile_anim_cc.uddp'; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-    }; \
-    if ('{{ecdir}}' -ne '') { \
-      Write-Host ''; \
-      cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-mobile-anims --ecdir '{{ecdir}}' --output '{{output_dir}}/mobile_anim_ec.uddp'; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-    }"
+    python scripts/uddconv/uddconv.py animations --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
 
 # Convert only Classic gump packages
-[unix]
 uddconv-gumps ccdir="" output_dir="target/uddp":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "{{ccdir}}" ]; then
-        echo "usage: just uddconv-gumps <ccdir> [output_dir]"
-        exit 2
-    fi
-    mkdir -p "{{output_dir}}"
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir "{{ccdir}}" --output "{{output_dir}}/gumps_cc.uddp"
-
-[windows]
-uddconv-gumps ccdir="" output_dir="target/uddp":
-    @powershell -NoProfile -Command " \
-    if ('{{ccdir}}' -eq '') { Write-Host 'usage: just uddconv-gumps <ccdir> [output_dir]'; exit 2 }; \
-    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-gumps --ccdir '{{ccdir}}' --output '{{output_dir}}/gumps_cc.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+    python scripts/uddconv/uddconv.py gumps --ccdir "{{ccdir}}" --output-dir "{{output_dir}}"
 
 # Convert only Enhanced Client gump packages
-[unix]
 uddconv-ec-gumps ecdir="" output_dir="target/uddp":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -z "{{ecdir}}" ]; then
-        echo "usage: just uddconv-ec-gumps <ecdir> [output_dir]"
-        exit 2
-    fi
-    mkdir -p "{{output_dir}}"
-    echo
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-gumps --ecdir "{{ecdir}}" --output "{{output_dir}}/gumps_ec.uddp"
-
-[windows]
-uddconv-ec-gumps ecdir="" output_dir="target/uddp":
-    @powershell -NoProfile -Command " \
-    if ('{{ecdir}}' -eq '') { Write-Host 'usage: just uddconv-ec-gumps <ecdir> [output_dir]'; exit 2 }; \
-    New-Item -ItemType Directory -Force -Path '{{output_dir}}' | Out-Null; \
-    Write-Host ''; \
-    cargo run -p udd-conv-cli --bin udd-pack -- pack-ec-gumps --ecdir '{{ecdir}}' --output '{{output_dir}}/gumps_ec.uddp'; \
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+    python scripts/uddconv/uddconv.py ec-gumps --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
 
 
 # --- Maintenance ---
