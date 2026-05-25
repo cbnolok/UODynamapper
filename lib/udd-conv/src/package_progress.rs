@@ -71,10 +71,14 @@ pub fn atlas_payload_progress_message(
             CompressionFlag::JpegXl => {
                 format!("registering {subject} for JPEG XL package compression")
             }
-            CompressionFlag::None => format!("registering uncompressed {subject}"),
-            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdDict | CompressionFlag::Auto => {
-                format!("registering {subject} for package compression")
+            CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
+                format!("registering {subject} for JPEG XL plus Zstd package compression")
             }
+            CompressionFlag::None => format!("registering uncompressed {subject}"),
+            CompressionFlag::ZstdNoDict
+            | CompressionFlag::ZstdNoDictLevel(_)
+            | CompressionFlag::ZstdDict
+            | CompressionFlag::Auto => format!("registering {subject} for package compression"),
         }
     }
 }
@@ -96,10 +100,14 @@ pub fn atlas_payload_finish_message(
             CompressionFlag::JpegXl => {
                 format!("{subject} registered for JPEG XL package compression")
             }
-            CompressionFlag::None => format!("{subject} registered uncompressed"),
-            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdDict | CompressionFlag::Auto => {
-                format!("{subject} registered for package compression")
+            CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
+                format!("{subject} registered for JPEG XL plus Zstd package compression")
             }
+            CompressionFlag::None => format!("{subject} registered uncompressed"),
+            CompressionFlag::ZstdNoDict
+            | CompressionFlag::ZstdNoDictLevel(_)
+            | CompressionFlag::ZstdDict
+            | CompressionFlag::Auto => format!("{subject} registered for package compression"),
         }
     }
 }

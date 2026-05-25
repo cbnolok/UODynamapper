@@ -10,7 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use super::support::{patch_header_package_hash64, zstd_compress, zstd_compress_with_dict, jxl_compress};
+use super::support::{
+    jxl_compress, jxl_zstd_compress, jxl_zstd_compress_level, patch_header_package_hash64,
+    zstd_compress, zstd_compress_level, zstd_compress_with_dict,
+};
 use super::*;
 
 const DICT_TRAIN_MIN_SAMPLE_BYTES: usize = 128;
@@ -201,9 +204,15 @@ impl UddpBuilder {
         for file in &self.files {
             match file.compression {
                 CompressionFlag::None => summary.raw += 1,
-                CompressionFlag::ZstdNoDict => summary.zstd_no_dict += 1,
+                CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => {
+                    summary.zstd_no_dict += 1
+                }
                 CompressionFlag::ZstdDict => summary.zstd_dict += 1,
                 CompressionFlag::JpegXl => summary.jpeg_xl += 1,
+                CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
+                    summary.jpeg_xl += 1;
+                    summary.zstd_no_dict += 1;
+                }
                 CompressionFlag::Auto => summary.auto += 1,
             }
         }
@@ -290,6 +299,11 @@ impl UddpBuilder {
                         let encoded = zstd_compress(data_to_compress).map_err(BuildError::Io)?;
                         (Codec::ZstdNoDict, encoded)
                     }
+                    CompressionFlag::ZstdNoDictLevel(level) => {
+                        let encoded =
+                            zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?;
+                        (Codec::ZstdNoDict, encoded)
+                    }
                     CompressionFlag::ZstdDict => {
                         let dict = dicts_by_type
                             .get(&file.data_type)
@@ -301,6 +315,17 @@ impl UddpBuilder {
                     CompressionFlag::JpegXl => {
                         let encoded = jxl_compress(data_to_compress, file.width, file.height)
                             .map_err(BuildError::CodecError)?;
+                        (Codec::JpegXl, encoded)
+                    }
+                    CompressionFlag::JpegXlZstd => {
+                        let encoded = jxl_zstd_compress(data_to_compress, file.width, file.height)
+                            .map_err(BuildError::CodecError)?;
+                        (Codec::JpegXl, encoded)
+                    }
+                    CompressionFlag::JpegXlZstdLevel(level) => {
+                        let encoded =
+                            jxl_zstd_compress_level(data_to_compress, file.width, file.height, level)
+                                .map_err(BuildError::CodecError)?;
                         (Codec::JpegXl, encoded)
                     }
                     CompressionFlag::Auto => {

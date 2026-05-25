@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 
+DEFAULT_ZSTD_VALUE = ""
+
+
 def run(command: list[str]) -> None:
     completed = subprocess.run(command)
     if completed.returncode != 0:
@@ -21,8 +24,21 @@ def run_pack(*args: str) -> None:
 def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
     parser.add_argument(
         f"--{prefix}format",
-        choices=["raw", "jxl", "bc7", "bc7-rdo"],
         default=None,
+        metavar="FORMAT",
+        help="Texture output format: raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE.",
+    )
+
+
+def add_zstd_arg(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
+    option_name = f"--{prefix}zstd"
+    parser.add_argument(
+        option_name,
+        nargs="?",
+        const=DEFAULT_ZSTD_VALUE,
+        default=None,
+        metavar="LEVEL",
+        help=f"Apply a file-level Zstd pass. Optionally pass {option_name}=LEVEL.",
     )
 
 
@@ -36,7 +52,52 @@ def format_args_from_namespace(
     selected = getattr(args, option_prefix, None)
     if selected is None:
         return []
-    return [f"--{cli_prefix}{selected}"]
+    if selected in ("raw", "rgba8888"):
+        return [f"--{cli_prefix}raw"]
+    if selected == "bc7":
+        return [f"--{cli_prefix}bc7"]
+    if selected == "bc7-rdo":
+        return [f"--{cli_prefix}bc7-rdo"]
+    if selected.startswith("bc7-rdo-lambda="):
+        value = selected.split("=", 1)[1]
+        if not value:
+            print(f"--{prefix}format=bc7-rdo-lambda=VALUE requires a value", file=sys.stderr)
+            raise SystemExit(2)
+        return [f"--{cli_prefix}bc7-rdo", "--bc7-rdo-lambda", value]
+    print(
+        f"invalid --{prefix}format: {selected} "
+        "(expected raw, rgba8888, bc7, bc7-rdo, or bc7-rdo-lambda=VALUE)",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def zstd_args_from_namespace(
+    args: argparse.Namespace,
+    *,
+    prefix: str = "",
+    cli_prefix: str = "",
+) -> list[str]:
+    option_prefix = prefix.replace("-", "_") + "zstd"
+    selected = getattr(args, option_prefix, None)
+    if selected is None:
+        return []
+    if selected == DEFAULT_ZSTD_VALUE:
+        return [f"--{cli_prefix}zstd"]
+    return [f"--{cli_prefix}zstd={selected}"]
+
+
+def format_and_zstd_args(
+    args: argparse.Namespace,
+    *,
+    prefix: str = "",
+    cli_prefix: str = "",
+    global_zstd: list[str] | None = None,
+) -> list[str]:
+    result = format_args_from_namespace(args, prefix=prefix, cli_prefix=cli_prefix)
+    prefixed_zstd = zstd_args_from_namespace(args, prefix=prefix, cli_prefix=cli_prefix)
+    result.extend(prefixed_zstd or global_zstd or [])
+    return result
 
 
 def require_value(value: str, usage: str) -> str:
@@ -157,19 +218,29 @@ def main() -> int:
     all_parser.add_argument("--ecdir", default="")
     all_parser.add_argument("--output-dir", default="target/uddp")
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
+    add_zstd_arg(all_parser)
     add_format_args(all_parser, prefix="cc-art-")
+    add_zstd_arg(all_parser, prefix="cc-art-")
     add_format_args(all_parser, prefix="cc-land-")
+    add_zstd_arg(all_parser, prefix="cc-land-")
     add_format_args(all_parser, prefix="cc-anim-")
+    add_zstd_arg(all_parser, prefix="cc-anim-")
     add_format_args(all_parser, prefix="ec-anim-")
+    add_zstd_arg(all_parser, prefix="ec-anim-")
     add_format_args(all_parser, prefix="art-")
+    add_zstd_arg(all_parser, prefix="art-")
     add_format_args(all_parser, prefix="land-")
+    add_zstd_arg(all_parser, prefix="land-")
 
     animations_parser = subparsers.add_parser("animations")
     animations_parser.add_argument("--ccdir", default="")
     animations_parser.add_argument("--ecdir", default="")
     animations_parser.add_argument("--output-dir", default="target/uddp")
+    add_zstd_arg(animations_parser)
     add_format_args(animations_parser, prefix="cc-")
+    add_zstd_arg(animations_parser, prefix="cc-")
     add_format_args(animations_parser, prefix="ec-")
+    add_zstd_arg(animations_parser, prefix="ec-")
 
     gumps_parser = subparsers.add_parser("gumps")
     gumps_parser.add_argument("--ccdir", default="")
@@ -181,25 +252,34 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "all":
+        global_zstd = zstd_args_from_namespace(args)
         run_all(
             args.ccdir,
             args.ecdir,
             args.output_dir,
             args.maps,
-            format_args_from_namespace(args, prefix="cc-art-"),
-            format_args_from_namespace(args, prefix="cc-land-"),
-            format_args_from_namespace(args, prefix="cc-anim-"),
-            format_args_from_namespace(args, prefix="ec-anim-"),
-            format_args_from_namespace(args, prefix="art-", cli_prefix="art-"),
-            format_args_from_namespace(args, prefix="land-", cli_prefix="land-"),
+            format_and_zstd_args(args, prefix="cc-art-", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-land-", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="cc-anim-", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="ec-anim-", global_zstd=global_zstd),
+            [
+                *format_args_from_namespace(args, prefix="art-", cli_prefix="art-"),
+                *global_zstd,
+                *zstd_args_from_namespace(args, prefix="art-", cli_prefix="art-"),
+            ],
+            [
+                *format_args_from_namespace(args, prefix="land-", cli_prefix="land-"),
+                *zstd_args_from_namespace(args, prefix="land-", cli_prefix="land-"),
+            ],
         )
     elif args.command == "animations":
+        global_zstd = zstd_args_from_namespace(args)
         run_animations(
             args.ccdir,
             args.ecdir,
             args.output_dir,
-            format_args_from_namespace(args, prefix="cc-"),
-            format_args_from_namespace(args, prefix="ec-"),
+            format_and_zstd_args(args, prefix="cc-", global_zstd=global_zstd),
+            format_and_zstd_args(args, prefix="ec-", global_zstd=global_zstd),
         )
     elif args.command == "gumps":
         run_gumps(args.ccdir, args.output_dir)

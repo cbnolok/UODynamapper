@@ -18,6 +18,7 @@ use zstd::bulk::{Compressor, Decompressor};
 use super::*;
 
 const ZSTD_LEVEL: i32 = 9;
+const JXL_ZSTD_PREFIX: &[u8; 4] = b"JXZ1";
 
 
 /// Pack the public metadata word stored in every file locator.
@@ -116,7 +117,12 @@ pub fn xxh64_virtual_path(path: &str) -> u64 {
 
 /// Plain Zstd compression helper.
 pub(crate) fn zstd_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
-    let mut compressor = Compressor::new(ZSTD_LEVEL)?;
+    zstd_compress_level(data, ZSTD_LEVEL)
+}
+
+/// Plain Zstd compression helper with an explicit compression level.
+pub(crate) fn zstd_compress_level(data: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
+    let mut compressor = Compressor::new(level)?;
     compressor.compress(data)
 }
 
@@ -150,8 +156,39 @@ pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u
     Ok(final_payload)
 }
 
+/// Jxl compression helper with a final Zstd pass over the encoded JXL payload.
+pub(crate) fn jxl_zstd_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    jxl_zstd_compress_level(data, width, height, ZSTD_LEVEL)
+}
+
+/// Jxl compression helper with a final explicit-level Zstd pass over the encoded JXL payload.
+pub(crate) fn jxl_zstd_compress_level(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    level: i32,
+) -> Result<Vec<u8>, String> {
+    let jxl_payload = jxl_compress(data, width, height)?;
+    let zstd_payload = zstd_compress_level(&jxl_payload, level).map_err(|e| e.to_string())?;
+    let mut final_payload = Vec::with_capacity(JXL_ZSTD_PREFIX.len() + zstd_payload.len());
+    final_payload.extend_from_slice(JXL_ZSTD_PREFIX);
+    final_payload.extend_from_slice(&zstd_payload);
+    Ok(final_payload)
+}
+
 /// Jxl decompression helper.
 pub(crate) fn jxl_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.starts_with(JXL_ZSTD_PREFIX) {
+        let jxl_payload =
+            zstd::stream::decode_all(std::io::Cursor::new(&data[JXL_ZSTD_PREFIX.len()..]))
+                .map_err(|e| e.to_string())?;
+        return jxl_decompress_payload(&jxl_payload);
+    }
+
+    jxl_decompress_payload(data)
+}
+
+fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
     use jpegxl_rs::decoder_builder;
     use jpegxl_rs::decode::Pixels;
 
@@ -437,4 +474,3 @@ pub fn read_package(
 ) -> Result<super::reader::UddpReader, Box<dyn std::error::Error>> {
     Ok(super::reader::UddpReader::load(path)?)
 }
-

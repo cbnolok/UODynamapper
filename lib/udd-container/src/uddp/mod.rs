@@ -174,6 +174,9 @@ pub enum CompressionFlag {
     /// Force plain Zstd compression.
     ZstdNoDict,
 
+    /// Force plain Zstd compression at an explicit level.
+    ZstdNoDictLevel(i32),
+
     /// Force Zstd compression with the implicit type dictionary.
     ZstdDict,
 
@@ -182,6 +185,9 @@ pub enum CompressionFlag {
 
     /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload.
     JpegXlZstd,
+
+    /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload at an explicit level.
+    JpegXlZstdLevel(i32),
 }
 
 /// Convenience starter type ids.

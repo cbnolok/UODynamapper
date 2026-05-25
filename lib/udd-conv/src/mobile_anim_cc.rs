@@ -412,7 +412,12 @@ fn mobile_anim_page_progress_message(options: &MobileAnimCcAtlasOptions) -> &'st
         } else {
             "BC7-compressing mobile animation atlas pages"
         }
-    } else if options.compression == CompressionFlag::JpegXl {
+    } else if matches!(
+        options.compression,
+        CompressionFlag::JpegXl
+            | CompressionFlag::JpegXlZstd
+            | CompressionFlag::JpegXlZstdLevel(_)
+    ) {
         "registering mobile animation atlas pages for JPEG XL package compression"
     } else {
         "registering uncompressed mobile animation atlas pages"
@@ -426,7 +431,12 @@ fn mobile_anim_page_finish_message(options: &MobileAnimCcAtlasOptions) -> &'stat
         } else {
             "Mobile animation atlas pages BC7-compressed"
         }
-    } else if options.compression == CompressionFlag::JpegXl {
+    } else if matches!(
+        options.compression,
+        CompressionFlag::JpegXl
+            | CompressionFlag::JpegXlZstd
+            | CompressionFlag::JpegXlZstdLevel(_)
+    ) {
         "Mobile animation atlas pages registered for JPEG XL package compression"
     } else {
         "Mobile animation atlas pages registered uncompressed"
