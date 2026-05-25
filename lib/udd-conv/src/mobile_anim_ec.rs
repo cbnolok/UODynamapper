@@ -24,6 +24,7 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
+use crate::upscale::{apply_filter_passes, UpscaleFilter};
 use crate::{resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
@@ -84,6 +85,7 @@ pub struct MobileAnimEcAtlasOptions {
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
+    pub upscale_passes: Vec<UpscaleFilter>,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -95,6 +97,7 @@ impl Default for MobileAnimEcAtlasOptions {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         }
     }
 }
@@ -197,7 +200,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     println!("Using EC animation source dir: {}", client_dir.display());
     println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
-    let planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    apply_planned_upscale(&mut planned_by_body, options)?;
     let planned_frames = planned_by_body
         .values()
         .flat_map(|frames| frames.iter().cloned())
@@ -511,6 +515,51 @@ fn append_planned_body_frames(
     }
     existing.append(&mut frames);
     Ok(())
+}
+
+fn apply_planned_upscale(
+    planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<()> {
+    if options.upscale_passes.is_empty() {
+        return Ok(());
+    }
+
+    let scale = options
+        .upscale_passes
+        .iter()
+        .copied()
+        .filter(|filter| !matches!(filter, UpscaleFilter::None))
+        .fold(1u32, |scale, filter| scale.saturating_mul(filter.scale_factor()));
+    if scale == 1 {
+        return Ok(());
+    }
+
+    for frames in planned_by_body.values_mut() {
+        for frame in frames {
+            frame.width = scale_u16(frame.width, scale, "EC mobile animation frame width")?;
+            frame.height = scale_u16(frame.height, scale, "EC mobile animation frame height")?;
+            frame.center_x = scale_i16(frame.center_x, scale, "EC mobile animation frame center_x")?;
+            frame.center_y = scale_i16(frame.center_y, scale, "EC mobile animation frame center_y")?;
+        }
+    }
+    Ok(())
+}
+
+fn scale_u16(value: u16, scale: u32, label: &str) -> eyre::Result<u16> {
+    let scaled = u32::from(value).saturating_mul(scale);
+    if scaled > u16::MAX as u32 {
+        eyre::bail!("{label} exceeds u16 after upscaling: {scaled}");
+    }
+    Ok(scaled as u16)
+}
+
+fn scale_i16(value: i16, scale: u32, label: &str) -> eyre::Result<i16> {
+    let scaled = i32::from(value).saturating_mul(scale as i32);
+    if scaled < i16::MIN as i32 || scaled > i16::MAX as i32 {
+        eyre::bail!("{label} exceeds i16 after upscaling: {scaled}");
+    }
+    Ok(scaled as i16)
 }
 
 fn plan_animationframe_package(
@@ -1253,15 +1302,21 @@ fn build_planned_page(
                 );
             };
             let decoded = animation.decode_frame(source_entry)?;
-            if decoded.width != frame.width || decoded.height != frame.height {
+            let (decoded_width, decoded_height, decoded_rgba, _, _) = apply_filter_passes(
+                decoded.width as u32,
+                decoded.height as u32,
+                &decoded.data,
+                &options.upscale_passes,
+            );
+            if decoded_width as u16 != frame.width || decoded_height as u16 != frame.height {
                 eyre::bail!(
                     "planned EC mobile animation body {} frame {} changed dimensions: planned {}x{}, decoded {}x{}",
                     frame.body_id,
                     frame.source_frame_index,
                     frame.width,
                     frame.height,
-                    decoded.width,
-                    decoded.height
+                    decoded_width,
+                    decoded_height
                 );
             }
 
@@ -1272,9 +1327,9 @@ fn build_planned_page(
                 page_size.width,
                 inner_x as u32,
                 inner_y as u32,
-                decoded.width as u32,
-                decoded.height as u32,
-                &decoded.data,
+                decoded_width,
+                decoded_height,
+                &decoded_rgba,
             )?;
             used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
             used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
@@ -1640,6 +1695,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -1662,6 +1718,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -1681,6 +1738,7 @@ mod tests {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 4, 4)], &options).unwrap();
         let (animations, frames) = build_animation_records(
@@ -1768,6 +1826,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let (_, placements) = pack_frames_into_pages(source_frames[&42].clone(), &options).unwrap();
         let (animations, frames) = build_animation_records(&source_frames, &placements, &HashMap::new()).unwrap();

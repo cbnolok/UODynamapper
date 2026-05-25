@@ -30,6 +30,7 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, source_path_label};
+use crate::upscale::{apply_filter_passes, UpscaleFilter};
 use crate::{resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_cc::{
     page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
@@ -86,6 +87,7 @@ pub struct MobileAnimCcAtlasOptions {
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
+    pub upscale_passes: Vec<UpscaleFilter>,
 }
 
 impl Default for MobileAnimCcAtlasOptions {
@@ -97,6 +99,7 @@ impl Default for MobileAnimCcAtlasOptions {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         }
     }
 }
@@ -208,8 +211,9 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
 
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
-    let (planned_frames, animation_records, mut frame_records) =
+    let (mut planned_frames, animation_records, mut frame_records) =
         plan_present_animations(&client_dir, &anim_map)?;
+    apply_planned_upscale(&mut planned_frames, &mut frame_records, options)?;
     let packed_frame_count = planned_frames.len() as u32;
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let body_type_records = build_body_type_records(&client_dir)?;
@@ -611,6 +615,54 @@ fn planned_animation_source(candidate: &PresentAnimationCandidate) -> PlannedAni
             }
         }
     }
+}
+
+fn apply_planned_upscale(
+    planned_frames: &mut [PlannedMobileAnimFrame],
+    frame_records: &mut [MobileAnimCcFrameRecord],
+    options: &MobileAnimCcAtlasOptions,
+) -> eyre::Result<()> {
+    if options.upscale_passes.is_empty() {
+        return Ok(());
+    }
+
+    let scale = options
+        .upscale_passes
+        .iter()
+        .copied()
+        .filter(|filter| !matches!(filter, UpscaleFilter::None))
+        .fold(1u32, |scale, filter| scale.saturating_mul(filter.scale_factor()));
+    if scale == 1 {
+        return Ok(());
+    }
+
+    for frame in planned_frames {
+        frame.width = scale_u16(frame.width, scale, "mobile animation frame width")?;
+        frame.height = scale_u16(frame.height, scale, "mobile animation frame height")?;
+    }
+    for record in frame_records {
+        record.width = scale_u16(record.width, scale, "mobile animation frame record width")?;
+        record.height = scale_u16(record.height, scale, "mobile animation frame record height")?;
+        record.center_x = scale_i16(record.center_x, scale, "mobile animation frame center_x")?;
+        record.center_y = scale_i16(record.center_y, scale, "mobile animation frame center_y")?;
+    }
+    Ok(())
+}
+
+fn scale_u16(value: u16, scale: u32, label: &str) -> eyre::Result<u16> {
+    let scaled = u32::from(value).saturating_mul(scale);
+    if scaled > u16::MAX as u32 {
+        eyre::bail!("{label} exceeds u16 after upscaling: {scaled}");
+    }
+    Ok(scaled as u16)
+}
+
+fn scale_i16(value: i16, scale: u32, label: &str) -> eyre::Result<i16> {
+    let scaled = i32::from(value).saturating_mul(scale as i32);
+    if scaled < i16::MIN as i32 || scaled > i16::MAX as i32 {
+        eyre::bail!("{label} exceeds i16 after upscaling: {scaled}");
+    }
+    Ok(scaled as i16)
 }
 
 fn decode_candidate_animation_frames(
@@ -1595,14 +1647,20 @@ fn build_planned_page(
                     frame.source_frame_index
                 );
             };
-            if decoded_frame.width != frame.width || decoded_frame.height != frame.height {
+            let (decoded_width, decoded_height, decoded_rgba, _, _) = apply_filter_passes(
+                decoded_frame.width as u32,
+                decoded_frame.height as u32,
+                &decoded_frame.data,
+                &options.upscale_passes,
+            );
+            if decoded_width as u16 != frame.width || decoded_height as u16 != frame.height {
                 eyre::bail!(
                     "planned mobile animation frame {} changed dimensions: planned {}x{}, decoded {}x{}",
                     frame.global_frame_index,
                     frame.width,
                     frame.height,
-                    decoded_frame.width,
-                    decoded_frame.height
+                    decoded_width,
+                    decoded_height
                 );
             }
 
@@ -1613,9 +1671,9 @@ fn build_planned_page(
                 page_size.width,
                 inner_x as u32,
                 inner_y as u32,
-                decoded_frame.width as u32,
-                decoded_frame.height as u32,
-                &decoded_frame.data,
+                decoded_width,
+                decoded_height,
+                &decoded_rgba,
             )?;
 
             used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
@@ -2016,6 +2074,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let mut records = vec![
             MobileAnimCcFrameRecord {
@@ -2063,6 +2122,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -2093,6 +2153,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -2124,6 +2185,7 @@ mod tests {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,
@@ -2211,6 +2273,7 @@ mod tests {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
             animation_index: 0,

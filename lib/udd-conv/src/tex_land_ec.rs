@@ -156,7 +156,7 @@ struct TerrainIgnoreMetadata {
     code: Option<String>,
 }
 
-use crate::upscale::{UpscaleConfig, UpscaleFilter};
+use crate::upscale::{apply_filter_passes, UpscaleConfig, UpscaleFilter};
 
 pub struct TexLandEcAtlasOptions {
     pub atlas_width: u32,
@@ -167,6 +167,10 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_128: UpscaleConfig,
     pub upscale_256: UpscaleConfig,
     pub upscale_512: UpscaleConfig,
+    pub upscale_64_passes: Vec<UpscaleFilter>,
+    pub upscale_128_passes: Vec<UpscaleFilter>,
+    pub upscale_256_passes: Vec<UpscaleFilter>,
+    pub upscale_512_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
@@ -185,6 +189,10 @@ impl Default for TexLandEcAtlasOptions {
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
             upscale_512: UpscaleConfig::default(),
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
+            upscale_256_passes: Vec::new(),
+            upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -1093,15 +1101,21 @@ fn decode_present_tiles(
         let (texture_id, decoded) = decoded_texture?;
         if let Some(mut decoded) = decoded {
             let upscale_config = match (decoded.width, decoded.height) {
-                (64, 64) => Some(&options.upscale_64),
-                (128, 128) => Some(&options.upscale_128),
-                (256, 256) => Some(&options.upscale_256),
-                (512, 512) => Some(&options.upscale_512),
+                (64, 64) => Some((&options.upscale_64, options.upscale_64_passes.as_slice())),
+                (128, 128) => Some((&options.upscale_128, options.upscale_128_passes.as_slice())),
+                (256, 256) => Some((&options.upscale_256, options.upscale_256_passes.as_slice())),
+                (512, 512) => Some((&options.upscale_512, options.upscale_512_passes.as_slice())),
                 _ => None,
             };
 
-            if let Some(cfg) = upscale_config {
-                if cfg.target_size > 0 && !matches!(cfg.filter, UpscaleFilter::None) {
+            if let Some((cfg, passes)) = upscale_config {
+                if !passes.is_empty() {
+                    let (width, height, rgba, _, _) =
+                        apply_filter_passes(decoded.width, decoded.height, &decoded.rgba, passes);
+                    decoded.width = width;
+                    decoded.height = height;
+                    decoded.rgba = rgba;
+                } else if cfg.target_size > 0 && !matches!(cfg.filter, UpscaleFilter::None) {
                     let rgba = cfg.filter.apply_to_size(
                         decoded.width,
                         decoded.height,
@@ -1629,6 +1643,10 @@ pub fn encode_slot_manifest(
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
             upscale_512: UpscaleConfig::default(),
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
+            upscale_256_passes: Vec::new(),
+            upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -1698,6 +1716,10 @@ mod tests {
             upscale_128: UpscaleConfig::default(),
             upscale_256: UpscaleConfig::default(),
             upscale_512: UpscaleConfig::default(),
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
+            upscale_256_passes: Vec::new(),
+            upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,

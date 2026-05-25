@@ -44,7 +44,7 @@ use crate::source_paths::{find_first_dir_matching, source_path_label};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
 
-use crate::upscale::UpscaleFilter;
+use crate::upscale::{apply_filter_passes, UpscaleFilter};
 
 use udd_assets::tex_art_cc::{
     page_entry_path, TexArtCcPageRecord, TexArtCcSlotRecord, PagePixelFormat, MISSING_PAGE_INDEX,
@@ -72,6 +72,7 @@ pub struct TexArtCcAtlasOptions {
     pub gutter: u16,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
+    pub upscale_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
@@ -86,6 +87,7 @@ impl Default for TexArtCcAtlasOptions {
             gutter: DEFAULT_ATLAS_GUTTER,
             compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -175,6 +177,14 @@ pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
         UpscaleFilter::Epx2x | UpscaleFilter::Epx3x | UpscaleFilter::Epx4x => 15,
         UpscaleFilter::Xbr2x | UpscaleFilter::Xbr3x | UpscaleFilter::Xbr4x => 16,
         UpscaleFilter::Mmpx2x | UpscaleFilter::Mmpx4x => 17,
+    }
+}
+
+fn art_upscale_passes(options: &TexArtCcAtlasOptions) -> Vec<UpscaleFilter> {
+    if options.upscale_passes.is_empty() {
+        vec![options.upscale]
+    } else {
+        options.upscale_passes.clone()
     }
 }
 
@@ -474,14 +484,16 @@ fn decode_present_tiles(
                         &mut rgba,
                     ) {
                         Ok(()) => {
-                            let (w, h, rgba) = options.upscale.apply(44, 44, &rgba);
+                            let upscale_passes = art_upscale_passes(options);
+                            let (w, h, rgba, upscale_factor, upscale_filter) =
+                                apply_filter_passes(44, 44, &rgba, &upscale_passes);
                             DecodeOutcome::Decoded(DecodedArtTile {
                                 art_id,
                                 kind,
                                 width: w as u16,
                                 height: h as u16,
-                                upscale_factor: options.upscale.scale_factor() as u16,
-                                upscale_algorithm: upscale_algorithm_code(options.upscale),
+                                upscale_factor: upscale_factor as u16,
+                                upscale_algorithm: upscale_algorithm_code(upscale_filter),
                                 rgba,
                             })
                         }
@@ -494,15 +506,16 @@ fn decode_present_tiles(
                     &mut scratch_raw,
                 ) {
                     Ok((width, height, rgba)) => {
-                        let (w, h, rgba) =
-                            options.upscale.apply(width as u32, height as u32, &rgba);
+                        let upscale_passes = art_upscale_passes(options);
+                        let (w, h, rgba, upscale_factor, upscale_filter) =
+                            apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
                         DecodeOutcome::Decoded(DecodedArtTile {
                             art_id,
                             kind,
                             width: w as u16,
                             height: h as u16,
-                            upscale_factor: options.upscale.scale_factor() as u16,
-                            upscale_algorithm: upscale_algorithm_code(options.upscale),
+                            upscale_factor: upscale_factor as u16,
+                            upscale_algorithm: upscale_algorithm_code(upscale_filter),
                             rgba,
                         })
                     }
@@ -994,6 +1007,7 @@ pub fn encode_slot_manifest(
             gutter,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -1026,6 +1040,7 @@ mod tests {
             gutter: 1,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: true,
@@ -1052,6 +1067,7 @@ mod tests {
             gutter: 1,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,

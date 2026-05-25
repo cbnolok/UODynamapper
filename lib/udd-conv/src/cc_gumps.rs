@@ -13,6 +13,7 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_existing_file, source_path_label};
+use crate::upscale::{apply_filter_passes, UpscaleFilter};
 
 pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
 
@@ -24,12 +25,16 @@ pub struct CcGumpsBuildSummary {
 
 pub struct CcGumpsOptions {
     pub compression: CompressionFlag,
+    pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
+    pub single_upscale_passes: Vec<UpscaleFilter>,
 }
 
 impl Default for CcGumpsOptions {
     fn default() -> Self {
         Self {
             compression: CompressionFlag::ZstdNoDict,
+            paperdoll_upscale_passes: Vec::new(),
+            single_upscale_passes: Vec::new(),
         }
     }
 }
@@ -122,19 +127,31 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
         };
 
         if is_paperdoll_equipment_gump_id(gump_id) {
+            let (width, height, rgba, upscale_factor, _) = apply_filter_passes(
+                u32::from(width),
+                u32::from(height),
+                &rgba,
+                &options.paperdoll_upscale_passes,
+            );
             atlas_gumps.push(DecodedGump {
                 gump_id,
-                width,
-                height,
-                upscale_factor: 1,
+                width: width as u16,
+                height: height as u16,
+                upscale_factor: upscale_factor as u16,
                 rgba,
             });
         } else {
+            let (width, height, rgba, _, _) = apply_filter_passes(
+                u32::from(width),
+                u32::from(height),
+                &rgba,
+                &options.single_upscale_passes,
+            );
             add_single_gump(
                 &mut builder,
                 gump_id,
-                u32::from(width),
-                u32::from(height),
+                width,
+                height,
                 &rgba,
                 options.compression,
             )?;

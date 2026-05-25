@@ -225,3 +225,27 @@ impl UpscaleFilter {
         }
     }
 }
+
+pub fn apply_filter_passes(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    passes: &[UpscaleFilter],
+) -> (u32, u32, Vec<u8>, u32, UpscaleFilter) {
+    let mut width = width;
+    let mut height = height;
+    let mut rgba = rgba.to_vec();
+    let mut scale_factor = 1u32;
+    let mut last_filter = UpscaleFilter::None;
+
+    for filter in passes.iter().copied().filter(|filter| !matches!(filter, UpscaleFilter::None)) {
+        let (next_width, next_height, next_rgba) = filter.apply(width, height, &rgba);
+        width = next_width;
+        height = next_height;
+        rgba = next_rgba;
+        scale_factor = scale_factor.saturating_mul(filter.scale_factor());
+        last_filter = filter;
+    }
+
+    (width, height, rgba, scale_factor, last_filter)
+}

@@ -161,6 +161,7 @@ impl UddConvApp {
                     gutter: DEFAULT_ATLAS_GUTTER,
                     compression,
                     upscale: settings.upscale_tex_art_cc,
+                    upscale_passes: Vec::new(),
                     pixel_format: match settings.opt_tex_art_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -199,6 +200,8 @@ impl UddConvApp {
                     compression,
                     upscale_64: settings.upscale_tex_land_cc_64,
                     upscale_128: settings.upscale_tex_land_cc_128,
+                    upscale_64_passes: Vec::new(),
+                    upscale_128_passes: Vec::new(),
                     pixel_format: match settings.opt_tex_land_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -237,6 +240,7 @@ impl UddConvApp {
                     crop_transparent_bounds: false,
                     compression,
                     upscale: settings.upscale_tex_art_ec,
+                    upscale_passes: Vec::new(),
                     pixel_format: match settings.opt_tex_art_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -276,6 +280,10 @@ impl UddConvApp {
                     upscale_128: settings.upscale_tex_land_ec_128,
                     upscale_256: settings.upscale_tex_land_ec_256,
                     upscale_512: settings.upscale_tex_land_ec_512,
+                    upscale_64_passes: Vec::new(),
+                    upscale_128_passes: Vec::new(),
+                    upscale_256_passes: Vec::new(),
+                    upscale_512_passes: Vec::new(),
                     pixel_format: match settings.opt_tex_land_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,

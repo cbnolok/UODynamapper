@@ -39,7 +39,7 @@ use udd_container::xxh64_virtual_path;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::land_texture::TexMap;
 
-use crate::upscale::{UpscaleFilter, UpscaleConfig};
+use crate::upscale::{apply_filter_passes, UpscaleConfig, UpscaleFilter};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
@@ -56,6 +56,8 @@ pub struct TexLandCcAtlasOptions {
     pub compression: CompressionFlag,
     pub upscale_64: UpscaleConfig,
     pub upscale_128: UpscaleConfig,
+    pub upscale_64_passes: Vec<UpscaleFilter>,
+    pub upscale_128_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
@@ -71,6 +73,8 @@ impl Default for TexLandCcAtlasOptions {
             compression: CompressionFlag::JpegXl,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -323,9 +327,21 @@ fn decode_present_tiles(
             let (orig_w, orig_h) = element.size().dimensions();
 
             let (w, h, rgba) = if orig_w == 64 && orig_h == 64 {
-                apply_upscale_config(orig_w as u32, orig_h as u32, &rgba_arc, options.upscale_64)
+                apply_upscale_config(
+                    orig_w as u32,
+                    orig_h as u32,
+                    &rgba_arc,
+                    options.upscale_64,
+                    &options.upscale_64_passes,
+                )
             } else if orig_w == 128 && orig_h == 128 {
-                apply_upscale_config(orig_w as u32, orig_h as u32, &rgba_arc, options.upscale_128)
+                apply_upscale_config(
+                    orig_w as u32,
+                    orig_h as u32,
+                    &rgba_arc,
+                    options.upscale_128,
+                    &options.upscale_128_passes,
+                )
             } else {
                 (orig_w as u32, orig_h as u32, rgba_arc.to_vec())
             };
@@ -355,7 +371,13 @@ fn apply_upscale_config(
     height: u32,
     rgba: &[u8],
     config: UpscaleConfig,
+    passes: &[UpscaleFilter],
 ) -> (u32, u32, Vec<u8>) {
+    if !passes.is_empty() {
+        let (width, height, rgba, _, _) = apply_filter_passes(width, height, rgba, passes);
+        return (width, height, rgba);
+    }
+
     if matches!(config.filter, UpscaleFilter::None) {
         return (width, height, rgba.to_vec());
     }
@@ -714,6 +736,7 @@ mod tests {
                 target_size: 256,
                 filter: UpscaleFilter::None,
             },
+            &[],
         );
 
         assert_eq!(width, 64);
@@ -731,6 +754,8 @@ mod tests {
             compression: CompressionFlag::None,
             upscale_64: UpscaleConfig::default(),
             upscale_128: UpscaleConfig::default(),
+            upscale_64_passes: Vec::new(),
+            upscale_128_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,

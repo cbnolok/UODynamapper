@@ -429,7 +429,7 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
         })
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug, Default)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CliUpscaleFilter {
     #[default]
     None,
@@ -464,12 +464,17 @@ pub enum CliUpscaleFilter {
     Hq2xSimple,
     Hq3xSimple,
     Hq4xSimple,
+    Hq2xTrue,
+    Hq3xTrue,
+    Hq4xTrue,
     Epx2x,
     Epx3x,
     Epx4x,
     Xbr2x,
     Xbr3x,
     Xbr4x,
+    Mmpx2x,
+    Mmpx4x,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, Default)]
@@ -523,14 +528,23 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::Hq2xSimple => UpscaleFilter::Hq2xSimple,
             CliUpscaleFilter::Hq3xSimple => UpscaleFilter::Hq3xSimple,
             CliUpscaleFilter::Hq4xSimple => UpscaleFilter::Hq4xSimple,
+            CliUpscaleFilter::Hq2xTrue => UpscaleFilter::Hq2xTrue,
+            CliUpscaleFilter::Hq3xTrue => UpscaleFilter::Hq3xTrue,
+            CliUpscaleFilter::Hq4xTrue => UpscaleFilter::Hq4xTrue,
             CliUpscaleFilter::Epx2x => UpscaleFilter::Epx2x,
             CliUpscaleFilter::Epx3x => UpscaleFilter::Epx3x,
             CliUpscaleFilter::Epx4x => UpscaleFilter::Epx4x,
             CliUpscaleFilter::Xbr2x => UpscaleFilter::Xbr2x,
             CliUpscaleFilter::Xbr3x => UpscaleFilter::Xbr3x,
             CliUpscaleFilter::Xbr4x => UpscaleFilter::Xbr4x,
+            CliUpscaleFilter::Mmpx2x => UpscaleFilter::Mmpx2x,
+            CliUpscaleFilter::Mmpx4x => UpscaleFilter::Mmpx4x,
         }
     }
+}
+
+fn convert_upscale_passes(passes: Vec<CliUpscaleFilter>) -> Vec<UpscaleFilter> {
+    passes.into_iter().map(UpscaleFilter::from).collect()
 }
 
 #[derive(Subcommand)]
@@ -580,6 +594,8 @@ enum Commands {
         upscale_256_algo: CliUpscaleFilter,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
+        #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
+        upscale_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs Classic texmaps.mul into tex_land_cc.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -614,6 +630,10 @@ enum Commands {
         bc7_rdo_lambda: f32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
+        #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 texmap upscale pass. Repeat to chain filters.")]
+        upscale_64_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-128-pass", value_enum, help = "Add a 128x128 texmap upscale pass. Repeat to chain filters.")]
+        upscale_128_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs classic anim*.mul/anim*.idx mobile animations into mobile_anim_cc.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -640,6 +660,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
+        upscale_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -666,6 +688,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
+        upscale_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -750,6 +774,16 @@ enum Commands {
         upscale_512_algo: CliUpscaleFilter,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None, help = "Legacy global upscale filter for art.")]
         upscale: CliUpscaleFilter,
+        #[arg(long = "art-upscale-pass", value_enum, help = "Add an EC art upscale pass. Repeat to chain filters.")]
+        art_upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 EC land upscale pass. Repeat to chain filters.")]
+        upscale_64_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-128-pass", value_enum, help = "Add a 128x128 EC land upscale pass. Repeat to chain filters.")]
+        upscale_128_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-256-pass", value_enum, help = "Add a 256x256 EC land upscale pass. Repeat to chain filters.")]
+        upscale_256_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-512-pass", value_enum, help = "Add a 512x512 EC land upscale pass. Repeat to chain filters.")]
+        upscale_512_passes: Vec<CliUpscaleFilter>,
     },
     /// Audits direct EC material texture references from tileart.uop and TerrainDefinition.uop.
     AuditEcMaterialRefs {
@@ -971,6 +1005,10 @@ enum Commands {
         raw: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
+        #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
+        paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
+        single_upscale_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs EC interface.uop gumpart into gumps_ec.uddp.
     PackEcGumps {
@@ -984,6 +1022,10 @@ enum Commands {
         raw: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
+        #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
+        paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
+        single_upscale_passes: Vec<CliUpscaleFilter>,
     },
 }
 
@@ -1014,6 +1056,7 @@ pub fn run() -> eyre::Result<()> {
             upscale_256_size: _,
             upscale_256_algo: _,
             upscale,
+            upscale_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1027,6 +1070,7 @@ pub fn run() -> eyre::Result<()> {
                     gutter,
                     compression: output_format.compression,
                     upscale: upscale.into(),
+                    upscale_passes: convert_upscale_passes(upscale_passes),
                     pixel_format: output_format.pixel_format,
                     packing_mode: packing_mode.into(),
                     filtering_ready,
@@ -1059,6 +1103,8 @@ pub fn run() -> eyre::Result<()> {
             filtering_ready,
             bc7_rdo_lambda,
             upscale,
+            upscale_64_passes,
+            upscale_128_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1079,6 +1125,8 @@ pub fn run() -> eyre::Result<()> {
                         target_size: 256,
                         filter: upscale.into(),
                     },
+                    upscale_64_passes: convert_upscale_passes(upscale_64_passes),
+                    upscale_128_passes: convert_upscale_passes(upscale_128_passes),
                     pixel_format: output_format.pixel_format,
                     packing_mode: packing_mode.into(),
                     filtering_ready,
@@ -1107,6 +1155,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            upscale_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1122,6 +1171,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    upscale_passes: convert_upscale_passes(upscale_passes),
                 },
             )?;
             println!(
@@ -1155,6 +1205,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1170,6 +1221,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    upscale_passes: convert_upscale_passes(upscale_passes),
                 },
             )?;
             println!(
@@ -1235,6 +1287,11 @@ pub fn run() -> eyre::Result<()> {
             upscale_512_size,
             upscale_512_algo,
             upscale,
+            art_upscale_passes,
+            upscale_64_passes,
+            upscale_128_passes,
+            upscale_256_passes,
+            upscale_512_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
@@ -1279,6 +1336,7 @@ pub fn run() -> eyre::Result<()> {
                     crop_transparent_bounds: false,
                     compression: art_output_format.compression,
                     upscale: upscale_filter,
+                    upscale_passes: convert_upscale_passes(art_upscale_passes),
                     pixel_format: art_output_format.pixel_format,
                     packing_mode: art_packing_mode.into(),
                     filtering_ready: art_filtering_ready,
@@ -1324,6 +1382,10 @@ pub fn run() -> eyre::Result<()> {
                         target_size: upscale_512_size,
                         filter: upscale_512_algo.into(),
                     },
+                    upscale_64_passes: convert_upscale_passes(upscale_64_passes),
+                    upscale_128_passes: convert_upscale_passes(upscale_128_passes),
+                    upscale_256_passes: convert_upscale_passes(upscale_256_passes),
+                    upscale_512_passes: convert_upscale_passes(upscale_512_passes),
                     pixel_format: land_output_format.pixel_format,
                     packing_mode: land_packing_mode.into(),
                     filtering_ready: land_filtering_ready,
@@ -1665,6 +1727,8 @@ pub fn run() -> eyre::Result<()> {
             output,
             raw: _,
             zstd,
+            paperdoll_upscale_passes,
+            single_upscale_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1674,6 +1738,8 @@ pub fn run() -> eyre::Result<()> {
                 &classic_patches.into(),
                 &CcGumpsOptions {
                     compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
+                    single_upscale_passes: convert_upscale_passes(single_upscale_passes),
                 },
             )?;
             println!(
@@ -1690,6 +1756,8 @@ pub fn run() -> eyre::Result<()> {
             max_id,
             raw: _,
             zstd,
+            paperdoll_upscale_passes,
+            single_upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1699,6 +1767,8 @@ pub fn run() -> eyre::Result<()> {
                 &EcGumpsOptions {
                     max_id,
                     compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
+                    single_upscale_passes: convert_upscale_passes(single_upscale_passes),
                 },
             )?;
             println!(
@@ -1967,6 +2037,58 @@ mod tests {
                     resolve_mobile_anim_output_format(raw, jxl, zstd, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
                 assert_eq!(output_format.compression, CompressionFlag::None);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_repeated_upscale_passes() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-mobile-anims",
+            "--ccdir",
+            "/cc",
+            "--upscale-pass",
+            "hq3x-true",
+            "--upscale-pass",
+            "fsr-easu-rcas2x",
+        ])
+        .expect("parse repeated upscale passes");
+
+        match cli.command {
+            Commands::PackMobileAnims { upscale_passes, .. } => {
+                assert_eq!(
+                    upscale_passes,
+                    vec![CliUpscaleFilter::Hq3xTrue, CliUpscaleFilter::FsrEasuRcas2x]
+                );
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_gump_upscale_families() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-gumps",
+            "--ccdir",
+            "/cc",
+            "--paperdoll-upscale-pass",
+            "nedi2x",
+            "--single-upscale-pass",
+            "fsr-easu3x",
+        ])
+        .expect("parse gump upscale passes");
+
+        match cli.command {
+            Commands::PackGumps {
+                paperdoll_upscale_passes,
+                single_upscale_passes,
+                ..
+            } => {
+                assert_eq!(paperdoll_upscale_passes, vec![CliUpscaleFilter::Nedi2x]);
+                assert_eq!(single_upscale_passes, vec![CliUpscaleFilter::FsrEasu3x]);
             }
             _ => panic!("unexpected command parsed"),
         }

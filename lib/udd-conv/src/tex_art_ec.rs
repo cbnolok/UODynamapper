@@ -52,7 +52,7 @@ use uocf::enhanced::{
     tileart::{ArtData, ArtTexture, TaeFlag, TileType},
 };
 
-use crate::upscale::UpscaleFilter;
+use crate::upscale::{apply_filter_passes, UpscaleFilter};
 use crate::tex_art_cc::upscale_algorithm_code;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
@@ -74,6 +74,7 @@ pub struct TexArtEcAtlasOptions {
     pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
+    pub upscale_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub packing_mode: AtlasPackingMode,
     pub filtering_ready: bool,
@@ -89,11 +90,20 @@ impl Default for TexArtEcAtlasOptions {
             crop_transparent_bounds: false,
             compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         }
+    }
+}
+
+fn art_upscale_passes(options: &TexArtEcAtlasOptions) -> Vec<UpscaleFilter> {
+    if options.upscale_passes.is_empty() {
+        vec![options.upscale]
+    } else {
+        options.upscale_passes.clone()
     }
 }
 
@@ -678,21 +688,18 @@ fn decode_present_tiles(
                 apply_requested_clip_rect(source_width, source_height, rgba.into_raw(), clip_rect)?
             };
 
-            let (width, height, rgba) = if !matches!(options.upscale, UpscaleFilter::None) {
-                let (w, h, rgba) = options.upscale.apply(width as u32, height as u32, &rgba);
-                (w as u16, h as u16, rgba)
-            } else {
-                (width, height, rgba)
-            };
+            let upscale_passes = art_upscale_passes(options);
+            let (width, height, rgba, upscale_factor, upscale_filter) =
+                apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
 
             decode_pb.inc(1);
             Ok(DecodedArtDecodeGroup {
                 canonical_art_id: group.canonical_art_id,
                 kind: group.kind,
-                width,
-                height,
-                upscale_factor: options.upscale.scale_factor() as u16,
-                upscale_algorithm: upscale_algorithm_code(options.upscale),
+                width: width as u16,
+                height: height as u16,
+                upscale_factor: upscale_factor as u16,
+                upscale_algorithm: upscale_algorithm_code(upscale_filter),
                 rgba,
                 crop_adjustment,
                 alias_art_ids: group.alias_art_ids.clone(),
@@ -1444,6 +1451,7 @@ pub fn encode_slot_manifest(
             crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::MaximumPacking,
             filtering_ready: false,
@@ -1489,6 +1497,7 @@ mod tests {
             crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
+            upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             packing_mode: AtlasPackingMode::Bc7Oriented,
             filtering_ready: false,
