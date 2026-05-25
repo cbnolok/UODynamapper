@@ -955,6 +955,7 @@ pub fn pack_frames_into_pages(
     remaining.sort_by_key(|frame| frame.global_frame_index);
     let mut pages = Vec::new();
     let mut page_index = 0u32;
+    let mut page_pixels = Vec::new();
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -965,7 +966,8 @@ pub fn pack_frames_into_pages(
     while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
         let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
-        let (page, unplaced) = build_page(page_index, page_size, page_frames, frame_records, options)?;
+        let (page, unplaced) =
+            build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -999,6 +1001,7 @@ fn pack_frames_into_package(
     let mut stats = MobileAnimPageStats::default();
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
+    let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
 
     let pb = ProgressBar::new(total_frames);
@@ -1014,7 +1017,8 @@ fn pack_frames_into_package(
     while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
         let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
-        let (page, unplaced) = build_page(page_index, page_size, page_frames, frame_records, options)?;
+        let (page, unplaced) =
+            build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1194,12 +1198,15 @@ fn build_page(
     mut frames: Vec<DecodedMobileAnimFrame>,
     frame_records: &mut [MobileAnimCcFrameRecord],
     options: &MobileAnimCcAtlasOptions,
+    pixels: &mut Vec<u8>,
 ) -> eyre::Result<(BuiltMobileAnimPage, Vec<DecodedMobileAnimFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
         page_size.height as i32,
     ));
-    let mut pixels = vec![0u8; page_size.width as usize * page_size.height as usize * 4];
+    let page_len = page_size.width as usize * page_size.height as usize * 4;
+    pixels.clear();
+    pixels.resize(page_len, 0);
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
@@ -1216,7 +1223,7 @@ fn build_page(
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
             blit_rgba_frame(
-                &mut pixels,
+                pixels,
                 page_size.width,
                 inner_x as u32,
                 inner_y as u32,
@@ -1241,7 +1248,7 @@ fn build_page(
     }
 
     let pixels = crate::tex_art_cc::crop_rgba_page(
-        &pixels,
+        pixels,
         page_size.width,
         used_width,
         used_height,
