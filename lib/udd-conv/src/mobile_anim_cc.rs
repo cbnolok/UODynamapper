@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
 };
-use uocf::classic::anim::{AnimFrame, AnimMap, MAX_ANIM_FILES};
+use uocf::classic::anim::{AnimFrame, AnimFrameInfo, AnimMap, MAX_ANIM_FILES};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
 use uocf::classic::bodyconv_def::BodyConvDef;
@@ -554,7 +554,7 @@ fn plan_present_animations(
             active_source = source_label;
             pb.set_message(format!("planning {active_source}"));
         }
-        let Ok(frames) = decode_candidate_animation_frames(&candidate, anim_map) else {
+        let Ok(frames) = decode_candidate_animation_frame_metadata(&candidate, anim_map) else {
             continue;
         };
         if frames.is_empty() || frames.len() > u16::MAX as usize {
@@ -572,7 +572,7 @@ fn plan_present_animations(
                 frame_index as u16,
                 frame,
             ));
-            if frame.width != 0 && frame.height != 0 && !frame.data.is_empty() {
+            if frame.width != 0 && frame.height != 0 {
                 planned_frames.push(PlannedMobileAnimFrame {
                     global_frame_index,
                     width: frame.width,
@@ -661,16 +661,16 @@ fn scale_i16(value: i16, scale: u32, label: &str) -> eyre::Result<i16> {
     Ok(scaled as i16)
 }
 
-fn decode_candidate_animation_frames(
+fn decode_candidate_animation_frame_metadata(
     candidate: &PresentAnimationCandidate,
     anim_map: &AnimMap,
-) -> eyre::Result<Vec<AnimFrame>> {
+) -> eyre::Result<Vec<AnimFrameInfo>> {
     match &candidate.frames {
         PresentAnimationFrames::Mul => {
-            anim_map.decode_animation_index(candidate.file_index, candidate.source_index)
+            anim_map.decode_animation_index_metadata(candidate.file_index, candidate.source_index)
         }
         PresentAnimationFrames::AnimationFrameUop { path, file_hash } => {
-            decode_classic_animationframe_uop_frames(path, *file_hash)
+            decode_classic_animationframe_uop_frame_metadata(path, *file_hash)
         }
     }
 }
@@ -721,6 +721,16 @@ fn decode_classic_animationframe_uop_frames(path: &Path, file_hash: u64) -> eyre
         .unpack_file_by_hash(file_hash)?
         .ok_or_else(|| eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display()))?;
     let animation = AnimationFrameCc::parse(&data)?;
+    Ok(animation.frames)
+}
+
+fn decode_classic_animationframe_uop_frame_metadata(path: &Path, file_hash: u64) -> eyre::Result<Vec<AnimFrameInfo>> {
+    let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
+        .wrap_err_with(|| format!("load {}", path.display()))?;
+    let data = package
+        .unpack_file_by_hash(file_hash)?
+        .ok_or_else(|| eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display()))?;
+    let animation = AnimationFrameCc::parse_metadata(&data)?;
     Ok(animation.frames)
 }
 
@@ -844,7 +854,7 @@ fn decode_classic_animationframe_package(
     for file_hash in file_hashes {
         pb.inc(1);
         let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else { continue; };
-        let Ok(animation) = AnimationFrameCc::parse(&data) else { continue; };
+        let Ok(animation) = AnimationFrameCc::parse_metadata(&data) else { continue; };
         if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
             continue;
         }
@@ -893,7 +903,7 @@ fn classic_animationframe_uop_index(path: &Path) -> eyre::Result<u8> {
 fn empty_frame_record(
     animation_index: u32,
     frame_index: u16,
-    frame: &AnimFrame,
+    frame: &AnimFrameInfo,
 ) -> MobileAnimCcFrameRecord {
     MobileAnimCcFrameRecord {
         animation_index,

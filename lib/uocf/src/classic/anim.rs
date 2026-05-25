@@ -29,6 +29,14 @@ pub struct AnimFrame {
     pub data: Vec<u8>, // RGBA8888
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnimFrameInfo {
+    pub width: u16,
+    pub height: u16,
+    pub center_x: i16,
+    pub center_y: i16,
+}
+
 /// Manages multiple animation MUL sources.
 pub struct AnimMap {
     sources: Vec<Option<AnimSource>>,
@@ -109,9 +117,26 @@ impl AnimMap {
         self.decode_animation(file_idx, index)
     }
 
+    pub fn decode_animation_index_metadata(&self, file_idx: u8, index: u32) -> eyre::Result<Vec<AnimFrameInfo>> {
+        self.decode_animation_metadata(file_idx, index)
+    }
+
     /// Decodes an animation from a specific MUL file.
     /// Returns a list of frames.
     pub fn decode_animation(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<AnimFrame>> {
+        self.read_animation_payload(file_idx, anim_id, |data| decode_animation_payload(data, 0))
+    }
+
+    pub fn decode_animation_metadata(&self, file_idx: u8, anim_id: u32) -> eyre::Result<Vec<AnimFrameInfo>> {
+        self.read_animation_payload(file_idx, anim_id, |data| decode_animation_payload_metadata(data, 0))
+    }
+
+    fn read_animation_payload<T>(
+        &self,
+        file_idx: u8,
+        anim_id: u32,
+        decode: impl FnOnce(&[u8]) -> eyre::Result<T>,
+    ) -> eyre::Result<T> {
         let source = self
             .sources
             .get(file_idx as usize)
@@ -121,7 +146,7 @@ impl AnimMap {
         if file_idx == 0 {
             if let Some(verdata) = &self.verdata {
                 if let Some(bytes) = verdata.read_patch(VerFileId::Anim, anim_id as i32)? {
-                    return decode_animation_payload(&bytes, 0);
+                    return decode(&bytes);
                 }
             }
         }
@@ -154,7 +179,7 @@ impl AnimMap {
             );
         }
 
-        decode_animation_payload(&source.mul[lookup..end], 0)
+        decode(&source.mul[lookup..end])
     }
 }
 
@@ -236,6 +261,61 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
                 center_x,
                 center_y,
                 data: pixel_data,
+            });
+        }
+
+        Ok(frames)
+}
+
+fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result<Vec<AnimFrameInfo>> {
+        let mut mul_ptr = &data[lookup..];
+
+        for _ in 0..256 {
+            let _ = mul_ptr.read_u16::<LittleEndian>()?;
+        }
+
+        let frame_offset_base = lookup
+            .checked_add(512)
+            .ok_or_else(|| eyre!("Animation frame offset base overflows"))?;
+
+        let frame_count = mul_ptr.read_u32::<LittleEndian>()?;
+        if frame_count > 1000 {
+            eyre::bail!("Suspiciously high frame count: {}", frame_count);
+        }
+
+        let mut frame_offsets = Vec::with_capacity(frame_count as usize);
+        for _ in 0..frame_count {
+            frame_offsets.push(mul_ptr.read_u32::<LittleEndian>()?);
+        }
+
+        let mut frames = Vec::with_capacity(frame_count as usize);
+        for i in 0..frame_count {
+            let offset = frame_offsets[i as usize] as usize;
+            let frame_start = frame_offset_base
+                .checked_add(offset)
+                .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;
+            if frame_start >= data.len() {
+                eyre::bail!("Frame offset {} out of bounds", frame_start);
+            }
+
+            let mut frame_ptr = &data[frame_start..];
+            let center_x = frame_ptr.read_i16::<LittleEndian>()?;
+            let center_y = frame_ptr.read_i16::<LittleEndian>()?;
+            let width = frame_ptr.read_u16::<LittleEndian>()?;
+            let height = frame_ptr.read_u16::<LittleEndian>()?;
+
+            if width > MAX_CLASSIC_ANIM_FRAME_DIMENSION
+                || height > MAX_CLASSIC_ANIM_FRAME_DIMENSION
+                || width as usize * height as usize > MAX_CLASSIC_ANIM_FRAME_PIXELS
+            {
+                eyre::bail!("Suspicious animation frame dimensions: {}x{}", width, height);
+            }
+
+            frames.push(AnimFrameInfo {
+                width,
+                height,
+                center_x,
+                center_y,
             });
         }
 
@@ -434,10 +514,16 @@ mod tests {
         data[533..537].copy_from_slice(&0x7FFF7FFFu32.to_le_bytes());
 
         let frames = decode_animation_payload(&data, 0).expect("payload should decode");
+        let metadata = decode_animation_payload_metadata(&data, 0).expect("metadata should decode");
 
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].width, 1);
         assert_eq!(frames[0].height, 1);
         assert_eq!(frames[0].data, vec![248, 248, 248, 255]);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].width, frames[0].width);
+        assert_eq!(metadata[0].height, frames[0].height);
+        assert_eq!(metadata[0].center_x, frames[0].center_x);
+        assert_eq!(metadata[0].center_y, frames[0].center_y);
     }
 }

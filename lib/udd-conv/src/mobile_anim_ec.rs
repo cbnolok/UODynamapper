@@ -1035,12 +1035,22 @@ fn select_page_bucket(
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(AtlasPageSize, usize)> {
     let mut best = None::<(AtlasPageSize, usize, u64)>;
-    for page_size in atlas_page_buckets(options) {
-        let prefix_len = max_fitting_page_prefix_len(frames, page_size, options)?;
-        if prefix_len == 0 {
+    let candidates = atlas_page_buckets(options)
+        .into_par_iter()
+        .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
+            let prefix_len = max_fitting_page_prefix_len(frames, page_size, options)?;
+            if prefix_len == 0 {
+                return Ok(None);
+            }
+            let alloc_area = page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+            Ok(Some((page_size, prefix_len, alloc_area)))
+        })
+        .collect::<Vec<_>>();
+
+    for candidate in candidates {
+        let Some((page_size, prefix_len, alloc_area)) = candidate? else {
             continue;
-        }
-        let alloc_area = page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+        };
         let replace = best
             .map(|(best_size, best_len, best_area)| {
                 alloc_area * best_size.area() > best_area * page_size.area()
@@ -1066,12 +1076,23 @@ fn select_planned_page_bucket(
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(AtlasPageSize, usize)> {
     let mut best = None::<(AtlasPageSize, usize, u64)>;
-    for page_size in atlas_page_buckets(options) {
-        let prefix_len = max_fitting_planned_page_prefix_len(frames, page_size, options)?;
-        if prefix_len == 0 {
+    let candidates = atlas_page_buckets(options)
+        .into_par_iter()
+        .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
+            let prefix_len = max_fitting_planned_page_prefix_len(frames, page_size, options)?;
+            if prefix_len == 0 {
+                return Ok(None);
+            }
+            let alloc_area =
+                planned_page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+            Ok(Some((page_size, prefix_len, alloc_area)))
+        })
+        .collect::<Vec<_>>();
+
+    for candidate in candidates {
+        let Some((page_size, prefix_len, alloc_area)) = candidate? else {
             continue;
-        }
-        let alloc_area = planned_page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+        };
         let replace = best
             .map(|(best_size, best_len, best_area)| {
                 alloc_area * best_size.area() > best_area * page_size.area()

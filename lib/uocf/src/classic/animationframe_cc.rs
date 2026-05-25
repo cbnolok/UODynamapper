@@ -8,7 +8,7 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Seek, SeekFrom};
 
-use crate::classic::anim::{decode_classic_rle_frame, rgb555_palette_to_rgba, AnimFrame};
+use crate::classic::anim::{decode_classic_rle_frame, rgb555_palette_to_rgba, AnimFrame, AnimFrameInfo};
 
 /// Represents the data inside a single CC AnimationFrame entry.
 pub struct AnimationFrameCc {
@@ -17,6 +17,14 @@ pub struct AnimationFrameCc {
     pub anim_id: u32,
     pub frame_count: u32,
     pub frames: Vec<AnimFrame>,
+}
+
+pub struct AnimationFrameCcMetadata {
+    pub format_id: u32,
+    pub version: u32,
+    pub anim_id: u32,
+    pub frame_count: u32,
+    pub frames: Vec<AnimFrameInfo>,
 }
 
 impl AnimationFrameCc {
@@ -101,6 +109,69 @@ impl AnimationFrameCc {
         }
 
         Ok(Self {
+            format_id,
+            version,
+            anim_id,
+            frame_count,
+            frames,
+        })
+    }
+
+    pub fn parse_metadata(data: &[u8]) -> eyre::Result<AnimationFrameCcMetadata> {
+        let mut reader = Cursor::new(data);
+
+        let format_id = reader.read_u32::<LittleEndian>()?;
+        let version = reader.read_u32::<LittleEndian>()?;
+        let _decompressed_size = reader.read_u32::<LittleEndian>()?;
+        let anim_id = reader.read_u32::<LittleEndian>()?;
+        let _unk1 = reader.read_u64::<LittleEndian>()?;
+        let _unk2 = reader.read_u16::<LittleEndian>()?;
+        let _unk3 = reader.read_u16::<LittleEndian>()?;
+        let _header_length = reader.read_u32::<LittleEndian>()?;
+        let frame_count = reader.read_u32::<LittleEndian>()?;
+        let first_frame_address = reader.read_u32::<LittleEndian>()?;
+
+        reader.seek(SeekFrom::Start(first_frame_address as u64))?;
+
+        let mut frame_entries = Vec::with_capacity(frame_count as usize);
+        for _ in 0..frame_count {
+            let data_start = reader.stream_position()?;
+            let _anim_group = reader.read_u16::<LittleEndian>()?;
+            let frame_id = reader.read_u16::<LittleEndian>()?;
+            let _unk = reader.read_u64::<LittleEndian>()?;
+            let pixel_data_offset = reader.read_u32::<LittleEndian>()?;
+
+            frame_entries.push((data_start, frame_id, pixel_data_offset));
+        }
+
+        let mut frames = Vec::with_capacity(frame_count as usize);
+        for (data_start, _frame_id, pixel_data_offset) in frame_entries {
+            reader.seek(SeekFrom::Start(data_start + pixel_data_offset as u64 + 512))?;
+
+            let center_x = reader.read_i16::<LittleEndian>()?;
+            let center_y = reader.read_i16::<LittleEndian>()?;
+            let width = reader.read_u16::<LittleEndian>()?;
+            let height = reader.read_u16::<LittleEndian>()?;
+
+            if width == 0 || height == 0 || width > 1024 || height > 1024 {
+                frames.push(AnimFrameInfo {
+                    width: 0,
+                    height: 0,
+                    center_x,
+                    center_y,
+                });
+                continue;
+            }
+
+            frames.push(AnimFrameInfo {
+                width,
+                height,
+                center_x,
+                center_y,
+            });
+        }
+
+        Ok(AnimationFrameCcMetadata {
             format_id,
             version,
             anim_id,
