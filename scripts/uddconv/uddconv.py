@@ -19,24 +19,19 @@ def run_pack(*args: str) -> None:
 
 
 def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:
-    parser.add_argument(f"--{prefix}raw", action="store_true")
-    parser.add_argument(f"--{prefix}jxl", action="store_true")
-    parser.add_argument(f"--{prefix}bc7", action="store_true")
-    parser.add_argument(f"--{prefix}bc7-rdo", dest=f"{prefix.replace('-', '_')}bc7_rdo", action="store_true")
+    parser.add_argument(
+        f"--{prefix}format",
+        choices=["raw", "jxl", "bc7", "bc7-rdo"],
+        default=None,
+    )
 
 
 def format_args_from_namespace(args: argparse.Namespace, *, prefix: str = "") -> list[str]:
-    option_prefix = prefix.replace("-", "_")
-    selected = []
-    if getattr(args, f"{option_prefix}raw", False):
-        selected.append("--" + prefix + "raw")
-    if getattr(args, f"{option_prefix}jxl", False):
-        selected.append("--" + prefix + "jxl")
-    if getattr(args, f"{option_prefix}bc7", False):
-        selected.append("--" + prefix + "bc7")
-    if getattr(args, f"{option_prefix}bc7_rdo", False):
-        selected.append("--" + prefix + "bc7-rdo")
-    return selected
+    option_prefix = prefix.replace("-", "_") + "format"
+    selected = getattr(args, option_prefix, None)
+    if selected is None:
+        return []
+    return [f"--{prefix}{selected}"]
 
 
 def require_value(value: str, usage: str) -> str:
