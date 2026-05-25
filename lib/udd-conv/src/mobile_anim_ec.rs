@@ -25,7 +25,7 @@ use crate::bc7::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
-use crate::upscale::{apply_filter_passes, UpscaleFilter};
+use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
 use crate::{resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
@@ -1477,10 +1477,10 @@ fn build_planned_page(
         .into_par_iter()
         .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
             let decoded = pending.animation.decode_frame(&pending.source_entry)?;
-            let (width, height, rgba, _, _) = apply_filter_passes(
+            let (width, height, rgba, _, _) = apply_filter_passes_owned(
                 decoded.width as u32,
                 decoded.height as u32,
-                &decoded.data,
+                decoded.data,
                 &options.upscale_passes,
             );
             if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
