@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -428,32 +429,23 @@ fn mobile_anim_page_progress_message(options: &MobileAnimCcAtlasOptions) -> &'st
     }
 }
 
-fn mobile_anim_page_finish_message(options: &MobileAnimCcAtlasOptions) -> &'static str {
-    if options.pixel_format == PagePixelFormat::Bc7 {
-        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
-            "Mobile animation atlas pages BC7-compressed with RDO"
-        } else {
-            "Mobile animation atlas pages BC7-compressed"
-        }
-    } else if matches!(
-        options.compression,
-        CompressionFlag::JpegXl
-            | CompressionFlag::JpegXlZstd
-            | CompressionFlag::JpegXlZstdLevel(_)
-    ) {
-        "Mobile animation atlas pages registered for JPEG XL package compression"
-    } else {
-        "Mobile animation atlas pages registered uncompressed"
-    }
-}
-
 fn encode_and_add_mobile_anim_page_chunk(
     package: &mut UddpBuilder,
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
-    pb: &ProgressBar,
 ) -> eyre::Result<()> {
-    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, pb)?;
+    let encode_pb = if options.pixel_format == PagePixelFormat::Bc7 {
+        let pb = ProgressBar::new_spinner();
+        pb.set_message(mobile_anim_page_progress_message(options));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
+    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, encode_pb.as_ref())?;
+    if let Some(pb) = encode_pb {
+        pb.finish_and_clear();
+    }
     for (page_path, stored_page, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
@@ -472,7 +464,7 @@ fn encode_and_add_mobile_anim_page_chunk(
 fn encode_mobile_anim_page_chunk(
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
-    pb: &ProgressBar,
+    pb: Option<&ProgressBar>,
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
     if options.pixel_format == PagePixelFormat::Bc7 {
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
@@ -487,7 +479,11 @@ fn encode_mobile_anim_page_chunk(
                     RawImageFormat::Rgba8888,
                     encoding,
                     options.bc7_rdo_lambda,
-                    |units| pb.inc(units as u64),
+                    |units| {
+                        if let Some(pb) = pb {
+                            pb.inc(units as u64);
+                        }
+                    },
                 )
                 .map_err(|e| {
                     eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
@@ -512,7 +508,6 @@ fn encode_mobile_anim_page_chunk(
         Ok(pages
             .iter()
             .map(|page| {
-                pb.inc(1);
                 (
                     page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
                     page.pixels.clone(),
@@ -1102,6 +1097,7 @@ pub fn pack_frames_into_pages(
     let mut pages = Vec::new();
     let mut page_index = 0u32;
     let mut page_pixels = Vec::new();
+    let mut next_frame = 0usize;
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -1109,9 +1105,18 @@ pub fn pack_frames_into_pages(
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
 
-    while !remaining.is_empty() {
+    while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
+        let (page_size, prefix_len) = select_page_bucket(&remaining[next_frame..], options)?;
+        if prefix_len == 0 {
+            eyre::bail!(
+                "could not fit any mobile animation frame into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
+        }
+        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
+        next_frame += prefix_len;
         let (page, unplaced) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
@@ -1121,12 +1126,16 @@ pub fn pack_frames_into_pages(
                 options.atlas_height
             );
         }
+        if !unplaced.is_empty() {
+            eyre::bail!(
+                "validated mobile animation atlas page {} left {} frames unplaced",
+                page_index,
+                unplaced.len()
+            );
+        }
 
         pb.inc(page.record.frame_count as u64);
         pages.push(page);
-        remaining = leftovers;
-        remaining.extend(unplaced);
-        remaining.sort_by_key(|frame| frame.global_frame_index);
         page_index += 1;
     }
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
@@ -1149,6 +1158,7 @@ fn pack_frames_into_package(
     let mut pending_pages = Vec::new();
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
+    let mut next_frame = 0usize;
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1157,12 +1167,18 @@ fn pack_frames_into_package(
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
 
-    let encode_pb = ProgressBar::new_spinner();
-    encode_pb.set_message(mobile_anim_page_progress_message(options));
-
-    while !remaining.is_empty() {
+    while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
+        let (page_size, prefix_len) = select_page_bucket(&remaining[next_frame..], options)?;
+        if prefix_len == 0 {
+            eyre::bail!(
+                "could not fit any mobile animation frame into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
+        }
+        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
+        next_frame += prefix_len;
         let (page, unplaced) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
@@ -1172,28 +1188,30 @@ fn pack_frames_into_package(
                 options.atlas_height
             );
         }
+        if !unplaced.is_empty() {
+            eyre::bail!(
+                "validated mobile animation atlas page {} left {} frames unplaced",
+                page_index,
+                unplaced.len()
+            );
+        }
 
         pb.inc(page.record.frame_count as u64);
         stats.add_page(&page);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
             pending_pages.clear();
         }
-
-        remaining = leftovers;
-        remaining.extend(unplaced);
-        remaining.sort_by_key(|frame| frame.global_frame_index);
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
-    encode_pb.finish_with_message(mobile_anim_page_finish_message(options));
 
     Ok(PackedMobileAnimPages { records, stats })
 }
@@ -1214,6 +1232,7 @@ fn pack_planned_frames_into_package(
     let mut pending_pages = Vec::new();
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
+    let mut next_frame = 0usize;
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1222,12 +1241,18 @@ fn pack_planned_frames_into_package(
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
 
-    let encode_pb = ProgressBar::new_spinner();
-    encode_pb.set_message(mobile_anim_page_progress_message(options));
-
-    while !remaining.is_empty() {
+    while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, page_frames, leftovers) = take_planned_page_frame_prefix(remaining, options)?;
+        let (page_size, prefix_len) = select_planned_page_bucket(&remaining[next_frame..], options)?;
+        if prefix_len == 0 {
+            eyre::bail!(
+                "could not fit any mobile animation frame into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
+        }
+        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
+        next_frame += prefix_len;
         let (page, unplaced) = build_planned_page(
             page_index,
             page_size,
@@ -1244,66 +1269,32 @@ fn pack_planned_frames_into_package(
                 options.atlas_height
             );
         }
+        if !unplaced.is_empty() {
+            eyre::bail!(
+                "validated mobile animation atlas page {} left {} frames unplaced",
+                page_index,
+                unplaced.len()
+            );
+        }
 
         pb.inc(page.record.frame_count as u64);
         stats.add_page(&page);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
             pending_pages.clear();
         }
-
-        remaining = leftovers;
-        remaining.extend(unplaced);
-        remaining.sort_by_key(|frame| frame.global_frame_index);
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
-    encode_pb.finish_with_message(mobile_anim_page_finish_message(options));
 
     Ok(PackedMobileAnimPages { records, stats })
-}
-
-fn take_page_frame_prefix(
-    frames: Vec<DecodedMobileAnimFrame>,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<(AtlasPageSize, Vec<DecodedMobileAnimFrame>, Vec<DecodedMobileAnimFrame>)> {
-    let (page_size, prefix_len) = select_page_bucket(&frames, options)?;
-    if prefix_len == 0 {
-        eyre::bail!(
-            "could not fit any mobile animation frame into atlas page {}x{}",
-            options.atlas_width,
-            options.atlas_height
-        );
-    }
-
-    let mut leftovers = frames;
-    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
-    Ok((page_size, selected, leftovers))
-}
-
-fn take_planned_page_frame_prefix(
-    frames: Vec<PlannedMobileAnimFrame>,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<(AtlasPageSize, Vec<PlannedMobileAnimFrame>, Vec<PlannedMobileAnimFrame>)> {
-    let (page_size, prefix_len) = select_planned_page_bucket(&frames, options)?;
-    if prefix_len == 0 {
-        eyre::bail!(
-            "could not fit any mobile animation frame into atlas page {}x{}",
-            options.atlas_width,
-            options.atlas_height
-        );
-    }
-
-    let mut leftovers = frames;
-    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
-    Ok((page_size, selected, leftovers))
 }
 
 fn select_page_bucket(
@@ -1420,10 +1411,25 @@ fn max_fitting_page_prefix_len(
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<usize> {
-    let mut low = 1usize;
-    let mut high = frames.len();
     let mut best = 0usize;
+    let mut high = 1usize;
+    while high <= frames.len() {
+        if page_prefix_fits(&frames[..high], page_size, options)? {
+            best = high;
+            if high == frames.len() {
+                return Ok(best);
+            }
+            high = high.saturating_mul(2).min(frames.len());
+        } else {
+            break;
+        }
+    }
+    if best == 0 {
+        return Ok(0);
+    }
 
+    let mut low = best + 1;
+    let mut high = high.saturating_sub(1);
     while low <= high {
         let mid = low + (high - low) / 2;
         if page_prefix_fits(&frames[..mid], page_size, options)? {
@@ -1442,10 +1448,25 @@ fn max_fitting_planned_page_prefix_len(
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<usize> {
-    let mut low = 1usize;
-    let mut high = frames.len();
     let mut best = 0usize;
+    let mut high = 1usize;
+    while high <= frames.len() {
+        if planned_page_prefix_fits(&frames[..high], page_size, options)? {
+            best = high;
+            if high == frames.len() {
+                return Ok(best);
+            }
+            high = high.saturating_mul(2).min(frames.len());
+        } else {
+            break;
+        }
+    }
+    if best == 0 {
+        return Ok(0);
+    }
 
+    let mut low = best + 1;
+    let mut high = high.saturating_sub(1);
     while low <= high {
         let mid = low + (high - low) / 2;
         if planned_page_prefix_fits(&frames[..mid], page_size, options)? {
