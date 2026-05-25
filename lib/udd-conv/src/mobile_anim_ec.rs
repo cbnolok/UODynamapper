@@ -10,15 +10,17 @@ use guillotiere::{size2, AtlasAllocator};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 use rayon::prelude::*;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{
+    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
+};
 use uocf::animation_sequence::AnimationSequence;
-use uocf::enhanced::animationframe::AnimationFrame;
+use uocf::enhanced::animationframe::{AnimationFrame, FrameEntry};
 use uocf::uop_container::hash::hash_file_name_single;
-use uocf::uop_container::package::UopPackage;
+use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
-    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
+    encode_for_vram_with_bc7_rdo_lambda_and_progress, preferred_bc7_encoder_backend, ImageExtent,
+    RawImageFormat, VramTextureEncoding,
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
@@ -108,6 +110,24 @@ pub struct DecodedMobileAnimEcFrame {
     pub rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PlannedMobileAnimEcSource {
+    path: PathBuf,
+    file_hash: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PlannedMobileAnimEcFrame {
+    body_id: u32,
+    source_frame_index: u16,
+    source_entry_index: u16,
+    width: u16,
+    height: u16,
+    center_x: i16,
+    center_y: i16,
+    source: PlannedMobileAnimEcSource,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FramePlacement {
     page_index: u32,
@@ -124,6 +144,11 @@ pub(crate) struct FramePlacement {
 pub struct BuiltMobileAnimEcPage {
     pub record: MobileAnimEcPageRecord,
     pub pixels: Vec<u8>,
+}
+
+struct PackedMobileAnimEcPages {
+    records: Vec<MobileAnimEcPageRecord>,
+    stats: MobileAnimPageStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,23 +197,26 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     println!("Using EC animation source dir: {}", client_dir.display());
     println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
-    let decoded_by_body = decode_animationframe_packages(&animationframe_paths)?;
-    let decoded_frames = decoded_by_body
+    let planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    let planned_frames = planned_by_body
         .values()
         .flat_map(|frames| frames.iter().cloned())
         .collect::<Vec<_>>();
-    let (pages, placements) = pack_frames_into_pages(decoded_frames, options)?;
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    let (packed_pages, placements) =
+        pack_planned_frames_into_package(&mut package, planned_frames, options)?;
     let packed_frame_count = placements.len() as u32;
-    let sequences = load_animation_sequences(&client_dir, decoded_by_body.keys().copied().collect::<Vec<_>>())?;
-    let (animations, frames) = build_animation_records(&decoded_by_body, &placements, &sequences)?;
+    let sequences = load_animation_sequences(&client_dir, planned_by_body.keys().copied().collect::<Vec<_>>())?;
+    let planned_frame_indices_by_body = planned_frame_indices_by_body(&planned_by_body);
+    let (animations, frames) =
+        build_animation_records_for_body_frames(&planned_frame_indices_by_body, &placements, &sequences)?;
 
-    let page_manifest = serialize_page_manifest(&pages, options)?;
+    let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animations)?;
     let frame_manifest = serialize_frame_manifest(&frames)?;
     let item_manifest = serialize_item_manifest(&items)?;
     let source_hint_manifest = serialize_source_hint_manifest(&source_hints)?;
 
-    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
         (ANIMATION_MANIFEST_ENTRY_PATH, animation_manifest.as_slice()),
@@ -208,21 +236,17 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
         })?;
     }
 
-    let page_count = pages.len() as u32;
-    let page_stats = summarize_mobile_anim_pages(&pages);
-    encode_and_add_mobile_anim_pages(&mut package, pages, options)?;
-
     build_and_write_package(&mut package, out_file)?;
 
     Ok(MobileAnimEcBuildSummary {
-        body_count: decoded_by_body.len() as u32,
+        body_count: planned_by_body.len() as u32,
         animation_count: animations.len() as u32,
         frame_count: frames.len() as u32,
         packed_frame_count,
-        page_count,
-        used_page_pixel_count: page_stats.used_page_pixel_count,
-        filled_pixel_count: page_stats.filled_pixel_count,
-        empty_pixel_count: page_stats.empty_pixel_count,
+        page_count: packed_pages.records.len() as u32,
+        used_page_pixel_count: packed_pages.stats.used_page_pixel_count,
+        filled_pixel_count: packed_pages.stats.filled_pixel_count,
+        empty_pixel_count: packed_pages.stats.empty_pixel_count,
         item_metadata_count: items.len() as u32,
         source_hint_count: source_hints.len() as u32,
         source_uop_count: animationframe_paths.len() as u32,
@@ -234,17 +258,23 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimEcPage]) -> MobileAnimPageStats {
     let mut stats = MobileAnimPageStats::default();
     for page in pages {
+        stats.add_page(page);
+    }
+    stats
+}
+
+impl MobileAnimPageStats {
+    fn add_page(&mut self, page: &BuiltMobileAnimEcPage) {
         let used_pixels = page.record.used_width as u64 * page.record.used_height as u64;
         let filled_pixels = page
             .pixels
             .chunks_exact(4)
             .filter(|pixel| pixel[3] != 0)
             .count() as u64;
-        stats.used_page_pixel_count += used_pixels;
-        stats.filled_pixel_count += filled_pixels;
-        stats.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
+        self.used_page_pixel_count += used_pixels;
+        self.filled_pixel_count += filled_pixels;
+        self.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
     }
-    stats
 }
 
 fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
@@ -254,25 +284,8 @@ fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn encode_and_add_mobile_anim_pages(
-    package: &mut UddpBuilder,
-    pages: Vec<BuiltMobileAnimEcPage>,
-    options: &MobileAnimEcAtlasOptions,
-) -> eyre::Result<()> {
-    let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;
-    let progress_len = if use_bc7 {
-        pages
-            .iter()
-            .map(|page| {
-                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
-                    .map_err(|e| eyre::eyre!("{e}"))?;
-                Ok(bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64)
-            })
-            .sum::<eyre::Result<u64>>()?
-    } else {
-        pages.len() as u64
-    };
-    let progress_message = if use_bc7 {
+fn mobile_anim_page_progress_message(options: &MobileAnimEcAtlasOptions) -> &'static str {
+    if options.pixel_format == PagePixelFormat::Bc7 {
         if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
             "BC7-compressing EC mobile animation atlas pages; RDO pass follows"
         } else {
@@ -282,37 +295,11 @@ fn encode_and_add_mobile_anim_pages(
         "registering EC mobile animation atlas pages for JPEG XL package compression"
     } else {
         "registering uncompressed EC mobile animation atlas pages"
-    };
-
-    let pb = ProgressBar::new(progress_len);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
-    pb.set_message(progress_message);
-
-    let chunk_size = rayon::current_num_threads().max(1);
-    let mut pages = pages.into_iter();
-    loop {
-        let chunk = pages.by_ref().take(chunk_size).collect::<Vec<_>>();
-        if chunk.is_empty() {
-            break;
-        }
-        let encoded_pages = encode_mobile_anim_page_chunk(&chunk, options, &pb)?;
-        for (page_path, stored_page, width, height) in &encoded_pages {
-            package.add_file(AddFileRequest {
-                data_type: DataType::Texture as u8,
-                compression: options.compression,
-                width: *width,
-                height: *height,
-                virtual_path: Some(page_path),
-                path_hash64: None,
-                id: None,
-                data: stored_page,
-            })?;
-        }
     }
-    let finish_message = if use_bc7 {
+}
+
+fn mobile_anim_page_finish_message(options: &MobileAnimEcAtlasOptions) -> &'static str {
+    if options.pixel_format == PagePixelFormat::Bc7 {
         if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
             "EC mobile animation atlas pages BC7-compressed with RDO"
         } else {
@@ -322,8 +309,28 @@ fn encode_and_add_mobile_anim_pages(
         "EC mobile animation atlas pages registered for JPEG XL package compression"
     } else {
         "EC mobile animation atlas pages registered uncompressed"
-    };
-    pb.finish_with_message(finish_message);
+    }
+}
+
+fn encode_and_add_mobile_anim_page_chunk(
+    package: &mut UddpBuilder,
+    pages: &[BuiltMobileAnimEcPage],
+    options: &MobileAnimEcAtlasOptions,
+    pb: &ProgressBar,
+) -> eyre::Result<()> {
+    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, pb)?;
+    for (page_path, stored_page, width, height) in encoded_pages {
+        package.add_owned_file(AddOwnedFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: options.compression,
+            width,
+            height,
+            virtual_path: Some(page_path),
+            path_hash64: None,
+            id: None,
+            data: stored_page,
+        })?;
+    }
     Ok(())
 }
 
@@ -455,19 +462,19 @@ fn animationframe_uop_index(name: &str) -> eyre::Result<u8> {
     Ok(index)
 }
 
-fn decode_animationframe_packages(
+fn plan_animationframe_packages(
     paths: &[PathBuf],
-) -> eyre::Result<BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>> {
-    let mut decoded_by_body = BTreeMap::<u32, Vec<DecodedMobileAnimEcFrame>>::new();
+) -> eyre::Result<BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>> {
+    let mut planned_by_body = BTreeMap::<u32, Vec<PlannedMobileAnimEcFrame>>::new();
     for path in paths {
-        let package = UopPackage::load(path)
+        let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
             .wrap_err_with(|| format!("load {}", path.display()))?;
-        let decoded = decode_animationframe_package(&package, path)?;
-        for (body_id, frames) in decoded {
-            append_decoded_body_frames(&mut decoded_by_body, body_id, frames)?;
+        let planned = plan_animationframe_package(&package, path)?;
+        for (body_id, frames) in planned {
+            append_planned_body_frames(&mut planned_by_body, body_id, frames)?;
         }
     }
-    Ok(decoded_by_body)
+    Ok(planned_by_body)
 }
 
 fn append_decoded_body_frames(
@@ -488,47 +495,125 @@ fn append_decoded_body_frames(
     Ok(())
 }
 
-fn decode_animationframe_package(
+fn append_planned_body_frames(
+    planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+    body_id: u32,
+    mut frames: Vec<PlannedMobileAnimEcFrame>,
+) -> eyre::Result<()> {
+    let existing = planned_by_body.entry(body_id).or_default();
+    let offset = existing.len();
+    for frame in &mut frames {
+        let source_frame_index = offset + frame.source_frame_index as usize;
+        if source_frame_index > u16::MAX as usize {
+            eyre::bail!("EC mobile animation {} has more than {} frames", body_id, u16::MAX);
+        }
+        frame.source_frame_index = source_frame_index as u16;
+    }
+    existing.append(&mut frames);
+    Ok(())
+}
+
+fn plan_animationframe_package(
     package: &UopPackage,
     path: &Path,
-) -> eyre::Result<BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>> {
-    let files = package.iter_files().filter(|file| file.has_size()).collect::<Vec<_>>();
+) -> eyre::Result<BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>> {
+    let file_hashes = package
+        .iter_files()
+        .filter(|file| file.has_size())
+        .map(|file| file.filename_hash())
+        .collect::<Vec<_>>();
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("AnimationFrame UOP");
-    let pb = ProgressBar::new(files.len() as u64);
+    let pb = ProgressBar::new(file_hashes.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message(format!("extracting EC mobile animations from {file_name}"));
 
-    let mut decoded_by_body = BTreeMap::<u32, Vec<DecodedMobileAnimEcFrame>>::new();
-    for file in files {
+    let mut planned_by_body = BTreeMap::<u32, Vec<PlannedMobileAnimEcFrame>>::new();
+    for file_hash in file_hashes {
         pb.inc(1);
-        let Ok(data) = file.unpack() else { continue; };
+        let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else { continue; };
         let Ok(animation) = AnimationFrame::load(&data) else { continue; };
         let mut frames = Vec::with_capacity(animation.frames.len());
         for (index, entry) in animation.frames.iter().enumerate() {
             if index > u16::MAX as usize {
                 continue;
             }
-            let decoded = animation.decode_frame(entry)?;
-            frames.push(DecodedMobileAnimEcFrame {
-                body_id: animation.animation_id,
-                source_frame_index: index as u16,
-                width: decoded.width,
-                height: decoded.height,
-                center_x: decoded.center_x,
-                center_y: decoded.center_y,
-                rgba: decoded.data,
-            });
+            frames.push(planned_frame_from_entry(
+                &animation,
+                entry,
+                index as u16,
+                path.to_path_buf(),
+                file_hash,
+            ));
         }
-        append_decoded_body_frames(&mut decoded_by_body, animation.animation_id, frames)?;
+        append_planned_body_frames(&mut planned_by_body, animation.animation_id, frames)?;
     }
     pb.finish_with_message(format!("EC mobile animations extracted from {file_name}"));
-    Ok(decoded_by_body)
+    Ok(planned_by_body)
+}
+
+fn planned_frame_from_entry(
+    animation: &AnimationFrame,
+    entry: &FrameEntry,
+    source_entry_index: u16,
+    path: PathBuf,
+    file_hash: u64,
+) -> PlannedMobileAnimEcFrame {
+    let width = (entry.end_coords_x - entry.init_coords_x).abs() as u16;
+    let height = (entry.end_coords_y - entry.init_coords_y).abs() as u16;
+    PlannedMobileAnimEcFrame {
+        body_id: animation.animation_id,
+        source_frame_index: source_entry_index,
+        source_entry_index,
+        width,
+        height,
+        center_x: if width == 0 || height == 0 {
+            0
+        } else {
+            animation.init_coords_x - entry.init_coords_x
+        },
+        center_y: if width == 0 || height == 0 {
+            0
+        } else {
+            animation.init_coords_y - entry.init_coords_y
+        },
+        source: PlannedMobileAnimEcSource { path, file_hash },
+    }
+}
+
+fn decode_planned_animation_source(source: &PlannedMobileAnimEcSource) -> eyre::Result<AnimationFrame> {
+    let package = UopPackage::load_with_mode(&source.path, LoadMode::Lazy)
+        .wrap_err_with(|| format!("load {}", source.path.display()))?;
+    let data = package
+        .unpack_file_by_hash(source.file_hash)?
+        .ok_or_else(|| eyre::eyre!(
+            "EC AnimationFrame payload {:016x} not found in {}",
+            source.file_hash,
+            source.path.display()
+        ))?;
+    AnimationFrame::load(&data)
+}
+
+fn planned_frame_indices_by_body(
+    planned_by_body: &BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+) -> BTreeMap<u32, Vec<u16>> {
+    planned_by_body
+        .iter()
+        .map(|(&body_id, frames)| {
+            (
+                body_id,
+                frames
+                    .iter()
+                    .map(|frame| frame.source_frame_index)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
 }
 
 fn load_animation_sequences(
@@ -542,7 +627,7 @@ fn load_animation_sequences(
     let Some(sequence_path) = sequence_path else {
         return Ok(HashMap::new());
     };
-    let package = UopPackage::load(&sequence_path)
+    let package = UopPackage::load_with_mode(&sequence_path, LoadMode::Lazy)
         .wrap_err_with(|| format!("load {}", sequence_path.display()))?;
     let mut sequences = HashMap::new();
     let pb = ProgressBar::new(body_ids.len() as u64);
@@ -559,10 +644,9 @@ fn load_animation_sequences(
             format!("build/animationsequence/{body_id:08}.bin"),
         ] {
             let hash = hash_file_name_single(&path);
-            let Some(file) = package.get_file_by_hash(hash) else {
+            let Some(data) = package.unpack_file_by_hash(hash)? else {
                 continue;
             };
-            let data = file.unpack()?;
             if let Ok(sequence) = AnimationSequence::parse_ec(&data, body_id) {
                 sequences.insert(body_id, sequence);
                 break;
@@ -578,10 +662,30 @@ fn build_animation_records(
     placements: &HashMap<(u32, u16), FramePlacement>,
     sequences: &HashMap<u32, AnimationSequence>,
 ) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
+    let source_frame_indices_by_body = decoded_by_body
+        .iter()
+        .map(|(&body_id, frames)| {
+            (
+                body_id,
+                frames
+                    .iter()
+                    .map(|frame| frame.source_frame_index)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    build_animation_records_for_body_frames(&source_frame_indices_by_body, placements, sequences)
+}
+
+fn build_animation_records_for_body_frames(
+    source_frame_indices_by_body: &BTreeMap<u32, Vec<u16>>,
+    placements: &HashMap<(u32, u16), FramePlacement>,
+    sequences: &HashMap<u32, AnimationSequence>,
+) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
     let mut animations = Vec::new();
     let mut frames = Vec::new();
 
-    for (&body_id, source_frames) in decoded_by_body {
+    for (&body_id, source_frame_indices) in source_frame_indices_by_body {
         if let Some(sequence) = sequences.get(&body_id) {
             let mut action_ids = sequence.actions.keys().copied().collect::<Vec<_>>();
             action_ids.sort_unstable();
@@ -612,17 +716,17 @@ fn build_animation_records(
                 }
             }
         } else {
-            if source_frames.len() > u16::MAX as usize {
+            if source_frame_indices.len() > u16::MAX as usize {
                 continue;
             }
             let animation_index = animations.len() as u32;
             let frame_start = frames.len() as u32;
-            for frame in source_frames {
+            for &source_frame_index in source_frame_indices {
                 frames.push(frame_record_from_placement(
                     animation_index,
-                    frame.source_frame_index,
-                    frame.source_frame_index,
-                    placements.get(&(body_id, frame.source_frame_index)),
+                    source_frame_index,
+                    source_frame_index,
+                    placements.get(&(body_id, source_frame_index)),
                 ));
             }
             animations.push(MobileAnimEcAnimationRecord {
@@ -696,11 +800,13 @@ pub(crate) fn pack_frames_into_pages(
     let mut pages = Vec::new();
     let mut placements = HashMap::new();
     let mut page_index = 0u32;
+    let mut page_pixels = Vec::new();
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
         let (page_size, page_frames, leftovers) = take_page_frame_prefix(remaining, options)?;
-        let (page, unplaced) = build_page(page_index, page_size, page_frames, &mut placements, options)?;
+        let (page, unplaced) =
+            build_page(page_index, page_size, page_frames, &mut placements, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -720,11 +826,99 @@ pub(crate) fn pack_frames_into_pages(
     Ok((pages, placements))
 }
 
+fn pack_planned_frames_into_package(
+    package: &mut UddpBuilder,
+    frames: Vec<PlannedMobileAnimEcFrame>,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(PackedMobileAnimEcPages, HashMap<(u32, u16), FramePlacement>)> {
+    let mut remaining = frames
+        .into_iter()
+        .filter(|frame| frame.width != 0 && frame.height != 0)
+        .collect::<Vec<_>>();
+    let pb = ProgressBar::new(remaining.len() as u64);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+    pb.set_message("creating EC mobile animation atlas pages");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    remaining.sort_by_key(|frame| (frame.body_id, frame.source_frame_index));
+    let mut records = Vec::new();
+    let mut stats = MobileAnimPageStats::default();
+    let mut placements = HashMap::new();
+    let mut page_index = 0u32;
+    let mut pending_pages = Vec::new();
+    let mut page_pixels = Vec::new();
+    let chunk_size = rayon::current_num_threads().max(1);
+
+    let encode_pb = ProgressBar::new_spinner();
+    encode_pb.set_message(mobile_anim_page_progress_message(options));
+
+    while !remaining.is_empty() {
+        pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
+        let (page_size, page_frames, leftovers) = take_planned_page_frame_prefix(remaining, options)?;
+        let (page, unplaced) = build_planned_page(
+            page_index,
+            page_size,
+            page_frames,
+            &mut placements,
+            options,
+            &mut page_pixels,
+        )?;
+        if page.record.frame_count == 0 {
+            eyre::bail!(
+                "could not fit any EC mobile animation frame into atlas page {}x{}",
+                options.atlas_width,
+                options.atlas_height
+            );
+        }
+        pb.inc(page.record.frame_count as u64);
+        stats.add_page(&page);
+        records.push(page.record);
+        pending_pages.push(page);
+        if pending_pages.len() >= chunk_size {
+            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+            pending_pages.clear();
+        }
+
+        remaining = leftovers;
+        remaining.extend(unplaced);
+        remaining.sort_by_key(|frame| (frame.body_id, frame.source_frame_index));
+        page_index += 1;
+    }
+
+    if !pending_pages.is_empty() {
+        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options, &encode_pb)?;
+    }
+
+    pb.finish_with_message(format!("EC mobile animation atlas pages created ({})", records.len()));
+    encode_pb.finish_with_message(mobile_anim_page_finish_message(options));
+    Ok((PackedMobileAnimEcPages { records, stats }, placements))
+}
+
 fn take_page_frame_prefix(
     frames: Vec<DecodedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(AtlasPageSize, Vec<DecodedMobileAnimEcFrame>, Vec<DecodedMobileAnimEcFrame>)> {
     let (page_size, prefix_len) = select_page_bucket(&frames, options)?;
+    if prefix_len == 0 {
+        eyre::bail!(
+            "could not fit any EC mobile animation frame into atlas page {}x{}",
+            options.atlas_width,
+            options.atlas_height
+        );
+    }
+    let mut leftovers = frames;
+    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
+    Ok((page_size, selected, leftovers))
+}
+
+fn take_planned_page_frame_prefix(
+    frames: Vec<PlannedMobileAnimEcFrame>,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(AtlasPageSize, Vec<PlannedMobileAnimEcFrame>, Vec<PlannedMobileAnimEcFrame>)> {
+    let (page_size, prefix_len) = select_planned_page_bucket(&frames, options)?;
     if prefix_len == 0 {
         eyre::bail!(
             "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -748,6 +942,37 @@ fn select_page_bucket(
             continue;
         }
         let alloc_area = page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+        let replace = best
+            .map(|(best_size, best_len, best_area)| {
+                alloc_area * best_size.area() > best_area * page_size.area()
+                    || (alloc_area * best_size.area() == best_area * page_size.area()
+                        && (prefix_len > best_len
+                            || (prefix_len == best_len && page_size.area() < best_size.area())))
+            })
+            .unwrap_or(true);
+        if replace {
+            best = Some((page_size, prefix_len, alloc_area));
+        }
+    }
+    best.map(|(page_size, prefix_len, _)| (page_size, prefix_len))
+        .ok_or_else(|| eyre::eyre!(
+            "could not fit any EC mobile animation frame into atlas page {}x{}",
+            options.atlas_width,
+            options.atlas_height
+        ))
+}
+
+fn select_planned_page_bucket(
+    frames: &[PlannedMobileAnimEcFrame],
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(AtlasPageSize, usize)> {
+    let mut best = None::<(AtlasPageSize, usize, u64)>;
+    for page_size in atlas_page_buckets(options) {
+        let prefix_len = max_fitting_planned_page_prefix_len(frames, page_size, options)?;
+        if prefix_len == 0 {
+            continue;
+        }
+        let alloc_area = planned_page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
         let replace = best
             .map(|(best_size, best_len, best_area)| {
                 alloc_area * best_size.area() > best_area * page_size.area()
@@ -814,6 +1039,26 @@ fn max_fitting_page_prefix_len(
     Ok(best)
 }
 
+fn max_fitting_planned_page_prefix_len(
+    frames: &[PlannedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<usize> {
+    let mut low = 1usize;
+    let mut high = frames.len();
+    let mut best = 0usize;
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if planned_page_prefix_fits(&frames[..mid], page_size, options)? {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid.saturating_sub(1);
+        }
+    }
+    Ok(best)
+}
+
 fn page_prefix_fits(
     frames: &[DecodedMobileAnimEcFrame],
     page_size: AtlasPageSize,
@@ -837,6 +1082,29 @@ fn page_prefix_fits(
     Ok(true)
 }
 
+fn planned_page_prefix_fits(
+    frames: &[PlannedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<bool> {
+    let mut to_pack = frames.iter().collect::<Vec<_>>();
+    sort_planned_frame_refs_within_page(&mut to_pack, page_size, options);
+    let mut allocator = AtlasAllocator::new(size2(
+        page_size.width as i32,
+        page_size.height as i32,
+    ));
+    for frame in to_pack {
+        let (width_axis, height_axis) = planned_packing_axes(frame, page_size, options)?;
+        if allocator
+            .allocate(size2(width_axis.alloc_extent as i32, height_axis.alloc_extent as i32))
+            .is_none()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn page_prefix_alloc_area(
     frames: &[DecodedMobileAnimEcFrame],
     page_size: AtlasPageSize,
@@ -848,18 +1116,32 @@ fn page_prefix_alloc_area(
     })
 }
 
+fn planned_page_prefix_alloc_area(
+    frames: &[PlannedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<u64> {
+    frames.iter().try_fold(0u64, |total, frame| {
+        let (width_axis, height_axis) = planned_packing_axes(frame, page_size, options)?;
+        Ok(total + width_axis.alloc_extent as u64 * height_axis.alloc_extent as u64)
+    })
+}
+
 fn build_page(
     page_index: u32,
     page_size: AtlasPageSize,
     mut frames: Vec<DecodedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
+    pixels: &mut Vec<u8>,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<DecodedMobileAnimEcFrame>)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
         page_size.height as i32,
     ));
-    let mut pixels = vec![0u8; page_size.width as usize * page_size.height as usize * 4];
+    let page_len = page_size.width as usize * page_size.height as usize * 4;
+    pixels.clear();
+    pixels.resize(page_len, 0);
     let mut leftovers = Vec::new();
     let mut used_width = 0u32;
     let mut used_height = 0u32;
@@ -876,7 +1158,7 @@ fn build_page(
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
             blit_rgba_frame(
-                &mut pixels,
+                pixels,
                 page_size.width,
                 inner_x as u32,
                 inner_y as u32,
@@ -903,7 +1185,117 @@ fn build_page(
     }
 
     let pixels = crate::tex_art_cc::crop_rgba_page(
-        &pixels,
+        pixels,
+        page_size.width,
+        used_width,
+        used_height,
+    );
+
+    Ok((
+        BuiltMobileAnimEcPage {
+            record: MobileAnimEcPageRecord {
+                page_index,
+                frame_count: page_frame_index as u32,
+                atlas_width: page_size.width,
+                atlas_height: page_size.height,
+                used_width,
+                used_height,
+                pixel_format: options.pixel_format,
+            },
+            pixels,
+        },
+        leftovers,
+    ))
+}
+
+fn build_planned_page(
+    page_index: u32,
+    page_size: AtlasPageSize,
+    mut frames: Vec<PlannedMobileAnimEcFrame>,
+    placements: &mut HashMap<(u32, u16), FramePlacement>,
+    options: &MobileAnimEcAtlasOptions,
+    pixels: &mut Vec<u8>,
+) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>)> {
+    let mut allocator = AtlasAllocator::new(size2(
+        page_size.width as i32,
+        page_size.height as i32,
+    ));
+    let page_len = page_size.width as usize * page_size.height as usize * 4;
+    pixels.clear();
+    pixels.resize(page_len, 0);
+    let mut leftovers = Vec::new();
+    let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, AnimationFrame>::new();
+    let mut used_width = 0u32;
+    let mut used_height = 0u32;
+    let mut page_frame_index = 0u16;
+
+    sort_planned_frames_within_page(&mut frames, page_size, options);
+
+    for frame in frames {
+        let (width_axis, height_axis) = planned_packing_axes(&frame, page_size, options)?;
+        if let Some(allocation) = allocator.allocate(size2(
+            width_axis.alloc_extent as i32,
+            height_axis.alloc_extent as i32,
+        )) {
+            let animation = match decoded_sources.entry(frame.source.clone()) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let decoded = decode_planned_animation_source(&frame.source)?;
+                    entry.insert(decoded)
+                }
+            };
+            let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize) else {
+                eyre::bail!(
+                    "planned EC mobile animation body {} frame {} missing source entry {}",
+                    frame.body_id,
+                    frame.source_frame_index,
+                    frame.source_entry_index
+                );
+            };
+            let decoded = animation.decode_frame(source_entry)?;
+            if decoded.width != frame.width || decoded.height != frame.height {
+                eyre::bail!(
+                    "planned EC mobile animation body {} frame {} changed dimensions: planned {}x{}, decoded {}x{}",
+                    frame.body_id,
+                    frame.source_frame_index,
+                    frame.width,
+                    frame.height,
+                    decoded.width,
+                    decoded.height
+                );
+            }
+
+            let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
+            let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
+            blit_rgba_frame(
+                pixels,
+                page_size.width,
+                inner_x as u32,
+                inner_y as u32,
+                decoded.width as u32,
+                decoded.height as u32,
+                &decoded.data,
+            )?;
+            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
+            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            placements.insert((frame.body_id, frame.source_frame_index), FramePlacement {
+                page_index,
+                page_frame_index,
+                x: inner_x as u16,
+                y: inner_y as u16,
+                width: frame.width,
+                height: frame.height,
+                center_x: frame.center_x,
+                center_y: frame.center_y,
+            });
+            page_frame_index += 1;
+        } else {
+            leftovers.push(frame);
+        }
+    }
+
+    let pixels = crate::tex_art_cc::crop_rgba_page(
+        pixels,
         page_size.width,
         used_width,
         used_height,
@@ -931,15 +1323,48 @@ fn packing_axes(
     page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(crate::PackingAxis, crate::PackingAxis)> {
+    packing_axes_for_dimensions(
+        frame.body_id,
+        frame.source_frame_index,
+        frame.width,
+        frame.height,
+        page_size,
+        options,
+    )
+}
+
+fn planned_packing_axes(
+    frame: &PlannedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(crate::PackingAxis, crate::PackingAxis)> {
+    packing_axes_for_dimensions(
+        frame.body_id,
+        frame.source_frame_index,
+        frame.width,
+        frame.height,
+        page_size,
+        options,
+    )
+}
+
+fn packing_axes_for_dimensions(
+    body_id: u32,
+    source_frame_index: u16,
+    width: u16,
+    height: u16,
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<(crate::PackingAxis, crate::PackingAxis)> {
     let width_axis = resolve_packing_axis(
-        frame.width as u32,
+        width as u32,
         page_size.width,
         options.gutter,
         AtlasPackingMode::Bc7Oriented,
         false,
     );
     let height_axis = resolve_packing_axis(
-        frame.height as u32,
+        height as u32,
         page_size.height,
         options.gutter,
         AtlasPackingMode::Bc7Oriented,
@@ -949,10 +1374,10 @@ fn packing_axes(
         (Some(width_axis), Some(height_axis)) => Ok((width_axis, height_axis)),
         _ => eyre::bail!(
             "EC mobile animation frame body {} frame {} ({}x{}) does not fit into atlas page {}x{} with gutter {}",
-            frame.body_id,
-            frame.source_frame_index,
-            frame.width,
-            frame.height,
+            body_id,
+            source_frame_index,
+            width,
+            height,
             page_size.width,
             page_size.height,
             options.gutter
@@ -978,6 +1403,22 @@ fn sort_frame_refs_within_page<'a>(
     frames.sort_by(|left, right| compare_frames_for_page(left, right, page_size, options));
 }
 
+fn sort_planned_frames_within_page(
+    frames: &mut [PlannedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) {
+    frames.sort_by(|left, right| compare_planned_frames_for_page(left, right, page_size, options));
+}
+
+fn sort_planned_frame_refs_within_page<'a>(
+    frames: &mut [&'a PlannedMobileAnimEcFrame],
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) {
+    frames.sort_by(|left, right| compare_planned_frames_for_page(left, right, page_size, options));
+}
+
 fn compare_frames_for_page(
     left: &DecodedMobileAnimEcFrame,
     right: &DecodedMobileAnimEcFrame,
@@ -998,6 +1439,29 @@ fn sort_area(
 ) -> u32 {
     let (width_axis, height_axis) =
         packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
+    width_axis.alloc_extent * height_axis.alloc_extent
+}
+
+fn compare_planned_frames_for_page(
+    left: &PlannedMobileAnimEcFrame,
+    right: &PlannedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> std::cmp::Ordering {
+    let left_area = planned_sort_area(left, page_size, options);
+    let right_area = planned_sort_area(right, page_size, options);
+    right_area
+        .cmp(&left_area)
+        .then_with(|| (left.body_id, left.source_frame_index).cmp(&(right.body_id, right.source_frame_index)))
+}
+
+fn planned_sort_area(
+    frame: &PlannedMobileAnimEcFrame,
+    page_size: AtlasPageSize,
+    options: &MobileAnimEcAtlasOptions,
+) -> u32 {
+    let (width_axis, height_axis) =
+        planned_packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
     width_axis.alloc_extent * height_axis.alloc_extent
 }
 
@@ -1035,7 +1499,15 @@ pub fn serialize_page_manifest(
     pages: &[BuiltMobileAnimEcPage],
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(26 + pages.len() * 24);
+    let records = pages.iter().map(|page| page.record).collect::<Vec<_>>();
+    serialize_page_record_manifest(&records, options)
+}
+
+fn serialize_page_record_manifest(
+    records: &[MobileAnimEcPageRecord],
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(26 + records.len() * 24);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -1043,14 +1515,14 @@ pub fn serialize_page_manifest(
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
     bytes.push(options.pixel_format as u8);
     bytes.push(AtlasPackingMode::Bc7Oriented as u8);
-    bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
-    for page in pages {
-        bytes.write_u32::<LittleEndian>(page.record.page_index)?;
-        bytes.write_u32::<LittleEndian>(page.record.frame_count)?;
-        bytes.write_u32::<LittleEndian>(page.record.atlas_width)?;
-        bytes.write_u32::<LittleEndian>(page.record.atlas_height)?;
-        bytes.write_u32::<LittleEndian>(page.record.used_width)?;
-        bytes.write_u32::<LittleEndian>(page.record.used_height)?;
+    bytes.write_u32::<LittleEndian>(records.len() as u32)?;
+    for record in records {
+        bytes.write_u32::<LittleEndian>(record.page_index)?;
+        bytes.write_u32::<LittleEndian>(record.frame_count)?;
+        bytes.write_u32::<LittleEndian>(record.atlas_width)?;
+        bytes.write_u32::<LittleEndian>(record.atlas_height)?;
+        bytes.write_u32::<LittleEndian>(record.used_width)?;
+        bytes.write_u32::<LittleEndian>(record.used_height)?;
     }
     Ok(bytes)
 }
