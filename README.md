@@ -13,6 +13,13 @@ The project is still early. Land rendering, multi-map support, BC7-compressed te
 - Streams custom `.uddp` packages instead of reading every source client file at runtime.
 - Handles multiple maps and camera-controlled exploration.
 
+## Why a new package format?
+
+`uddp` files are containers conceptually similar to `uop`, but with a slimmer per-file metadata structure and better compression algorithms. This helps noticeably reduce disk size.
+Moreover, `uddp` packs textures in GPU-ready formats (texture atlases when useful, otherwise single textures per file) that make asset streaming fast and efficient. Textures can be uncompressed raw RGBA8888 files or BC7-compressed. BC7 is a GPU block-compression format that can be sampled directly by the GPU without a decompression prepass. It preserves far more quality than KR/EC DXT1/BC1 while using 1/4 of the VRAM required by uncompressed RGBA8888 assets.
+
+The workspace includes an in-tree BC7 encoder and a BC7 RDO (rate-distortion optimization) pass. RDO deliberately allows tiny, bounded visual changes when they make neighboring BC7 blocks more compressible by the outer package compressor. In practice, this keeps runtime textures GPU-ready while improving package size and streaming locality compared with storing naive BC7 output.
+
 ## Current Scope
 
 Implemented:
@@ -86,12 +93,14 @@ Release builds should expose these binaries as separate executables.
   - `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
   - `udd-conv-cli`: CLI crate; generated executables are `udd-pack` for building `.uddp` packages and `udd-tool` for inspecting, extracting, diffing, editing, and rebuilding them.
   - `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
-- UOCF command-line tools
+- UOCF end-user command-line tools
   - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
   - `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
-  - `texture-scanner`: identify and isolate land candidates from UO texture pools.
   - `sound-tool`: inspect or convert supported UO sound data.
   - `multimap-tool`: convert Classic Client `multimap.rle` files to and from BMP or PNG.
+- UOCF discovery and development command-line tools
+  - These are still built by the `uocf-cli` crate, but their entrypoints live under `tools/uocf-cli/src/bin/dev-tools/` because they support package research, evidence gathering, and asset-pipeline maintenance rather than common user workflows.
+  - `texture-scanner`: identify and isolate land candidates from UO texture pools.
   - `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
   - `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
   - `uop-dict-populator-cli`: build and expand UOP hash dictionaries without the GUI.
@@ -120,8 +129,8 @@ Release builds should expose these binaries as separate executables.
   - `udd-container`: low-level UDDP/UDDF container infrastructure.
   - `udd-assets`: runtime readers and package access helpers for converted assets.
   - `udd-conv`: conversion and packaging logic shared by frontends and CLIs.
-  - `udd-conv-ktx2`: KTX2 texture handling for the conversion pipeline.
-  - `image-postprocess`: image processing and compression support used by packaging work.
+  - `udd-image-codecs`: GPU texture codec support for the conversion pipeline, including KTX2 writing, BC7 decoding/encoding, SIMD-assisted analytical BC7 paths, and the BC7 RDO pass used to improve outer compression.
+  - `image-postprocess`: image scaling and filtering support used before packaging, including xBRZ, hqx, and MMPX-style postprocess steps. Compression-specific code now lives in `udd-image-codecs`.
 
 ## Workspace
 
@@ -129,7 +138,7 @@ The repository is a Cargo workspace. The important top-level groups are:
 
 - `dynamapper/`: the Bevy application and renderer.
 - `lib/uocf/`: parsers for Ultima Online source formats.
-- `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`, `lib/udd-conv-ktx2/`: package infrastructure, runtime readers, and conversion logic.
+- `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`, `lib/udd-image-codecs/`, `lib/image-postprocess/`: package infrastructure, runtime readers, conversion logic, GPU texture codecs, and image postprocessing.
 - `tools/`: CLI and GUI tools for conversion, inspection, package editing, and UOP-related workflows.
 
 Detailed crate and tool responsibilities live in [docs/WORKSPACE_COMPONENTS.md](docs/WORKSPACE_COMPONENTS.md).

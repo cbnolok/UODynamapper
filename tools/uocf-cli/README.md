@@ -3,17 +3,24 @@
 `uocf-cli` contains general-purpose Ultima Online file tooling built on top of
 the `uocf` parser library.
 
-## Binaries
+## End-User Binaries
 
 - `uop-tool`: hash UOP paths, brute-force hashes, extract packages, merge DIC
   dictionaries, replace package payloads, and rebuild packages.
 - `cc-uop-mul-converter`: convert supported Classic Client `.mul`/`.idx`
   files to and from modern `.uop` packages.
+- `sound-tool`: export Classic Client sound entries.
+- `multimap-tool`: convert Classic Client `multimap.rle` to and from images.
+
+## Discovery and Development Binaries
+
+These binaries are still built as normal Cargo targets, but their entrypoints
+live under `src/bin/dev-tools/` because they support asset discovery, evidence
+gathering, and dictionary maintenance rather than common end-user workflows.
+
 - `uop-dict-populator-cli`: populate DIC hash dictionaries from configured UOP
   templates.
 - `texture-scanner`: scan unpacked DDS texture trees and write a CSV inventory.
-- `sound-tool`: export Classic Client sound entries.
-- `multimap-tool`: convert Classic Client `multimap.rle` to and from images.
 - `facet-evidence-tool`: extract EC/KR facet land evidence into KDL.
 - `kr-ec-terrain-diff-tool`: compare KR land routing against EC evidence.
 

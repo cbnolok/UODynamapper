@@ -29,7 +29,7 @@ path = "src/bin/cc_uop_mul_converter.rs"
 
 [[bin]]
 name = "uop-dict-populator-cli"
-path = "src/bin/uop_dict_populator.rs"
+path = "src/bin/dev-tools/uop_dict_populator.rs"
 
 [[bin]]
 name = "texture-scanner"
@@ -45,8 +45,8 @@ path = "src/bin/multimap_tool.rs"
 
 [[bin]]
 name = "facet-evidence-tool"
-path = "src/bin/facet_evidence_tool.rs"
+path = "src/bin/dev-tools/facet_evidence_tool.rs"
 
 [[bin]]
 name = "kr-ec-terrain-diff-tool"
-path = "src/bin/kr_ec_terrain_diff_tool.rs"
+path = "src/bin/dev-tools/kr_ec_terrain_diff_tool.rs"
