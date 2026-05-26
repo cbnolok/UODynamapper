@@ -35,6 +35,7 @@ pub struct PreferencesDialogState {
     pub land_texture_source: ClientTextureSource,
     pub perspective_camera: bool,
     pub enable_statics: bool,
+    pub enable_static_lights: bool,
     /// Timer used to debounce applying settings that cause UI layout shifts (like UI scale).
     pub apply_timer: Timer,
 }
@@ -66,6 +67,7 @@ impl Default for PreferencesDialogState {
             land_texture_source: ClientTextureSource::default(),
             perspective_camera: false,
             enable_statics: true,
+            enable_static_lights: false,
             apply_timer: {
                 let mut t = Timer::from_seconds(0.3, TimerMode::Once);
                 t.pause();
@@ -126,6 +128,7 @@ fn sys_sync_settings_to_state(
         state.land_texture_source = settings.graphics.land_texture_source;
         state.perspective_camera = settings.app.window.perspective_camera;
         state.enable_statics = settings.world_rendering.enable_statics;
+        state.enable_static_lights = settings.world_rendering.enable_static_lights;
 
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
@@ -203,6 +206,9 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().world_rendering.enable_statics != state.enable_statics {
             settings.world_rendering.enable_statics = state.enable_statics;
+        }
+        if settings.as_ref().world_rendering.enable_static_lights != state.enable_static_lights {
+            settings.world_rendering.enable_static_lights = state.enable_static_lights;
         }
         if (settings.as_ref().app.window.ui_scale - state.ui_scale).abs() > 0.001 {
             settings.app.window.ui_scale = state.ui_scale;
@@ -467,6 +473,13 @@ pub fn sys_render_preferences_dialog(
                     }
                     if ui
                         .checkbox(&mut state.enable_statics, "Render Static Items")
+                        .changed()
+                    {
+                        state.apply_timer.reset();
+                        state.apply_timer.unpause();
+                    }
+                    if ui
+                        .checkbox(&mut state.enable_static_lights, "Render Static Light Decals")
                         .changed()
                     {
                         state.apply_timer.reset();

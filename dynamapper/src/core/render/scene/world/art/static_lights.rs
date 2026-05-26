@@ -113,7 +113,7 @@ pub fn sys_collect_visible_static_lights(
 ) {
     output.0.clear();
 
-    if !settings.world_rendering.enable_statics {
+    if !settings.world_rendering.enable_static_lights {
         return;
     }
 

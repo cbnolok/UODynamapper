@@ -102,6 +102,8 @@ pub struct SectWorld {
 pub struct SectWorldRendering {
     #[serde(default = "default_enable_statics")]
     pub enable_statics: bool,
+    #[serde(default = "default_enable_static_lights")]
+    pub enable_static_lights: bool,
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
     #[serde(default)]
@@ -111,6 +113,10 @@ pub struct SectWorldRendering {
 }
 
 fn default_enable_statics() -> bool {
+    false
+}
+
+fn default_enable_static_lights() -> bool {
     false
 }
 
