@@ -98,13 +98,67 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     };
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;
+
+    convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
+        source_dirs,
+        output_path,
+        map_id,
+        &idx_path,
+        &mul_path,
+        width_blocks,
+        height_blocks,
+        patch_options,
+    )
+}
+
+pub fn convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    map_id: u32,
+    width_blocks: u32,
+    height_blocks: u32,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<CcStaticsBuildSummary> {
+    let idx_file_name = format!("staidx{}.mul", map_id);
+    let mul_file_name = format!("statics{}.mul", map_id);
+
+    let idx_path = find_first_existing_file(source_dirs, &[&idx_file_name])
+        .ok_or_else(|| eyre::eyre!("missing {}", idx_file_name))?;
+    let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
+        .ok_or_else(|| eyre::eyre!("missing {}", mul_file_name))?;
+
+    println!("Using CC staidx{} source file: {}", map_id, idx_path.display());
+    println!("Using CC statics{} source file: {}", map_id, mul_path.display());
+
+    convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
+        source_dirs,
+        output_path,
+        map_id,
+        &idx_path,
+        &mul_path,
+        width_blocks,
+        height_blocks,
+        patch_options,
+    )
+}
+
+fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
+    source_dirs: &[PathBuf],
+    output_path: &Path,
+    map_id: u32,
+    idx_path: &Path,
+    mul_path: &Path,
+    width_blocks: u32,
+    height_blocks: u32,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<CcStaticsBuildSummary> {
     let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
     let height_chunks = height_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
     let total_chunks = width_chunks * height_chunks;
 
     let reader = StaticsReader::new_with_patches(
-        &idx_path,
-        &mul_path,
+        idx_path,
+        mul_path,
         width_blocks * 8,
         height_blocks * 8,
         load_static_diff_if_enabled(source_dirs, map_id, patch_options)?,

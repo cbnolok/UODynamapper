@@ -88,6 +88,8 @@ pub enum CcMapSourcePreference {
 pub struct CcMapBuildSummary {
     pub map_id: u32,
     pub chunk_count: u32,
+    pub width_blocks: u32,
+    pub height_blocks: u32,
     pub width_chunks: u32,
     pub height_chunks: u32,
 }
@@ -270,6 +272,8 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
     Ok(CcMapBuildSummary {
         map_id,
         chunk_count: total_chunks,
+        width_blocks,
+        height_blocks,
         width_chunks,
         height_chunks,
     })

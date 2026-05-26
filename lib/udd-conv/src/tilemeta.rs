@@ -23,7 +23,11 @@ use log::info;
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::find_first_existing_file;
-use crate::tex_art_ec::compute_tex_art_ec_crop_adjustments_from_sources;
+use crate::tex_art_ec::{
+    compute_tex_art_ec_crop_adjustments_from_loaded_sources,
+    compute_tex_art_ec_crop_adjustments_from_sources,
+    TexArtEcLoadedSources,
+};
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::{
     EcMaterialPhysicalPackage, EcMaterialSpeculativeRole, EcMaterialStableRole,
@@ -185,6 +189,24 @@ pub fn build_tilemeta_uddp_from_split_sources(
     write_tilemeta_uddp(out_file, built)
 }
 
+pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
+    cc_source_dir: &Path,
+    ec_source_dir: &Path,
+    ec_sources: &TexArtEcLoadedSources,
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+) -> eyre::Result<()> {
+    let built = build_tilemeta_tables_from_split_sources_with_loaded_ec_sources(
+        cc_source_dir,
+        ec_source_dir,
+        ec_sources,
+        options,
+        "unifying tiledata",
+    )?;
+
+    write_tilemeta_uddp(out_file, built)
+}
+
 fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Result<()> {
     let land_bytes = bytemuck::cast_slice(&built.land_tiles);
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
@@ -268,6 +290,7 @@ fn build_tilemeta_tables_from_sources(
         radarcol_path,
         source_dirs,
         source_dirs,
+        None,
         options,
         progress_label,
     )
@@ -296,6 +319,33 @@ fn build_tilemeta_tables_from_split_sources(
         radarcol_path,
         &cc_source_dirs,
         &ec_source_dirs,
+        None,
+        options,
+        progress_label,
+    )
+}
+
+fn build_tilemeta_tables_from_split_sources_with_loaded_ec_sources(
+    cc_source_dir: &Path,
+    ec_source_dir: &Path,
+    ec_sources: &TexArtEcLoadedSources,
+    options: &TileMetaBuildOptions,
+    progress_label: &str,
+) -> eyre::Result<BuiltTileMetaTables> {
+    let cc_source_dirs = [cc_source_dir.to_path_buf()];
+    let ec_source_dirs = [ec_source_dir.to_path_buf()];
+    let tiledata_path = find_first_existing_file(&cc_source_dirs, &["tiledata.mul"])
+        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
+    let radarcol_path = find_first_existing_file(&cc_source_dirs, &["radarcol.mul"]);
+
+    build_tilemeta_tables_from_resolved_paths(
+        tiledata_path,
+        ec_sources.tileart_path.clone(),
+        ec_sources.stringdict_path.clone(),
+        radarcol_path,
+        &cc_source_dirs,
+        &ec_source_dirs,
+        Some(ec_sources),
         options,
         progress_label,
     )
@@ -308,6 +358,7 @@ fn build_tilemeta_tables_from_resolved_paths(
     radarcol_path: Option<PathBuf>,
     cc_source_dirs: &[PathBuf],
     ec_source_dirs: &[PathBuf],
+    loaded_ec_sources: Option<&TexArtEcLoadedSources>,
     options: &TileMetaBuildOptions,
     progress_label: &str,
 ) -> eyre::Result<BuiltTileMetaTables> {
@@ -328,9 +379,19 @@ fn build_tilemeta_tables_from_resolved_paths(
         tiledata_path.clone(),
         load_verdata_if_enabled(cc_source_dirs, &options.classic_patches)?,
     )?;
-    let tex_art_ec = ArtDefinition::load(&tileart_path, &stringdict_path)?;
+    let loaded_art_definition;
+    let tex_art_ec = if let Some(sources) = loaded_ec_sources {
+        &sources.art_definition
+    } else {
+        loaded_art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)?;
+        &loaded_art_definition
+    };
     let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
-        compute_tex_art_ec_crop_adjustments_from_sources(ec_source_dirs)?
+        if let Some(sources) = loaded_ec_sources {
+            compute_tex_art_ec_crop_adjustments_from_loaded_sources(sources)?
+        } else {
+            compute_tex_art_ec_crop_adjustments_from_sources(ec_source_dirs)?
+        }
     } else {
         Vec::new()
     };

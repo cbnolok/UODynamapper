@@ -18,7 +18,10 @@ use udd_conv::{
         GUMPS_CC_DEFAULT_OUTPUT,
     },
     cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
-    cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
+    cc_statics::{
+        convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
+        convert_statics_mul_to_uddp_from_sources_with_patches,
+    },
     ec_gumps::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
         GUMPS_EC_DEFAULT_OUTPUT,
@@ -63,7 +66,7 @@ use udd_conv::{
     },
     tilemeta::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
-        TileMetaBuildOptions,
+        build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
     },
     upscale::UpscaleFilter,
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
@@ -702,10 +705,18 @@ enum Commands {
     PackEcTextures {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
         #[arg(long, default_value = "tex_art_ec.uddp")]
         art_output: PathBuf,
         #[arg(long, default_value = "tex_land_ec.uddp")]
         land_output: PathBuf,
+        #[arg(long, help = "Also build tilemeta.uddp from the same loaded EC tileart/TerrainDefinition sources. Requires --ccdir.")]
+        tilemeta_output: Option<PathBuf>,
+        #[arg(long = "tilemeta-ec-art-cropped", default_value_t = false)]
+        tilemeta_ec_art_cropped: bool,
+        #[arg(long = "tilemeta-use-ec-radarcol", default_value_t = false)]
+        tilemeta_use_ec_radarcol: bool,
         #[arg(long, help = "Embed this terrain routing KDL in tex_land_ec.uddp instead of auto-discovered TerrainTranscode.kdl.")]
         land_transcode_kdl: Option<PathBuf>,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
@@ -971,6 +982,23 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; static packing currently keeps its internal package compression policy.")]
+        zstd: Option<i32>,
+    },
+    /// Packs Classic mapX.uddp and staticsX.uddp together, reusing the map dimensions for statics.
+    PackMapStatics {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[command(flatten)]
+        classic_patches: ClassicPatchArgs,
+        #[arg(long)]
+        map_id: u32,
+        #[arg(long)]
+        map_output: Option<PathBuf>,
+        #[arg(long)]
+        statics_output: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        uop: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; map/statics packing currently keeps its internal package compression policy.")]
         zstd: Option<i32>,
     },
     /// Packs CC and EC lighting textures into world_lights.uddp.
@@ -1261,8 +1289,12 @@ pub fn run() -> eyre::Result<()> {
         }
         Commands::PackEcTextures {
             source_dirs: source_dir_args,
+            classic_patches,
             art_output,
             land_output,
+            tilemeta_output,
+            tilemeta_ec_art_cropped,
+            tilemeta_use_ec_radarcol,
             land_transcode_kdl,
             art_atlas_width,
             art_atlas_height,
@@ -1309,6 +1341,12 @@ pub fn run() -> eyre::Result<()> {
             let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
             let art_out_file = resolve_output_path(&ec_paths, &art_output);
             let land_out_file = resolve_output_path(&ec_paths, &land_output);
+            let tilemeta_out_file = tilemeta_output
+                .as_ref()
+                .map(|output| resolve_output_path(&paths, output));
+            if tilemeta_out_file.is_some() && source_dir_args.ccdir.is_none() {
+                eyre::bail!("--tilemeta-output requires --ccdir for tiledata.mul");
+            }
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
             let upscale_filter = UpscaleFilter::from(upscale);
             let shared_output_format = TextureOutputFormatArgs {
@@ -1429,6 +1467,32 @@ pub fn run() -> eyre::Result<()> {
                 land_summary.slot_count,
                 land_out_file.display()
             );
+
+            if let Some(tilemeta_out_file) = tilemeta_out_file.as_ref() {
+                let ccdir = source_dir_args
+                    .ccdir
+                    .as_ref()
+                    .expect("--ccdir validated for tilemeta output");
+                let ecdir = source_dir_args
+                    .ecdir
+                    .as_ref()
+                    .expect("--ecdir validated for EC texture output");
+                build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
+                    ccdir,
+                    ecdir,
+                    &shared_sources,
+                    tilemeta_out_file,
+                    &TileMetaBuildOptions {
+                        adjust_tex_art_ec_sampling: tilemeta_ec_art_cropped,
+                        use_ec_radarcol: tilemeta_use_ec_radarcol,
+                        classic_patches: classic_patches.into(),
+                    },
+                )?;
+                println!(
+                    "Wrote tilemeta.uddp from shared EC sources to '{}'.",
+                    tilemeta_out_file.display()
+                );
+            }
         }
         Commands::AuditEcMaterialRefs {
             source_dirs: source_dir_args,
@@ -1627,6 +1691,62 @@ pub fn run() -> eyre::Result<()> {
                 summary.total_statics,
                 summary.map_id,
                 out_file.display(),
+            );
+        }
+        Commands::PackMapStatics {
+            source_dirs: source_dir_args,
+            classic_patches,
+            map_id,
+            map_output,
+            statics_output,
+            uop,
+            zstd: _,
+        } => {
+            let paths = collect_source_dirs(&source_dir_args)?;
+            let default_map_output = PathBuf::from(format!("map{}.uddp", map_id));
+            let default_statics_output = PathBuf::from(format!("statics{}.uddp", map_id));
+            let map_out_file =
+                resolve_output_path(&paths, map_output.as_ref().unwrap_or(&default_map_output));
+            let statics_out_file = resolve_output_path(
+                &paths,
+                statics_output.as_ref().unwrap_or(&default_statics_output),
+            );
+            let patch_options: ClassicPatchOptions = classic_patches.into();
+            let map_summary = convert_map_mul_to_uddp_from_sources_with_patches(
+                &paths,
+                &map_out_file,
+                map_id,
+                if uop {
+                    CcMapSourcePreference::Uop
+                } else {
+                    CcMapSourcePreference::Mul
+                },
+                &patch_options,
+            )?;
+            println!(
+                "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
+                map_summary.chunk_count,
+                map_summary.map_id,
+                map_out_file.display(),
+                map_summary.width_chunks,
+                map_summary.height_chunks,
+            );
+
+            let statics_summary =
+                convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
+                    &paths,
+                    &statics_out_file,
+                    map_id,
+                    map_summary.width_blocks,
+                    map_summary.height_blocks,
+                    &patch_options,
+                )?;
+            println!(
+                "Wrote {} chunks with {} total statics for map {} to '{}' using map dimensions from the map pass.",
+                statics_summary.chunk_count,
+                statics_summary.total_statics,
+                statics_summary.map_id,
+                statics_out_file.display(),
             );
         }
         Commands::PackRadar {
@@ -2003,6 +2123,78 @@ mod tests {
                 assert!(!jxl);
                 assert!(!bc7);
                 assert!(!bc7_rdo);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_ec_textures_with_shared_tilemeta_output() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-textures",
+            "--ccdir",
+            "/cc",
+            "--ecdir",
+            "/ec",
+            "--tilemeta-output",
+            "tilemeta.uddp",
+            "--tilemeta-use-ec-radarcol",
+            "--include-verdata",
+        ])
+        .expect("parse EC texture group with tilemeta output");
+
+        match cli.command {
+            Commands::PackEcTextures {
+                source_dirs,
+                classic_patches,
+                tilemeta_output,
+                tilemeta_use_ec_radarcol,
+                ..
+            } => {
+                assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
+                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert_eq!(tilemeta_output, Some(PathBuf::from("tilemeta.uddp")));
+                assert!(tilemeta_use_ec_radarcol);
+                assert!(classic_patches.include_verdata);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_map_statics_group() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-map-statics",
+            "--ccdir",
+            "/cc",
+            "--map-id",
+            "0",
+            "--map-output",
+            "map0.uddp",
+            "--statics-output",
+            "statics0.uddp",
+            "--include-static-difs",
+        ])
+        .expect("parse grouped map/statics command");
+
+        match cli.command {
+            Commands::PackMapStatics {
+                source_dirs,
+                classic_patches,
+                map_id,
+                map_output,
+                statics_output,
+                uop,
+                ..
+            } => {
+                assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
+                assert!(classic_patches.include_static_difs);
+                assert_eq!(map_id, 0);
+                assert_eq!(map_output, Some(PathBuf::from("map0.uddp")));
+                assert_eq!(statics_output, Some(PathBuf::from("statics0.uddp")));
+                assert!(!uop);
             }
             _ => panic!("unexpected command parsed"),
         }

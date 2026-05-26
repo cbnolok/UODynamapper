@@ -480,6 +480,12 @@ pub fn compute_tex_art_ec_crop_adjustments_from_sources(
     source_dirs: &[PathBuf],
 ) -> eyre::Result<Vec<Option<TexArtEcCropAdjustment>>> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
+    compute_tex_art_ec_crop_adjustments_from_loaded_sources(&sources)
+}
+
+pub fn compute_tex_art_ec_crop_adjustments_from_loaded_sources(
+    sources: &TexArtEcLoadedSources,
+) -> eyre::Result<Vec<Option<TexArtEcCropAdjustment>>> {
     let mut options = TexArtEcAtlasOptions::default();
     options.crop_transparent_bounds = true;
 

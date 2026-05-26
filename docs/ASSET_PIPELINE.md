@@ -18,12 +18,27 @@ Common commands:
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
 - `pack-map`: pack Classic Client map data into a block-based `.uddp` package.
 - `pack-statics`: pack Classic Client statics data into a block-based `.uddp` package.
+- `pack-map-statics`: pack Classic Client map and statics packages together, sharing map dimensions discovered by the map pass.
 
 Typical Enhanced Client texture and metadata workflow:
 
 ```text
 udd-pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
 udd-pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
+```
+
+When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped form so
+`tileart.uop`, `TerrainDefinition.uop`, `string_dictionary.uop`, `Texture.uop`, and
+`LegacyTexture.uop` are loaded once for the shared EC classification pass:
+
+```text
+udd-pack pack-ec-textures --ccdir /path/to/cc --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp --tilemeta-output tilemeta.uddp
+```
+
+For Classic facet packages that need both map and statics data, prefer:
+
+```text
+udd-pack pack-map-statics --ccdir /path/to/cc --map-id 0 --map-output map0.uddp --statics-output statics0.uddp
 ```
 
 ### `udd-tool`
