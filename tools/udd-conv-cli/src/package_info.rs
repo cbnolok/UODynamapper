@@ -376,31 +376,30 @@ pub fn print_package_info(path: &Path) -> eyre::Result<()> {
         );
     }
 
-    let recognized = print_known_package_summary(&package)?;
-    if !recognized {
+    print_known_package_summary(&package)?;
+
+    println!(
+        "Payload totals: raw={} stored={} saved={}",
+        raw_total,
+        stored_total,
+        raw_total.saturating_sub(stored_total)
+    );
+
+    println!("Compression:");
+    for (codec, count) in codec_counts {
+        println!("  {}: {} files", codec, count);
+    }
+
+    println!("Data types:");
+    for (data_type, (count, raw_size, stored_size)) in type_counts {
         println!(
-            "Payload totals: raw={} stored={} saved={}",
-            raw_total,
-            stored_total,
-            raw_total.saturating_sub(stored_total)
+            "  {} ({}) : {} files, raw={}, stored={}",
+            data_type_name(data_type),
+            data_type,
+            count,
+            raw_size,
+            stored_size
         );
-
-        println!("Compression:");
-        for (codec, count) in codec_counts {
-            println!("  {}: {} files", codec, count);
-        }
-
-        println!("Data types:");
-        for (data_type, (count, raw_size, stored_size)) in type_counts {
-            println!(
-                "  {} ({}) : {} files, raw={}, stored={}",
-                data_type_name(data_type),
-                data_type,
-                count,
-                raw_size,
-                stored_size
-            );
-        }
     }
 
     Ok(())
