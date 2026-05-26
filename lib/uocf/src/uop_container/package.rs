@@ -297,15 +297,26 @@ impl UopPackage {
 
     /// Load one payload into memory when this package was opened lazily.
     pub fn ensure_file_data_loaded_by_hash(&mut self, filename_hash: u64) -> io::Result<()> {
+        let needs_load = self
+            .get_file_by_hash(filename_hash)
+            .map(|file| file.data().is_none() && file.has_size())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file payload for hash {filename_hash:016X} not found"),
+                )
+            })?;
+        if !needs_load {
+            return Ok(());
+        }
+
         let package_path = self.package_path.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "package has no backing file path for lazy payload loading",
             )
         })?;
-
         let mut reader = File::open(package_path)?;
-        let mut loaded = false;
         {
             let file = self.get_file_by_hash_mut(filename_hash).ok_or_else(|| {
                 io::Error::new(
@@ -313,17 +324,57 @@ impl UopPackage {
                     format!("file payload for hash {filename_hash:016X} not found"),
                 )
             })?;
-            if file.data().is_none() && file.has_size() {
-                file.load_data_from(&mut reader)?;
-                loaded = true;
-            }
+            file.load_data_from(&mut reader)?;
         }
-
-        if loaded {
-            self.refresh_hash_index();
-        }
+        self.refresh_hash_index();
 
         Ok(())
+    }
+
+    /// Unpack one file payload by hash, caching compressed payload bytes in this
+    /// package when it was opened lazily.
+    pub fn unpack_file_by_hash_cached(&mut self, filename_hash: u64) -> io::Result<Option<Vec<u8>>> {
+        if self.get_file_by_hash(filename_hash).is_none() {
+            return Ok(None);
+        }
+        self.ensure_file_data_loaded_by_hash(filename_hash)?;
+        self.get_file_by_hash(filename_hash)
+            .expect("file payload was just checked")
+            .unpack()
+            .map(Some)
+    }
+
+    /// Open a reader positioned by per-entry payload offsets for repeated lazy
+    /// payload reads.
+    pub fn open_payload_reader(&self) -> io::Result<File> {
+        let package_path = self.package_path.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "package has no backing file path for lazy payload loading",
+            )
+        })?;
+        File::open(package_path)
+    }
+
+    /// Unpack one file payload by hash using a caller-owned package reader.
+    ///
+    /// This avoids reopening the package for each payload while keeping the
+    /// package itself immutable, which is useful for parallel metadata scans.
+    pub fn unpack_file_by_hash_from_reader<R: Read + Seek>(
+        &self,
+        filename_hash: u64,
+        reader: &mut R,
+    ) -> io::Result<Option<Vec<u8>>> {
+        let Some(file) = self.get_file_by_hash(filename_hash) else {
+            return Ok(None);
+        };
+
+        let mut file = file.clone();
+        if file.data().is_none() && file.has_size() {
+            file.load_data_from(reader)?;
+        }
+
+        file.unpack().map(Some)
     }
 
     /// Unpack one file payload by hash without storing the payload in this package.

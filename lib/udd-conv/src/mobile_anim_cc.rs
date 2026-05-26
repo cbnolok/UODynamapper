@@ -290,19 +290,19 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimPage]) -> MobileAnimPageStats {
     let mut stats = MobileAnimPageStats::default();
     for page in pages {
-        stats.add_page(page);
-    }
-    stats
-}
-
-impl MobileAnimPageStats {
-    fn add_page(&mut self, page: &BuiltMobileAnimPage) {
-        let used_pixels = page.record.used_width as u64 * page.record.used_height as u64;
         let filled_pixels = page
             .pixels
             .chunks_exact(4)
             .filter(|pixel| pixel[3] != 0)
             .count() as u64;
+        stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixels);
+    }
+    stats
+}
+
+impl MobileAnimPageStats {
+    fn add_page_bounds(&mut self, used_width: u32, used_height: u32, filled_pixels: u64) {
+        let used_pixels = used_width as u64 * used_height as u64;
         self.used_page_pixel_count += used_pixels;
         self.filled_pixel_count += filled_pixels;
         self.empty_pixel_count += used_pixels.saturating_sub(filled_pixels);
@@ -730,7 +730,7 @@ fn decode_planned_animation_source(
                 animationframe_packages.insert(path.clone(), package);
             }
             let package = animationframe_packages
-                .get(path)
+                .get_mut(path)
                 .expect("Classic AnimationFrame UOP package was just cached");
             decode_classic_animationframe_uop_frames_from_package(package, path, *file_hash)
         }
@@ -772,12 +772,12 @@ fn cached_decode_planned_animation_source<'a>(
 }
 
 fn decode_classic_animationframe_uop_frames_from_package(
-    package: &UopPackage,
+    package: &mut UopPackage,
     path: &Path,
     file_hash: u64,
 ) -> eyre::Result<Vec<AnimFrame>> {
     let data = package
-        .unpack_file_by_hash(file_hash)?
+        .unpack_file_by_hash_cached(file_hash)?
         .ok_or_else(|| eyre::eyre!("Classic AnimationFrame payload {file_hash:016x} not found in {}", path.display()))?;
     let animation = AnimationFrameCc::parse(&data)?;
     Ok(animation.frames)
@@ -901,36 +901,42 @@ fn decode_classic_animationframe_package(
 
     let parsed = file_hashes
         .par_iter()
-        .map(|&file_hash| {
-            pb.inc(1);
-            let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else {
-                return None;
-            };
-            let Ok(animation) = AnimationFrameCc::parse_metadata(&data) else {
-                return None;
-            };
-            if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
-                return None;
-            }
-            let Some((body_id, action_id, direction)) =
-                animation_layout_from_source_index(file_index, animation.anim_id)
-            else {
-                return None;
-            };
-            Some(PresentAnimationCandidate {
-                body_id,
-                action_id,
-                direction,
-                file_index,
-                source_index: animation.anim_id,
-                flags: 0,
-                frames: PresentAnimationFrames::AnimationFrameUop {
-                    path: path.to_path_buf(),
-                    file_hash,
-                    frame_metadata: animation.frames,
-                },
-            })
-        })
+        .map_init(
+            || package.open_payload_reader(),
+            |reader, &file_hash| {
+                pb.inc(1);
+                let Ok(reader) = reader.as_mut() else {
+                    return None;
+                };
+                let Ok(Some(data)) = package.unpack_file_by_hash_from_reader(file_hash, reader) else {
+                    return None;
+                };
+                let Ok(animation) = AnimationFrameCc::parse_metadata(&data) else {
+                    return None;
+                };
+                if animation.frames.is_empty() || animation.frames.len() > u16::MAX as usize {
+                    return None;
+                }
+                let Some((body_id, action_id, direction)) =
+                    animation_layout_from_source_index(file_index, animation.anim_id)
+                else {
+                    return None;
+                };
+                Some(PresentAnimationCandidate {
+                    body_id,
+                    action_id,
+                    direction,
+                    file_index,
+                    source_index: animation.anim_id,
+                    flags: 0,
+                    frames: PresentAnimationFrames::AnimationFrameUop {
+                        path: path.to_path_buf(),
+                        file_hash,
+                        frame_metadata: animation.frames,
+                    },
+                })
+            },
+        )
         .collect::<Vec<_>>();
     let mut candidates = Vec::new();
     for candidate in parsed.into_iter().flatten() {
@@ -1213,7 +1219,7 @@ pub fn pack_frames_into_pages(
         }
         let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
         next_frame += prefix_len;
-        let (page, unplaced) =
+        let (page, unplaced, _) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -1275,7 +1281,7 @@ fn pack_frames_into_package(
         }
         let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
         next_frame += prefix_len;
-        let (page, unplaced) =
+        let (page, unplaced, filled_pixel_count) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
             eyre::bail!(
@@ -1293,7 +1299,7 @@ fn pack_frames_into_package(
         }
 
         pb.inc(page.record.frame_count as u64);
-        stats.add_page(&page);
+        stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixel_count);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
@@ -1351,7 +1357,7 @@ fn pack_planned_frames_into_package(
         }
         let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
         next_frame += prefix_len;
-        let (page, unplaced) = build_planned_page(
+        let (page, unplaced, filled_pixel_count) = build_planned_page(
             page_index,
             page_size,
             page_frames,
@@ -1378,7 +1384,7 @@ fn pack_planned_frames_into_package(
         }
 
         pb.inc(page.record.frame_count as u64);
-        stats.add_page(&page);
+        stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixel_count);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
@@ -1631,7 +1637,7 @@ fn build_page(
     frame_records: &mut [MobileAnimCcFrameRecord],
     options: &MobileAnimCcAtlasOptions,
     pixels: &mut Vec<u8>,
-) -> eyre::Result<(BuiltMobileAnimPage, Vec<DecodedMobileAnimFrame>)> {
+) -> eyre::Result<(BuiltMobileAnimPage, Vec<DecodedMobileAnimFrame>, u64)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
         page_size.height as i32,
@@ -1643,6 +1649,7 @@ fn build_page(
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
+    let mut filled_pixel_count = 0u64;
 
     sort_frames_within_page(&mut frames, page_size, options);
 
@@ -1654,7 +1661,7 @@ fn build_page(
         )) {
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
-            blit_rgba_frame(
+            filled_pixel_count += blit_rgba_frame(
                 pixels,
                 page_size.width,
                 inner_x as u32,
@@ -1700,6 +1707,7 @@ fn build_page(
             pixels,
         },
         leftovers,
+        filled_pixel_count,
     ))
 }
 
@@ -1713,7 +1721,7 @@ fn build_planned_page(
     animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
     decoded_sources: &mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
     decoded_source_use_tick: &mut u64,
-) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>)> {
+) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>, u64)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
         page_size.height as i32,
@@ -1722,6 +1730,7 @@ fn build_planned_page(
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
+    let mut filled_pixel_count = 0u64;
     let upscale_active = has_effective_upscale(&options.upscale_passes);
     let mut pending_blits = Vec::new();
     let mut pending_direct_blits = Vec::new();
@@ -1856,7 +1865,7 @@ fn build_planned_page(
 
         for prepared in prepared_blits {
             let prepared = prepared?;
-            blit_rgba_frame(
+            filled_pixel_count += blit_rgba_frame(
                 &mut pixels,
                 used_width,
                 prepared.inner_x,
@@ -1893,7 +1902,7 @@ fn build_planned_page(
                     decoded_frame.height
                 );
             }
-            blit_rgba_frame(
+            filled_pixel_count += blit_rgba_frame(
                 &mut pixels,
                 used_width,
                 pending.inner_x,
@@ -1920,6 +1929,7 @@ fn build_planned_page(
             pixels,
         },
         leftovers,
+        filled_pixel_count,
     ))
 }
 
@@ -2034,7 +2044,7 @@ fn blit_rgba_frame(
     frame_width: u32,
     frame_height: u32,
     src: &[u8],
-) -> eyre::Result<()> {
+) -> eyre::Result<u64> {
     let expected_len = frame_width as usize * frame_height as usize * 4;
     if src.len() != expected_len {
         eyre::bail!(
@@ -2048,14 +2058,20 @@ fn blit_rgba_frame(
 
     let dst_stride = dst_width as usize * 4;
     let src_stride = frame_width as usize * 4;
+    let mut filled_pixel_count = 0u64;
     for row in 0..frame_height as usize {
         let src_start = row * src_stride;
         let dst_start = ((dst_y as usize + row) * dst_stride) + dst_x as usize * 4;
         let dst_end = dst_start + src_stride;
-        dst[dst_start..dst_end].copy_from_slice(&src[src_start..src_start + src_stride]);
+        let src_row = &src[src_start..src_start + src_stride];
+        filled_pixel_count += src_row
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] != 0)
+            .count() as u64;
+        dst[dst_start..dst_end].copy_from_slice(src_row);
     }
 
-    Ok(())
+    Ok(filled_pixel_count)
 }
 
 pub fn serialize_page_manifest(
