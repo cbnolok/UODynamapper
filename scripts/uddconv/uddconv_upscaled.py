@@ -264,20 +264,6 @@ def run_all(
         source_args.extend(["--ecdir", ecdir])
 
     print("Converting common world packages...")
-    run([
-        "cargo",
-        "run",
-        "-p",
-        "udd-conv-cli",
-        "--bin",
-        "udd-pack",
-        "--",
-        "pack-tilemeta",
-        *non_texture_zstd,
-        *source_args,
-        "--output",
-        f"{output_dir}/tilemeta.uddp",
-    ])
     run_pack("pack-art", *cc_art_format, *cc_art_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/tex_art_cc.uddp")
     run_pack("pack-texmaps", *cc_land_format, *cc_land_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/tex_land_cc.uddp")
     if ecdir:
@@ -287,25 +273,29 @@ def run_all(
             *ec_land_format,
             *ec_art_upscale,
             *ec_land_upscale,
-            "--ecdir",
-            ecdir,
+            *source_args,
             "--art-output",
             f"{output_dir}/tex_art_ec.uddp",
             "--land-output",
             f"{output_dir}/tex_land_ec.uddp",
+            "--tilemeta-output",
+            f"{output_dir}/tilemeta.uddp",
         )
+    else:
+        run_pack("pack-tilemeta", *non_texture_zstd, *source_args, "--output", f"{output_dir}/tilemeta.uddp")
     run_pack("pack-lights", *non_texture_zstd, *source_args, "--output", f"{output_dir}/world_lights.uddp")
     run_pack("pack-hues", *non_texture_zstd, "--ccdir", ccdir, "--output", f"{output_dir}/hues.uddp")
     for map_id in map_ids:
-        run_pack("pack-map", *non_texture_zstd, "--ccdir", ccdir, "--map-id", map_id, "--output", f"{output_dir}/map{map_id}.uddp")
         run_pack(
-            "pack-statics",
+            "pack-map-statics",
             *non_texture_zstd,
             "--ccdir",
             ccdir,
             "--map-id",
             map_id,
-            "--output",
+            "--map-output",
+            f"{output_dir}/map{map_id}.uddp",
+            "--statics-output",
             f"{output_dir}/statics{map_id}.uddp",
         )
     run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, cc_anim_upscale, ec_anim_upscale, tables)
