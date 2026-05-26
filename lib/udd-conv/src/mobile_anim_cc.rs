@@ -488,41 +488,34 @@ fn encode_mobile_anim_page_chunk(
     if options.pixel_format == PagePixelFormat::Bc7 {
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
         let pending_progress = AtomicU64::new(0);
-        let encoded_pages = pages
-            .par_iter()
-            .map(|page| {
-                let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
-                    .map_err(|e| eyre::eyre!("{e}"))?;
-                let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
-                    &page.pixels,
-                    extent,
-                    RawImageFormat::Rgba8888,
-                    encoding,
-                    options.bc7_rdo_lambda,
-                    |units| {
-                        add_bc7_progress(pb, &pending_progress, units as u64);
-                    },
-                )
-                .map_err(|e| {
-                    eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
-                })?
-                .into_bytes()
-                .to_vec();
-                Ok((
-                    page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
-                    encoded,
-                    page.record.used_width,
-                    page.record.used_height,
-                ))
-            })
-            .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>();
-        flush_bc7_progress(pb, &pending_progress);
-
-        let mut resolved = Vec::with_capacity(encoded_pages.len());
-        for page in encoded_pages {
-            resolved.push(page?);
+        let mut encoded_pages = Vec::with_capacity(pages.len());
+        for page in pages {
+            let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+                .map_err(|e| eyre::eyre!("{e}"))?;
+            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                &page.pixels,
+                extent,
+                RawImageFormat::Rgba8888,
+                encoding,
+                options.bc7_rdo_lambda,
+                |units| {
+                    add_bc7_progress(pb, &pending_progress, units as u64);
+                },
+            )
+            .map_err(|e| {
+                eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
+            })?
+            .into_bytes()
+            .to_vec();
+            encoded_pages.push((
+                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+                encoded,
+                page.record.used_width,
+                page.record.used_height,
+            ));
         }
-        Ok(resolved)
+        flush_bc7_progress(pb, &pending_progress);
+        Ok(encoded_pages)
     } else {
         Ok(pages
             .iter()
@@ -683,6 +676,10 @@ fn apply_planned_upscale(
         record.center_y = scale_i16(record.center_y, scale, "mobile animation frame center_y")?;
     }
     Ok(())
+}
+
+fn has_effective_upscale(passes: &[UpscaleFilter]) -> bool {
+    passes.iter().any(|filter| !matches!(filter, UpscaleFilter::None))
 }
 
 fn scale_u16(value: u16, scale: u32, label: &str) -> eyre::Result<u16> {
@@ -1408,11 +1405,12 @@ fn select_page_bucket(
     let candidates = atlas_page_buckets(options)
         .into_par_iter()
         .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
-            let prefix_len = max_fitting_page_prefix_len(frames, page_size, options)?;
+            let page_candidates = page_prefix_pack_candidates(frames, page_size, options)?;
+            let prefix_len = max_fitting_candidate_prefix_len(&page_candidates, page_size);
             if prefix_len == 0 {
                 return Ok(None);
             }
-            let alloc_area = page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+            let alloc_area = candidate_prefix_alloc_area(&page_candidates[..prefix_len]);
             Ok(Some((page_size, prefix_len, alloc_area)))
         })
         .collect::<Vec<_>>();
@@ -1449,12 +1447,12 @@ fn select_planned_page_bucket(
     let candidates = atlas_page_buckets(options)
         .into_par_iter()
         .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
-            let prefix_len = max_fitting_planned_page_prefix_len(frames, page_size, options)?;
+            let page_candidates = planned_page_prefix_pack_candidates(frames, page_size, options)?;
+            let prefix_len = max_fitting_candidate_prefix_len(&page_candidates, page_size);
             if prefix_len == 0 {
                 return Ok(None);
             }
-            let alloc_area =
-                planned_page_prefix_alloc_area(&frames[..prefix_len], page_size, options)?;
+            let alloc_area = candidate_prefix_alloc_area(&page_candidates[..prefix_len]);
             Ok(Some((page_size, prefix_len, alloc_area)))
         })
         .collect::<Vec<_>>();
@@ -1509,33 +1507,33 @@ fn atlas_page_buckets(options: &MobileAnimCcAtlasOptions) -> Vec<AtlasPageSize> 
     buckets
 }
 
-fn max_fitting_page_prefix_len(
-    frames: &[DecodedMobileAnimFrame],
+fn max_fitting_candidate_prefix_len<Key: Ord + Copy>(
+    candidates: &[PagePackCandidate<Key>],
     page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<usize> {
+) -> usize {
     let mut best = 0usize;
     let mut high = 1usize;
-    while high <= frames.len() {
-        if page_prefix_fits(&frames[..high], page_size, options)? {
+    let mut scratch = Vec::new();
+    while high <= candidates.len() {
+        if candidate_prefix_fits(&candidates[..high], page_size, &mut scratch) {
             best = high;
-            if high == frames.len() {
-                return Ok(best);
+            if high == candidates.len() {
+                return best;
             }
-            high = high.saturating_mul(2).min(frames.len());
+            high = high.saturating_mul(2).min(candidates.len());
         } else {
             break;
         }
     }
     if best == 0 {
-        return Ok(0);
+        return 0;
     }
 
     let mut low = best + 1;
     let mut high = high.saturating_sub(1);
     while low <= high {
         let mid = low + (high - low) / 2;
-        if page_prefix_fits(&frames[..mid], page_size, options)? {
+        if candidate_prefix_fits(&candidates[..mid], page_size, &mut scratch) {
             best = mid;
             low = mid + 1;
         } else {
@@ -1543,99 +1541,35 @@ fn max_fitting_page_prefix_len(
         }
     }
 
-    Ok(best)
+    best
 }
 
-fn max_fitting_planned_page_prefix_len(
-    frames: &[PlannedMobileAnimFrame],
+fn candidate_prefix_fits<Key: Ord + Copy>(
+    candidates: &[PagePackCandidate<Key>],
     page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<usize> {
-    let mut best = 0usize;
-    let mut high = 1usize;
-    while high <= frames.len() {
-        if planned_page_prefix_fits(&frames[..high], page_size, options)? {
-            best = high;
-            if high == frames.len() {
-                return Ok(best);
-            }
-            high = high.saturating_mul(2).min(frames.len());
-        } else {
-            break;
-        }
-    }
-    if best == 0 {
-        return Ok(0);
-    }
-
-    let mut low = best + 1;
-    let mut high = high.saturating_sub(1);
-    while low <= high {
-        let mid = low + (high - low) / 2;
-        if planned_page_prefix_fits(&frames[..mid], page_size, options)? {
-            best = mid;
-            low = mid + 1;
-        } else {
-            high = mid.saturating_sub(1);
-        }
-    }
-
-    Ok(best)
+    scratch: &mut Vec<PagePackCandidate<Key>>,
+) -> bool {
+    scratch.clear();
+    scratch.extend_from_slice(candidates);
+    page_pack_candidates_fit(scratch, page_size)
 }
 
-fn page_prefix_fits(
-    frames: &[DecodedMobileAnimFrame],
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<bool> {
-    let Some(mut candidates) = page_prefix_pack_candidates(frames, page_size, options)? else {
-        return Ok(false);
-    };
-    Ok(page_pack_candidates_fit(&mut candidates, page_size))
-}
-
-fn planned_page_prefix_fits(
-    frames: &[PlannedMobileAnimFrame],
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<bool> {
-    let Some(mut candidates) = planned_page_prefix_pack_candidates(frames, page_size, options)? else {
-        return Ok(false);
-    };
-    Ok(page_pack_candidates_fit(&mut candidates, page_size))
-}
-
-fn page_prefix_alloc_area(
-    frames: &[DecodedMobileAnimFrame],
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<u64> {
-    frames.iter().try_fold(0u64, |total, frame| {
-        let (width_axis, height_axis) = packing_axes(frame, page_size, options)?;
-        Ok(total + width_axis.alloc_extent as u64 * height_axis.alloc_extent as u64)
-    })
-}
-
-fn planned_page_prefix_alloc_area(
-    frames: &[PlannedMobileAnimFrame],
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<u64> {
-    frames.iter().try_fold(0u64, |total, frame| {
-        let (width_axis, height_axis) = planned_packing_axes(frame, page_size, options)?;
-        Ok(total + width_axis.alloc_extent as u64 * height_axis.alloc_extent as u64)
-    })
+fn candidate_prefix_alloc_area<Key>(candidates: &[PagePackCandidate<Key>]) -> u64 {
+    candidates
+        .iter()
+        .map(|candidate| candidate.alloc_area as u64)
+        .sum()
 }
 
 fn page_prefix_pack_candidates(
     frames: &[DecodedMobileAnimFrame],
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<Option<Vec<PagePackCandidate<u32>>>> {
+) -> eyre::Result<Vec<PagePackCandidate<u32>>> {
     let mut candidates = Vec::with_capacity(frames.len());
     for frame in frames {
         let Ok((width_axis, height_axis)) = packing_axes(frame, page_size, options) else {
-            return Ok(None);
+            break;
         };
         candidates.push(PagePackCandidate {
             sort_key: frame.global_frame_index,
@@ -1644,18 +1578,18 @@ fn page_prefix_pack_candidates(
             alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
         });
     }
-    Ok(Some(candidates))
+    Ok(candidates)
 }
 
 fn planned_page_prefix_pack_candidates(
     frames: &[PlannedMobileAnimFrame],
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
-) -> eyre::Result<Option<Vec<PagePackCandidate<u32>>>> {
+) -> eyre::Result<Vec<PagePackCandidate<u32>>> {
     let mut candidates = Vec::with_capacity(frames.len());
     for frame in frames {
         let Ok((width_axis, height_axis)) = planned_packing_axes(frame, page_size, options) else {
-            return Ok(None);
+            break;
         };
         candidates.push(PagePackCandidate {
             sort_key: frame.global_frame_index,
@@ -1664,7 +1598,7 @@ fn planned_page_prefix_pack_candidates(
             alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
         });
     }
-    Ok(Some(candidates))
+    Ok(candidates)
 }
 
 fn page_pack_candidates_fit<Key: Ord + Copy>(
@@ -1788,7 +1722,9 @@ fn build_planned_page(
     let mut used_width = 0u32;
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
+    let upscale_active = has_effective_upscale(&options.upscale_passes);
     let mut pending_blits = Vec::new();
+    let mut pending_direct_blits = Vec::new();
 
     struct PendingPlannedBlit {
         global_frame_index: u32,
@@ -1810,6 +1746,16 @@ fn build_planned_page(
         rgba: Vec<u8>,
     }
 
+    struct DirectPlannedBlit {
+        global_frame_index: u32,
+        inner_x: u32,
+        inner_y: u32,
+        width: u16,
+        height: u16,
+        source: PlannedAnimationSource,
+        source_frame_index: u16,
+    }
+
     sort_planned_frames_within_page(&mut frames, page_size, options);
 
     for frame in frames {
@@ -1818,37 +1764,53 @@ fn build_planned_page(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
         )) {
-            let decoded_frames = cached_decode_planned_animation_source(
-                &frame.source,
-                anim_map,
-                animationframe_packages,
-                decoded_sources,
-                decoded_source_use_tick,
-            )?;
-            let Some(decoded_frame) = decoded_frames.get(frame.source_frame_index as usize) else {
-                eyre::bail!(
-                    "planned mobile animation frame {} missing source frame {}",
-                    frame.global_frame_index,
-                    frame.source_frame_index
-                );
-            };
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
-            pending_blits.push(PendingPlannedBlit {
-                global_frame_index: frame.global_frame_index,
-                inner_x: inner_x as u32,
-                inner_y: inner_y as u32,
-                expected_width: frame.width,
-                expected_height: frame.height,
-                source_width: decoded_frame.width,
-                source_height: decoded_frame.height,
-                rgba: decoded_frame.data.clone(),
-            });
+            let global_frame_index = frame.global_frame_index;
+            let source_frame_index = frame.source_frame_index;
+            let width = frame.width;
+            let height = frame.height;
+            if upscale_active {
+                let decoded_frames = cached_decode_planned_animation_source(
+                    &frame.source,
+                    anim_map,
+                    animationframe_packages,
+                    decoded_sources,
+                    decoded_source_use_tick,
+                )?;
+                let Some(decoded_frame) = decoded_frames.get(source_frame_index as usize) else {
+                    eyre::bail!(
+                        "planned mobile animation frame {} missing source frame {}",
+                        global_frame_index,
+                        source_frame_index
+                    );
+                };
+                pending_blits.push(PendingPlannedBlit {
+                    global_frame_index,
+                    inner_x: inner_x as u32,
+                    inner_y: inner_y as u32,
+                    expected_width: width,
+                    expected_height: height,
+                    source_width: decoded_frame.width,
+                    source_height: decoded_frame.height,
+                    rgba: decoded_frame.data.clone(),
+                });
+            } else {
+                pending_direct_blits.push(DirectPlannedBlit {
+                    global_frame_index,
+                    inner_x: inner_x as u32,
+                    inner_y: inner_y as u32,
+                    width,
+                    height,
+                    source: frame.source,
+                    source_frame_index,
+                });
+            }
 
             used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
             used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
             let record = frame_records
-                .get_mut(frame.global_frame_index as usize)
+                .get_mut(global_frame_index as usize)
                 .context("placed mobile animation frame outside frame table")?;
             record.page_index = page_index;
             record.page_frame_index = page_frame_index;
@@ -1860,49 +1822,88 @@ fn build_planned_page(
         }
     }
 
-    let prepared_blits = pending_blits
-        .into_par_iter()
-        .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
-            let (width, height, rgba, _, _) = apply_filter_passes_owned(
-                pending.source_width as u32,
-                pending.source_height as u32,
-                pending.rgba,
-                &options.upscale_passes,
-            );
-            if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
+    let mut pixels = vec![0u8; used_width as usize * used_height as usize * 4];
+    if upscale_active {
+        let prepared_blits = pending_blits
+            .into_par_iter()
+            .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
+                let (width, height, rgba, _, _) = apply_filter_passes_owned(
+                    pending.source_width as u32,
+                    pending.source_height as u32,
+                    pending.rgba,
+                    &options.upscale_passes,
+                );
+                if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
+                    eyre::bail!(
+                        "planned mobile animation frame {} changed dimensions: planned {}x{}, decoded {}x{}",
+                        pending.global_frame_index,
+                        pending.expected_width,
+                        pending.expected_height,
+                        width,
+                        height
+                    );
+                }
+                Ok(PreparedPlannedBlit {
+                    global_frame_index: pending.global_frame_index,
+                    inner_x: pending.inner_x,
+                    inner_y: pending.inner_y,
+                    width,
+                    height,
+                    rgba,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for prepared in prepared_blits {
+            let prepared = prepared?;
+            blit_rgba_frame(
+                &mut pixels,
+                used_width,
+                prepared.inner_x,
+                prepared.inner_y,
+                prepared.width,
+                prepared.height,
+                &prepared.rgba,
+            )
+            .wrap_err_with(|| format!("blit mobile animation frame {}", prepared.global_frame_index))?;
+        }
+    } else {
+        for pending in pending_direct_blits {
+            let decoded_frames = cached_decode_planned_animation_source(
+                &pending.source,
+                anim_map,
+                animationframe_packages,
+                decoded_sources,
+                decoded_source_use_tick,
+            )?;
+            let Some(decoded_frame) = decoded_frames.get(pending.source_frame_index as usize) else {
+                eyre::bail!(
+                    "planned mobile animation frame {} missing source frame {}",
+                    pending.global_frame_index,
+                    pending.source_frame_index
+                );
+            };
+            if decoded_frame.width != pending.width || decoded_frame.height != pending.height {
                 eyre::bail!(
                     "planned mobile animation frame {} changed dimensions: planned {}x{}, decoded {}x{}",
                     pending.global_frame_index,
-                    pending.expected_width,
-                    pending.expected_height,
-                    width,
-                    height
+                    pending.width,
+                    pending.height,
+                    decoded_frame.width,
+                    decoded_frame.height
                 );
             }
-            Ok(PreparedPlannedBlit {
-                global_frame_index: pending.global_frame_index,
-                inner_x: pending.inner_x,
-                inner_y: pending.inner_y,
-                width,
-                height,
-                rgba,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let mut pixels = vec![0u8; used_width as usize * used_height as usize * 4];
-    for prepared in prepared_blits {
-        let prepared = prepared?;
-        blit_rgba_frame(
-            &mut pixels,
-            used_width,
-            prepared.inner_x,
-            prepared.inner_y,
-            prepared.width,
-            prepared.height,
-            &prepared.rgba,
-        )
-        .wrap_err_with(|| format!("blit mobile animation frame {}", prepared.global_frame_index))?;
+            blit_rgba_frame(
+                &mut pixels,
+                used_width,
+                pending.inner_x,
+                pending.inner_y,
+                pending.width as u32,
+                pending.height as u32,
+                &decoded_frame.data,
+            )
+            .wrap_err_with(|| format!("blit mobile animation frame {}", pending.global_frame_index))?;
+        }
     }
 
     Ok((
