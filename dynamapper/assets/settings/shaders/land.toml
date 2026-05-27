@@ -1113,7 +1113,7 @@ rim_color = [
 ]
 
 [kr.morning]
-global_lighting = 1.02
+global_lighting = 1.04
 
 [kr.morning.effects]
 shading_mode = 2
@@ -1158,8 +1158,8 @@ atmosphere_tint = [
     0.29,
 ]
 _pad1_ = 0.0
-exposure = 1.0
-ambient_strength = 0.28
+exposure = 1.03
+ambient_strength = 0.24
 _pad2_ = [
     0.0,
     0.0,
@@ -1183,26 +1183,26 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.42,
-    1.16,
-    1.14,
-    0.9,
+    0.38,
+    1.12,
+    1.1,
+    0.75,
 ]
 gloom_params = [
-    0.32,
-    0.008,
-    0.68,
+    0.16,
+    0.006,
+    0.52,
     0.0,
 ]
 fog_color = [
-    0.72,
-    0.8,
+    0.74,
+    0.82,
     0.9,
-    0.35,
+    0.24,
 ]
 fog_params = [
-    0.06,
-    0.03,
+    0.035,
+    0.018,
     0.0,
     0.0,
 ]
@@ -1210,7 +1210,7 @@ gloom_color = [
     0.15,
     0.18,
     0.28,
-    0.25,
+    0.12,
 ]
 fog_night_color = [
     0.0,
@@ -1227,7 +1227,7 @@ _pad2_ = 0
 diffuse_strength = 1.28
 specular_strength = 0.035
 rim_strength = 0.13
-fill_strength = 0.34
+fill_strength = 0.32
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
@@ -1252,7 +1252,7 @@ rim_color = [
 ]
 
 [kr.afternoon]
-global_lighting = 1.04
+global_lighting = 1.08
 
 [kr.afternoon.effects]
 shading_mode = 2
@@ -1297,8 +1297,8 @@ atmosphere_tint = [
     0.28,
 ]
 _pad1_ = 0.0
-exposure = 1.0
-ambient_strength = 0.3
+exposure = 1.06
+ambient_strength = 0.25
 _pad2_ = [
     0.0,
     0.0,
@@ -1322,26 +1322,26 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.5,
-    1.18,
-    1.16,
-    1.0,
+    0.45,
+    1.14,
+    1.12,
+    0.8,
 ]
 gloom_params = [
-    0.28,
-    0.007,
-    0.66,
+    0.14,
+    0.005,
+    0.5,
     0.0,
 ]
 fog_color = [
-    0.72,
-    0.8,
+    0.74,
+    0.82,
     0.9,
-    0.35,
+    0.22,
 ]
 fog_params = [
-    0.06,
     0.03,
+    0.016,
     0.0,
     0.0,
 ]
@@ -1349,7 +1349,7 @@ gloom_color = [
     0.14,
     0.16,
     0.24,
-    0.2,
+    0.1,
 ]
 fog_night_color = [
     0.0,
@@ -1366,7 +1366,7 @@ _pad2_ = 0
 diffuse_strength = 1.35
 specular_strength = 0.04
 rim_strength = 0.15
-fill_strength = 0.36
+fill_strength = 0.34
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
@@ -1391,7 +1391,7 @@ rim_color = [
 ]
 
 [kr.night]
-global_lighting = 0.72
+global_lighting = 0.76
 
 [kr.night.effects]
 shading_mode = 2
@@ -1436,8 +1436,8 @@ atmosphere_tint = [
     0.24,
 ]
 _pad1_ = 0.0
-exposure = 1.0
-ambient_strength = 0.1
+exposure = 1.06
+ambient_strength = 0.12
 _pad2_ = [
     0.0,
     0.0,
@@ -1461,26 +1461,26 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.25,
-    1.05,
-    1.06,
-    0.8,
+    0.22,
+    1.02,
+    1.04,
+    0.65,
 ]
 gloom_params = [
-    0.5,
-    0.01,
-    0.65,
+    0.24,
+    0.008,
+    0.52,
     0.0,
 ]
 fog_color = [
     0.72,
     0.8,
     0.9,
-    0.4,
+    0.28,
 ]
 fog_params = [
-    0.08,
-    0.04,
+    0.045,
+    0.024,
     0.0,
     0.0,
 ]
@@ -1488,13 +1488,13 @@ gloom_color = [
     0.08,
     0.1,
     0.18,
-    0.45,
+    0.22,
 ]
 fog_night_color = [
     0.05,
     0.07,
     0.14,
-    0.75,
+    0.45,
 ]
 
 [kr.night.land_lighting]
@@ -1502,10 +1502,10 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 0.58
+diffuse_strength = 0.62
 specular_strength = 0.025
 rim_strength = 0.16
-fill_strength = 0.18
+fill_strength = 0.22
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.2
@@ -1530,7 +1530,7 @@ rim_color = [
 ]
 
 [kr.cave]
-global_lighting = 0.5
+global_lighting = 0.56
 
 [kr.cave.effects]
 shading_mode = 2
@@ -1575,8 +1575,8 @@ atmosphere_tint = [
     0.2,
 ]
 _pad1_ = 0.0
-exposure = 0.8
-ambient_strength = 0.05
+exposure = 0.92
+ambient_strength = 0.07
 _pad2_ = [
     0.0,
     0.0,
@@ -1600,26 +1600,26 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.25,
+    0.22,
+    1.02,
     1.05,
-    1.08,
-    0.8,
+    0.65,
 ]
 gloom_params = [
-    0.7,
-    0.012,
-    0.75,
+    0.3,
+    0.01,
+    0.58,
     0.0,
 ]
 fog_color = [
     0.72,
     0.8,
     0.9,
-    0.35,
+    0.24,
 ]
 fog_params = [
-    0.04,
-    0.06,
+    0.025,
+    0.03,
     0.0,
     0.0,
 ]
@@ -1627,13 +1627,13 @@ gloom_color = [
     0.06,
     0.08,
     0.14,
-    0.55,
+    0.28,
 ]
 fog_night_color = [
     0.03,
     0.04,
     0.08,
-    0.9,
+    0.5,
 ]
 
 [kr.cave.land_lighting]
@@ -1641,10 +1641,10 @@ enable_bent = 1
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 0.48
+diffuse_strength = 0.54
 specular_strength = 0.02
 rim_strength = 0.11
-fill_strength = 0.14
+fill_strength = 0.18
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.15
