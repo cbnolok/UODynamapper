@@ -138,10 +138,10 @@ def require_value(value: str, usage: str) -> str:
     raise SystemExit(2)
 
 
-def parse_map_ids(raw_maps: str) -> list[str]:
+def parse_map_ids(raw_maps: str, usage: str = "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]") -> list[str]:
     map_ids = [item.strip() for item in raw_maps.split(",") if item.strip()]
     if not map_ids:
-        print("usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]", file=sys.stderr)
+        print(usage, file=sys.stderr)
         raise SystemExit(2)
     return map_ids
 
@@ -171,6 +171,24 @@ def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = No
     require_value(ecdir, "usage: just uddconv-ec-gumps <ecdir> [output_dir]")
     ensure_output_dir(output_dir)
     run_pack("pack-ec-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
+
+
+def run_maps_statics(ccdir: str, output_dir: str, maps: str, non_texture_zstd: list[str]) -> None:
+    ccdir = require_value(ccdir, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]")
+    ensure_output_dir(output_dir)
+    for map_id in parse_map_ids(maps, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]"):
+        run_pack(
+            "pack-map-statics",
+            *non_texture_zstd,
+            "--ccdir",
+            ccdir,
+            "--map-id",
+            map_id,
+            "--map-output",
+            f"{output_dir}/map{map_id}.uddp",
+            "--statics-output",
+            f"{output_dir}/statics{map_id}.uddp",
+        )
 
 
 def run_all(
@@ -280,6 +298,12 @@ def main() -> int:
     ec_gumps_parser.add_argument("--output-dir", default="target/uddp")
     add_zstd_arg(ec_gumps_parser)
 
+    maps_statics_parser = subparsers.add_parser("maps-statics")
+    maps_statics_parser.add_argument("--ccdir", default="")
+    maps_statics_parser.add_argument("--output-dir", default="target/uddp")
+    maps_statics_parser.add_argument("--maps", default="0,1,2,3,4,5")
+    add_zstd_arg(maps_statics_parser)
+
     args = parser.parse_args()
     if args.command == "all":
         global_zstd = zstd_args_from_namespace(args)
@@ -312,8 +336,10 @@ def main() -> int:
         )
     elif args.command == "gumps":
         run_gumps(args.ccdir, args.output_dir, default_or_requested_gump_args(args))
-    else:
+    elif args.command == "ec-gumps":
         run_ec_gumps(args.ecdir, args.output_dir, default_or_requested_gump_args(args))
+    else:
+        run_maps_statics(args.ccdir, args.output_dir, args.maps, default_or_requested_zstd(args))
     return 0
 
 
