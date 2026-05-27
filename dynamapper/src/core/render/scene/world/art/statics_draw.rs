@@ -1,6 +1,6 @@
 use super::DrawStaticSpritesPlugin;
 use crate::configs::settings::{ClientTextureSource, Settings};
-use crate::configs::shader_presets::UniformState;
+use crate::configs::shader_presets::{UniformSnapshot, UniformState};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
 use crate::core::render::scene::world::art::statics_collect::{
@@ -1375,14 +1375,21 @@ pub fn sys_update_art_materials(
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
+    mut last_uniform_snapshot: Local<Option<UniformSnapshot>>,
 ) {
     let current_global_lighting = uniform_state.global_lighting;
     let current_render_zoom = render_zoom.0;
+    let current_uniform_snapshot = uniform_state.snapshot();
 
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
-    let uniforms_dirty = uniform_state.dirty;
+    let uniforms_changed = last_uniform_snapshot.map_or(true, |snapshot| {
+        snapshot.effects != current_uniform_snapshot.effects
+            || snapshot.lighting != current_uniform_snapshot.lighting
+            || (snapshot.global_lighting - current_uniform_snapshot.global_lighting).abs()
+                > f32::EPSILON
+    });
     let land_page_bindings =
         land_page_binding_handles(shared_land_material.as_deref(), &land_materials);
 
@@ -1397,7 +1404,7 @@ pub fn sys_update_art_materials(
         }
     }
 
-    if !lighting_meaningfully_changed && !zoom_changed && !uniforms_dirty {
+    if !uniforms_changed && !zoom_changed {
         return;
     }
 
@@ -1449,11 +1456,14 @@ pub fn sys_update_art_materials(
         }
     }
 
-    if lighting_meaningfully_changed {
+    if lighting_meaningfully_changed || uniforms_changed {
         *last_global_lighting = current_global_lighting;
     }
     if zoom_changed {
         *last_render_zoom = current_render_zoom;
+    }
+    if uniforms_changed {
+        *last_uniform_snapshot = Some(current_uniform_snapshot);
     }
 }
 
