@@ -325,7 +325,7 @@ impl TexLandEcPackage {
     }
 
     pub fn set_transcode(&mut self, transcode: HashMap<u32, u32>) {
-        self.transcode = transcode;
+        self.transcode.extend(transcode);
     }
 
     pub fn set_terrain_overrides_from_kdl(
@@ -1627,6 +1627,21 @@ mod tests {
         assert_eq!(changes[0].material_id, 52);
         assert_eq!(changes[0].runtime_slot_id, Some(100));
         assert_eq!(changes[0].effective_runtime_slot_id, Some(101));
+    }
+
+    #[test]
+    fn loose_transcode_overlays_embedded_transcode_without_dropping_existing_routes() {
+        let mut package = test_package();
+        package.transcode.insert(2000, 52);
+        package.transcode.insert(2001, 99);
+
+        package.set_transcode(HashMap::from([(77, 52), (2001, 52)]));
+
+        assert_eq!(package.transcode.get(&2000), Some(&52));
+        assert_eq!(package.transcode.get(&2001), Some(&52));
+        assert_eq!(package.resolve_runtime_slot_id(2000), Some(100));
+        assert_eq!(package.resolve_runtime_slot_id(2001), Some(100));
+        assert_eq!(package.resolve_runtime_slot_id(77), Some(100));
     }
 
     #[test]

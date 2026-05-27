@@ -410,15 +410,15 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return None;
     };
 
-    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
-        return Some(resolution);
-    }
-
     let main_ec_texture_id = tilemeta_package
         .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
         .map(|texture_ref| texture_ref.texture_id)
         .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
     let Some(main_ec_texture_id) = main_ec_texture_id else {
+        if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+            return Some(resolution);
+        }
+
         return package
             .resolve_runtime_slot_id(meta.cc_texture_id)
             .map(|runtime_slot_id| {
@@ -466,6 +466,10 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         return alias_slots.into_iter().next().map(|runtime_slot_id| {
             surface_like_tex_land_ec_resolution(package, runtime_slot_id, Some(main_ec_texture_id))
         });
+    }
+
+    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+        return Some(resolution);
     }
 
     package
@@ -521,15 +525,11 @@ fn surface_like_legacy_ec_texture_id_fallback(
     Some(tilemeta.ec_texture_id)
 }
 
-fn surface_like_prefers_water_material(tilemeta: &udd_assets::tilemeta::TileMetaItemTile) -> bool {
-    tilemeta.flags & TILE_FLAG_WET != 0
-}
-
 fn wet_surface_like_water_resolution(
     tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
-    if !surface_like_prefers_water_material(tilemeta) {
+    if tilemeta.flags & TILE_FLAG_WET == 0 {
         return None;
     }
 
@@ -1782,13 +1782,23 @@ mod tests {
     }
 
     #[test]
-    fn wet_surface_like_tiles_prefer_water_material_over_tileart_refs() {
-        let tile = item_tile_with_flags(
-            TILE_FLAG_WET,
-            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
-        );
+    fn wet_surface_like_tiles_consider_visible_tileart_refs_before_water_fallback() {
+        let refs = [
+            texture_ref_with_role(
+                200,
+                udd_assets::tilemeta::EcMaterialStableRole::NormalLike,
+                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+            texture_ref_with_role(
+                201,
+                udd_assets::tilemeta::EcMaterialStableRole::Base,
+                udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+        ];
 
-        assert!(surface_like_prefers_water_material(&tile));
+        let chosen = choose_visible_surface_texture_ref(&refs, 42).expect("visible ref");
+
+        assert_eq!(chosen.texture_id, 201);
     }
 
     #[test]
@@ -1797,14 +1807,6 @@ mod tests {
 
         assert_eq!(material_flags, 0);
         assert_eq!(material_payload, 0);
-    }
-
-    #[test]
-    fn dry_surface_like_tiles_do_not_force_water_material() {
-        let tile =
-            item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
-
-        assert!(!surface_like_prefers_water_material(&tile));
     }
 
     #[test]
