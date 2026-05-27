@@ -16,6 +16,9 @@ members = [
     "tools/uop-dict-populator-gui",
 ]
 
+[workspace.dependencies]
+zstd = "0.13"
+
 
 # --------- Release
 

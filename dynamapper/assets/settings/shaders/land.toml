@@ -1,29 +1,33 @@
-default_preset = "kr.afternoon"
+default_preset = "classic.morning"
 
 [classic.morning]
-global_lighting = 1.02
+global_lighting = 0.65
 
 [classic.morning.effects]
 shading_mode = 0
-normal_mode = 1
+normal_mode = 0
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.45
 sharpening_amount = 0.0
 blur_strength = 0.15
-blur_radius = 0.0025
+blur_radius = 0.5
 enable_water_animation = 1
 post_process_profile = 0
-enable_grunge = 0
+enable_grunge = 1
 _pad_eff0 = 0
-grunge_strength = 0.0
+grunge_strength = 0.35
 light_decal_intensity = 1.0
+art_highlight_strength = 0.58
+art_depth_tint_strength = 0.55
 enable_normal_maps = 0
 enable_art_fake_normals = 0
-art_contact_shadow_strength = 0.0
-kr_land_temperature_strength = 0.0
-kr_land_relief_shadow_strength = 0.0
-kr_land_shadow_mottle_strength = 0.0
-kr_art_temperature_strength = 0.0
+art_contact_shadow_strength = 0.59
+_pad_eff3 = 0
+kr_land_temperature_strength = 1.1
+kr_land_relief_shadow_strength = 1.05
+kr_land_shadow_mottle_strength = 1.2
+kr_art_temperature_strength = 1.16
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -43,7 +47,11 @@ atmosphere_tint = [
 ]
 _pad1_ = 0.0
 exposure = 1.05
-ambient_strength = 0.18
+ambient_strength = 0.16
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -69,7 +77,7 @@ grade_extra = [
     0.9,
 ]
 gloom_params = [
-    0.2,
+    0.0,
     0.008,
     0.45,
     0.0,
@@ -100,17 +108,17 @@ fog_night_color = [
 ]
 
 [classic.morning.land_lighting]
-enable_bent = 1
+enable_bent = 0
 _pad0_ = 0
 _pad1_ = 0
 _pad2_ = 0
-diffuse_strength = 1.0
-specular_strength = 0.0
-rim_strength = 0.0
-fill_strength = 0.0
-sharpness_factor = 1.0
-sharpness_mix = 0.0
-diffuse_wrap = 0.0
+diffuse_strength = 0.97
+specular_strength = 0.0375
+rim_strength = 0.0675
+fill_strength = 0.33
+sharpness_factor = 1.06
+sharpness_mix = 0.022
+diffuse_wrap = 0.1155
 _pad4_ = 0.0
 fill_sky_color = [
     0.5,
@@ -139,6 +147,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -148,9 +157,12 @@ enable_grunge = 0
 _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -175,6 +187,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.1
 ambient_strength = 0.18
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -270,6 +286,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -279,9 +296,12 @@ enable_grunge = 0
 _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -306,6 +326,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.2
 ambient_strength = 0.1
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -401,6 +425,7 @@ shading_mode = 0
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -410,9 +435,12 @@ enable_grunge = 0
 _pad_eff0 = 0
 grunge_strength = 0.0
 light_decal_intensity = 1.0
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -437,6 +465,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 0.95
 ambient_strength = 0.06
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -532,6 +564,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -541,9 +574,12 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -568,6 +604,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.05
 ambient_strength = 0.18
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -663,6 +703,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -672,9 +713,12 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -699,6 +743,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.1
 ambient_strength = 0.18
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -794,6 +842,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -803,9 +852,12 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -830,6 +882,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.0
 ambient_strength = 0.08
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -925,6 +981,7 @@ shading_mode = 1
 normal_mode = 1
 enable_blur = 0
 enable_linear_filtering = 0
+art_shadow_strength = 0.12
 sharpening_amount = 0.0
 blur_strength = 0.15
 blur_radius = 0.0025
@@ -934,9 +991,12 @@ enable_grunge = 1
 _pad_eff0 = 0
 grunge_strength = 0.18
 light_decal_intensity = 0.75
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
 enable_normal_maps = 0
 enable_art_fake_normals = 0
 art_contact_shadow_strength = 0.0
+_pad_eff3 = 0
 kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
@@ -961,6 +1021,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 0.85
 ambient_strength = 0.04
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1071,6 +1135,7 @@ art_depth_tint_strength = 0.28
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 art_contact_shadow_strength = 0.42
+_pad_eff3 = 0
 kr_land_temperature_strength = 1.0
 kr_land_relief_shadow_strength = 1.0
 kr_land_shadow_mottle_strength = 1.0
@@ -1095,6 +1160,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.0
 ambient_strength = 0.28
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1201,10 +1270,11 @@ _pad_eff0 = 0
 grunge_strength = 0.79
 light_decal_intensity = 1.35
 art_highlight_strength = 0.42
-art_depth_tint_strength = 0.30
+art_depth_tint_strength = 0.3
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 art_contact_shadow_strength = 0.48
+_pad_eff3 = 0
 kr_land_temperature_strength = 1.0
 kr_land_relief_shadow_strength = 1.0
 kr_land_shadow_mottle_strength = 1.0
@@ -1228,7 +1298,11 @@ atmosphere_tint = [
 ]
 _pad1_ = 0.0
 exposure = 1.0
-ambient_strength = 0.30
+ambient_strength = 0.3
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1248,7 +1322,7 @@ grade_params = [
     1.0,
 ]
 grade_extra = [
-    0.50,
+    0.5,
     1.18,
     1.16,
     1.0,
@@ -1339,6 +1413,7 @@ art_depth_tint_strength = 0.42
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 art_contact_shadow_strength = 0.55
+_pad_eff3 = 0
 kr_land_temperature_strength = 1.0
 kr_land_relief_shadow_strength = 1.0
 kr_land_shadow_mottle_strength = 1.0
@@ -1363,6 +1438,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 1.0
 ambient_strength = 0.1
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1451,7 +1530,7 @@ rim_color = [
 ]
 
 [kr.cave]
-global_lighting = 0.50
+global_lighting = 0.5
 
 [kr.cave.effects]
 shading_mode = 2
@@ -1473,6 +1552,7 @@ art_depth_tint_strength = 0.48
 enable_normal_maps = 0
 enable_art_fake_normals = 1
 art_contact_shadow_strength = 0.62
+_pad_eff3 = 0
 kr_land_temperature_strength = 1.0
 kr_land_relief_shadow_strength = 1.0
 kr_land_shadow_mottle_strength = 1.0
@@ -1497,6 +1577,10 @@ atmosphere_tint = [
 _pad1_ = 0.0
 exposure = 0.8
 ambient_strength = 0.05
+_pad2_ = [
+    0.0,
+    0.0,
+]
 grade_warm_color = [
     1.08,
     0.98,

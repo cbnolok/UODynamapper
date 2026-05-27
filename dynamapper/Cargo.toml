@@ -16,7 +16,7 @@ udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
 bevy_framepace = { version = "0.21", default-features = false }
 bevy_egui = { version = "0.39" } #, features = ["immutable_ctx"] }
-bytemuck = { version = "1", default-features = false, features = ["derive"] }
+bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
   "std",
@@ -153,7 +153,7 @@ features = [
   #"bluenoise_texture",  # Include blue noise KTX2 file used by environment maps, Solari and atmosphere
 
   # --- Graphics & Rendering Features ---
-  "spirv_shader_passthrough", # Enable passthrough loading for SPIR-V shaders (Vulkan only)
+  #"spirv_shader_passthrough", # Enable passthrough loading for SPIR-V shaders (Vulkan only)
   #"dlss",               # NVIDIA Deep Learning Super Sampling
   #"experimental_pbr_pcss", # Enable support for PCSS (experimental)
   #"meshlet",            # Enables the meshlet renderer for dense high-poly scenes (experimental)
@@ -168,7 +168,7 @@ features = [
   # --- Asset File Format Support ---
   #"png",    # PNG image format support
   #"bmp",    # BMP image format support
-  "dds",    # DDS compressed texture support
+  #"dds",    # DDS compressed texture support
   #"ico",    # ICO image format support
   #"jpeg",   # JPEG image format support
   "ktx2",   # KTX2 compressed texture support

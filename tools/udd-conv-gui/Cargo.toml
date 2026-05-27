@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.31.1", features = ["persistence"] }
-egui = "0.31.1"
+eframe = { version = "0.31.1", default-features = false, features = [
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+    "persistence",
+    "glow",
+] }
+egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["image"] }
 rfd = "0.14"
 color-eyre = "0.6.5"
@@ -18,7 +25,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }
 ktx2 = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "dds"] }
-zstd = "0.13"
+zstd.workspace = true
 
 [features]
 default = []

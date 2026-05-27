@@ -4,24 +4,31 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.31.1", features = ["persistence"] }
+eframe = { version = "0.31.1", default-features = false, features = [
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+    "persistence",
+    "glow",
+] }
+egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 uocf = { path = "../../lib/uocf" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-conv = { path = "../../lib/udd-conv" }
 udd-container = { path = "../../lib/udd-container" }
 ktx2 = "0.4"
-zstd = "0.13"
+zstd.workspace = true
 color-eyre = "0.6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 rfd = { version = "0.15", features = ["xdg-portal"] }
 byteorder = "1.5"
 serde = { version = "1", features = ["derive"] }
-bytemuck = "1.25"
+bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 image = { version = "0.25", default-features = false, features = [
     "png",
     "dds",
     "tga",
     "bmp",
 ] }
-egui = "0.31.1"

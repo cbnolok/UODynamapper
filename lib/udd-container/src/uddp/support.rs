@@ -18,6 +18,7 @@ use zstd::bulk::{Compressor, Decompressor};
 use super::*;
 
 const ZSTD_LEVEL: i32 = 9;
+const JXL_LEVEL: jpegxl_rs::encode::EncoderSpeed = jpegxl_rs::encode::EncoderSpeed::Kitten;
 const JXL_ZSTD_PREFIX: &[u8; 4] = b"JXZ1";
 
 
@@ -135,13 +136,13 @@ pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Resu
 /// Jxl compression helper.
 pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     use jpegxl_rs::encoder_builder;
-    use jpegxl_rs::encode::{EncoderFrame, EncoderSpeed};
+    use jpegxl_rs::encode::EncoderFrame;
 
     let mut encoder = encoder_builder()
         .has_alpha(true)
         .lossless(true)
         .uses_original_profile(true)
-        .speed(EncoderSpeed::Falcon)
+        .speed(JXL_LEVEL)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -205,7 +206,7 @@ fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
 
     let (_, pixels) = decoder.decode(encoded)
         .map_err(|e| e.to_string())?;
-    
+
     // We expect RGBA8 (8-bit per channel)
     match pixels {
         Pixels::Uint8(v) => Ok(v),

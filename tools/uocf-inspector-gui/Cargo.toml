@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.31.1", features = ["persistence", "glow"] }
-egui = "0.31.1"
+eframe = { version = "0.31.1", default-features = false, features = [
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+    "persistence",
+    "glow",
+] }
+egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 udd-assets = { path = "../../lib/udd-assets" }

@@ -1,5 +1,3 @@
-
-
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
@@ -260,7 +258,7 @@ pub struct SectGraphics {
     pub land_texture_source: ClientTextureSource,
     #[serde(default)]
     pub hue_source: HueSourcePreference,
-    pub sharpening_strength: f32,    // 0.0 to 1.0
+    pub sharpening_strength: f32, // 0.0 to 1.0
 }
 
 fn default_client_texture_source() -> ClientTextureSource {
@@ -698,7 +696,11 @@ pub fn save_runtime_assets_settings(settings: &Settings) {
                     &format!("Failed to save runtime_assets.toml: {}", e),
                 );
             } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved runtime_assets.toml");
+                console_logger::one(
+                    LogSev::Info,
+                    LogAbout::Settings,
+                    "Saved runtime_assets.toml",
+                );
             }
         }
         Err(e) => {
@@ -989,10 +991,18 @@ fn sys_debounced_save(
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "App settings changed");
             }
             if changes.session_state {
-                console_logger::one(LogSev::Debug, LogAbout::Settings, "Session state changed");
+                console_logger::one(
+                    LogSev::DebugVerbose,
+                    LogAbout::Settings,
+                    "Session state changed",
+                );
             }
             if changes.graphics {
-                console_logger::one(LogSev::Debug, LogAbout::Settings, "Graphics settings changed");
+                console_logger::one(
+                    LogSev::Debug,
+                    LogAbout::Settings,
+                    "Graphics settings changed",
+                );
             }
             if changes.keybindings {
                 console_logger::one(LogSev::Debug, LogAbout::Settings, "Keybindings changed");

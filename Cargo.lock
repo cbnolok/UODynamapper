@@ -39,31 +39,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "accesskit_atspi_common"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c5dd55e6e94949498698daf4d48fb5659e824d7abec0d394089656ceaf99d4f"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_consumer 0.26.0",
- "atspi-common",
- "serde",
- "thiserror 1.0.69",
- "zvariant 4.2.0",
-]
-
-[[package]]
-name = "accesskit_consumer"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f47983a1084940ba9a39c077a8c63e55c619388be5476ac04c804cfbd1e63459"
-dependencies = [
- "accesskit 0.17.1",
- "hashbrown 0.15.5",
- "immutable-chunkmap",
-]
-
-[[package]]
 name = "accesskit_consumer"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -75,63 +50,16 @@ dependencies = [
 
 [[package]]
 name = "accesskit_macos"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7329821f3bd1101e03a7d2e03bd339e3ac0dc64c70b4c9f9ae1949e3ba8dece1"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_consumer 0.26.0",
- "hashbrown 0.15.5",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
-]
-
-[[package]]
-name = "accesskit_macos"
 version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0089e5c0ac0ca281e13ea374773898d9354cc28d15af9f0f7394d44a495b575"
 dependencies = [
  "accesskit 0.21.1",
- "accesskit_consumer 0.31.0",
+ "accesskit_consumer",
  "hashbrown 0.15.5",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
-]
-
-[[package]]
-name = "accesskit_unix"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcee751cc20d88678c33edaf9c07e8b693cd02819fe89053776f5313492273f5"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_atspi_common",
- "async-channel",
- "async-executor",
- "async-task",
- "atspi",
- "futures-lite",
- "futures-util",
- "serde",
- "zbus 4.4.0",
-]
-
-[[package]]
-name = "accesskit_windows"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24fcd5d23d70670992b823e735e859374d694a3d12bfd8dd32bd3bd8bedb5d81"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_consumer 0.26.0",
- "hashbrown 0.15.5",
- "paste",
- "static_assertions",
- "windows 0.58.0",
- "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -141,25 +69,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2d63dd5041e49c363d83f5419a896ecb074d309c414036f616dc0b04faca971"
 dependencies = [
  "accesskit 0.21.1",
- "accesskit_consumer 0.31.0",
+ "accesskit_consumer",
  "hashbrown 0.15.5",
  "static_assertions",
  "windows 0.61.3",
  "windows-core 0.61.2",
-]
-
-[[package]]
-name = "accesskit_winit"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6a48dad5530b6deb9fc7a52cc6c3bf72cdd9eb8157ac9d32d69f2427a5e879"
-dependencies = [
- "accesskit 0.17.1",
- "accesskit_macos 0.18.1",
- "accesskit_unix",
- "accesskit_windows 0.24.1",
- "raw-window-handle",
- "winit",
 ]
 
 [[package]]
@@ -169,8 +83,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8cfabe59d0eaca7412bfb1f70198dd31e3b0496fee7e15b066f9c36a1a140a0"
 dependencies = [
  "accesskit 0.21.1",
- "accesskit_macos 0.22.2",
- "accesskit_windows 0.29.2",
+ "accesskit_macos",
+ "accesskit_windows",
  "raw-window-handle",
  "winit",
 ]
@@ -682,57 +596,6 @@ checksum = "301801c08259e328a1c7da556608c0c22687708831b22024dbd3a57ea741e6de"
 dependencies = [
  "portable-atomic",
  "portable-atomic-util",
-]
-
-[[package]]
-name = "atspi"
-version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be534b16650e35237bb1ed189ba2aab86ce65e88cc84c66f4935ba38575cecbf"
-dependencies = [
- "atspi-common",
- "atspi-connection",
- "atspi-proxies",
-]
-
-[[package]]
-name = "atspi-common"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1909ed2dc01d0a17505d89311d192518507e8a056a48148e3598fef5e7bb6ba7"
-dependencies = [
- "enumflags2",
- "serde",
- "static_assertions",
- "zbus 4.4.0",
- "zbus-lockstep",
- "zbus-lockstep-macros",
- "zbus_names 3.0.0",
- "zvariant 4.2.0",
-]
-
-[[package]]
-name = "atspi-connection"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "430c5960624a4baaa511c9c0fcc2218e3b58f5dbcc47e6190cafee344b873333"
-dependencies = [
- "atspi-common",
- "atspi-proxies",
- "futures-lite",
- "zbus 4.4.0",
-]
-
-[[package]]
-name = "atspi-proxies"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5e6c5de3e524cf967569722446bcd458d5032348554d9a17d7d72b041ab7496"
-dependencies = [
- "atspi-common",
- "serde",
- "zbus 4.4.0",
- "zvariant 4.2.0",
 ]
 
 [[package]]
@@ -1275,7 +1138,6 @@ dependencies = [
  "bevy_utils",
  "bitflags 2.11.1",
  "bytemuck",
- "ddsfile",
  "futures-lite",
  "guillotiere",
  "half",
@@ -2008,7 +1870,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2de1c13d32ab8528435b58eca7ab874a1068184c6d6f266ee11433ae99d4069"
 dependencies = [
  "accesskit 0.21.1",
- "accesskit_winit 0.29.2",
+ "accesskit_winit",
  "approx",
  "bevy_a11y",
  "bevy_android",
@@ -2374,6 +2236,8 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim 0.11.1",
+ "unicase",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -3154,6 +3018,7 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "parking_lot",
  "percent-encoding",
+ "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
  "ron 0.8.1",
@@ -3163,6 +3028,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "wgpu 24.0.5",
  "winapi",
  "windows-sys 0.59.0",
  "winit",
@@ -3229,7 +3095,6 @@ version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d9dfbb78fe4eb9c3a39ad528b90ee5915c252e77bbab9d4ebc576541ab67e13"
 dependencies = [
- "accesskit_winit 0.23.1",
  "ahash",
  "arboard",
  "bytemuck",
@@ -4481,15 +4346,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40fac9d56ed6437b198fddba683305e8e2d651aa42647f00f5ae542e7f5c94a2"
 
 [[package]]
-name = "immutable-chunkmap"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a3e98b1520e49e252237edc238a39869da9f3241f2ec19dc788c1d24694d1e4"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "indenter"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5240,7 +5096,6 @@ dependencies = [
  "log",
  "num-traits",
  "once_cell",
- "petgraph",
  "pp-rs",
  "rustc-hash 1.1.0",
  "spirv",
@@ -6010,17 +5865,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap",
-]
-
-[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6342,16 +6186,6 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
-
-[[package]]
-name = "quick-xml"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff6510e86862b57b210fd8cbe8ed3f0d7d600b9c2863cd4549a2e033c66e956"
-dependencies = [
- "memchr",
- "serde",
-]
 
 [[package]]
 name = "quick-xml"
@@ -8608,7 +8442,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c324a910fd86ebdc364a3e61ec1f11737d3b1d6c273c0239ee8ff4bc0d24b4a"
 dependencies = [
  "proc-macro2",
- "quick-xml 0.39.4",
+ "quick-xml",
  "quote",
 ]
 
@@ -8696,6 +8530,7 @@ dependencies = [
  "document-features",
  "js-sys",
  "log",
+ "naga 24.0.0",
  "parking_lot",
  "profiling",
  "raw-window-handle",
@@ -8817,6 +8652,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "bitflags 2.11.1",
+ "block",
  "bytemuck",
  "cfg_aliases",
  "core-graphics-types 0.1.3",
@@ -9933,30 +9769,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zbus-lockstep"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca2c5dceb099bddaade154055c926bb8ae507a18756ba1d8963fd7b51d8ed1d"
-dependencies = [
- "zbus_xml",
- "zvariant 4.2.0",
-]
-
-[[package]]
-name = "zbus-lockstep-macros"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709ab20fc57cb22af85be7b360239563209258430bccf38d8b979c5a2ae3ecce"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "zbus-lockstep",
- "zbus_xml",
- "zvariant 4.2.0",
-]
-
-[[package]]
 name = "zbus_macros"
 version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10004,19 +9816,6 @@ dependencies = [
  "serde",
  "winnow 1.0.3",
  "zvariant 5.11.0",
-]
-
-[[package]]
-name = "zbus_xml"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3f374552b954f6abb4bd6ce979e6c9b38fb9d0cd7cc68a7d796e70c9f3a233"
-dependencies = [
- "quick-xml 0.30.0",
- "serde",
- "static_assertions",
- "zbus_names 3.0.0",
- "zvariant 4.2.0",
 ]
 
 [[package]]

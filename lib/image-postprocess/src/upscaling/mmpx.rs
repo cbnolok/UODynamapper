@@ -6,8 +6,9 @@
 use image::RgbaImage;
 
 pub fn apply_mmpx(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, Vec<u8>) {
-    let img = RgbaImage::from_raw(width, height, rgba.to_vec()).expect("Failed to create RgbaImage for MMPX");
-    
+    let img = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .expect("Failed to create RgbaImage for MMPX");
+
     match scale {
         2 => {
             let magnified = mmpx::magnify(&img);
@@ -16,7 +17,11 @@ pub fn apply_mmpx(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32
         4 => {
             let magnified1 = mmpx::magnify(&img);
             let magnified2 = mmpx::magnify(&magnified1);
-            (magnified2.width(), magnified2.height(), magnified2.into_raw())
+            (
+                magnified2.width(),
+                magnified2.height(),
+                magnified2.into_raw(),
+            )
         }
         _ => {
             // MMPX natively supports 2x. For other scales, we return the original
