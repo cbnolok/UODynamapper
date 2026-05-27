@@ -2,7 +2,6 @@
 // art::shading — Shared fake-lighting helpers for 2D art and ground-art passes.
 // ============================================================================
 
-#import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform, GlobalLightingUniforms}
 #import "shaders/world/land/noise.wgsl"::hash
 
 const ART_DEPTH_CLASS_FOLIAGE: u32 = 2u;
@@ -47,16 +46,24 @@ fn apply_art_surface_shading(
     world_pos: vec3<f32>,
     depth_class: u32,
     light_direction: vec3<f32>,
-    effects: LandEffectsUniform,
-    global_light: GlobalLightingUniforms,
+    light_color: vec3<f32>,
+    atmosphere_tint: vec3<f32>,
+    shading_mode: u32,
+    enable_art_fake_normals: u32,
+    art_shadow_strength: f32,
+    art_highlight_strength: f32,
+    art_depth_tint_strength: f32,
+    art_contact_shadow_strength: f32,
+    light_decal_intensity: f32,
+    kr_art_temperature_strength: f32,
     local_light_rgba: vec4<f32>,
     is_ground_art: bool,
 ) -> vec3<f32> {
-    let shadow_strength = clamp(effects.art_shadow_strength, 0.0, 1.0);
-    let highlight_strength = clamp(effects.art_highlight_strength, 0.0, 1.0);
-    let tint_strength = clamp(effects.art_depth_tint_strength, 0.0, 1.0);
-    let contact_strength = clamp(effects.art_contact_shadow_strength, 0.0, 1.0);
-    let light_static = clamp(effects.light_decal_intensity, 0.0, 2.0);
+    let shadow_strength = clamp(art_shadow_strength, 0.0, 1.0);
+    let highlight_strength = clamp(art_highlight_strength, 0.0, 1.0);
+    let tint_strength = clamp(art_depth_tint_strength, 0.0, 1.0);
+    let contact_strength = clamp(art_contact_shadow_strength, 0.0, 1.0);
+    let light_static = clamp(light_decal_intensity, 0.0, 2.0);
 
     let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
     let lower_occlusion = smoothstep(0.18, 1.0, uv_in_tile.y);
@@ -65,10 +72,10 @@ fn apply_art_surface_shading(
 
     var out_rgb = rgb;
     out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
-    out_rgb += rgb * global_light.light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
-    out_rgb = mix(out_rgb, out_rgb * global_light.atmosphere_tint, tint_strength * lower_occlusion);
+    out_rgb += rgb * light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
+    out_rgb = mix(out_rgb, out_rgb * atmosphere_tint, tint_strength * lower_occlusion);
 
-    if (effects.enable_art_fake_normals == 1u && effects.shading_mode == 2u) {
+    if (enable_art_fake_normals == 1u && shading_mode == 2u) {
         let N = art_fake_normal(uv_in_tile, depth_class, is_ground_art);
         let L = normalize(light_direction);
         let lambert = max(dot(N, L), 0.0);
@@ -121,8 +128,8 @@ fn apply_art_surface_shading(
             foot_contact_profile = 0.55;
         }
 
-        let warm_key = global_light.light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale * plane_catch_profile;
-        let cool_shadow = mix(vec3<f32>(1.0), global_light.atmosphere_tint, tint_strength * (0.45 + 0.35 * contact));
+        let warm_key = light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale * plane_catch_profile;
+        let cool_shadow = mix(vec3<f32>(1.0), atmosphere_tint, tint_strength * (0.45 + 0.35 * contact));
         let contact_shadow = ground_contact * contact_strength * contact_scale;
         let shadow_cut = 1.0 - (
             shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise * shadow_profile
@@ -132,12 +139,12 @@ fn apply_art_surface_shading(
 
         out_rgb = rgb * cool_shadow * shadow_cut;
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
-        out_rgb += global_light.light_color * edge_catch * highlight_strength * 0.22;
+        out_rgb += light_color * edge_catch * highlight_strength * 0.22;
         out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
         let foot_contact_noise = 0.82 + 0.18 * hash(floor(world_pos.xz * 0.8 + uv_in_tile * 11.0));
         let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
         out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
-        let art_temperature_strength = clamp(effects.kr_art_temperature_strength, 0.0, 1.5);
+        let art_temperature_strength = clamp(kr_art_temperature_strength, 0.0, 1.5);
         let sun_mask = smoothstep(0.34, 0.92, wrap) * (0.45 + 0.55 * top_catch);
         let shade_mask = clamp((1.0 - smoothstep(0.22, 0.72, lambert)) * (0.35 + 0.65 * contact), 0.0, 1.0);
         let shaded_luma = art_luminance(out_rgb);
