@@ -64,6 +64,12 @@ Terrain shaders are in `dynamapper/assets/shaders/worldmap/land/` as WGSL module
 ### 3.4 Uniform Binding Protocol
 Rust `#[uniform(10X)]` must match WGSL `@binding(10X)`. See `mesh_material.rs` and `bindings.wgsl` for current bindings.
 
+### 3.5 EC Land Missing-Texture Policy
+
+In EC/enhanced land mode, missing EC terrain textures must remain explicit. Do not hide unresolved EC land ids by silently falling back to Classic Client texmaps. Black/missing output is a useful failure signal while routing or provenance is being repaired.
+
+Correct fixes should trace the affected land ids through `TerrainTranscode.kdl`, embedded `tex_land_ec.uddp` transcode metadata, `TerrainDefinition.uop` provenance, and EC terrain overrides. Add a CC fallback only as an explicitly named compatibility or diagnostic mode, never as the default regression fix.
+
 ---
 
 ## 4. Code Editing Rules

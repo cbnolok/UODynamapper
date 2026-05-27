@@ -95,6 +95,14 @@ Packages:
 
 That aligns with the current UODynamapper investigation: `tex_land_ec.uddp` should be defined by land semantics, not by scanning a numeric id range or assuming every flat-looking `worldart` texture is land-owned.
 
+### 5.0.1 Missing EC Terrain Must Stay Explicit
+
+When the renderer is in EC/enhanced land mode, an unresolved EC land route is a data or resolver failure, not a rendering style choice.
+
+Do not silently fall back from a missing EC land texture to the Classic Client texmap path. Black or otherwise explicit missing output is preferred during investigation because it preserves the failure signal and keeps bad EC routing visible. A fix should identify the missing land ids, trace them through `TerrainTranscode.kdl`, embedded `tex_land_ec.uddp` transcode metadata, `TerrainDefinition.uop` provenance, and override data, then repair the incorrect data or resolver behavior.
+
+Classic fallback is acceptable only as an explicitly named user-facing compatibility mode or diagnostic mode. It must not be the default behavior for EC land rendering regressions.
+
 ## 5.1 KR And EC Land Relationship
 
 Kingdom Reborn and Enhanced Client land evidence should be kept separate until a specific runtime mode intentionally merges them.
