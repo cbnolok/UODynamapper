@@ -123,30 +123,21 @@ pub fn land_ui_system(
 
                 ui.separator();
 
-                let mut land_relief = if u.effects.normal_mode == 0 {
-                    0.0
-                } else {
-                    0.5 + 0.5 * u.land_lighting.sharpness_mix.clamp(0.0, 1.0)
-                };
+                let mut land_relief = land_relief_control_value(&u);
                 if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
-                    u.effects.normal_mode = if land_relief > 0.15 { 1 } else { 0 };
-                    u.land_lighting.enable_bent = if land_relief > 0.55 { 1 } else { 0 };
-                    u.land_lighting.sharpness_mix = (land_relief * 0.55).clamp(0.0, 0.55);
-                    u.land_lighting.sharpness_factor = (1.0 + land_relief * 1.5).clamp(1.0, 3.0);
+                    apply_land_relief_control(&mut u, land_relief);
                     changed = true;
                 }
 
-                let mut soft_lighting = (u.land_lighting.fill_strength + u.land_lighting.diffuse_wrap * 2.0) * 0.5;
+                let mut soft_lighting = soft_lighting_control_value(&u);
                 if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
-                    u.land_lighting.fill_strength = soft_lighting;
-                    u.land_lighting.diffuse_wrap = (soft_lighting * 0.35).clamp(0.0, 0.5);
+                    apply_soft_lighting_control(&mut u, soft_lighting);
                     changed = true;
                 }
 
-                let mut highlights = (u.land_lighting.rim_strength + u.land_lighting.specular_strength) * 0.5;
+                let mut highlights = highlights_control_value(&u);
                 if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
-                    u.land_lighting.rim_strength = highlights * 0.45;
-                    u.land_lighting.specular_strength = highlights * 0.25;
+                    apply_highlights_control(&mut u, highlights);
                     changed = true;
                 }
 
@@ -782,4 +773,73 @@ fn color4(ui: &mut egui::Ui, label: &str, v: &mut Vec4) -> bool {
         *v = Vec4::from_array(arr);
     }
     changed
+}
+
+fn land_relief_control_value(u: &UniformState) -> f32 {
+    if u.effects.normal_mode == 0 {
+        0.0
+    } else {
+        (u.land_lighting.sharpness_mix / 0.55).clamp(0.0, 1.0)
+    }
+}
+
+fn apply_land_relief_control(u: &mut UniformState, land_relief: f32) {
+    let land_relief = land_relief.clamp(0.0, 1.0);
+    u.effects.normal_mode = if land_relief > 0.15 { 1 } else { 0 };
+    u.land_lighting.enable_bent = if land_relief > 0.55 { 1 } else { 0 };
+    u.land_lighting.sharpness_mix = (land_relief * 0.55).clamp(0.0, 0.55);
+    u.land_lighting.sharpness_factor = (1.0 + land_relief * 1.5).clamp(1.0, 3.0);
+}
+
+fn soft_lighting_control_value(u: &UniformState) -> f32 {
+    u.land_lighting.fill_strength.clamp(0.0, 1.0)
+}
+
+fn apply_soft_lighting_control(u: &mut UniformState, soft_lighting: f32) {
+    let soft_lighting = soft_lighting.clamp(0.0, 1.0);
+    u.land_lighting.fill_strength = soft_lighting;
+    u.land_lighting.diffuse_wrap = (soft_lighting * 0.35).clamp(0.0, 0.5);
+}
+
+fn highlights_control_value(u: &UniformState) -> f32 {
+    let from_rim = u.land_lighting.rim_strength / 0.45;
+    let from_specular = u.land_lighting.specular_strength / 0.25;
+    ((from_rim + from_specular) * 0.5).clamp(0.0, 1.0)
+}
+
+fn apply_highlights_control(u: &mut UniformState, highlights: f32) {
+    let highlights = highlights.clamp(0.0, 1.0);
+    u.land_lighting.rim_strength = highlights * 0.45;
+    u.land_lighting.specular_strength = highlights * 0.25;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uniform_state() -> UniformState {
+        UniformState {
+            effects: LandEffectsUniform::default(),
+            lighting: GlobalLightingUniforms::default(),
+            land_lighting: LandLightingUniforms::default(),
+            global_lighting: 1.0,
+            dirty: false,
+            saved_snapshot: None,
+            active_preset: "classic.morning".to_string(),
+        }
+    }
+
+    #[test]
+    fn basic_composite_controls_roundtrip_their_slider_values() {
+        let mut u = uniform_state();
+
+        apply_land_relief_control(&mut u, 0.8);
+        assert_eq!(land_relief_control_value(&u), 0.8);
+
+        apply_soft_lighting_control(&mut u, 0.7);
+        assert_eq!(soft_lighting_control_value(&u), 0.7);
+
+        apply_highlights_control(&mut u, 0.6);
+        assert!((highlights_control_value(&u) - 0.6).abs() < f32::EPSILON);
+    }
 }
