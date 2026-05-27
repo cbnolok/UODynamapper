@@ -176,7 +176,7 @@ impl InspectorApp {
         let Some(v_idx) = self.selected_virtual_idx else {
             return;
         };
-        let ventry = &self.virtual_entries[v_idx];
+        let ventry = self.active_virtual_entries()[v_idx].clone();
 
         ui.horizontal(|ui| {
             if let VirtualEntryData::AtlasRect { .. } = ventry.data {
@@ -233,6 +233,48 @@ impl InspectorApp {
                     ui.label("Flags:");
                     ui.label(format!("0x{:04X}", flags));
                     ui.end_row();
+                }
+                VirtualEntryData::EcLandMaterial(info) => {
+                    ui.label("Material ID:");
+                    ui.label(info.material_id.to_string());
+                    ui.end_row();
+                    ui.label("Material Name ID:");
+                    ui.label(info.material_name_id.to_string());
+                    ui.end_row();
+                    ui.label("TerrainDefinition Path:");
+                    ui.label(&info.terrain_definition_path);
+                    ui.end_row();
+                    ui.label("TerrainDefinition Hash:");
+                    ui.label(format!("0x{:016X}", info.terrain_definition_hash64));
+                    ui.end_row();
+                    ui.label("Primary Texture:");
+                    ui.label(
+                        info.primary_texture_id
+                            .map(|texture_id| texture_id.to_string())
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                    );
+                    ui.end_row();
+                    ui.label("Aliases:");
+                    ui.label(info.alias_count.to_string());
+                    ui.end_row();
+                    ui.label("Selected Textures:");
+                    ui.label(info.selected_texture_count.to_string());
+                    ui.end_row();
+                    if let Some(preview) = info.preview.as_ref() {
+                        ui.label("Preview Slot:");
+                        ui.label(preview.slot_id.to_string());
+                        ui.end_row();
+                        ui.label("Preview Rect:");
+                        ui.label(format!(
+                            "page {} {},{} - {}x{}",
+                            preview.page_index,
+                            preview.x,
+                            preview.y,
+                            preview.width,
+                            preview.height
+                        ));
+                        ui.end_row();
+                    }
                 }
                 VirtualEntryData::TileMetaLand(info) => {
                     ui.label("Texture:");

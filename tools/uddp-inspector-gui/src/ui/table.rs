@@ -107,7 +107,11 @@ impl InspectorApp {
             .body(|body| {
                 body.rows(text_height, filtered_indices.len(), |mut row| {
                     let idx = filtered_indices[row.index()];
-                    let id_str = self.virtual_entries[idx].id.to_string();
+                    let entry = &self.active_virtual_entries()[idx];
+                    let id_str = entry.id.to_string();
+                    let kind = entry.kind.clone();
+                    let summary = entry.summary.clone();
+                    let location = entry.location.clone();
                     row.col(|ui| {
                         let is_selected = self.selected_virtual_idx == Some(idx);
                         let resp = ui.selectable_label(is_selected, id_str);
@@ -120,13 +124,13 @@ impl InspectorApp {
                         }
                     });
                     row.col(|ui| {
-                        ui.label(&self.virtual_entries[idx].kind);
+                        ui.label(kind);
                     });
                     row.col(|ui| {
-                        ui.label(&self.virtual_entries[idx].summary);
+                        ui.label(summary);
                     });
                     row.col(|ui| {
-                        ui.label(&self.virtual_entries[idx].location);
+                        ui.label(location);
                     });
                 });
             });

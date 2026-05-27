@@ -1,5 +1,5 @@
 use eframe::egui;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use udd_assets::{MobileAnimCcPackage, MobileAnimEcPackage};
@@ -26,6 +26,11 @@ pub const MAX_INLINE_PREVIEW_WIDTH: usize = 800;
 pub const MAX_INLINE_PREVIEW_HEIGHT: usize = 600;
 pub const DATA_TYPE_MAP: u8 = 3;
 pub const DATA_TYPE_STATIC: u8 = 14;
+const MISSING_TEXTURE_ID: u32 = u32::MAX;
+
+fn terrain_definition_path(material_id: u32) -> String {
+    format!("build/terraindefinition/{material_id:08}.bin")
+}
 
 pub struct InspectorApp {
     pub package: Option<UddpReader>,
@@ -42,6 +47,8 @@ pub struct InspectorApp {
     // Virtual View state
     pub view_mode: ViewMode,
     pub virtual_entries: Vec<VirtualEntry>,
+    pub virtual_material_entries: Vec<VirtualEntry>,
+    pub virtual_entry_mode: VirtualEntryMode,
     pub selected_virtual_idx: Option<usize>,
 
     // Preview state
@@ -74,6 +81,8 @@ impl InspectorApp {
             selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
             selected_virtual_idx: None,
             preview_text: None,
             preview_texture: None,
@@ -230,7 +239,7 @@ impl InspectorApp {
         let filter_lower = self.filter.to_lowercase();
         let filter_dec = self.filter.parse::<u32>().ok();
 
-        self.virtual_entries
+        self.active_virtual_entries()
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
@@ -251,6 +260,16 @@ impl InspectorApp {
             })
             .map(|(i, _)| i)
             .collect()
+    }
+
+    pub fn active_virtual_entries(&self) -> &[VirtualEntry] {
+        if self.virtual_entry_mode == VirtualEntryMode::Material
+            && !self.virtual_material_entries.is_empty()
+        {
+            &self.virtual_material_entries
+        } else {
+            &self.virtual_entries
+        }
     }
 
     pub fn handle_keyboard_navigation(&mut self, ctx: &egui::Context) {
@@ -349,6 +368,8 @@ impl InspectorApp {
                     .collect();
 
                 self.virtual_entries.clear();
+                self.virtual_material_entries.clear();
+                self.virtual_entry_mode = VirtualEntryMode::Entry;
                 self.atlas_pages.clear();
                 self.mobile_anim_cc_package = MobileAnimCcPackage::load(&path).ok().map(Arc::new);
                 self.mobile_anim_ec_package = MobileAnimEcPackage::load(&path).ok().map(Arc::new);
@@ -377,6 +398,7 @@ impl InspectorApp {
 
     pub fn detect_virtual_entries(&mut self, reader: &UddpReader) {
         self.virtual_entries.clear();
+        self.virtual_material_entries.clear();
         self.atlas_pages.clear();
 
         if let Some(data) = self.read_file_by_path(reader, "metadata/pages.bin") {
@@ -386,6 +408,9 @@ impl InspectorApp {
         if let Some(data) = self.read_file_by_path(reader, "metadata/slots.bin") {
             let atlas_entries = parse_virtual_entries_from_slot_manifest(&data);
             if !atlas_entries.is_empty() {
+                if let Ok(package) = udd_assets::TexLandEcPackage::from_uddp_package(reader.clone()) {
+                    self.virtual_material_entries = self.detect_tex_land_ec_material_entries(&package);
+                }
                 self.virtual_entries = atlas_entries;
                 return;
             }
@@ -398,6 +423,123 @@ impl InspectorApp {
         }
 
         self.virtual_entries = self.detect_block_virtual_entries();
+    }
+
+    pub fn detect_tex_land_ec_material_entries(
+        &self,
+        package: &udd_assets::TexLandEcPackage,
+    ) -> Vec<VirtualEntry> {
+        let mut material_ids = package
+            .terrain_provenance()
+            .iter()
+            .map(|record| record.material_id)
+            .collect::<Vec<_>>();
+        material_ids.sort_unstable();
+        material_ids.dedup();
+
+        material_ids
+            .into_iter()
+            .map(|material_id| {
+                let records = package
+                    .terrain_provenance()
+                    .iter()
+                    .filter(|record| record.material_id == material_id)
+                    .collect::<Vec<_>>();
+                let material_name_id = records
+                    .first()
+                    .map(|record| record.material_name_id)
+                    .unwrap_or(0);
+                let alias_count = package
+                    .terrain_provenance()
+                    .iter()
+                    .filter(|record| record.material_id == material_id)
+                    .filter_map(|record| (record.alias_slot_id != 0).then_some(record.alias_slot_id))
+                    .collect::<HashSet<_>>()
+                    .len();
+                let preview = package
+                    .terrain_provenance()
+                    .iter()
+                    .filter(|record| record.material_id == material_id)
+                    .filter_map(|record| {
+                        if record.canonical_slot_id != 0 {
+                            package
+                                .present_slot(record.canonical_slot_id)
+                                .map(|slot| (record.canonical_slot_id, slot))
+                        } else if record.alias_slot_id != 0 {
+                            package
+                                .present_slot(record.alias_slot_id)
+                                .map(|slot| (record.alias_slot_id, slot))
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+                    .map(|(slot_id, slot)| EcLandMaterialPreview {
+                        slot_id,
+                        page_index: slot.page_index,
+                        x: slot.x,
+                        y: slot.y,
+                        width: slot.width,
+                        height: slot.height,
+                    });
+                let primary_texture_id = records
+                    .iter()
+                    .find_map(|record| {
+                        (record.primary_texture_id != MISSING_TEXTURE_ID)
+                            .then_some(record.primary_texture_id)
+                    });
+                let primary_texture = primary_texture_id
+                    .map(|texture_id| texture_id.to_string())
+                    .unwrap_or_else(|| "missing".to_string());
+                let selected_texture_count = records
+                    .iter()
+                    .filter_map(|record| {
+                        (record.selected_texture_id != MISSING_TEXTURE_ID)
+                            .then_some(record.selected_texture_id)
+                    })
+                    .collect::<HashSet<_>>()
+                    .len();
+                let path = terrain_definition_path(material_id);
+                let path_hash = uocf::uop_container::hash::hash_file_name_single(&path);
+                let summary = format!(
+                    "primary {} | aliases {} | textures {}",
+                    primary_texture,
+                    alias_count,
+                    selected_texture_count
+                );
+                VirtualEntry {
+                    id: material_id,
+                    _data_type: 11,
+                    kind: "EC Land Material".to_string(),
+                    summary,
+                    location: path.clone(),
+                    data: VirtualEntryData::EcLandMaterial(EcLandMaterialInfo {
+                        material_id,
+                        material_name_id,
+                        terrain_definition_path: path,
+                        terrain_definition_hash64: path_hash,
+                        alias_count,
+                        selected_texture_count,
+                        primary_texture_id,
+                        preview,
+                    }),
+                }
+            })
+            .collect()
+    }
+
+    fn material_preview_page_data(
+        &self,
+        reader: &UddpReader,
+        preview: Option<&EcLandMaterialPreview>,
+    ) -> Option<Vec<u8>> {
+        let preview = preview?;
+        for path in atlas_page_paths(preview.page_index) {
+            if let Some(data) = self.read_file_by_path(reader, &path) {
+                return Some(data);
+            }
+        }
+        None
     }
 
     pub fn detect_tilemeta_virtual_entries(&self, reader: &UddpReader) -> Vec<VirtualEntry> {
@@ -546,17 +688,24 @@ impl InspectorApp {
             // Virtual View
             let result: Option<(VirtualEntry, Option<Vec<u8>>, Option<Vec<u8>>)> =
                 if let Some(idx) = self.selected_virtual_idx {
-                    let ventry = self.virtual_entries[idx].clone();
-                    match &ventry.data {
+                    let ventry = self.active_virtual_entries()[idx].clone();
+                    match ventry.data.clone() {
                         VirtualEntryData::AtlasRect { page_index, .. } => {
                             let mut page_data = None;
-                            for path in atlas_page_paths(*page_index) {
+                            for path in atlas_page_paths(page_index) {
                                 if let Some(data) = self.read_file_by_path(u_reader, &path) {
                                     page_data = Some(data);
                                     break;
                                 }
                             }
                             page_data.map(|data| (ventry, Some(data), None))
+                        }
+                        VirtualEntryData::EcLandMaterial(info) => {
+                            Some((
+                                ventry,
+                                self.material_preview_page_data(u_reader, info.preview.as_ref()),
+                                None,
+                            ))
                         }
                         /*
                         VirtualEntryData::DirectPayload { offset, size } => {
@@ -679,6 +828,43 @@ impl InspectorApp {
                                 self.atlas_texture_size =
                                     Some([page.width as usize, page.height as usize]);
                             }
+                        }
+                    }
+                    VirtualEntryData::EcLandMaterial(info) => {
+                        if let (Some(preview), Some(page_bytes)) = (info.preview.as_ref(), page_data_opt) {
+                            let decoded_page = self
+                                .atlas_pages
+                                .get(&preview.page_index)
+                                .copied()
+                                .and_then(|page_info| decode_atlas_page(page_info, page_bytes));
+                            if let Some(page) = decoded_page {
+                                let rect = [
+                                    preview.x as usize,
+                                    preview.y as usize,
+                                    preview.width as usize,
+                                    preview.height as usize,
+                                ];
+                                let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
+                                self.set_preview_image(
+                                    ctx,
+                                    "ec_land_material",
+                                    [preview.width as usize, preview.height as usize],
+                                    &cropped,
+                                    format!(
+                                        "Material: {} via slot {} ({}x{})",
+                                        info.material_id,
+                                        preview.slot_id,
+                                        preview.width,
+                                        preview.height
+                                    ),
+                                );
+                            }
+                        } else {
+                            self.preview_texture = None;
+                            self.preview_text = Some(format!(
+                                "Material {} has no resolved preview slot.",
+                                info.material_id
+                            ));
                         }
                     }
                     /*
@@ -973,6 +1159,8 @@ mod tests {
             selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
             selected_virtual_idx: None,
             preview_text: Some("hello".to_string()),
             preview_texture: None,
@@ -1039,6 +1227,8 @@ mod tests {
             selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
             selected_virtual_idx: None,
             preview_text: None,
             preview_texture: None,
@@ -1122,6 +1312,8 @@ mod tests {
                     }),
                 },
             ],
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
             selected_virtual_idx: None,
             preview_text: None,
             preview_texture: None,
@@ -1151,6 +1343,19 @@ mod tests {
         // Filter by summary substring
         app.filter = "grass".to_string();
         assert_eq!(app.filtered_virtual_indices(), vec![1]);
+    }
+
+    #[test]
+    fn terrain_definition_path_uses_material_id_and_hashes_as_uop_path() {
+        let path = terrain_definition_path(20_000_061);
+
+        assert_eq!(path, "build/terraindefinition/20000061.bin");
+        assert_eq!(
+            uocf::uop_container::hash::hash_file_name_single(&path),
+            uocf::uop_container::hash::hash_file_name_single(
+                "build/terraindefinition/20000061.bin"
+            )
+        );
     }
 
     #[test]
@@ -1193,6 +1398,8 @@ mod tests {
             selected_mobile_anim_frame_index: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
             selected_virtual_idx: None,
             preview_text: None,
             preview_texture: None,

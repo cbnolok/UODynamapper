@@ -8,7 +8,7 @@ mod logic;
 mod ui;
 
 use app::InspectorApp;
-use models::ViewMode;
+use models::{ViewMode, VirtualEntryMode};
 use ui::mobile_anim::{ui_mobile_anim_cc, ui_mobile_anim_ec};
 use utils::{open_package_dialog};
 
@@ -106,21 +106,33 @@ impl InspectorApp {
     fn ui_left_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Package Info");
 
-        let Some(u_reader) = &self.package else {
+        let Some((version_major, version_minor, lookup_mode, file_count, dicts)) = self
+            .package
+            .as_ref()
+            .map(|u_reader| {
+                let header = u_reader.header();
+                (
+                    header.version_major,
+                    header.version_minor,
+                    u_reader.lookup_mode(),
+                    header.file_count,
+                    u_reader.dictionary_records(),
+                )
+            })
+        else {
             ui.label("No package loaded.");
             return;
         };
 
-        let header = u_reader.header();
         egui::Grid::new("header_grid").show(ui, |ui| {
             ui.label("Version:");
-            ui.label(format!("{}.{}", header.version_major, header.version_minor));
+            ui.label(format!("{}.{}", version_major, version_minor));
             ui.end_row();
             ui.label("Lookup Mode:");
-            ui.label(format!("{:?}", u_reader.lookup_mode()));
+            ui.label(format!("{:?}", lookup_mode));
             ui.end_row();
             ui.label("Files:");
-            ui.label(header.file_count.to_string());
+            ui.label(file_count.to_string());
             ui.end_row();
         });
 
@@ -137,6 +149,17 @@ impl InspectorApp {
             ui.selectable_value(&mut self.view_mode, ViewMode::Package, "Package");
             if !self.virtual_entries.is_empty() {
                 ui.selectable_value(&mut self.view_mode, ViewMode::Virtual, "Virtual");
+            }
+            if self.view_mode == ViewMode::Virtual && !self.virtual_material_entries.is_empty() {
+                ui.add_space(6.0);
+                ui.label("Virtual Grouping");
+                let old_mode = self.virtual_entry_mode;
+                ui.selectable_value(&mut self.virtual_entry_mode, VirtualEntryMode::Entry, "Entry");
+                ui.selectable_value(&mut self.virtual_entry_mode, VirtualEntryMode::Material, "Material");
+                if self.virtual_entry_mode != old_mode {
+                    self.selected_virtual_idx = None;
+                    self.clear_preview_state();
+                }
             }
             if self.mobile_anim_cc_package.is_some() {
                 ui.selectable_value(&mut self.view_mode, ViewMode::MobileAnimCc, "CC Mobile Anim");
@@ -159,7 +182,6 @@ impl InspectorApp {
         ui.add_space(10.0);
 
         ui.heading("Dictionaries");
-        let dicts = u_reader.dictionary_records();
         if dicts.is_empty() {
             ui.label("No dictionaries.");
             return;

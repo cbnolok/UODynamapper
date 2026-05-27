@@ -16,6 +16,12 @@ pub enum PreviewModeKind {
     Atlas,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualEntryMode {
+    Entry,
+    Material,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct EntryInfo {
     pub key: FileKey,
@@ -46,6 +52,7 @@ pub enum VirtualEntryData {
         height: u16,
         flags: u16,
     },
+    EcLandMaterial(EcLandMaterialInfo),
     TileMetaLand(TileMetaLandInfo),
     TileMetaItem(TileMetaItemInfo),
     MapBlock {
@@ -60,6 +67,28 @@ pub enum VirtualEntryData {
         size: u32,
     },
     */
+}
+
+#[derive(Debug, Clone)]
+pub struct EcLandMaterialInfo {
+    pub material_id: u32,
+    pub material_name_id: i32,
+    pub terrain_definition_path: String,
+    pub terrain_definition_hash64: u64,
+    pub alias_count: usize,
+    pub selected_texture_count: usize,
+    pub primary_texture_id: Option<u32>,
+    pub preview: Option<EcLandMaterialPreview>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EcLandMaterialPreview {
+    pub slot_id: u32,
+    pub page_index: u32,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 #[derive(Debug, Clone)]
