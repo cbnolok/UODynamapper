@@ -63,7 +63,9 @@ use udd_assets::ec_terrain_overrides::{
     TerrainLiquidOverride, TerrainPolicyOverride, TerrainTextureOverride,
 };
 use udd_container::xxh64_virtual_path;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{
+    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
+};
 use uocf::enhanced::{
     terrain_definition::{
         TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionPrimaryLayerReason,
@@ -374,10 +376,14 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
             "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
         ],
     );
-    let terrain_override_layers_by_material = terrain_overrides_kdl_path
+    let terrain_overrides = terrain_overrides_kdl_path
         .as_ref()
-        .map(|path| terrain_override_layers_by_material(path))
+        .map(|path| EcTerrainOverrides::load(path).map(|overrides| (path.clone(), overrides)))
         .transpose()?
+        .map(|(path, overrides)| LoadedTerrainOverrides { path, overrides });
+    let terrain_override_layers_by_material = terrain_overrides
+        .as_ref()
+        .map(|loaded| terrain_override_layers_by_material(&loaded.overrides))
         .unwrap_or_default();
     let terrain_override_texture_ids = terrain_override_layers_by_material
         .values()
@@ -432,9 +438,11 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
     let terrain_provenance_manifest = serialize_terrain_provenance_manifest(&terrain_provenance)?;
-    let terrain_overrides_manifest = terrain_overrides_kdl_path
+    let terrain_overrides_manifest = terrain_overrides
         .as_ref()
-        .map(|path| serialize_terrain_overrides_metadata(path))
+        .map(|loaded| {
+            serialize_terrain_overrides_metadata_from_overrides(&loaded.path, &loaded.overrides)
+        })
         .transpose()?;
     let terrain_override_entry_count = terrain_overrides_manifest
         .as_ref()
@@ -627,15 +635,15 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     };
 
     for (page_path, encoded, width, height) in encoded_pages {
-        package.add_file(AddFileRequest {
+        package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
             compression,
             width,
             height,
-            virtual_path: Some(&page_path),
+            virtual_path: Some(page_path),
             path_hash64: None,
             id: None,
-            data: &encoded,
+            data: encoded,
         })?;
     }
     pb.finish_with_message(atlas_payload_finish_message(
@@ -655,7 +663,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         unique_texture_selection_count,
         unique_packed_texture_count,
         terrain_override_entry_count,
-        terrain_override_source: terrain_overrides_kdl_path,
+        terrain_override_source: terrain_overrides.map(|loaded| loaded.path),
         ignored_source_texture_ids,
         slot_count,
         populated_slot_count,
@@ -685,6 +693,11 @@ struct SerializedTerrainOverridesMetadata {
     entry_count: u32,
 }
 
+struct LoadedTerrainOverrides {
+    path: PathBuf,
+    overrides: EcTerrainOverrides,
+}
+
 fn find_first_existing_file_in_sources_or_cwd(
     source_dirs: &[PathBuf],
     file_names: &[&str],
@@ -700,6 +713,13 @@ fn serialize_terrain_overrides_metadata(
     path: &Path,
 ) -> eyre::Result<SerializedTerrainOverridesMetadata> {
     let overrides = EcTerrainOverrides::load(path)?;
+    serialize_terrain_overrides_metadata_from_overrides(path, &overrides)
+}
+
+fn serialize_terrain_overrides_metadata_from_overrides(
+    path: &Path,
+    overrides: &EcTerrainOverrides,
+) -> eyre::Result<SerializedTerrainOverridesMetadata> {
     let mut entries = overrides
         .to_map()
         .into_values()
@@ -735,9 +755,8 @@ struct TerrainLayerProvenance {
 }
 
 fn terrain_override_layers_by_material(
-    path: &Path,
-) -> eyre::Result<HashMap<u32, BTreeMap<u32, TerrainLayerProvenance>>> {
-    let overrides = EcTerrainOverrides::load(path)?;
+    overrides: &EcTerrainOverrides,
+) -> HashMap<u32, BTreeMap<u32, TerrainLayerProvenance>> {
     let mut layers_by_material = HashMap::<u32, BTreeMap<u32, TerrainLayerProvenance>>::new();
     for (material_id, entry) in overrides.to_map() {
         let layers = layers_by_material.entry(material_id).or_default();
@@ -757,7 +776,7 @@ fn terrain_override_layers_by_material(
             });
         }
     }
-    Ok(layers_by_material)
+    layers_by_material
 }
 
 fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOverrideMetadataEntry {

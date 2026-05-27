@@ -36,7 +36,9 @@ use udd_assets::tex_land_cc::{
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_PRESENT, SLOT_MANIFEST_ENTRY_PATH,
 };
 use udd_container::xxh64_virtual_path;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{
+    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
+};
 use uocf::classic::land_texture::TexMap;
 
 use crate::upscale::{apply_filter_passes, UpscaleConfig, UpscaleFilter};
@@ -278,15 +280,15 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
     };
 
     for (page_path, encoded, width, height) in encoded_pages {
-        package.add_file(AddFileRequest {
+        package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
             compression: options.compression,
             width,
             height,
-            virtual_path: Some(&page_path),
+            virtual_path: Some(page_path),
             path_hash64: None,
             id: None,
-            data: &encoded,
+            data: encoded,
         })?;
     }
     pb.finish_with_message(atlas_payload_finish_message(

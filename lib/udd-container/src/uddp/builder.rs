@@ -243,13 +243,20 @@ impl UddpBuilder {
         F: FnMut(BuildProgress),
     {
         let mut samples_by_type: HashMap<u8, Vec<&[u8]>> = HashMap::new();
+        let mut dictionary_candidate_types = HashSet::new();
         for file in &self.files {
             samples_by_type.entry(file.data_type).or_default().push(&file.raw_data);
+            if matches!(file.compression, CompressionFlag::ZstdDict | CompressionFlag::Auto) {
+                dictionary_candidate_types.insert(file.data_type);
+            }
         }
 
         let training_samples_by_type = samples_by_type
             .iter()
             .filter_map(|(&data_type, samples)| {
+                if !dictionary_candidate_types.contains(&data_type) {
+                    return None;
+                }
                 let training_samples = select_dict_training_samples(samples);
                 should_train_dict(&training_samples)
                     .then_some((data_type, training_samples))
@@ -734,4 +741,37 @@ fn validate_keys(mode: LookupMode, files: &[BuiltFile]) -> Result<(), BuildError
 fn train_zstd_dict(samples: &[&[u8]], dict_size: usize) -> Result<Vec<u8>, BuildError> {
     let dict = zstd::dict::from_samples(samples, dict_size).map_err(BuildError::Io)?;
     Ok(dict)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_skips_dictionary_training_when_no_file_can_use_dictionary() {
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        for id in 0..16u32 {
+            builder
+                .add_owned_file(AddOwnedFileRequest {
+                    data_type: DataType::Metadata as u8,
+                    compression: CompressionFlag::None,
+                    width: 0,
+                    height: 0,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data: vec![id as u8; 8 * 1024],
+                })
+                .expect("add sample");
+        }
+
+        let mut phases = Vec::new();
+        builder
+            .build_with_progress(|progress| phases.push(progress.phase))
+            .expect("build package");
+
+        assert!(!phases.contains(&BuildProgressPhase::TrainingDictionaries));
+        assert!(phases.contains(&BuildProgressPhase::CompressingFiles));
+        assert!(phases.contains(&BuildProgressPhase::Assembling));
+    }
 }

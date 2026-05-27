@@ -44,7 +44,9 @@ use udd_assets::tex_art_ec::{
     SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH,
 };
 use udd_container::xxh64_virtual_path;
-use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+use udd_container::{
+    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
+};
 use uocf::enhanced::{
     terrain_definition::TerrainDefinitionPackage,
     textures::{TextureFile, Textures},
@@ -443,15 +445,15 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
     };
 
     for (page_path, encoded, width, height) in encoded_pages {
-        package.add_file(AddFileRequest {
+        package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
             compression,
             width,
             height,
-            virtual_path: Some(&page_path),
+            virtual_path: Some(page_path),
             path_hash64: None,
             id: None,
-            data: &encoded,
+            data: encoded,
         })?;
     }
     pb.finish_with_message(atlas_payload_finish_message(
@@ -616,39 +618,17 @@ fn decode_present_tiles(
         if !should_include_art_tile(art_data.tile_type) {
             continue;
         }
-        let resolved = if let Some(texture) = art_data.ec_texture.as_ref() {
-            if let Some(world_textures) = world_textures {
-                world_textures
-                    .get_from_id(texture.texture_id)?
-                    .map(|file| (TextureSourceKey::World(texture.texture_id), texture, file))
-            } else {
-                None
-            }
+        let resolved = if let (Some(texture), Some(_)) =
+            (art_data.ec_texture.as_ref(), world_textures)
+        {
+            Some((TextureSourceKey::World(texture.texture_id), texture))
+        } else if let (Some(texture), Some(_)) = (art_data.cc_texture.as_ref(), legacy_textures) {
+            Some((TextureSourceKey::Legacy(texture.texture_id), texture))
         } else {
             None
-        }
-        .or(if let Some(texture) = art_data.cc_texture.as_ref() {
-            if let Some(legacy_textures) = legacy_textures {
-                legacy_textures
-                    .get_from_id(texture.texture_id)?
-                    .map(|file| (TextureSourceKey::Legacy(texture.texture_id), texture, file))
-            } else {
-                None
-            }
-        } else {
-            None
-        });
+        };
 
-        if let Some((source_key, texture_bounds, file)) = resolved {
-            if should_skip_terrain_material_static(
-                art_data,
-                texture_bounds,
-                &file,
-                terrain_source_texture_ids,
-            )? {
-                continue;
-            }
-
+        if let Some((source_key, texture_bounds)) = resolved {
             // Tileart ownership is authoritative for tex_art_ec packing.
             // A source texture id may legitimately appear in both terrain and tileart
             // metadata, and shared ids should survive in both packages.
@@ -659,6 +639,27 @@ fn decode_present_tiles(
 
             if let Some(&group_index) = canonical_by_source.get(&canonical_key) {
                 decode_groups[group_index].alias_art_ids.push(art_id as u32);
+                continue;
+            }
+
+            let file = match source_key {
+                TextureSourceKey::World(texture_id) => world_textures
+                    .expect("world texture source was selected only when available")
+                    .get_from_id(texture_id)?,
+                TextureSourceKey::Legacy(texture_id) => legacy_textures
+                    .expect("legacy texture source was selected only when available")
+                    .get_from_id(texture_id)?,
+            };
+            let Some(file) = file else {
+                continue;
+            };
+
+            if should_skip_terrain_material_static(
+                art_data,
+                texture_bounds,
+                &file,
+                terrain_source_texture_ids,
+            )? {
                 continue;
             }
 

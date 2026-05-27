@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre;
 use guillotiere::{size2, AtlasAllocator};
 use indicatif::{ProgressBar, ProgressStyle};
-use udd_container::{AddFileRequest, CompressionFlag, DataType, UddpBuilder};
+use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
 use crate::tex_art_cc::crop_rgba_page;
 use crate::{merge_unplaced_tiles, resolve_packing_axis, AtlasPackingMode};
@@ -133,7 +133,7 @@ pub fn add_gump_atlas_files(
             page.record.used_width,
             page.record.used_height,
         );
-        builder.add_file(AddFileRequest {
+        builder.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
             compression: options.compression,
             width: page.record.used_width,
@@ -141,7 +141,7 @@ pub fn add_gump_atlas_files(
             virtual_path: None,
             path_hash64: None,
             id: Some(GUMP_ATLAS_PAGE_ID_BASE + page.record.page_index),
-            data: &payload,
+            data: payload,
         })?;
     }
 
