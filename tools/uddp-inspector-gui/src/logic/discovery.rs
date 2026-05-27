@@ -31,7 +31,7 @@ pub fn parse_atlas_page_manifest(data: &[u8]) -> HashMap<u32, AtlasPageInfo> {
         Some(1) => AtlasPixelFormat::Bc7,
         _ => return HashMap::new(),
     };
-    if version >= PACKING_MODE_HEADER_VERSION {
+    if version >= PACKING_MODE_HEADER_VERSION || magic == *b"CTXP" {
         match cursor.read_u8().ok() {
             Some(0 | 1) => {}
             _ => return HashMap::new(),
@@ -97,7 +97,7 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
     let _atlas_w = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _atlas_h = cursor.read_u32::<LittleEndian>().unwrap_or(0);
     let _gutter = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    if version >= PACKING_MODE_HEADER_VERSION {
+    if version >= PACKING_MODE_HEADER_VERSION || magic == *b"CTXS" {
         match cursor.read_u8().ok() {
             Some(0 | 1) => {}
             _ => return Vec::new(),
@@ -275,6 +275,7 @@ mod tests {
         assert_eq!(slot_manifest_kind(b"CASL"), Some("CC Art"));
         assert_eq!(slot_manifest_kind(b"EASL"), Some("EC Art"));
         assert_eq!(slot_manifest_kind(b"ELSL"), Some("EC Land"));
+        assert_eq!(slot_manifest_kind(b"CTXS"), Some("CC Texmaps"));
         assert_eq!(slot_manifest_kind(b"NOPE"), None);
     }
 
@@ -287,6 +288,34 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry.id, 42);
         assert_eq!(entry.kind, "EC Land");
+        match &entry.data {
+            VirtualEntryData::AtlasRect {
+                page_index,
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => {
+                assert_eq!(*page_index, 7);
+                assert_eq!(*x, 11);
+                assert_eq!(*y, 22);
+                assert_eq!(*width, 33);
+                assert_eq!(*height, 44);
+            }
+            other => panic!("expected atlas rect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_virtual_entries_accepts_tex_land_cc_v2_manifests() {
+        let manifest = build_slot_manifest(b"CTXS", 2, Some(1), 1);
+        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.id, 42);
+        assert_eq!(entry.kind, "CC Texmaps");
         match &entry.data {
             VirtualEntryData::AtlasRect {
                 page_index,
@@ -336,6 +365,19 @@ mod tests {
         assert_eq!(info.used_width, 3000);
         assert_eq!(info.used_height, 1500);
         assert_eq!(info.pixel_format, AtlasPixelFormat::Bc7);
+    }
+
+    #[test]
+    fn parse_atlas_page_manifest_accepts_tex_land_cc_v2_manifest() {
+        let manifest = build_page_manifest(b"CTXP", 2, 0, Some(1), 3000, 1500);
+        let pages = parse_atlas_page_manifest(&manifest);
+        let info = pages.get(&7).unwrap();
+
+        assert_eq!(info.atlas_width, 4096);
+        assert_eq!(info.atlas_height, 2048);
+        assert_eq!(info.used_width, 3000);
+        assert_eq!(info.used_height, 1500);
+        assert_eq!(info.pixel_format, AtlasPixelFormat::Rgba8888);
     }
 
     #[test]
