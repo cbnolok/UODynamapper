@@ -58,6 +58,8 @@ pub struct InspectorApp {
     pub atlas_texture: Option<egui::TextureHandle>,
     pub atlas_texture_size: Option<[usize; 2]>,
     pub atlas_text: Option<String>,
+    pub decoded_atlas_page_index: Option<u32>,
+    pub decoded_atlas_page: Option<DecodedAtlasPage>,
     pub preview_mode: PreviewModeKind,
     pub image_window_open: bool,
     pub image_window_mode: PreviewModeKind,
@@ -90,6 +92,8 @@ impl InspectorApp {
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
+            decoded_atlas_page_index: None,
+            decoded_atlas_page: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -106,6 +110,8 @@ impl InspectorApp {
         self.atlas_texture = None;
         self.atlas_texture_size = None;
         self.atlas_text = None;
+        self.decoded_atlas_page_index = None;
+        self.decoded_atlas_page = None;
         self.preview_mode = PreviewModeKind::Entry;
         self.image_window_mode = PreviewModeKind::Entry;
         self.texture_zoom = 1.0;
@@ -166,6 +172,24 @@ impl InspectorApp {
                         self.atlas_text.as_deref().unwrap_or("Full Atlas"),
                     )
                 }),
+        }
+    }
+
+    fn clear_entry_preview_state(&mut self) {
+        self.preview_text = None;
+        self.preview_texture = None;
+        self.preview_texture_size = None;
+        self.preview_mode = PreviewModeKind::Entry;
+        self.image_window_mode = PreviewModeKind::Entry;
+        self.texture_zoom = 1.0;
+    }
+
+    fn virtual_atlas_page_index(&self, idx: usize) -> Option<u32> {
+        let entry = self.active_virtual_entries().get(idx)?;
+        if let VirtualEntryData::AtlasRect { page_index, .. } = entry.data {
+            Some(page_index)
+        } else {
+            None
         }
     }
 
@@ -542,6 +566,66 @@ impl InspectorApp {
         None
     }
 
+    fn decode_virtual_atlas_page(
+        &self,
+        page_index: u32,
+        page_bytes: Vec<u8>,
+    ) -> Option<DecodedAtlasPage> {
+        if let Some(page_info) = self.atlas_pages.get(&page_index).copied() {
+            decode_atlas_page(page_info, page_bytes)
+        } else if page_bytes.starts_with(b"UDT1") {
+            if let Ok(vram) = udd_conv::bc7::VramTextureData::from_container_bytes(&page_bytes) {
+                udd_conv::bc7::decode_from_vram(
+                    &vram,
+                    udd_conv::bc7::RawImageFormat::Rgba8888,
+                )
+                .ok()
+                .map(|rgba| DecodedAtlasPage {
+                    rgba,
+                    width: vram.extent().width(),
+                    height: vram.extent().height(),
+                })
+            } else {
+                None
+            }
+        } else if page_bytes.starts_with(&[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB]) {
+            if let Ok(k_reader) = ktx2::Reader::new(&page_bytes) {
+                let k_header = k_reader.header();
+                if k_header.format == Some(ktx2::Format::BC7_UNORM_BLOCK) {
+                    let level0 = k_reader.levels().next().unwrap();
+                    let mut blocks = level0.data.to_vec();
+                    if k_header.supercompression_scheme
+                        == Some(ktx2::SupercompressionScheme::Zstandard)
+                    {
+                        if let Ok(decompressed) = zstd::decode_all(std::io::Cursor::new(&blocks)) {
+                            blocks = decompressed;
+                        }
+                    }
+                    udd_conv::bc7::decode_bc7_to_rgba8888(
+                        &blocks,
+                        udd_conv::bc7::ImageExtent::new(
+                            k_header.pixel_width,
+                            k_header.pixel_height,
+                        )
+                        .ok()?,
+                    )
+                    .ok()
+                    .map(|rgba| DecodedAtlasPage {
+                        rgba,
+                        width: k_header.pixel_width,
+                        height: k_header.pixel_height,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn detect_tilemeta_virtual_entries(&self, reader: &UddpReader) -> Vec<VirtualEntry> {
         let mut entries = Vec::new();
 
@@ -691,14 +775,20 @@ impl InspectorApp {
                     let ventry = self.active_virtual_entries()[idx].clone();
                     match ventry.data.clone() {
                         VirtualEntryData::AtlasRect { page_index, .. } => {
-                            let mut page_data = None;
-                            for path in atlas_page_paths(page_index) {
-                                if let Some(data) = self.read_file_by_path(u_reader, &path) {
-                                    page_data = Some(data);
-                                    break;
+                            if self.decoded_atlas_page_index == Some(page_index)
+                                && self.decoded_atlas_page.is_some()
+                            {
+                                Some((ventry, None, None))
+                            } else {
+                                let mut page_data = None;
+                                for path in atlas_page_paths(page_index) {
+                                    if let Some(data) = self.read_file_by_path(u_reader, &path) {
+                                        page_data = Some(data);
+                                        break;
+                                    }
                                 }
+                                page_data.map(|data| (ventry, Some(data), None))
                             }
-                            page_data.map(|data| (ventry, Some(data), None))
                         }
                         VirtualEntryData::EcLandMaterial(info) => {
                             Some((
@@ -738,95 +828,47 @@ impl InspectorApp {
                         height,
                         ..
                     } => {
-                        if let Some(page_bytes) = page_data_opt {
-                            let page_bytes: Vec<u8> = page_bytes;
-                            let decoded_page = if let Some(page_info) =
-                                self.atlas_pages.get(&page_index).copied()
-                            {
-                                decode_atlas_page(page_info, page_bytes.clone())
-                            } else if page_bytes.starts_with(b"UDT1") {
-                                if let Ok(vram) =
-                                    udd_conv::bc7::VramTextureData::from_container_bytes(&page_bytes)
-                                {
-                                    udd_conv::bc7::decode_from_vram(
-                                        &vram,
-                                        udd_conv::bc7::RawImageFormat::Rgba8888,
-                                    )
-                                    .ok()
-                                    .map(|rgba| {
-                                        DecodedAtlasPage {
-                                            rgba,
-                                            width: vram.extent().width(),
-                                            height: vram.extent().height(),
-                                        }
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else if page_bytes
-                                .starts_with(&[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB])
-                            {
-                                if let Ok(k_reader) = ktx2::Reader::new(&page_bytes) {
-                                    let k_header = k_reader.header();
-                                    if k_header.format == Some(ktx2::Format::BC7_UNORM_BLOCK) {
-                                        let level0 = k_reader.levels().next().unwrap();
-                                        let mut blocks = level0.data.to_vec();
-                                        if k_header.supercompression_scheme
-                                            == Some(ktx2::SupercompressionScheme::Zstandard)
-                                        {
-                                            if let Ok(decompressed) =
-                                                zstd::decode_all(std::io::Cursor::new(&blocks))
-                                            {
-                                                blocks = decompressed;
-                                            }
-                                        }
-                                        if let Ok(rgba) = udd_conv::bc7::decode_bc7_to_rgba8888(
-                                            &blocks,
-                                            udd_conv::bc7::ImageExtent::new(
-                                                k_header.pixel_width,
-                                                k_header.pixel_height,
-                                            )
-                                            .unwrap(),
-                                        ) {
-                                            Some(DecodedAtlasPage {
-                                                rgba,
-                                                width: k_header.pixel_width,
-                                                height: k_header.pixel_height,
-                                            })
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
+                        if self.decoded_atlas_page_index != Some(page_index) {
+                            self.decoded_atlas_page_index = None;
+                            self.decoded_atlas_page = page_data_opt.and_then(|page_bytes| {
+                                self.decode_virtual_atlas_page(page_index, page_bytes)
+                            });
+                            if self.decoded_atlas_page.is_some() {
+                                self.decoded_atlas_page_index = Some(page_index);
+                            }
+                            self.atlas_texture = None;
+                            self.atlas_texture_size = None;
+                            self.atlas_text = None;
+                        }
+
+                        if let Some(page) = self.decoded_atlas_page.as_ref() {
+                            let rect = [x as usize, y as usize, width as usize, height as usize];
+                            let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
+                            let atlas_image = if self.atlas_texture.is_none() {
+                                Some(egui::ColorImage::from_rgba_unmultiplied(
+                                    [page.width as usize, page.height as usize],
+                                    &page.rgba,
+                                ))
                             } else {
                                 None
                             };
+                            let atlas_size = [page.width as usize, page.height as usize];
 
-                            if let Some(page) = decoded_page {
-                                let rect =
-                                    [x as usize, y as usize, width as usize, height as usize];
-                                let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
-                                self.set_preview_image(
-                                    ctx,
-                                    "virtual_tile",
-                                    [width as usize, height as usize],
-                                    &cropped,
-                                    format!("Virtual Tile: {} ({}x{})", ventry.id, width, height),
-                                );
+                            self.set_preview_image(
+                                ctx,
+                                "virtual_tile",
+                                [width as usize, height as usize],
+                                &cropped,
+                                format!("Virtual Tile: {} ({}x{})", ventry.id, width, height),
+                            );
+                            if let Some(atlas_image) = atlas_image {
                                 self.atlas_texture = Some(ctx.load_texture(
                                     "full_atlas",
-                                    egui::ColorImage::from_rgba_unmultiplied(
-                                        [page.width as usize, page.height as usize],
-                                        &page.rgba,
-                                    ),
+                                    atlas_image,
                                     egui::TextureOptions::default(),
                                 ));
-                                self.atlas_texture_size =
-                                    Some([page.width as usize, page.height as usize]);
+                                self.atlas_texture_size = Some(atlas_size);
+                                self.atlas_text = Some(format!("Full Atlas Page {}", page_index));
                             }
                         }
                     }
@@ -1131,9 +1173,17 @@ impl InspectorApp {
 
     pub fn select_virtual_entry(&mut self, ctx: &egui::Context, idx: usize) {
         if self.selected_virtual_idx != Some(idx) {
+            let previous_page = self.selected_virtual_idx.and_then(|idx| {
+                self.virtual_atlas_page_index(idx)
+            });
+            let next_page = self.virtual_atlas_page_index(idx);
             self.selected_virtual_idx = Some(idx);
             self.scroll_to_selected = true;
-            self.clear_preview_state();
+            if previous_page.is_some() && previous_page == next_page {
+                self.clear_entry_preview_state();
+            } else {
+                self.clear_preview_state();
+            }
             self.load_preview(ctx);
         }
     }
@@ -1168,6 +1218,12 @@ mod tests {
             atlas_texture: None,
             atlas_texture_size: Some([20, 20]),
             atlas_text: Some("world".to_string()),
+            decoded_atlas_page_index: Some(7),
+            decoded_atlas_page: Some(DecodedAtlasPage {
+                rgba: vec![255, 0, 0, 255],
+                width: 1,
+                height: 1,
+            }),
             preview_mode: PreviewModeKind::Atlas,
             image_window_open: true,
             image_window_mode: PreviewModeKind::Atlas,
@@ -1182,6 +1238,8 @@ mod tests {
         assert_eq!(app.preview_texture_size, None);
         assert_eq!(app.atlas_texture_size, None);
         assert_eq!(app.atlas_text, None);
+        assert_eq!(app.decoded_atlas_page_index, None);
+        assert!(app.decoded_atlas_page.is_none());
         assert_eq!(app.preview_mode, PreviewModeKind::Entry);
         assert_eq!(app.image_window_mode, PreviewModeKind::Entry);
         assert_eq!(app.texture_zoom, 1.0);
@@ -1236,6 +1294,8 @@ mod tests {
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
+            decoded_atlas_page_index: None,
+            decoded_atlas_page: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -1321,6 +1381,8 @@ mod tests {
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
+            decoded_atlas_page_index: None,
+            decoded_atlas_page: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -1407,6 +1469,8 @@ mod tests {
             atlas_texture: None,
             atlas_texture_size: None,
             atlas_text: None,
+            decoded_atlas_page_index: None,
+            decoded_atlas_page: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
