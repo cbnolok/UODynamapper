@@ -8,7 +8,7 @@ use crate::ec_material_audit::{
     write_ec_material_baseline_report, write_ec_terrain_override_candidates,
     write_ec_terrain_practical_review,
 };
-use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
@@ -70,7 +70,7 @@ use udd_conv::{
     },
     upscale::UpscaleFilter,
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
-    AtlasPackingMode, CompressionFlag, PagePixelFormat,
+    CompressionFlag, PagePixelFormat,
 };
 
 #[cfg(test)]
@@ -480,22 +480,6 @@ pub enum CliUpscaleFilter {
     Mmpx4x,
 }
 
-#[derive(ValueEnum, Clone, Copy, Debug, Default)]
-pub enum CliAtlasPackingMode {
-    #[default]
-    MaximumPacking,
-    Bc7Oriented,
-}
-
-impl From<CliAtlasPackingMode> for AtlasPackingMode {
-    fn from(value: CliAtlasPackingMode) -> Self {
-        match value {
-            CliAtlasPackingMode::MaximumPacking => AtlasPackingMode::MaximumPacking,
-            CliAtlasPackingMode::Bc7Oriented => AtlasPackingMode::Bc7Oriented,
-        }
-    }
-}
-
 impl From<CliUpscaleFilter> for UpscaleFilter {
     fn from(val: CliUpscaleFilter) -> Self {
         match val {
@@ -577,10 +561,6 @@ enum Commands {
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
-        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
-        packing_mode: CliAtlasPackingMode,
-        #[arg(long, default_value_t = false, help = "Extrude slot edge pixels into atlas gutters for linear/bilinear filtering.")]
-        filtering_ready: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
         #[arg(long, default_value_t = 256)]
@@ -625,10 +605,6 @@ enum Commands {
         bc7: bool,
         #[arg(long = "bc7-rdo", help = "Write BC7 atlas pages with BC7 RDO.")]
         bc7_rdo: bool,
-        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Atlas placement policy.")]
-        packing_mode: CliAtlasPackingMode,
-        #[arg(long, default_value_t = false, help = "Extrude tile edge pixels into atlas gutters for linear/bilinear filtering.")]
-        filtering_ready: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
@@ -761,14 +737,6 @@ enum Commands {
         land_bc7: bool,
         #[arg(long = "land-bc7-rdo", help = "Write EC land atlas pages as BC7 with BC7 RDO, overriding the shared format flags.")]
         land_bc7_rdo: bool,
-        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Art atlas placement policy.")]
-        art_packing_mode: CliAtlasPackingMode,
-        #[arg(long, value_enum, default_value_t = CliAtlasPackingMode::MaximumPacking, help = "Land atlas placement policy.")]
-        land_packing_mode: CliAtlasPackingMode,
-        #[arg(long, default_value_t = false, help = "Extrude EC art edge pixels into atlas gutters for linear/bilinear filtering.")]
-        art_filtering_ready: bool,
-        #[arg(long, default_value_t = false, help = "Extrude EC land edge pixels into atlas gutters for linear/bilinear filtering.")]
-        land_filtering_ready: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda for EC texture pages. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
         #[arg(long, default_value_t = 256)]
@@ -1082,8 +1050,6 @@ pub fn run() -> eyre::Result<()> {
             zstd,
             bc7,
             bc7_rdo,
-            packing_mode,
-            filtering_ready,
             bc7_rdo_lambda,
             upscale_64_size: _, // Land upscaling not currently applied to CC Art
             upscale_64_algo: _,
@@ -1108,8 +1074,6 @@ pub fn run() -> eyre::Result<()> {
                     upscale: upscale.into(),
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     pixel_format: output_format.pixel_format,
-                    packing_mode: packing_mode.into(),
-                    filtering_ready,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                 },
                 &classic_patches.into(),
@@ -1135,8 +1099,6 @@ pub fn run() -> eyre::Result<()> {
             zstd,
             bc7,
             bc7_rdo,
-            packing_mode,
-            filtering_ready,
             bc7_rdo_lambda,
             upscale,
             upscale_64_passes,
@@ -1164,8 +1126,6 @@ pub fn run() -> eyre::Result<()> {
                     upscale_64_passes: convert_upscale_passes(upscale_64_passes),
                     upscale_128_passes: convert_upscale_passes(upscale_128_passes),
                     pixel_format: output_format.pixel_format,
-                    packing_mode: packing_mode.into(),
-                    filtering_ready,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                 },
                 &classic_patches.into(),
@@ -1317,10 +1277,6 @@ pub fn run() -> eyre::Result<()> {
             land_zstd,
             land_bc7,
             land_bc7_rdo,
-            art_packing_mode,
-            land_packing_mode,
-            art_filtering_ready,
-            land_filtering_ready,
             bc7_rdo_lambda,
             upscale_64_size,
             upscale_64_algo,
@@ -1388,8 +1344,6 @@ pub fn run() -> eyre::Result<()> {
                     upscale: upscale_filter,
                     upscale_passes: convert_upscale_passes(art_upscale_passes),
                     pixel_format: art_output_format.pixel_format,
-                    packing_mode: art_packing_mode.into(),
-                    filtering_ready: art_filtering_ready,
                     bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
                 },
             )?;
@@ -1437,8 +1391,6 @@ pub fn run() -> eyre::Result<()> {
                     upscale_256_passes: convert_upscale_passes(upscale_256_passes),
                     upscale_512_passes: convert_upscale_passes(upscale_512_passes),
                     pixel_format: land_output_format.pixel_format,
-                    packing_mode: land_packing_mode.into(),
-                    filtering_ready: land_filtering_ready,
                     bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     transcode_kdl_path: land_transcode_kdl,
                 },

@@ -2,7 +2,6 @@ use color_eyre::eyre;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use udd_conv::{
-    AtlasPackingMode,
     classic_patches::ClassicPatchOptions,
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources},
@@ -22,7 +21,7 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, DiffKind},
 };
 use crate::app::UddConvApp;
-use crate::models::{AtlasPackingModeSetting, LogLevel, LogMessage, TextureOptimization};
+use crate::models::{LogLevel, LogMessage, TextureOptimization};
 
 struct ConvertingFlagReset {
     is_converting: std::sync::Arc<std::sync::Mutex<bool>>,
@@ -33,13 +32,6 @@ impl Drop for ConvertingFlagReset {
         if let Ok(mut is_converting) = self.is_converting.lock() {
             *is_converting = false;
         }
-    }
-}
-
-fn atlas_packing_mode(setting: AtlasPackingModeSetting) -> AtlasPackingMode {
-    match setting {
-        AtlasPackingModeSetting::MaximumPacking => AtlasPackingMode::MaximumPacking,
-        AtlasPackingModeSetting::Bc7Oriented => AtlasPackingMode::Bc7Oriented,
     }
 }
 
@@ -166,8 +158,6 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    packing_mode: atlas_packing_mode(settings.packing_tex_art_cc),
-                    filtering_ready: settings.filtering_ready_tex_art_cc,
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
@@ -206,8 +196,6 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    packing_mode: atlas_packing_mode(settings.packing_tex_land_cc),
-                    filtering_ready: settings.filtering_ready_tex_land_cc,
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
@@ -245,8 +233,6 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    packing_mode: atlas_packing_mode(settings.packing_tex_art_ec),
-                    filtering_ready: settings.filtering_ready_tex_art_ec,
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
             )?;
@@ -288,8 +274,6 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    packing_mode: atlas_packing_mode(settings.packing_tex_land_ec),
-                    filtering_ready: settings.filtering_ready_tex_land_ec,
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                     transcode_kdl_path: None,
                 },

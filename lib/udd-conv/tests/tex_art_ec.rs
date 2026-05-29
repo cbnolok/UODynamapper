@@ -6,7 +6,6 @@ use udd_container::{
 
 use udd_conv::tex_art_ec::*;
 use udd_conv::upscale::UpscaleFilter;
-use udd_conv::AtlasPackingMode;
 use udd_assets::{
     tex_art_ec::{TexArtEcCropAdjustment, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH},
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
@@ -38,8 +37,6 @@ fn sparse_slots_keep_absent_records() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
@@ -83,8 +80,6 @@ fn packer_spills_to_multiple_pages() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
@@ -112,8 +107,6 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![
@@ -142,8 +135,6 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
@@ -170,8 +161,6 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let mut tile = rgba_tile(0, ArtTileKind::Static, 4, 4);
@@ -249,8 +238,6 @@ fn alias_slots_reuse_canonical_page_location() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];

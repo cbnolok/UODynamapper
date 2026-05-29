@@ -1,5 +1,5 @@
 use crate::app::UddConvApp;
-use crate::models::{AtlasPackingModeSetting, TextureOptimization};
+use crate::models::TextureOptimization;
 use eframe::egui;
 use udd_conv::upscale::UpscaleFilter;
 
@@ -24,8 +24,6 @@ impl UddConvApp {
                     "Items and land textures from art.mul",
                     Some(&mut self.settings.opt_tex_art_cc),
                     Some(&mut self.settings.bc7_rdo_lambda),
-                    Some(&mut self.settings.packing_tex_art_cc),
-                    Some(&mut self.settings.filtering_ready_tex_art_cc),
                     Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                     vec![],
                 );
@@ -38,8 +36,6 @@ impl UddConvApp {
                     "High-resolution terrain textures from texmaps.mul",
                     Some(&mut self.settings.opt_tex_land_cc),
                     Some(&mut self.settings.bc7_rdo_lambda),
-                    Some(&mut self.settings.packing_tex_land_cc),
-                    Some(&mut self.settings.filtering_ready_tex_land_cc),
                     None,
                     vec![
                         ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
@@ -57,8 +53,6 @@ impl UddConvApp {
                     "Static items from worldart",
                     Some(&mut self.settings.opt_tex_art_ec),
                     Some(&mut self.settings.bc7_rdo_lambda),
-                    Some(&mut self.settings.packing_tex_art_ec),
-                    Some(&mut self.settings.filtering_ready_tex_art_ec),
                     Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
                     vec![],
                 );
@@ -71,8 +65,6 @@ impl UddConvApp {
                     "High-resolution terrain textures",
                     Some(&mut self.settings.opt_tex_land_ec),
                     Some(&mut self.settings.bc7_rdo_lambda),
-                    Some(&mut self.settings.packing_tex_land_ec),
-                    Some(&mut self.settings.filtering_ready_tex_land_ec),
                     None,
                     vec![
                         ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
@@ -90,8 +82,6 @@ impl UddConvApp {
                     ui,
                     "Tile Metadata",
                     "Unified metadata and radar color data",
-                    None,
-                    None,
                     None,
                     None,
                     None,
@@ -135,7 +125,8 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
                             .color(egui::Color32::from_rgb(100, 200, 255)),
                     );
                     ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Jpeg XL is lossless.").weak());
-                    ui.label(egui::RichText::new("BC7-oriented packing keeps atlas placements block-aligned.").weak());
+                    ui.label(egui::RichText::new("BC7 outputs use automatic 4x4-aligned atlas placement.").weak());
+                    ui.label(egui::RichText::new("Land textures always include filtering-aware gutters.").weak());
                 });
             });
         });
@@ -159,8 +150,6 @@ fn draw_asset_card(
     desc: &str,
     opt: Option<&mut TextureOptimization>,
     bc7_rdo_lambda: Option<&mut f32>,
-    packing_mode: Option<&mut AtlasPackingModeSetting>,
-    filtering_ready: Option<&mut bool>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
@@ -201,7 +190,7 @@ fn draw_asset_card(
                     });
                 });
 
-                if opt.is_some() || bc7_rdo_lambda.is_some() || filtering_ready.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
+                if opt.is_some() || bc7_rdo_lambda.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
                     ui.add_space(2.0);
                     ui.separator();
                     ui.add_space(2.0);
@@ -267,45 +256,6 @@ fn draw_asset_card(
                                     });
                                 }
                             }
-                        }
-
-                        if let Some(mode_val) = packing_mode {
-                            draw_control_cell(ui, "Packing Mode", 190.0, |ui| {
-                                let current_mode = match mode_val {
-                                    AtlasPackingModeSetting::MaximumPacking => "Maximum packing",
-                                    AtlasPackingModeSetting::Bc7Oriented => "BC7-oriented",
-                                };
-
-                                egui::ComboBox::from_id_salt(format!("{}_packing", title))
-                                    .selected_text(current_mode)
-                                    .width(ui.available_width())
-                                    .show_ui(ui, |ui| {
-                                        if ui
-                                            .selectable_label(
-                                                current_mode == "Maximum packing",
-                                                "Maximum packing",
-                                            )
-                                            .clicked()
-                                        {
-                                            *mode_val = AtlasPackingModeSetting::MaximumPacking;
-                                        }
-                                        if ui
-                                            .selectable_label(
-                                                current_mode == "BC7-oriented",
-                                                "BC7-oriented",
-                                            )
-                                            .clicked()
-                                        {
-                                            *mode_val = AtlasPackingModeSetting::Bc7Oriented;
-                                        }
-                                    });
-                            });
-                        }
-
-                        if let Some(filtering_ready_val) = filtering_ready {
-                            draw_control_cell(ui, "Sampling", 178.0, |ui| {
-                                ui.checkbox(filtering_ready_val, "Filtering-ready gutters");
-                            });
                         }
 
                         if let Some((up_val, target)) = upscale_single {

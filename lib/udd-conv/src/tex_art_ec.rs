@@ -32,7 +32,10 @@ use crate::bc7::{
     bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
-use crate::{AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles, resolve_packing_axis};
+use crate::{
+    texture_atlas_packing_mode, AtlasPackingMode, extrude_rgba_rect_edges, merge_unplaced_tiles,
+    resolve_packing_axis,
+};
 use crate::package_progress::{
     atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
 };
@@ -78,8 +81,6 @@ pub struct TexArtEcAtlasOptions {
     pub upscale: UpscaleFilter,
     pub upscale_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
-    pub packing_mode: AtlasPackingMode,
-    pub filtering_ready: bool,
     pub bc7_rdo_lambda: f32,
 }
 
@@ -94,8 +95,6 @@ impl Default for TexArtEcAtlasOptions {
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
-            packing_mode: AtlasPackingMode::MaximumPacking,
-            filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         }
     }
@@ -114,6 +113,10 @@ fn packing_mode_repr(mode: AtlasPackingMode) -> u8 {
         AtlasPackingMode::MaximumPacking => 0,
         AtlasPackingMode::Bc7Oriented => 1,
     }
+}
+
+fn effective_packing_mode(options: &TexArtEcAtlasOptions) -> AtlasPackingMode {
+    texture_atlas_packing_mode(options.pixel_format)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1150,14 +1153,14 @@ fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) ->
             tile.width as u32,
             options.atlas_width,
             options.gutter,
-            options.packing_mode,
+            effective_packing_mode(options),
             true,
         );
         let height_axis = resolve_packing_axis(
             tile.height as u32,
             options.atlas_height,
             options.gutter,
-            options.packing_mode,
+            effective_packing_mode(options),
             true,
         );
         let (Some(width_axis), Some(height_axis)) = (width_axis, height_axis) else {
@@ -1194,14 +1197,14 @@ fn sort_tiles_within_page(tiles: &mut [DecodedArtTile], options: &TexArtEcAtlasO
 }
 
 fn sort_area(tile: &DecodedArtTile, options: &TexArtEcAtlasOptions) -> u32 {
-    match options.packing_mode {
+    match effective_packing_mode(options) {
         AtlasPackingMode::MaximumPacking => tile.width as u32 * tile.height as u32,
         AtlasPackingMode::Bc7Oriented => {
             let width_axis = resolve_packing_axis(
                 tile.width as u32,
                 options.atlas_width,
                 options.gutter,
-                options.packing_mode,
+                effective_packing_mode(options),
                 true,
             )
             .unwrap_or_else(|| unreachable!("validated before placement"));
@@ -1209,7 +1212,7 @@ fn sort_area(tile: &DecodedArtTile, options: &TexArtEcAtlasOptions) -> u32 {
                 tile.height as u32,
                 options.atlas_height,
                 options.gutter,
-                options.packing_mode,
+                effective_packing_mode(options),
                 true,
             )
             .unwrap_or_else(|| unreachable!("validated before placement"));
@@ -1245,14 +1248,14 @@ fn build_page(
             tile.width as u32,
             options.atlas_width,
             options.gutter,
-            options.packing_mode,
+            effective_packing_mode(options),
             true,
         );
         let height_axis = resolve_packing_axis(
             tile.height as u32,
             options.atlas_height,
             options.gutter,
-            options.packing_mode,
+            effective_packing_mode(options),
             true,
         );
         let (Some(width_axis), Some(height_axis)) = (width_axis, height_axis) else {
@@ -1282,7 +1285,8 @@ fn build_page(
                 tile.height as u32,
                 &tile.rgba,
             )?;
-            if options.filtering_ready {
+            let filtering_ready = matches!(tile.kind, ArtTileKind::Land);
+            if filtering_ready {
                 extrude_rgba_rect_edges(
                     &mut pixels,
                     options.atlas_width,
@@ -1301,7 +1305,7 @@ fn build_page(
             // Record the furthest texel that carries real image data. The package
             // stores only `used_width x used_height`, while the manifest preserves
             // the original atlas dimensions needed to interpret these coordinates.
-            if options.filtering_ready {
+            if filtering_ready {
                 used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
                 used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
             } else {
@@ -1405,7 +1409,7 @@ pub fn serialize_page_manifest(
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
     bytes.push(pixel_format as u8);
-    bytes.push(packing_mode_repr(options.packing_mode));
+    bytes.push(packing_mode_repr(effective_packing_mode(options)));
     bytes.write_u32::<LittleEndian>(pages.len() as u32)?;
     for page in pages {
         bytes.write_u32::<LittleEndian>(page.record.page_index)?;
@@ -1426,7 +1430,7 @@ pub fn serialize_slot_manifest(
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
     bytes.write_u32::<LittleEndian>(options.atlas_height)?;
     bytes.write_u32::<LittleEndian>(options.gutter as u32)?;
-    bytes.push(packing_mode_repr(options.packing_mode));
+    bytes.push(packing_mode_repr(effective_packing_mode(options)));
     bytes.write_u32::<LittleEndian>(slots.len() as u32)?;
     for slot in slots {
         bytes.write_u32::<LittleEndian>(slot.art_id)?;
@@ -1460,8 +1464,6 @@ pub fn encode_slot_manifest(
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
-            packing_mode: AtlasPackingMode::MaximumPacking,
-            filtering_ready: false,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         },
     )
@@ -1505,9 +1507,7 @@ mod tests {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),
-            pixel_format: PagePixelFormat::Rgba8888,
-            packing_mode: AtlasPackingMode::Bc7Oriented,
-            filtering_ready: false,
+            pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
         };
 

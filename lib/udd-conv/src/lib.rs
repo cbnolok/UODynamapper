@@ -37,6 +37,13 @@ pub enum AtlasPackingMode {
 	Bc7Oriented,
 }
 
+pub fn texture_atlas_packing_mode(pixel_format: PagePixelFormat) -> AtlasPackingMode {
+	match pixel_format {
+		PagePixelFormat::Rgba8888 => AtlasPackingMode::MaximumPacking,
+		PagePixelFormat::Bc7 => AtlasPackingMode::Bc7Oriented,
+	}
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackingAxis {
 	pub leading_padding: u32,

@@ -12,13 +12,6 @@ pub enum TextureOptimization {
     JpegXl,
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum AtlasPackingModeSetting {
-    #[default]
-    MaximumPacking,
-    Bc7Oriented,
-}
-
 #[derive(Deserialize, Serialize, Clone)]
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
@@ -32,18 +25,6 @@ pub struct AppSettings {
     pub opt_tex_land_ec: TextureOptimization,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
-    pub packing_tex_art_cc: AtlasPackingModeSetting,
-    pub packing_tex_land_cc: AtlasPackingModeSetting,
-    pub packing_tex_art_ec: AtlasPackingModeSetting,
-    pub packing_tex_land_ec: AtlasPackingModeSetting,
-    #[serde(default)]
-    pub filtering_ready_tex_art_cc: bool,
-    #[serde(default)]
-    pub filtering_ready_tex_land_cc: bool,
-    #[serde(default)]
-    pub filtering_ready_tex_art_ec: bool,
-    #[serde(default)]
-    pub filtering_ready_tex_land_ec: bool,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig,
@@ -76,14 +57,6 @@ impl Default for AppSettings {
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
-            packing_tex_art_cc: AtlasPackingModeSetting::MaximumPacking,
-            packing_tex_land_cc: AtlasPackingModeSetting::MaximumPacking,
-            packing_tex_art_ec: AtlasPackingModeSetting::MaximumPacking,
-            packing_tex_land_ec: AtlasPackingModeSetting::MaximumPacking,
-            filtering_ready_tex_art_cc: false,
-            filtering_ready_tex_land_cc: false,
-            filtering_ready_tex_art_ec: false,
-            filtering_ready_tex_land_ec: false,
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
             upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig::default(),

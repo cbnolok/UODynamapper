@@ -4,7 +4,6 @@ use udd_container::{
 
 use udd_conv::tex_land_ec::*;
 use udd_conv::upscale::UpscaleConfig;
-use udd_conv::AtlasPackingMode;
 use udd_assets::{
     tex_land_ec::{
         TexLandEcTerrainProvenanceRecord,
@@ -42,8 +41,6 @@ fn sparse_slots_keep_absent_records() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
         transcode_kdl_path: None,
     };
@@ -77,8 +74,6 @@ fn packer_spills_to_multiple_pages() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
         transcode_kdl_path: None,
     };
@@ -112,8 +107,6 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
         transcode_kdl_path: None,
     };
@@ -216,8 +209,6 @@ fn land_alias_slots_reuse_canonical_page_location() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
         transcode_kdl_path: None,
     };
@@ -260,8 +251,6 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-        packing_mode: AtlasPackingMode::MaximumPacking,
-        filtering_ready: false,
             bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
         transcode_kdl_path: None,
     };
