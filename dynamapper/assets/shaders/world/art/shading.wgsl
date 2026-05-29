@@ -38,7 +38,7 @@ fn art_fake_normal(uv_in_tile: vec2<f32>, depth_class: u32, is_ground_art: bool)
         face = 0.48;
         side_slope *= 0.30;
     } else {
-        side_slope *= 0.12;
+        side_slope *= 0.35;
     }
 
     return normalize(vec3<f32>(side_slope, vertical, face));
@@ -52,12 +52,12 @@ fn apply_art_surface_shading(
     light_direction: vec3<f32>,
     light_color: vec3<f32>,
     atmosphere_tint: vec3<f32>,
-    shading_mode: u32,
     enable_art_fake_normals: u32,
     art_shadow_strength: f32,
     art_highlight_strength: f32,
     art_depth_tint_strength: f32,
     art_contact_shadow_strength: f32,
+    art_mottle_strength: f32,
     light_decal_intensity: f32,
     kr_art_temperature_strength: f32,
     local_light_rgba: vec4<f32>,
@@ -67,19 +67,20 @@ fn apply_art_surface_shading(
     let highlight_strength = clamp(art_highlight_strength, 0.0, 1.0);
     let tint_strength = clamp(art_depth_tint_strength, 0.0, 1.0);
     let contact_strength = clamp(art_contact_shadow_strength, 0.0, 1.0);
+    let mottle_strength = clamp(art_mottle_strength, 0.0, 1.5);
     let light_static = clamp(light_decal_intensity, 0.0, 2.0);
 
     let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
     let lower_occlusion = smoothstep(0.18, 1.0, uv_in_tile.y);
     let side_contact = 1.0 - smoothstep(0.0, 0.18, min(uv_in_tile.x, 1.0 - uv_in_tile.x));
-    let contact_noise = 0.92 + 0.08 * noise_2d(world_pos.xz * 0.25);
+    let contact_noise = 1.0 + (noise_2d(world_pos.xz * 0.25) - 0.5) * 0.16 * mottle_strength;
 
     var out_rgb = rgb;
     out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
     out_rgb += rgb * light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
     out_rgb = mix(out_rgb, out_rgb * atmosphere_tint, tint_strength * lower_occlusion);
 
-    if (enable_art_fake_normals == 1u && shading_mode == 2u) {
+    if (enable_art_fake_normals == 1u) {
         let N = art_fake_normal(uv_in_tile, depth_class, is_ground_art);
         let L = normalize(light_direction);
         let lambert = max(dot(N, L), 0.0);
@@ -101,7 +102,7 @@ fn apply_art_surface_shading(
         var foot_contact_profile = 1.0;
         var edge_profile = 0.0;
         let side_plane = smoothstep(0.18, 0.5, abs(uv_in_tile.x - 0.5));
-        let dapple = 0.75 + 0.50 * noise_2d(world_pos.xz * 1.7 + uv_in_tile * 17.0);
+        let dapple = 1.0 + (noise_2d(world_pos.xz * 1.7 + uv_in_tile * 17.0) - 0.5) * mottle_strength;
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
             depth_scale = 1.12;
             contact_scale = 1.28;
@@ -130,8 +131,9 @@ fn apply_art_surface_shading(
             foot_contact_profile = 0.42;
             edge_profile = side_plane * 0.35;
         } else if (!is_ground_art) {
-            shadow_profile = 0.98;
-            plane_catch_profile = 0.92;
+            shadow_profile = 1.04;
+            plane_catch_profile = 1.0;
+            edge_profile = side_plane * 0.08;
         } else {
             foot_contact_profile = 0.55;
             edge_profile = side_plane * 0.35;
@@ -150,13 +152,7 @@ fn apply_art_surface_shading(
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += light_color * edge_catch * highlight_strength * 0.22;
         out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
-        if (depth_class == ART_DEPTH_CLASS_ROOF) {
-            let roof_mottle = noise_2d(world_pos.xz * 0.65 + uv_in_tile * 2.0);
-            let roof_grain = noise_2d(world_pos.xz * 3.0 + uv_in_tile * 13.0);
-            let roof_breakup = ((roof_mottle - 0.5) * 0.16 + (roof_grain - 0.5) * 0.05) * shadow_strength;
-            out_rgb *= 1.0 + roof_breakup;
-        }
-        let foot_contact_noise = 0.88 + 0.12 * noise_2d(world_pos.xz * 0.8 + uv_in_tile * 11.0);
+        let foot_contact_noise = 1.0 + (noise_2d(world_pos.xz * 0.8 + uv_in_tile * 11.0) - 0.5) * 0.24 * mottle_strength;
         let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
         out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
         let art_temperature_strength = clamp(kr_art_temperature_strength, 0.0, 1.5);
@@ -167,6 +163,22 @@ fn apply_art_surface_shading(
         out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(0.84, 0.91, 1.08), shade_mask * 0.18 * art_temperature_strength);
         out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(1.07, 1.02, 0.93), sun_mask * highlight_strength * 0.12 * art_temperature_strength);
         out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
+    }
+
+    if (mottle_strength > 0.0) {
+        var mottle_profile = 0.10;
+        if (depth_class == ART_DEPTH_CLASS_ROOF) {
+            mottle_profile = 0.28;
+        } else if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
+            mottle_profile = 0.16;
+        } else if (is_ground_art || depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
+            mottle_profile = 0.08;
+        }
+
+        let broad_mottle = noise_2d(world_pos.xz * 0.55 + uv_in_tile * 2.0);
+        let fine_mottle = noise_2d(world_pos.xz * 2.8 + uv_in_tile * 17.0);
+        let mottle = ((broad_mottle - 0.5) + (fine_mottle - 0.5) * 0.35) * mottle_profile * mottle_strength;
+        out_rgb *= 1.0 + mottle;
     }
 
     return max(out_rgb, vec3<f32>(0.0));

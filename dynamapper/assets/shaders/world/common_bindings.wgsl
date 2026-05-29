@@ -36,7 +36,7 @@ struct LandEffectsUniform {
     enable_normal_maps: u32,
     enable_art_fake_normals: u32,
     art_contact_shadow_strength: f32,
-    _pad_eff3: u32,
+    art_mottle_strength: f32,
     kr_land_temperature_strength: f32,
     kr_land_relief_shadow_strength: f32,
     kr_land_shadow_mottle_strength: f32,

@@ -180,8 +180,9 @@ pub struct LandEffectsUniform {
     pub enable_art_fake_normals: u32,
     /// KR-style contact darkening for static art bases, walls, foliage, and ground art.
     pub art_contact_shadow_strength: f32,
+    /// Strength of procedural variation applied to art shading and roof repetition.
     #[serde(default)]
-    pub _pad_eff3: u32,
+    pub art_mottle_strength: f32,
 
     // --- KR style controls (vec4 slot 5) ---
     /// 0 disables KR land warm/cool split; 1 preserves the preset strength.
