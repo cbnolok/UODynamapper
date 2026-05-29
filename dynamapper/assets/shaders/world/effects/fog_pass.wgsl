@@ -49,7 +49,8 @@ struct FogPostProcessUniform {
     // --- Scene info for distance calculation ---
     // screen resolution in pixels
     screen_size: vec2<f32>,
-    _pad_ss: vec2<f32>,
+    time_seconds: f32,
+    _pad_time: f32,
 };
 
 // ============================================================================
@@ -100,22 +101,24 @@ fn fog_factor_screen_space(uv: vec2<f32>) -> f32 {
     let center = vec2<f32>(0.5, 0.5);
     let d = length(uv - center); // 0 at center, ~0.707 at corner
 
-    // The UI/presets use small density values in the 0.02..0.08 range. Use
-    // sqrt shaping so those values produce visible edge haze instead of falling
-    // below the screen's maximum radial distance.
+    // Static corner/edge fog. The UI/presets use small density values in the
+    // 0.02..0.08 range, so sqrt shaping makes them visible without maxing out.
     let fog_radius = mix(0.64, 0.08, sqrt(dist_density));
     let radial_fog = smoothstep(fog_radius, fog_radius + 0.35, d);
     let vertical_fog = smoothstep(0.40, 1.0, uv.y) * height_density * 2.0;
+    let static_fog = clamp(radial_fog + vertical_fog, 0.0, 1.0);
 
-    var factor = clamp(radial_fog + vertical_fog, 0.0, 1.0);
+    // Dynamic cloudy veil over the whole screen, independent of distance.
+    var cloud_fog = 0.0;
     if (noise_scale > 0.001 && noise_strength > 0.001) {
         let aspect = max(fog.screen_size.x / max(fog.screen_size.y, 1.0), 0.1);
-        let p = vec2<f32>(uv.x * aspect, uv.y) * noise_scale * 14.0 + vec2<f32>(31.0, 17.0);
-        let n = fog_fbm(p) * 2.0 - 1.0;
-        factor = clamp(factor * (1.0 + n * noise_strength * 0.45), 0.0, 1.0);
+        let drift = vec2<f32>(fog.time_seconds * 0.018, fog.time_seconds * -0.011);
+        let p = vec2<f32>(uv.x * aspect, uv.y) * noise_scale * 10.0 + drift + vec2<f32>(31.0, 17.0);
+        let n = fog_fbm(p);
+        cloud_fog = smoothstep(0.28, 0.88, n) * noise_strength;
     }
 
-    return factor;
+    return clamp(static_fog + cloud_fog, 0.0, 1.0);
 }
 
 @fragment

@@ -43,15 +43,15 @@ fn apply_visual_grunge(rgb: vec3<f32>, world_xz: vec2<f32>, strength: f32, profi
   let fine = grunge_fbm(p * 3.7 + vec2<f32>(9.2, -4.6));
   let n = mix(coarse, fine, select(0.18, 0.35, is_kr));
 
-  let dark = select(0.84, 0.64, is_kr);
-  let light = select(1.04, 1.10, is_kr);
+  let dark = select(0.76, 0.48, is_kr);
+  let light = select(1.08, 1.16, is_kr);
   let factor = mix(light, dark, smoothstep(0.18, 0.92, n));
   var tint = vec3<f32>(factor);
   if (is_kr) {
     tint = vec3<f32>(factor * 0.94, factor * 0.97, factor * 1.04);
   }
 
-  let profile_gain = select(0.40, 1.0, is_kr);
+  let profile_gain = select(0.70, 1.35, is_kr);
   return rgb * mix(vec3<f32>(1.0), tint, s * profile_gain);
 }
 
@@ -77,11 +77,11 @@ fn apply_shadow_aware_land_grunge(
   let n = mix(coarse, fine, 0.35);
   let shadow = clamp(shadow_factor, 0.0, 1.0);
 
-  let deposit = smoothstep(0.22, 0.90, n) * (0.35 + shadow * 0.75);
-  let highlight_protection = 1.0 - shadow * 0.55;
-  let grime_dark = vec3<f32>(0.62, 0.66, 0.74);
-  let dry_light = vec3<f32>(1.08, 1.06, 1.02);
+  let deposit = smoothstep(0.16, 0.82, n) * (0.45 + shadow * 0.85);
+  let highlight_protection = 1.0 - shadow * 0.35;
+  let grime_dark = vec3<f32>(0.46, 0.50, 0.58);
+  let dry_light = vec3<f32>(1.14, 1.10, 1.03);
   let weather_tint = mix(dry_light, grime_dark, deposit);
 
-  return rgb * mix(vec3<f32>(1.0), weather_tint, s * highlight_protection);
+  return rgb * mix(vec3<f32>(1.0), weather_tint, min(s * 1.25 * highlight_protection, 1.0));
 }

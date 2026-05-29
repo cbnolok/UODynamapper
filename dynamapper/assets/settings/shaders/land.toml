@@ -1128,7 +1128,7 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 _pad_eff0 = 0
-grunge_strength = 0.45
+grunge_strength = 0.65
 light_decal_intensity = 1.35
 art_highlight_strength = 0.38
 art_depth_tint_strength = 0.2
@@ -1195,16 +1195,16 @@ gloom_params = [
     0.0,
 ]
 fog_color = [
-    0.74,
-    0.82,
-    0.9,
-    0.24,
+    0.035,
+    0.045,
+    0.06,
+    0.3,
 ]
 fog_params = [
-    0.035,
-    0.018,
-    0.0,
-    0.0,
+    0.04,
+    0.012,
+    0.55,
+    0.16,
 ]
 gloom_color = [
     0.15,
@@ -1213,10 +1213,10 @@ gloom_color = [
     0.12,
 ]
 fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
+    0.01,
+    0.014,
+    0.024,
+    0.25,
 ]
 
 [kr.morning.land_lighting]
@@ -1267,7 +1267,7 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 _pad_eff0 = 0
-grunge_strength = 0.45
+grunge_strength = 0.65
 light_decal_intensity = 1.35
 art_highlight_strength = 0.42
 art_depth_tint_strength = 0.22
@@ -1334,16 +1334,16 @@ gloom_params = [
     0.0,
 ]
 fog_color = [
-    0.74,
-    0.82,
-    0.9,
-    0.22,
+    0.04,
+    0.05,
+    0.065,
+    0.28,
 ]
 fog_params = [
-    0.03,
-    0.016,
-    0.0,
-    0.0,
+    0.035,
+    0.01,
+    0.5,
+    0.14,
 ]
 gloom_color = [
     0.14,
@@ -1352,10 +1352,10 @@ gloom_color = [
     0.1,
 ]
 fog_night_color = [
-    0.0,
-    0.0,
-    0.0,
-    0.0,
+    0.012,
+    0.016,
+    0.026,
+    0.22,
 ]
 
 [kr.afternoon.land_lighting]
@@ -1406,7 +1406,7 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 _pad_eff0 = 0
-grunge_strength = 0.42
+grunge_strength = 0.6
 light_decal_intensity = 1.35
 art_highlight_strength = 0.28
 art_depth_tint_strength = 0.3
@@ -1473,16 +1473,16 @@ gloom_params = [
     0.0,
 ]
 fog_color = [
-    0.72,
-    0.8,
-    0.9,
-    0.28,
+    0.02,
+    0.026,
+    0.04,
+    0.36,
 ]
 fog_params = [
-    0.045,
-    0.024,
-    0.0,
-    0.0,
+    0.055,
+    0.02,
+    0.48,
+    0.22,
 ]
 gloom_color = [
     0.08,
@@ -1491,10 +1491,10 @@ gloom_color = [
     0.22,
 ]
 fog_night_color = [
-    0.05,
-    0.07,
-    0.14,
-    0.45,
+    0.006,
+    0.008,
+    0.018,
+    0.55,
 ]
 
 [kr.night.land_lighting]
@@ -1545,7 +1545,7 @@ enable_water_animation = 1
 post_process_profile = 2
 enable_grunge = 1
 _pad_eff0 = 0
-grunge_strength = 0.4
+grunge_strength = 0.58
 light_decal_intensity = 1.35
 art_highlight_strength = 0.24
 art_depth_tint_strength = 0.34
@@ -1612,16 +1612,16 @@ gloom_params = [
     0.0,
 ]
 fog_color = [
-    0.72,
-    0.8,
-    0.9,
-    0.24,
+    0.018,
+    0.022,
+    0.034,
+    0.34,
 ]
 fog_params = [
-    0.025,
-    0.03,
-    0.0,
-    0.0,
+    0.04,
+    0.026,
+    0.42,
+    0.2,
 ]
 gloom_color = [
     0.06,
@@ -1630,10 +1630,10 @@ gloom_color = [
     0.28,
 ]
 fog_night_color = [
-    0.03,
-    0.04,
-    0.08,
-    0.5,
+    0.004,
+    0.006,
+    0.014,
+    0.6,
 ]
 
 [kr.cave.land_lighting]

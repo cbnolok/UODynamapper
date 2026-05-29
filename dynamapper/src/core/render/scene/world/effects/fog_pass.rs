@@ -65,7 +65,8 @@ pub struct FogPostProcessUniform {
 
     // --- Screen size (for radial fog) ---
     pub screen_size: Vec2,
-    pub _pad_ss: Vec2,
+    pub time_seconds: f32,
+    pub _pad_time: f32,
 }
 
 impl FullscreenMaterial for FogPostProcessUniform {
@@ -90,16 +91,20 @@ impl FullscreenMaterial for FogPostProcessUniform {
 /// component on the `PlayerCamera` entity so the GPU gets updated values.
 fn sys_sync_fog_uniform(
     uniform_state: Res<UniformState>,
+    time: Res<Time>,
     windows: Query<&Window>,
     mut camera_q: Query<&mut FogPostProcessUniform, With<PlayerCamera>>,
 ) {
-    if !uniform_state.is_changed() {
+    let lighting = &uniform_state.lighting;
+    let dynamic_fog = lighting.enable_fog != 0
+        && lighting.fog_params.z > 0.001
+        && lighting.fog_params.w > 0.001;
+    if !uniform_state.is_changed() && !dynamic_fog {
         return;
     }
     let Ok(mut fog_uniform) = camera_q.single_mut() else {
         return;
     };
-    let lighting = &uniform_state.lighting;
 
     let screen_size = windows
         .iter()
@@ -112,4 +117,5 @@ fn sys_sync_fog_uniform(
     fog_uniform.fog_night_color = lighting.fog_night_color;
     fog_uniform.fog_params = lighting.fog_params;
     fog_uniform.screen_size = screen_size;
+    fog_uniform.time_seconds = time.elapsed_secs();
 }
