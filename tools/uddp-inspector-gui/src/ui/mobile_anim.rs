@@ -399,29 +399,37 @@ fn show_frame_image(
         return;
     }
 
-    let Some(page_rgba) = read_page_rgba() else {
-        ui.label("Unable to read frame atlas page.");
-        return;
-    };
-    let Some(cropped) = crop_frame_rgba(
-        &page_rgba,
-        page_width.unwrap_or_else(|| page_width_from_rgba_len(&page_rgba).unwrap_or(2048)),
-        x as u32,
-        y as u32,
-        width as u32,
-        height as u32,
-    ) else {
-        ui.label("Frame rectangle is outside the atlas page.");
-        return;
-    };
+    let size = [width as usize, height as usize];
+    let label = format!("{texture_prefix} page {page_index} rect {x},{y} {width}x{height}");
 
-    app.set_preview_image(
-        ctx,
-        &format!("{texture_prefix}_page{page_index}_{x}_{y}"),
-        [width as usize, height as usize],
-        &cropped,
-        format!("{texture_prefix} page {page_index} rect {x},{y} {width}x{height}"),
-    );
+    if app.preview_texture.is_none()
+        || app.preview_texture_size != Some(size)
+        || app.preview_text.as_deref() != Some(label.as_str())
+    {
+        let Some(page_rgba) = read_page_rgba() else {
+            ui.label("Unable to read frame atlas page.");
+            return;
+        };
+        let Some(cropped) = crop_frame_rgba(
+            &page_rgba,
+            page_width.unwrap_or_else(|| page_width_from_rgba_len(&page_rgba).unwrap_or(2048)),
+            x as u32,
+            y as u32,
+            width as u32,
+            height as u32,
+        ) else {
+            ui.label("Frame rectangle is outside the atlas page.");
+            return;
+        };
+
+        app.set_preview_image(
+            ctx,
+            &format!("{texture_prefix}_page{page_index}_{x}_{y}"),
+            size,
+            &cropped,
+            label,
+        );
+    }
 
     if let Some((texture, size, _)) = app.active_preview_image() {
         let texture = texture.clone();
