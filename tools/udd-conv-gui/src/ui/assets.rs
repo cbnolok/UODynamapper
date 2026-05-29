@@ -6,147 +6,86 @@ use udd_conv::upscale::UpscaleFilter;
 impl UddConvApp {
     pub fn ui_assets(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
 
             ui.heading("Asset Packing");
             ui.label("Convert basic client assets into UODynamapper optimized packages.");
-            ui.add_space(12.0);
-
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("Compression guidelines:").strong().color(egui::Color32::from_rgb(100, 200, 255)));
-                ui.add_space(5.0);
-                egui::Grid::new("guidelines_grid")
-                    .num_columns(2)
-                    .spacing([15.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                        ui.label("Lossy but reduces disk size and VRAM usage. Sampled directly by the GPU in its compressed state.");
-                        ui.end_row();
-
-                        ui.label(egui::RichText::new("Supercompressed BC7:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                        ui.label("BC7 data compressed with zstd. Extremely small disk footprint, but requires on-the-fly decompression when loading.");
-                        ui.end_row();
-
-                        ui.label(egui::RichText::new("Jpeg XL:").strong().color(egui::Color32::from_rgb(255, 200, 100)));
-                        ui.label("Lossless and reduces disk size, but offers no VRAM savings.");
-                        ui.end_row();
-                    });
-            });
-            ui.add_space(8.0);
-
-            ui.group(|ui| {
-                ui.label(
-                    egui::RichText::new("Source selection and packing mode").strong().color(egui::Color32::from_rgb(255, 210, 120)),
-                );
-                ui.add_space(4.0);
-                ui.label("Classic actions read only the CC client directory. Enhanced actions read only the EC client directory. Tile Metadata intentionally combines CC tiledata with EC tileart and string dictionary data.");
-                ui.add_space(4.0);
-                ui.label("Packing mode changes how atlas pages are laid out before encoding. Maximum packing uses all available space. BC7-oriented keeps placements BC7-friendly and block-aligned so the compressed output is easier to encode efficiently.");
-            });
-            ui.add_space(10.0);
-
-            ui.group(|ui| {
-                ui.label(
-                    egui::RichText::new("Classic patch files")
-                        .strong()
-                        .color(egui::Color32::from_rgb(255, 210, 120)),
-                );
-                ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(&mut self.settings.include_verdata, "verdata.mul");
-                    ui.checkbox(&mut self.settings.include_map_difs, "map difs");
-                    ui.checkbox(&mut self.settings.include_static_difs, "static difs");
-                });
-            });
-            ui.add_space(10.0);
+            ui.add_space(6.0);
+            draw_assets_overview(ui, self);
+            ui.add_space(2.0);
 
             let is_busy = self.is_busy();
 
             ui.add_enabled_ui(!is_busy, |ui| {
-                let column_gap = 12.0;
-                let card_width = ((ui.available_width() - column_gap).max(360.0)) * 0.5;
+                draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
+                let (clicked, preview) = draw_asset_card(
+                    ui,
+                    "Classic Art",
+                    "Items and land textures from art.mul",
+                    Some(&mut self.settings.opt_tex_art_cc),
+                    Some(&mut self.settings.bc7_rdo_lambda),
+                    Some(&mut self.settings.packing_tex_art_cc),
+                    Some(&mut self.settings.filtering_ready_tex_art_cc),
+                    Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
+                    vec![],
+                );
+                if clicked { self.convert_tex_art_cc(); }
+                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                ui.columns(2, |cols| {
-                    cols[0].set_min_width(card_width);
-                    cols[1].set_min_width(card_width);
-                    cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                let (clicked, preview) = draw_asset_card(
+                    ui,
+                    "Classic Texmaps",
+                    "High-resolution terrain textures from texmaps.mul",
+                    Some(&mut self.settings.opt_tex_land_cc),
+                    Some(&mut self.settings.bc7_rdo_lambda),
+                    Some(&mut self.settings.packing_tex_land_cc),
+                    Some(&mut self.settings.filtering_ready_tex_land_cc),
+                    None,
+                    vec![
+                        ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
+                        ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
+                    ],
+                );
+                if clicked { self.convert_tex_land_cc(); }
+                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                    let (clicked, preview) = draw_asset_card(
-                        &mut cols[0],
-                        "Classic Art",
-                        "Classic items and land textures (art.mul)",
-                        Some(&mut self.settings.opt_tex_art_cc),
-                        Some(&mut self.settings.bc7_rdo_lambda),
-                        Some(&mut self.settings.packing_tex_art_cc),
-                        Some(&mut self.settings.filtering_ready_tex_art_cc),
-                        Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
-                        vec![],
-                    );
-                    if clicked { self.convert_tex_art_cc(); }
-                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+                ui.add_space(4.0);
+                draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
+                let (clicked, preview) = draw_asset_card(
+                    ui,
+                    "Enhanced Art",
+                    "Static items from worldart",
+                    Some(&mut self.settings.opt_tex_art_ec),
+                    Some(&mut self.settings.bc7_rdo_lambda),
+                    Some(&mut self.settings.packing_tex_art_ec),
+                    Some(&mut self.settings.filtering_ready_tex_art_ec),
+                    Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
+                    vec![],
+                );
+                if clicked { self.convert_tex_art_ec(); }
+                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                    let (clicked, preview) = draw_asset_card(
-                        &mut cols[1],
-                        "Classic Texmaps",
-                        "Classic high-res terrain textures (texmaps.mul)",
-                        Some(&mut self.settings.opt_tex_land_cc),
-                        Some(&mut self.settings.bc7_rdo_lambda),
-                        Some(&mut self.settings.packing_tex_land_cc),
-                        Some(&mut self.settings.filtering_ready_tex_land_cc),
-                        None,
-                        vec![
-                            ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
-                            ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
-                        ],
-                    );
-                    if clicked { self.convert_tex_land_cc(); }
-                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-                });
+                let (clicked, preview) = draw_asset_card(
+                    ui,
+                    "Enhanced Land",
+                    "High-resolution terrain textures",
+                    Some(&mut self.settings.opt_tex_land_ec),
+                    Some(&mut self.settings.bc7_rdo_lambda),
+                    Some(&mut self.settings.packing_tex_land_ec),
+                    Some(&mut self.settings.filtering_ready_tex_land_ec),
+                    None,
+                    vec![
+                        ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
+                        ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
+                        ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
+                        ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
+                    ],
+                );
+                if clicked { self.convert_tex_land_ec(); }
+                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                ui.add_space(8.0);
-
-                ui.columns(2, |cols| {
-                    cols[0].set_min_width(card_width);
-                    cols[1].set_min_width(card_width);
-                    cols[0].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    cols[1].spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-
-                    let (clicked, preview) = draw_asset_card(
-                        &mut cols[0],
-                        "Enhanced Art",
-                        "Enhanced Client static items (worldart)",
-                        Some(&mut self.settings.opt_tex_art_ec),
-                        Some(&mut self.settings.bc7_rdo_lambda),
-                        Some(&mut self.settings.packing_tex_art_ec),
-                        Some(&mut self.settings.filtering_ready_tex_art_ec),
-                        Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
-                        vec![],
-                    );
-                    if clicked { self.convert_tex_art_ec(); }
-                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-
-                    let (clicked, preview) = draw_asset_card(
-                        &mut cols[1],
-                        "Enhanced Land",
-                        "Enhanced Client high-res terrain textures",
-                        Some(&mut self.settings.opt_tex_land_ec),
-                        Some(&mut self.settings.bc7_rdo_lambda),
-                        Some(&mut self.settings.packing_tex_land_ec),
-                        Some(&mut self.settings.filtering_ready_tex_land_ec),
-                        None,
-                        vec![
-                            ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
-                            ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
-                            ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
-                            ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
-                        ],
-                    );
-                    if clicked { self.convert_tex_land_ec(); }
-                    if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
-                });
-
-                ui.add_space(8.0);
-
+                ui.add_space(4.0);
+                draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
                 if draw_asset_card(
                     ui,
                     "Tile Metadata",
@@ -163,6 +102,55 @@ impl UddConvApp {
             });
         });
     }
+}
+
+fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(16.0, 6.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Classic patch files")
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 210, 120)),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        ui.checkbox(&mut app.settings.include_verdata, "verdata.mul");
+                        ui.checkbox(&mut app.settings.include_map_difs, "map difs");
+                        ui.checkbox(&mut app.settings.include_static_difs, "static difs");
+                    });
+                });
+
+                ui.separator();
+
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Compression")
+                            .strong()
+                            .color(egui::Color32::from_rgb(100, 200, 255)),
+                    );
+                    ui.label(egui::RichText::new("BC7 saves VRAM. BC7+zstd saves disk. Jpeg XL is lossless.").weak());
+                    ui.label(egui::RichText::new("BC7-oriented packing keeps atlas placements block-aligned.").weak());
+                });
+            });
+        });
+}
+
+fn draw_section_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .size(16.0)
+                .color(egui::Color32::from_rgb(230, 230, 230)),
+        );
+        ui.label(egui::RichText::new(subtitle).weak());
+    });
 }
 
 fn draw_asset_card(
@@ -182,13 +170,15 @@ fn draw_asset_card(
     egui::Frame::group(ui.style())
         .fill(ui.visuals().widgets.noninteractive.bg_fill)
         .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
 
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
+                        ui.set_width((ui.available_width() - 132.0).max(180.0));
                         ui.label(
                             egui::RichText::new(title)
                                 .strong()
@@ -201,8 +191,8 @@ fn draw_asset_card(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_sized(
-                                [112.0, 28.0],
-                                egui::Button::new(egui::RichText::new("PACK ASSET").strong()),
+                                [120.0, 30.0],
+                                egui::Button::new(egui::RichText::new("Pack Asset").strong()),
                             )
                             .clicked()
                         {
@@ -212,17 +202,16 @@ fn draw_asset_card(
                 });
 
                 if opt.is_some() || bc7_rdo_lambda.is_some() || filtering_ready.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     ui.separator();
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
 
                         if let Some(opt_val) = opt {
                             let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Output Format:").size(12.5).weak());
+                            draw_control_cell(ui, "Output Format", 210.0, |ui| {
                                 let current_fmt = match opt_val {
                                     TextureOptimization::None => "Raw+zstd (default)",
                                     TextureOptimization::Bc7 => "BC7",
@@ -232,7 +221,7 @@ fn draw_asset_card(
 
                                 egui::ComboBox::from_id_salt(format!("{}_fmt", title))
                                     .selected_text(current_fmt)
-                                    .width(176.0)
+                                    .width(ui.available_width())
                                     .show_ui(ui, |ui| {
                                         if ui
                                             .selectable_label(
@@ -266,26 +255,22 @@ fn draw_asset_card(
                                         }
                                     });
                             });
-                            ui.add_space(25.0);
 
                             if show_bc7_settings {
                                 if let Some(lambda) = bc7_rdo_lambda {
-                                    ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new("RDO Lambda:").size(12.5).weak());
+                                    draw_control_cell(ui, "BC7 RDO", 96.0, |ui| {
                                         ui.add(
                                             egui::DragValue::new(lambda)
                                                 .speed(0.01)
                                                 .range(0.0..=1.0),
                                         );
                                     });
-                                    ui.add_space(25.0);
                                 }
                             }
                         }
 
                         if let Some(mode_val) = packing_mode {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Packing Mode:").size(12.5).weak());
+                            draw_control_cell(ui, "Packing Mode", 190.0, |ui| {
                                 let current_mode = match mode_val {
                                     AtlasPackingModeSetting::MaximumPacking => "Maximum packing",
                                     AtlasPackingModeSetting::Bc7Oriented => "BC7-oriented",
@@ -293,7 +278,7 @@ fn draw_asset_card(
 
                                 egui::ComboBox::from_id_salt(format!("{}_packing", title))
                                     .selected_text(current_mode)
-                                    .width(176.0)
+                                    .width(ui.available_width())
                                     .show_ui(ui, |ui| {
                                         if ui
                                             .selectable_label(
@@ -315,48 +300,52 @@ fn draw_asset_card(
                                         }
                                     });
                             });
-                            ui.add_space(25.0);
                         }
 
                         if let Some(filtering_ready_val) = filtering_ready {
-                            ui.checkbox(filtering_ready_val, "Filtering-ready gutters");
-                            ui.add_space(25.0);
+                            draw_control_cell(ui, "Sampling", 178.0, |ui| {
+                                ui.checkbox(filtering_ready_val, "Filtering-ready gutters");
+                            });
                         }
 
                         if let Some((up_val, target)) = upscale_single {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Upscale Filter:").size(12.5).weak());
-                                draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
-                                if ui.button("🔍 Preview").clicked() {
-                                    preview_req = Some((target, *up_val));
-                                }
+                            draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.set_width(ui.available_width());
+                                    let combo_width = (ui.available_width() - 34.0).max(120.0);
+                                    ui.scope(|ui| {
+                                        ui.set_width(combo_width);
+                                        draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
+                                    });
+                                    if ui.button("🔍").on_hover_text("Preview").clicked() {
+                                        preview_req = Some((target, *up_val));
+                                    }
+                                });
                             });
                         }
                     });
 
                     if !upscale_configs.is_empty() {
-                        ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
                             for (label, config, target) in upscale_configs.iter_mut() {
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("Upscale {}", label))
-                                            .size(12.0)
-                                            .weak(),
-                                    );
+                                draw_control_cell(ui, &format!("Upscale {}", label), 190.0, |ui| {
                                     ui.horizontal(|ui| {
-                                        draw_upscale_filter(
-                                            ui,
-                                            format!("{}_upscale_{}", title, label),
-                                            &mut config.filter,
-                                        );
-                                        if ui.button("🔍").clicked() {
+                                        ui.set_width(ui.available_width());
+                                        let combo_width = (ui.available_width() - 34.0).max(120.0);
+                                        ui.scope(|ui| {
+                                            ui.set_width(combo_width);
+                                            draw_upscale_filter(
+                                                ui,
+                                                format!("{}_upscale_{}", title, label),
+                                                &mut config.filter,
+                                            );
+                                        });
+                                        if ui.button("🔍").on_hover_text("Preview").clicked() {
                                             preview_req = Some((*target, config.filter));
                                         }
                                     });
                                 });
-                                ui.add_space(15.0);
                             }
                         });
                     }
@@ -367,6 +356,20 @@ fn draw_asset_card(
     (clicked, preview_req)
 }
 
+fn draw_control_cell<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.label(egui::RichText::new(label).size(12.0).weak());
+        add_contents(ui)
+    })
+    .inner
+}
+
 fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter) {
     let current_up = format!("{:?}", up_val);
     egui::ComboBox::from_id_salt(id)
@@ -375,7 +378,7 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
         } else {
             &current_up
         })
-        .width(144.0)
+        .width(ui.available_width())
         .show_ui(ui, |ui| {
             let filters = [
                 UpscaleFilter::None,
