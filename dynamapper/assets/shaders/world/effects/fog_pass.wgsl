@@ -16,7 +16,6 @@
 // ============================================================================
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
-#import bevy_pbr::mesh_view_bindings::globals
 
 // The screen texture (rendered world, land + art)
 @group(0) @binding(0)
@@ -111,7 +110,7 @@ fn fog_factor_screen_space(uv: vec2<f32>) -> f32 {
     var factor = clamp(radial_fog + vertical_fog, 0.0, 1.0);
     if (noise_scale > 0.001 && noise_strength > 0.001) {
         let aspect = max(fog.screen_size.x / max(fog.screen_size.y, 1.0), 0.1);
-        let p = vec2<f32>(uv.x * aspect, uv.y) * noise_scale * 14.0 + vec2<f32>(globals.time * 0.015, 17.0);
+        let p = vec2<f32>(uv.x * aspect, uv.y) * noise_scale * 14.0 + vec2<f32>(31.0, 17.0);
         let n = fog_fbm(p) * 2.0 - 1.0;
         factor = clamp(factor * (1.0 + n * noise_strength * 0.45), 0.0, 1.0);
     }
