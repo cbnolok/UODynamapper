@@ -2,7 +2,7 @@ use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use udd_assets::{MobileAnimCcPackage, MobileAnimEcPackage};
+use udd_assets::{AtlasCacheOptions, MobileAnimCcPackage, MobileAnimEcPackage};
 use udd_assets::tilemeta::{
     TileMetaItemTile, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
 };
@@ -14,6 +14,7 @@ use udd_container::{
     xxh64_virtual_path, // Codec,
     FileKey,
     UddpReader,
+    UddpReaderOptions,
 };
 
 use crate::logic::decoding::*;
@@ -372,7 +373,8 @@ impl InspectorApp {
     }
 
     pub fn open_package(&mut self, path: PathBuf) {
-        match UddpReader::load(&path) {
+        let reader_options = UddpReaderOptions::enable_decoded_entry_cache();
+        match UddpReader::load_with_options(&path, reader_options) {
             Ok(reader) => {
                 let records = reader.records();
                 self.entries = records
@@ -395,8 +397,18 @@ impl InspectorApp {
                 self.virtual_material_entries.clear();
                 self.virtual_entry_mode = VirtualEntryMode::Entry;
                 self.atlas_pages.clear();
-                self.mobile_anim_cc_package = MobileAnimCcPackage::load(&path).ok().map(Arc::new);
-                self.mobile_anim_ec_package = MobileAnimEcPackage::load(&path).ok().map(Arc::new);
+                self.mobile_anim_cc_package = MobileAnimCcPackage::from_uddp_package_with_options(
+                    reader.clone(),
+                    AtlasCacheOptions::disabled(),
+                )
+                .ok()
+                .map(Arc::new);
+                self.mobile_anim_ec_package = MobileAnimEcPackage::from_uddp_package_with_options(
+                    reader.clone(),
+                    AtlasCacheOptions::disabled(),
+                )
+                .ok()
+                .map(Arc::new);
                 self.selected_mobile_anim_index = 0;
                 self.selected_mobile_anim_frame_index = 0;
                 self.detect_virtual_entries(&reader);
