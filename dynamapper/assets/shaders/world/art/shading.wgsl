@@ -2,7 +2,7 @@
 // art::shading — Shared fake-lighting helpers for 2D art and ground-art passes.
 // ============================================================================
 
-#import "shaders/world/land/noise.wgsl"::hash
+#import "shaders/world/land/noise.wgsl"::noise_2d
 
 const ART_DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const ART_DEPTH_CLASS_ROOF: u32 = 3u;
@@ -19,7 +19,7 @@ fn art_saturate(c: vec3<f32>, saturation: f32) -> vec3<f32> {
 
 fn art_fake_normal(uv_in_tile: vec2<f32>, depth_class: u32, is_ground_art: bool) -> vec3<f32> {
     let center = uv_in_tile - vec2<f32>(0.5);
-    let side_slope = clamp(center.x * 1.65, -0.9, 0.9);
+    var side_slope = clamp(center.x * 1.65, -0.9, 0.9);
 
     if (is_ground_art || depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
         let bevel_x = (smoothstep(0.0, 0.18, uv_in_tile.x) - smoothstep(0.82, 1.0, uv_in_tile.x)) * 0.32;
@@ -32,9 +32,13 @@ fn art_fake_normal(uv_in_tile: vec2<f32>, depth_class: u32, is_ground_art: bool)
     if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
         vertical += 0.20;
         face = 0.62;
+        side_slope *= 0.45;
     } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
         vertical += 0.34;
         face = 0.48;
+        side_slope *= 0.30;
+    } else {
+        side_slope *= 0.12;
     }
 
     return normalize(vec3<f32>(side_slope, vertical, face));
@@ -68,7 +72,7 @@ fn apply_art_surface_shading(
     let vertical_light = clamp(1.0 - uv_in_tile.y, 0.0, 1.0);
     let lower_occlusion = smoothstep(0.18, 1.0, uv_in_tile.y);
     let side_contact = 1.0 - smoothstep(0.0, 0.18, min(uv_in_tile.x, 1.0 - uv_in_tile.x));
-    let contact_noise = 0.85 + 0.15 * hash(floor(world_pos.xz * 0.25));
+    let contact_noise = 0.92 + 0.08 * noise_2d(world_pos.xz * 0.25);
 
     var out_rgb = rgb;
     out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
@@ -95,8 +99,9 @@ fn apply_art_surface_shading(
         var saturation_profile = 0.82;
         var plane_catch_profile = 1.0;
         var foot_contact_profile = 1.0;
+        var edge_profile = 0.0;
         let side_plane = smoothstep(0.18, 0.5, abs(uv_in_tile.x - 0.5));
-        let dapple = 0.75 + 0.50 * hash(floor(world_pos.xz * 1.7 + uv_in_tile * 17.0));
+        let dapple = 0.75 + 0.50 * noise_2d(world_pos.xz * 1.7 + uv_in_tile * 17.0);
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
             depth_scale = 1.12;
             contact_scale = 1.28;
@@ -105,6 +110,7 @@ fn apply_art_surface_shading(
             saturation_profile = 0.92;
             plane_catch_profile = dapple;
             foot_contact_profile = 1.18;
+            edge_profile = side_plane;
         } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
             depth_scale = 0.92;
             contact_scale = 0.70;
@@ -113,6 +119,7 @@ fn apply_art_surface_shading(
             saturation_profile = 0.74;
             plane_catch_profile = 0.72;
             foot_contact_profile = 0.50;
+            edge_profile = side_plane * 0.25;
         } else if (depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_scale = 0.78;
             contact_scale = 0.55;
@@ -121,11 +128,13 @@ fn apply_art_surface_shading(
             saturation_profile = 0.78;
             plane_catch_profile = 0.58;
             foot_contact_profile = 0.42;
+            edge_profile = side_plane * 0.35;
         } else if (!is_ground_art) {
-            shadow_profile = 1.04 + side_plane * 0.18;
-            plane_catch_profile = 1.0 + side_plane * 0.28;
+            shadow_profile = 0.98;
+            plane_catch_profile = 0.92;
         } else {
             foot_contact_profile = 0.55;
+            edge_profile = side_plane * 0.35;
         }
 
         let warm_key = light_color * (0.42 + 0.78 * wrap) * highlight_strength * depth_scale * plane_catch_profile;
@@ -135,13 +144,19 @@ fn apply_art_surface_shading(
             shadow_strength * (0.24 + 0.38 * (1.0 - lambert)) * contact_noise * shadow_profile
             + contact_shadow * (0.20 + 0.26 * (1.0 - lambert))
         );
-        let edge_catch = side_plane * (0.18 + 0.12 * top_catch) * plane_catch_profile;
+        let edge_catch = edge_profile * (0.18 + 0.12 * top_catch) * plane_catch_profile;
 
         out_rgb = rgb * cool_shadow * shadow_cut;
         out_rgb += rgb * warm_key * (0.25 + 0.75 * top_catch);
         out_rgb += light_color * edge_catch * highlight_strength * 0.22;
         out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * local_light_profile * (0.18 + 0.62 * top_catch);
-        let foot_contact_noise = 0.82 + 0.18 * hash(floor(world_pos.xz * 0.8 + uv_in_tile * 11.0));
+        if (depth_class == ART_DEPTH_CLASS_ROOF) {
+            let roof_mottle = noise_2d(world_pos.xz * 0.65 + uv_in_tile * 2.0);
+            let roof_grain = noise_2d(world_pos.xz * 3.0 + uv_in_tile * 13.0);
+            let roof_breakup = ((roof_mottle - 0.5) * 0.16 + (roof_grain - 0.5) * 0.05) * shadow_strength;
+            out_rgb *= 1.0 + roof_breakup;
+        }
+        let foot_contact_noise = 0.88 + 0.12 * noise_2d(world_pos.xz * 0.8 + uv_in_tile * 11.0);
         let foot_contact = smoothstep(0.68, 1.0, uv_in_tile.y) * foot_contact_noise * foot_contact_profile;
         out_rgb *= 1.0 - foot_contact * contact_strength * (0.10 + 0.10 * shadow_strength);
         let art_temperature_strength = clamp(kr_art_temperature_strength, 0.0, 1.5);
