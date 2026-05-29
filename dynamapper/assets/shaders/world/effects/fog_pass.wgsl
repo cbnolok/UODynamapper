@@ -60,9 +60,40 @@ struct FogPostProcessUniform {
 // the screen edges correspond to greater world-space distances. A radial
 // measure from screen-centre is a cheap and visually plausible proxy.
 // ============================================================================
+fn fog_hash(p: vec2<f32>) -> f32 {
+    let p3 = fract(vec3<f32>(p.xyx) * 0.1031);
+    let p3s = p3 + dot(p3, p3.yzx + vec3<f32>(19.19));
+    return fract((p3s.x + p3s.y) * p3s.z);
+}
+
+fn fog_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = fog_hash(i + vec2<f32>(0.0, 0.0));
+    let b = fog_hash(i + vec2<f32>(1.0, 0.0));
+    let c = fog_hash(i + vec2<f32>(0.0, 1.0));
+    let d = fog_hash(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn fog_fbm(p: vec2<f32>) -> f32 {
+    var sum = 0.0;
+    var amp = 0.5;
+    var f = 1.0;
+    sum += amp * fog_noise(p * f); f *= 2.0; amp *= 0.5;
+    sum += amp * fog_noise(p * f); f *= 2.0; amp *= 0.5;
+    sum += amp * fog_noise(p * f); f *= 2.0; amp *= 0.5;
+    sum += amp * fog_noise(p * f);
+    return clamp(sum, 0.0, 1.0);
+}
+
 fn fog_factor_screen_space(uv: vec2<f32>) -> f32 {
     let dist_density = clamp(fog.fog_params.x, 0.0, 1.0);
-    if (dist_density < 0.001) {
+    let height_density = clamp(fog.fog_params.y, 0.0, 1.0);
+    let noise_scale = max(fog.fog_params.z, 0.0);
+    let noise_strength = clamp(fog.fog_params.w, 0.0, 1.0);
+    if (dist_density < 0.001 && height_density < 0.001) {
         return 0.0;
     }
 
@@ -70,11 +101,22 @@ fn fog_factor_screen_space(uv: vec2<f32>) -> f32 {
     let center = vec2<f32>(0.5, 0.5);
     let d = length(uv - center); // 0 at center, ~0.707 at corner
 
-    // Map dist_density to a fog radius (0 = full screen fog, 1 = almost no fog)
-    // At density=0: radius = huge (no fog). At density=1: radius = 0.1 (heavy fog)
-    let fog_radius = mix(0.75, 0.05, smoothstep(0.0, 1.0, dist_density));
+    // The UI/presets use small density values in the 0.02..0.08 range. Use
+    // sqrt shaping so those values produce visible edge haze instead of falling
+    // below the screen's maximum radial distance.
+    let fog_radius = mix(0.64, 0.08, sqrt(dist_density));
+    let radial_fog = smoothstep(fog_radius, fog_radius + 0.35, d);
+    let vertical_fog = smoothstep(0.40, 1.0, uv.y) * height_density * 2.0;
 
-    return clamp(smoothstep(fog_radius, fog_radius + 0.35, d), 0.0, 1.0);
+    var factor = clamp(radial_fog + vertical_fog, 0.0, 1.0);
+    if (noise_scale > 0.001 && noise_strength > 0.001) {
+        let aspect = max(fog.screen_size.x / max(fog.screen_size.y, 1.0), 0.1);
+        let p = vec2<f32>(uv.x * aspect, uv.y) * noise_scale * 14.0 + vec2<f32>(globals.time * 0.015, 17.0);
+        let n = fog_fbm(p) * 2.0 - 1.0;
+        factor = clamp(factor * (1.0 + n * noise_strength * 0.45), 0.0, 1.0);
+    }
+
+    return factor;
 }
 
 @fragment

@@ -32,7 +32,7 @@ fn grunge_fbm(p: vec2<f32>) -> f32 {
 
 fn apply_visual_grunge(rgb: vec3<f32>, world_xz: vec2<f32>, strength: f32, profile: u32) -> vec3<f32> {
   let s = clamp(strength, 0.0, 1.0);
-  if (s <= 0.0001 || profile == 0u) {
+  if (s <= 0.0001) {
     return rgb;
   }
 
