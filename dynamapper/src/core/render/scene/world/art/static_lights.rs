@@ -20,6 +20,10 @@ const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
 const STATIC_LIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, STATIC_LIGHT_ALPHA);
+const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
+const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
+const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
+const STATIC_LIGHT_BILLBOARD_NORMAL: Vec3 = Vec3::new(0.57735026, 0.57735026, 0.57735026);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum StaticLightHueSourceKind {
@@ -86,19 +90,27 @@ pub fn build_static_light_mesh() -> Mesh {
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_POSITION,
         vec![
-            [-0.5, 0.0, -0.5],
-            [0.5, 0.0, -0.5],
-            [-0.5, 0.0, 0.5],
-            [0.5, 0.0, 0.5],
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+            [0.5, 0.5, 0.0],
         ],
     );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 4]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 4]);
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
     );
     mesh.insert_indices(Indices::U32(vec![0, 2, 1, 1, 2, 3]));
     mesh
+}
+
+fn static_light_billboard_rotation() -> Quat {
+    Quat::from_mat3(&Mat3::from_cols(
+        STATIC_LIGHT_BILLBOARD_RIGHT,
+        STATIC_LIGHT_BILLBOARD_UP,
+        STATIC_LIGHT_BILLBOARD_NORMAL,
+    ))
 }
 
 pub fn sys_collect_visible_static_lights(
@@ -261,7 +273,8 @@ pub fn sys_sync_static_light_entities(
         };
 
         let transform = Transform::from_xyz(instance.world_x, instance.world_y, instance.world_z)
-            .with_scale(Vec3::new(instance.width_world, 1.0, instance.height_world));
+            .with_rotation(static_light_billboard_rotation())
+            .with_scale(Vec3::new(instance.width_world, instance.height_world, 1.0));
 
         if let Some(entity) = existing_by_key.get(&instance.key) {
             let _ = commands.entity(*entity).insert(transform);
@@ -364,7 +377,7 @@ fn static_light_material(
         cull_mode: None,
         unlit: true,
         fog_enabled: false,
-        depth_bias: 1.0,
+        depth_bias: STATIC_LIGHT_DEPTH_BIAS,
         ..default()
     });
     material_cache

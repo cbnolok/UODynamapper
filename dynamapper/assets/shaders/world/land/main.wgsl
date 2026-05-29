@@ -46,6 +46,7 @@
   shade_mode0_classic_vertex,
   shade_mode1_enhanced_fragment,
   shade_mode2_kr_fragment,
+  apply_static_light_decals,
 }
 #import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
 
@@ -478,6 +479,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       fill_strength, rim_strength, specular_strength, enable_gloom
     );
   }
+  hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
 
   hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
 

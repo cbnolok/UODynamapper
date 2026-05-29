@@ -165,6 +165,11 @@ fn apply_art_surface_shading(
         out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 
+    if (enable_art_fake_normals != 1u && local_light_rgba.a > 0.001) {
+        let top_catch = pow(max(1.0 - uv_in_tile.y, 0.0), 1.7);
+        out_rgb += rgb * local_light_rgba.rgb * local_light_rgba.a * light_static * (0.18 + 0.62 * top_catch);
+    }
+
     if (mottle_strength > 0.0) {
         var mottle_profile = 0.10;
         if (depth_class == ART_DEPTH_CLASS_ROOF) {
