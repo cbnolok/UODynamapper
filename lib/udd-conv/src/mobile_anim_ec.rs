@@ -349,27 +349,6 @@ fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
-fn mobile_anim_page_progress_message(options: &MobileAnimEcAtlasOptions) -> &'static str {
-    if options.pixel_format == PagePixelFormat::Bc7 {
-        if options.bc7_rdo_lambda > 0.0 && options.bc7_rdo_lambda.is_finite() {
-            "BC7-compressing EC mobile animation atlas pages; RDO pass follows"
-        } else {
-            "BC7-compressing EC mobile animation atlas pages"
-        }
-    } else if matches!(
-        options.compression,
-        CompressionFlag::JpegXl
-            | CompressionFlag::JpegXlLevel(_)
-            | CompressionFlag::JpegXlZstd
-            | CompressionFlag::JpegXlZstdLevel(_)
-            | CompressionFlag::JpegXlZstdLevels { .. }
-    ) {
-        "registering EC mobile animation atlas pages for JPEG XL package compression"
-    } else {
-        "registering uncompressed EC mobile animation atlas pages"
-    }
-}
-
 fn encode_and_add_mobile_anim_page_chunk(
     package: &mut UddpBuilder,
     pages: &[BuiltMobileAnimEcPage],
@@ -379,18 +358,7 @@ fn encode_and_add_mobile_anim_page_chunk(
     payload_completed: &AtomicU64,
     payload_total: u64,
 ) -> eyre::Result<()> {
-    let encode_pb = if options.pixel_format == PagePixelFormat::Bc7 {
-        let pb = ProgressBar::new_spinner();
-        pb.set_message(mobile_anim_page_progress_message(options));
-        pb.enable_steady_tick(Duration::from_millis(100));
-        Some(pb)
-    } else {
-        None
-    };
-    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, encode_pb.as_ref())?;
-    if let Some(pb) = encode_pb {
-        pb.finish_and_clear();
-    }
+    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, None)?;
     for (page_path, stored_page, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
