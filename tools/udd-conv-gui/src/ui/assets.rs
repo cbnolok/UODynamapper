@@ -27,6 +27,15 @@ impl UddConvApp {
                     Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                     vec![],
                 );
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(
+                        &mut self.settings.ignore_missing_tileart_for_tex_art_cc,
+                        "Allow missing tileart.uop",
+                    )
+                    .on_hover_text(
+                        "Builds tex_art_cc without tileart-derived owner slots. CC fallback statics may lose per-item draw offsets and appear shifted.",
+                    );
+                });
                 if clicked { self.convert_tex_art_cc(); }
                 if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 

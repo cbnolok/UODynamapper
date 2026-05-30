@@ -23,6 +23,8 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
+    #[serde(default)]
+    pub ignore_missing_tileart_for_tex_art_cc: bool,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
     pub upscale_tex_art_cc: UpscaleFilter,
@@ -56,6 +58,7 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
+            ignore_missing_tileart_for_tex_art_cc: false,
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
@@ -136,6 +139,7 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(!settings.ignore_missing_tileart_for_tex_art_cc);
     }
 
     #[test]
@@ -144,6 +148,7 @@ mod tests {
         let old_config = serialized
             .lines()
             .filter(|line| !line.starts_with("include_"))
+            .filter(|line| !line.starts_with("ignore_missing_tileart_for_tex_art_cc"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -152,6 +157,7 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(!settings.ignore_missing_tileart_for_tex_art_cc);
     }
 
     #[test]
@@ -160,6 +166,7 @@ mod tests {
         settings.include_verdata = true;
         settings.include_map_difs = true;
         settings.include_static_difs = true;
+        settings.ignore_missing_tileart_for_tex_art_cc = true;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
         let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
@@ -167,5 +174,6 @@ mod tests {
         assert!(restored.include_verdata);
         assert!(restored.include_map_difs);
         assert!(restored.include_static_difs);
+        assert!(restored.ignore_missing_tileart_for_tex_art_cc);
     }
 }
