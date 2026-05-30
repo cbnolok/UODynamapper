@@ -9,6 +9,7 @@ Welcome to UODynamapper! This guide is designed to help you resolve common issue
 ### Symptom: "Error: Too many open files" (Linux Only)
 - **Error message**: `Failed to create file watcher from path ... Error { kind: Io(Os { code: 24, ... message: "Too many open files" }) }`
 - **Cause**: The application is attempting to monitor too many files (hot-reloading) and has hit the Linux `inotify` limit.
+- **Impact**: The application can continue running, but asset hot-reloading is disabled for that run.
 - **Fix**: Increase the `max_user_instances` limit by running the following command in your terminal:
   ```bash
   su -c "echo 256 > /proc/sys/fs/inotify/max_user_instances"

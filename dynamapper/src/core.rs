@@ -34,7 +34,7 @@ use bevy::{
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
-use std::{process::ExitCode, time::Duration};
+use std::{path::Path, process::ExitCode, time::Duration};
 use system_sets::*;
 
 fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
@@ -181,6 +181,67 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
     }
 }
 
+fn file_watcher_fix_suggestion() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        return "Linux fix: increase the inotify max_user_instances limit with: su -c \"echo 256 > /proc/sys/fs/inotify/max_user_instances\"";
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return "macOS fix: close applications using many file watchers or raise the open-file limit with ulimit -n before starting UODynamapper.";
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return "Windows fix: close applications using many file watchers, then restart UODynamapper. If sync or antivirus software is watching the assets directory, exclude it.";
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        return "Fix: close applications using many file watchers or raise the host OS file watcher/open-file limit before starting UODynamapper.";
+    }
+}
+
+fn resilient_asset_source_builder(file_path: &Path) -> bevy::asset::io::AssetSourceBuilder {
+    let file_path = file_path.to_string_lossy().to_string();
+    let watched_file_path = file_path.clone();
+
+    bevy::asset::io::AssetSourceBuilder::platform_default(&file_path, None).with_watcher(
+        move |sender| {
+            let path = bevy::asset::io::file::FileAssetReader::get_base_path()
+                .join(watched_file_path.clone());
+
+            if !path.exists() {
+                bevy::log::warn!(
+                    "Skipping asset file watcher because path {:?} does not exist.",
+                    path
+                );
+                return None;
+            }
+
+            match bevy::asset::io::file::FileWatcher::new(
+                path.clone(),
+                sender,
+                Duration::from_millis(300),
+            ) {
+                Ok(watcher) => {
+                    Some(Box::new(watcher) as Box<dyn bevy::asset::io::AssetWatcher>)
+                }
+                Err(err) => {
+                    bevy::log::error!(
+                        "Failed to create asset file watcher for path {:?}: {:?}. Asset hot-reloading is disabled for this run. {}",
+                        path,
+                        err,
+                        file_watcher_fix_suggestion()
+                    );
+                    None
+                }
+            }
+        },
+    )
+}
+
 pub fn run_bevy_app() -> ExitCode {
     let cwd = std::env::current_dir().unwrap();
     let assets_folder = constants::valid_asset_dir();
@@ -221,6 +282,13 @@ pub fn run_bevy_app() -> ExitCode {
     init_bevy_logging();
 
     let mut app = App::new();
+    let mut asset_source_builders = bevy::asset::io::AssetSourceBuilders::default();
+    asset_source_builders.insert(
+        bevy::asset::io::AssetSourceId::Default,
+        resilient_asset_source_builder(&assets_folder),
+    );
+    app.insert_resource(asset_source_builders);
+
     app.insert_resource(custom_winit_settings(
         settings_data.graphics.reduce_unfocused_fps,
     ))
