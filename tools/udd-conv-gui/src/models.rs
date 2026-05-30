@@ -133,6 +133,7 @@ pub enum AssetPackProgressState {
     Idle,
     Running,
     Succeeded,
+    Cancelled,
     Failed,
 }
 

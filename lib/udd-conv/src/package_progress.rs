@@ -8,6 +8,12 @@ use udd_container::{
     UddpBuilder,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssetPayloadProgress {
+    pub completed: u64,
+    pub total: u64,
+}
+
 fn spinner_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} [{elapsed_precise}] {msg}")

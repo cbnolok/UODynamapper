@@ -24,7 +24,7 @@ impl UddConvApp {
             draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
             let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
             let tex_art_cc_progress = self.asset_pack_progress(AssetPackTask::TexArtCc);
-            let (clicked, preview) = draw_asset_card(
+            let (clicked, stop_clicked, preview) = draw_asset_card(
                 ui,
                 "Classic Art",
                 "Items and land textures from art.mul",
@@ -39,10 +39,11 @@ impl UddConvApp {
                 vec![],
             );
             if clicked { self.convert_tex_art_cc(); }
+            if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
             let tex_land_cc_progress = self.asset_pack_progress(AssetPackTask::TexLandCc);
-            let (clicked, preview) = draw_asset_card(
+            let (clicked, stop_clicked, preview) = draw_asset_card(
                 ui,
                 "Classic Texmaps",
                 "High-resolution terrain textures from texmaps.mul",
@@ -60,12 +61,13 @@ impl UddConvApp {
                 ],
             );
             if clicked { self.convert_tex_land_cc(); }
+            if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
             ui.add_space(4.0);
             draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
             let tex_art_ec_progress = self.asset_pack_progress(AssetPackTask::TexArtEc);
-            let (clicked, preview) = draw_asset_card(
+            let (clicked, stop_clicked, preview) = draw_asset_card(
                 ui,
                 "Enhanced Art",
                 "Static items from worldart",
@@ -80,10 +82,11 @@ impl UddConvApp {
                 vec![],
             );
             if clicked { self.convert_tex_art_ec(); }
+            if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
             let tex_land_ec_progress = self.asset_pack_progress(AssetPackTask::TexLandEc);
-            let (clicked, preview) = draw_asset_card(
+            let (clicked, stop_clicked, preview) = draw_asset_card(
                 ui,
                 "Enhanced Land",
                 "High-resolution terrain textures",
@@ -103,12 +106,13 @@ impl UddConvApp {
                 ],
             );
             if clicked { self.convert_tex_land_ec(); }
+            if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
             ui.add_space(4.0);
             draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
             let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
-            if draw_asset_card(
+            let (clicked, stop_clicked, _) = draw_asset_card(
                 ui,
                 "Tile Metadata",
                 "Unified metadata and radar color data",
@@ -121,9 +125,11 @@ impl UddConvApp {
                 None,
                 None,
                 vec![],
-            ).0 {
+            );
+            if clicked {
                 self.convert_tilemeta();
             }
+            if stop_clicked { self.request_cancel_conversion(); }
         });
     }
 }
@@ -203,9 +209,11 @@ fn draw_asset_card(
     bc7_rdo_lambda: Option<&mut f32>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
-) -> (bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
+) -> (bool, bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
     let mut clicked = false;
+    let mut stop_clicked = false;
     let mut preview_req = None;
+    let is_running = progress.state == AssetPackProgressState::Running;
 
     egui::Frame::group(ui.style())
         .fill(ui.visuals().widgets.noninteractive.bg_fill)
@@ -218,7 +226,7 @@ fn draw_asset_card(
 
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_width((ui.available_width() - 132.0).max(180.0));
+                        ui.set_width(ui.available_width().min(420.0).max(180.0));
                         ui.label(
                             egui::RichText::new(title)
                                 .strong()
@@ -235,9 +243,28 @@ fn draw_asset_card(
                         }
                     });
 
+                    ui.vertical(|ui| {
+                        ui.set_width((ui.available_width() - 132.0).max(180.0));
+                        draw_asset_progress(ui, progress);
+                    });
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(can_start, egui::Button::new(egui::RichText::new("Pack Asset").strong()))
+                        if is_running {
+                            if ui
+                                .add_sized(
+                                    [90.0, 30.0],
+                                    egui::Button::new(egui::RichText::new("Stop").strong()),
+                                )
+                                .on_hover_text("Request conversion stop")
+                                .clicked()
+                            {
+                                stop_clicked = true;
+                            }
+                        } else if ui
+                            .add_enabled(
+                                can_start,
+                                egui::Button::new(egui::RichText::new("Pack Asset").strong()),
+                            )
                             .on_hover_text(if can_start { "Pack this asset" } else { "Another task is running" })
                             .clicked()
                         {
@@ -245,8 +272,6 @@ fn draw_asset_card(
                         }
                     });
                 });
-
-                draw_asset_progress(ui, progress);
 
                 if opt.is_some()
                     || texture_levels.is_some()
@@ -383,7 +408,7 @@ fn draw_asset_card(
             });
         });
 
-    (clicked, preview_req)
+    (clicked, stop_clicked, preview_req)
 }
 
 fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
@@ -394,6 +419,9 @@ fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
         }
         AssetPackProgressState::Succeeded => {
             egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(120, 220, 150))
+        }
+        AssetPackProgressState::Cancelled => {
+            egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(255, 190, 110))
         }
         AssetPackProgressState::Failed => {
             egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(255, 120, 120))

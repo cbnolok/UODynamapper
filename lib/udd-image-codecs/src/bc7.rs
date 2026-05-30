@@ -574,6 +574,9 @@ pub fn encode_to_bc7_with_rdo_lambda(
 }
 
 #[cfg(feature = "bc7-encode")]
+const BC7_RDO_PROGRESS_WEIGHT: usize = 4;
+
+#[cfg(feature = "bc7-encode")]
 pub fn encode_to_bc7_with_rdo_lambda_and_progress<F>(
     pixels: &[u8],
     extent: ImageExtent,
@@ -597,7 +600,16 @@ where
             encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &progress)
         }
     };
-    apply_bc7_rdo_with_progress(&mut encoded, rgba_pixels.as_ref(), extent, rdo_lambda, &progress);
+    let weighted_rdo_progress = |units: usize| {
+        progress(units.saturating_mul(BC7_RDO_PROGRESS_WEIGHT));
+    };
+    apply_bc7_rdo_with_progress(
+        &mut encoded,
+        rgba_pixels.as_ref(),
+        extent,
+        rdo_lambda,
+        &weighted_rdo_progress,
+    );
 
     Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))
 }
@@ -606,7 +618,7 @@ where
 pub fn bc7_encode_progress_units(extent: ImageExtent, rdo_lambda: f32) -> usize {
     let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
     if rdo_lambda > 0.0 && rdo_lambda.is_finite() {
-        blocks * 2
+        blocks.saturating_mul(1 + BC7_RDO_PROGRESS_WEIGHT)
     } else {
         blocks
     }
@@ -975,4 +987,21 @@ fn flatten_bc7_blocks(blocks: Vec<[u8; 16]>) -> Vec<u8> {
         flat.extend_from_slice(&block);
     }
     flat
+}
+
+#[cfg(all(test, feature = "bc7-encode"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bc7_progress_weights_rdo_pass_more_heavily() {
+        let extent = ImageExtent::new(8, 8).expect("extent");
+        let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
+
+        assert_eq!(bc7_encode_progress_units(extent, 0.0), blocks);
+        assert_eq!(
+            bc7_encode_progress_units(extent, 1.0),
+            blocks * (1 + BC7_RDO_PROGRESS_WEIGHT),
+        );
+    }
 }

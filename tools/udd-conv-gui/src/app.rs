@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui;
 use crate::models::{AppSettings, AssetPackProgress, AssetPackTask, LogMessage, LogLevel, Tab};
 use crate::logic::settings::{load_settings_report, save_settings};
@@ -10,6 +11,7 @@ pub struct UddConvApp {
     pub logs: Arc<Mutex<Vec<LogMessage>>>,
     pub asset_progress: Arc<Mutex<HashMap<AssetPackTask, AssetPackProgress>>>,
     pub is_converting: Arc<Mutex<bool>>,
+    pub cancel_conversion: Arc<AtomicBool>,
     pub current_tab: Tab,
 
     // Tool state
@@ -25,6 +27,7 @@ impl UddConvApp {
         let (settings, settings_warning) = load_settings_report();
         let logs = Arc::new(Mutex::new(Vec::new()));
         let asset_progress = Arc::new(Mutex::new(HashMap::new()));
+        let cancel_conversion = Arc::new(AtomicBool::new(false));
         crate::logic::panel_logger::install_panel_logger(logs.clone());
 
         {
@@ -45,6 +48,7 @@ impl UddConvApp {
             settings,
             logs,
             asset_progress,
+            cancel_conversion,
             is_converting: Arc::new(Mutex::new(false)),
             current_tab: Tab::Sources,
             tool_file_1: None,
@@ -66,6 +70,10 @@ impl UddConvApp {
 
     pub fn is_busy(&self) -> bool {
         self.is_converting.lock().map(|busy| *busy).unwrap_or(false)
+    }
+
+    pub fn request_cancel_conversion(&self) {
+        self.cancel_conversion.store(true, Ordering::Relaxed);
     }
 
     pub fn asset_pack_progress(&self, task: AssetPackTask) -> AssetPackProgress {

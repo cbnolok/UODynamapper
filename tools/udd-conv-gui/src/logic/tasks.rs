@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
@@ -17,6 +18,7 @@ use udd_conv::{
     BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
+use udd_conv::package_progress::AssetPayloadProgress;
 use udd_conv_cli::{
     package_info::get_package_info_string,
     extract::extract_package,
@@ -32,10 +34,14 @@ struct ConvertingFlagReset {
     is_converting: std::sync::Arc<std::sync::Mutex<bool>>,
 }
 
+#[derive(Debug)]
+struct ConversionCancelled;
+
 #[derive(Clone)]
 struct AssetProgressReporter {
     task: AssetPackTask,
     progress: Arc<Mutex<HashMap<AssetPackTask, AssetPackProgress>>>,
+    cancel: Arc<AtomicBool>,
 }
 
 impl AssetProgressReporter {
@@ -61,16 +67,45 @@ impl AssetProgressReporter {
         self.set(AssetPackProgressState::Failed, 1.0, "Failed");
     }
 
+    fn cancelled(&self) {
+        self.set(AssetPackProgressState::Cancelled, 1.0, "Cancelled");
+    }
+
+    fn cancel_requested(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn panic_if_cancelled(&self) {
+        if self.cancel_requested() {
+            panic::panic_any(ConversionCancelled);
+        }
+    }
+
+    fn payload_progress(&self, progress: AssetPayloadProgress) {
+        self.panic_if_cancelled();
+        let fraction = if progress.total == 0 {
+            0.0
+        } else {
+            progress.completed.min(progress.total) as f32 / progress.total as f32
+        };
+        self.set(
+            AssetPackProgressState::Running,
+            fraction * 0.55,
+            format!("Encoding atlas pages {}/{}", progress.completed, progress.total),
+        );
+    }
+
     fn build_progress(&self, progress: BuildProgress) {
+        self.panic_if_cancelled();
         let phase_fraction = if progress.total == 0 {
             0.0
         } else {
             progress.completed.min(progress.total) as f32 / progress.total as f32
         };
         let (base, span, phase_label) = match progress.phase {
-            BuildProgressPhase::TrainingDictionaries => (0.0, 0.10, "Training dictionaries"),
-            BuildProgressPhase::CompressingFiles => (0.10, 0.70, "Compressing package"),
-            BuildProgressPhase::Assembling => (0.80, 0.18, "Assembling package"),
+            BuildProgressPhase::TrainingDictionaries => (0.55, 0.05, "Training dictionaries"),
+            BuildProgressPhase::CompressingFiles => (0.60, 0.30, "Compressing package"),
+            BuildProgressPhase::Assembling => (0.90, 0.08, "Assembling package"),
         };
         let text = if progress.phase == BuildProgressPhase::CompressingFiles {
             if let Some(file) = progress.active_file {
@@ -151,6 +186,7 @@ impl UddConvApp {
     {
         let is_converting = self.is_converting.clone();
         let logs = self.logs.clone();
+        let cancel = self.cancel_conversion.clone();
 
         match is_converting.lock() {
             Ok(mut busy) => {
@@ -162,6 +198,7 @@ impl UddConvApp {
                     return;
                 }
                 *busy = true;
+                cancel.store(false, Ordering::Relaxed);
             }
             Err(_) => {
                 self.push_log(
@@ -191,6 +228,9 @@ impl UddConvApp {
                 let _stdout_capture = crate::logic::panel_logger::capture_stdout_to_panel(logs.clone());
                 match panic::catch_unwind(AssertUnwindSafe(task)) {
                     Ok(result) => result,
+                    Err(payload) if payload.is::<ConversionCancelled>() => {
+                        Err(eyre::eyre!("conversion cancelled"))
+                    }
                     Err(_) => Err(eyre::eyre!("task panicked")),
                 }
             };
@@ -223,13 +263,23 @@ impl UddConvApp {
         let reporter = AssetProgressReporter {
             task: task_id,
             progress: self.asset_progress.clone(),
+            cancel: self.cancel_conversion.clone(),
         };
         let reporter_for_task = reporter.clone();
         reporter.start();
         self.spawn_task(name, move || {
-            let result = task(reporter_for_task.clone());
+            let result = match panic::catch_unwind(AssertUnwindSafe(|| {
+                task(reporter_for_task.clone())
+            })) {
+                Ok(result) => result,
+                Err(payload) if payload.is::<ConversionCancelled>() => {
+                    Err(eyre::eyre!("conversion cancelled"))
+                }
+                Err(payload) => panic::resume_unwind(payload),
+            };
             match &result {
                 Ok(_) => reporter_for_task.finish(),
+                Err(_) if reporter_for_task.cancel_requested() => reporter_for_task.cancelled(),
                 Err(_) => reporter_for_task.fail(),
             }
             result
@@ -267,6 +317,7 @@ impl UddConvApp {
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
+                |payload_progress| progress.payload_progress(payload_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -305,6 +356,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
+                |payload_progress| progress.payload_progress(payload_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -341,6 +393,7 @@ impl UddConvApp {
                     },
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
+                |payload_progress| progress.payload_progress(payload_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -383,6 +436,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                     transcode_kdl_path: None,
                 },
+                |payload_progress| progress.payload_progress(payload_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))

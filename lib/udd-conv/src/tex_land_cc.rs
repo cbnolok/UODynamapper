@@ -11,6 +11,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
@@ -30,7 +31,8 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package_with_progress,
+    atlas_payload_finish_message, atlas_payload_progress_message, AssetPayloadProgress,
+    build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -154,6 +156,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
         options,
         patch_options,
         |_| {},
+        |_| {},
     )
 }
 
@@ -162,6 +165,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
     out_file: &Path,
     options: &TexLandCcAtlasOptions,
     patch_options: &ClassicPatchOptions,
+    payload_progress: impl Fn(AssetPayloadProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandCcBuildSummary> {
     let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
@@ -241,6 +245,22 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
         options.bc7_rdo_lambda,
     );
 
+    payload_progress(AssetPayloadProgress {
+        completed: 0,
+        total: progress_len,
+    });
+    let payload_completed = AtomicU64::new(0);
+    let add_payload_progress = |units: u64| {
+        let completed = payload_completed
+            .fetch_add(units, Ordering::Relaxed)
+            .saturating_add(units)
+            .min(progress_len);
+        payload_progress(AssetPayloadProgress {
+            completed,
+            total: progress_len,
+        });
+    };
+
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -261,7 +281,11 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                         RawImageFormat::Rgba8888,
                         encoding,
                         options.bc7_rdo_lambda,
-                        |units| pb.inc(units as u64),
+                        |units| {
+                            let units = units as u64;
+                            pb.inc(units);
+                            add_payload_progress(units);
+                        },
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
@@ -283,6 +307,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
             .iter()
             .map(|page| {
                 pb.inc(1);
+                add_payload_progress(1);
                 (
                     page_entry_path(page.record.page_index, pixel_format),
                     crop_rgba_page(
@@ -316,6 +341,10 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
         options.compression,
         options.bc7_rdo_lambda,
     ));
+    payload_progress(AssetPayloadProgress {
+        completed: progress_len,
+        total: progress_len,
+    });
 
     build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
