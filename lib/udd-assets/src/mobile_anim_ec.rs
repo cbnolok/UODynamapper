@@ -6,7 +6,10 @@ use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
 use udd_container::UddpReader;
 
-use crate::common::{decode_atlas_page_rgba, read_path_entry, AtlasCacheOptions, AtlasPageCache};
+use crate::common::{
+    decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, AtlasCacheOptions,
+    AtlasPageCache,
+};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -246,7 +249,8 @@ impl MobileAnimEcPackage {
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let fmt = self
             .pages
-            .get(page_index as usize)
+            .iter()
+            .find(|page| page.page_index == page_index)
             .map(|page| page.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
         self.page_cache.read_page_bytes(page_index, || {
@@ -258,7 +262,8 @@ impl MobileAnimEcPackage {
     pub fn read_page_rgba(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let page = self
             .pages
-            .get(page_index as usize)
+            .iter()
+            .find(|page| page.page_index == page_index)
             .ok_or_else(|| eyre::eyre!("missing EC mobile animation atlas page metadata for {page_index}"))?;
         let page_bytes = self.read_page_bytes(page_index)?;
         decode_atlas_page_rgba(
@@ -268,6 +273,35 @@ impl MobileAnimEcPackage {
             page.atlas_height,
             page.used_width,
             page.used_height,
+        )
+    }
+
+    pub fn read_frame_rgba(&self, frame: &MobileAnimEcFrameRecord) -> eyre::Result<Vec<u8>> {
+        if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
+            return Ok(Vec::new());
+        }
+        let page = self
+            .pages
+            .iter()
+            .find(|page| page.page_index == frame.page_index)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "missing EC mobile animation atlas page metadata for {}",
+                    frame.page_index
+                )
+            })?;
+        let page_bytes = self.read_page_bytes(frame.page_index)?;
+        extract_atlas_subrect_rgba(
+            &page_bytes,
+            page.pixel_format,
+            page.atlas_width,
+            page.atlas_height,
+            page.used_width,
+            page.used_height,
+            frame.x,
+            frame.y,
+            frame.width,
+            frame.height,
         )
     }
 }

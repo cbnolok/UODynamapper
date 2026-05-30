@@ -48,6 +48,7 @@ pub struct InspectorApp {
     pub mobile_anim_last_frame_time: f64,
     pub mobile_anim_playback_speed: f32,
     pub mobile_anim_loop: bool,
+    pub mobile_anim_frame_reset_pending: bool,
 
     // Virtual View state
     pub view_mode: ViewMode,
@@ -90,6 +91,7 @@ impl InspectorApp {
             mobile_anim_last_frame_time: 0.0,
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: true,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -421,6 +423,7 @@ impl InspectorApp {
                 self.selected_mobile_anim_frame_index = 0;
                 self.mobile_anim_is_playing = false;
                 self.mobile_anim_last_frame_time = 0.0;
+                self.mobile_anim_frame_reset_pending = true;
                 self.detect_virtual_entries(&reader);
 
                 self.package = Some(reader);
@@ -1233,6 +1236,7 @@ mod tests {
             mobile_anim_last_frame_time: 0.0,
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: false,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1313,6 +1317,7 @@ mod tests {
             mobile_anim_last_frame_time: 0.0,
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: false,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1374,6 +1379,7 @@ mod tests {
             mobile_anim_last_frame_time: 0.0,
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: false,
             view_mode: ViewMode::Virtual,
             virtual_entries: vec![
                 VirtualEntry {
@@ -1496,6 +1502,7 @@ mod tests {
             mobile_anim_last_frame_time: 0.0,
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: false,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),

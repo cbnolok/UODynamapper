@@ -34,13 +34,21 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (index, animation) in animations.iter().enumerate() {
+                    let frames = package.animation_frames(animation);
+                    let visible_count = displayable_frame_count(
+                        frames,
+                        udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
+                        |frame| (frame.page_index, frame.width, frame.height),
+                    );
                     let label = format!(
-                        "body {} action {} dir {} file {} idx {}",
+                        "body {} action {} dir {} file {} idx {} | {}/{} visible",
                         animation.body_id,
                         animation.action_id,
                         animation.direction,
                         animation.file_index,
-                        animation.source_index
+                        animation.source_index,
+                        visible_count,
+                        frames.len()
                     );
                     if !query.is_empty() && !label.to_ascii_lowercase().contains(&query) {
                         continue;
@@ -51,6 +59,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                     {
                         app.selected_mobile_anim_index = index;
                         app.selected_mobile_anim_frame_index = 0;
+                        app.mobile_anim_frame_reset_pending = true;
                         app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
                     }
                 }
@@ -59,7 +68,12 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     let selected_animation = animations[app.selected_mobile_anim_index];
     let frames = package.animation_frames(&selected_animation);
-    clamp_selected_frame(app, frames.len());
+    apply_pending_frame_reset(
+        app,
+        frames,
+        udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
+        |frame| (frame.page_index, frame.width, frame.height),
+    );
 
     ui.heading("mobile_anim_cc.uddp");
     ui.horizontal_wrapped(|ui| {
@@ -142,11 +156,19 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (index, animation) in animations.iter().enumerate() {
+                    let frames = package.animation_frames(animation);
+                    let visible_count = displayable_frame_count(
+                        frames,
+                        udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
+                        |frame| (frame.page_index, frame.width, frame.height),
+                    );
                     let label = format!(
-                        "body {} action {} dir {}",
+                        "body {} action {} dir {} | {}/{} visible",
                         animation.body_id,
                         animation.action_id,
-                        animation.direction
+                        animation.direction,
+                        visible_count,
+                        frames.len()
                     );
                     if !query.is_empty() && !label.to_ascii_lowercase().contains(&query) {
                         continue;
@@ -157,6 +179,7 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                     {
                         app.selected_mobile_anim_index = index;
                         app.selected_mobile_anim_frame_index = 0;
+                        app.mobile_anim_frame_reset_pending = true;
                         app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
                     }
                 }
@@ -165,7 +188,12 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     let selected_animation = animations[app.selected_mobile_anim_index];
     let frames = package.animation_frames(&selected_animation);
-    clamp_selected_frame(app, frames.len());
+    apply_pending_frame_reset(
+        app,
+        frames,
+        udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
+        |frame| (frame.page_index, frame.width, frame.height),
+    );
 
     ui.heading("mobile_anim_ec.uddp");
     ui.horizontal_wrapped(|ui| {
@@ -219,6 +247,54 @@ fn clamp_selected_frame(app: &mut InspectorApp, frame_count: usize) {
         app.selected_mobile_anim_frame_index =
             app.selected_mobile_anim_frame_index.min(frame_count - 1);
     }
+}
+
+fn apply_pending_frame_reset<T>(
+    app: &mut InspectorApp,
+    frames: &[T],
+    missing_page_index: u32,
+    frame_parts: impl Fn(&T) -> (u32, u16, u16),
+) {
+    if app.mobile_anim_frame_reset_pending {
+        app.selected_mobile_anim_frame_index =
+            first_displayable_frame_index(frames, missing_page_index, frame_parts).unwrap_or(0);
+        app.mobile_anim_frame_reset_pending = false;
+    }
+    clamp_selected_frame(app, frames.len());
+}
+
+fn first_displayable_frame_index<T>(
+    frames: &[T],
+    missing_page_index: u32,
+    frame_parts: impl Fn(&T) -> (u32, u16, u16),
+) -> Option<usize> {
+    frames.iter().position(|frame| {
+        let (page_index, width, height) = frame_parts(frame);
+        is_displayable_frame(page_index, width, height, missing_page_index)
+    })
+}
+
+fn displayable_frame_count<T>(
+    frames: &[T],
+    missing_page_index: u32,
+    frame_parts: impl Fn(&T) -> (u32, u16, u16),
+) -> usize {
+    frames
+        .iter()
+        .filter(|frame| {
+            let (page_index, width, height) = frame_parts(frame);
+            is_displayable_frame(page_index, width, height, missing_page_index)
+        })
+        .count()
+}
+
+fn is_displayable_frame(
+    page_index: u32,
+    width: u16,
+    height: u16,
+    missing_page_index: u32,
+) -> bool {
+    page_index != missing_page_index && width != 0 && height != 0
 }
 
 fn show_playback_controls(
@@ -333,11 +409,6 @@ fn show_cc_frame(
         frame.center_y,
         udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
     );
-    let page_width = package
-        .pages()
-        .iter()
-        .find(|page| page.page_index == frame.page_index)
-        .map(|page| page.used_width);
     let page_size = package
         .pages()
         .iter()
@@ -350,12 +421,12 @@ fn show_cc_frame(
         app,
         "mobile_anim_cc",
         page_size,
-        page_width,
         frame.page_index,
         frame.x,
         frame.y,
         frame.width,
         frame.height,
+        || package.read_frame_rgba(&frame).ok(),
         || package.read_page_rgba(frame.page_index).ok(),
     );
 }
@@ -380,11 +451,6 @@ fn show_ec_frame(
         frame.center_y,
         udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
     );
-    let page_width = package
-        .pages()
-        .iter()
-        .find(|page| page.page_index == frame.page_index)
-        .map(|page| page.used_width);
     let page_size = package
         .pages()
         .iter()
@@ -397,12 +463,12 @@ fn show_ec_frame(
         app,
         "mobile_anim_ec",
         page_size,
-        page_width,
         frame.page_index,
         frame.x,
         frame.y,
         frame.width,
         frame.height,
+        || package.read_frame_rgba(&frame).ok(),
         || package.read_page_rgba(frame.page_index).ok(),
     );
 }
@@ -483,12 +549,12 @@ fn show_frame_image(
     app: &mut InspectorApp,
     texture_prefix: &str,
     page_size: Option<(u32, u32, u32, u32)>,
-    page_width: Option<u32>,
     page_index: u32,
     x: u16,
     y: u16,
     width: u16,
     height: u16,
+    read_frame_rgba: impl Fn() -> Option<Vec<u8>>,
     read_page_rgba: impl Fn() -> Option<Vec<u8>>,
 ) {
     if width == 0 || height == 0 {
@@ -503,21 +569,14 @@ fn show_frame_image(
         || app.preview_texture_size != Some(size)
         || app.preview_text.as_deref() != Some(label.as_str())
     {
-        let Some(page_rgba) = read_page_rgba() else {
-            ui.label("Unable to read frame atlas page.");
+        let Some(cropped) = read_frame_rgba() else {
+            ui.label("Unable to read frame image.");
             return;
         };
-        let Some(cropped) = crop_frame_rgba(
-            &page_rgba,
-            page_width.unwrap_or_else(|| page_width_from_rgba_len(&page_rgba).unwrap_or(2048)),
-            x as u32,
-            y as u32,
-            width as u32,
-            height as u32,
-        ) else {
-            ui.label("Frame rectangle is outside the atlas page.");
+        if cropped.len() != size[0] * size[1] * 4 {
+            ui.label("Frame image has an unexpected size.");
             return;
-        };
+        }
 
         app.set_preview_image(
             ctx,
@@ -713,6 +772,28 @@ mod tests {
         assert_eq!(
             decoded_page_size(&atlas, Some((16, 16, 8, 4))),
             Some([16, 16])
+        );
+    }
+
+    #[test]
+    fn first_displayable_frame_index_skips_missing_or_empty_frames() {
+        let frames = [
+            (u32::MAX, 0, 0),
+            (0, 0, 12),
+            (0, 8, 12),
+        ];
+
+        assert_eq!(
+            first_displayable_frame_index(&frames, u32::MAX, |frame| {
+                (frame.0, frame.1, frame.2)
+            }),
+            Some(2)
+        );
+        assert_eq!(
+            displayable_frame_count(&frames, u32::MAX, |frame| {
+                (frame.0, frame.1, frame.2)
+            }),
+            1
         );
     }
 }

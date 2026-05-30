@@ -5,7 +5,10 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use udd_container::UddpReader;
 
-use crate::common::{read_path_entry, AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba};
+use crate::common::{
+    decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, AtlasCacheOptions,
+    AtlasPageCache,
+};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -215,7 +218,8 @@ impl MobileAnimCcPackage {
     pub fn read_page_bytes(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let fmt = self
             .pages
-            .get(page_index as usize)
+            .iter()
+            .find(|page| page.page_index == page_index)
             .map(|page| page.pixel_format)
             .unwrap_or(PagePixelFormat::Rgba8888);
         self.page_cache.read_page_bytes(page_index, || {
@@ -227,7 +231,8 @@ impl MobileAnimCcPackage {
     pub fn read_page_rgba(&self, page_index: u32) -> eyre::Result<Vec<u8>> {
         let page = self
             .pages
-            .get(page_index as usize)
+            .iter()
+            .find(|page| page.page_index == page_index)
             .ok_or_else(|| eyre::eyre!("missing mobile animation atlas page metadata for {page_index}"))?;
         let page_bytes = self.read_page_bytes(page_index)?;
         decode_atlas_page_rgba(
@@ -237,6 +242,35 @@ impl MobileAnimCcPackage {
             page.atlas_height,
             page.used_width,
             page.used_height,
+        )
+    }
+
+    pub fn read_frame_rgba(&self, frame: &MobileAnimCcFrameRecord) -> eyre::Result<Vec<u8>> {
+        if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
+            return Ok(Vec::new());
+        }
+        let page = self
+            .pages
+            .iter()
+            .find(|page| page.page_index == frame.page_index)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "missing mobile animation atlas page metadata for {}",
+                    frame.page_index
+                )
+            })?;
+        let page_bytes = self.read_page_bytes(frame.page_index)?;
+        extract_atlas_subrect_rgba(
+            &page_bytes,
+            page.pixel_format,
+            page.atlas_width,
+            page.atlas_height,
+            page.used_width,
+            page.used_height,
+            frame.x,
+            frame.y,
+            frame.width,
+            frame.height,
         )
     }
 }
@@ -437,8 +471,8 @@ mod tests {
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 0).unwrap();
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut bytes, 0).unwrap();
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 0).unwrap();
-            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 4).unwrap();
-            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 4).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 1).unwrap();
+            byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 1).unwrap();
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 2).unwrap();
             byteorder::WriteBytesExt::write_u16::<LittleEndian>(&mut bytes, 2).unwrap();
             byteorder::WriteBytesExt::write_i16::<LittleEndian>(&mut bytes, 1).unwrap();
@@ -501,5 +535,11 @@ mod tests {
         assert_eq!(package.body_resolve_record(7).unwrap().resolved_body_id, 8);
         assert_eq!(package.body_type_record(7).unwrap().group_type, 3);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), page.len());
+        let animation = package.animation(2, 3, 4).unwrap();
+        let frame = &package.animation_frames(animation)[0];
+        assert_eq!(
+            package.read_frame_rgba(frame).unwrap().len(),
+            2 * 2 * 4
+        );
     }
 }
