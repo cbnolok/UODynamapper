@@ -20,6 +20,7 @@ libc = "0.2"
 log = "0.4.29"
 udd-conv = { path = "../../lib/udd-conv" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
+udd-logging = { path = "../../lib/udd-logging" }
 uocf = { path = "../../lib/uocf" }
 udd-conv-cli = { path = "../udd-conv-cli" }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }

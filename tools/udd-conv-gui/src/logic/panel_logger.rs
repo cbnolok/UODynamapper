@@ -33,7 +33,7 @@ impl Log for PanelLogger {
         }
 
         let text = format!("[{}] {}", record.level(), record.args());
-        eprintln!("{text}");
+        eprintln!("{}", udd_logging::format_record(record));
 
         let level = match record.level() {
             Level::Error => LogLevel::Error,
