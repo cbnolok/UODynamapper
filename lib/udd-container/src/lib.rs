@@ -7,6 +7,7 @@ pub use uddp::{
     AddFileRequest,
     AddOwnedFileRequest,
     BuildProgress,
+    BuildProgressFile,
     BuildProgressPhase,
     Codec,
     CompressionSummary,

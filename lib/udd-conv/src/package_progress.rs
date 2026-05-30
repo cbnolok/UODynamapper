@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
-use udd_container::{BuildProgress, BuildProgressPhase, CompressionFlag, CompressionSummary, UddpBuilder};
+use udd_container::{
+    BuildProgress, BuildProgressFile, BuildProgressPhase, CompressionFlag, CompressionSummary,
+    UddpBuilder,
+};
 
 fn spinner_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
@@ -51,6 +54,44 @@ fn phase_message(phase: BuildProgressPhase, compression_summary: CompressionSumm
         BuildProgressPhase::TrainingDictionaries => "training compression dictionaries".to_string(),
         BuildProgressPhase::CompressingFiles => compression_message(compression_summary),
         BuildProgressPhase::Assembling => "assembling package bytes".to_string(),
+    }
+}
+
+fn active_file_message(file: BuildProgressFile) -> String {
+    let compression = match file.compression {
+        CompressionFlag::JpegXl => "JPEG XL",
+        CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => "JPEG XL plus Zstd",
+        CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => "Zstd",
+        CompressionFlag::ZstdDict => "Zstd dictionary",
+        CompressionFlag::Auto => "auto",
+        CompressionFlag::None => "raw",
+    };
+    let dimensions = if file.width > 0 && file.height > 0 {
+        format!(", {}x{}", file.width, file.height)
+    } else {
+        String::new()
+    };
+    format!(
+        "compressing {compression} file {}/{} ({}{dimensions})",
+        file.index + 1,
+        file.total,
+        format_bytes(file.raw_size),
+    )
+}
+
+fn format_bytes(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+    if bytes as f64 >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB)
+    } else if bytes as f64 >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB)
+    } else if bytes as f64 >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB)
+    } else {
+        format!("{bytes} B")
     }
 }
 
@@ -136,8 +177,19 @@ pub fn build_and_write_package(builder: &mut UddpBuilder, out_file: &Path) -> ey
                     bar.set_position(0);
                 }
             }
-            bar.set_message(phase_message(progress.phase, compression_summary));
         }
+        if progress.phase == BuildProgressPhase::CompressingFiles
+            && progress.active_file.is_some()
+        {
+            bar.enable_steady_tick(Duration::from_millis(100));
+        } else if progress.phase != BuildProgressPhase::TrainingDictionaries {
+            bar.disable_steady_tick();
+        }
+        let message = progress
+            .active_file
+            .map(active_file_message)
+            .unwrap_or_else(|| phase_message(progress.phase, compression_summary));
+        bar.set_message(message);
 
         match progress.phase {
             BuildProgressPhase::TrainingDictionaries => {

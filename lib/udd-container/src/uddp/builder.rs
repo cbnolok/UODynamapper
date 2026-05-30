@@ -71,6 +71,17 @@ pub struct BuildProgress {
     pub phase: BuildProgressPhase,
     pub completed: usize,
     pub total: usize,
+    pub active_file: Option<BuildProgressFile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildProgressFile {
+    pub index: usize,
+    pub total: usize,
+    pub compression: CompressionFlag,
+    pub raw_size: usize,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -270,6 +281,7 @@ impl UddpBuilder {
                 phase: BuildProgressPhase::TrainingDictionaries,
                 completed,
                 total: training_samples_by_type.len(),
+                active_file: None,
             });
 
             for (data_type, samples) in &training_samples_by_type {
@@ -283,6 +295,7 @@ impl UddpBuilder {
                     phase: BuildProgressPhase::TrainingDictionaries,
                     completed,
                     total: training_samples_by_type.len(),
+                    active_file: None,
                 });
             }
         }
@@ -291,16 +304,18 @@ impl UddpBuilder {
             phase: BuildProgressPhase::CompressingFiles,
             completed: 0,
             total: self.files.len(),
+            active_file: None,
         });
 
         let compressed_files = compress_files_with_progress(
             &self.files,
             &dicts_by_type,
-            |completed| {
+            |compression_progress| {
                 progress(BuildProgress {
                     phase: BuildProgressPhase::CompressingFiles,
-                    completed,
+                    completed: compression_progress.completed,
                     total: self.files.len(),
+                    active_file: compression_progress.active_file,
                 });
             },
         )?;
@@ -339,6 +354,7 @@ impl UddpBuilder {
             phase: BuildProgressPhase::Assembling,
             completed,
             total: total_steps,
+            active_file: None,
         });
 
         let dict_table_offset = UddpHeader::SERIALIZED_SIZE as u64;
@@ -397,6 +413,7 @@ impl UddpBuilder {
             phase: BuildProgressPhase::Assembling,
             completed,
             total: total_steps,
+            active_file: None,
         });
 
         let header = UddpHeader {
@@ -476,6 +493,7 @@ impl UddpBuilder {
             phase: BuildProgressPhase::Assembling,
             completed,
             total: total_steps,
+            active_file: None,
         });
 
         for dict in &plan.dictionaries {
@@ -485,6 +503,7 @@ impl UddpBuilder {
                 phase: BuildProgressPhase::Assembling,
                 completed,
                 total: total_steps,
+                active_file: None,
             });
         }
         for file in &plan.files {
@@ -494,6 +513,7 @@ impl UddpBuilder {
                 phase: BuildProgressPhase::Assembling,
                 completed,
                 total: total_steps,
+                active_file: None,
             });
         }
 
@@ -522,10 +542,14 @@ fn compress_files_with_progress<F>(
     mut progress: F,
 ) -> Result<Vec<BuiltFile>, BuildError>
 where
-    F: FnMut(usize),
+    F: FnMut(CompressionProgress),
 {
     if files.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if files.iter().any(uses_internal_parallel_compression) {
+        return compress_files_serial_with_progress(files, dicts_by_type, progress);
     }
 
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -546,7 +570,10 @@ where
         let mut first_error = None;
         for result in receiver {
             completed += 1;
-            progress(completed);
+            progress(CompressionProgress {
+                completed,
+                active_file: None,
+            });
             match result {
                 Ok((index, built_file)) => {
                     compressed_files[index] = Some(built_file);
@@ -572,6 +599,49 @@ where
             })
             .collect()
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompressionProgress {
+    completed: usize,
+    active_file: Option<BuildProgressFile>,
+}
+
+fn compress_files_serial_with_progress<F>(
+    files: &[PendingFile],
+    dicts_by_type: &HashMap<u8, Vec<u8>>,
+    mut progress: F,
+) -> Result<Vec<BuiltFile>, BuildError>
+where
+    F: FnMut(CompressionProgress),
+{
+    let mut compressed_files = Vec::with_capacity(files.len());
+    for (index, file) in files.iter().enumerate() {
+        progress(CompressionProgress {
+            completed: index,
+            active_file: Some(BuildProgressFile {
+                index,
+                total: files.len(),
+                compression: file.compression,
+                raw_size: file.raw_data.len(),
+                width: file.width,
+                height: file.height,
+            }),
+        });
+        compressed_files.push(compress_file(file, dicts_by_type)?);
+        progress(CompressionProgress {
+            completed: index + 1,
+            active_file: None,
+        });
+    }
+    Ok(compressed_files)
+}
+
+fn uses_internal_parallel_compression(file: &PendingFile) -> bool {
+    matches!(
+        file.compression,
+        CompressionFlag::JpegXl | CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_)
+    )
 }
 
 fn compress_file(
@@ -835,5 +905,52 @@ mod tests {
         assert!(!phases.contains(&BuildProgressPhase::TrainingDictionaries));
         assert!(phases.contains(&BuildProgressPhase::CompressingFiles));
         assert!(phases.contains(&BuildProgressPhase::Assembling));
+    }
+
+    #[test]
+    fn jpegxl_build_reports_active_compression_file() {
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        builder
+            .add_owned_file(AddOwnedFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::JpegXl,
+                width: 2,
+                height: 2,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(0),
+                data: vec![
+                    255, 0, 0, 255,
+                    0, 255, 0, 255,
+                    0, 0, 255, 255,
+                    255, 255, 255, 255,
+                ],
+            })
+            .expect("add jxl texture");
+
+        let mut compression_events = Vec::new();
+        builder
+            .build_with_progress(|progress| {
+                if progress.phase == BuildProgressPhase::CompressingFiles {
+                    compression_events.push(progress);
+                }
+            })
+            .expect("build package");
+
+        assert!(compression_events.iter().any(|progress| {
+            progress.completed == 0
+                && progress.active_file
+                    == Some(BuildProgressFile {
+                        index: 0,
+                        total: 1,
+                        compression: CompressionFlag::JpegXl,
+                        raw_size: 16,
+                        width: 2,
+                        height: 2,
+                    })
+        }));
+        assert!(compression_events.iter().any(|progress| {
+            progress.completed == 1 && progress.active_file.is_none()
+        }));
     }
 }
