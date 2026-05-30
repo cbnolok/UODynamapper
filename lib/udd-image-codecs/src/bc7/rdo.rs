@@ -15,7 +15,7 @@ const MATCH_REP0_BITS: f32 = 4.0;
 
 const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
-const RDO_PROGRESS_BLOCK_BATCH: usize = 64;
+const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 
 const fn bc7_segment_masks() -> [u128; 17] {
@@ -27,6 +27,61 @@ const fn bc7_segment_masks() -> [u128; 17] {
     }
     masks[16] = u128::MAX;
     masks
+}
+
+struct ModeHistory {
+    entries: Vec<usize>,
+    start: usize,
+    len: usize,
+}
+
+impl ModeHistory {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: vec![0; capacity],
+            start: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, block_index: usize) {
+        let capacity = self.entries.len();
+        if self.len < capacity {
+            self.entries[(self.start + self.len) % capacity] = block_index;
+            self.len += 1;
+        } else {
+            self.entries[self.start] = block_index;
+            self.start = (self.start + 1) % capacity;
+        }
+    }
+
+    #[inline]
+    fn iter_recent(&self) -> ModeHistoryRecent<'_> {
+        ModeHistoryRecent {
+            history: self,
+            remaining: self.len,
+        }
+    }
+}
+
+struct ModeHistoryRecent<'a> {
+    history: &'a ModeHistory,
+    remaining: usize,
+}
+
+impl Iterator for ModeHistoryRecent<'_> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let index = (self.history.start + self.remaining) % self.history.entries.len();
+        Some(self.history.entries[index])
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -283,7 +338,11 @@ fn reduce_entropy_bc7_impl_with_progress(
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
     let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
-    let mut previous_blocks_by_mode = vec![Vec::<usize>::new(); 8];
+    let mut block_bits = blocks.par_iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
+    let history_capacity = total_blocks_to_check.min(num_blocks).max(1);
+    let mut previous_blocks_by_mode = (0..8)
+        .map(|_| ModeHistory::with_capacity(history_capacity))
+        .collect::<Vec<_>>();
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
     //   prev_cont_window_ofs: source-window offset just past the last accepted match end.
@@ -299,7 +358,7 @@ fn reduce_entropy_bc7_impl_with_progress(
         }
 
         let orig_blk = blocks[block_index];
-        let orig_bits = bc7_block_bits(orig_blk);
+        let orig_bits = block_bits[block_index];
         let p_pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
         let bc7_mode = block_modes[block_index];
         if bc7_mode == 8 {
@@ -348,7 +407,7 @@ fn reduce_entropy_bc7_impl_with_progress(
             let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
             let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
             let mut relative_previous_blocks_checked = 0usize;
-            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
                 if prev_block_index < first_block_to_check {
                     break;
                 }
@@ -361,8 +420,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                     break;
                 }
                 relative_previous_blocks_checked += 1;
-                let prev_blk = blocks[prev_block_index];
-                let prev_bits = bc7_block_bits(prev_blk);
+                let prev_bits = block_bits[prev_block_index];
                 let base_dist = (block_index - prev_block_index) * 16;
                 let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
                 if let Some(stats) = stats.as_deref_mut() {
@@ -395,7 +453,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             }
 
                             // Hash check to skip redundant trials
-                            let hs = hash_hsieh_bc7_segment(&prev_blk, src_ofs, len, dst_ofs as u32);
+                            let hs = hash_hsieh_bc7_segment_bits(prev_bits, src_ofs, len, dst_ofs as u32);
                             let hash_check = hash_table[hs as usize & hash_mask];
                             if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                 && (hash_check >> 8) == (hs >> 8) {
@@ -427,6 +485,13 @@ fn reduce_entropy_bc7_impl_with_progress(
                             }
                             let trial_blk =
                                 bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
+                            let trust_mode_hint = dst_ofs > 0;
+                            if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.unsupported_mode_trials += 1;
+                                }
+                                continue;
+                            }
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.decode_trials += 1;
                             }
@@ -435,7 +500,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 &trial_blk,
                                 p_pixels,
                                 bc7_mode,
-                                dst_ofs > 0,
+                                trust_mode_hint,
                                 max_trial_err,
                                 stats.as_deref_mut(),
                             ) else {
@@ -463,12 +528,11 @@ fn reduce_entropy_bc7_impl_with_progress(
             }
         } else {
             // ── Main search window: fixed-offset default path ──
-            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
                 if prev_block_index < first_block_to_check {
                     break;
                 }
-                let prev_blk = blocks[prev_block_index];
-                let prev_bits = bc7_block_bits(prev_blk);
+                let prev_bits = block_bits[prev_block_index];
                 let dist = (block_index - prev_block_index) * 16;
                 let normal_dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
                 for len in (3..=16).rev() {
@@ -515,7 +579,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
-                                let hs = hash_hsieh_bc7_segment(&prev_blk, ofs, len, ofs as u32);
+                                let hs = hash_hsieh_bc7_segment_bits(prev_bits, ofs, len, ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                     && (hash_check >> 8) == (hs >> 8) {
@@ -557,6 +621,12 @@ fn reduce_entropy_bc7_impl_with_progress(
                             continue;
                         }
                         let trial_blk = bc7_copy_segment(orig_bits, prev_bits, ofs, ofs, len);
+                        if get_bc7_mode(&trial_blk) != bc7_mode {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.unsupported_mode_trials += 1;
+                            }
+                            continue;
+                        }
                         if let Some(stats) = stats.as_deref_mut() {
                             stats.decode_trials += 1;
                         }
@@ -602,12 +672,11 @@ fn reduce_entropy_bc7_impl_with_progress(
             let orig_best_ms_err = best_ms_err;
             let best_match_end = best_match_dst_block_ofs + best_match_len;
 
-            for &prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter().rev() {
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
                 if prev_block_index < first_block_to_check {
                     break;
                 }
-                let prev_blk = blocks[prev_block_index];
-                let prev_bits = bc7_block_bits(prev_blk);
+                let prev_bits = block_bits[prev_block_index];
 
                 let dist = (block_index - prev_block_index) * 16;
                 let dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
@@ -640,6 +709,13 @@ fn reduce_entropy_bc7_impl_with_progress(
                             } else {
                                 let trial_blk =
                                     bc7_copy_segment(orig_best_bits, prev_bits, ofs, ofs, len);
+                                let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
+                                if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
+                                    if let Some(stats) = stats.as_deref_mut() {
+                                        stats.unsupported_mode_trials += 1;
+                                    }
+                                    continue;
+                                }
 
                                 if let Some(stats) = stats.as_deref_mut() {
                                     stats.decode_trials += 1;
@@ -649,7 +725,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     &trial_blk,
                                     p_pixels,
                                     bc7_mode,
-                                    !params.allow_relative_movement || ofs > 0,
+                                    trust_mode_hint,
                                     max_trial_err,
                                     stats.as_deref_mut(),
                                 ) else {
@@ -678,6 +754,7 @@ fn reduce_entropy_bc7_impl_with_progress(
         if best_t < cur_t {
             blocks[block_index] = best_block;
             block_modes[block_index] = get_bc7_mode(&best_block);
+            block_bits[block_index] = bc7_block_bits(best_block);
             total_modified += 1;
             if let Some(stats) = stats.as_deref_mut() {
                 stats.modified_blocks += 1;
@@ -1428,16 +1505,17 @@ const BC7_WEIGHTS3: [u8; 8] = [0, 9, 18, 27, 37, 46, 55, 64];
 const BC7_WEIGHTS2: [u8; 4] = [0, 21, 43, 64];
 
 #[inline(always)]
-fn hash_hsieh_bc7_segment(block: &[u8; 16], ofs: usize, len: usize, salt: u32) -> u32 {
+fn hash_hsieh_bc7_segment_bits(block_bits: u128, ofs: usize, len: usize, salt: u32) -> u32 {
     debug_assert!(len > 0);
     debug_assert!(ofs + len <= 16);
     let mut h = (len as u32).wrapping_add(salt << 16);
-    let mut i = ofs;
+    let segment = (block_bits >> (ofs * 8)) & BC7_SEGMENT_MASKS[len];
+    let mut i = 0usize;
     let mut rem = len;
 
     while rem >= 4 {
-        let w0 = u16::from_le_bytes([block[i], block[i+1]]) as u32;
-        let w1 = u16::from_le_bytes([block[i+2], block[i+3]]) as u32;
+        let w0 = ((segment >> (i * 8)) & 0xFFFF) as u32;
+        let w1 = ((segment >> ((i + 2) * 8)) & 0xFFFF) as u32;
         
         h = h.wrapping_add(w0);
         let t = (w1 << 11) ^ h;
@@ -1450,18 +1528,18 @@ fn hash_hsieh_bc7_segment(block: &[u8; 16], ofs: usize, len: usize, salt: u32) -
 
     match rem {
         3 => {
-            h = h.wrapping_add(u16::from_le_bytes([block[i], block[i+1]]) as u32);
+            h = h.wrapping_add(((segment >> (i * 8)) & 0xFFFF) as u32);
             h ^= h << 16;
-            h ^= (block[i+2] as i8 as u32) << 18;
+            h ^= ((segment >> ((i + 2) * 8)) as u8 as i8 as u32) << 18;
             h = h.wrapping_add(h >> 11);
         }
         2 => {
-            h = h.wrapping_add(u16::from_le_bytes([block[i], block[i+1]]) as u32);
+            h = h.wrapping_add(((segment >> (i * 8)) & 0xFFFF) as u32);
             h ^= h << 11;
             h = h.wrapping_add(h >> 17);
         }
         1 => {
-            h = h.wrapping_add(block[i] as i8 as u32);
+            h = h.wrapping_add((segment >> (i * 8)) as u8 as i8 as u32);
             h ^= h << 10;
             h = h.wrapping_add(h >> 1);
         }

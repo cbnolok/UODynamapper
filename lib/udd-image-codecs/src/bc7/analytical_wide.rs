@@ -9,7 +9,7 @@ use super::analytical::{pack_bc7_rgb, pack_bc7_rgba, Pixel};
 use rayon::prelude::*;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;
-const PROGRESS_BLOCK_BATCH: usize = 64;
+const PROGRESS_BLOCK_BATCH: usize = 256;
 
 pub fn pack_bc7_rgba_blocks_wide(
     blocks: &mut [u8],

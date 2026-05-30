@@ -122,7 +122,7 @@ impl Default for Bc7RdoOptions {
 }
 
 #[cfg(feature = "bc7-encode")]
-const BC7_PROGRESS_BLOCK_BATCH: usize = 64;
+const BC7_PROGRESS_BLOCK_BATCH: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VramTextureEncoding {
