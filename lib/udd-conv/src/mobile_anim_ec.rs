@@ -87,6 +87,7 @@ pub struct MobileAnimEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
+    pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
@@ -101,6 +102,7 @@ impl Default for MobileAnimEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
+            crop_transparent_bounds: false,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
@@ -135,6 +137,10 @@ struct PlannedMobileAnimEcFrame {
     source_entry_index: u16,
     width: u16,
     height: u16,
+    source_left: u16,
+    source_top: u16,
+    source_width: u16,
+    source_height: u16,
     center_x: i16,
     center_y: i16,
     source: PlannedMobileAnimEcSource,
@@ -227,6 +233,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    apply_planned_transparent_trim(&mut planned_by_body, options)?;
     apply_planned_upscale(&mut planned_by_body, options)?;
     let planned_frames = planned_by_body
         .values()
@@ -605,6 +612,79 @@ fn apply_planned_upscale(
     Ok(())
 }
 
+fn apply_planned_transparent_trim(
+    planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<()> {
+    if !options.crop_transparent_bounds {
+        return Ok(());
+    }
+
+    let mut animationframe_packages = HashMap::<PathBuf, UopPackage>::new();
+    let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
+    let mut decoded_source_use_tick = 0u64;
+
+    for frames in planned_by_body.values_mut() {
+        for frame in frames {
+            let animation = cached_decode_planned_animation_source(
+                &frame.source,
+                &mut animationframe_packages,
+                &mut decoded_sources,
+                &mut decoded_source_use_tick,
+            )?;
+            let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize).copied() else {
+                eyre::bail!(
+                    "planned EC mobile animation body {} frame {} missing source entry {} while trimming",
+                    frame.body_id,
+                    frame.source_frame_index,
+                    frame.source_entry_index
+                );
+            };
+            let decoded = animation.decode_frame(&source_entry)?;
+            if decoded.width != frame.width || decoded.height != frame.height {
+                eyre::bail!(
+                    "planned EC mobile animation body {} frame {} changed dimensions while trimming: planned {}x{}, decoded {}x{}",
+                    frame.body_id,
+                    frame.source_frame_index,
+                    frame.width,
+                    frame.height,
+                    decoded.width,
+                    decoded.height
+                );
+            }
+            let Some(bounds) = transparent_bounds(decoded.width, decoded.height, &decoded.data)? else {
+                continue;
+            };
+            if bounds.left == 0
+                && bounds.top == 0
+                && bounds.right == u32::from(frame.width)
+                && bounds.bottom == u32::from(frame.height)
+            {
+                continue;
+            }
+
+            frame.source_left = bounds.left as u16;
+            frame.source_top = bounds.top as u16;
+            frame.width = (bounds.right - bounds.left) as u16;
+            frame.height = (bounds.bottom - bounds.top) as u16;
+            frame.source_width = frame.width;
+            frame.source_height = frame.height;
+            frame.center_x = adjusted_frame_center(
+                frame.center_x,
+                bounds.left,
+                "EC mobile animation frame center_x",
+            )?;
+            frame.center_y = adjusted_frame_center(
+                frame.center_y,
+                bounds.top,
+                "EC mobile animation frame center_y",
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn has_effective_upscale(passes: &[UpscaleFilter]) -> bool {
     passes.iter().any(|filter| !matches!(filter, UpscaleFilter::None))
 }
@@ -702,6 +782,10 @@ fn planned_frame_from_entry(
         source_entry_index,
         width,
         height,
+        source_left: 0,
+        source_top: 0,
+        source_width: width,
+        source_height: height,
         center_x: if width == 0 || height == 0 {
             0
         } else {
@@ -956,7 +1040,7 @@ pub(crate) fn pack_frames_into_pages(
     frames: Vec<DecodedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<(Vec<BuiltMobileAnimEcPage>, HashMap<(u32, u16), FramePlacement>)> {
-    let mut remaining = frames
+    let mut remaining = prepare_decoded_frames(frames, options)?
         .into_iter()
         .filter(|frame| frame.width != 0 && frame.height != 0 && !frame.rgba.is_empty())
         .collect::<Vec<_>>();
@@ -1437,6 +1521,10 @@ fn build_planned_page(
         inner_y: u32,
         expected_width: u16,
         expected_height: u16,
+        source_left: u16,
+        source_top: u16,
+        source_crop_width: u16,
+        source_crop_height: u16,
         animation: Arc<AnimationFrame>,
         source_entry: FrameEntry,
     }
@@ -1482,6 +1570,10 @@ fn build_planned_page(
                 inner_y: inner_y as u32,
                 expected_width: frame.width,
                 expected_height: frame.height,
+                source_left: frame.source_left,
+                source_top: frame.source_top,
+                source_crop_width: frame.source_width,
+                source_crop_height: frame.source_height,
                 animation,
                 source_entry,
             });
@@ -1509,10 +1601,19 @@ fn build_planned_page(
             .into_par_iter()
             .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
                 let decoded = pending.animation.decode_frame(&pending.source_entry)?;
-                let (width, height, rgba, _, _) = apply_filter_passes_owned(
-                    decoded.width as u32,
-                    decoded.height as u32,
+                let rgba = crop_rgba_frame_window(
+                    decoded.width,
+                    decoded.height,
                     decoded.data,
+                    u32::from(pending.source_left),
+                    u32::from(pending.source_top),
+                    u32::from(pending.source_crop_width),
+                    u32::from(pending.source_crop_height),
+                )?;
+                let (width, height, rgba, _, _) = apply_filter_passes_owned(
+                    pending.source_crop_width as u32,
+                    pending.source_crop_height as u32,
+                    rgba,
                     &options.upscale_passes,
                 );
                 if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
@@ -1558,25 +1659,38 @@ fn build_planned_page(
     } else {
         for pending in pending_blits {
             let decoded = pending.animation.decode_frame(&pending.source_entry)?;
-            if decoded.width != pending.expected_width || decoded.height != pending.expected_height {
+            if u32::from(pending.source_left) + u32::from(pending.source_crop_width) > u32::from(decoded.width)
+                || u32::from(pending.source_top) + u32::from(pending.source_crop_height) > u32::from(decoded.height)
+            {
                 eyre::bail!(
-                    "planned EC mobile animation body {} frame {} changed dimensions: planned {}x{}, decoded {}x{}",
+                    "planned EC mobile animation body {} frame {} crop window is outside decoded frame: crop {},{} {}x{}, decoded {}x{}",
                     pending.body_id,
                     pending.source_frame_index,
-                    pending.expected_width,
-                    pending.expected_height,
+                    pending.source_left,
+                    pending.source_top,
+                    pending.source_crop_width,
+                    pending.source_crop_height,
                     decoded.width,
                     decoded.height
                 );
             }
+            let rgba = crop_rgba_frame_window(
+                decoded.width,
+                decoded.height,
+                decoded.data,
+                u32::from(pending.source_left),
+                u32::from(pending.source_top),
+                u32::from(pending.source_crop_width),
+                u32::from(pending.source_crop_height),
+            )?;
             filled_pixel_count += blit_rgba_frame(
                 &mut pixels,
                 used_width,
                 pending.inner_x,
                 pending.inner_y,
-                decoded.width as u32,
-                decoded.height as u32,
-                &decoded.data,
+                pending.expected_width as u32,
+                pending.expected_height as u32,
+                &rgba,
             )
             .wrap_err_with(|| format!(
                 "blit EC mobile animation body {} frame {}",
@@ -1717,6 +1831,156 @@ fn planned_sort_area(
     planned_packing_axes(frame, page_size, options)
         .map(|(width_axis, height_axis)| width_axis.alloc_extent * height_axis.alloc_extent)
         .unwrap_or(0)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TransparentBounds {
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+}
+
+fn prepare_decoded_frames(
+    frames: Vec<DecodedMobileAnimEcFrame>,
+    options: &MobileAnimEcAtlasOptions,
+) -> eyre::Result<Vec<DecodedMobileAnimEcFrame>> {
+    if !options.crop_transparent_bounds {
+        return Ok(frames);
+    }
+
+    frames.into_iter().map(trim_decoded_frame).collect()
+}
+
+fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMobileAnimEcFrame> {
+    let Some(bounds) = transparent_bounds(frame.width, frame.height, &frame.rgba)? else {
+        return Ok(frame);
+    };
+    if bounds.left == 0
+        && bounds.top == 0
+        && bounds.right == u32::from(frame.width)
+        && bounds.bottom == u32::from(frame.height)
+    {
+        return Ok(frame);
+    }
+
+    let width = (bounds.right - bounds.left) as u16;
+    let height = (bounds.bottom - bounds.top) as u16;
+    let center_x = adjusted_frame_center(
+        frame.center_x,
+        bounds.left,
+        "EC mobile animation frame center_x",
+    )?;
+    let center_y = adjusted_frame_center(
+        frame.center_y,
+        bounds.top,
+        "EC mobile animation frame center_y",
+    )?;
+    let body_id = frame.body_id;
+    let source_frame_index = frame.source_frame_index;
+    let rgba = crop_rgba_frame_window(
+        frame.width,
+        frame.height,
+        frame.rgba,
+        bounds.left,
+        bounds.top,
+        u32::from(width),
+        u32::from(height),
+    )?;
+
+    Ok(DecodedMobileAnimEcFrame {
+        body_id,
+        source_frame_index,
+        width,
+        height,
+        center_x,
+        center_y,
+        rgba,
+    })
+}
+
+fn transparent_bounds(
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+) -> eyre::Result<Option<TransparentBounds>> {
+    let expected_len = width as usize * height as usize * 4;
+    if rgba.len() != expected_len {
+        eyre::bail!(
+            "invalid RGBA payload length for EC mobile animation trim {}x{}: expected {}, got {}",
+            width,
+            height,
+            expected_len,
+            rgba.len()
+        );
+    }
+
+    let mut min_x = width as u32;
+    let mut min_y = height as u32;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    let mut found_opaque = false;
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let alpha = rgba[(y * width as usize + x) * 4 + 3];
+            if alpha != 0 {
+                found_opaque = true;
+                min_x = min_x.min(x as u32);
+                min_y = min_y.min(y as u32);
+                max_x = max_x.max(x as u32);
+                max_y = max_y.max(y as u32);
+            }
+        }
+    }
+
+    Ok(found_opaque.then_some(TransparentBounds {
+        left: min_x,
+        top: min_y,
+        right: max_x + 1,
+        bottom: max_y + 1,
+    }))
+}
+
+fn crop_rgba_frame_window(
+    source_width: u16,
+    source_height: u16,
+    rgba: Vec<u8>,
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+) -> eyre::Result<Vec<u8>> {
+    if left == 0 && top == 0 && width == u32::from(source_width) && height == u32::from(source_height) {
+        return Ok(rgba);
+    }
+    if left + width > u32::from(source_width) || top + height > u32::from(source_height) {
+        eyre::bail!(
+            "EC mobile animation frame crop {},{} {}x{} is outside source {}x{}",
+            left,
+            top,
+            width,
+            height,
+            source_width,
+            source_height
+        );
+    }
+
+    let source_stride = source_width as usize * 4;
+    let target_stride = width as usize * 4;
+    let mut cropped = vec![0u8; width as usize * height as usize * 4];
+    for row in 0..height as usize {
+        let source_start = ((top as usize + row) * source_stride) + left as usize * 4;
+        let target_start = row * target_stride;
+        cropped[target_start..target_start + target_stride]
+            .copy_from_slice(&rgba[source_start..source_start + target_stride]);
+    }
+    Ok(cropped)
+}
+
+fn adjusted_frame_center(center: i16, trim_start: u32, label: &str) -> eyre::Result<i16> {
+    let adjusted = i32::from(center) - trim_start as i32;
+    i16::try_from(adjusted)
+        .map_err(|_| eyre::eyre!("{label} exceeds i16 after transparent trim: {adjusted}"))
 }
 
 fn blit_rgba_frame(
@@ -1891,12 +2155,34 @@ mod tests {
         }
     }
 
+    fn sparse_frame(body_id: u32, source_frame_index: u16) -> DecodedMobileAnimEcFrame {
+        let width = 6u16;
+        let height = 6u16;
+        let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        for y in 2..5usize {
+            for x in 1..4usize {
+                let index = (y * width as usize + x) * 4;
+                rgba[index..index + 4].copy_from_slice(&[10, 20, 30, 255]);
+            }
+        }
+        DecodedMobileAnimEcFrame {
+            body_id,
+            source_frame_index,
+            width,
+            height,
+            center_x: 4,
+            center_y: 5,
+            rgba,
+        }
+    }
+
     #[test]
     fn packer_uses_four_pixel_aligned_extents() {
         let options = MobileAnimEcAtlasOptions {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 0,
+            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -1917,11 +2203,39 @@ mod tests {
     }
 
     #[test]
+    fn transparent_trim_updates_frame_bounds_and_centers() {
+        let options = MobileAnimEcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 0,
+            crop_transparent_bounds: true,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
+        };
+
+        let (pages, placements) = pack_frames_into_pages(vec![sparse_frame(42, 0)], &options).unwrap();
+        let placement = placements[&(42, 0)];
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(placement.width, 3);
+        assert_eq!(placement.height, 3);
+        assert_eq!(placement.center_x, 3);
+        assert_eq!(placement.center_y, 3);
+        assert_eq!(pages[0].record.used_width % 4, 0);
+        assert_eq!(pages[0].record.used_height % 4, 0);
+    }
+
+    #[test]
     fn packer_uses_smallest_effective_bucket() {
         let options = MobileAnimEcAtlasOptions {
             atlas_width: 2048,
             atlas_height: 2048,
             gutter: 4,
+            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -1944,6 +2258,7 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
+            crop_transparent_bounds: false,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -2034,6 +2349,7 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
+            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,

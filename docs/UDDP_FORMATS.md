@@ -177,7 +177,13 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 ---
 
-## 3. `world_lights.uddp`
+## 3. Animation Atlas Trimming
+
+`mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` can trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
+
+---
+
+## 4. `world_lights.uddp`
 
 This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime unless the placed static has a nonzero hue id, in which case the runtime can recolor the mask from `hues.uddp` or `hues.mul`.
 
@@ -186,7 +192,7 @@ This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` 
 - `metadata/slots.bin`: Dense slot manifest indexed by light id.
 - `lights/{light_id:08}.rgba8888`: Raw RGBA8888 light-mask payload for present slots.
 
-### 3.1 `WorldLightSlotRecord` Struct (10 Bytes)
+### 4.1 `WorldLightSlotRecord` Struct (10 Bytes)
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|

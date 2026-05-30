@@ -627,6 +627,8 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
+        #[arg(long = "crop-transparent-bounds", default_value_t = false, help = "Trim transparent mobile animation frame borders before atlas packing and adjust frame centers.")]
+        crop_transparent_bounds: bool,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
@@ -655,6 +657,8 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
+        #[arg(long = "crop-transparent-bounds", default_value_t = false, help = "Trim transparent EC mobile animation frame borders before atlas packing and adjust frame centers.")]
+        crop_transparent_bounds: bool,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
@@ -1149,6 +1153,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_width,
             atlas_height,
             gutter,
+            crop_transparent_bounds,
             raw,
             jxl,
             zstd,
@@ -1168,6 +1173,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width,
                     atlas_height,
                     gutter,
+                    crop_transparent_bounds,
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
@@ -1199,6 +1205,7 @@ pub fn run() -> eyre::Result<()> {
             atlas_width,
             atlas_height,
             gutter,
+            crop_transparent_bounds,
             raw,
             jxl,
             zstd,
@@ -1220,6 +1227,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width,
                     atlas_height,
                     gutter,
+                    crop_transparent_bounds,
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
@@ -2209,6 +2217,7 @@ mod tests {
             "/cc",
             "--output",
             "mobile_anim_cc.uddp",
+            "--crop-transparent-bounds",
         ])
         .expect("mobile animation pack commands default to BC7 output");
 
@@ -2219,6 +2228,7 @@ mod tests {
                 zstd,
                 bc7,
                 bc7_rdo,
+                crop_transparent_bounds,
                 ..
             } => {
                 assert!(!raw);
@@ -2226,6 +2236,7 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
+                assert!(crop_transparent_bounds);
                 let output_format =
                     resolve_mobile_anim_output_format(raw, jxl, zstd, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
@@ -2670,6 +2681,7 @@ mod tests {
             "/tables",
             "--ec-mobile-animations-kdl",
             "/tables/EcMobileAnimations.kdl",
+            "--crop-transparent-bounds",
         ])
         .expect("parse ec mobile animation metadata paths");
 
@@ -2677,6 +2689,7 @@ mod tests {
             Commands::PackEcMobileAnims {
                 tables,
                 ec_mobile_animations_kdl,
+                crop_transparent_bounds,
                 ..
             } => {
                 assert_eq!(tables, Some(PathBuf::from("/tables")));
@@ -2684,6 +2697,7 @@ mod tests {
                     ec_mobile_animations_kdl,
                     Some(PathBuf::from("/tables/EcMobileAnimations.kdl"))
                 );
+                assert!(crop_transparent_bounds);
             }
             _ => panic!("unexpected command parsed"),
         }
