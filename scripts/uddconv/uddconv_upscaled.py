@@ -201,9 +201,29 @@ def run_animations(
         raise SystemExit(2)
     ensure_output_dir(output_dir)
     if ccdir:
-        run_pack("pack-mobile-anims", *cc_format, *cc_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/mobile_anim_cc.uddp")
+        run_pack(
+            "pack-mobile-anims",
+            *cc_format,
+            *cc_upscale,
+            "--crop-transparent-bounds",
+            "--ccdir",
+            ccdir,
+            "--output",
+            f"{output_dir}/mobile_anim_cc.uddp",
+        )
     if ecdir:
-        run_pack("pack-ec-mobile-anims", *ec_format, *ec_upscale, "--tables", tables, "--ecdir", ecdir, "--output", f"{output_dir}/mobile_anim_ec.uddp")
+        run_pack(
+            "pack-ec-mobile-anims",
+            *ec_format,
+            *ec_upscale,
+            "--crop-transparent-bounds",
+            "--tables",
+            tables,
+            "--ecdir",
+            ecdir,
+            "--output",
+            f"{output_dir}/mobile_anim_ec.uddp",
+        )
 
 
 def run_gumps(
@@ -264,7 +284,7 @@ def run_all(
         source_args.extend(["--ecdir", ecdir])
 
     print("Converting common world packages...")
-    run_pack("pack-art", *cc_art_format, *cc_art_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/tex_art_cc.uddp")
+    run_pack("pack-art", *cc_art_format, *cc_art_upscale, *source_args, "--output", f"{output_dir}/tex_art_cc.uddp")
     run_pack("pack-texmaps", *cc_land_format, *cc_land_upscale, "--ccdir", ccdir, "--output", f"{output_dir}/tex_land_cc.uddp")
     if ecdir:
         run_pack(
@@ -274,6 +294,8 @@ def run_all(
             *ec_art_upscale,
             *ec_land_upscale,
             *source_args,
+            "--art-crop-transparent-bounds",
+            "--tilemeta-ec-art-cropped",
             "--art-output",
             f"{output_dir}/tex_art_ec.uddp",
             "--land-output",
