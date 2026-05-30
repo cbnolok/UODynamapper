@@ -102,9 +102,11 @@ impl eframe::App for UddConvApp {
                         });
 
                         ui.add_space(5.0);
+                        let log_scroll_height = ui.available_height();
                         let text_edit_id = ui.make_persistent_id("log_view");
                         egui::ScrollArea::vertical()
                             .id_salt(text_edit_id)
+                            .max_height(log_scroll_height)
                             .auto_shrink([false, false])
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
@@ -123,6 +125,7 @@ impl eframe::App for UddConvApp {
                                     };
                                     ui.colored_label(color, &log.text);
                                 }
+                                ui.add_space(6.0);
                             });
                     },
                 );

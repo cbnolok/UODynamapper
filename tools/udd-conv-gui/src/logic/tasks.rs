@@ -27,6 +27,7 @@ use udd_conv::{
     tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
+    upscale::{UpscaleConfig, UpscaleFilter},
     BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
@@ -103,7 +104,11 @@ impl AssetProgressReporter {
         }
     }
 
-    fn task_progress(&self, progress: AssetTaskProgress) {
+    fn task_progress_with_extract_label(
+        &self,
+        progress: AssetTaskProgress,
+        extract_label: &'static str,
+    ) {
         self.panic_if_cancelled();
         let fraction = if progress.total == 0 {
             0.0
@@ -111,7 +116,7 @@ impl AssetProgressReporter {
             progress.completed.min(progress.total) as f32 / progress.total as f32
         };
         let (base, span, label) = match progress.stage {
-            AssetTaskProgressStage::Extracting => (0.0, 0.20, "Extracting"),
+            AssetTaskProgressStage::Extracting => (0.0, 0.20, extract_label),
             AssetTaskProgressStage::PackingAtlas => (0.20, 0.20, "Building atlas"),
             AssetTaskProgressStage::EncodingBc7 => (0.40, 0.15, "BC7 encoding"),
             AssetTaskProgressStage::ApplyingRdo => (0.55, 0.15, "Applying RDO"),
@@ -214,6 +219,14 @@ fn bc7_rdo_lambda(settings: &AppSettings) -> f32 {
     } else {
         0.0
     }
+}
+
+fn upscale_filter_active(filter: UpscaleFilter) -> bool {
+    !matches!(filter, UpscaleFilter::None)
+}
+
+fn upscale_config_active(config: UpscaleConfig) -> bool {
+    upscale_filter_active(config.filter)
 }
 
 impl UddConvApp {
@@ -336,6 +349,11 @@ impl UddConvApp {
                 settings.zstd_tex_art_cc,
                 settings.jxl_tex_art_cc,
             );
+            let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc) {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
 
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
                 &sources, &output,
@@ -354,7 +372,7 @@ impl UddConvApp {
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
-                |task_progress| progress.task_progress(task_progress),
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -374,6 +392,13 @@ impl UddConvApp {
                 settings.zstd_tex_land_cc,
                 settings.jxl_tex_land_cc,
             );
+            let extract_label = if upscale_config_active(settings.upscale_tex_land_cc_64)
+                || upscale_config_active(settings.upscale_tex_land_cc_128)
+            {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
 
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                 &sources[0], &output,
@@ -393,7 +418,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                 },
                 &classic_patch_options(&settings),
-                |task_progress| progress.task_progress(task_progress),
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -413,6 +438,11 @@ impl UddConvApp {
                 settings.zstd_tex_art_ec,
                 settings.jxl_tex_art_ec,
             );
+            let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec) {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
 
             let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
                 &sources, &output,
@@ -430,7 +460,7 @@ impl UddConvApp {
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                 },
-                |task_progress| progress.task_progress(task_progress),
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -450,6 +480,15 @@ impl UddConvApp {
                 settings.zstd_tex_land_ec,
                 settings.jxl_tex_land_ec,
             );
+            let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
+                || upscale_config_active(settings.upscale_tex_land_ec_128)
+                || upscale_config_active(settings.upscale_tex_land_ec_256)
+                || upscale_config_active(settings.upscale_tex_land_ec_512)
+            {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
 
             let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
                 &sources, &output,
@@ -473,7 +512,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                     transcode_kdl_path: None,
                 },
-                |task_progress| progress.task_progress(task_progress),
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
