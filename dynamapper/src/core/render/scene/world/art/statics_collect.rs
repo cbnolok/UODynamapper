@@ -1368,8 +1368,6 @@ pub fn sys_collect_visible_statics(
                             let world_y = base_world_y + bias;
                             let (
                                 billboard_source,
-                                offset_x_pixels,
-                                offset_y_pixels,
                                 resolved_sprite,
                                 texture_stretch,
                             ) =
@@ -1380,10 +1378,6 @@ pub fn sys_collect_visible_statics(
                                         else {
                                             continue;
                                         };
-                                        let offset_x_pixels =
-                                            tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0);
-                                        let offset_y_pixels =
-                                            tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0);
 
                                         if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
                                             chunk_requested_pages.insert(slot.page_index as u64);
@@ -1391,8 +1385,6 @@ pub fn sys_collect_visible_statics(
 
                                         (
                                             ClientTextureSource::Cc,
-                                            offset_x_pixels,
-                                            offset_y_pixels,
                                             sprite_atlas.resolve_cc(tex_art_cc, art_id),
                                             0.0,
                                         )
@@ -1429,8 +1421,6 @@ pub fn sys_collect_visible_statics(
 
                                         (
                                             ClientTextureSource::Ec,
-                                            0,
-                                            0,
                                             ground_atlas.resolve_tex_land_ec(
                                                 tex_land_ec,
                                                 resolution.runtime_slot_id,
@@ -1444,10 +1434,6 @@ pub fn sys_collect_visible_statics(
                                         else {
                                             continue;
                                         };
-                                        let offset_x_pixels =
-                                            tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0);
-                                        let offset_y_pixels =
-                                            tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0);
 
                                         if let Some(slot) = tex_art_ec.present_slot(art_id) {
                                             chunk_requested_pages.insert(slot.page_index as u64);
@@ -1455,8 +1441,6 @@ pub fn sys_collect_visible_statics(
 
                                         (
                                             ClientTextureSource::Ec,
-                                            offset_x_pixels,
-                                            offset_y_pixels,
                                             sprite_atlas.resolve_ec(tex_art_ec, art_id),
                                             0.0,
                                         )
@@ -1507,8 +1491,8 @@ pub fn sys_collect_visible_statics(
                                 } else {
                                     let bounds = resolve_static_billboard_bounds(
                                         billboard_source,
-                                        offset_x_pixels,
-                                        offset_y_pixels,
+                                        resolved.offset_x,
+                                        resolved.offset_y,
                                         resolved.logical_width,
                                         resolved.logical_height,
                                     );

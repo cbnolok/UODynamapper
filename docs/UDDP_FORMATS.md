@@ -84,15 +84,15 @@ Represents static map items and artwork.
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
 | 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
 | 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
-| 0x38 | `i16` | `ec_offset_x` | X draw offset for EC. |
-| 0x3A | `i16` | `ec_offset_y` | Y draw offset for EC. |
+| 0x38 | `i16` | `ec_offset_x` | Reserved legacy EC draw offset. Runtime art placement reads `tex_art_ec` slot metadata instead. |
+| 0x3A | `i16` | `ec_offset_y` | Reserved legacy EC draw offset. Runtime art placement reads `tex_art_ec` slot metadata instead. |
 | 0x3C | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
 | 0x40 | `i16` | `cc_start_x` | X bounding box start for CC. |
 | 0x42 | `i16` | `cc_start_y` | Y bounding box start for CC. |
-| 0x44 | `i16` | `cc_offset_x` | X draw offset for CC. |
-| 0x46 | `i16` | `cc_offset_y` | Y draw offset for CC. |
+| 0x44 | `i16` | `cc_offset_x` | Reserved legacy CC draw offset. Runtime art placement reads `tex_art_cc` slot metadata instead. |
+| 0x46 | `i16` | `cc_offset_y` | Reserved legacy CC draw offset. Runtime art placement reads `tex_art_cc` slot metadata instead. |
 
-When `tilemeta.uddp` is generated for the historical cropped EC-static layout, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped source payload. For atlas alpha trimming inside the tileart sampling window, placement should instead be preserved by adjusting `ec_offset_x`/`ec_offset_y` with the visual trim delta while leaving `ec_start_x`/`ec_start_y` unchanged.
+When `tilemeta.uddp` is generated for the historical cropped EC-static layout, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped source payload. Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec.uddp`.
 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
@@ -129,7 +129,7 @@ For cropped EC art layouts, cropping is performed per art entry, not per decoded
 
 This rule matters because different art ids can reference the same source texture while sampling different sub-rectangles of it.
 It also explains why `tileart.uop` must be treated as the source of entry-local EC art semantics rather than as a blunt texture-id list.
-When the cropped payload is consumed as an atlas slot by the renderer, the matching `tilemeta.uddp` should preserve the original on-screen placement by applying the visual trim to EC draw offsets. BC7 output still keeps atlas allocation and stored page extents aligned to 4x4 blocks.
+When the cropped payload is consumed as an atlas slot by the renderer, the `tex_art_ec` slot record preserves the original on-screen placement by applying the visual trim to EC draw offsets. BC7 output still keeps atlas allocation and stored page extents aligned to 4x4 blocks.
 
 ### 2.1 Metadata Structures
 
@@ -142,7 +142,7 @@ When the cropped payload is consumed as an atlas slot by the renderer, the match
 | 0x08 | `u32` | `used_width` | Maximum X extent used in the page. |
 | 0x0C | `u32` | `used_height`| Maximum Y extent used in the page. |
 
-**Slot Record (24 Bytes)**
+**Slot Record (28 Bytes)**
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
@@ -156,8 +156,10 @@ When the cropped payload is consumed as an atlas slot by the renderer, the match
 | 0x12 | `u16` | `height` | Height of the tile. |
 | 0x14 | `u16` | `upscale_factor` | Per-slot pixel upscale factor. Atlas coordinates and dimensions are physical pixels; renderer placement uses `width / upscale_factor` and `height / upscale_factor` in source-logical pixels. |
 | 0x16 | `u16` | `upscale_algorithm` | Per-slot upscale algorithm code. `0` means none/native; nonzero values identify the build-time upscaler family. |
+| 0x18 | `i16` | `draw_offset_x` | Source-specific X draw offset in logical pixels. |
+| 0x1A | `i16` | `draw_offset_y` | Source-specific Y draw offset in logical pixels. |
 
-`upscale_factor` and `upscale_algorithm` are intentionally stored per slot because art packages may mix native, 2x, 3x, and 4x assets. Missing or non-upscaled slots use factor `1` and algorithm `0`.
+`upscale_factor`, `upscale_algorithm`, and draw offsets are intentionally stored per slot because art packages may mix native, 2x, 3x, and 4x assets and aliased art ids may share pixels while keeping distinct placement. Missing or non-upscaled slots use factor `1` and algorithm `0`.
 
 ### 2.2 Gump Atlas Metadata
 

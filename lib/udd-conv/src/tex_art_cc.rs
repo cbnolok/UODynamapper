@@ -132,6 +132,8 @@ pub struct DecodedArtTile {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
     pub rgba: Vec<u8>,
 }
 
@@ -146,6 +148,8 @@ pub struct PlacedTile {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
 }
 
 #[derive(Debug, Clone)]
@@ -160,7 +164,7 @@ pub struct BuiltPage {
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_CC_METADATA_VERSION: u32 = 5;
+const TEX_ART_CC_METADATA_VERSION: u32 = 6;
 
 pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
     match filter {
@@ -499,6 +503,8 @@ fn decode_present_tiles(
                                 height: h as u16,
                                 upscale_factor: upscale_factor as u16,
                                 upscale_algorithm: upscale_algorithm_code(upscale_filter),
+                                draw_offset_x: 0,
+                                draw_offset_y: 0,
                                 rgba,
                             })
                         }
@@ -521,6 +527,8 @@ fn decode_present_tiles(
                             height: h as u16,
                             upscale_factor: upscale_factor as u16,
                             upscale_algorithm: upscale_algorithm_code(upscale_filter),
+                            draw_offset_x: 0,
+                            draw_offset_y: 0,
                             rgba,
                         })
                     }
@@ -633,6 +641,8 @@ pub fn pack_tiles_into_pages(
                 height: placed.height,
                 upscale_factor: placed.upscale_factor,
                 upscale_algorithm: placed.upscale_algorithm,
+                draw_offset_x: placed.draw_offset_x,
+                draw_offset_y: placed.draw_offset_y,
             };
         }
 
@@ -869,6 +879,8 @@ fn build_page(
                 height: tile.height,
                 upscale_factor: tile.upscale_factor,
                 upscale_algorithm: tile.upscale_algorithm,
+                draw_offset_x: tile.draw_offset_x,
+                draw_offset_y: tile.draw_offset_y,
             });
         } else {
             leftovers.push(tile);
@@ -976,7 +988,7 @@ pub fn serialize_slot_manifest(
     slots: &[TexArtCcSlotRecord],
     options: &TexArtCcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(25 + slots.len() * 24);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 28);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_CC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -995,6 +1007,8 @@ pub fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.height)?;
         bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
         bytes.write_u16::<LittleEndian>(slot.upscale_algorithm)?;
+        bytes.write_i16::<LittleEndian>(slot.draw_offset_x)?;
+        bytes.write_i16::<LittleEndian>(slot.draw_offset_y)?;
     }
     Ok(bytes)
 }
@@ -1032,6 +1046,8 @@ mod tests {
             height,
             upscale_factor: 1,
             upscale_algorithm: 0,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
             rgba: vec![255; width as usize * height as usize * 4],
         }
     }
@@ -1087,5 +1103,27 @@ mod tests {
         assert_eq!(page.record.used_height % 4, 0);
         assert_eq!(placed.width, 3);
         assert_eq!(placed.height, 3);
+    }
+
+    #[test]
+    fn packed_art_slot_preserves_draw_offset() {
+        let options = TexArtCcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 1,
+            compression: CompressionFlag::None,
+            upscale: UpscaleFilter::None,
+            upscale_passes: Vec::new(),
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        };
+        let mut tile = tile(7, 3, 3);
+        tile.draw_offset_x = -5;
+        tile.draw_offset_y = 6;
+
+        let (_pages, slots) = pack_tiles_into_pages(vec![tile], 8, &options).unwrap();
+
+        assert_eq!(slots[7].draw_offset_x, -5);
+        assert_eq!(slots[7].draw_offset_y, 6);
     }
 }

@@ -63,7 +63,7 @@ use crate::tex_art_cc::upscale_algorithm_code;
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Bump version when the binary layout of either manifest changes.
-const TEX_ART_EC_METADATA_VERSION: u32 = 5;
+const TEX_ART_EC_METADATA_VERSION: u32 = 6;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -161,6 +161,8 @@ pub struct DecodedArtTile {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
     pub rgba: Vec<u8>,
 }
 
@@ -170,7 +172,7 @@ struct PreparedArtDecodeGroup {
     kind: ArtTileKind,
     texture_bounds: ArtTexture,
     file: TextureFile,
-    alias_art_ids: Vec<u32>,
+    alias_art_ids: Vec<(u32, i16, i16)>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,9 +183,11 @@ struct DecodedArtDecodeGroup {
     height: u16,
     upscale_factor: u16,
     upscale_algorithm: u16,
+    draw_offset_x: i16,
+    draw_offset_y: i16,
     rgba: Vec<u8>,
     crop_adjustment: TexArtEcCropAdjustment,
-    alias_art_ids: Vec<u32>,
+    alias_art_ids: Vec<(u32, i16, i16)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,6 +221,8 @@ pub struct RenderedTileKey {
 pub struct SlotAlias {
     pub art_id: u32,
     pub canonical_art_id: u32,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
 }
 
 pub struct TexArtEcLoadedSources {
@@ -249,6 +255,8 @@ pub struct PlacedTile {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
 }
 
 #[derive(Debug, Clone)]
@@ -574,6 +582,36 @@ fn validate_options(options: &TexArtEcAtlasOptions) -> eyre::Result<()> {
     Ok(())
 }
 
+fn adjusted_draw_offset(
+    art_id: u32,
+    texture: &ArtTexture,
+    adjustment: TexArtEcCropAdjustment,
+) -> eyre::Result<(i16, i16)> {
+    adjusted_draw_offset_values(art_id, texture.offset_x, texture.offset_y, adjustment)
+}
+
+fn adjusted_draw_offset_values(
+    art_id: u32,
+    offset_x: i32,
+    offset_y: i32,
+    adjustment: TexArtEcCropAdjustment,
+) -> eyre::Result<(i16, i16)> {
+    let adjusted_x = offset_x + i32::from(adjustment.trim_left);
+    let adjusted_y = offset_y - i32::from(adjustment.trim_bottom);
+    Ok((
+        i16::try_from(adjusted_x).map_err(|_| {
+            eyre::eyre!("art {art_id} adjusted EC offset_x {adjusted_x} does not fit in i16")
+        })?,
+        i16::try_from(adjusted_y).map_err(|_| {
+            eyre::eyre!("art {art_id} adjusted EC offset_y {adjusted_y} does not fit in i16")
+        })?,
+    ))
+}
+
+fn base_draw_offset(art_id: u32, texture: &ArtTexture) -> eyre::Result<(i16, i16)> {
+    adjusted_draw_offset(art_id, texture, TexArtEcCropAdjustment::default())
+}
+
 fn decode_present_tiles(
     art_definition: &ArtDefinition,
     terrain_source_texture_ids: &HashSet<u32>,
@@ -639,9 +677,12 @@ fn decode_present_tiles(
                 source: source_key,
                 window: requested_source_window(texture_bounds),
             };
+            let (draw_offset_x, draw_offset_y) = base_draw_offset(art_id as u32, texture_bounds)?;
 
             if let Some(&group_index) = canonical_by_source.get(&canonical_key) {
-                decode_groups[group_index].alias_art_ids.push(art_id as u32);
+                decode_groups[group_index]
+                    .alias_art_ids
+                    .push((art_id as u32, draw_offset_x, draw_offset_y));
                 continue;
             }
 
@@ -697,6 +738,18 @@ fn decode_present_tiles(
             } else {
                 apply_requested_clip_rect(source_width, source_height, rgba.into_raw(), clip_rect)?
             };
+            let (draw_offset_x, draw_offset_y) =
+                adjusted_draw_offset(group.canonical_art_id, &group.texture_bounds, crop_adjustment)?;
+            let mut alias_art_ids = Vec::with_capacity(group.alias_art_ids.len());
+            for &(alias_art_id, alias_offset_x, alias_offset_y) in &group.alias_art_ids {
+                let (alias_offset_x, alias_offset_y) = adjusted_draw_offset_values(
+                    alias_art_id,
+                    i32::from(alias_offset_x),
+                    i32::from(alias_offset_y),
+                    crop_adjustment,
+                )?;
+                alias_art_ids.push((alias_art_id, alias_offset_x, alias_offset_y));
+            }
 
             let upscale_passes = art_upscale_passes(options);
             let (width, height, rgba, upscale_factor, upscale_filter) =
@@ -710,9 +763,11 @@ fn decode_present_tiles(
                 height: height as u16,
                 upscale_factor: upscale_factor as u16,
                 upscale_algorithm: upscale_algorithm_code(upscale_filter),
+                draw_offset_x,
+                draw_offset_y,
                 rgba,
                 crop_adjustment,
-                alias_art_ids: group.alias_art_ids.clone(),
+                alias_art_ids,
             })
         })
         .collect::<Vec<_>>();
@@ -720,7 +775,7 @@ fn decode_present_tiles(
 
     for decoded_group in decoded_groups {
         let decoded_group = decoded_group?;
-        if let Some(rendered_canonical_art_id) = register_rendered_tile_alias(
+        let canonical_art_id = if let Some(rendered_canonical_art_id) = register_rendered_tile_alias(
             decoded_group.canonical_art_id,
             decoded_group.width,
             decoded_group.height,
@@ -730,7 +785,10 @@ fn decode_present_tiles(
             aliases.push(SlotAlias {
                 art_id: decoded_group.canonical_art_id,
                 canonical_art_id: rendered_canonical_art_id,
+                draw_offset_x: decoded_group.draw_offset_x,
+                draw_offset_y: decoded_group.draw_offset_y,
             });
+            rendered_canonical_art_id
         } else {
             crop_adjustments.insert(
                 decoded_group.canonical_art_id,
@@ -743,14 +801,19 @@ fn decode_present_tiles(
                 height: decoded_group.height,
                 upscale_factor: decoded_group.upscale_factor,
                 upscale_algorithm: decoded_group.upscale_algorithm,
+                draw_offset_x: decoded_group.draw_offset_x,
+                draw_offset_y: decoded_group.draw_offset_y,
                 rgba: decoded_group.rgba,
             });
-        }
+            decoded_group.canonical_art_id
+        };
 
-        for alias_art_id in decoded_group.alias_art_ids {
+        for (alias_art_id, draw_offset_x, draw_offset_y) in decoded_group.alias_art_ids {
             aliases.push(SlotAlias {
                 art_id: alias_art_id,
-                canonical_art_id: decoded_group.canonical_art_id,
+                canonical_art_id,
+                draw_offset_x,
+                draw_offset_y,
             });
         }
     }
@@ -1062,6 +1125,8 @@ pub fn apply_slot_aliases(
         }
         *slot = TexArtEcSlotRecord {
             art_id: alias.art_id,
+            draw_offset_x: alias.draw_offset_x,
+            draw_offset_y: alias.draw_offset_y,
             ..canonical
         };
     }
@@ -1117,6 +1182,8 @@ pub fn pack_tiles_into_pages(
                 height: placed.height,
                 upscale_factor: placed.upscale_factor,
                 upscale_algorithm: placed.upscale_algorithm,
+                draw_offset_x: placed.draw_offset_x,
+                draw_offset_y: placed.draw_offset_y,
             };
         }
 
@@ -1354,6 +1421,8 @@ fn build_page(
                 height: tile.height,
                 upscale_factor: tile.upscale_factor,
                 upscale_algorithm: tile.upscale_algorithm,
+                draw_offset_x: tile.draw_offset_x,
+                draw_offset_y: tile.draw_offset_y,
             });
         } else {
             leftovers.push(tile);
@@ -1456,7 +1525,7 @@ pub fn serialize_slot_manifest(
     slots: &[TexArtEcSlotRecord],
     options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(25 + slots.len() * 24);
+    let mut bytes = Vec::with_capacity(25 + slots.len() * 28);
     bytes.extend_from_slice(&SLOT_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_ART_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -1475,6 +1544,8 @@ pub fn serialize_slot_manifest(
         bytes.write_u16::<LittleEndian>(slot.height)?;
         bytes.write_u16::<LittleEndian>(slot.upscale_factor.max(1))?;
         bytes.write_u16::<LittleEndian>(slot.upscale_algorithm)?;
+        bytes.write_i16::<LittleEndian>(slot.draw_offset_x)?;
+        bytes.write_i16::<LittleEndian>(slot.draw_offset_y)?;
     }
     Ok(bytes)
 }
@@ -1513,6 +1584,8 @@ mod tests {
             height,
             upscale_factor: 1,
             upscale_algorithm: 0,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
             rgba: vec![255; width as usize * height as usize * 4],
         }
     }
@@ -1560,5 +1633,43 @@ mod tests {
         assert!(should_include_art_tile(TileType::Static));
         assert!(should_include_art_tile(TileType::Solid));
         assert!(should_include_art_tile(TileType::Liquid));
+    }
+
+    #[test]
+    fn slot_alias_preserves_alias_draw_offset() {
+        let mut slots = vec![
+            TexArtEcSlotRecord {
+                art_id: 0,
+                page_index: 2,
+                page_tile_index: 3,
+                flags: SLOT_FLAG_PRESENT | SLOT_FLAG_STATIC,
+                x: 4,
+                y: 5,
+                width: 6,
+                height: 7,
+                upscale_factor: 1,
+                upscale_algorithm: 0,
+                draw_offset_x: 8,
+                draw_offset_y: 9,
+            },
+            TexArtEcSlotRecord::absent(1),
+        ];
+
+        apply_slot_aliases(
+            &mut slots,
+            &[SlotAlias {
+                art_id: 1,
+                canonical_art_id: 0,
+                draw_offset_x: -10,
+                draw_offset_y: 11,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(slots[1].page_index, slots[0].page_index);
+        assert_eq!(slots[1].x, slots[0].x);
+        assert_eq!(slots[1].y, slots[0].y);
+        assert_eq!(slots[1].draw_offset_x, -10);
+        assert_eq!(slots[1].draw_offset_y, 11);
     }
 }

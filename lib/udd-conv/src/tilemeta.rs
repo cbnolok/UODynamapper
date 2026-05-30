@@ -48,8 +48,7 @@ pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
     /// start coordinates so they remain aligned with the shared EC texture pass.
     pub adjust_tex_art_ec_sampling: bool,
-    /// When `true`, apply the EC-art visual trim delta to stored EC draw offsets
-    /// so cropped atlas payloads keep their original on-screen placement.
+    /// Deprecated no-op. Art draw offsets are stored in tex_art_* slot records.
     pub adjust_tex_art_ec_draw_offsets: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
@@ -389,9 +388,7 @@ fn build_tilemeta_tables_from_resolved_paths(
         loaded_art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)?;
         &loaded_art_definition
     };
-    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling
-        || options.adjust_tex_art_ec_draw_offsets
-    {
+    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
         if let Some(sources) = loaded_ec_sources {
             compute_tex_art_ec_crop_adjustments_from_loaded_sources(sources)?
         } else {
@@ -526,22 +523,8 @@ fn build_tilemeta_tables_from_resolved_paths(
                 )?;
                 tile_meta_item.ec_start_x = ec_start_x;
                 tile_meta_item.ec_start_y = ec_start_y;
-                let (ec_offset_x, ec_offset_y) = adjusted_ec_draw_offset(
-                    tile.tile_id as u32,
-                    ec_tex.offset_x,
-                    ec_tex.offset_y,
-                    if options.adjust_tex_art_ec_draw_offsets {
-                        crop_adjustment
-                    } else {
-                        None
-                    },
-                )?;
-                tile_meta_item.ec_offset_x = ec_offset_x;
-                tile_meta_item.ec_offset_y = ec_offset_y;
                 if ec_start_x != ec_tex.start_x as i16
                     || ec_start_y != ec_tex.start_y as i16
-                    || ec_offset_x != ec_tex.offset_x as i16
-                    || ec_offset_y != ec_tex.offset_y as i16
                 {
                     adjusted_ec_item_count += 1;
                 }
@@ -552,8 +535,6 @@ fn build_tilemeta_tables_from_resolved_paths(
                 tile_meta_item.cc_texture_id = cc_tex.texture_id;
                 tile_meta_item.cc_start_x = cc_tex.start_x as i16;
                 tile_meta_item.cc_start_y = cc_tex.start_y as i16;
-                tile_meta_item.cc_offset_x = cc_tex.offset_x as i16;
-                tile_meta_item.cc_offset_y = cc_tex.offset_y as i16;
             }
 
             item_texture_refs.extend(ec_data.texture_items.iter().flatten().map(|item| {

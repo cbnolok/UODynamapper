@@ -817,8 +817,8 @@ fn resolve_hovered_static_geometry(
             let slot = tex_art_cc_res?.0.present_slot(art_id as u32)?;
             let bounds = resolve_static_billboard_bounds(
                 crate::configs::settings::ClientTextureSource::Cc,
-                tilemeta.map(|meta| meta.cc_offset_x).unwrap_or(0),
-                tilemeta.map(|meta| meta.cc_offset_y).unwrap_or(0),
+                slot.draw_offset_x,
+                slot.draw_offset_y,
                 slot.logical_width(),
                 slot.logical_height(),
             );
@@ -880,8 +880,8 @@ fn resolve_hovered_static_geometry(
             let slot = tex_art_ec_res?.0.present_slot(graphic as u32)?;
             let bounds = resolve_static_billboard_bounds(
                 crate::configs::settings::ClientTextureSource::Ec,
-                tilemeta.map(|meta| meta.ec_offset_x).unwrap_or(0),
-                tilemeta.map(|meta| meta.ec_offset_y).unwrap_or(0),
+                slot.draw_offset_x,
+                slot.draw_offset_y,
                 slot.logical_width(),
                 slot.logical_height(),
             );

@@ -22,6 +22,8 @@ fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Decoded
         height,
         upscale_factor: 1,
         upscale_algorithm: 0,
+        draw_offset_x: 0,
+        draw_offset_y: 0,
         rgba: vec![255u8; width as usize * height as usize * 4],
     }
 }
@@ -248,6 +250,8 @@ fn alias_slots_reuse_canonical_page_location() {
         &[SlotAlias {
             art_id: 9,
             canonical_art_id: 7,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
         }],
     )
     .unwrap();
@@ -411,6 +415,8 @@ fn crop_adjustment_lookup_copies_canonical_adjustment_to_aliases() {
         &[SlotAlias {
             art_id: 9,
             canonical_art_id: 7,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
         }],
     );
 

@@ -21,6 +21,8 @@ fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> Decoded
         height,
         upscale_factor: 1,
         upscale_algorithm: 0,
+        draw_offset_x: 0,
+        draw_offset_y: 0,
         rgba: vec![255u8; width as usize * height as usize * 4],
     }
 }

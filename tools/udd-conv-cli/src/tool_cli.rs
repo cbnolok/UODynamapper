@@ -325,6 +325,8 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
                 upscale_factor: existing.upscale_factor,
                 upscale_algorithm: existing.upscale_algorithm,
+                draw_offset_x: existing.draw_offset_x,
+                draw_offset_y: existing.draw_offset_y,
             };
         }
         let manifest = encode_cc_slot_manifest(
@@ -371,6 +373,8 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
                 height: row.height,
                 upscale_factor: existing.upscale_factor,
                 upscale_algorithm: existing.upscale_algorithm,
+                draw_offset_x: existing.draw_offset_x,
+                draw_offset_y: existing.draw_offset_y,
             };
         }
         let manifest = encode_tex_art_ec_slot_manifest(

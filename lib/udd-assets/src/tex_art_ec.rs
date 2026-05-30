@@ -17,7 +17,7 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
-const TEX_ART_EC_METADATA_VERSION: u32 = 5;
+const TEX_ART_EC_METADATA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexArtEcCropAdjustment {
@@ -50,6 +50,8 @@ pub struct TexArtEcSlotRecord {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
 }
 
 impl TexArtEcSlotRecord {
@@ -65,6 +67,8 @@ impl TexArtEcSlotRecord {
             height: 0,
             upscale_factor: 1,
             upscale_algorithm: 0,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
         }
     }
 
@@ -297,6 +301,8 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
             height: cursor.read_u16::<LittleEndian>()?,
             upscale_factor: cursor.read_u16::<LittleEndian>()?.max(1),
             upscale_algorithm: cursor.read_u16::<LittleEndian>()?,
+            draw_offset_x: cursor.read_i16::<LittleEndian>()?,
+            draw_offset_y: cursor.read_i16::<LittleEndian>()?,
         });
     }
     Ok((w, h, g, packing_mode, slots))
