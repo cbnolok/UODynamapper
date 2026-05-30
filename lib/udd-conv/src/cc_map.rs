@@ -36,13 +36,10 @@ use color_eyre::eyre::{self};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
-use crate::classic_patches::{
-    load_map_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
-};
+use crate::classic_patches::ClassicPatchOptions;
+use crate::classic_sources::{resolve_classic_map_source, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
-use log::{info, warn};
-use uocf::classic::map::MapPlane;
+use log::info;
 use udd_assets::map_metadata::{encode_map_package_metadata, MapPackageMetadata};
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
@@ -79,11 +76,7 @@ const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: usize = 32;
 const PACKAGE_CHUNK_TEXEL_COUNT: usize = PACKAGE_CHUNK_TILE_DIM * PACKAGE_CHUNK_TILE_DIM;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CcMapSourcePreference {
-    Mul,
-    Uop,
-}
+pub use crate::classic_sources::SourceFormatPreference as CcMapSourcePreference;
 
 pub struct CcMapBuildSummary {
     pub map_id: u32,
@@ -113,71 +106,25 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
     source_dirs: &[PathBuf],
     output_path: &Path,
     map_id: u32,
-    preference: CcMapSourcePreference,
+    preference: SourceFormatPreference,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcMapBuildSummary> {
-    let mul_name = format!("map{}.mul", map_id);
-    let uop_names = [
-        format!("map{}LegacyMUL.uop", map_id),
-        format!("map{}.uop", map_id),
-        format!("map{}xLegacyMUL.uop", map_id),
-        format!("map{}x.uop", map_id),
-    ];
-
-    let (map_path, is_uop) = match preference {
-        CcMapSourcePreference::Mul => {
-            if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
-                (path, false)
-            } else if let Some(path) =
-                find_first_existing_file(source_dirs, &uop_names.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-            {
-                warn!("map{}.mul not found, falling back to uop", map_id);
-                (path, true)
-            } else {
-                eyre::bail!("Missing map data for map{} (tried .mul and .uop)", map_id);
-            }
-        }
-        CcMapSourcePreference::Uop => {
-            if let Some(path) =
-                find_first_existing_file(source_dirs, &uop_names.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-            {
-                (path, true)
-            } else if let Some(path) = find_first_existing_file(source_dirs, &[&mul_name]) {
-                warn!("No .uop found, falling back to .mul");
-                (path, false)
-            } else {
-                eyre::bail!("Missing map data for map{} (tried .uop and .mul)", map_id);
-            }
-        }
-    };
+    let map_source = resolve_classic_map_source(source_dirs, map_id, preference)?;
 
     info!(
         "Converting map {} ({}) to {}",
         map_id,
-        if is_uop { "UOP" } else { "MUL" },
+        map_source.format.label(),
         output_path.display()
     );
     println!(
         "Using CC map{} source file ({}): {}",
         map_id,
-        if is_uop { "UOP" } else { "MUL" },
-        map_path.display()
+        map_source.format.label(),
+        map_source.path.display()
     );
 
-    let mut plane = if is_uop {
-        MapPlane::init_uop(map_path, map_id)?
-    } else if let Some(map_diff) = load_map_diff_if_enabled(source_dirs, map_id, patch_options)? {
-        MapPlane::init_with_diff(map_path, map_id, map_diff)?
-    } else {
-        MapPlane::init(map_path, map_id)?
-    };
-    if !is_uop {
-        if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
-            plane = plane.with_verdata(verdata);
-        }
-    } else if patch_options.any() {
-        warn!("Classic map patch files are ignored when converting map{} from UOP.", map_id);
-    }
+    let mut plane = map_source.load_plane(source_dirs, patch_options)?;
 
     let width_blocks = plane.size_blocks.width;
     let height_blocks = plane.size_blocks.height;

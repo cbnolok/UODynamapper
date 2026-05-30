@@ -30,7 +30,7 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -147,6 +147,22 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
     out_file: &Path,
     options: &TexLandCcAtlasOptions,
     patch_options: &ClassicPatchOptions,
+) -> eyre::Result<TexLandCcBuildSummary> {
+    convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
+        client_dir,
+        out_file,
+        options,
+        patch_options,
+        |_| {},
+    )
+}
+
+pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
+    client_dir: &Path,
+    out_file: &Path,
+    options: &TexLandCcAtlasOptions,
+    patch_options: &ClassicPatchOptions,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandCcBuildSummary> {
     let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
         .ok_or_else(|| eyre::eyre!("missing texmaps.mul in {}", client_dir.display()))?;
@@ -301,7 +317,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
         options.bc7_rdo_lambda,
     ));
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(TexLandCcBuildSummary {
         slot_count,

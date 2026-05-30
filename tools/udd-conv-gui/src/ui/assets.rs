@@ -1,5 +1,5 @@
 use crate::app::UddConvApp;
-use crate::models::TextureOptimization;
+use crate::models::{AssetPackProgress, AssetPackProgressState, AssetPackTask, TextureOptimization};
 use eframe::egui;
 use udd_conv::source_paths::gather_source_dirs;
 use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
@@ -17,87 +17,103 @@ impl UddConvApp {
             ui.add_space(2.0);
 
             let is_busy = self.is_busy();
+            if is_busy {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            }
 
-            ui.add_enabled_ui(!is_busy, |ui| {
-                draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
-                let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
-                let (clicked, preview) = draw_asset_card(
-                    ui,
-                    "Classic Art",
-                    "Items and land textures from art.mul",
-                    Some(&tex_art_cc_metadata_source),
-                    Some(&mut self.settings.opt_tex_art_cc),
-                    Some(&mut self.settings.bc7_rdo_lambda),
-                    Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
-                    vec![],
-                );
-                if clicked { self.convert_tex_art_cc(); }
-                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+            draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
+            let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
+            let tex_art_cc_progress = self.asset_pack_progress(AssetPackTask::TexArtCc);
+            let (clicked, preview) = draw_asset_card(
+                ui,
+                "Classic Art",
+                "Items and land textures from art.mul",
+                Some(&tex_art_cc_metadata_source),
+                &tex_art_cc_progress,
+                !is_busy,
+                Some(&mut self.settings.opt_tex_art_cc),
+                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
+                vec![],
+            );
+            if clicked { self.convert_tex_art_cc(); }
+            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                let (clicked, preview) = draw_asset_card(
-                    ui,
-                    "Classic Texmaps",
-                    "High-resolution terrain textures from texmaps.mul",
-                    None,
-                    Some(&mut self.settings.opt_tex_land_cc),
-                    Some(&mut self.settings.bc7_rdo_lambda),
-                    None,
-                    vec![
-                        ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
-                        ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
-                    ],
-                );
-                if clicked { self.convert_tex_land_cc(); }
-                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+            let tex_land_cc_progress = self.asset_pack_progress(AssetPackTask::TexLandCc);
+            let (clicked, preview) = draw_asset_card(
+                ui,
+                "Classic Texmaps",
+                "High-resolution terrain textures from texmaps.mul",
+                None,
+                &tex_land_cc_progress,
+                !is_busy,
+                Some(&mut self.settings.opt_tex_land_cc),
+                Some(&mut self.settings.bc7_rdo_lambda),
+                None,
+                vec![
+                    ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
+                    ("128x128", &mut self.settings.upscale_tex_land_cc_128, crate::models::UpscalePreviewTarget::TexLandCc128),
+                ],
+            );
+            if clicked { self.convert_tex_land_cc(); }
+            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                ui.add_space(4.0);
-                draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
-                let (clicked, preview) = draw_asset_card(
-                    ui,
-                    "Enhanced Art",
-                    "Static items from worldart",
-                    None,
-                    Some(&mut self.settings.opt_tex_art_ec),
-                    Some(&mut self.settings.bc7_rdo_lambda),
-                    Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
-                    vec![],
-                );
-                if clicked { self.convert_tex_art_ec(); }
-                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+            ui.add_space(4.0);
+            draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
+            let tex_art_ec_progress = self.asset_pack_progress(AssetPackTask::TexArtEc);
+            let (clicked, preview) = draw_asset_card(
+                ui,
+                "Enhanced Art",
+                "Static items from worldart",
+                None,
+                &tex_art_ec_progress,
+                !is_busy,
+                Some(&mut self.settings.opt_tex_art_ec),
+                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
+                vec![],
+            );
+            if clicked { self.convert_tex_art_ec(); }
+            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                let (clicked, preview) = draw_asset_card(
-                    ui,
-                    "Enhanced Land",
-                    "High-resolution terrain textures",
-                    None,
-                    Some(&mut self.settings.opt_tex_land_ec),
-                    Some(&mut self.settings.bc7_rdo_lambda),
-                    None,
-                    vec![
-                        ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
-                        ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
-                        ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
-                        ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
-                    ],
-                );
-                if clicked { self.convert_tex_land_ec(); }
-                if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+            let tex_land_ec_progress = self.asset_pack_progress(AssetPackTask::TexLandEc);
+            let (clicked, preview) = draw_asset_card(
+                ui,
+                "Enhanced Land",
+                "High-resolution terrain textures",
+                None,
+                &tex_land_ec_progress,
+                !is_busy,
+                Some(&mut self.settings.opt_tex_land_ec),
+                Some(&mut self.settings.bc7_rdo_lambda),
+                None,
+                vec![
+                    ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
+                    ("128x128", &mut self.settings.upscale_tex_land_ec_128, crate::models::UpscalePreviewTarget::TexLandEc128),
+                    ("256x256", &mut self.settings.upscale_tex_land_ec_256, crate::models::UpscalePreviewTarget::TexLandEc256),
+                    ("512x512", &mut self.settings.upscale_tex_land_ec_512, crate::models::UpscalePreviewTarget::TexLandEc512),
+                ],
+            );
+            if clicked { self.convert_tex_land_ec(); }
+            if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-                ui.add_space(4.0);
-                draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
-                if draw_asset_card(
-                    ui,
-                    "Tile Metadata",
-                    "Unified metadata and radar color data",
-                    None,
-                    None,
-                    None,
-                    None,
-                    vec![],
-                ).0 {
-                    self.convert_tilemeta();
-                }
-            });
+            ui.add_space(4.0);
+            draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
+            let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
+            if draw_asset_card(
+                ui,
+                "Tile Metadata",
+                "Unified metadata and radar color data",
+                None,
+                &tilemeta_progress,
+                !is_busy,
+                None,
+                None,
+                None,
+                vec![],
+            ).0 {
+                self.convert_tilemeta();
+            }
         });
     }
 }
@@ -169,6 +185,8 @@ fn draw_asset_card(
     title: &str,
     desc: &str,
     source_note: Option<&str>,
+    progress: &AssetPackProgress,
+    can_start: bool,
     opt: Option<&mut TextureOptimization>,
     bc7_rdo_lambda: Option<&mut f32>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
@@ -207,10 +225,8 @@ fn draw_asset_card(
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add_sized(
-                                [120.0, 30.0],
-                                egui::Button::new(egui::RichText::new("Pack Asset").strong()),
-                            )
+                            .add_enabled(can_start, egui::Button::new(egui::RichText::new("Pack Asset").strong()))
+                            .on_hover_text(if can_start { "Pack this asset" } else { "Another task is running" })
                             .clicked()
                         {
                             clicked = true;
@@ -218,120 +234,144 @@ fn draw_asset_card(
                     });
                 });
 
+                draw_asset_progress(ui, progress);
+
                 if opt.is_some() || bc7_rdo_lambda.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
                     ui.add_space(2.0);
                     ui.separator();
                     ui.add_space(2.0);
 
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-
-                        if let Some(opt_val) = opt {
-                            let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
-                            draw_control_cell(ui, "Output Format", 210.0, |ui| {
-                                let current_fmt = match opt_val {
-                                    TextureOptimization::None => "Raw+zstd (default)",
-                                    TextureOptimization::Bc7 => "BC7",
-                                    TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
-                                    TextureOptimization::JpegXl => "Jpeg XL",
-                                };
-
-                                egui::ComboBox::from_id_salt(format!("{}_fmt", title))
-                                    .selected_text(current_fmt)
-                                    .width(ui.available_width())
-                                    .show_ui(ui, |ui| {
-                                        if ui
-                                            .selectable_label(
-                                                current_fmt == "Raw+zstd (default)",
-                                                "Raw+zstd (default)",
-                                            )
-                                            .clicked()
-                                        {
-                                            *opt_val = TextureOptimization::None;
-                                        }
-                                        if ui
-                                            .selectable_label(current_fmt == "BC7", "BC7")
-                                            .clicked()
-                                        {
-                                            *opt_val = TextureOptimization::Bc7;
-                                        }
-                                        if ui
-                                            .selectable_label(
-                                                current_fmt == "Supercompressed BC7+zstd",
-                                                "Supercompressed BC7+zstd",
-                                            )
-                                            .clicked()
-                                        {
-                                            *opt_val = TextureOptimization::Bc7Zstd;
-                                        }
-                                        if ui
-                                            .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
-                                            .clicked()
-                                        {
-                                            *opt_val = TextureOptimization::JpegXl;
-                                        }
-                                    });
-                            });
-
-                            if show_bc7_settings {
-                                if let Some(lambda) = bc7_rdo_lambda {
-                                    draw_control_cell(ui, "BC7 RDO", 96.0, |ui| {
-                                        ui.add(
-                                            egui::DragValue::new(lambda)
-                                                .speed(0.01)
-                                                .range(0.0..=1.0),
-                                        );
-                                    });
-                                }
-                            }
-                        }
-
-                        if let Some((up_val, target)) = upscale_single {
-                            draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.set_width(ui.available_width());
-                                    let combo_width = (ui.available_width() - 34.0).max(120.0);
-                                    ui.scope(|ui| {
-                                        ui.set_width(combo_width);
-                                        draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
-                                    });
-                                    if ui.button("🔍").on_hover_text("Preview").clicked() {
-                                        preview_req = Some((target, *up_val));
-                                    }
-                                });
-                            });
-                        }
-                    });
-
-                    if !upscale_configs.is_empty() {
+                    ui.add_enabled_ui(can_start, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
-                            for (label, config, target) in upscale_configs.iter_mut() {
-                                draw_control_cell(ui, &format!("Upscale {}", label), 190.0, |ui| {
+
+                            if let Some(opt_val) = opt {
+                                let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
+                                draw_control_cell(ui, "Output Format", 210.0, |ui| {
+                                    let current_fmt = match opt_val {
+                                        TextureOptimization::None => "Raw+zstd (default)",
+                                        TextureOptimization::Bc7 => "BC7",
+                                        TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
+                                        TextureOptimization::JpegXl => "Jpeg XL",
+                                    };
+
+                                    egui::ComboBox::from_id_salt(format!("{}_fmt", title))
+                                        .selected_text(current_fmt)
+                                        .width(ui.available_width())
+                                        .show_ui(ui, |ui| {
+                                            if ui
+                                                .selectable_label(
+                                                    current_fmt == "Raw+zstd (default)",
+                                                    "Raw+zstd (default)",
+                                                )
+                                                .clicked()
+                                            {
+                                                *opt_val = TextureOptimization::None;
+                                            }
+                                            if ui
+                                                .selectable_label(current_fmt == "BC7", "BC7")
+                                                .clicked()
+                                            {
+                                                *opt_val = TextureOptimization::Bc7;
+                                            }
+                                            if ui
+                                                .selectable_label(
+                                                    current_fmt == "Supercompressed BC7+zstd",
+                                                    "Supercompressed BC7+zstd",
+                                                )
+                                                .clicked()
+                                            {
+                                                *opt_val = TextureOptimization::Bc7Zstd;
+                                            }
+                                            if ui
+                                                .selectable_label(current_fmt == "Jpeg XL", "Jpeg XL")
+                                                .clicked()
+                                            {
+                                                *opt_val = TextureOptimization::JpegXl;
+                                            }
+                                        });
+                                });
+
+                                if show_bc7_settings {
+                                    if let Some(lambda) = bc7_rdo_lambda {
+                                        draw_control_cell(ui, "BC7 RDO", 96.0, |ui| {
+                                            ui.add(
+                                                egui::DragValue::new(lambda)
+                                                    .speed(0.01)
+                                                    .range(0.0..=1.0),
+                                            );
+                                        });
+                                    }
+                                }
+                            }
+
+                            if let Some((up_val, target)) = upscale_single {
+                                draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.set_width(ui.available_width());
                                         let combo_width = (ui.available_width() - 34.0).max(120.0);
                                         ui.scope(|ui| {
                                             ui.set_width(combo_width);
-                                            draw_upscale_filter(
-                                                ui,
-                                                format!("{}_upscale_{}", title, label),
-                                                &mut config.filter,
-                                            );
+                                            draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
                                         });
                                         if ui.button("🔍").on_hover_text("Preview").clicked() {
-                                            preview_req = Some((*target, config.filter));
+                                            preview_req = Some((target, *up_val));
                                         }
                                     });
                                 });
                             }
                         });
-                    }
+
+                        if !upscale_configs.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                                for (label, config, target) in upscale_configs.iter_mut() {
+                                    draw_control_cell(ui, &format!("Upscale {}", label), 190.0, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.set_width(ui.available_width());
+                                            let combo_width = (ui.available_width() - 34.0).max(120.0);
+                                            ui.scope(|ui| {
+                                                ui.set_width(combo_width);
+                                                draw_upscale_filter(
+                                                    ui,
+                                                    format!("{}_upscale_{}", title, label),
+                                                    &mut config.filter,
+                                                );
+                                            });
+                                            if ui.button("🔍").on_hover_text("Preview").clicked() {
+                                                preview_req = Some((*target, config.filter));
+                                            }
+                                        });
+                                    });
+                                }
+                            });
+                        }
+                    });
                 }
             });
         });
 
     (clicked, preview_req)
+}
+
+fn draw_asset_progress(ui: &mut egui::Ui, progress: &AssetPackProgress) {
+    let text = match progress.state {
+        AssetPackProgressState::Idle => egui::RichText::new(&progress.text).weak(),
+        AssetPackProgressState::Running => {
+            egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(110, 205, 255))
+        }
+        AssetPackProgressState::Succeeded => {
+            egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(120, 220, 150))
+        }
+        AssetPackProgressState::Failed => {
+            egui::RichText::new(&progress.text).color(egui::Color32::from_rgb(255, 120, 120))
+        }
+    };
+    ui.add(
+        egui::ProgressBar::new(progress.fraction)
+            .animate(progress.state == AssetPackProgressState::Running)
+            .text(text),
+    );
 }
 
 fn draw_control_cell<R>(

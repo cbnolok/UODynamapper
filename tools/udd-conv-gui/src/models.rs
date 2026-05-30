@@ -84,6 +84,40 @@ pub struct LogMessage {
     pub level: LogLevel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AssetPackTask {
+    TexArtCc,
+    TexLandCc,
+    TexArtEc,
+    TexLandEc,
+    TileMeta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetPackProgressState {
+    Idle,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssetPackProgress {
+    pub state: AssetPackProgressState,
+    pub fraction: f32,
+    pub text: String,
+}
+
+impl AssetPackProgress {
+    pub fn idle() -> Self {
+        Self {
+            state: AssetPackProgressState::Idle,
+            fraction: 0.0,
+            text: "Ready".to_string(),
+        }
+    }
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum LogLevel {
     Info,

@@ -37,7 +37,7 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -290,15 +290,48 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources(
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
 ) -> eyre::Result<TexArtEcBuildSummary> {
+    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
+        source_dirs,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TexArtEcAtlasOptions,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<TexArtEcBuildSummary> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
 
-    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(&sources, out_file, options)
+    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+        &sources,
+        out_file,
+        options,
+        package_progress,
+    )
 }
 
 pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
     sources: &TexArtEcLoadedSources,
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
+) -> eyre::Result<TexArtEcBuildSummary> {
+    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+        sources,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progress(
+    sources: &TexArtEcLoadedSources,
+    out_file: &Path,
+    options: &TexArtEcAtlasOptions,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtEcBuildSummary> {
     validate_options(options)?;
 
@@ -474,7 +507,7 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
         options.bc7_rdo_lambda,
     ));
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(TexArtEcBuildSummary {
         slot_count,

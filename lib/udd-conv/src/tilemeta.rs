@@ -21,7 +21,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
 
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
-use crate::package_progress::build_and_write_package;
+use crate::package_progress::build_and_write_package_with_progress;
 use crate::source_paths::find_first_existing_file;
 use crate::tex_art_ec::{
     compute_tex_art_ec_crop_adjustments_from_loaded_sources,
@@ -168,9 +168,18 @@ pub fn build_tilemeta_uddp_from_sources(
     out_file: &Path,
     options: &TileMetaBuildOptions,
 ) -> eyre::Result<()> {
+    build_tilemeta_uddp_from_sources_with_progress(source_dirs, out_file, options, |_| {})
+}
+
+pub fn build_tilemeta_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<()> {
     let built = build_tilemeta_tables_from_sources(source_dirs, options, "unifying tiledata")?;
 
-    write_tilemeta_uddp(out_file, built)
+    write_tilemeta_uddp_with_progress(out_file, built, package_progress)
 }
 
 pub fn build_tilemeta_uddp_from_split_sources(
@@ -179,6 +188,22 @@ pub fn build_tilemeta_uddp_from_split_sources(
     out_file: &Path,
     options: &TileMetaBuildOptions,
 ) -> eyre::Result<()> {
+    build_tilemeta_uddp_from_split_sources_with_progress(
+        cc_source_dir,
+        ec_source_dir,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+pub fn build_tilemeta_uddp_from_split_sources_with_progress(
+    cc_source_dir: &Path,
+    ec_source_dir: &Path,
+    out_file: &Path,
+    options: &TileMetaBuildOptions,
+    package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<()> {
     let built = build_tilemeta_tables_from_split_sources(
         cc_source_dir,
         ec_source_dir,
@@ -186,7 +211,7 @@ pub fn build_tilemeta_uddp_from_split_sources(
         "unifying tiledata",
     )?;
 
-    write_tilemeta_uddp(out_file, built)
+    write_tilemeta_uddp_with_progress(out_file, built, package_progress)
 }
 
 pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
@@ -208,6 +233,14 @@ pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
 }
 
 fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Result<()> {
+    write_tilemeta_uddp_with_progress(out_file, built, |_| {})
+}
+
+fn write_tilemeta_uddp_with_progress(
+    out_file: &Path,
+    built: BuiltTileMetaTables,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<()> {
     let land_bytes = bytemuck::cast_slice(&built.land_tiles);
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
     let item_texture_ref_span_bytes = bytemuck::cast_slice(&built.item_texture_ref_spans);
@@ -254,7 +287,7 @@ fn write_tilemeta_uddp(out_file: &Path, built: BuiltTileMetaTables) -> eyre::Res
         id: None,
         data: item_texture_ref_bytes,
     })?;
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(())
 }

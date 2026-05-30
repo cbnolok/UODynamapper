@@ -13,13 +13,12 @@ use crate::bc7::{
     RawImageFormat,
 };
 use crate::classic_patches::{
-    load_map_diff_if_enabled, load_static_diff_if_enabled, load_verdata_if_enabled,
-    ClassicPatchOptions,
+    load_static_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
 };
+use crate::classic_sources::{resolve_classic_map_source, SourceFormatPreference};
 use crate::source_paths::find_first_existing_file;
 use udd_assets::TileMetaPackage;
 use uocf::classic::hues::load_hues;
-use uocf::classic::map::MapPlane;
 use uocf::classic::statics::{PackedStaticTile, StaticsReader};
 
 const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
@@ -52,6 +51,7 @@ pub struct RadarBuildOptions {
     pub format: RadarFormat,
     pub zstd_level: i32,
     pub classic_patches: ClassicPatchOptions,
+    pub map_source_preference: SourceFormatPreference,
 }
 
 fn radar_static_top_z(statics_tile: PackedStaticTile, height: i8) -> i16 {
@@ -98,12 +98,11 @@ fn build_radar_rgba_pixels(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
     map_id: u32,
+    map_source_preference: SourceFormatPreference,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<(u32, u32, Vec<u8>)> {
     // 1. Locate source files
-    let map_file_name = format!("map{}.mul", map_id);
-    let map_path = find_first_existing_file(source_dirs, &[&map_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", map_file_name))?;
+    let map_source = resolve_classic_map_source(source_dirs, map_id, map_source_preference)?;
 
     let statics_file_name = format!("statics{}.mul", map_id);
     let statics_path = find_first_existing_file(source_dirs, &[&statics_file_name])
@@ -116,7 +115,11 @@ fn build_radar_rgba_pixels(
     let hues_path = find_first_existing_file(source_dirs, &["hues.mul"])
         .ok_or_else(|| eyre::eyre!("missing hues.mul"))?;
 
-    println!("Using CC radar map source file: {}", map_path.display());
+    println!(
+        "Using CC radar map source file ({}): {}",
+        map_source.format.label(),
+        map_source.path.display()
+    );
     println!("Using CC radar statics source file: {}", statics_path.display());
     println!("Using CC radar staidx source file: {}", staidx_path.display());
     println!("Using CC radar hues source file: {}", hues_path.display());
@@ -128,14 +131,7 @@ fn build_radar_rgba_pixels(
     let hues = load_hues(&hues_path)?;
 
     println!("Initializing MapPlane...");
-    let mut plane = if let Some(map_diff) = load_map_diff_if_enabled(source_dirs, map_id, patch_options)? {
-        MapPlane::init_with_diff(map_path, map_id, map_diff)?
-    } else {
-        MapPlane::init(map_path, map_id)?
-    };
-    if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
-        plane = plane.with_verdata(verdata);
-    }
+    let mut plane = map_source.load_plane(source_dirs, patch_options)?;
     let width_tiles = plane.size_cells().width;
     let height_tiles = plane.size_cells().height;
 
@@ -258,10 +254,11 @@ pub fn build_facet_radar_bc7(
     tilemeta_path: &Path,
     map_id: u32,
 ) -> eyre::Result<Bc7TextureData> {
-    build_facet_radar_bc7_with_patches(
+    build_facet_radar_bc7_with_options(
         source_dirs,
         tilemeta_path,
         map_id,
+        SourceFormatPreference::Mul,
         &ClassicPatchOptions::NONE,
     )
 }
@@ -272,8 +269,30 @@ pub fn build_facet_radar_bc7_with_patches(
     map_id: u32,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<Bc7TextureData> {
+    build_facet_radar_bc7_with_options(
+        source_dirs,
+        tilemeta_path,
+        map_id,
+        SourceFormatPreference::Mul,
+        patch_options,
+    )
+}
+
+pub fn build_facet_radar_bc7_with_options(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+    map_source_preference: SourceFormatPreference,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<Bc7TextureData> {
     let (width_tiles, height_tiles, rgba_pixels) =
-        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id, patch_options)?;
+        build_radar_rgba_pixels(
+            source_dirs,
+            tilemeta_path,
+            map_id,
+            map_source_preference,
+            patch_options,
+        )?;
     build_radar_bc7_from_rgba(width_tiles, height_tiles, &rgba_pixels)
 }
 
@@ -366,7 +385,13 @@ pub fn build_facet_radar_dds(
     options: &RadarBuildOptions,
 ) -> eyre::Result<()> {
     let (width_tiles, height_tiles, rgba_pixels) =
-        build_radar_rgba_pixels(source_dirs, tilemeta_path, map_id, &options.classic_patches)?;
+        build_radar_rgba_pixels(
+            source_dirs,
+            tilemeta_path,
+            map_id,
+            options.map_source_preference,
+            &options.classic_patches,
+        )?;
 
     match options.format {
         RadarFormat::Bc7 => {

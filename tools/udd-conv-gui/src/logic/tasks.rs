@@ -1,18 +1,20 @@
 use color_eyre::eyre;
+use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
-    tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
-    tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources},
-    tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources},
-    tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources},
+    tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
+    tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
+    tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
+    tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
-    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches},
+    tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
-    CompressionFlag,
+    BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
 use udd_conv_cli::{
@@ -21,10 +23,70 @@ use udd_conv_cli::{
     tool_cli::{diff_paths_report, DiffKind},
 };
 use crate::app::UddConvApp;
-use crate::models::{LogLevel, LogMessage, TextureOptimization};
+use crate::models::{
+    AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
+    TextureOptimization,
+};
 
 struct ConvertingFlagReset {
     is_converting: std::sync::Arc<std::sync::Mutex<bool>>,
+}
+
+#[derive(Clone)]
+struct AssetProgressReporter {
+    task: AssetPackTask,
+    progress: Arc<Mutex<HashMap<AssetPackTask, AssetPackProgress>>>,
+}
+
+impl AssetProgressReporter {
+    fn set(&self, state: AssetPackProgressState, fraction: f32, text: impl Into<String>) {
+        if let Ok(mut progress) = self.progress.lock() {
+            progress.insert(self.task, AssetPackProgress {
+                state,
+                fraction: fraction.clamp(0.0, 1.0),
+                text: text.into(),
+            });
+        }
+    }
+
+    fn start(&self) {
+        self.set(AssetPackProgressState::Running, 0.0, "Preparing");
+    }
+
+    fn finish(&self) {
+        self.set(AssetPackProgressState::Succeeded, 1.0, "Complete");
+    }
+
+    fn fail(&self) {
+        self.set(AssetPackProgressState::Failed, 1.0, "Failed");
+    }
+
+    fn build_progress(&self, progress: BuildProgress) {
+        let phase_fraction = if progress.total == 0 {
+            0.0
+        } else {
+            progress.completed.min(progress.total) as f32 / progress.total as f32
+        };
+        let (base, span, phase_label) = match progress.phase {
+            BuildProgressPhase::TrainingDictionaries => (0.0, 0.10, "Training dictionaries"),
+            BuildProgressPhase::CompressingFiles => (0.10, 0.70, "Compressing package"),
+            BuildProgressPhase::Assembling => (0.80, 0.18, "Assembling package"),
+        };
+        let text = if progress.phase == BuildProgressPhase::CompressingFiles {
+            if let Some(file) = progress.active_file {
+                format!("Compressing file {}/{}", file.index + 1, file.total)
+            } else {
+                format!("{phase_label} {}/{}", progress.completed, progress.total)
+            }
+        } else {
+            format!("{phase_label} {}/{}", progress.completed, progress.total)
+        };
+        self.set(
+            AssetPackProgressState::Running,
+            base + phase_fraction * span,
+            text,
+        );
+    }
 }
 
 impl Drop for ConvertingFlagReset {
@@ -133,10 +195,38 @@ impl UddConvApp {
         });
     }
 
+    fn spawn_asset_task<F>(&self, task_id: AssetPackTask, name: String, task: F)
+    where
+        F: FnOnce(AssetProgressReporter) -> eyre::Result<String> + Send + 'static,
+    {
+        if self.is_busy() {
+            self.push_log(
+                format!("Cannot start {} while another task is running.", name),
+                LogLevel::Error,
+            );
+            return;
+        }
+
+        let reporter = AssetProgressReporter {
+            task: task_id,
+            progress: self.asset_progress.clone(),
+        };
+        let reporter_for_task = reporter.clone();
+        reporter.start();
+        self.spawn_task(name, move || {
+            let result = task(reporter_for_task.clone());
+            match &result {
+                Ok(_) => reporter_for_task.finish(),
+                Err(_) => reporter_for_task.fail(),
+            }
+            result
+        });
+    }
+
     pub fn convert_tex_art_cc(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_cc.uddp");
-        self.spawn_task("CC Art Packing".to_string(), move || {
+        self.spawn_asset_task(AssetPackTask::TexArtCc, "CC Art Packing".to_string(), move |progress| {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -148,7 +238,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
+            let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
                 &sources, &output,
                 &TexArtCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -162,8 +252,10 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -172,7 +264,7 @@ impl UddConvApp {
     pub fn convert_tex_land_cc(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_cc.uddp");
-        self.spawn_task("CC Texmaps Packing".to_string(), move || {
+        self.spawn_asset_task(AssetPackTask::TexLandCc, "CC Texmaps Packing".to_string(), move |progress| {
             let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -184,7 +276,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
+            let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                 &sources[0], &output,
                 &TexLandCcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -202,6 +294,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -210,7 +303,7 @@ impl UddConvApp {
     pub fn convert_tex_art_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_ec.uddp");
-        self.spawn_task("EC Art Packing".to_string(), move || {
+        self.spawn_asset_task(AssetPackTask::TexArtEc, "EC Art Packing".to_string(), move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -222,7 +315,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources(
+            let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
                 &sources, &output,
                 &TexArtEcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -238,6 +331,7 @@ impl UddConvApp {
                     },
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -246,7 +340,7 @@ impl UddConvApp {
     pub fn convert_tex_land_ec(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_land_ec.uddp");
-        self.spawn_task("EC Land Packing".to_string(), move || {
+        self.spawn_asset_task(AssetPackTask::TexLandEc, "EC Land Packing".to_string(), move |progress| {
             let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
@@ -258,7 +352,7 @@ impl UddConvApp {
                 TextureOptimization::JpegXl => CompressionFlag::JpegXl,
             };
 
-            let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
+            let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
                 &sources, &output,
                 &TexLandEcAtlasOptions {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
@@ -280,6 +374,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                     transcode_kdl_path: None,
                 },
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
         });
@@ -288,11 +383,11 @@ impl UddConvApp {
     pub fn convert_tilemeta(&self) {
         let settings = self.settings.clone();
         let output = self.get_output_path("tilemeta.uddp");
-        self.spawn_task("Tilemeta Packing".to_string(), move || {
+        self.spawn_asset_task(AssetPackTask::TileMeta, "Tilemeta Packing".to_string(), move |progress| {
             ensure_output_parent(&output)?;
             match (settings.cc_dir.as_ref(), settings.ec_dir.as_ref()) {
                 (Some(cc_dir), Some(ec_dir)) => {
-                    build_tilemeta_uddp_from_split_sources(
+                    build_tilemeta_uddp_from_split_sources_with_progress(
                         cc_dir,
                         ec_dir,
                         &output,
@@ -301,12 +396,13 @@ impl UddConvApp {
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                         },
+                        |build_progress| progress.build_progress(build_progress),
                     )?;
                 }
                 _ => {
                     let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
                     if sources.is_empty() { eyre::bail!("No source dirs"); }
-                    build_tilemeta_uddp_from_sources(
+                    build_tilemeta_uddp_from_sources_with_progress(
                         &sources,
                         &output,
                         &TileMetaBuildOptions {
@@ -314,6 +410,7 @@ impl UddConvApp {
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                         },
+                        |build_progress| progress.build_progress(build_progress),
                     )?;
                 }
             }
@@ -373,10 +470,11 @@ impl UddConvApp {
             ensure_output_parent(&output)?;
 
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_options(
                     &sources,
                     &tilemeta_path,
                     map_id,
+                    settings.map_preferences[map_id as usize],
                     &classic_patch_options(&settings),
                 )?;
                 udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
@@ -394,6 +492,7 @@ impl UddConvApp {
                         format: settings.radar_format,
                         zstd_level: settings.radar_zstd,
                         classic_patches: classic_patch_options(&settings),
+                        map_source_preference: settings.map_preferences[map_id as usize],
                     },
                 )?;
             }
@@ -442,10 +541,11 @@ impl UddConvApp {
                 settings.radar_format.extension()
             ));
             if settings.radar_format == RadarFormat::Bc7Ktx2 {
-                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_options(
                     &sources,
                     &tilemeta_path,
                     map_id,
+                    settings.map_preferences[map_id as usize],
                     &classic_patch_options(&settings),
                 )?;
                 udd_image_codecs::ktx2::write_ktx2_bc7_zstd(
@@ -463,6 +563,7 @@ impl UddConvApp {
                         format: settings.radar_format,
                         zstd_level: settings.radar_zstd,
                         classic_patches: classic_patch_options(&settings),
+                        map_source_preference: settings.map_preferences[map_id as usize],
                     },
                 )?;
             }

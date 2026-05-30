@@ -40,10 +40,11 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
+use crate::classic_sources::{resolve_classic_art_source, SourceFormat, SourceFormatPreference};
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package_with_progress,
 };
-use crate::source_paths::{find_first_dir_matching, find_first_existing_file, source_path_label};
+use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
 use uocf::classic::tiledata::TileData;
@@ -126,6 +127,7 @@ pub struct TexArtCcAtlasOptions {
     pub upscale_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
+    pub source_preference: SourceFormatPreference,
 }
 
 impl Default for TexArtCcAtlasOptions {
@@ -139,6 +141,7 @@ impl Default for TexArtCcAtlasOptions {
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            source_preference: SourceFormatPreference::Uop,
         }
     }
 }
@@ -278,20 +281,28 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
     options: &TexArtCcAtlasOptions,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<TexArtCcBuildSummary> {
+    convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
+        source_dirs,
+        out_file,
+        options,
+        patch_options,
+        |_| {},
+    )
+}
+
+pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TexArtCcAtlasOptions,
+    patch_options: &ClassicPatchOptions,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<TexArtCcBuildSummary> {
     validate_options(options)?;
 
-    let client_dir = find_first_dir_matching(source_dirs, &[&["artlegacymul.uop"], &["artLegacyMUL.uop"], &["artidx.mul", "art.mul"]])
-        .ok_or_else(|| eyre::eyre!(
-            "no art sources found in any provided path: expected artLegacyMUL.uop or art.mul/artidx.mul"
-        ))?;
+    let art_source_selection =
+        resolve_classic_art_source(source_dirs, options.source_preference)?;
 
-    let art_uop_path = ["artlegacymul.uop", "artLegacyMUL.uop"]
-        .iter()
-        .map(|name| client_dir.join(name))
-        .find(|path| path.is_file());
-    let has_uop = art_uop_path.is_some();
-
-    if has_uop {
+    if art_source_selection.format == SourceFormat::Uop {
         info!(
             "Converting CC Art from UOP format to {}",
             out_file.display()
@@ -302,30 +313,30 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
             out_file.display()
         );
     }
-    if let Some(path) = &art_uop_path {
-        println!("Using CC art source file (UOP): {}", source_path_label(&client_dir, path));
+    if art_source_selection.format == SourceFormat::Uop {
+        println!(
+            "Using CC art source file (UOP): {}",
+            source_path_label(&art_source_selection.root, &art_source_selection.primary_path)
+        );
     } else {
-        let artidx_path = client_dir.join("artidx.mul");
-        let art_path = client_dir.join("art.mul");
-        println!("Using CC art index source file: {}", source_path_label(&client_dir, &artidx_path));
-        println!("Using CC art source file (MUL): {}", source_path_label(&client_dir, &art_path));
+        println!(
+            "Using CC art source file (MUL): {}",
+            source_path_label(&art_source_selection.root, &art_source_selection.primary_path)
+        );
     }
 
     let classic_verdata = load_verdata_if_enabled(source_dirs, patch_options)?;
 
-    let mut art_map = ArtMap::load(&client_dir)
-        .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
-    if !has_uop {
+    let mut art_map = art_source_selection
+        .load_art_map()
+        .wrap_err_with(|| format!("load art sources from {}", art_source_selection.root.display()))?;
+    if art_source_selection.format == SourceFormat::Mul {
         if let Some(verdata) = classic_verdata.clone() {
             art_map = art_map.with_verdata(verdata);
         }
     }
 
-    let art_source = if has_uop {
-        ArtSource::CcUop
-    } else {
-        ArtSource::Mul
-    };
+    let art_source = art_source_selection.art_source();
     let metadata_source = select_tex_art_cc_metadata_source(source_dirs)?;
     let metadata_source_label = tex_art_cc_metadata_source_label(source_dirs, &metadata_source);
     info!(
@@ -504,7 +515,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
         options.bc7_rdo_lambda,
     ));
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(TexArtCcBuildSummary {
         slot_count,
@@ -1261,6 +1272,7 @@ pub fn encode_slot_manifest(
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            source_preference: SourceFormatPreference::Uop,
         },
     )
 }
@@ -1310,6 +1322,7 @@ mod tests {
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            source_preference: SourceFormatPreference::Uop,
         };
 
         let mut tile = tile(7, 2, 2);
@@ -1363,6 +1376,7 @@ mod tests {
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            source_preference: SourceFormatPreference::Uop,
         };
 
         let (page, leftovers) = build_page(0, vec![tile(7, 3, 3)], &options).unwrap();
@@ -1388,6 +1402,7 @@ mod tests {
             upscale_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            source_preference: SourceFormatPreference::Uop,
         };
         let mut tile = tile(7, 3, 3);
         tile.draw_offset_x = -5;

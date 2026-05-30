@@ -3,6 +3,7 @@ use udd_container::{
 };
 
 use udd_conv::tex_art_cc::*;
+use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::upscale::UpscaleFilter;
 use udd_assets::{
     tex_art_cc::{
@@ -37,7 +38,8 @@ fn sparse_slots_keep_absent_records() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        source_preference: SourceFormatPreference::Uop,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -63,7 +65,8 @@ fn packer_spills_to_multiple_pages() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        source_preference: SourceFormatPreference::Uop,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Land, 4, 4),
@@ -89,7 +92,8 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        source_preference: SourceFormatPreference::Uop,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 6, 6),
@@ -116,7 +120,8 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        source_preference: SourceFormatPreference::Uop,
     };
     let mut tile = rgba_tile(0, ArtTileKind::Land, 4, 4);
     tile.upscale_factor = 2;

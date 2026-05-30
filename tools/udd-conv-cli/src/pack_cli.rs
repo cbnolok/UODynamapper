@@ -13,6 +13,7 @@ use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
+    classic_sources::SourceFormatPreference,
     cc_gumps::{
         convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
         GUMPS_CC_DEFAULT_OUTPUT,
@@ -575,6 +576,8 @@ enum Commands {
         upscale_256_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale_256_algo: CliUpscaleFilter,
+        #[arg(long, default_value_t = false, help = "Prefer art.mul/artidx.mul over artLegacyMUL.uop.")]
+        mul: bool,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
@@ -926,6 +929,8 @@ enum Commands {
         /// Output format: rgba8, bc7, bc7ktx2
         #[arg(long, default_value = "bc7")]
         format: String,
+        #[arg(long, default_value_t = false)]
+        uop: bool,
         /// Zstd compression level for KTX2 (1-22)
         #[arg(long, default_value_t = 3)]
         zstd_level: i32,
@@ -1013,6 +1018,8 @@ enum Commands {
         jxl: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
+        #[arg(long, default_value_t = false)]
+        uop: bool,
         #[arg(long = "paperdoll-upscale-pass", value_enum, help = "Add a paperdoll equipment gump upscale pass. Repeat to chain filters.")]
         paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
@@ -1063,6 +1070,7 @@ pub fn run() -> eyre::Result<()> {
             upscale_128_algo: _,
             upscale_256_size: _,
             upscale_256_algo: _,
+            mul,
             upscale,
             upscale_passes,
         } => {
@@ -1081,6 +1089,11 @@ pub fn run() -> eyre::Result<()> {
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    source_preference: if mul {
+                        SourceFormatPreference::Mul
+                    } else {
+                        SourceFormatPreference::Uop
+                    },
                 },
                 &classic_patches.into(),
             )?;
@@ -1720,6 +1733,7 @@ pub fn run() -> eyre::Result<()> {
             outdir,
             output,
             format,
+            uop,
             zstd_level,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -1743,12 +1757,18 @@ pub fn run() -> eyre::Result<()> {
 
             let uddp_dir = uddp_dir.unwrap_or_else(|| PathBuf::from("."));
             let tilemeta_path = find_raw_tilemeta_package(&uddp_dir)?;
+            let map_source_preference = if uop {
+                CcMapSourcePreference::Uop
+            } else {
+                CcMapSourcePreference::Mul
+            };
 
             if radar_format == udd_conv::cc_radar::RadarFormat::Bc7Ktx2 {
-                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_patches(
+                let bc7_data = udd_conv::cc_radar::build_facet_radar_bc7_with_options(
                     &paths,
                     &tilemeta_path,
                     map_id,
+                    map_source_preference,
                     &classic_patches.into(),
                 )?;
                 udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
@@ -1763,6 +1783,7 @@ pub fn run() -> eyre::Result<()> {
                         format: radar_format,
                         zstd_level,
                         classic_patches: classic_patches.into(),
+                        map_source_preference,
                     },
                 )?;
             }
@@ -1823,6 +1844,7 @@ pub fn run() -> eyre::Result<()> {
             raw: _,
             jxl,
             zstd,
+            uop,
             paperdoll_upscale_passes,
             single_upscale_passes,
         } => {
@@ -1847,6 +1869,11 @@ pub fn run() -> eyre::Result<()> {
                     },
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
+                    source_preference: if uop {
+                        SourceFormatPreference::Uop
+                    } else {
+                        SourceFormatPreference::Mul
+                    },
                 },
             )?;
             println!(

@@ -8,11 +8,12 @@ use uocf::classic::gump::GumpMap;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
+use crate::classic_sources::{resolve_classic_gump_source, SourceFormat, SourceFormatPreference};
 use crate::gump_atlas::{
     add_gump_atlas_files, is_paperdoll_equipment_gump_id, DecodedGump, GumpAtlasOptions,
 };
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::{find_first_existing_file, source_path_label};
+use crate::source_paths::source_path_label;
 use crate::upscale::{apply_filter_passes, UpscaleFilter};
 
 pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
@@ -28,6 +29,7 @@ pub struct CcGumpsOptions {
     pub atlas_compression: CompressionFlag,
     pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
     pub single_upscale_passes: Vec<UpscaleFilter>,
+    pub source_preference: SourceFormatPreference,
 }
 
 impl Default for CcGumpsOptions {
@@ -37,6 +39,7 @@ impl Default for CcGumpsOptions {
             atlas_compression: CompressionFlag::ZstdNoDict,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
+            source_preference: SourceFormatPreference::Mul,
         }
     }
 }
@@ -60,42 +63,22 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
     patch_options: &ClassicPatchOptions,
     options: &CcGumpsOptions,
 ) -> eyre::Result<CcGumpsBuildSummary> {
-    let source_root = find_first_existing_file(source_dirs, &["gumpidx.mul", "gumpartLegacyMUL.uop"])
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .ok_or_else(|| eyre::eyre!("missing Classic gump source"))?;
-    let gump_idx_path = ["gumpidx.mul", "Gumpidx.mul"]
-        .iter()
-        .map(|name| source_root.join(name))
-        .find(|path| path.is_file());
-    let gump_mul_path = ["gumpart.mul", "Gumpart.mul"]
-        .iter()
-        .map(|name| source_root.join(name))
-        .find(|path| path.is_file());
-    let gump_uop_path = [
-        "gumpartLegacyMUL.uop",
-        "GumpartLegacyMUL.uop",
-        "gumpartlegacymul.uop",
-    ]
-    .iter()
-    .map(|name| source_root.join(name))
-    .find(|path| path.is_file());
-    if let (Some(idx_path), Some(mul_path)) = (&gump_idx_path, &gump_mul_path) {
-        println!("Using CC gump index source file: {}", source_path_label(&source_root, idx_path));
-        println!("Using CC gump source file (MUL): {}", source_path_label(&source_root, mul_path));
-    } else if let Some(uop_path) = &gump_uop_path {
-        println!("Using CC gump source file (UOP): {}", source_path_label(&source_root, uop_path));
-    }
-    if gump_idx_path.is_some() && gump_mul_path.is_some() && gump_uop_path.is_some() {
-        println!(
-            "Using CC gump source preference: MUL first; UOP fallback available: {}",
-            source_path_label(&source_root, gump_uop_path.as_ref().expect("checked above"))
-        );
-    }
+    let gump_source = resolve_classic_gump_source(source_dirs, options.source_preference)?;
+    println!(
+        "Using CC gump source file ({}): {}",
+        gump_source.format.label(),
+        source_path_label(&gump_source.root, &gump_source.primary_path)
+    );
 
-    let mut gumps = GumpMap::load(&source_root)
-        .wrap_err_with(|| format!("load Classic gumps from {}", source_root.display()))?;
-    if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
-        gumps = gumps.with_verdata(verdata);
+    let mut gumps = gump_source
+        .load_gump_map()
+        .wrap_err_with(|| format!("load Classic gumps from {}", gump_source.root.display()))?;
+    if gump_source.format == SourceFormat::Mul {
+        if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+            gumps = gumps.with_verdata(verdata);
+        }
+    } else if patch_options.any() {
+        log::warn!("Classic gump patch files are ignored when converting gumps from UOP.");
     }
 
     let max_id = gumps.max_id();

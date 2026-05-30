@@ -154,12 +154,24 @@ pub fn atlas_payload_finish_message(
 }
 
 pub fn build_and_write_package(builder: &mut UddpBuilder, out_file: &Path) -> eyre::Result<()> {
+    build_and_write_package_with_progress(builder, out_file, |_| {})
+}
+
+pub fn build_and_write_package_with_progress<F>(
+    builder: &mut UddpBuilder,
+    out_file: &Path,
+    mut progress_callback: F,
+) -> eyre::Result<()>
+where
+    F: FnMut(BuildProgress),
+{
     let bar = ProgressBar::new(1);
     bar.set_style(build_style());
     let compression_summary = builder.compression_summary();
 
     let mut active_phase = None;
     let bytes = builder.build_with_progress(|progress: BuildProgress| {
+        progress_callback(progress);
         let total = progress.total.max(1) as u64;
         if active_phase != Some(progress.phase) || bar.length() != Some(total) {
             active_phase = Some(progress.phase);

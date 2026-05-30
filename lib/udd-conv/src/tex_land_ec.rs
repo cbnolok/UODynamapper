@@ -39,7 +39,7 @@ use crate::{
     texture_atlas_packing_mode, AtlasPackingMode, extrude_rgba_rect_edges, resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
+    atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
@@ -291,6 +291,20 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
     out_file: &Path,
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<TexLandEcBuildSummary> {
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
+        source_dirs,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &TexLandEcAtlasOptions,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
 
     let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
@@ -338,7 +352,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
     let terrain_definition = TerrainDefinitionPackage::load(&terrain_definition_path)
         .wrap_err("load TerrainDefinition.uop")?;
 
-    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_progress(
         source_dirs,
         &terrain_definition_path,
         texture_uop_path.as_deref(),
@@ -348,6 +362,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources(
         legacy_textures.as_ref(),
         out_file,
         options,
+        package_progress,
     )
 }
 
@@ -361,6 +376,32 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     legacy_textures: Option<&Textures>,
     out_file: &Path,
     options: &TexLandEcAtlasOptions,
+) -> eyre::Result<TexLandEcBuildSummary> {
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_progress(
+        source_dirs,
+        terrain_definition_path,
+        texture_uop_path,
+        legacy_texture_uop_path,
+        terrain_definition,
+        world_textures,
+        legacy_textures,
+        out_file,
+        options,
+        |_| {},
+    )
+}
+
+pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_progress(
+    source_dirs: &[PathBuf],
+    terrain_definition_path: &Path,
+    texture_uop_path: Option<&Path>,
+    legacy_texture_uop_path: Option<&Path>,
+    terrain_definition: &TerrainDefinitionPackage,
+    world_textures: Option<&Textures>,
+    legacy_textures: Option<&Textures>,
+    out_file: &Path,
+    options: &TexLandEcAtlasOptions,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
 
@@ -655,7 +696,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         options.bc7_rdo_lambda,
     ));
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(TexLandEcBuildSummary {
         terrain_entry_count,
