@@ -26,7 +26,7 @@ use udd_conv_cli::{
 };
 use crate::app::UddConvApp;
 use crate::models::{
-    AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
+    AppSettings, AssetPackProgress, AssetPackProgressState, AssetPackTask, LogLevel, LogMessage,
     TextureOptimization,
 };
 
@@ -196,6 +196,14 @@ fn texture_compression(
     }
 }
 
+fn bc7_rdo_lambda(settings: &AppSettings) -> f32 {
+    if settings.bc7_rdo_enabled {
+        settings.bc7_rdo_lambda
+    } else {
+        0.0
+    }
+}
+
 impl UddConvApp {
     pub fn spawn_task<F>(&self, name: String, task: F)
     where
@@ -330,7 +338,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
@@ -370,7 +378,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                 },
                 &classic_patch_options(&settings),
                 |task_progress| progress.task_progress(task_progress),
@@ -408,7 +416,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                 },
                 |task_progress| progress.task_progress(task_progress),
                 |build_progress| progress.build_progress(build_progress),
@@ -450,7 +458,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: settings.bc7_rdo_lambda,
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
                     transcode_kdl_path: None,
                 },
                 |task_progress| progress.task_progress(task_progress),

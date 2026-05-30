@@ -43,6 +43,8 @@ pub struct AppSettings {
     pub jxl_tex_land_ec: u8,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
+    #[serde(default = "default_bc7_rdo_enabled")]
+    pub bc7_rdo_enabled: bool,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig,
@@ -84,6 +86,7 @@ impl Default for AppSettings {
             jxl_tex_art_ec: default_jxl_level(),
             jxl_tex_land_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
+            bc7_rdo_enabled: default_bc7_rdo_enabled(),
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
             upscale_tex_land_cc_128: udd_conv::upscale::UpscaleConfig::default(),
@@ -104,6 +107,10 @@ impl Default for AppSettings {
 
 fn default_bc7_rdo_lambda() -> f32 {
     udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA
+}
+
+fn default_bc7_rdo_enabled() -> bool {
+    true
 }
 
 fn default_zstd_level() -> i32 {
@@ -206,6 +213,7 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(settings.bc7_rdo_enabled);
     }
 
     #[test]
@@ -213,7 +221,9 @@ mod tests {
         let serialized = toml::to_string(&AppSettings::default()).expect("serialize settings");
         let old_config = serialized
             .lines()
-            .filter(|line| !line.starts_with("include_"))
+            .filter(|line| {
+                !line.starts_with("include_") && !line.starts_with("bc7_rdo_enabled")
+            })
             .collect::<Vec<_>>()
             .join("\n")
             + "\nignore_missing_tileart_for_tex_art_cc = true\n";
@@ -223,6 +233,7 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(settings.bc7_rdo_enabled);
     }
 
     #[test]

@@ -34,7 +34,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_cc, &mut self.settings.jxl_tex_art_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_art_cc),
-                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
                 Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                 vec![],
             );
@@ -53,7 +53,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_cc, &mut self.settings.jxl_tex_land_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_land_cc),
-                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
@@ -77,7 +77,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_ec, &mut self.settings.jxl_tex_art_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_art_ec),
-                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
                 Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
                 vec![],
             );
@@ -96,7 +96,7 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_ec, &mut self.settings.jxl_tex_land_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_land_ec),
-                Some(&mut self.settings.bc7_rdo_lambda),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
@@ -206,7 +206,7 @@ fn draw_asset_card(
     texture_levels: Option<(&mut i32, &mut u8)>,
     zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
-    bc7_rdo_lambda: Option<&mut f32>,
+    bc7_rdo: Option<(&mut bool, &mut f32)>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
@@ -276,7 +276,7 @@ fn draw_asset_card(
                 if opt.is_some()
                     || texture_levels.is_some()
                     || zstd_only_level.is_some()
-                    || bc7_rdo_lambda.is_some()
+                    || bc7_rdo.is_some()
                     || upscale_single.is_some()
                     || !upscale_configs.is_empty()
                 {
@@ -336,14 +336,19 @@ fn draw_asset_card(
                                 });
 
                                 if show_bc7_settings {
-                                    if let Some(lambda) = bc7_rdo_lambda {
-                                        draw_control_cell(ui, "BC7 RDO", 96.0, |ui| {
-                                            ui.add(
-                                                egui::DragValue::new(lambda)
-                                                    .speed(0.01)
-                                                    .range(0.0..=1.0),
-                                            )
-                                                .on_hover_text("0 disables RDO. Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
+                                    if let Some((enabled, lambda)) = bc7_rdo {
+                                        draw_control_cell(ui, "BC7 RDO", 142.0, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(enabled, "On")
+                                                    .on_hover_text("Disable to skip the BC7 RDO pass.");
+                                                ui.add_enabled(
+                                                    *enabled,
+                                                    egui::DragValue::new(lambda)
+                                                        .speed(0.01)
+                                                        .range(0.0..=1.0),
+                                                )
+                                                    .on_hover_text("Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
+                                            });
                                         });
                                     }
                                 }
