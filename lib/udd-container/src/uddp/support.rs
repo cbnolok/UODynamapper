@@ -137,12 +137,15 @@ pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Resu
 pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     use jpegxl_rs::encoder_builder;
     use jpegxl_rs::encode::EncoderFrame;
+    use jpegxl_rs::parallel::threads_runner::ThreadsRunner;
 
+    let parallel_runner = ThreadsRunner::default();
     let mut encoder = encoder_builder()
         .has_alpha(true)
         .lossless(true)
         .uses_original_profile(true)
         .speed(JXL_LEVEL)
+        .parallel_runner(&parallel_runner)
         .build()
         .map_err(|e| e.to_string())?;
 

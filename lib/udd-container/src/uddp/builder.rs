@@ -287,88 +287,27 @@ impl UddpBuilder {
             }
         }
 
-        let mut completed = 0usize;
         progress(BuildProgress {
             phase: BuildProgressPhase::CompressingFiles,
-            completed,
+            completed: 0,
             total: self.files.len(),
         });
 
-        let compressed_files = self
-            .files
-            .par_iter()
-            .map(|file| -> Result<BuiltFile, BuildError> {
-                let data_to_compress = &file.raw_data;
-
-                let (codec, encoded_payload) = match file.compression {
-                    CompressionFlag::None => (Codec::None, data_to_compress.to_vec()),
-                    CompressionFlag::ZstdNoDict => {
-                        let encoded = zstd_compress(data_to_compress).map_err(BuildError::Io)?;
-                        (Codec::ZstdNoDict, encoded)
-                    }
-                    CompressionFlag::ZstdNoDictLevel(level) => {
-                        let encoded =
-                            zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?;
-                        (Codec::ZstdNoDict, encoded)
-                    }
-                    CompressionFlag::ZstdDict => {
-                        let dict = dicts_by_type
-                            .get(&file.data_type)
-                            .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
-                        let encoded =
-                            zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?;
-                        (Codec::ZstdTypeDict, encoded)
-                    }
-                    CompressionFlag::JpegXl => {
-                        let encoded = jxl_compress(data_to_compress, file.width, file.height)
-                            .map_err(BuildError::CodecError)?;
-                        (Codec::JpegXl, encoded)
-                    }
-                    CompressionFlag::JpegXlZstd => {
-                        let encoded = jxl_zstd_compress(data_to_compress, file.width, file.height)
-                            .map_err(BuildError::CodecError)?;
-                        (Codec::JpegXl, encoded)
-                    }
-                    CompressionFlag::JpegXlZstdLevel(level) => {
-                        let encoded =
-                            jxl_zstd_compress_level(data_to_compress, file.width, file.height, level)
-                                .map_err(BuildError::CodecError)?;
-                        (Codec::JpegXl, encoded)
-                    }
-                    CompressionFlag::Auto => {
-                        choose_auto_compression(file, dicts_by_type.get(&file.data_type))?
-                    }
-                };
-
-                // The packed locator stores only a non-negative `raw_size - stored_size`
-                // delta. If compression grows the payload, the file must fall back to raw
-                // storage even when the caller requested compression explicitly.
-                let (codec, encoded_payload): (Codec, Vec<u8>) =
-                    if codec != Codec::None && encoded_payload.len() < file.raw_data.len() {
-                        (codec, encoded_payload)
-                    } else {
-                        (Codec::None, file.raw_data.clone())
-                    };
-
-                Ok(BuiltFile {
-                    key: file.key,
-                    data_type: file.data_type,
-                    codec,
-                    raw_size: file.raw_data.len() as u32,
-                    encoded_payload,
-                })
-            })
-            .collect::<Vec<_>>();
+        let compressed_files = compress_files_with_progress(
+            &self.files,
+            &dicts_by_type,
+            |completed| {
+                progress(BuildProgress {
+                    phase: BuildProgressPhase::CompressingFiles,
+                    completed,
+                    total: self.files.len(),
+                });
+            },
+        )?;
 
         let mut files = Vec::with_capacity(compressed_files.len());
         for built_file in compressed_files {
-            files.push(built_file?);
-            completed += 1;
-            progress(BuildProgress {
-                phase: BuildProgressPhase::CompressingFiles,
-                completed,
-                total: self.files.len(),
-            });
+            files.push(built_file);
         }
 
         let mut dictionaries = Vec::new();
@@ -575,6 +514,129 @@ pub(crate) fn codec_to_compression_flag(codec: Codec) -> CompressionFlag {
         Codec::ZstdTypeDict => CompressionFlag::ZstdDict,
         Codec::JpegXl => CompressionFlag::JpegXl,
     }
+}
+
+fn compress_files_with_progress<F>(
+    files: &[PendingFile],
+    dicts_by_type: &HashMap<u8, Vec<u8>>,
+    mut progress: F,
+) -> Result<Vec<BuiltFile>, BuildError>
+where
+    F: FnMut(usize),
+{
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            files
+                .par_iter()
+                .enumerate()
+                .for_each_with(sender, |sender, (index, file)| {
+                    let result = compress_file(file, dicts_by_type)
+                        .map(|built_file| (index, built_file));
+                    let _ = sender.send(result);
+                });
+        });
+
+        let mut completed = 0usize;
+        let mut compressed_files = vec![None; files.len()];
+        let mut first_error = None;
+        for result in receiver {
+            completed += 1;
+            progress(completed);
+            match result {
+                Ok((index, built_file)) => {
+                    compressed_files[index] = Some(built_file);
+                }
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+
+        compressed_files
+            .into_iter()
+            .map(|file| {
+                file.ok_or_else(|| {
+                    BuildError::CodecError("compression worker did not return a file".to_string())
+                })
+            })
+            .collect()
+    })
+}
+
+fn compress_file(
+    file: &PendingFile,
+    dicts_by_type: &HashMap<u8, Vec<u8>>,
+) -> Result<BuiltFile, BuildError> {
+    let data_to_compress = &file.raw_data;
+
+    let (codec, encoded_payload) = match file.compression {
+        CompressionFlag::None => (Codec::None, data_to_compress.to_vec()),
+        CompressionFlag::ZstdNoDict => {
+            let encoded = zstd_compress(data_to_compress).map_err(BuildError::Io)?;
+            (Codec::ZstdNoDict, encoded)
+        }
+        CompressionFlag::ZstdNoDictLevel(level) => {
+            let encoded =
+                zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?;
+            (Codec::ZstdNoDict, encoded)
+        }
+        CompressionFlag::ZstdDict => {
+            let dict = dicts_by_type
+                .get(&file.data_type)
+                .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
+            let encoded =
+                zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?;
+            (Codec::ZstdTypeDict, encoded)
+        }
+        CompressionFlag::JpegXl => {
+            let encoded = jxl_compress(data_to_compress, file.width, file.height)
+                .map_err(BuildError::CodecError)?;
+            (Codec::JpegXl, encoded)
+        }
+        CompressionFlag::JpegXlZstd => {
+            let encoded = jxl_zstd_compress(data_to_compress, file.width, file.height)
+                .map_err(BuildError::CodecError)?;
+            (Codec::JpegXl, encoded)
+        }
+        CompressionFlag::JpegXlZstdLevel(level) => {
+            let encoded =
+                jxl_zstd_compress_level(data_to_compress, file.width, file.height, level)
+                    .map_err(BuildError::CodecError)?;
+            (Codec::JpegXl, encoded)
+        }
+        CompressionFlag::Auto => {
+            choose_auto_compression(file, dicts_by_type.get(&file.data_type))?
+        }
+    };
+
+    // The packed locator stores only a non-negative `raw_size - stored_size`
+    // delta. If compression grows the payload, the file must fall back to raw
+    // storage even when the caller requested compression explicitly.
+    let (codec, encoded_payload): (Codec, Vec<u8>) =
+        if codec != Codec::None && encoded_payload.len() < file.raw_data.len() {
+            (codec, encoded_payload)
+        } else {
+            (Codec::None, file.raw_data.clone())
+        };
+
+    Ok(BuiltFile {
+        key: file.key,
+        data_type: file.data_type,
+        codec,
+        raw_size: file.raw_data.len() as u32,
+        encoded_payload,
+    })
 }
 
 /// Decide whether we have enough same-type samples to justify dictionary training.
