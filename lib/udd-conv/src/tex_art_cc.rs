@@ -46,6 +46,7 @@ use crate::package_progress::{
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file, source_path_label};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
+use uocf::classic::tiledata::TileData;
 use uocf::enhanced::tile_database::ArtDefinition;
 
 use crate::upscale::{apply_filter_passes, UpscaleFilter};
@@ -66,6 +67,49 @@ pub struct TexArtCcBuildSummary {
     pub page_count: u32,
     pub atlas_width: u32,
     pub atlas_height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexArtCcMetadataSourceKind {
+    TiledataMul,
+    TileartUop,
+}
+
+impl TexArtCcMetadataSourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TiledataMul => "tiledata.mul",
+            Self::TileartUop => "tileart.uop",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TexArtCcMetadataSource {
+    pub kind: TexArtCcMetadataSourceKind,
+    pub path: PathBuf,
+}
+
+pub fn select_tex_art_cc_metadata_source(
+    source_dirs: &[PathBuf],
+) -> eyre::Result<TexArtCcMetadataSource> {
+    if let Some(path) = find_first_existing_file(source_dirs, &["tiledata.mul", "Tiledata.mul"]) {
+        return Ok(TexArtCcMetadataSource {
+            kind: TexArtCcMetadataSourceKind::TiledataMul,
+            path,
+        });
+    }
+
+    if let Some(path) = find_first_existing_file(source_dirs, &["tileart.uop"]) {
+        return Ok(TexArtCcMetadataSource {
+            kind: TexArtCcMetadataSourceKind::TileartUop,
+            path,
+        });
+    }
+
+    eyre::bail!(
+        "missing CC art metadata source: expected tiledata.mul or tileart.uop for tex_art_cc draw offsets"
+    )
 }
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
@@ -267,10 +311,12 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
         println!("Using CC art source file (MUL): {}", source_path_label(&client_dir, &art_path));
     }
 
+    let classic_verdata = load_verdata_if_enabled(source_dirs, patch_options)?;
+
     let mut art_map = ArtMap::load(&client_dir)
         .wrap_err_with(|| format!("load art sources from {}", client_dir.display()))?;
     if !has_uop {
-        if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
+        if let Some(verdata) = classic_verdata.clone() {
             art_map = art_map.with_verdata(verdata);
         }
     }
@@ -280,7 +326,32 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
     } else {
         ArtSource::Mul
     };
-    let slot_aliases = load_tileart_cc_slot_aliases(source_dirs)?;
+    let metadata_source = select_tex_art_cc_metadata_source(source_dirs)?;
+    let metadata_source_label = tex_art_cc_metadata_source_label(source_dirs, &metadata_source);
+    info!(
+        "Using CC art metadata source file ({}): {}",
+        metadata_source.kind.label(),
+        metadata_source.path.display()
+    );
+    println!(
+        "Using CC art metadata source file ({}): {}",
+        metadata_source.kind.label(),
+        metadata_source_label
+    );
+
+    let tiledata = match metadata_source.kind {
+        TexArtCcMetadataSourceKind::TiledataMul => Some(
+            TileData::load_with_verdata(metadata_source.path.clone(), classic_verdata)
+                .wrap_err("load tiledata-driven CC art draw offset metadata")?
+        ),
+        TexArtCcMetadataSourceKind::TileartUop => None,
+    };
+    let slot_aliases = match metadata_source.kind {
+        TexArtCcMetadataSourceKind::TiledataMul => Vec::new(),
+        TexArtCcMetadataSourceKind::TileartUop => {
+            load_tileart_cc_slot_aliases(source_dirs, &metadata_source.path)?
+        }
+    };
     let slot_count = slot_aliases
         .iter()
         .fold(art_map.max_id_for_source(art_source), |slot_count, alias| {
@@ -288,7 +359,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 .max(alias.art_id.saturating_add(1))
                 .max(alias.canonical_art_id.saturating_add(1))
         });
-    let decoded_tiles = decode_present_tiles(&art_map, art_source, options)?;
+    let decoded_tiles = decode_present_tiles(&art_map, art_source, options, tiledata.as_ref())?;
 
     let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
     apply_slot_aliases(&mut slot_records, &slot_aliases)?;
@@ -463,6 +534,7 @@ fn decode_present_tiles(
     art_map: &ArtMap,
     source: ArtSource,
     options: &TexArtCcAtlasOptions,
+    tiledata: Option<&TileData>,
 ) -> eyre::Result<Vec<DecodedArtTile>> {
     // Decode every occupied art slot up front so the packer can sort by area and
     // feed the atlas allocator largest-first. Classic clients are messy in practice:
@@ -474,6 +546,7 @@ fn decode_present_tiles(
     let mut skipped_static_tiles = 0u32;
     let mut skipped_land_samples = Vec::new();
     let mut skipped_static_samples = Vec::new();
+    let mut failed_static_samples = Vec::new();
 
     let max_id = art_map.max_id_for_source(source);
     let art_ids = (0..max_id)
@@ -489,6 +562,7 @@ fn decode_present_tiles(
         Decoded(DecodedArtTile),
         SkippedLand(String),
         SkippedStatic(String),
+        FailedStatic(String),
     }
 
     let decode_outcomes = art_ids
@@ -535,20 +609,37 @@ fn decode_present_tiles(
                     &mut scratch_raw,
                 ) {
                     Ok((width, height, rgba)) => {
-                        let upscale_passes = art_upscale_passes(options);
-                        let (w, h, rgba, upscale_factor, upscale_filter) =
-                            apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
-                        DecodeOutcome::Decoded(DecodedArtTile {
-                            art_id,
-                            kind,
-                            width: w as u16,
-                            height: h as u16,
-                            upscale_factor: upscale_factor as u16,
-                            upscale_algorithm: upscale_algorithm_code(upscale_filter),
-                            draw_offset_x: 0,
-                            draw_offset_y: 0,
-                            rgba,
-                        })
+                        let draw_offsets = match tiledata {
+                            Some(tiledata) => match classic_static_draw_offset(
+                                art_id,
+                                width,
+                                height,
+                                tiledata,
+                            ) {
+                                Ok(offsets) => Ok(offsets),
+                                Err(error) => Err(format!("{art_id} ({error})")),
+                            },
+                            None => Ok((0, 0)),
+                        };
+                        match draw_offsets {
+                            Ok((draw_offset_x, draw_offset_y)) => {
+                                let upscale_passes = art_upscale_passes(options);
+                                let (w, h, rgba, upscale_factor, upscale_filter) =
+                                    apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
+                                DecodeOutcome::Decoded(DecodedArtTile {
+                                    art_id,
+                                    kind,
+                                    width: w as u16,
+                                    height: h as u16,
+                                    upscale_factor: upscale_factor as u16,
+                                    upscale_algorithm: upscale_algorithm_code(upscale_filter),
+                                    draw_offset_x,
+                                    draw_offset_y,
+                                    rgba,
+                                })
+                            }
+                            Err(sample) => DecodeOutcome::FailedStatic(sample),
+                        }
                     }
                     Err(error) => DecodeOutcome::SkippedStatic(format!("{art_id} ({error})")),
                 },
@@ -575,7 +666,18 @@ fn decode_present_tiles(
                     skipped_static_samples.push(sample);
                 }
             }
+            DecodeOutcome::FailedStatic(sample) => {
+                if failed_static_samples.len() < 8 {
+                    failed_static_samples.push(sample);
+                }
+            }
         }
+    }
+    if !failed_static_samples.is_empty() {
+        eyre::bail!(
+            "failed to resolve tiledata-driven draw offsets for CC static art: {}",
+            failed_static_samples.join(", ")
+        );
     }
     if skipped_tiles > 0 {
         let land_summary = format_skip_summary(skipped_land_tiles, &skipped_land_samples);
@@ -614,6 +716,17 @@ fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
     find_first_existing_file(source_dirs, &["string_dictionary.uop"])
 }
 
+fn tex_art_cc_metadata_source_label(
+    source_dirs: &[PathBuf],
+    source: &TexArtCcMetadataSource,
+) -> String {
+    source_dirs
+        .iter()
+        .find(|source_dir| source.path.starts_with(source_dir))
+        .map(|source_dir| source_path_label(source_dir, &source.path))
+        .unwrap_or_else(|| source.path.display().to_string())
+}
+
 fn classic_static_art_id(tile_id: u32) -> u32 {
     (tile_id as u16)
         .saturating_add(CLASSIC_STATIC_ART_ID_OFFSET)
@@ -622,19 +735,47 @@ fn classic_static_art_id(tile_id: u32) -> u32 {
 
 fn i16_draw_offset(art_id: u32, axis: &str, value: i32) -> eyre::Result<i16> {
     i16::try_from(value).map_err(|_| {
-        eyre::eyre!("CC art alias {art_id} {axis} draw offset {value} does not fit in i16")
+        eyre::eyre!("CC art {art_id} {axis} draw offset {value} does not fit in i16")
     })
 }
 
-fn load_tileart_cc_slot_aliases(source_dirs: &[PathBuf]) -> eyre::Result<Vec<TexArtCcSlotAlias>> {
-    let Some(tileart_path) = find_first_existing_file(source_dirs, &["tileart.uop"]) else {
-        return Ok(Vec::new());
-    };
+fn classic_static_draw_offset(
+    art_id: u32,
+    width: u16,
+    height: u16,
+    tiledata: &TileData,
+) -> eyre::Result<(i16, i16)> {
+    let item_id = art_id
+        .checked_sub(CLASSIC_STATIC_ART_ID_OFFSET as u32)
+        .ok_or_else(|| eyre::eyre!("art id is not a classic static slot"))?;
+    let item = tiledata
+        .item_tiles()
+        .get(item_id as usize)
+        .filter(|item| item.tile_id >= 0)
+        .ok_or_else(|| eyre::eyre!("missing tiledata.mul item entry {item_id}"))?;
+    if item.tile_id as u32 != item_id {
+        eyre::bail!(
+            "tiledata.mul item entry {} has unexpected tile id {}",
+            item_id,
+            item.tile_id
+        );
+    }
+
+    Ok((
+        i16_draw_offset(art_id, "x", -(i32::from(width) / 2))?,
+        i16_draw_offset(art_id, "y", -i32::from(height))?,
+    ))
+}
+
+fn load_tileart_cc_slot_aliases(
+    source_dirs: &[PathBuf],
+    tileart_path: &Path,
+) -> eyre::Result<Vec<TexArtCcSlotAlias>> {
     let Some(stringdict_path) = find_string_dictionary_path(source_dirs) else {
-        return Ok(Vec::new());
+        eyre::bail!("tileart.uop fallback requires string_dictionary.uop for CC art draw offsets");
     };
 
-    let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
+    let art_definition = ArtDefinition::load(tileart_path, &stringdict_path)
         .wrap_err("load tileart-driven CC art alias metadata")?;
     let mut aliases = Vec::new();
     for (&tile_id, art_data) in &art_definition.definitions {
@@ -649,13 +790,11 @@ fn load_tileart_cc_slot_aliases(source_dirs: &[PathBuf]) -> eyre::Result<Vec<Tex
             draw_offset_y: i16_draw_offset(art_id, "y", texture.offset_y)?,
         });
     }
-    if !aliases.is_empty() {
-        info!(
-            "Loaded {} tileart-derived CC art slot aliases from {}",
-            aliases.len(),
-            tileart_path.display()
-        );
-    }
+    info!(
+        "Loaded {} tileart-derived CC art slot aliases from {}",
+        aliases.len(),
+        tileart_path.display()
+    );
     Ok(aliases)
 }
 
@@ -1129,6 +1268,22 @@ pub fn encode_slot_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_source_dir(test_name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "udd_tex_art_cc_{test_name}_{}_{}",
+            std::process::id(),
+            stamp
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     fn tile(art_id: u32, width: u16, height: u16) -> DecodedArtTile {
         DecodedArtTile {
@@ -1170,6 +1325,31 @@ mod tests {
         let gutter_y = placed.y as u32;
         let gutter_offset = ((gutter_y * options.atlas_width + gutter_x) * 4) as usize;
         assert_eq!(&page.pixels[gutter_offset..gutter_offset + 4], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn metadata_source_prefers_tiledata_over_tileart() {
+        let dir = temp_source_dir("metadata_source_prefers_tiledata_over_tileart");
+        fs::write(dir.join("tiledata.mul"), b"").unwrap();
+        fs::write(dir.join("tileart.uop"), b"").unwrap();
+
+        let selected = select_tex_art_cc_metadata_source(&[dir.clone()]).unwrap();
+
+        assert_eq!(selected.kind, TexArtCcMetadataSourceKind::TiledataMul);
+        assert_eq!(selected.path, dir.join("tiledata.mul"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn metadata_source_falls_back_to_tileart() {
+        let dir = temp_source_dir("metadata_source_falls_back_to_tileart");
+        fs::write(dir.join("tileart.uop"), b"").unwrap();
+
+        let selected = select_tex_art_cc_metadata_source(&[dir.clone()]).unwrap();
+
+        assert_eq!(selected.kind, TexArtCcMetadataSourceKind::TileartUop);
+        assert_eq!(selected.path, dir.join("tileart.uop"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

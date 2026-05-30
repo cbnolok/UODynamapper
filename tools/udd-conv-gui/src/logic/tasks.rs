@@ -136,13 +136,6 @@ impl UddConvApp {
         self.spawn_task("CC Art Packing".to_string(), move || {
             let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
-            if !settings.ignore_missing_tileart_for_tex_art_cc
-                && sources.iter().all(|source| !source.join("tileart.uop").is_file())
-            {
-                eyre::bail!(
-                    "tileart.uop is required for tex_art_cc owner-slot draw offsets. Enable 'Allow missing tileart.uop' to build without those offsets."
-                );
-            }
             ensure_output_parent(&output)?;
 
             let compression = match settings.opt_tex_art_cc {

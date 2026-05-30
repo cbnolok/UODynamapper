@@ -1,6 +1,8 @@
 use crate::app::UddConvApp;
 use crate::models::TextureOptimization;
 use eframe::egui;
+use udd_conv::source_paths::gather_source_dirs;
+use udd_conv::tex_art_cc::select_tex_art_cc_metadata_source;
 use udd_conv::upscale::UpscaleFilter;
 
 impl UddConvApp {
@@ -18,24 +20,17 @@ impl UddConvApp {
 
             ui.add_enabled_ui(!is_busy, |ui| {
                 draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
+                let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
                 let (clicked, preview) = draw_asset_card(
                     ui,
                     "Classic Art",
                     "Items and land textures from art.mul",
+                    Some(&tex_art_cc_metadata_source),
                     Some(&mut self.settings.opt_tex_art_cc),
                     Some(&mut self.settings.bc7_rdo_lambda),
                     Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
                     vec![],
                 );
-                ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(
-                        &mut self.settings.ignore_missing_tileart_for_tex_art_cc,
-                        "Allow missing tileart.uop",
-                    )
-                    .on_hover_text(
-                        "Builds tex_art_cc without tileart-derived owner slots. CC fallback statics may lose per-item draw offsets and appear shifted.",
-                    );
-                });
                 if clicked { self.convert_tex_art_cc(); }
                 if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
@@ -43,6 +38,7 @@ impl UddConvApp {
                     ui,
                     "Classic Texmaps",
                     "High-resolution terrain textures from texmaps.mul",
+                    None,
                     Some(&mut self.settings.opt_tex_land_cc),
                     Some(&mut self.settings.bc7_rdo_lambda),
                     None,
@@ -60,6 +56,7 @@ impl UddConvApp {
                     ui,
                     "Enhanced Art",
                     "Static items from worldart",
+                    None,
                     Some(&mut self.settings.opt_tex_art_ec),
                     Some(&mut self.settings.bc7_rdo_lambda),
                     Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
@@ -72,6 +69,7 @@ impl UddConvApp {
                     ui,
                     "Enhanced Land",
                     "High-resolution terrain textures",
+                    None,
                     Some(&mut self.settings.opt_tex_land_ec),
                     Some(&mut self.settings.bc7_rdo_lambda),
                     None,
@@ -94,12 +92,25 @@ impl UddConvApp {
                     None,
                     None,
                     None,
+                    None,
                     vec![],
                 ).0 {
                     self.convert_tilemeta();
                 }
             });
         });
+    }
+}
+
+fn tex_art_cc_metadata_source_label(app: &UddConvApp) -> String {
+    let sources = gather_source_dirs(app.settings.cc_dir.as_ref(), app.settings.ec_dir.as_ref());
+    if sources.is_empty() {
+        return "Draw offsets: select a Classic or Enhanced source directory".to_string();
+    }
+
+    match select_tex_art_cc_metadata_source(&sources) {
+        Ok(source) => format!("Draw offsets: {}", source.path.display()),
+        Err(_) => "Draw offsets: missing tiledata.mul or tileart.uop".to_string(),
     }
 }
 
@@ -157,6 +168,7 @@ fn draw_asset_card(
     ui: &mut egui::Ui,
     title: &str,
     desc: &str,
+    source_note: Option<&str>,
     opt: Option<&mut TextureOptimization>,
     bc7_rdo_lambda: Option<&mut f32>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
@@ -184,6 +196,13 @@ fn draw_asset_card(
                                 .color(egui::Color32::WHITE),
                         );
                         ui.label(egui::RichText::new(desc).size(12.5).weak());
+                        if let Some(source_note) = source_note {
+                            ui.label(
+                                egui::RichText::new(source_note)
+                                    .size(12.5)
+                                    .color(egui::Color32::from_rgb(100, 200, 255)),
+                            );
+                        }
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
