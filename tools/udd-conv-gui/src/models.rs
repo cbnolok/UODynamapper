@@ -23,6 +23,10 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
+    #[serde(default = "default_mobile_anim_optimization")]
+    pub opt_mobile_anim_cc: TextureOptimization,
+    #[serde(default = "default_mobile_anim_optimization")]
+    pub opt_mobile_anim_ec: TextureOptimization,
     #[serde(default = "default_zstd_level")]
     pub zstd_tex_art_cc: i32,
     #[serde(default = "default_zstd_level")]
@@ -33,6 +37,10 @@ pub struct AppSettings {
     pub zstd_tex_land_ec: i32,
     #[serde(default = "default_zstd_level")]
     pub zstd_tilemeta: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_mobile_anim_cc: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_mobile_anim_ec: i32,
     #[serde(default = "default_jxl_level")]
     pub jxl_tex_art_cc: u8,
     #[serde(default = "default_jxl_level")]
@@ -41,6 +49,10 @@ pub struct AppSettings {
     pub jxl_tex_art_ec: u8,
     #[serde(default = "default_jxl_level")]
     pub jxl_tex_land_ec: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_mobile_anim_cc: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_mobile_anim_ec: u8,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
     #[serde(default = "default_bc7_rdo_enabled")]
@@ -76,15 +88,21 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
+            opt_mobile_anim_cc: default_mobile_anim_optimization(),
+            opt_mobile_anim_ec: default_mobile_anim_optimization(),
             zstd_tex_art_cc: default_zstd_level(),
             zstd_tex_land_cc: default_zstd_level(),
             zstd_tex_art_ec: default_zstd_level(),
             zstd_tex_land_ec: default_zstd_level(),
             zstd_tilemeta: default_zstd_level(),
+            zstd_mobile_anim_cc: default_zstd_level(),
+            zstd_mobile_anim_ec: default_zstd_level(),
             jxl_tex_art_cc: default_jxl_level(),
             jxl_tex_land_cc: default_jxl_level(),
             jxl_tex_art_ec: default_jxl_level(),
             jxl_tex_land_ec: default_jxl_level(),
+            jxl_mobile_anim_cc: default_jxl_level(),
+            jxl_mobile_anim_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
             upscale_tex_art_cc: UpscaleFilter::None,
@@ -121,6 +139,10 @@ fn default_jxl_level() -> u8 {
     6
 }
 
+fn default_mobile_anim_optimization() -> TextureOptimization {
+    TextureOptimization::Bc7
+}
+
 pub struct LogMessage {
     pub text: String,
     pub level: LogLevel,
@@ -132,6 +154,8 @@ pub enum AssetPackTask {
     TexLandCc,
     TexArtEc,
     TexLandEc,
+    MobileAnimCc,
+    MobileAnimEc,
     TileMeta,
 }
 
@@ -214,6 +238,8 @@ mod tests {
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
         assert!(settings.bc7_rdo_enabled);
+        assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
+        assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
     }
 
     #[test]
@@ -234,6 +260,8 @@ mod tests {
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
         assert!(settings.bc7_rdo_enabled);
+        assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
+        assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
     }
 
     #[test]

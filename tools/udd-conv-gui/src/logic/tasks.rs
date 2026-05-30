@@ -6,6 +6,18 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
+    mobile_anim_cc::{
+        convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
+    mobile_anim_ec::{
+        convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources, MobileAnimEcAtlasOptions,
+        DEFAULT_ATLAS_GUTTER as EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+        DEFAULT_ATLAS_PAGE_HEIGHT as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+        DEFAULT_ATLAS_PAGE_WIDTH as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+    },
     tex_art_cc::{TexArtCcAtlasOptions, convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress, DEFAULT_ATLAS_GUTTER, DEFAULT_ATLAS_PAGE_WIDTH, DEFAULT_ATLAS_PAGE_HEIGHT},
     tex_art_ec::{TexArtEcAtlasOptions, convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress},
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
@@ -505,6 +517,90 @@ impl UddConvApp {
                 }
             }
             Ok(format!("Wrote tilemeta.uddp to {}", output.display()))
+        });
+    }
+
+    pub fn convert_mobile_anim_cc(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path("mobile_anim_cc.uddp");
+        self.spawn_asset_task(AssetPackTask::MobileAnimCc, "CC Mobile Animation Packing".to_string(), move |progress| {
+            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
+
+            let compression = texture_compression(
+                settings.opt_mobile_anim_cc,
+                settings.zstd_mobile_anim_cc,
+                settings.jxl_mobile_anim_cc,
+            );
+            progress.set(AssetPackProgressState::Running, 0.1, "Packing mobile animations");
+            let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
+                &sources,
+                &output,
+                &MobileAnimCcAtlasOptions {
+                    atlas_width: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+                    atlas_height: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+                    gutter: CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+                    crop_transparent_bounds: false,
+                    compression,
+                    pixel_format: match settings.opt_mobile_anim_cc {
+                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                        _ => PagePixelFormat::Rgba8888,
+                    },
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    upscale_passes: Vec::new(),
+                },
+            )?;
+            Ok(format!(
+                "Wrote {} pages for {} packed frames out of {} total frames to {}",
+                summary.page_count,
+                summary.packed_frame_count,
+                summary.frame_count,
+                output.display()
+            ))
+        });
+    }
+
+    pub fn convert_mobile_anim_ec(&self) {
+        let settings = self.settings.clone();
+        let output = self.get_output_path("mobile_anim_ec.uddp");
+        self.spawn_asset_task(AssetPackTask::MobileAnimEc, "EC Mobile Animation Packing".to_string(), move |progress| {
+            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No source dirs"); }
+            ensure_output_parent(&output)?;
+
+            let compression = texture_compression(
+                settings.opt_mobile_anim_ec,
+                settings.zstd_mobile_anim_ec,
+                settings.jxl_mobile_anim_ec,
+            );
+            progress.set(AssetPackProgressState::Running, 0.1, "Packing mobile animations");
+            let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
+                &sources,
+                &output,
+                &MobileAnimEcAtlasOptions {
+                    atlas_width: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
+                    atlas_height: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
+                    gutter: EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
+                    crop_transparent_bounds: false,
+                    compression,
+                    pixel_format: match settings.opt_mobile_anim_ec {
+                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                        _ => PagePixelFormat::Rgba8888,
+                    },
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    upscale_passes: Vec::new(),
+                    metadata_path: None,
+                    tables_dir: None,
+                },
+            )?;
+            Ok(format!(
+                "Wrote {} pages for {} packed frames out of {} total frames to {}",
+                summary.page_count,
+                summary.packed_frame_count,
+                summary.frame_count,
+                output.display()
+            ))
         });
     }
 

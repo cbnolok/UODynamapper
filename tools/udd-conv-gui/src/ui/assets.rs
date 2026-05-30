@@ -21,6 +21,28 @@ impl UddConvApp {
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
             }
 
+            draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
+            let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
+            let (clicked, stop_clicked, _) = draw_asset_card(
+                ui,
+                "Tile Metadata",
+                "Unified metadata and radar color data",
+                None,
+                &tilemeta_progress,
+                !is_busy,
+                None,
+                Some(&mut self.settings.zstd_tilemeta),
+                None,
+                None,
+                None,
+                vec![],
+            );
+            if clicked {
+                self.convert_tilemeta();
+            }
+            if stop_clicked { self.request_cancel_conversion(); }
+
+            ui.add_space(4.0);
             draw_section_header(ui, "Classic Client", "Assets read from the Classic Client directory");
             let tex_art_cc_metadata_source = tex_art_cc_metadata_source_label(self);
             let tex_art_cc_progress = self.asset_pack_progress(AssetPackTask::TexArtCc);
@@ -63,6 +85,24 @@ impl UddConvApp {
             if clicked { self.convert_tex_land_cc(); }
             if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
+
+            let mobile_anim_cc_progress = self.asset_pack_progress(AssetPackTask::MobileAnimCc);
+            let (clicked, stop_clicked, _) = draw_asset_card(
+                ui,
+                "Classic Mobile Animations",
+                "Creatures and mobiles from anim*.mul and AnimationFrame*.uop",
+                None,
+                &mobile_anim_cc_progress,
+                !is_busy,
+                Some((&mut self.settings.zstd_mobile_anim_cc, &mut self.settings.jxl_mobile_anim_cc)),
+                None,
+                Some(&mut self.settings.opt_mobile_anim_cc),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                None,
+                vec![],
+            );
+            if clicked { self.convert_mobile_anim_cc(); }
+            if stop_clicked { self.request_cancel_conversion(); }
 
             ui.add_space(4.0);
             draw_section_header(ui, "Enhanced Client", "Assets read from the Enhanced Client directory");
@@ -109,26 +149,22 @@ impl UddConvApp {
             if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
-            ui.add_space(4.0);
-            draw_section_header(ui, "Shared Metadata", "Classic tiledata with Enhanced tileart and string dictionary data");
-            let tilemeta_progress = self.asset_pack_progress(AssetPackTask::TileMeta);
+            let mobile_anim_ec_progress = self.asset_pack_progress(AssetPackTask::MobileAnimEc);
             let (clicked, stop_clicked, _) = draw_asset_card(
                 ui,
-                "Tile Metadata",
-                "Unified metadata and radar color data",
+                "Enhanced Mobile Animations",
+                "Creatures and mobiles from AnimationFrame*.uop",
                 None,
-                &tilemeta_progress,
+                &mobile_anim_ec_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_mobile_anim_ec, &mut self.settings.jxl_mobile_anim_ec)),
                 None,
-                Some(&mut self.settings.zstd_tilemeta),
-                None,
-                None,
+                Some(&mut self.settings.opt_mobile_anim_ec),
+                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
                 None,
                 vec![],
             );
-            if clicked {
-                self.convert_tilemeta();
-            }
+            if clicked { self.convert_mobile_anim_ec(); }
             if stop_clicked { self.request_cancel_conversion(); }
         });
     }
@@ -292,7 +328,7 @@ fn draw_asset_card(
                                 let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
                                 draw_control_cell(ui, "Output Format", 210.0, |ui| {
                                     let current_fmt = match opt_val {
-                                        TextureOptimization::None => "Raw+zstd (default)",
+                                        TextureOptimization::None => "Raw+zstd",
                                         TextureOptimization::Bc7 => "BC7",
                                         TextureOptimization::Bc7Zstd => "Supercompressed BC7+zstd",
                                         TextureOptimization::JpegXl => "Jpeg XL",
@@ -304,8 +340,8 @@ fn draw_asset_card(
                                         .show_ui(ui, |ui| {
                                             if ui
                                                 .selectable_label(
-                                                    current_fmt == "Raw+zstd (default)",
-                                                    "Raw+zstd (default)",
+                                                    current_fmt == "Raw+zstd",
+                                                    "Raw+zstd",
                                                 )
                                                 .clicked()
                                             {
