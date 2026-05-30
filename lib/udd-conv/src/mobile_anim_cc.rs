@@ -29,10 +29,12 @@ use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_lambda_and_progress, preferred_bc7_encoder_backend, ImageExtent,
-    RawImageFormat, VramTextureEncoding,
+    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
+    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
-use crate::package_progress::build_and_write_package;
+use crate::package_progress::{
+    build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
+};
 use crate::source_paths::{find_first_dir_matching, source_path_label};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
 use crate::{resolve_packing_axis, AtlasPackingMode};
@@ -222,6 +224,22 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
     out_file: &Path,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<MobileAnimCcBuildSummary> {
+    convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
+        source_dirs,
+        out_file,
+        options,
+        |_| {},
+        |_| {},
+    )
+}
+
+pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &MobileAnimCcAtlasOptions,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<MobileAnimCcBuildSummary> {
     validate_options(options)?;
 
     let client_dir = find_first_dir_matching(source_dirs, &[&["anim.idx", "anim.mul"]])
@@ -237,6 +255,11 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
 
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: 1,
+    });
     let (mut planned_frames, animation_records, mut frame_records) =
         plan_present_animations(&client_dir, &anim_map)?;
     apply_planned_transparent_trim(
@@ -246,6 +269,11 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         options,
     )?;
     apply_planned_upscale(&mut planned_frames, &mut frame_records, options)?;
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 1,
+        total: 1,
+    });
     let packed_frame_count = planned_frames.len() as u32;
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let body_type_records = build_body_type_records(&client_dir)?;
@@ -257,6 +285,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         &mut frame_records,
         &anim_map,
         options,
+        &payload_progress,
     )?;
 
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
@@ -284,7 +313,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
         })?;
     }
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(MobileAnimCcBuildSummary {
         animation_count: animation_records.len() as u32,
@@ -466,6 +495,10 @@ fn encode_and_add_mobile_anim_page_chunk(
     package: &mut UddpBuilder,
     pages: &[BuiltMobileAnimPage],
     options: &MobileAnimCcAtlasOptions,
+    payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
+    payload_stage: AssetTaskProgressStage,
+    payload_completed: &AtomicU64,
+    payload_total: u64,
 ) -> eyre::Result<()> {
     let encode_pb = if options.pixel_format == PagePixelFormat::Bc7 {
         let pb = ProgressBar::new_spinner();
@@ -491,6 +524,19 @@ fn encode_and_add_mobile_anim_page_chunk(
             data: stored_page,
         })?;
     }
+    let chunk_frames = pages
+        .iter()
+        .map(|page| page.record.frame_count as u64)
+        .sum::<u64>();
+    let completed = payload_completed
+        .fetch_add(chunk_frames, Ordering::Relaxed)
+        .saturating_add(chunk_frames)
+        .min(payload_total);
+    payload_progress(AssetTaskProgress {
+        stage: payload_stage,
+        completed,
+        total: payload_total,
+    });
     Ok(())
 }
 
@@ -506,14 +552,16 @@ fn encode_mobile_anim_page_chunk(
         for page in pages {
             let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
                 .map_err(|e| eyre::eyre!("{e}"))?;
-            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
                 &page.pixels,
                 extent,
                 RawImageFormat::Rgba8888,
                 encoding,
                 options.bc7_rdo_lambda,
-                |units| {
-                    add_bc7_progress(pb, &pending_progress, units as u64);
+                |stage, units| {
+                    if stage == Bc7ProgressStage::Encode {
+                        add_bc7_progress(pb, &pending_progress, units as u64);
+                    }
                 },
             )
             .map_err(|e| {
@@ -1355,6 +1403,13 @@ fn pack_frames_into_package(
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
     let mut next_frame = 0usize;
+    let payload_progress = |_progress: AssetTaskProgress| {};
+    let payload_stage = if options.pixel_format == PagePixelFormat::Bc7 {
+        AssetTaskProgressStage::EncodingBc7
+    } else {
+        AssetTaskProgressStage::RegisteringPages
+    };
+    let payload_completed = AtomicU64::new(0);
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1397,14 +1452,30 @@ fn pack_frames_into_package(
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+            encode_and_add_mobile_anim_page_chunk(
+                package,
+                &pending_pages,
+                options,
+                &payload_progress,
+                payload_stage,
+                &payload_completed,
+                total_frames,
+            )?;
             pending_pages.clear();
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+        encode_and_add_mobile_anim_page_chunk(
+            package,
+            &pending_pages,
+            options,
+            &payload_progress,
+            payload_stage,
+            &payload_completed,
+            total_frames,
+        )?;
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
@@ -1418,6 +1489,7 @@ fn pack_planned_frames_into_package(
     frame_records: &mut [MobileAnimCcFrameRecord],
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
+    payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<PackedMobileAnimPages> {
     let mut remaining = frames;
     let total_frames = remaining.len() as u64;
@@ -1438,6 +1510,18 @@ fn pack_planned_frames_into_package(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::PackingAtlas,
+        completed: 0,
+        total: total_frames,
+    });
+    let mut packed_frames = 0u64;
+    let payload_stage = if options.pixel_format == PagePixelFormat::Bc7 {
+        AssetTaskProgressStage::EncodingBc7
+    } else {
+        AssetTaskProgressStage::RegisteringPages
+    };
+    let payload_completed = AtomicU64::new(0);
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
@@ -1478,18 +1562,53 @@ fn pack_planned_frames_into_package(
         }
 
         pb.inc(page.record.frame_count as u64);
+        packed_frames = packed_frames
+            .saturating_add(page.record.frame_count as u64)
+            .min(total_frames);
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::PackingAtlas,
+            completed: packed_frames,
+            total: total_frames,
+        });
         stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixel_count);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+            encode_and_add_mobile_anim_page_chunk(
+                package,
+                &pending_pages,
+                options,
+                payload_progress,
+                payload_stage,
+                &payload_completed,
+                total_frames,
+            )?;
             pending_pages.clear();
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+        encode_and_add_mobile_anim_page_chunk(
+            package,
+            &pending_pages,
+            options,
+            payload_progress,
+            payload_stage,
+            &payload_completed,
+            total_frames,
+        )?;
+    }
+
+    if options.pixel_format == PagePixelFormat::Bc7
+        && options.bc7_rdo_lambda.is_finite()
+        && options.bc7_rdo_lambda > f32::EPSILON
+    {
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::ApplyingRdo,
+            completed: total_frames,
+            total: total_frames,
+        });
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));

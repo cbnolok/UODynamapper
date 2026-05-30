@@ -7,13 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     mobile_anim_cc::{
-        convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
+        convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress,
+        MobileAnimCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
     },
     mobile_anim_ec::{
-        convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources, MobileAnimEcAtlasOptions,
+        convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress,
+        MobileAnimEcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
         DEFAULT_ATLAS_PAGE_HEIGHT as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
         DEFAULT_ATLAS_PAGE_WIDTH as EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
@@ -227,6 +229,14 @@ fn upscale_filter_active(filter: UpscaleFilter) -> bool {
 
 fn upscale_config_active(config: UpscaleConfig) -> bool {
     upscale_filter_active(config.filter)
+}
+
+fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscaleFilter> {
+    if upscale_filter_active(filter) {
+        vec![filter]
+    } else {
+        Vec::new()
+    }
 }
 
 impl UddConvApp {
@@ -572,8 +582,13 @@ impl UddConvApp {
                 settings.zstd_mobile_anim_cc,
                 settings.jxl_mobile_anim_cc,
             );
-            progress.set(AssetPackProgressState::Running, 0.1, "Packing mobile animations");
-            let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
+            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc) {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
+
+            let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
                 &sources,
                 &output,
                 &MobileAnimCcAtlasOptions {
@@ -587,8 +602,10 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
-                    upscale_passes: Vec::new(),
+                    upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
                 },
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!(
                 "Wrote {} pages for {} packed frames out of {} total frames to {}",
@@ -613,8 +630,13 @@ impl UddConvApp {
                 settings.zstd_mobile_anim_ec,
                 settings.jxl_mobile_anim_ec,
             );
-            progress.set(AssetPackProgressState::Running, 0.1, "Packing mobile animations");
-            let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
+            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec) {
+                "Extracting and upscaling"
+            } else {
+                "Extracting"
+            };
+
+            let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress(
                 &sources,
                 &output,
                 &MobileAnimEcAtlasOptions {
@@ -628,10 +650,12 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
-                    upscale_passes: Vec::new(),
+                    upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
                     metadata_path: None,
                     tables_dir: None,
                 },
+                |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
+                |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!(
                 "Wrote {} pages for {} packed frames out of {} total frames to {}",

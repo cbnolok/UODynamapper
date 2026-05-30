@@ -57,7 +57,7 @@ impl UddConvApp {
                 None,
                 Some(&mut self.settings.opt_tex_art_cc),
                 Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
-                Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
+                Some((&mut self.settings.upscale_tex_art_cc, Some(crate::models::UpscalePreviewTarget::TexArtCc))),
                 vec![],
             );
             if clicked { self.convert_tex_art_cc(); }
@@ -98,7 +98,7 @@ impl UddConvApp {
                 None,
                 Some(&mut self.settings.opt_mobile_anim_cc),
                 Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
-                None,
+                Some((&mut self.settings.upscale_mobile_anim_cc, None)),
                 vec![],
             );
             if clicked { self.convert_mobile_anim_cc(); }
@@ -118,7 +118,7 @@ impl UddConvApp {
                 None,
                 Some(&mut self.settings.opt_tex_art_ec),
                 Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
-                Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
+                Some((&mut self.settings.upscale_tex_art_ec, Some(crate::models::UpscalePreviewTarget::TexArtEc))),
                 vec![],
             );
             if clicked { self.convert_tex_art_ec(); }
@@ -161,7 +161,7 @@ impl UddConvApp {
                 None,
                 Some(&mut self.settings.opt_mobile_anim_ec),
                 Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
-                None,
+                Some((&mut self.settings.upscale_mobile_anim_ec, None)),
                 vec![],
             );
             if clicked { self.convert_mobile_anim_ec(); }
@@ -243,7 +243,7 @@ fn draw_asset_card(
     zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
     bc7_rdo: Option<(&mut bool, &mut f32)>,
-    upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
+    upscale_single: Option<(&mut UpscaleFilter, Option<crate::models::UpscalePreviewTarget>)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
     let mut clicked = false;
@@ -408,13 +408,19 @@ fn draw_asset_card(
                                 draw_control_cell(ui, "Upscale Filter", 206.0, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.set_width(ui.available_width());
-                                        let combo_width = (ui.available_width() - 34.0).max(120.0);
+                                        let combo_width = if target.is_some() {
+                                            (ui.available_width() - 34.0).max(120.0)
+                                        } else {
+                                            ui.available_width().max(120.0)
+                                        };
                                         ui.scope(|ui| {
                                             ui.set_width(combo_width);
                                             draw_upscale_filter(ui, format!("{}_upscale", title), up_val);
                                         });
-                                        if ui.button("🔍").on_hover_text("Preview").clicked() {
-                                            preview_req = Some((target, *up_val));
+                                        if let Some(target) = target {
+                                            if ui.button("🔍").on_hover_text("Preview").clicked() {
+                                                preview_req = Some((target, *up_val));
+                                            }
                                         }
                                     });
                                 });

@@ -22,10 +22,12 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_lambda_and_progress, preferred_bc7_encoder_backend, ImageExtent,
-    RawImageFormat, VramTextureEncoding,
+    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
+    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
-use crate::package_progress::build_and_write_package;
+use crate::package_progress::{
+    build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
+};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
 use crate::{resolve_packing_axis, AtlasPackingMode};
@@ -206,6 +208,22 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     out_file: &Path,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<MobileAnimEcBuildSummary> {
+    convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress(
+        source_dirs,
+        out_file,
+        options,
+        |_| {},
+        |_| {},
+    )
+}
+
+pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progress(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &MobileAnimEcAtlasOptions,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
+    mut package_progress: impl FnMut(udd_container::BuildProgress),
+) -> eyre::Result<MobileAnimEcBuildSummary> {
     validate_options(options)?;
     let client_dir = find_first_dir_matching(source_dirs, &[&["AnimationFrame1.uop"], &["animationframe1.uop"]])
         .ok_or_else(|| eyre::eyre!(
@@ -232,16 +250,26 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
     println!("Using EC animation source dir: {}", client_dir.display());
     println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: 1,
+    });
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
     apply_planned_transparent_trim(&mut planned_by_body, options)?;
     apply_planned_upscale(&mut planned_by_body, options)?;
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 1,
+        total: 1,
+    });
     let planned_frames = planned_by_body
         .values()
         .flat_map(|frames| frames.iter().cloned())
         .collect::<Vec<_>>();
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     let (packed_pages, placements) =
-        pack_planned_frames_into_package(&mut package, planned_frames, options)?;
+        pack_planned_frames_into_package(&mut package, planned_frames, options, &payload_progress)?;
     let packed_frame_count = placements.len() as u32;
     let sequences = load_animation_sequences(&client_dir, planned_by_body.keys().copied().collect::<Vec<_>>())?;
     let planned_frame_indices_by_body = planned_frame_indices_by_body(&planned_by_body);
@@ -273,7 +301,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
         })?;
     }
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
 
     Ok(MobileAnimEcBuildSummary {
         body_count: planned_by_body.len() as u32,
@@ -346,6 +374,10 @@ fn encode_and_add_mobile_anim_page_chunk(
     package: &mut UddpBuilder,
     pages: &[BuiltMobileAnimEcPage],
     options: &MobileAnimEcAtlasOptions,
+    payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
+    payload_stage: AssetTaskProgressStage,
+    payload_completed: &AtomicU64,
+    payload_total: u64,
 ) -> eyre::Result<()> {
     let encode_pb = if options.pixel_format == PagePixelFormat::Bc7 {
         let pb = ProgressBar::new_spinner();
@@ -371,6 +403,19 @@ fn encode_and_add_mobile_anim_page_chunk(
             data: stored_page,
         })?;
     }
+    let chunk_frames = pages
+        .iter()
+        .map(|page| page.record.frame_count as u64)
+        .sum::<u64>();
+    let completed = payload_completed
+        .fetch_add(chunk_frames, Ordering::Relaxed)
+        .saturating_add(chunk_frames)
+        .min(payload_total);
+    payload_progress(AssetTaskProgress {
+        stage: payload_stage,
+        completed,
+        total: payload_total,
+    });
     Ok(())
 }
 
@@ -386,14 +431,16 @@ fn encode_mobile_anim_page_chunk(
         for page in pages {
             let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
                 .map_err(|e| eyre::eyre!("{e}"))?;
-            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_progress(
+            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
                 &page.pixels,
                 extent,
                 RawImageFormat::Rgba8888,
                 encoding,
                 options.bc7_rdo_lambda,
-                |units| {
-                    add_bc7_progress(pb, &pending_progress, units as u64);
+                |stage, units| {
+                    if stage == Bc7ProgressStage::Encode {
+                        add_bc7_progress(pb, &pending_progress, units as u64);
+                    }
                 },
             )
             .map_err(|e| {
@@ -1093,6 +1140,7 @@ fn pack_planned_frames_into_package(
     package: &mut UddpBuilder,
     frames: Vec<PlannedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
+    payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(PackedMobileAnimEcPages, HashMap<(u32, u16), FramePlacement>)> {
     let mut remaining = frames
         .into_iter()
@@ -1105,6 +1153,12 @@ fn pack_planned_frames_into_package(
         .progress_chars("#>-"));
     pb.set_message("creating EC mobile animation atlas pages");
     pb.enable_steady_tick(Duration::from_millis(100));
+    let total_frames = remaining.len() as u64;
+    payload_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::PackingAtlas,
+        completed: 0,
+        total: total_frames,
+    });
 
     remaining.sort_by_key(|frame| (frame.body_id, frame.source_frame_index));
     let mut records = Vec::new();
@@ -1117,6 +1171,13 @@ fn pack_planned_frames_into_package(
     let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
+    let mut packed_frames = 0u64;
+    let payload_stage = if options.pixel_format == PagePixelFormat::Bc7 {
+        AssetTaskProgressStage::EncodingBc7
+    } else {
+        AssetTaskProgressStage::RegisteringPages
+    };
+    let payload_completed = AtomicU64::new(0);
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
@@ -1155,18 +1216,53 @@ fn pack_planned_frames_into_package(
             );
         }
         pb.inc(page.record.frame_count as u64);
+        packed_frames = packed_frames
+            .saturating_add(page.record.frame_count as u64)
+            .min(total_frames);
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::PackingAtlas,
+            completed: packed_frames,
+            total: total_frames,
+        });
         stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixel_count);
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+            encode_and_add_mobile_anim_page_chunk(
+                package,
+                &pending_pages,
+                options,
+                payload_progress,
+                payload_stage,
+                &payload_completed,
+                total_frames,
+            )?;
             pending_pages.clear();
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(package, &pending_pages, options)?;
+        encode_and_add_mobile_anim_page_chunk(
+            package,
+            &pending_pages,
+            options,
+            payload_progress,
+            payload_stage,
+            &payload_completed,
+            total_frames,
+        )?;
+    }
+
+    if options.pixel_format == PagePixelFormat::Bc7
+        && options.bc7_rdo_lambda.is_finite()
+        && options.bc7_rdo_lambda > f32::EPSILON
+    {
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::ApplyingRdo,
+            completed: total_frames,
+            total: total_frames,
+        });
     }
 
     pb.finish_with_message(format!("EC mobile animation atlas pages created ({})", records.len()));

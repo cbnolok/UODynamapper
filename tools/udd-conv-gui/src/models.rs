@@ -65,6 +65,10 @@ pub struct AppSettings {
     pub upscale_tex_land_ec_128: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_ec_256: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_ec_512: udd_conv::upscale::UpscaleConfig,
+    #[serde(default)]
+    pub upscale_mobile_anim_cc: UpscaleFilter,
+    #[serde(default)]
+    pub upscale_mobile_anim_ec: UpscaleFilter,
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
     pub map_preferences: [CcMapSourcePreference; 6],
@@ -113,6 +117,8 @@ impl Default for AppSettings {
             upscale_tex_land_ec_128: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: UpscaleFilter::FsrEasu2x },
             upscale_tex_land_ec_256: udd_conv::upscale::UpscaleConfig { target_size: 256, filter: UpscaleFilter::FsrEasu2x },
             upscale_tex_land_ec_512: udd_conv::upscale::UpscaleConfig { target_size: 512, filter: UpscaleFilter::None },
+            upscale_mobile_anim_cc: UpscaleFilter::None,
+            upscale_mobile_anim_ec: UpscaleFilter::None,
             radar_format: RadarFormat::Bc7,
             radar_zstd: 3,
             map_preferences: [CcMapSourcePreference::Mul; 6],
