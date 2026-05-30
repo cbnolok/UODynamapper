@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -1315,6 +1316,7 @@ pub fn pack_frames_into_pages(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
+    pb.enable_steady_tick(Duration::from_millis(100));
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
@@ -1384,6 +1386,7 @@ fn pack_frames_into_package(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
+    pb.enable_steady_tick(Duration::from_millis(100));
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
@@ -1477,6 +1480,7 @@ fn pack_planned_frames_into_package(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating mobile animation atlas pages");
+    pb.enable_steady_tick(Duration::from_millis(100));
     payload_progress(AssetTaskProgress {
         stage: AssetTaskProgressStage::PackingAtlas,
         completed: 0,
