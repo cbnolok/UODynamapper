@@ -22,8 +22,9 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_and_stage_progress, Bc7ProgressStage,
-    preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
+    encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7ProgressStage,
+    Bc7RdoOptions, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
+    VramTextureEncoding,
 };
 use crate::package_progress::{
     build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
@@ -366,9 +367,56 @@ fn encode_and_add_mobile_anim_page_chunk(
     payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
     payload_stage: AssetTaskProgressStage,
     payload_completed: &AtomicU64,
+    rdo_payload_completed: &AtomicU64,
     payload_total: u64,
 ) -> eyre::Result<()> {
-    let encoded_pages = encode_mobile_anim_page_chunk(pages, options, None)?;
+    let chunk_frames = pages
+        .iter()
+        .map(|page| page.record.frame_count as u64)
+        .sum::<u64>();
+    let chunk_bc7_blocks = if options.pixel_format == PagePixelFormat::Bc7 {
+        mobile_anim_chunk_bc7_blocks(pages)
+    } else {
+        0
+    };
+    let encode_units_completed = AtomicU64::new(0);
+    let rdo_units_completed = AtomicU64::new(0);
+    let rdo_enabled =
+        options.bc7_rdo_lambda.is_finite() && options.bc7_rdo_lambda > f32::EPSILON;
+    let report_bc7_progress = |stage: Bc7ProgressStage, units: u64| {
+        let (asset_stage, stage_units, stage_completed) = match stage {
+            Bc7ProgressStage::Encode => (
+                AssetTaskProgressStage::EncodingBc7,
+                encode_units_completed.fetch_add(units, Ordering::Relaxed).saturating_add(units),
+                payload_completed.load(Ordering::Relaxed),
+            ),
+            Bc7ProgressStage::Rdo => (
+                AssetTaskProgressStage::ApplyingRdo,
+                rdo_units_completed.fetch_add(units, Ordering::Relaxed).saturating_add(units),
+                rdo_payload_completed.load(Ordering::Relaxed),
+            ),
+        };
+        let chunk_progress = if chunk_bc7_blocks == 0 {
+            chunk_frames
+        } else {
+            chunk_frames.saturating_mul(stage_units.min(chunk_bc7_blocks)) / chunk_bc7_blocks
+        };
+        payload_progress(AssetTaskProgress {
+            stage: asset_stage,
+            completed: stage_completed.saturating_add(chunk_progress).min(payload_total),
+            total: payload_total,
+        });
+    };
+    let encoded_pages = encode_mobile_anim_page_chunk(
+        pages,
+        options,
+        None,
+        if options.pixel_format == PagePixelFormat::Bc7 {
+            Some(&report_bc7_progress)
+        } else {
+            None
+        },
+    )?;
     for (page_path, stored_page, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
@@ -381,19 +429,39 @@ fn encode_and_add_mobile_anim_page_chunk(
             data: stored_page,
         })?;
     }
-    let chunk_frames = pages
-        .iter()
-        .map(|page| page.record.frame_count as u64)
-        .sum::<u64>();
-    let completed = payload_completed
-        .fetch_add(chunk_frames, Ordering::Relaxed)
-        .saturating_add(chunk_frames)
-        .min(payload_total);
-    payload_progress(AssetTaskProgress {
-        stage: payload_stage,
-        completed,
-        total: payload_total,
-    });
+    if options.pixel_format == PagePixelFormat::Bc7 {
+        let completed = payload_completed
+            .fetch_add(chunk_frames, Ordering::Relaxed)
+            .saturating_add(chunk_frames)
+            .min(payload_total);
+        if rdo_enabled {
+            let completed = rdo_payload_completed
+                .fetch_add(chunk_frames, Ordering::Relaxed)
+                .saturating_add(chunk_frames)
+                .min(payload_total);
+            payload_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::ApplyingRdo,
+                completed,
+                total: payload_total,
+            });
+        } else {
+            payload_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::EncodingBc7,
+                completed,
+                total: payload_total,
+            });
+        }
+    } else {
+        let completed = payload_completed
+            .fetch_add(chunk_frames, Ordering::Relaxed)
+            .saturating_add(chunk_frames)
+            .min(payload_total);
+        payload_progress(AssetTaskProgress {
+            stage: payload_stage,
+            completed,
+            total: payload_total,
+        });
+    }
     Ok(())
 }
 
@@ -401,24 +469,30 @@ fn encode_mobile_anim_page_chunk(
     pages: &[BuiltMobileAnimEcPage],
     options: &MobileAnimEcAtlasOptions,
     pb: Option<&ProgressBar>,
+    progress: Option<&(dyn Fn(Bc7ProgressStage, u64) + Sync)>,
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
     if options.pixel_format == PagePixelFormat::Bc7 {
         let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+        let rdo_options = Bc7RdoOptions::sparse_atlas(
+            options.bc7_rdo_lambda,
+            options.bc7_rdo_lookback_blocks,
+        );
         let pending_progress = AtomicU64::new(0);
         let mut encoded_pages = Vec::with_capacity(pages.len());
         for page in pages {
             let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
                 .map_err(|e| eyre::eyre!("{e}"))?;
-            let encoded = encode_for_vram_with_bc7_rdo_and_stage_progress(
+            let encoded = encode_for_vram_with_bc7_rdo_options_and_stage_progress(
                 &page.pixels,
                 extent,
                 RawImageFormat::Rgba8888,
                 encoding,
-                options.bc7_rdo_lambda,
-                options.bc7_rdo_lookback_blocks,
+                &rdo_options,
                 |stage, units| {
-                    if stage == Bc7ProgressStage::Encode {
-                        add_bc7_progress(pb, &pending_progress, units as u64);
+                    let units = units as u64;
+                    add_bc7_progress(pb, &pending_progress, units);
+                    if let Some(progress) = progress {
+                        progress(stage, units);
                     }
                 },
             )
@@ -449,6 +523,17 @@ fn encode_mobile_anim_page_chunk(
             })
             .collect())
     }
+}
+
+fn mobile_anim_chunk_bc7_blocks(pages: &[BuiltMobileAnimEcPage]) -> u64 {
+    pages
+        .iter()
+        .map(|page| {
+            let blocks_wide = page.record.used_width.div_ceil(crate::BC7_BLOCK_DIM);
+            let blocks_high = page.record.used_height.div_ceil(crate::BC7_BLOCK_DIM);
+            blocks_wide as u64 * blocks_high as u64
+        })
+        .sum()
 }
 
 fn add_bc7_progress(pb: Option<&ProgressBar>, pending: &AtomicU64, units: u64) {
@@ -1157,6 +1242,7 @@ fn pack_planned_frames_into_package(
         AssetTaskProgressStage::RegisteringPages
     };
     let payload_completed = AtomicU64::new(0);
+    let rdo_payload_completed = AtomicU64::new(0);
 
     while next_frame < remaining.len() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
@@ -1214,6 +1300,7 @@ fn pack_planned_frames_into_package(
                 payload_progress,
                 payload_stage,
                 &payload_completed,
+                &rdo_payload_completed,
                 total_frames,
             )?;
             pending_pages.clear();
@@ -1229,19 +1316,9 @@ fn pack_planned_frames_into_package(
             payload_progress,
             payload_stage,
             &payload_completed,
+            &rdo_payload_completed,
             total_frames,
         )?;
-    }
-
-    if options.pixel_format == PagePixelFormat::Bc7
-        && options.bc7_rdo_lambda.is_finite()
-        && options.bc7_rdo_lambda > f32::EPSILON
-    {
-        payload_progress(AssetTaskProgress {
-            stage: AssetTaskProgressStage::ApplyingRdo,
-            completed: total_frames,
-            total: total_frames,
-        });
     }
 
     pb.finish_with_message(format!("EC mobile animation atlas pages created ({})", records.len()));
