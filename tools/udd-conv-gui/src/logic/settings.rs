@@ -124,6 +124,9 @@ mod tests {
     fn settings_save_and_load_roundtrip() {
         let path = temp_config_path("roundtrip");
         let mut settings = AppSettings::default();
+        settings.cc_dir = Some(PathBuf::from("/uo/classic"));
+        settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
+        settings.input_uddp_dir = PathBuf::from("runtime-assets");
         settings.output_uddp_dir = PathBuf::from("converted");
         settings.include_verdata = true;
 
@@ -131,6 +134,9 @@ mod tests {
         let loaded = load_settings_from_path(&path).expect("load settings");
         let _ = std::fs::remove_file(&path);
 
+        assert_eq!(loaded.cc_dir, Some(PathBuf::from("/uo/classic")));
+        assert_eq!(loaded.ec_dir, Some(PathBuf::from("/uo/enhanced")));
+        assert_eq!(loaded.input_uddp_dir, PathBuf::from("runtime-assets"));
         assert_eq!(loaded.output_uddp_dir, PathBuf::from("converted"));
         assert!(loaded.include_verdata);
     }

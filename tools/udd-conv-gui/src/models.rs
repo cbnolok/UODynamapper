@@ -12,7 +12,7 @@ pub enum TextureOptimization {
     JpegXl,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
     pub ec_dir: Option<PathBuf>,

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use eframe::egui;
 use crate::models::{AppSettings, LogMessage, LogLevel, Tab};
-use crate::logic::settings::load_settings_report;
+use crate::logic::settings::{load_settings_report, save_settings};
 
 pub struct UddConvApp {
     pub settings: AppSettings,
@@ -56,6 +56,12 @@ impl UddConvApp {
 
     pub fn is_busy(&self) -> bool {
         self.is_converting.lock().map(|busy| *busy).unwrap_or(false)
+    }
+
+    pub fn persist_settings(&self) {
+        if let Err(error) = save_settings(&self.settings) {
+            self.push_log(format!("Could not save settings: {}", error), LogLevel::Error);
+        }
     }
 
     pub fn get_output_path(&self, filename: &str) -> PathBuf {

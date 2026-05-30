@@ -8,7 +8,6 @@ mod ui;
 
 use app::UddConvApp;
 use models::{LogLevel, Tab};
-use logic::settings::save_settings;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -38,6 +37,7 @@ async fn main() -> eyre::Result<()> {
 impl eframe::App for UddConvApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
+        let settings_before = self.settings.clone();
 
         // External preview window (for big textures)
         self.ui_preview_window(ctx);
@@ -133,11 +133,17 @@ impl eframe::App for UddConvApp {
         if self.is_busy() {
             ctx.request_repaint();
         }
+
+        if self.settings != settings_before {
+            self.persist_settings();
+        }
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        if let Err(error) = save_settings(&self.settings) {
-            self.push_log(format!("Could not save settings: {}", error), LogLevel::Error);
-        }
+        self.persist_settings();
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_settings();
     }
 }
