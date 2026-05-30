@@ -21,8 +21,12 @@ const TEX_ART_EC_METADATA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexArtEcCropAdjustment {
-    pub left: i16,
-    pub top: i16,
+    pub source_left: i16,
+    pub source_top: i16,
+    pub trim_left: i16,
+    pub trim_top: i16,
+    pub trim_right: i16,
+    pub trim_bottom: i16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

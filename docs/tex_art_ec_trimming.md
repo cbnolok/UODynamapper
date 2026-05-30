@@ -28,11 +28,15 @@ The EC source package split matters here:
 ## Tilemeta Contract
 
 - Raw `tilemeta.uddp` keeps the original EC `start_x/start_y/end_x/end_y` semantics from `tileart.uop`.
-- Cropped EC art needs a matching cropped tilemeta package whose `ec_start_x/ec_start_y` are shifted by the recorded top/left crop delta.
-- `ec_offset_x/ec_offset_y` stay unchanged. They are draw offsets, not crop offsets.
+- Historical cropped EC art used a matching tilemeta package whose `ec_start_x/ec_start_y` were shifted by the recorded source top/left crop delta.
+- Atlas-packed EC art that is alpha-trimmed after the tileart sampling window should keep `ec_start_x/ec_start_y` unchanged and instead adjust the draw offsets by the visual trim delta.
+- The renderer treats EC billboard Y placement as bottom-anchored, so the placement-preserving draw-offset correction uses the left trim for `ec_offset_x` and the bottom trim for `ec_offset_y`.
+- `ec_offset_x/ec_offset_y` are draw offsets, so they are the correct place to preserve on-screen placement when the atlas stores only the non-empty visual bounds.
 
 ## CLI Status
 
 - The standalone cropped EC-art command has been removed.
 - EC package creation now goes through the shared `udd-pack pack-ec-textures` pass.
-- This file remains as a description of the historical cropped-art behavior and matching tilemeta contract, not as a supported current workflow.
+- `udd-pack pack-ec-textures --art-crop-transparent-bounds` enables atlas alpha trimming for EC art. When that command also writes `--tilemeta-output`, it applies the matching draw-offset adjustment automatically.
+- If `tilemeta.uddp` is built separately for a trimmed EC-art atlas, use `udd-pack pack-tilemeta --ec-art-trimmed-draw-offsets`.
+- The legacy `--ec-art-cropped`/`--tilemeta-ec-art-cropped` path is for historical source-cropped metadata that shifts EC sampling starts.

@@ -92,7 +92,7 @@ Represents static map items and artwork.
 | 0x44 | `i16` | `cc_offset_x` | X draw offset for CC. |
 | 0x46 | `i16` | `cc_offset_y` | Y draw offset for CC. |
 
-When `tilemeta.uddp` is generated for cropped EC statics, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped art payload. `ec_offset_x` and `ec_offset_y` remain the original EC draw offsets.
+When `tilemeta.uddp` is generated for the historical cropped EC-static layout, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped source payload. For atlas alpha trimming inside the tileart sampling window, placement should instead be preserved by adjusting `ec_offset_x`/`ec_offset_y` with the visual trim delta while leaving `ec_start_x`/`ec_start_y` unchanged.
 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
@@ -122,13 +122,14 @@ Current EC packing semantics:
 - `metadata/slots.bin`: Binary array of `SlotRecord` structs indexed by `art_id` containing the UV mapping.
 - `pages/{page_id}.rgba8888`: Raw RGBA8888 pixel payloads (compressed by Zstd via UDDP).
 
-For the historical cropped EC art layout, cropping was performed per art entry, not per decoded source texture. The correct order was:
+For cropped EC art layouts, cropping is performed per art entry, not per decoded source texture. The correct order is:
 
 1. apply the tileart `start_x/start_y/end_x/end_y` clip rect for that art entry
 2. alpha-trim inside that clipped rectangle
 
 This rule matters because different art ids can reference the same source texture while sampling different sub-rectangles of it.
 It also explains why `tileart.uop` must be treated as the source of entry-local EC art semantics rather than as a blunt texture-id list.
+When the cropped payload is consumed as an atlas slot by the renderer, the matching `tilemeta.uddp` should preserve the original on-screen placement by applying the visual trim to EC draw offsets. BC7 output still keeps atlas allocation and stored page extents aligned to 4x4 blocks.
 
 ### 2.1 Metadata Structures
 

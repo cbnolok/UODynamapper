@@ -701,6 +701,8 @@ enum Commands {
         art_atlas_height: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_GUTTER)]
         art_gutter: u16,
+        #[arg(long = "art-crop-transparent-bounds", default_value_t = false, help = "Trim transparent EC art borders inside tileart sampling windows before atlas packing.")]
+        art_crop_transparent_bounds: bool,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH)]
         land_atlas_width: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT)]
@@ -900,6 +902,8 @@ enum Commands {
         zstd: Option<i32>,
         #[arg(long, default_value_t = false)]
         ec_art_cropped: bool,
+        #[arg(long = "ec-art-trimmed-draw-offsets", default_value_t = false, help = "Adjust EC draw offsets for tex_art_ec atlases built with --art-crop-transparent-bounds.")]
+        ec_art_trimmed_draw_offsets: bool,
         #[arg(long, default_value_t = false)]
         use_ec_radarcol: bool,
     },
@@ -1259,6 +1263,7 @@ pub fn run() -> eyre::Result<()> {
             art_atlas_width,
             art_atlas_height,
             art_gutter,
+            art_crop_transparent_bounds,
             land_atlas_width,
             land_atlas_height,
             land_gutter,
@@ -1339,7 +1344,7 @@ pub fn run() -> eyre::Result<()> {
                     atlas_width: art_atlas_width,
                     atlas_height: art_atlas_height,
                     gutter: art_gutter,
-                    crop_transparent_bounds: false,
+                    crop_transparent_bounds: art_crop_transparent_bounds,
                     compression: art_output_format.compression,
                     upscale: upscale_filter,
                     upscale_passes: convert_upscale_passes(art_upscale_passes),
@@ -1436,6 +1441,7 @@ pub fn run() -> eyre::Result<()> {
                     tilemeta_out_file,
                     &TileMetaBuildOptions {
                         adjust_tex_art_ec_sampling: tilemeta_ec_art_cropped,
+                        adjust_tex_art_ec_draw_offsets: art_crop_transparent_bounds,
                         use_ec_radarcol: tilemeta_use_ec_radarcol,
                         classic_patches: classic_patches.into(),
                     },
@@ -1571,12 +1577,14 @@ pub fn run() -> eyre::Result<()> {
             output,
             zstd: _,
             ec_art_cropped,
+            ec_art_trimmed_draw_offsets,
             use_ec_radarcol,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let options = TileMetaBuildOptions {
                 adjust_tex_art_ec_sampling: ec_art_cropped,
+                adjust_tex_art_ec_draw_offsets: ec_art_trimmed_draw_offsets,
                 use_ec_radarcol,
                 classic_patches: classic_patches.into(),
             };
@@ -1982,6 +1990,7 @@ mod tests {
                 classic_patches,
                 output,
                 ec_art_cropped,
+                ec_art_trimmed_draw_offsets,
                 use_ec_radarcol,
                 ..
             } => {
@@ -1992,6 +2001,7 @@ mod tests {
                 assert!(!classic_patches.include_static_difs);
                 assert_eq!(output, PathBuf::from("tilemeta.uddp"));
                 assert!(!ec_art_cropped);
+                assert!(!ec_art_trimmed_draw_offsets);
                 assert!(!use_ec_radarcol);
             }
             _ => panic!("unexpected command parsed"),
@@ -2011,6 +2021,7 @@ mod tests {
             "tex_land_ec.uddp",
             "--land-transcode-kdl",
             "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
+            "--art-crop-transparent-bounds",
             "--bc7",
         ])
         .expect("parse unified ec texture args");
@@ -2021,6 +2032,7 @@ mod tests {
                 art_output,
                 land_output,
                 land_transcode_kdl,
+                art_crop_transparent_bounds,
                 bc7,
                 bc7_rdo,
                 raw,
@@ -2037,6 +2049,7 @@ mod tests {
                         "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
                     ))
                 );
+                assert!(art_crop_transparent_bounds);
                 assert!(bc7);
                 assert!(!bc7_rdo);
                 assert!(!raw);

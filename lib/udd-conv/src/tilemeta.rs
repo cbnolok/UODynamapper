@@ -48,6 +48,9 @@ pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
     /// start coordinates so they remain aligned with the shared EC texture pass.
     pub adjust_tex_art_ec_sampling: bool,
+    /// When `true`, apply the EC-art visual trim delta to stored EC draw offsets
+    /// so cropped atlas payloads keep their original on-screen placement.
+    pub adjust_tex_art_ec_draw_offsets: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
@@ -386,7 +389,9 @@ fn build_tilemeta_tables_from_resolved_paths(
         loaded_art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)?;
         &loaded_art_definition
     };
-    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
+    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling
+        || options.adjust_tex_art_ec_draw_offsets
+    {
         if let Some(sources) = loaded_ec_sources {
             compute_tex_art_ec_crop_adjustments_from_loaded_sources(sources)?
         } else {
@@ -513,13 +518,31 @@ fn build_tilemeta_tables_from_resolved_paths(
                     tile.tile_id as u32,
                     ec_tex.start_x,
                     ec_tex.start_y,
-                    crop_adjustment,
+                    if options.adjust_tex_art_ec_sampling {
+                        crop_adjustment
+                    } else {
+                        None
+                    },
                 )?;
                 tile_meta_item.ec_start_x = ec_start_x;
                 tile_meta_item.ec_start_y = ec_start_y;
-                tile_meta_item.ec_offset_x = ec_tex.offset_x as i16;
-                tile_meta_item.ec_offset_y = ec_tex.offset_y as i16;
-                if ec_start_x != ec_tex.start_x as i16 || ec_start_y != ec_tex.start_y as i16 {
+                let (ec_offset_x, ec_offset_y) = adjusted_ec_draw_offset(
+                    tile.tile_id as u32,
+                    ec_tex.offset_x,
+                    ec_tex.offset_y,
+                    if options.adjust_tex_art_ec_draw_offsets {
+                        crop_adjustment
+                    } else {
+                        None
+                    },
+                )?;
+                tile_meta_item.ec_offset_x = ec_offset_x;
+                tile_meta_item.ec_offset_y = ec_offset_y;
+                if ec_start_x != ec_tex.start_x as i16
+                    || ec_start_y != ec_tex.start_y as i16
+                    || ec_offset_x != ec_tex.offset_x as i16
+                    || ec_offset_y != ec_tex.offset_y as i16
+                {
                     adjusted_ec_item_count += 1;
                 }
             }
@@ -662,14 +685,35 @@ pub fn adjusted_ec_sampling_start(
     start_y: i32,
     adjustment: Option<TexArtEcCropAdjustment>,
 ) -> eyre::Result<(i16, i16)> {
-    let adjusted_x = start_x - adjustment.map_or(0, |adjustment| i32::from(adjustment.left));
-    let adjusted_y = start_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.top));
+    let adjusted_x =
+        start_x - adjustment.map_or(0, |adjustment| i32::from(adjustment.source_left));
+    let adjusted_y =
+        start_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.source_top));
     Ok((
         i16::try_from(adjusted_x).map_err(|_| {
             eyre::eyre!("tile {texture_id} adjusted EC start_x {adjusted_x} does not fit in i16")
         })?,
         i16::try_from(adjusted_y).map_err(|_| {
             eyre::eyre!("tile {texture_id} adjusted EC start_y {adjusted_y} does not fit in i16")
+        })?,
+    ))
+}
+
+pub fn adjusted_ec_draw_offset(
+    texture_id: u32,
+    offset_x: i32,
+    offset_y: i32,
+    adjustment: Option<TexArtEcCropAdjustment>,
+) -> eyre::Result<(i16, i16)> {
+    let adjusted_x = offset_x + adjustment.map_or(0, |adjustment| i32::from(adjustment.trim_left));
+    let adjusted_y =
+        offset_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.trim_bottom));
+    Ok((
+        i16::try_from(adjusted_x).map_err(|_| {
+            eyre::eyre!("tile {texture_id} adjusted EC offset_x {adjusted_x} does not fit in i16")
+        })?,
+        i16::try_from(adjusted_y).map_err(|_| {
+            eyre::eyre!("tile {texture_id} adjusted EC offset_y {adjusted_y} does not fit in i16")
         })?,
     ))
 }

@@ -73,9 +73,9 @@ pub struct TexArtEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
-    /// When `true`, trim transparent borders from decoded EC art textures before
-    /// atlas packing. Matching tile metadata must subtract the same top/left crop
-    /// from its EC sampling start coordinates.
+    /// When `true`, trim transparent borders from decoded EC art textures after
+    /// applying their tileart sampling windows. Matching tile metadata should apply
+    /// the visual trim delta to EC draw offsets when consumed with the packed atlas.
     pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
@@ -908,6 +908,10 @@ pub fn crop_rgba_tile_to_bounds(
                 clip.top as usize,
                 clip.right as usize,
                 clip.bottom as usize,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
             );
         }
         return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
@@ -927,12 +931,28 @@ pub fn crop_rgba_tile_to_bounds(
                 clip.top as usize,
                 clip.right as usize,
                 clip.bottom as usize,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
             );
         }
         return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
     }
 
-    crop_rgba_subrect(width, height, rgba, min_x, min_y, max_x + 1, max_y + 1)
+    crop_rgba_subrect(
+        width,
+        height,
+        rgba,
+        clip_left,
+        clip_top,
+        clip_right,
+        clip_bottom,
+        min_x,
+        min_y,
+        max_x + 1,
+        max_y + 1,
+    )
 }
 
 pub fn apply_requested_clip_rect(
@@ -950,6 +970,10 @@ pub fn apply_requested_clip_rect(
             clip.top as usize,
             clip.right as usize,
             clip.bottom as usize,
+            clip.left as usize,
+            clip.top as usize,
+            clip.right as usize,
+            clip.bottom as usize,
         )
     } else {
         Ok((width, height, rgba, TexArtEcCropAdjustment::default()))
@@ -960,6 +984,10 @@ fn crop_rgba_subrect(
     width: u16,
     _height: u16,
     rgba: Vec<u8>,
+    clip_left: usize,
+    clip_top: usize,
+    clip_right: usize,
+    clip_bottom: usize,
     left: usize,
     top: usize,
     right: usize,
@@ -982,8 +1010,12 @@ fn crop_rgba_subrect(
         cropped_height,
         cropped,
         TexArtEcCropAdjustment {
-            left: left as i16,
-            top: top as i16,
+            source_left: left as i16,
+            source_top: top as i16,
+            trim_left: (left - clip_left) as i16,
+            trim_top: (top - clip_top) as i16,
+            trim_right: (clip_right - right) as i16,
+            trim_bottom: (clip_bottom - bottom) as i16,
         },
     ))
 }

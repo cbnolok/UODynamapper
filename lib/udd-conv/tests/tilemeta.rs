@@ -133,11 +133,38 @@ fn tilemeta_crop_adjustment_shifts_ec_sampling_start_only() {
         42,
         12,
         18,
-        Some(TexArtEcCropAdjustment { left: 5, top: 7 }),
+        Some(TexArtEcCropAdjustment {
+            source_left: 5,
+            source_top: 7,
+            trim_left: 2,
+            trim_top: 3,
+            trim_right: 4,
+            trim_bottom: 6,
+        }),
     )
     .expect("adjust EC sampling start");
 
     assert_eq!(adjusted, (7, 11));
+}
+
+#[test]
+fn tilemeta_crop_adjustment_shifts_ec_draw_offset_to_trimmed_visual_bounds() {
+    let adjusted = adjusted_ec_draw_offset(
+        42,
+        12,
+        18,
+        Some(TexArtEcCropAdjustment {
+            source_left: 5,
+            source_top: 7,
+            trim_left: 2,
+            trim_top: 3,
+            trim_right: 4,
+            trim_bottom: 6,
+        }),
+    )
+    .expect("adjust EC draw offset");
+
+    assert_eq!(adjusted, (14, 12));
 }
 
 #[test]

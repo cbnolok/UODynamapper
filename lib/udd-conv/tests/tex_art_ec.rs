@@ -279,7 +279,17 @@ fn transparent_border_crop_trims_to_opaque_bounds() {
     assert_eq!(width, 2);
     assert_eq!(height, 2);
     assert_eq!(cropped.len(), 2 * 2 * 4);
-    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 1, top: 1 });
+    assert_eq!(
+        adjustment,
+        TexArtEcCropAdjustment {
+            source_left: 1,
+            source_top: 1,
+            trim_left: 1,
+            trim_top: 1,
+            trim_right: 1,
+            trim_bottom: 1,
+        }
+    );
 }
 
 #[test]
@@ -312,7 +322,17 @@ fn clip_rect_is_applied_before_alpha_trim() {
     assert_eq!(width, 2);
     assert_eq!(height, 2);
     assert_eq!(cropped.len(), 2 * 2 * 4);
-    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 2, top: 2 });
+    assert_eq!(
+        adjustment,
+        TexArtEcCropAdjustment {
+            source_left: 2,
+            source_top: 2,
+            trim_left: 1,
+            trim_top: 1,
+            trim_right: 1,
+            trim_bottom: 1,
+        }
+    );
 }
 
 #[test]
@@ -340,7 +360,17 @@ fn requested_clip_rect_is_applied_without_alpha_trim() {
 
     assert_eq!(width, 2);
     assert_eq!(height, 2);
-    assert_eq!(adjustment, TexArtEcCropAdjustment { left: 2, top: 1 });
+    assert_eq!(
+        adjustment,
+        TexArtEcCropAdjustment {
+            source_left: 2,
+            source_top: 1,
+            trim_left: 0,
+            trim_top: 0,
+            trim_right: 0,
+            trim_bottom: 0,
+        }
+    );
     assert_eq!(cropped.len(), 2 * 2 * 4);
     assert_eq!(&cropped[0..4], &[2, 1, 99, 255]);
     assert_eq!(&cropped[4..8], &[3, 1, 99, 255]);
@@ -367,15 +397,45 @@ fn normalized_source_clip_rect_ignores_empty_rects() {
 fn crop_adjustment_lookup_copies_canonical_adjustment_to_aliases() {
     let lookup = build_crop_adjustment_lookup(
         16,
-        &HashMap::from([(7, TexArtEcCropAdjustment { left: 3, top: 4 })]),
+        &HashMap::from([(
+            7,
+            TexArtEcCropAdjustment {
+                source_left: 3,
+                source_top: 4,
+                trim_left: 1,
+                trim_top: 2,
+                trim_right: 3,
+                trim_bottom: 4,
+            },
+        )]),
         &[SlotAlias {
             art_id: 9,
             canonical_art_id: 7,
         }],
     );
 
-    assert_eq!(lookup[7], Some(TexArtEcCropAdjustment { left: 3, top: 4 }));
-    assert_eq!(lookup[9], Some(TexArtEcCropAdjustment { left: 3, top: 4 }));
+    assert_eq!(
+        lookup[7],
+        Some(TexArtEcCropAdjustment {
+            source_left: 3,
+            source_top: 4,
+            trim_left: 1,
+            trim_top: 2,
+            trim_right: 3,
+            trim_bottom: 4,
+        })
+    );
+    assert_eq!(
+        lookup[9],
+        Some(TexArtEcCropAdjustment {
+            source_left: 3,
+            source_top: 4,
+            trim_left: 1,
+            trim_top: 2,
+            trim_right: 3,
+            trim_bottom: 4,
+        })
+    );
     assert_eq!(lookup[6], None);
 }
 
