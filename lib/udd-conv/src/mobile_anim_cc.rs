@@ -29,7 +29,7 @@ use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
+    encode_for_vram_with_bc7_rdo_and_stage_progress, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::package_progress::{
@@ -96,6 +96,7 @@ pub struct MobileAnimCcAtlasOptions {
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
+    pub bc7_rdo_lookback_blocks: usize,
     pub upscale_passes: Vec<UpscaleFilter>,
 }
 
@@ -109,6 +110,7 @@ impl Default for MobileAnimCcAtlasOptions {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         }
     }
@@ -520,12 +522,13 @@ fn encode_mobile_anim_page_chunk(
         for page in pages {
             let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
                 .map_err(|e| eyre::eyre!("{e}"))?;
-            let encoded = encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
+            let encoded = encode_for_vram_with_bc7_rdo_and_stage_progress(
                 &page.pixels,
                 extent,
                 RawImageFormat::Rgba8888,
                 encoding,
                 options.bc7_rdo_lambda,
+                options.bc7_rdo_lookback_blocks,
                 |stage, units| {
                     if stage == Bc7ProgressStage::Encode {
                         add_bc7_progress(pb, &pending_progress, units as u64);
@@ -2657,6 +2660,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut records = vec![
@@ -2706,6 +2710,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
@@ -2742,6 +2747,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
@@ -2774,6 +2780,7 @@ mod tests {
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut records = vec![MobileAnimCcFrameRecord {
@@ -2807,6 +2814,7 @@ mod tests {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {
@@ -2896,6 +2904,7 @@ mod tests {
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
         };
         let mut frame_records = vec![MobileAnimCcFrameRecord {

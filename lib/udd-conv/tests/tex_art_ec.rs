@@ -14,6 +14,8 @@ use udd_assets::{
 use udd_container::CompressionFlag;
 use uocf::enhanced::tileart::{TaeFlag, TileType};
 
+fn ignore_asset_progress(_: udd_conv::package_progress::AssetTaskProgress) {}
+
 fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
     DecodedArtTile {
         art_id,
@@ -39,14 +41,15 @@ fn sparse_slots_keep_absent_records() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 4, 4),
         rgba_tile(3, ArtTileKind::Static, 4, 4),
     ];
 
-    let (_pages, slots) = pack_tiles_into_pages(tiles, 5, &options).unwrap();
+    let (_pages, slots) = pack_tiles_into_pages(tiles, 5, &options, &ignore_asset_progress).unwrap();
 
     assert!(slots[0].is_present());
     assert!(!slots[1].is_present());
@@ -82,14 +85,15 @@ fn packer_spills_to_multiple_pages() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 4, 4),
         rgba_tile(1, ArtTileKind::Static, 4, 4),
     ];
 
-    let (pages, slots) = pack_tiles_into_pages(tiles, 2, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 2, &options, &ignore_asset_progress).unwrap();
 
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].record.tile_count, 1);
@@ -109,7 +113,8 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let tiles = vec![
         rgba_tile(0, ArtTileKind::Static, 6, 6),
@@ -117,7 +122,7 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         rgba_tile(2, ArtTileKind::Static, 1, 1),
     ];
 
-    let (pages, slots) = pack_tiles_into_pages(tiles, 0x10000, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 0x10000, &options, &ignore_asset_progress).unwrap();
 
     assert_eq!(pages.len(), 2);
     assert_eq!(slots[0].page_index, 0);
@@ -137,11 +142,12 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let tiles = vec![rgba_tile(41339, ArtTileKind::Static, 4096, 128)];
 
-    let (pages, slots) = pack_tiles_into_pages(tiles, 0x10000, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 0x10000, &options, &ignore_asset_progress).unwrap();
 
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].record.tile_count, 1);
@@ -163,13 +169,14 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let mut tile = rgba_tile(0, ArtTileKind::Static, 4, 4);
     tile.upscale_factor = 2;
     tile.upscale_algorithm = 6;
     let tiles = vec![tile];
-    let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options, &ignore_asset_progress).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
 
@@ -240,11 +247,12 @@ fn alias_slots_reuse_canonical_page_location() {
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Static, 4, 4)];
 
-    let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options).unwrap();
+    let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options, &ignore_asset_progress).unwrap();
     apply_slot_aliases(
         &mut slots,
         &[SlotAlias {

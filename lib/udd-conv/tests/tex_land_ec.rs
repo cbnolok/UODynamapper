@@ -15,6 +15,8 @@ use udd_assets::{
 };
 use udd_container::CompressionFlag;
 
+fn ignore_asset_progress(_: udd_conv::package_progress::AssetTaskProgress) {}
+
 pub fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
     DecodedArtTile {
         art_id,
@@ -41,7 +43,8 @@ fn sparse_slots_keep_absent_records() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         transcode_kdl_path: None,
     };
     let tiles = vec![
@@ -49,7 +52,7 @@ fn sparse_slots_keep_absent_records() {
         rgba_tile(3, ArtTileKind::Land, 4, 4),
     ];
 
-    let (_pages, slots) = pack_tiles_into_pages(tiles, 5, &options).unwrap();
+    let (_pages, slots) = pack_tiles_into_pages(tiles, 5, &options, &ignore_asset_progress).unwrap();
 
     assert!(slots[0].is_present());
     assert!(!slots[1].is_present());
@@ -74,7 +77,8 @@ fn packer_spills_to_multiple_pages() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         transcode_kdl_path: None,
     };
     let tiles = vec![
@@ -82,7 +86,7 @@ fn packer_spills_to_multiple_pages() {
         rgba_tile(1, ArtTileKind::Land, 4, 4),
     ];
 
-    let (pages, slots) = pack_tiles_into_pages(tiles, 2, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 2, &options, &ignore_asset_progress).unwrap();
 
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].record.tile_count, 1);
@@ -107,11 +111,12 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         transcode_kdl_path: None,
     };
     let tiles = vec![rgba_tile(0, ArtTileKind::Land, 4, 4)];
-    let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options, &ignore_asset_progress).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
     let terrain_provenance = vec![TexLandEcTerrainProvenanceRecord {
@@ -209,12 +214,13 @@ fn land_alias_slots_reuse_canonical_page_location() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         transcode_kdl_path: None,
     };
     let tiles = vec![rgba_tile(7, ArtTileKind::Land, 4, 4)];
 
-    let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options).unwrap();
+    let (_pages, mut slots) = pack_tiles_into_pages(tiles, 16, &options, &ignore_asset_progress).unwrap();
     apply_slot_aliases(
         &mut slots,
         &[SlotAlias {
@@ -251,7 +257,8 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         upscale_256_passes: Vec::new(),
         upscale_512_passes: Vec::new(),
         pixel_format: PagePixelFormat::Rgba8888,
-            bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lambda: udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA,
+        bc7_rdo_lookback_blocks: udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
         transcode_kdl_path: None,
     };
     let tiles = vec![
@@ -263,7 +270,7 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
         rgba_tile(16_110, ArtTileKind::Land, 4, 4),
         rgba_tile(16_111, ArtTileKind::Land, 4, 4),
     ];
-    let (pages, slots) = pack_tiles_into_pages(tiles, 16_112, &options).unwrap();
+    let (pages, slots) = pack_tiles_into_pages(tiles, 16_112, &options, &ignore_asset_progress).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
     let terrain_provenance = vec![

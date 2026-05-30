@@ -33,7 +33,7 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
+    encode_for_vram_with_bc7_rdo_and_stage_progress, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{
@@ -180,6 +180,7 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_512_passes: Vec<UpscaleFilter>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
+    pub bc7_rdo_lookback_blocks: usize,
     pub transcode_kdl_path: Option<PathBuf>,
 }
 
@@ -200,6 +201,7 @@ impl Default for TexLandEcAtlasOptions {
             upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
         }
     }
@@ -695,12 +697,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
+                    encode_for_vram_with_bc7_rdo_and_stage_progress(
                         &page.pixels,
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
                         options.bc7_rdo_lambda,
+                        options.bc7_rdo_lookback_blocks,
                         &report_bc7_progress,
                     )
                         .map_err(|e| {
@@ -1841,6 +1844,7 @@ pub fn encode_slot_manifest(
             upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
         },
     )
@@ -1912,6 +1916,7 @@ mod tests {
             upscale_512_passes: Vec::new(),
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
         };
 

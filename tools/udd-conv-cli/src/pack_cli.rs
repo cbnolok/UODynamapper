@@ -120,6 +120,7 @@ struct TextureOutputFormat {
     compression: CompressionFlag,
     pixel_format: PagePixelFormat,
     bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
     label: &'static str,
 }
 
@@ -135,6 +136,17 @@ struct TextureOutputFormatArgs {
 
 fn zstd_compression(level: i32) -> CompressionFlag {
     CompressionFlag::ZstdNoDictLevel(level)
+}
+
+fn parse_bc7_rdo_lookback_blocks(value: &str) -> Result<usize, String> {
+    let blocks = value
+        .parse::<usize>()
+        .map_err(|_| format!("expected one of 64, 128, or 256, got {value}"))?;
+    if udd_conv::bc7::BC7_RDO_LOOKBACK_BLOCK_PRESETS.contains(&blocks) {
+        Ok(blocks)
+    } else {
+        Err(format!("expected one of 64, 128, or 256, got {value}"))
+    }
 }
 
 fn jxl_compression_level(level: Option<u8>) -> CompressionFlag {
@@ -156,6 +168,7 @@ fn resolve_texture_output_format(
     bc7: bool,
     bc7_rdo: bool,
     bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, jxl, bc7, bc7_rdo) {
         (false, false, false, false) => Ok(TextureOutputFormat {
@@ -166,6 +179,7 @@ fn resolve_texture_output_format(
             },
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() {
                 "RGBA8888 JXL + Zstd"
             } else {
@@ -180,6 +194,7 @@ fn resolve_texture_output_format(
             },
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() { "RGBA8888 Zstd" } else { "RGBA8888 raw" },
         }),
         (false, true, false, false) => Ok(TextureOutputFormat {
@@ -190,6 +205,7 @@ fn resolve_texture_output_format(
             },
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() {
                 "RGBA8888 JXL + Zstd"
             } else {
@@ -204,6 +220,7 @@ fn resolve_texture_output_format(
             },
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() { "BC7 + Zstd" } else { "BC7" },
         }),
         (false, false, false, true) => Ok(TextureOutputFormat {
@@ -214,6 +231,7 @@ fn resolve_texture_output_format(
             },
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() { "BC7 RDO + Zstd" } else { "BC7 RDO" },
         }),
         _ => eyre::bail!("select at most one output format: --raw, --jxl, --bc7, or --bc7-rdo"),
@@ -223,6 +241,7 @@ fn resolve_texture_output_format(
 fn resolve_texture_output_format_args(
     args: TextureOutputFormatArgs,
     bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
     resolve_texture_output_format(
         args.raw,
@@ -232,6 +251,7 @@ fn resolve_texture_output_format_args(
         args.bc7,
         args.bc7_rdo,
         bc7_rdo_lambda,
+        bc7_rdo_lookback_blocks,
     )
 }
 
@@ -243,6 +263,7 @@ fn resolve_mobile_anim_output_format(
     bc7: bool,
     bc7_rdo: bool,
     bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
 ) -> eyre::Result<TextureOutputFormat> {
     match (raw, jxl, bc7, bc7_rdo) {
         (false, false, false, false) => Ok(TextureOutputFormat {
@@ -253,9 +274,19 @@ fn resolve_mobile_anim_output_format(
             },
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks,
             label: if zstd.is_some() { "BC7 + Zstd" } else { "BC7" },
         }),
-        _ => resolve_texture_output_format(raw, jxl, jxl_level, zstd, bc7, bc7_rdo, bc7_rdo_lambda),
+        _ => resolve_texture_output_format(
+            raw,
+            jxl,
+            jxl_level,
+            zstd,
+            bc7,
+            bc7_rdo,
+            bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
+        ),
     }
 }
 
@@ -578,6 +609,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
@@ -626,6 +659,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::None)]
         upscale: CliUpscaleFilter,
         #[arg(long = "upscale-64-pass", value_enum, help = "Add a 64x64 texmap upscale pass. Repeat to chain filters.")]
@@ -662,6 +697,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
     },
@@ -694,6 +731,8 @@ enum Commands {
         bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
         #[arg(long, help = "Directory containing EcMobileAnimations.kdl, or the KDL file itself.")]
         tables: Option<PathBuf>,
         #[arg(long = "ec-mobile-animations-kdl", help = "Exact EcMobileAnimations.kdl path.")]
@@ -774,6 +813,8 @@ enum Commands {
         land_bc7_rdo: bool,
         #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA, help = "BC7 RDO lambda for EC texture pages. Use 0 to disable RDO.")]
         bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS, help = "BC7 RDO lookback preset in previous BC7 blocks.")]
+        bc7_rdo_lookback_blocks: usize,
         #[arg(long, default_value_t = 256)]
         upscale_64_size: u32,
         #[arg(long, value_enum, default_value_t = CliUpscaleFilter::FsrEasu2x)]
@@ -1095,6 +1136,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             upscale_64_size: _, // Land upscaling not currently applied to CC Art
             upscale_64_algo: _,
             upscale_128_size: _,
@@ -1115,6 +1157,7 @@ pub fn run() -> eyre::Result<()> {
                 bc7,
                 bc7_rdo,
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
             )?;
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &paths,
@@ -1128,6 +1171,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     source_preference: if mul {
                         SourceFormatPreference::Mul
                     } else {
@@ -1159,6 +1203,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             upscale,
             upscale_64_passes,
             upscale_128_passes,
@@ -1173,6 +1218,7 @@ pub fn run() -> eyre::Result<()> {
                 bc7,
                 bc7_rdo,
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
             )?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
@@ -1194,6 +1240,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_128_passes: convert_upscale_passes(upscale_128_passes),
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                 },
                 &classic_patches.into(),
             )?;
@@ -1220,6 +1267,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             upscale_passes,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
@@ -1233,6 +1281,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7,
                     bc7_rdo,
                     bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks,
                 )?;
             let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
                 &paths,
@@ -1245,6 +1294,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                 },
             )?;
@@ -1281,6 +1331,7 @@ pub fn run() -> eyre::Result<()> {
             bc7,
             bc7_rdo,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             tables,
             ec_mobile_animations_kdl,
             upscale_passes,
@@ -1296,6 +1347,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7,
                     bc7_rdo,
                     bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks,
                 )?;
             let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
                 &paths,
@@ -1308,6 +1360,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     metadata_path: ec_mobile_animations_kdl,
                     tables_dir: tables,
@@ -1372,6 +1425,7 @@ pub fn run() -> eyre::Result<()> {
             land_bc7,
             land_bc7_rdo,
             bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
             upscale_64_size,
             upscale_64_algo,
             upscale_128_size,
@@ -1417,6 +1471,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo: art_bc7_rdo || shared_output_format.bc7_rdo,
                 },
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
             )?;
             let land_output_format = resolve_texture_output_format_args(
                 TextureOutputFormatArgs {
@@ -1428,6 +1483,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo: land_bc7_rdo || shared_output_format.bc7_rdo,
                 },
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
             )?;
             let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(
                 &shared_sources,
@@ -1442,6 +1498,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_passes: convert_upscale_passes(art_upscale_passes),
                     pixel_format: art_output_format.pixel_format,
                     bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: art_output_format.bc7_rdo_lookback_blocks,
                 },
             )?;
             println!(
@@ -1489,6 +1546,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_512_passes: convert_upscale_passes(upscale_512_passes),
                     pixel_format: land_output_format.pixel_format,
                     bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
                     transcode_kdl_path: land_transcode_kdl,
                 },
             )?;
@@ -2298,8 +2356,17 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
@@ -2339,8 +2406,17 @@ mod tests {
                 assert!(!bc7);
                 assert!(!bc7_rdo);
                 assert!(crop_transparent_bounds);
-                let output_format =
-                    resolve_mobile_anim_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_mobile_anim_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
                 assert_eq!(output_format.compression, CompressionFlag::None);
             }
@@ -2430,8 +2506,17 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(output_format.compression, CompressionFlag::None);
             }
@@ -2466,8 +2551,17 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
@@ -2509,9 +2603,17 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, jxl_level, zstd, bc7, bc7_rdo, 1.0)
-                        .unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    jxl_level,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(output_format.compression, CompressionFlag::JpegXlLevel(4));
             }
@@ -2547,8 +2649,17 @@ mod tests {
                 assert_eq!(zstd, Some(DEFAULT_ZSTD_LEVEL));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
@@ -2587,8 +2698,17 @@ mod tests {
                 assert_eq!(zstd, Some(DEFAULT_ZSTD_LEVEL));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
@@ -2630,8 +2750,17 @@ mod tests {
                 assert_eq!(zstd, Some(5));
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                let output_format =
-                    resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
+                let output_format = resolve_texture_output_format(
+                    raw,
+                    jxl,
+                    None,
+                    zstd,
+                    bc7,
+                    bc7_rdo,
+                    1.0,
+                    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+                )
+                .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(output_format.compression, CompressionFlag::ZstdNoDictLevel(5));
             }
@@ -2651,6 +2780,8 @@ mod tests {
             "--bc7-rdo",
             "--bc7-rdo-lambda",
             "2.5",
+            "--bc7-rdo-lookback-blocks",
+            "128",
             "--zstd",
         ])
         .expect("parse bc7 rdo zstd texture output");
@@ -2663,6 +2794,7 @@ mod tests {
                 bc7,
                 bc7_rdo,
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
                 ..
             } => {
                 assert!(!raw);
@@ -2678,6 +2810,7 @@ mod tests {
                     bc7,
                     bc7_rdo,
                     bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks,
                 )
                 .unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Bc7);
@@ -2686,9 +2819,33 @@ mod tests {
                     CompressionFlag::ZstdNoDictLevel(DEFAULT_ZSTD_LEVEL)
                 );
                 assert_eq!(output_format.bc7_rdo_lambda, 2.5);
+                assert_eq!(output_format.bc7_rdo_lookback_blocks, 128);
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    #[test]
+    fn cli_rejects_non_preset_bc7_rdo_lookback_blocks() {
+        let error = match Cli::try_parse_from([
+            "uddpack",
+            "pack-art",
+            "--ccdir",
+            "/cc",
+            "--output",
+            "tex_art_cc.uddp",
+            "--bc7-rdo",
+            "--bc7-rdo-lookback-blocks",
+            "96",
+        ]) {
+            Ok(_) => panic!("bc7 rdo lookback must be a supported preset"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("expected one of 64, 128, or 256"),
+            "{error}"
+        );
     }
 
     #[test]

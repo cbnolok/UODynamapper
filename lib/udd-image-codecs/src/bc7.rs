@@ -75,6 +75,8 @@ pub const fn preferred_bc7_encoder_backend() -> Bc7EncoderBackend {
 }
 
 pub const DEFAULT_BC7_RDO_LAMBDA: f32 = 0.05;
+pub const DEFAULT_BC7_RDO_LOOKBACK_BLOCKS: usize = 64;
+pub const BC7_RDO_LOOKBACK_BLOCK_PRESETS: [usize; 3] = [64, 128, 256];
 
 #[cfg(feature = "bc7-encode")]
 const BC7_PROGRESS_BLOCK_BATCH: usize = 64;
@@ -558,6 +560,25 @@ pub fn encode_to_bc7_with_rdo_lambda(
     backend: Bc7EncoderBackend,
     rdo_lambda: f32,
 ) -> Result<Bc7TextureData, TextureError> {
+    encode_to_bc7_with_rdo(
+        pixels,
+        extent,
+        input_format,
+        backend,
+        rdo_lambda,
+        DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_to_bc7_with_rdo(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_lambda: f32,
+    rdo_lookback_blocks: usize,
+) -> Result<Bc7TextureData, TextureError> {
     validate_input_len(pixels, extent, input_format)?;
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
     let backend = resolve_bc7_encoder_backend(backend);
@@ -568,7 +589,13 @@ pub fn encode_to_bc7_with_rdo_lambda(
             encode_with_analytical_wide(rgba_pixels.as_ref(), extent)
         }
     };
-    apply_bc7_rdo(&mut encoded, rgba_pixels.as_ref(), extent, rdo_lambda);
+    apply_bc7_rdo(
+        &mut encoded,
+        rgba_pixels.as_ref(),
+        extent,
+        rdo_lambda,
+        rdo_lookback_blocks,
+    );
 
     Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))
 }
@@ -614,6 +641,30 @@ pub fn encode_to_bc7_with_rdo_lambda_and_stage_progress<F>(
 where
     F: Fn(Bc7ProgressStage, usize) + Sync,
 {
+    encode_to_bc7_with_rdo_and_stage_progress(
+        pixels,
+        extent,
+        input_format,
+        backend,
+        rdo_lambda,
+        DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+        progress,
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_to_bc7_with_rdo_and_stage_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_lambda: f32,
+    rdo_lookback_blocks: usize,
+    progress: F,
+) -> Result<Bc7TextureData, TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
     validate_input_len(pixels, extent, input_format)?;
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
     let backend = resolve_bc7_encoder_backend(backend);
@@ -633,6 +684,7 @@ where
         rgba_pixels.as_ref(),
         extent,
         rdo_lambda,
+        rdo_lookback_blocks,
         &rdo_progress,
     );
 
@@ -667,6 +719,25 @@ pub fn encode_for_vram_with_bc7_rdo_lambda(
     encoding: VramTextureEncoding,
     bc7_rdo_lambda: f32,
 ) -> Result<VramTextureData, TextureError> {
+    encode_for_vram_with_bc7_rdo(
+        pixels,
+        extent,
+        input_format,
+        encoding,
+        bc7_rdo_lambda,
+        DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_for_vram_with_bc7_rdo(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
+) -> Result<VramTextureData, TextureError> {
     match encoding {
         VramTextureEncoding::Rgba8UnormSrgb => {
             validate_input_len(pixels, extent, input_format)?;
@@ -678,12 +749,13 @@ pub fn encode_for_vram_with_bc7_rdo_lambda(
             )
         }
         VramTextureEncoding::Bc7(backend) => {
-            Ok(encode_to_bc7_with_rdo_lambda(
+            Ok(encode_to_bc7_with_rdo(
                 pixels,
                 extent,
                 input_format,
                 backend,
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
             )?.into())
         }
     }
@@ -723,6 +795,30 @@ pub fn encode_for_vram_with_bc7_rdo_lambda_and_stage_progress<F>(
 where
     F: Fn(Bc7ProgressStage, usize) + Sync,
 {
+    encode_for_vram_with_bc7_rdo_and_stage_progress(
+        pixels,
+        extent,
+        input_format,
+        encoding,
+        bc7_rdo_lambda,
+        DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+        progress,
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_for_vram_with_bc7_rdo_and_stage_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_lambda: f32,
+    bc7_rdo_lookback_blocks: usize,
+    progress: F,
+) -> Result<VramTextureData, TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
     match encoding {
         VramTextureEncoding::Rgba8UnormSrgb => {
             validate_input_len(pixels, extent, input_format)?;
@@ -734,12 +830,13 @@ where
             )
         }
         VramTextureEncoding::Bc7(backend) => {
-            Ok(encode_to_bc7_with_rdo_lambda_and_stage_progress(
+            Ok(encode_to_bc7_with_rdo_and_stage_progress(
                 pixels,
                 extent,
                 input_format,
                 backend,
                 bc7_rdo_lambda,
+                bc7_rdo_lookback_blocks,
                 progress,
             )?.into())
         }
@@ -938,6 +1035,7 @@ fn apply_bc7_rdo(
     rgba_pixels: &[u8],
     extent: ImageExtent,
     rdo_lambda: f32,
+    rdo_lookback_blocks: usize,
 ) {
     if rdo_lambda <= 0.0 || !rdo_lambda.is_finite() {
         return;
@@ -953,6 +1051,7 @@ fn apply_bc7_rdo(
     };
     let params = crate::bc7_rdo::Bc7RdoParams {
         lambda: rdo_lambda,
+        lookback_window_size: bc7_rdo_lookback_window_size(rdo_lookback_blocks),
         ..Default::default()
     };
     crate::bc7_rdo::reduce_entropy_bc7_parallel(
@@ -970,6 +1069,7 @@ fn apply_bc7_rdo_with_progress<F>(
     rgba_pixels: &[u8],
     extent: ImageExtent,
     rdo_lambda: f32,
+    rdo_lookback_blocks: usize,
     progress: &F,
 ) where
     F: Fn(usize) + Sync,
@@ -988,6 +1088,7 @@ fn apply_bc7_rdo_with_progress<F>(
     };
     let params = crate::bc7_rdo::Bc7RdoParams {
         lambda: rdo_lambda,
+        lookback_window_size: bc7_rdo_lookback_window_size(rdo_lookback_blocks),
         ..Default::default()
     };
     crate::bc7_rdo::reduce_entropy_bc7_parallel_with_progress(
@@ -998,6 +1099,20 @@ fn apply_bc7_rdo_with_progress<F>(
         &params,
         progress,
     );
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn normalize_bc7_rdo_lookback_blocks(blocks: usize) -> usize {
+    if BC7_RDO_LOOKBACK_BLOCK_PRESETS.contains(&blocks) {
+        blocks
+    } else {
+        DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
+    }
+}
+
+#[cfg(feature = "bc7-encode")]
+fn bc7_rdo_lookback_window_size(blocks: usize) -> usize {
+    normalize_bc7_rdo_lookback_blocks(blocks) * 16
 }
 
 #[cfg(feature = "bc7-encode")]

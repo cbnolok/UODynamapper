@@ -223,6 +223,10 @@ fn bc7_rdo_lambda(settings: &AppSettings) -> f32 {
     }
 }
 
+fn bc7_rdo_lookback_blocks(settings: &AppSettings) -> usize {
+    udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(settings.bc7_rdo_lookback_blocks)
+}
+
 fn upscale_filter_active(filter: UpscaleFilter) -> bool {
     !matches!(filter, UpscaleFilter::None)
 }
@@ -379,6 +383,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
@@ -426,6 +431,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                 },
                 &classic_patch_options(&settings),
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
@@ -469,6 +475,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
@@ -520,6 +527,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     transcode_kdl_path: None,
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
@@ -602,6 +610,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
@@ -650,6 +659,7 @@ impl UddConvApp {
                         _ => PagePixelFormat::Rgba8888,
                     },
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
                     metadata_path: None,
                     tables_dir: settings.dynamapper_routing_dir.clone(),

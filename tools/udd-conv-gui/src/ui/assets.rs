@@ -56,7 +56,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_cc, &mut self.settings.jxl_tex_art_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_art_cc),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 Some((&mut self.settings.upscale_tex_art_cc, Some(crate::models::UpscalePreviewTarget::TexArtCc))),
                 vec![],
             );
@@ -75,7 +79,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_cc, &mut self.settings.jxl_tex_land_cc)),
                 None,
                 Some(&mut self.settings.opt_tex_land_cc),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_cc_64, crate::models::UpscalePreviewTarget::TexLandCc64),
@@ -97,7 +105,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_mobile_anim_cc, &mut self.settings.jxl_mobile_anim_cc)),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_cc),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 Some((&mut self.settings.upscale_mobile_anim_cc, None)),
                 vec![],
             );
@@ -117,7 +129,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_art_ec, &mut self.settings.jxl_tex_art_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_art_ec),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 Some((&mut self.settings.upscale_tex_art_ec, Some(crate::models::UpscalePreviewTarget::TexArtEc))),
                 vec![],
             );
@@ -136,7 +152,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_tex_land_ec, &mut self.settings.jxl_tex_land_ec)),
                 None,
                 Some(&mut self.settings.opt_tex_land_ec),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 None,
                 vec![
                     ("64x64", &mut self.settings.upscale_tex_land_ec_64, crate::models::UpscalePreviewTarget::TexLandEc64),
@@ -160,7 +180,11 @@ impl UddConvApp {
                 Some((&mut self.settings.zstd_mobile_anim_ec, &mut self.settings.jxl_mobile_anim_ec)),
                 None,
                 Some(&mut self.settings.opt_mobile_anim_ec),
-                Some((&mut self.settings.bc7_rdo_enabled, &mut self.settings.bc7_rdo_lambda)),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
                 Some((&mut self.settings.upscale_mobile_anim_ec, None)),
                 vec![],
             );
@@ -242,7 +266,7 @@ fn draw_asset_card(
     texture_levels: Option<(&mut i32, &mut u8)>,
     zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
-    bc7_rdo: Option<(&mut bool, &mut f32)>,
+    bc7_rdo: Option<(&mut bool, &mut f32, &mut usize)>,
     upscale_single: Option<(&mut UpscaleFilter, Option<crate::models::UpscalePreviewTarget>)>,
     mut upscale_configs: Vec<(&str, &mut udd_conv::upscale::UpscaleConfig, crate::models::UpscalePreviewTarget)>,
 ) -> (bool, bool, Option<(crate::models::UpscalePreviewTarget, UpscaleFilter)>) {
@@ -372,8 +396,12 @@ fn draw_asset_card(
                                 });
 
                                 if show_bc7_settings {
-                                    if let Some((enabled, lambda)) = bc7_rdo {
-                                        draw_control_cell(ui, "BC7 RDO", 142.0, |ui| {
+                                    if let Some((enabled, lambda, lookback_blocks)) = bc7_rdo {
+                                        *lookback_blocks =
+                                            udd_conv::bc7::normalize_bc7_rdo_lookback_blocks(
+                                                *lookback_blocks,
+                                            );
+                                        draw_control_cell(ui, "BC7 RDO", 230.0, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.checkbox(enabled, "On")
                                                     .on_hover_text("Disable to skip the BC7 RDO pass.");
@@ -384,6 +412,22 @@ fn draw_asset_card(
                                                         .range(0.0..=1.0),
                                                 )
                                                     .on_hover_text("Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
+                                                ui.add_enabled_ui(*enabled, |ui| {
+                                                    egui::ComboBox::from_id_salt(format!("{title}_bc7_rdo_lookback"))
+                                                        .selected_text(format!("{} blocks", *lookback_blocks))
+                                                        .width(82.0)
+                                                        .show_ui(ui, |ui| {
+                                                            for blocks in udd_conv::bc7::BC7_RDO_LOOKBACK_BLOCK_PRESETS {
+                                                                ui.selectable_value(
+                                                                    lookback_blocks,
+                                                                    blocks,
+                                                                    format!("{blocks} blocks"),
+                                                                );
+                                                            }
+                                                        });
+                                                })
+                                                    .response
+                                                    .on_hover_text("Limits how many previous BC7 blocks RDO searches.");
                                             });
                                         });
                                     }

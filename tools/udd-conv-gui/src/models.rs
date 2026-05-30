@@ -57,6 +57,8 @@ pub struct AppSettings {
     pub jxl_mobile_anim_ec: u8,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
+    #[serde(default = "default_bc7_rdo_lookback_blocks")]
+    pub bc7_rdo_lookback_blocks: usize,
     #[serde(default = "default_bc7_rdo_enabled")]
     pub bc7_rdo_enabled: bool,
     pub upscale_tex_art_cc: UpscaleFilter,
@@ -113,6 +115,7 @@ impl Default for AppSettings {
             jxl_mobile_anim_cc: default_jxl_level(),
             jxl_mobile_anim_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
+            bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
@@ -137,6 +140,10 @@ impl Default for AppSettings {
 
 fn default_bc7_rdo_lambda() -> f32 {
     udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA
+}
+
+fn default_bc7_rdo_lookback_blocks() -> usize {
+    udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
 }
 
 fn default_bc7_rdo_enabled() -> bool {
@@ -252,6 +259,10 @@ mod tests {
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
         assert!(settings.bc7_rdo_enabled);
+        assert_eq!(
+            settings.bc7_rdo_lookback_blocks,
+            udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
+        );
         assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
     }
@@ -263,6 +274,7 @@ mod tests {
             .lines()
             .filter(|line| {
                 !line.starts_with("include_") && !line.starts_with("bc7_rdo_enabled")
+                    && !line.starts_with("bc7_rdo_lookback_blocks")
                     && !line.starts_with("dynamapper_routing_dir")
                     && !line.starts_with("ec_mobile_anim_allow_missing_kdl")
             })
@@ -278,6 +290,10 @@ mod tests {
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
         assert!(settings.bc7_rdo_enabled);
+        assert_eq!(
+            settings.bc7_rdo_lookback_blocks,
+            udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
+        );
         assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
     }
@@ -290,6 +306,7 @@ mod tests {
         settings.include_static_difs = true;
         settings.ec_mobile_anim_allow_missing_kdl = true;
         settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
+        settings.bc7_rdo_lookback_blocks = 128;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
         let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
@@ -302,5 +319,6 @@ mod tests {
             restored.dynamapper_routing_dir,
             Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"))
         );
+        assert_eq!(restored.bc7_rdo_lookback_blocks, 128);
     }
 }
