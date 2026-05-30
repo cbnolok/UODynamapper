@@ -43,9 +43,10 @@ use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::{
     atlas_payload_finish_message, atlas_payload_progress_message, build_and_write_package,
 };
-use crate::source_paths::{find_first_dir_matching, source_path_label};
+use crate::source_paths::{find_first_dir_matching, find_first_existing_file, source_path_label};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
+use uocf::enhanced::tile_database::ArtDefinition;
 
 use crate::upscale::{apply_filter_passes, UpscaleFilter};
 
@@ -70,6 +71,7 @@ pub struct TexArtCcBuildSummary {
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
+const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 
 pub struct TexArtCcAtlasOptions {
     pub atlas_width: u32,
@@ -148,6 +150,14 @@ pub struct PlacedTile {
     pub height: u16,
     pub upscale_factor: u16,
     pub upscale_algorithm: u16,
+    pub draw_offset_x: i16,
+    pub draw_offset_y: i16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TexArtCcSlotAlias {
+    pub art_id: u32,
+    pub canonical_art_id: u32,
     pub draw_offset_x: i16,
     pub draw_offset_y: i16,
 }
@@ -270,11 +280,19 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
     } else {
         ArtSource::Mul
     };
-    let slot_count = art_map.max_id_for_source(art_source);
+    let slot_aliases = load_tileart_cc_slot_aliases(source_dirs)?;
+    let slot_count = slot_aliases
+        .iter()
+        .fold(art_map.max_id_for_source(art_source), |slot_count, alias| {
+            slot_count
+                .max(alias.art_id.saturating_add(1))
+                .max(alias.canonical_art_id.saturating_add(1))
+        });
     let decoded_tiles = decode_present_tiles(&art_map, art_source, options)?;
-    let populated_slot_count = decoded_tiles.len() as u32;
 
-    let (pages, slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    apply_slot_aliases(&mut slot_records, &slot_aliases)?;
+    let populated_slot_count = slot_records.iter().filter(|slot| slot.is_present()).count() as u32;
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
 
@@ -590,6 +608,80 @@ fn format_skip_summary(skipped_count: u32, samples: &[String]) -> String {
     } else {
         format!("{skipped_count} [{}]", samples.join(", "))
     }
+}
+
+fn find_string_dictionary_path(source_dirs: &[PathBuf]) -> Option<PathBuf> {
+    find_first_existing_file(source_dirs, &["string_dictionary.uop"])
+}
+
+fn classic_static_art_id(tile_id: u32) -> u32 {
+    (tile_id as u16)
+        .saturating_add(CLASSIC_STATIC_ART_ID_OFFSET)
+        .into()
+}
+
+fn i16_draw_offset(art_id: u32, axis: &str, value: i32) -> eyre::Result<i16> {
+    i16::try_from(value).map_err(|_| {
+        eyre::eyre!("CC art alias {art_id} {axis} draw offset {value} does not fit in i16")
+    })
+}
+
+fn load_tileart_cc_slot_aliases(source_dirs: &[PathBuf]) -> eyre::Result<Vec<TexArtCcSlotAlias>> {
+    let Some(tileart_path) = find_first_existing_file(source_dirs, &["tileart.uop"]) else {
+        return Ok(Vec::new());
+    };
+    let Some(stringdict_path) = find_string_dictionary_path(source_dirs) else {
+        return Ok(Vec::new());
+    };
+
+    let art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)
+        .wrap_err("load tileart-driven CC art alias metadata")?;
+    let mut aliases = Vec::new();
+    for (&tile_id, art_data) in &art_definition.definitions {
+        let Some(texture) = art_data.cc_texture.as_ref() else {
+            continue;
+        };
+        let art_id = classic_static_art_id(tile_id as u32);
+        aliases.push(TexArtCcSlotAlias {
+            art_id,
+            canonical_art_id: classic_static_art_id(texture.texture_id),
+            draw_offset_x: i16_draw_offset(art_id, "x", texture.offset_x)?,
+            draw_offset_y: i16_draw_offset(art_id, "y", texture.offset_y)?,
+        });
+    }
+    if !aliases.is_empty() {
+        info!(
+            "Loaded {} tileart-derived CC art slot aliases from {}",
+            aliases.len(),
+            tileart_path.display()
+        );
+    }
+    Ok(aliases)
+}
+
+pub fn apply_slot_aliases(
+    slots: &mut [TexArtCcSlotRecord],
+    aliases: &[TexArtCcSlotAlias],
+) -> eyre::Result<()> {
+    for alias in aliases {
+        let Some(canonical) = slots
+            .get(alias.canonical_art_id as usize)
+            .copied()
+            .filter(|slot| slot.is_present())
+        else {
+            continue;
+        };
+        let slot = slots
+            .get_mut(alias.art_id as usize)
+            .context("alias tex_art_cc slot outside slot table")?;
+        *slot = TexArtCcSlotRecord {
+            art_id: alias.art_id,
+            draw_offset_x: alias.draw_offset_x,
+            draw_offset_y: alias.draw_offset_y,
+            ..canonical
+        };
+    }
+    Ok(())
 }
 
 pub fn pack_tiles_into_pages(
@@ -1125,5 +1217,40 @@ mod tests {
 
         assert_eq!(slots[7].draw_offset_x, -5);
         assert_eq!(slots[7].draw_offset_y, 6);
+    }
+
+    #[test]
+    fn slot_alias_preserves_owner_draw_offset() {
+        let mut slots = vec![TexArtCcSlotRecord::absent(0); 4];
+        slots[1] = TexArtCcSlotRecord {
+            art_id: 1,
+            page_index: 2,
+            page_tile_index: 3,
+            flags: SLOT_FLAG_PRESENT | SLOT_FLAG_STATIC,
+            x: 4,
+            y: 5,
+            width: 6,
+            height: 7,
+            upscale_factor: 1,
+            upscale_algorithm: 0,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
+        };
+
+        apply_slot_aliases(
+            &mut slots,
+            &[TexArtCcSlotAlias {
+                art_id: 3,
+                canonical_art_id: 1,
+                draw_offset_x: -8,
+                draw_offset_y: 9,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(slots[3].page_index, slots[1].page_index);
+        assert_eq!(slots[3].x, slots[1].x);
+        assert_eq!(slots[3].draw_offset_x, -8);
+        assert_eq!(slots[3].draw_offset_y, 9);
     }
 }

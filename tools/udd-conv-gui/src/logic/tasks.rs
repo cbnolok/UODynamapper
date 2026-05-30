@@ -134,7 +134,7 @@ impl UddConvApp {
         let settings = self.settings.clone();
         let output = self.get_output_path("tex_art_cc.uddp");
         self.spawn_task("CC Art Packing".to_string(), move || {
-            let sources = gather_cc_source_dirs(settings.cc_dir.as_ref());
+            let sources = gather_source_dirs(settings.cc_dir.as_ref(), settings.ec_dir.as_ref());
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
 

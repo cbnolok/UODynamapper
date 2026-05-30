@@ -810,11 +810,19 @@ fn resolve_hovered_static_geometry(
         crate::configs::settings::ClientTextureSource::Cc => {
             let world_x = world_x + 0.5;
             let world_z = world_z + 1.5;
-            let cc_texture_id = tilemeta
+            let fallback_texture_id = tilemeta
                 .map(|meta| meta.cc_texture_id as u16)
                 .unwrap_or(graphic);
-            let art_id = cc_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
-            let slot = tex_art_cc_res?.0.present_slot(art_id as u32)?;
+            let art_id = graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
+            let fallback_art_id = fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
+            let package = &tex_art_cc_res?.0;
+            let slot = package
+                .present_slot(art_id as u32)
+                .or_else(|| {
+                    (fallback_art_id != art_id)
+                        .then(|| package.present_slot(fallback_art_id as u32))
+                        .flatten()
+                })?;
             let bounds = resolve_static_billboard_bounds(
                 crate::configs::settings::ClientTextureSource::Cc,
                 slot.draw_offset_x,

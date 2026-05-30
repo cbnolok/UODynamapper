@@ -121,7 +121,7 @@ fn surface_like_static_world_anchor(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticVisualKind {
-    CcRegularArt { art_id: u16 },
+    CcRegularArt { art_id: u16, fallback_art_id: u16 },
     EcRegularArt { art_id: u32 },
     TexLandEcArt { art_id: u32 },
 }
@@ -630,11 +630,12 @@ fn resolve_static_visual_kind(
 ) -> StaticVisualKind {
     match art_source {
         ClientTextureSource::Cc => {
-            let cc_texture_id = tilemeta
+            let fallback_texture_id = tilemeta
                 .map(|meta| meta.cc_texture_id as u16)
                 .unwrap_or(tile_graphic);
             StaticVisualKind::CcRegularArt {
-                art_id: cc_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
+                art_id: tile_graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
+                fallback_art_id: fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
             }
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
@@ -1372,20 +1373,34 @@ pub fn sys_collect_visible_statics(
                                 texture_stretch,
                             ) =
                                 match visual_kind {
-                                    StaticVisualKind::CcRegularArt { art_id } => {
+                                    StaticVisualKind::CcRegularArt {
+                                        art_id,
+                                        fallback_art_id,
+                                    } => {
                                         let Some(tex_art_cc) =
                                             tex_art_cc_res.as_ref().map(|x| &x.0)
                                         else {
                                             continue;
                                         };
-
-                                        if let Some(slot) = tex_art_cc.present_slot(art_id as u32) {
+                                        let resolved_sprite = if let Some(slot) =
+                                            tex_art_cc.present_slot(art_id as u32)
+                                        {
                                             chunk_requested_pages.insert(slot.page_index as u64);
-                                        }
+                                            sprite_atlas.resolve_cc(tex_art_cc, art_id)
+                                        } else if fallback_art_id != art_id {
+                                            if let Some(slot) =
+                                                tex_art_cc.present_slot(fallback_art_id as u32)
+                                            {
+                                                chunk_requested_pages.insert(slot.page_index as u64);
+                                            }
+                                            sprite_atlas.resolve_cc(tex_art_cc, fallback_art_id)
+                                        } else {
+                                            None
+                                        };
 
                                         (
                                             ClientTextureSource::Cc,
-                                            sprite_atlas.resolve_cc(tex_art_cc, art_id),
+                                            resolved_sprite,
                                             0.0,
                                         )
                                     }
@@ -1745,13 +1760,36 @@ mod tests {
     #[test]
     fn regular_static_art_keeps_sprite_world_anchor() {
         let anchor = surface_like_static_world_anchor(
-            StaticVisualKind::EcRegularArt { art_id: 42 },
+            StaticVisualKind::CcRegularArt {
+                art_id: 42,
+                fallback_art_id: 42,
+            },
             10.0,
             20.0,
         );
 
         approx_eq(anchor.0, 10.0 + EC_STATIC_TILE_TRANSLATION_X);
         approx_eq(anchor.1, 20.0 + EC_STATIC_TILE_TRANSLATION_Z);
+    }
+
+    #[test]
+    fn cc_visual_kind_prefers_owner_slot_with_texture_fallback() {
+        let mut tile = item_tile_with_flags(
+            0,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt,
+        );
+        tile.cc_texture_id = 99;
+
+        let visual_kind =
+            resolve_static_visual_kind(ClientTextureSource::Cc, 7, None, Some(&tile), None, None);
+
+        assert_eq!(
+            visual_kind,
+            StaticVisualKind::CcRegularArt {
+                art_id: 0x4007,
+                fallback_art_id: 0x4063,
+            }
+        );
     }
 
     #[test]

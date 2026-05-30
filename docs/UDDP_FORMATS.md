@@ -157,6 +157,8 @@ When the cropped payload is consumed as an atlas slot by the renderer, the `tex_
 
 `upscale_factor`, `upscale_algorithm`, and draw offsets are intentionally stored per slot because art packages may mix native, 2x, 3x, and 4x assets and aliased art ids may share pixels while keeping distinct placement. Missing or non-upscaled slots use factor `1` and algorithm `0`.
 
+`tex_art_cc.uddp` may include tileart-derived owner aliases when built with EC metadata available. Those alias slots reuse the packed Classic source rectangle selected by tileart `cc_texture_id`, but keep the owning item id and its own `draw_offset_x/draw_offset_y`. Runtime CC placement resolves the owning item slot first and falls back to the raw Classic texture slot only for packages built without those aliases.
+
 ### 2.2 Gump Atlas Metadata
 
 `gumps_cc.uddp` and `gumps_ec.uddp` can store paperdoll equipment gumps in atlas pages. Their atlas slot records also carry a per-slot `upscale_factor`. The stored page rectangle remains physical pixels; UI and paperdoll placement use logical dimensions derived by dividing physical width/height by the factor. Single-gump payloads without atlas slot metadata are treated as `upscale_factor = 1`.
