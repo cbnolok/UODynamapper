@@ -31,6 +31,8 @@ impl UddConvApp {
                 Some(&tex_art_cc_metadata_source),
                 &tex_art_cc_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_tex_art_cc, &mut self.settings.jxl_tex_art_cc)),
+                None,
                 Some(&mut self.settings.opt_tex_art_cc),
                 Some(&mut self.settings.bc7_rdo_lambda),
                 Some((&mut self.settings.upscale_tex_art_cc, crate::models::UpscalePreviewTarget::TexArtCc)),
@@ -47,6 +49,8 @@ impl UddConvApp {
                 None,
                 &tex_land_cc_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_tex_land_cc, &mut self.settings.jxl_tex_land_cc)),
+                None,
                 Some(&mut self.settings.opt_tex_land_cc),
                 Some(&mut self.settings.bc7_rdo_lambda),
                 None,
@@ -68,6 +72,8 @@ impl UddConvApp {
                 None,
                 &tex_art_ec_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_tex_art_ec, &mut self.settings.jxl_tex_art_ec)),
+                None,
                 Some(&mut self.settings.opt_tex_art_ec),
                 Some(&mut self.settings.bc7_rdo_lambda),
                 Some((&mut self.settings.upscale_tex_art_ec, crate::models::UpscalePreviewTarget::TexArtEc)),
@@ -84,6 +90,8 @@ impl UddConvApp {
                 None,
                 &tex_land_ec_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_tex_land_ec, &mut self.settings.jxl_tex_land_ec)),
+                None,
                 Some(&mut self.settings.opt_tex_land_ec),
                 Some(&mut self.settings.bc7_rdo_lambda),
                 None,
@@ -107,6 +115,8 @@ impl UddConvApp {
                 None,
                 &tilemeta_progress,
                 !is_busy,
+                None,
+                Some(&mut self.settings.zstd_tilemeta),
                 None,
                 None,
                 None,
@@ -187,6 +197,8 @@ fn draw_asset_card(
     source_note: Option<&str>,
     progress: &AssetPackProgress,
     can_start: bool,
+    texture_levels: Option<(&mut i32, &mut u8)>,
+    zstd_only_level: Option<&mut i32>,
     opt: Option<&mut TextureOptimization>,
     bc7_rdo_lambda: Option<&mut f32>,
     upscale_single: Option<(&mut UpscaleFilter, crate::models::UpscalePreviewTarget)>,
@@ -236,7 +248,13 @@ fn draw_asset_card(
 
                 draw_asset_progress(ui, progress);
 
-                if opt.is_some() || bc7_rdo_lambda.is_some() || upscale_single.is_some() || !upscale_configs.is_empty() {
+                if opt.is_some()
+                    || texture_levels.is_some()
+                    || zstd_only_level.is_some()
+                    || bc7_rdo_lambda.is_some()
+                    || upscale_single.is_some()
+                    || !upscale_configs.is_empty()
+                {
                     ui.add_space(2.0);
                     ui.separator();
                     ui.add_space(2.0);
@@ -303,6 +321,20 @@ fn draw_asset_card(
                                         });
                                     }
                                 }
+
+                                if let Some((zstd_level, jxl_level)) = texture_levels {
+                                    match *opt_val {
+                                        TextureOptimization::None | TextureOptimization::Bc7Zstd => {
+                                            draw_zstd_level_cell(ui, zstd_level);
+                                        }
+                                        TextureOptimization::JpegXl => {
+                                            draw_jxl_level_cell(ui, jxl_level);
+                                        }
+                                        TextureOptimization::Bc7 => {}
+                                    }
+                                }
+                            } else if let Some(zstd_level) = zstd_only_level {
+                                draw_zstd_level_cell(ui, zstd_level);
                             }
 
                             if let Some((up_val, target)) = upscale_single {
@@ -386,6 +418,26 @@ fn draw_control_cell<R>(
         add_contents(ui)
     })
     .inner
+}
+
+fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {
+    draw_control_cell(ui, "Zstd Level", 96.0, |ui| {
+        ui.add(
+            egui::DragValue::new(level)
+                .speed(1)
+                .range(1..=22),
+        );
+    });
+}
+
+fn draw_jxl_level_cell(ui: &mut egui::Ui, level: &mut u8) {
+    draw_control_cell(ui, "JPEG XL Level", 116.0, |ui| {
+        ui.add(
+            egui::DragValue::new(level)
+                .speed(1)
+                .range(1..=10),
+        );
+    });
 }
 
 fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter) {

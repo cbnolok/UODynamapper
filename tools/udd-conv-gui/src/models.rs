@@ -23,6 +23,24 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tex_art_cc: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tex_land_cc: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tex_art_ec: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tex_land_ec: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tilemeta: i32,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_tex_art_cc: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_tex_land_cc: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_tex_art_ec: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_tex_land_ec: u8,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
     pub upscale_tex_art_cc: UpscaleFilter,
@@ -56,6 +74,15 @@ impl Default for AppSettings {
             opt_tex_land_cc: TextureOptimization::None,
             opt_tex_art_ec: TextureOptimization::None,
             opt_tex_land_ec: TextureOptimization::None,
+            zstd_tex_art_cc: default_zstd_level(),
+            zstd_tex_land_cc: default_zstd_level(),
+            zstd_tex_art_ec: default_zstd_level(),
+            zstd_tex_land_ec: default_zstd_level(),
+            zstd_tilemeta: default_zstd_level(),
+            jxl_tex_art_cc: default_jxl_level(),
+            jxl_tex_land_cc: default_jxl_level(),
+            jxl_tex_art_ec: default_jxl_level(),
+            jxl_tex_land_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             upscale_tex_art_cc: UpscaleFilter::None,
             upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig::default(),
@@ -77,6 +104,14 @@ impl Default for AppSettings {
 
 fn default_bc7_rdo_lambda() -> f32 {
     udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA
+}
+
+fn default_zstd_level() -> i32 {
+    9
+}
+
+fn default_jxl_level() -> u8 {
+    3
 }
 
 pub struct LogMessage {

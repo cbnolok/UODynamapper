@@ -43,7 +43,6 @@ use udd_container::{
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
     /// start coordinates so they remain aligned with the shared EC texture pass.
@@ -52,6 +51,18 @@ pub struct TileMetaBuildOptions {
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
     pub classic_patches: ClassicPatchOptions,
+    pub package_compression: CompressionFlag,
+}
+
+impl Default for TileMetaBuildOptions {
+    fn default() -> Self {
+        Self {
+            adjust_tex_art_ec_sampling: false,
+            use_ec_radarcol: false,
+            classic_patches: ClassicPatchOptions::default(),
+            package_compression: CompressionFlag::ZstdNoDict,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,6 +75,7 @@ struct BuiltTileMetaTables {
     item_tiles: Vec<TileMetaItemTile>,
     item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
     item_texture_refs: Vec<TileMetaItemTextureRef>,
+    package_compression: CompressionFlag,
     summary: TileMetaBuildSummary,
 }
 
@@ -249,7 +261,7 @@ fn write_tilemeta_uddp_with_progress(
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
+        compression: built.package_compression,
         width: 0,
         height: 0,
         virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
@@ -259,7 +271,7 @@ fn write_tilemeta_uddp_with_progress(
     })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
+        compression: built.package_compression,
         width: 0,
         height: 0,
         virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
@@ -269,7 +281,7 @@ fn write_tilemeta_uddp_with_progress(
     })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
+        compression: built.package_compression,
         width: 0,
         height: 0,
         virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH),
@@ -279,7 +291,7 @@ fn write_tilemeta_uddp_with_progress(
     })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
+        compression: built.package_compression,
         width: 0,
         height: 0,
         virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH),
@@ -614,6 +626,7 @@ fn build_tilemeta_tables_from_resolved_paths(
         item_tiles: tilemeta_items,
         item_texture_ref_spans,
         item_texture_refs,
+        package_compression: options.package_compression,
         summary: TileMetaBuildSummary {
             adjusted_ec_item_count,
         },

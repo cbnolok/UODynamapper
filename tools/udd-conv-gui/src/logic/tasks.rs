@@ -131,6 +131,19 @@ fn ensure_output_parent(output: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
+fn texture_compression(
+    optimization: TextureOptimization,
+    zstd_level: i32,
+    jxl_level: u8,
+) -> CompressionFlag {
+    match optimization {
+        TextureOptimization::None => CompressionFlag::ZstdNoDictLevel(zstd_level),
+        TextureOptimization::Bc7 => CompressionFlag::None,
+        TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDictLevel(zstd_level),
+        TextureOptimization::JpegXl => CompressionFlag::JpegXlLevel(jxl_level),
+    }
+}
+
 impl UddConvApp {
     pub fn spawn_task<F>(&self, name: String, task: F)
     where
@@ -231,12 +244,11 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
 
-            let compression = match settings.opt_tex_art_cc {
-                TextureOptimization::None => CompressionFlag::ZstdNoDict,
-                TextureOptimization::Bc7 => CompressionFlag::None,
-                TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
-                TextureOptimization::JpegXl => CompressionFlag::JpegXl,
-            };
+            let compression = texture_compression(
+                settings.opt_tex_art_cc,
+                settings.zstd_tex_art_cc,
+                settings.jxl_tex_art_cc,
+            );
 
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress(
                 &sources, &output,
@@ -269,12 +281,11 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
 
-            let compression = match settings.opt_tex_land_cc {
-                TextureOptimization::None => CompressionFlag::ZstdNoDict,
-                TextureOptimization::Bc7 => CompressionFlag::None,
-                TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
-                TextureOptimization::JpegXl => CompressionFlag::JpegXl,
-            };
+            let compression = texture_compression(
+                settings.opt_tex_land_cc,
+                settings.zstd_tex_land_cc,
+                settings.jxl_tex_land_cc,
+            );
 
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                 &sources[0], &output,
@@ -308,12 +319,11 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
 
-            let compression = match settings.opt_tex_art_ec {
-                TextureOptimization::None => CompressionFlag::ZstdNoDict,
-                TextureOptimization::Bc7 => CompressionFlag::None,
-                TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
-                TextureOptimization::JpegXl => CompressionFlag::JpegXl,
-            };
+            let compression = texture_compression(
+                settings.opt_tex_art_ec,
+                settings.zstd_tex_art_ec,
+                settings.jxl_tex_art_ec,
+            );
 
             let summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
                 &sources, &output,
@@ -345,12 +355,11 @@ impl UddConvApp {
             if sources.is_empty() { eyre::bail!("No source dirs"); }
             ensure_output_parent(&output)?;
 
-            let compression = match settings.opt_tex_land_ec {
-                TextureOptimization::None => CompressionFlag::ZstdNoDict,
-                TextureOptimization::Bc7 => CompressionFlag::None,
-                TextureOptimization::Bc7Zstd => CompressionFlag::ZstdNoDict,
-                TextureOptimization::JpegXl => CompressionFlag::JpegXl,
-            };
+            let compression = texture_compression(
+                settings.opt_tex_land_ec,
+                settings.zstd_tex_land_ec,
+                settings.jxl_tex_land_ec,
+            );
 
             let summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
                 &sources, &output,
@@ -395,6 +404,7 @@ impl UddConvApp {
                             adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
+                            package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
                         },
                         |build_progress| progress.build_progress(build_progress),
                     )?;
@@ -409,6 +419,7 @@ impl UddConvApp {
                             adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
+                            package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
                         },
                         |build_progress| progress.build_progress(build_progress),
                     )?;

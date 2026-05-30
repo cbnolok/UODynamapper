@@ -165,6 +165,16 @@ fn zstd_worker_count() -> u32 {
 
 /// Jxl compression helper.
 pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    jxl_compress_level(data, width, height, JXL_LEVEL)
+}
+
+/// Jxl compression helper with an explicit encoder level.
+pub(crate) fn jxl_compress_level(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    level: jpegxl_rs::encode::EncoderSpeed,
+) -> Result<Vec<u8>, String> {
     use jpegxl_rs::encoder_builder;
     use jpegxl_rs::encode::EncoderFrame;
     use jpegxl_rs::parallel::threads_runner::ThreadsRunner;
@@ -174,7 +184,7 @@ pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u
         .has_alpha(true)
         .lossless(true)
         .uses_original_profile(true)
-        .speed(JXL_LEVEL)
+        .speed(level)
         .parallel_runner(&parallel_runner)
         .build()
         .map_err(|e| e.to_string())?;
@@ -188,6 +198,15 @@ pub(crate) fn jxl_compress(data: &[u8], width: u32, height: u32) -> Result<Vec<u
     final_payload.extend_from_slice(&height.to_le_bytes());
     final_payload.extend_from_slice(&encoded);
     Ok(final_payload)
+}
+
+pub(crate) fn jxl_compress_numeric_level(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    level: u8,
+) -> Result<Vec<u8>, String> {
+    jxl_compress_level(data, width, height, jxl_encoder_speed(level)?)
 }
 
 /// Jxl compression helper with a final Zstd pass over the encoded JXL payload.
@@ -208,6 +227,37 @@ pub(crate) fn jxl_zstd_compress_level(
     final_payload.extend_from_slice(JXL_ZSTD_PREFIX);
     final_payload.extend_from_slice(&zstd_payload);
     Ok(final_payload)
+}
+
+pub(crate) fn jxl_zstd_compress_levels(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    jxl_level: u8,
+    zstd_level: i32,
+) -> Result<Vec<u8>, String> {
+    let jxl_payload = jxl_compress_numeric_level(data, width, height, jxl_level)?;
+    let zstd_payload = zstd_compress_level(&jxl_payload, zstd_level).map_err(|e| e.to_string())?;
+    let mut final_payload = Vec::with_capacity(JXL_ZSTD_PREFIX.len() + zstd_payload.len());
+    final_payload.extend_from_slice(JXL_ZSTD_PREFIX);
+    final_payload.extend_from_slice(&zstd_payload);
+    Ok(final_payload)
+}
+
+fn jxl_encoder_speed(level: u8) -> Result<jpegxl_rs::encode::EncoderSpeed, String> {
+    match level {
+        1 => Ok(jpegxl_rs::encode::EncoderSpeed::Lightning),
+        2 => Ok(jpegxl_rs::encode::EncoderSpeed::Thunder),
+        3 => Ok(jpegxl_rs::encode::EncoderSpeed::Falcon),
+        4 => Ok(jpegxl_rs::encode::EncoderSpeed::Cheetah),
+        5 => Ok(jpegxl_rs::encode::EncoderSpeed::Hare),
+        6 => Ok(jpegxl_rs::encode::EncoderSpeed::Wombat),
+        7 => Ok(jpegxl_rs::encode::EncoderSpeed::Squirrel),
+        8 => Ok(jpegxl_rs::encode::EncoderSpeed::Kitten),
+        9 => Ok(jpegxl_rs::encode::EncoderSpeed::Tortoise),
+        10 => Ok(jpegxl_rs::encode::EncoderSpeed::Glacier),
+        _ => Err(format!("JPEG XL level must be in 1..=10, got {level}")),
+    }
 }
 
 /// Jxl decompression helper.

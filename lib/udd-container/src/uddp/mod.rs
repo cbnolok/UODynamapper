@@ -185,11 +185,17 @@ pub enum CompressionFlag {
     /// Force Jpeg XL lossless.
     JpegXl,
 
+    /// Force Jpeg XL lossless at an explicit encoder level.
+    JpegXlLevel(u8),
+
     /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload.
     JpegXlZstd,
 
     /// Force Jpeg XL lossless, then Zstd-compress the encoded JXL payload at an explicit level.
     JpegXlZstdLevel(i32),
+
+    /// Force Jpeg XL lossless at an explicit encoder level, then Zstd-compress it at an explicit level.
+    JpegXlZstdLevels { jxl_level: u8, zstd_level: i32 },
 }
 
 /// Convenience starter type ids.

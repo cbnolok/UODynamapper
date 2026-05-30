@@ -451,8 +451,10 @@ fn mobile_anim_page_progress_message(options: &MobileAnimCcAtlasOptions) -> &'st
     } else if matches!(
         options.compression,
         CompressionFlag::JpegXl
+            | CompressionFlag::JpegXlLevel(_)
             | CompressionFlag::JpegXlZstd
             | CompressionFlag::JpegXlZstdLevel(_)
+            | CompressionFlag::JpegXlZstdLevels { .. }
     ) {
         "registering mobile animation atlas pages for JPEG XL package compression"
     } else {
