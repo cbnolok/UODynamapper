@@ -1,8 +1,21 @@
 use std::collections::BTreeMap;
 
 use eframe::egui;
+use udd_assets::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+use udd_container::{Codec, DataType};
 
 use crate::app::InspectorApp;
+use crate::models::EntryInfo;
+use crate::utils::format_size;
+
+#[derive(Clone, Copy)]
+struct MobileAnimPageDetails {
+    atlas_width: u32,
+    atlas_height: u32,
+    used_width: u32,
+    used_height: u32,
+    pixel_format: PagePixelFormat,
+}
 
 pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.mobile_anim_cc_package.clone() else {
@@ -33,6 +46,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut tree = BTreeMap::<Option<u8>, BTreeMap<u16, BTreeMap<u16, Vec<usize>>>>::new();
                 for (index, animation) in animations.iter().enumerate() {
                     let frames = package.animation_frames(animation);
                     let visible_count = displayable_frame_count(
@@ -40,29 +54,69 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                         udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
                         |frame| (frame.page_index, frame.width, frame.height),
                     );
-                    let label = format!(
-                        "body {} action {} dir {} file {} idx {} | {}/{} visible",
+                    let body_type = package
+                        .body_type_record(animation.body_id)
+                        .map(|record| record.group_type);
+                    let label = cc_animation_label(animation, visible_count, frames.len());
+                    let search_label = format!(
+                        "{} body {} action {} {}",
+                        body_type_label(body_type),
                         animation.body_id,
                         animation.action_id,
-                        animation.direction,
-                        animation.file_index,
-                        animation.source_index,
-                        visible_count,
-                        frames.len()
+                        label,
                     );
-                    if !query.is_empty() && !label.to_ascii_lowercase().contains(&query) {
+                    if !query.is_empty() && !search_label.to_ascii_lowercase().contains(&query) {
                         continue;
                     }
-                    if ui
-                        .selectable_label(app.selected_mobile_anim_index == index, label)
-                        .clicked()
-                    {
-                        app.selected_mobile_anim_index = index;
-                        app.selected_mobile_anim_frame_index = 0;
-                        app.mobile_anim_frame_reset_pending = true;
-                        app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
-                    }
+                    tree.entry(body_type)
+                        .or_default()
+                        .entry(animation.body_id)
+                        .or_default()
+                        .entry(animation.action_id)
+                        .or_default()
+                        .push(index);
                 }
+                if tree.is_empty() {
+                    ui.label("No animations match the filter.");
+                }
+                let default_open = !query.is_empty();
+                for (body_type, bodies) in tree {
+                    egui::CollapsingHeader::new(body_type_label(body_type))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for (body_id, actions) in bodies {
+                                egui::CollapsingHeader::new(format!("Body {}", body_id))
+                                    .default_open(default_open)
+                                    .show(ui, |ui| {
+                                        for (action_id, indexes) in actions {
+                                            egui::CollapsingHeader::new(format!("Action {}", action_id))
+                                                .default_open(default_open)
+                                                .show(ui, |ui| {
+                                                    for index in indexes {
+                                                        let animation = &animations[index];
+                                                        let frames = package.animation_frames(animation);
+                                                        let visible_count = displayable_frame_count(
+                                                            frames,
+                                                            udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
+                                                            |frame| (frame.page_index, frame.width, frame.height),
+                                                        );
+                                                        let label = cc_animation_label(animation, visible_count, frames.len());
+                                                        if ui
+                                                            .selectable_label(
+                                                                app.selected_mobile_anim_index == index,
+                                                                label,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            select_mobile_animation(app, ctx, index);
+                                                        }
+                                                    }
+                                                });
+                                        }
+                                    });
+                            }
+                        });
+                    }
             });
         });
 
@@ -78,6 +132,16 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     ui.heading("mobile_anim_cc.uddp");
     ui.horizontal_wrapped(|ui| {
         ui.label(format!("Atlas: {}x{} gutter {}", package.atlas_width(), package.atlas_height(), package.gutter()));
+        ui.separator();
+        ui.label(format!("Atlas packing: {}", packing_mode_name(package.packing_mode())));
+        ui.separator();
+        ui.label(format!("Page format: {}", page_format_summary(package.pages().iter().map(|page| page.pixel_format))));
+        ui.separator();
+        ui.label("Upscale: not stored");
+        ui.separator();
+        ui.label(format!("Texture compression: {}", codec_summary(&app.entries, DataType::Texture as u8)));
+        ui.separator();
+        ui.label(format!("Metadata compression: {}", codec_summary(&app.entries, DataType::Metadata as u8)));
         ui.separator();
         ui.label(format!("Pages: {}", package.pages().len()));
         ui.separator();
@@ -101,6 +165,9 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         .show(ui, |ui| {
             ui.label("Body");
             ui.label(selected_animation.body_id.to_string());
+            ui.end_row();
+            ui.label("Body Type");
+            ui.label(body_type_label(package.body_type_record(selected_animation.body_id).map(|record| record.group_type)));
             ui.end_row();
             ui.label("Action");
             ui.label(selected_animation.action_id.to_string());
@@ -155,6 +222,7 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut tree = BTreeMap::<Option<i16>, BTreeMap<u32, BTreeMap<u16, Vec<usize>>>>::new();
                 for (index, animation) in animations.iter().enumerate() {
                     let frames = package.animation_frames(animation);
                     let visible_count = displayable_frame_count(
@@ -162,26 +230,65 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                         udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
                         |frame| (frame.page_index, frame.width, frame.height),
                     );
+                    let body_type = ec_body_type_for_body(&package, animation.body_id);
                     let label = format!(
-                        "body {} action {} dir {} | {}/{} visible",
+                        "{} body {} action {} {}",
+                        ec_body_type_label(body_type),
                         animation.body_id,
                         animation.action_id,
-                        animation.direction,
-                        visible_count,
-                        frames.len()
+                        ec_animation_label(animation, visible_count, frames.len()),
                     );
                     if !query.is_empty() && !label.to_ascii_lowercase().contains(&query) {
                         continue;
                     }
-                    if ui
-                        .selectable_label(app.selected_mobile_anim_index == index, label)
-                        .clicked()
-                    {
-                        app.selected_mobile_anim_index = index;
-                        app.selected_mobile_anim_frame_index = 0;
-                        app.mobile_anim_frame_reset_pending = true;
-                        app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
-                    }
+                    tree.entry(body_type)
+                        .or_default()
+                        .entry(animation.body_id)
+                        .or_default()
+                        .entry(animation.action_id)
+                        .or_default()
+                        .push(index);
+                }
+                if tree.is_empty() {
+                    ui.label("No animations match the filter.");
+                }
+                let default_open = !query.is_empty();
+                for (body_type, bodies) in tree {
+                    egui::CollapsingHeader::new(ec_body_type_label(body_type))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for (body_id, actions) in bodies {
+                                egui::CollapsingHeader::new(format!("Body {}", body_id))
+                                    .default_open(default_open)
+                                    .show(ui, |ui| {
+                                        for (action_id, indexes) in actions {
+                                            egui::CollapsingHeader::new(format!("Action {}", action_id))
+                                                .default_open(default_open)
+                                                .show(ui, |ui| {
+                                                    for index in indexes {
+                                                        let animation = &animations[index];
+                                                        let frames = package.animation_frames(animation);
+                                                        let visible_count = displayable_frame_count(
+                                                            frames,
+                                                            udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
+                                                            |frame| (frame.page_index, frame.width, frame.height),
+                                                        );
+                                                        let label = ec_animation_label(animation, visible_count, frames.len());
+                                                        if ui
+                                                            .selectable_label(
+                                                                app.selected_mobile_anim_index == index,
+                                                                label,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            select_mobile_animation(app, ctx, index);
+                                                        }
+                                                    }
+                                                });
+                                        }
+                                    });
+                            }
+                        });
                 }
             });
         });
@@ -198,6 +305,16 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     ui.heading("mobile_anim_ec.uddp");
     ui.horizontal_wrapped(|ui| {
         ui.label(format!("Atlas: {}x{} gutter {}", package.atlas_width(), package.atlas_height(), package.gutter()));
+        ui.separator();
+        ui.label(format!("Atlas packing: {}", packing_mode_name(package.packing_mode())));
+        ui.separator();
+        ui.label(format!("Page format: {}", page_format_summary(package.pages().iter().map(|page| page.pixel_format))));
+        ui.separator();
+        ui.label("Upscale: not stored");
+        ui.separator();
+        ui.label(format!("Texture compression: {}", codec_summary(&app.entries, DataType::Texture as u8)));
+        ui.separator();
+        ui.label(format!("Metadata compression: {}", codec_summary(&app.entries, DataType::Metadata as u8)));
         ui.separator();
         ui.label(format!("Pages: {}", package.pages().len()));
         ui.separator();
@@ -221,6 +338,9 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         .show(ui, |ui| {
             ui.label("Body");
             ui.label(selected_animation.body_id.to_string());
+            ui.end_row();
+            ui.label("Body Type");
+            ui.label(ec_body_type_label(ec_body_type_for_body(&package, selected_animation.body_id)));
             ui.end_row();
             ui.label("Action");
             ui.label(selected_animation.action_id.to_string());
@@ -389,6 +509,126 @@ fn advance_frame(app: &mut InspectorApp, frame_count: usize) {
     }
 }
 
+fn select_mobile_animation(app: &mut InspectorApp, ctx: &egui::Context, index: usize) {
+    app.selected_mobile_anim_index = index;
+    app.selected_mobile_anim_frame_index = 0;
+    app.mobile_anim_frame_reset_pending = true;
+    app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+}
+
+fn cc_animation_label(
+    animation: &udd_assets::mobile_anim_cc::MobileAnimCcAnimationRecord,
+    visible_count: usize,
+    frame_count: usize,
+) -> String {
+    format!(
+        "dir {} file {} idx {} | {}/{} visible",
+        animation.direction,
+        animation.file_index,
+        animation.source_index,
+        visible_count,
+        frame_count
+    )
+}
+
+fn ec_animation_label(
+    animation: &udd_assets::mobile_anim_ec::MobileAnimEcAnimationRecord,
+    visible_count: usize,
+    frame_count: usize,
+) -> String {
+    format!(
+        "dir {} | {}/{} visible",
+        animation.direction,
+        visible_count,
+        frame_count
+    )
+}
+
+fn body_type_label(body_type: Option<u8>) -> String {
+    match body_type {
+        Some(body_type) => format!("Body type {}", body_type),
+        None => "Body type not stored".to_string(),
+    }
+}
+
+fn ec_body_type_for_body(package: &udd_assets::MobileAnimEcPackage, body_id: u32) -> Option<i16> {
+    let item_id = i32::try_from(body_id).ok()?;
+    package
+        .items()
+        .iter()
+        .find(|item| item.item_id == item_id)
+        .map(|item| item.item_type)
+}
+
+fn ec_body_type_label(body_type: Option<i16>) -> String {
+    match body_type {
+        Some(body_type) => format!("Body type {}", body_type),
+        None => "Body type not stored".to_string(),
+    }
+}
+
+fn packing_mode_name(mode: AtlasPackingMode) -> &'static str {
+    match mode {
+        AtlasPackingMode::MaximumPacking => "maximum packing",
+        AtlasPackingMode::Bc7Oriented => "BC7 oriented",
+    }
+}
+
+fn pixel_format_name(format: PagePixelFormat) -> &'static str {
+    match format {
+        PagePixelFormat::Rgba8888 => "RGBA8888",
+        PagePixelFormat::Bc7 => "BC7",
+    }
+}
+
+fn codec_name(codec: Codec) -> &'static str {
+    match codec {
+        Codec::None => "none",
+        Codec::ZstdNoDict => "zstd",
+        Codec::ZstdTypeDict => "zstd type dict",
+        Codec::JpegXl => "JPEG XL",
+    }
+}
+
+fn page_format_summary(formats: impl Iterator<Item = PagePixelFormat>) -> String {
+    let mut buckets = BTreeMap::<&'static str, usize>::new();
+    for format in formats {
+        *buckets.entry(pixel_format_name(format)).or_default() += 1;
+    }
+    if buckets.is_empty() {
+        return "none".to_string();
+    }
+    buckets
+        .into_iter()
+        .map(|(format, count)| format!("{format}: {count} pages"))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn codec_summary(entries: &[EntryInfo], data_type: u8) -> String {
+    let mut buckets = BTreeMap::<&'static str, (usize, u64, u64)>::new();
+    for entry in entries.iter().filter(|entry| entry.data_type == data_type) {
+        let bucket = buckets.entry(codec_name(entry.codec)).or_default();
+        bucket.0 += 1;
+        bucket.1 += entry.raw_size as u64;
+        bucket.2 += entry.stored_size as u64;
+    }
+    if buckets.is_empty() {
+        return "none".to_string();
+    }
+    buckets
+        .into_iter()
+        .map(|(codec, (count, raw_size, stored_size))| {
+            format!(
+                "{codec}: {count} entries, {} raw / {} stored",
+                format_size(raw_size),
+                format_size(stored_size)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn show_cc_frame(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -413,7 +653,13 @@ fn show_cc_frame(
         .pages()
         .iter()
         .find(|page| page.page_index == frame.page_index)
-        .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
+        .map(|page| MobileAnimPageDetails {
+            atlas_width: page.atlas_width,
+            atlas_height: page.atlas_height,
+            used_width: page.used_width,
+            used_height: page.used_height,
+            pixel_format: page.pixel_format,
+        });
     show_page_size_metadata(ui, page_size);
     show_frame_image(
         ui,
@@ -455,7 +701,13 @@ fn show_ec_frame(
         .pages()
         .iter()
         .find(|page| page.page_index == frame.page_index)
-        .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
+        .map(|page| MobileAnimPageDetails {
+            atlas_width: page.atlas_width,
+            atlas_height: page.atlas_height,
+            used_width: page.used_width,
+            used_height: page.used_height,
+            pixel_format: page.pixel_format,
+        });
     show_page_size_metadata(ui, page_size);
     show_frame_image(
         ui,
@@ -494,12 +746,16 @@ fn page_bucket_summary(pages: impl Iterator<Item = (u32, u32, u32)>) -> String {
 
 fn show_page_size_metadata(
     ui: &mut egui::Ui,
-    page_size: Option<(u32, u32, u32, u32)>,
+    page_size: Option<MobileAnimPageDetails>,
 ) {
-    if let Some((atlas_width, atlas_height, used_width, used_height)) = page_size {
+    if let Some(page_size) = page_size {
         ui.label(format!(
-            "Page size: {}x{} atlas, {}x{} used",
-            atlas_width, atlas_height, used_width, used_height
+            "Page size: {}x{} atlas, {}x{} used, {}",
+            page_size.atlas_width,
+            page_size.atlas_height,
+            page_size.used_width,
+            page_size.used_height,
+            pixel_format_name(page_size.pixel_format)
         ));
     }
 }
@@ -548,7 +804,7 @@ fn show_frame_image(
     ctx: &egui::Context,
     app: &mut InspectorApp,
     texture_prefix: &str,
-    page_size: Option<(u32, u32, u32, u32)>,
+    page_size: Option<MobileAnimPageDetails>,
     page_index: u32,
     x: u16,
     y: u16,
@@ -640,16 +896,23 @@ fn set_mobile_anim_atlas_image(
     app: &mut InspectorApp,
     texture_prefix: &str,
     page_index: u32,
-    page_size: Option<(u32, u32, u32, u32)>,
+    page_size: Option<MobileAnimPageDetails>,
     page_rgba: &[u8],
 ) {
     let Some(size) = decoded_page_size(page_rgba, page_size) else {
         return;
     };
     let label = page_size
-        .map(|(atlas_width, atlas_height, used_width, used_height)| {
+        .map(|page_size| {
             format!(
-                "{texture_prefix} page {page_index} atlas {atlas_width}x{atlas_height}, used {used_width}x{used_height}"
+                "{} page {} atlas {}x{}, used {}x{}, {}",
+                texture_prefix,
+                page_index,
+                page_size.atlas_width,
+                page_size.atlas_height,
+                page_size.used_width,
+                page_size.used_height,
+                pixel_format_name(page_size.pixel_format)
             )
         })
         .unwrap_or_else(|| format!("{texture_prefix} page {page_index} atlas"));
@@ -670,20 +933,20 @@ fn set_mobile_anim_atlas_image(
 
 fn decoded_page_size(
     page_rgba: &[u8],
-    page_size: Option<(u32, u32, u32, u32)>,
+    page_size: Option<MobileAnimPageDetails>,
 ) -> Option<[usize; 2]> {
     if page_rgba.len() % 4 != 0 {
         return None;
     }
     let pixels = page_rgba.len() / 4;
-    if let Some((atlas_width, atlas_height, used_width, used_height)) = page_size {
-        let used_pixels = used_width as usize * used_height as usize;
+    if let Some(page_size) = page_size {
+        let used_pixels = page_size.used_width as usize * page_size.used_height as usize;
         if pixels == used_pixels {
-            return Some([used_width as usize, used_height as usize]);
+            return Some([page_size.used_width as usize, page_size.used_height as usize]);
         }
-        let atlas_pixels = atlas_width as usize * atlas_height as usize;
+        let atlas_pixels = page_size.atlas_width as usize * page_size.atlas_height as usize;
         if pixels == atlas_pixels {
-            return Some([atlas_width as usize, atlas_height as usize]);
+            return Some([page_size.atlas_width as usize, page_size.atlas_height as usize]);
         }
     }
     page_width_from_rgba_len(page_rgba).map(|side| [side as usize, side as usize])
@@ -764,13 +1027,20 @@ mod tests {
     fn decoded_page_size_prefers_manifest_used_or_atlas_size() {
         let used = vec![0u8; 8 * 4 * 4];
         let atlas = vec![0u8; 16 * 16 * 4];
+        let page_size = MobileAnimPageDetails {
+            atlas_width: 16,
+            atlas_height: 16,
+            used_width: 8,
+            used_height: 4,
+            pixel_format: PagePixelFormat::Rgba8888,
+        };
 
         assert_eq!(
-            decoded_page_size(&used, Some((16, 16, 8, 4))),
+            decoded_page_size(&used, Some(page_size)),
             Some([8, 4])
         );
         assert_eq!(
-            decoded_page_size(&atlas, Some((16, 16, 8, 4))),
+            decoded_page_size(&atlas, Some(page_size)),
             Some([16, 16])
         );
     }
