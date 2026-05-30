@@ -88,7 +88,7 @@ pub struct LogMessage {
 pub enum LogLevel {
     Info,
     Success,
-    // Warning,
+    Warning,
     Error,
 }
 

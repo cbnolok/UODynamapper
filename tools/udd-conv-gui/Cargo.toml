@@ -16,6 +16,8 @@ egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["image"] }
 rfd = "0.14"
 color-eyre = "0.6.5"
+libc = "0.2"
+log = "0.4.29"
 udd-conv = { path = "../../lib/udd-conv" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }

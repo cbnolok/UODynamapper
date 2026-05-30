@@ -21,20 +21,26 @@ pub struct UddConvApp {
 impl UddConvApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let (settings, settings_warning) = load_settings_report();
-        let mut logs = vec![LogMessage {
-            text: "Application started. Please configure your source directories.".to_string(),
-            level: LogLevel::Info,
-        }];
-        if let Some(warning) = settings_warning {
-            logs.push(LogMessage {
-                text: warning,
-                level: LogLevel::Error,
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        crate::logic::panel_logger::install_panel_logger(logs.clone());
+
+        {
+            let mut logs_guard = logs.lock().expect("initialize GUI logs");
+            logs_guard.push(LogMessage {
+                text: "Application started. Please configure your source directories.".to_string(),
+                level: LogLevel::Info,
             });
+            if let Some(warning) = settings_warning {
+                logs_guard.push(LogMessage {
+                    text: warning,
+                    level: LogLevel::Error,
+                });
+            }
         }
 
         Self {
             settings,
-            logs: Arc::new(Mutex::new(logs)),
+            logs,
             is_converting: Arc::new(Mutex::new(false)),
             current_tab: Tab::Sources,
             tool_file_1: None,

@@ -112,9 +112,12 @@ impl UddConvApp {
                 });
             }
 
-            let result = match panic::catch_unwind(AssertUnwindSafe(task)) {
-                Ok(result) => result,
-                Err(_) => Err(eyre::eyre!("task panicked")),
+            let result = {
+                let _stdout_capture = crate::logic::panel_logger::capture_stdout_to_panel(logs.clone());
+                match panic::catch_unwind(AssertUnwindSafe(task)) {
+                    Ok(result) => result,
+                    Err(_) => Err(eyre::eyre!("task panicked")),
+                }
             };
 
             {

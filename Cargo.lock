@@ -7843,6 +7843,8 @@ dependencies = [
  "egui_extras",
  "image",
  "ktx2",
+ "libc",
+ "log",
  "rfd 0.14.1",
  "serde",
  "tokio",

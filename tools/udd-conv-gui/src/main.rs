@@ -118,7 +118,7 @@ impl eframe::App for UddConvApp {
                                     let color = match log.level {
                                         LogLevel::Info => egui::Color32::from_gray(200),
                                         LogLevel::Success => egui::Color32::from_rgb(100, 255, 100),
-                                        // LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
+                                        LogLevel::Warning => egui::Color32::from_rgb(255, 200, 0),
                                         LogLevel::Error => egui::Color32::from_rgb(255, 100, 100),
                                     };
                                     ui.colored_label(color, &log.text);
