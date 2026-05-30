@@ -349,7 +349,7 @@ fn draw_asset_card(
                             ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
 
                             if let Some(opt_val) = opt {
-                                let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd);
+                                let show_bc7_settings = matches!(opt_val, TextureOptimization::Bc7Zstd);
                                 draw_control_cell(ui, "Output Format", 210.0, |ui| {
                                     let current_fmt = match opt_val {
                                         TextureOptimization::None => "Raw+zstd",

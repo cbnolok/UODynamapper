@@ -215,8 +215,8 @@ fn texture_compression(
     }
 }
 
-fn bc7_rdo_lambda(settings: &AppSettings) -> f32 {
-    if settings.bc7_rdo_enabled {
+fn bc7_rdo_lambda(settings: &AppSettings, optimization: TextureOptimization) -> f32 {
+    if settings.bc7_rdo_enabled && matches!(optimization, TextureOptimization::Bc7Zstd) {
         settings.bc7_rdo_lambda
     } else {
         0.0
@@ -382,7 +382,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_cc),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
@@ -430,7 +430,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_cc),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                 },
                 &classic_patch_options(&settings),
@@ -474,7 +474,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_art_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
@@ -526,7 +526,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_land_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     transcode_kdl_path: None,
                 },
@@ -609,7 +609,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_cc),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
                 },
@@ -658,7 +658,7 @@ impl UddConvApp {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
                     },
-                    bc7_rdo_lambda: bc7_rdo_lambda(&settings),
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
                     metadata_path: None,
@@ -876,5 +876,29 @@ impl UddConvApp {
         self.spawn_task("Diff Packages".to_string(), move || {
             diff_paths_report(&left, &right, DiffKind::Auto)
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_bc7_does_not_apply_rdo() {
+        let mut settings = AppSettings::default();
+        settings.bc7_rdo_enabled = true;
+        settings.bc7_rdo_lambda = 0.6;
+
+        assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7), 0.0);
+        assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7Zstd), 0.6);
+    }
+
+    #[test]
+    fn disabled_bc7_rdo_overrides_supercompressed_bc7() {
+        let mut settings = AppSettings::default();
+        settings.bc7_rdo_enabled = false;
+        settings.bc7_rdo_lambda = 0.6;
+
+        assert_eq!(bc7_rdo_lambda(&settings, TextureOptimization::Bc7Zstd), 0.0);
     }
 }
