@@ -19,9 +19,6 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     }
 
     app.selected_mobile_anim_index = app.selected_mobile_anim_index.min(animations.len() - 1);
-    let selected_animation = animations[app.selected_mobile_anim_index];
-    let frames = package.animation_frames(&selected_animation);
-    clamp_selected_frame(app, frames.len());
 
     egui::SidePanel::left("mobile_anim_cc_list")
         .resizable(true)
@@ -54,10 +51,15 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                     {
                         app.selected_mobile_anim_index = index;
                         app.selected_mobile_anim_frame_index = 0;
+                        app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
                     }
                 }
             });
         });
+
+    let selected_animation = animations[app.selected_mobile_anim_index];
+    let frames = package.animation_frames(&selected_animation);
+    clamp_selected_frame(app, frames.len());
 
     ui.heading("mobile_anim_cc.uddp");
     ui.horizontal_wrapped(|ui| {
@@ -104,7 +106,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         });
 
     ui.separator();
-    show_frame_selector(ui, app, frames.len());
+    show_playback_controls(ctx, ui, app, frames.len());
     if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
         show_cc_frame(ui, ctx, app, &package, frame);
     }
@@ -125,9 +127,6 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     }
 
     app.selected_mobile_anim_index = app.selected_mobile_anim_index.min(animations.len() - 1);
-    let selected_animation = animations[app.selected_mobile_anim_index];
-    let frames = package.animation_frames(&selected_animation);
-    clamp_selected_frame(app, frames.len());
 
     egui::SidePanel::left("mobile_anim_ec_list")
         .resizable(true)
@@ -158,10 +157,15 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                     {
                         app.selected_mobile_anim_index = index;
                         app.selected_mobile_anim_frame_index = 0;
+                        app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
                     }
                 }
             });
         });
+
+    let selected_animation = animations[app.selected_mobile_anim_index];
+    let frames = package.animation_frames(&selected_animation);
+    clamp_selected_frame(app, frames.len());
 
     ui.heading("mobile_anim_ec.uddp");
     ui.horizontal_wrapped(|ui| {
@@ -202,7 +206,7 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         });
 
     ui.separator();
-    show_frame_selector(ui, app, frames.len());
+    show_playback_controls(ctx, ui, app, frames.len());
     if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
         show_ec_frame(ui, ctx, app, &package, frame);
     }
@@ -217,26 +221,96 @@ fn clamp_selected_frame(app: &mut InspectorApp, frame_count: usize) {
     }
 }
 
-fn show_frame_selector(ui: &mut egui::Ui, app: &mut InspectorApp, frame_count: usize) {
+fn show_playback_controls(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    app: &mut InspectorApp,
+    frame_count: usize,
+) {
     if frame_count == 0 {
         ui.label("Animation has no frame records.");
         return;
     }
 
+    if app.mobile_anim_is_playing {
+        let time = ctx.input(|input| input.time);
+        let frame_delay = 0.1 / app.mobile_anim_playback_speed.max(0.1) as f64;
+        if time - app.mobile_anim_last_frame_time >= frame_delay {
+            advance_frame(app, frame_count);
+            app.mobile_anim_last_frame_time = time;
+        }
+        ctx.request_repaint();
+    }
+
+    app.selected_mobile_anim_frame_index =
+        app.selected_mobile_anim_frame_index.min(frame_count - 1);
+
     ui.horizontal_wrapped(|ui| {
-        ui.label("Frame:");
+        if ui
+            .button(if app.mobile_anim_is_playing { "Stop" } else { "Play" })
+            .clicked()
+        {
+            app.mobile_anim_is_playing = !app.mobile_anim_is_playing;
+            app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+        }
+        if ui.button("First").clicked() {
+            app.selected_mobile_anim_frame_index = 0;
+            app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+        }
+        if ui.button("Prev").clicked() {
+            app.selected_mobile_anim_frame_index =
+                app.selected_mobile_anim_frame_index.saturating_sub(1);
+            app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+        }
+        if ui.button("Next").clicked() {
+            advance_frame(app, frame_count);
+            app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+        }
+        ui.checkbox(&mut app.mobile_anim_loop, "Loop");
+        ui.label(format!(
+            "Frame {} / {}",
+            app.selected_mobile_anim_frame_index + 1,
+            frame_count
+        ));
+    });
+
+    let mut frame_index = app.selected_mobile_anim_frame_index;
+    if ui
+        .add(egui::Slider::new(&mut frame_index, 0..=frame_count - 1).text("Frame"))
+        .changed()
+    {
+        app.selected_mobile_anim_frame_index = frame_index;
+        app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
+    }
+    ui.add(egui::Slider::new(&mut app.mobile_anim_playback_speed, 0.1..=5.0).text("Speed"));
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Quick frames:");
         for index in 0..frame_count.min(32) {
             if ui
                 .selectable_label(app.selected_mobile_anim_frame_index == index, index.to_string())
                 .clicked()
             {
                 app.selected_mobile_anim_frame_index = index;
+                app.mobile_anim_last_frame_time = ctx.input(|input| input.time);
             }
         }
         if frame_count > 32 {
             ui.label(format!("... {} total", frame_count));
         }
     });
+}
+
+fn advance_frame(app: &mut InspectorApp, frame_count: usize) {
+    app.selected_mobile_anim_frame_index += 1;
+    if app.selected_mobile_anim_frame_index >= frame_count {
+        if app.mobile_anim_loop {
+            app.selected_mobile_anim_frame_index = 0;
+        } else {
+            app.selected_mobile_anim_frame_index = frame_count - 1;
+            app.mobile_anim_is_playing = false;
+        }
+    }
 }
 
 fn show_cc_frame(
@@ -270,9 +344,20 @@ fn show_cc_frame(
         .find(|page| page.page_index == frame.page_index)
         .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
     show_page_size_metadata(ui, page_size);
-    show_frame_image(ui, ctx, app, "mobile_anim_cc", page_width, frame.page_index, frame.x, frame.y, frame.width, frame.height, || {
-        package.read_page_rgba(frame.page_index).ok()
-    });
+    show_frame_image(
+        ui,
+        ctx,
+        app,
+        "mobile_anim_cc",
+        page_size,
+        page_width,
+        frame.page_index,
+        frame.x,
+        frame.y,
+        frame.width,
+        frame.height,
+        || package.read_page_rgba(frame.page_index).ok(),
+    );
 }
 
 fn show_ec_frame(
@@ -306,9 +391,20 @@ fn show_ec_frame(
         .find(|page| page.page_index == frame.page_index)
         .map(|page| (page.atlas_width, page.atlas_height, page.used_width, page.used_height));
     show_page_size_metadata(ui, page_size);
-    show_frame_image(ui, ctx, app, "mobile_anim_ec", page_width, frame.page_index, frame.x, frame.y, frame.width, frame.height, || {
-        package.read_page_rgba(frame.page_index).ok()
-    });
+    show_frame_image(
+        ui,
+        ctx,
+        app,
+        "mobile_anim_ec",
+        page_size,
+        page_width,
+        frame.page_index,
+        frame.x,
+        frame.y,
+        frame.width,
+        frame.height,
+        || package.read_page_rgba(frame.page_index).ok(),
+    );
 }
 
 fn page_bucket_summary(pages: impl Iterator<Item = (u32, u32, u32)>) -> String {
@@ -386,13 +482,14 @@ fn show_frame_image(
     ctx: &egui::Context,
     app: &mut InspectorApp,
     texture_prefix: &str,
+    page_size: Option<(u32, u32, u32, u32)>,
     page_width: Option<u32>,
     page_index: u32,
     x: u16,
     y: u16,
     width: u16,
     height: u16,
-    read_page_rgba: impl FnOnce() -> Option<Vec<u8>>,
+    read_page_rgba: impl Fn() -> Option<Vec<u8>>,
 ) {
     if width == 0 || height == 0 {
         ui.label("(Empty frame)");
@@ -431,13 +528,39 @@ fn show_frame_image(
         );
     }
 
-    if let Some((texture, size, _)) = app.active_preview_image() {
+    if let Some((texture, size, _)) = app.preview_texture
+        .as_ref()
+        .zip(app.preview_texture_size)
+        .map(|(texture, size)| {
+            (
+                texture,
+                size,
+                app.preview_text.as_deref().unwrap_or("Image Preview"),
+            )
+        })
+    {
         let texture = texture.clone();
         let size = size;
-        if ui.button("Open Image Window").clicked() {
-            app.image_window_mode = crate::models::PreviewModeKind::Entry;
-            app.image_window_open = true;
-        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Open Frame Window").clicked() {
+                app.image_window_mode = crate::models::PreviewModeKind::Entry;
+                app.image_window_open = true;
+            }
+            if ui.button("Open Atlas Window").clicked() {
+                if let Some(page_rgba) = read_page_rgba() {
+                    set_mobile_anim_atlas_image(
+                        ctx,
+                        app,
+                        texture_prefix,
+                        page_index,
+                        page_size,
+                        &page_rgba,
+                    );
+                    app.image_window_mode = crate::models::PreviewModeKind::Atlas;
+                    app.image_window_open = true;
+                }
+            }
+        });
         let max = ui.available_size();
         let scale = (max.x / size[0] as f32)
             .min((max.y.max(1.0)) / size[1] as f32)
@@ -451,6 +574,60 @@ fn show_frame_image(
             );
         });
     }
+}
+
+fn set_mobile_anim_atlas_image(
+    ctx: &egui::Context,
+    app: &mut InspectorApp,
+    texture_prefix: &str,
+    page_index: u32,
+    page_size: Option<(u32, u32, u32, u32)>,
+    page_rgba: &[u8],
+) {
+    let Some(size) = decoded_page_size(page_rgba, page_size) else {
+        return;
+    };
+    let label = page_size
+        .map(|(atlas_width, atlas_height, used_width, used_height)| {
+            format!(
+                "{texture_prefix} page {page_index} atlas {atlas_width}x{atlas_height}, used {used_width}x{used_height}"
+            )
+        })
+        .unwrap_or_else(|| format!("{texture_prefix} page {page_index} atlas"));
+
+    if app.atlas_texture_size == Some(size) && app.atlas_text.as_deref() == Some(label.as_str()) {
+        return;
+    }
+
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, page_rgba);
+    app.atlas_texture = Some(ctx.load_texture(
+        format!("{texture_prefix}_atlas_page{page_index}"),
+        color_image,
+        Default::default(),
+    ));
+    app.atlas_texture_size = Some(size);
+    app.atlas_text = Some(label);
+}
+
+fn decoded_page_size(
+    page_rgba: &[u8],
+    page_size: Option<(u32, u32, u32, u32)>,
+) -> Option<[usize; 2]> {
+    if page_rgba.len() % 4 != 0 {
+        return None;
+    }
+    let pixels = page_rgba.len() / 4;
+    if let Some((atlas_width, atlas_height, used_width, used_height)) = page_size {
+        let used_pixels = used_width as usize * used_height as usize;
+        if pixels == used_pixels {
+            return Some([used_width as usize, used_height as usize]);
+        }
+        let atlas_pixels = atlas_width as usize * atlas_height as usize;
+        if pixels == atlas_pixels {
+            return Some([atlas_width as usize, atlas_height as usize]);
+        }
+    }
+    page_width_from_rgba_len(page_rgba).map(|side| [side as usize, side as usize])
 }
 
 fn page_width_from_rgba_len(page_rgba: &[u8]) -> Option<u32> {
@@ -521,6 +698,21 @@ mod tests {
         assert_eq!(
             summary,
             "512x512: 2 pages / 13 frames; 2048x1024: 1 pages / 5 frames"
+        );
+    }
+
+    #[test]
+    fn decoded_page_size_prefers_manifest_used_or_atlas_size() {
+        let used = vec![0u8; 8 * 4 * 4];
+        let atlas = vec![0u8; 16 * 16 * 4];
+
+        assert_eq!(
+            decoded_page_size(&used, Some((16, 16, 8, 4))),
+            Some([8, 4])
+        );
+        assert_eq!(
+            decoded_page_size(&atlas, Some((16, 16, 8, 4))),
+            Some([16, 16])
         );
     }
 }

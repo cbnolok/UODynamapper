@@ -44,6 +44,10 @@ pub struct InspectorApp {
     pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
+    pub mobile_anim_is_playing: bool,
+    pub mobile_anim_last_frame_time: f64,
+    pub mobile_anim_playback_speed: f32,
+    pub mobile_anim_loop: bool,
 
     // Virtual View state
     pub view_mode: ViewMode,
@@ -82,6 +86,10 @@ impl InspectorApp {
             mobile_anim_ec_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -411,6 +419,8 @@ impl InspectorApp {
                 .map(Arc::new);
                 self.selected_mobile_anim_index = 0;
                 self.selected_mobile_anim_frame_index = 0;
+                self.mobile_anim_is_playing = false;
+                self.mobile_anim_last_frame_time = 0.0;
                 self.detect_virtual_entries(&reader);
 
                 self.package = Some(reader);
@@ -699,13 +709,13 @@ impl InspectorApp {
                             ec_texture_id: tile.ec_texture_id,
                             ec_start_x: tile.ec_start_x,
                             ec_start_y: tile.ec_start_y,
-                            ec_offset_x: tile.ec_offset_x,
-                            ec_offset_y: tile.ec_offset_y,
+                            ec_offset_x: 0,
+                            ec_offset_y: 0,
                             cc_texture_id: tile.cc_texture_id,
                             cc_start_x: tile.cc_start_x,
                             cc_start_y: tile.cc_start_y,
-                            cc_offset_x: tile.cc_offset_x,
-                            cc_offset_y: tile.cc_offset_y,
+                            cc_offset_x: 0,
+                            cc_offset_y: 0,
                         }),
                     }
                 }));
@@ -1219,6 +1229,10 @@ mod tests {
             mobile_anim_ec_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1295,6 +1309,10 @@ mod tests {
             mobile_anim_ec_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1352,6 +1370,10 @@ mod tests {
             mobile_anim_ec_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
             view_mode: ViewMode::Virtual,
             virtual_entries: vec![
                 VirtualEntry {
@@ -1470,6 +1492,10 @@ mod tests {
             mobile_anim_ec_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
