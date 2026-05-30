@@ -9,7 +9,17 @@ use udd_container::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AssetPayloadProgress {
+pub enum AssetTaskProgressStage {
+    Extracting,
+    PackingAtlas,
+    EncodingBc7,
+    ApplyingRdo,
+    RegisteringPages,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssetTaskProgress {
+    pub stage: AssetTaskProgressStage,
     pub completed: u64,
     pub total: u64,
 }

@@ -18,8 +18,8 @@ use zstd::bulk::{Compressor, Decompressor};
 
 use super::*;
 
-const ZSTD_LEVEL: i32 = 9;
-const JXL_LEVEL: jpegxl_rs::encode::EncoderSpeed = jpegxl_rs::encode::EncoderSpeed::Kitten;
+const ZSTD_LEVEL: i32 = 7;
+const JXL_LEVEL: jpegxl_rs::encode::EncoderSpeed = jpegxl_rs::encode::EncoderSpeed::Wombat;
 const JXL_ZSTD_PREFIX: &[u8; 4] = b"JXZ1";
 
 

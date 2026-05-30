@@ -107,11 +107,11 @@ fn default_bc7_rdo_lambda() -> f32 {
 }
 
 fn default_zstd_level() -> i32 {
-    9
+    7
 }
 
 fn default_jxl_level() -> u8 {
-    3
+    6
 }
 
 pub struct LogMessage {

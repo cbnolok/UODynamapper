@@ -22,7 +22,7 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
 use crate::bc7::{
-    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
+    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
@@ -31,7 +31,8 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, AssetPayloadProgress,
+    atlas_payload_finish_message, atlas_payload_progress_message, AssetTaskProgress,
+    AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
@@ -165,7 +166,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
     out_file: &Path,
     options: &TexLandCcAtlasOptions,
     patch_options: &ClassicPatchOptions,
-    payload_progress: impl Fn(AssetPayloadProgress) + Sync,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandCcBuildSummary> {
     let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
@@ -185,10 +186,11 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
         .wrap_err_with(|| format!("load texmaps from {}", client_dir.display()))?;
 
     let slot_count = texmap_source.len() as u32;
-    let decoded_tiles = decode_present_tiles(&texmap_source, options)?;
+    let decoded_tiles = decode_present_tiles(&texmap_source, options, &payload_progress)?;
     let populated_slot_count = decoded_tiles.len() as u32;
 
-    let (pages, slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    let (pages, slot_records) =
+        pack_tiles_into_pages(decoded_tiles, slot_count, options, &payload_progress)?;
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
 
@@ -233,11 +235,6 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
     } else {
         None
     };
-    let progress_len = if let Some(extent) = bc7_extent {
-        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
-    } else {
-        pages.len() as u64
-    };
     let progress_message = atlas_payload_progress_message(
         "CC texmap atlas pages",
         use_bc7,
@@ -245,22 +242,11 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
         options.bc7_rdo_lambda,
     );
 
-    payload_progress(AssetPayloadProgress {
-        completed: 0,
-        total: progress_len,
-    });
-    let payload_completed = AtomicU64::new(0);
-    let add_payload_progress = |units: u64| {
-        let completed = payload_completed
-            .fetch_add(units, Ordering::Relaxed)
-            .saturating_add(units)
-            .min(progress_len);
-        payload_progress(AssetPayloadProgress {
-            completed,
-            total: progress_len,
-        });
+    let progress_len = if let Some(extent) = bc7_extent {
+        pages.len() as u64 * extent.blocks_wide() as u64 * extent.blocks_high() as u64
+    } else {
+        pages.len() as u64
     };
-
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -270,22 +256,73 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
 
     let encoded_pages = if use_bc7 {
         let extent = bc7_extent.expect("BC7 extent is initialized when BC7 output is selected");
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::EncodingBc7,
+            completed: 0,
+            total: progress_len,
+        });
+        let encode_completed = AtomicU64::new(0);
+        let rdo_enabled =
+            options.bc7_rdo_lambda.is_finite() && options.bc7_rdo_lambda > f32::EPSILON;
+        let rdo_completed = AtomicU64::new(0);
+        let rdo_pb = if rdo_enabled {
+            payload_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::ApplyingRdo,
+                completed: 0,
+                total: progress_len,
+            });
+            let rdo_pb = ProgressBar::new(progress_len);
+            rdo_pb.set_style(ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} applying BC7 RDO to CC texmap atlas pages ({eta})")
+                .unwrap()
+                .progress_chars("#>-"));
+            Some(rdo_pb)
+        } else {
+            None
+        };
+        let report_bc7_progress = |stage: Bc7ProgressStage, units: usize| {
+            let units = units as u64;
+            match stage {
+                Bc7ProgressStage::Encode => {
+                    pb.inc(units);
+                    let completed = encode_completed
+                        .fetch_add(units, Ordering::Relaxed)
+                        .saturating_add(units)
+                        .min(progress_len);
+                    payload_progress(AssetTaskProgress {
+                        stage: AssetTaskProgressStage::EncodingBc7,
+                        completed,
+                        total: progress_len,
+                    });
+                }
+                Bc7ProgressStage::Rdo => {
+                    if let Some(rdo_pb) = &rdo_pb {
+                        rdo_pb.inc(units);
+                    }
+                    let completed = rdo_completed
+                        .fetch_add(units, Ordering::Relaxed)
+                        .saturating_add(units)
+                        .min(progress_len);
+                    payload_progress(AssetTaskProgress {
+                        stage: AssetTaskProgressStage::ApplyingRdo,
+                        completed,
+                        total: progress_len,
+                    });
+                }
+            }
+        };
         pages
             .par_iter()
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
                         &page.pixels,
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
                         options.bc7_rdo_lambda,
-                        |units| {
-                            let units = units as u64;
-                            pb.inc(units);
-                            add_payload_progress(units);
-                        },
+                        &report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
@@ -301,13 +338,33 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
             })
             .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>()
             .into_iter()
-            .collect::<eyre::Result<Vec<_>>>()?
+            .collect::<eyre::Result<Vec<_>>>()
+            .map(|encoded_pages| {
+                if let Some(rdo_pb) = rdo_pb {
+                    rdo_pb.finish_with_message("BC7 RDO applied to CC texmap atlas pages");
+                }
+                encoded_pages
+            })?
     } else {
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::RegisteringPages,
+            completed: 0,
+            total: progress_len,
+        });
+        let payload_completed = AtomicU64::new(0);
         pages
             .iter()
             .map(|page| {
                 pb.inc(1);
-                add_payload_progress(1);
+                let completed = payload_completed
+                    .fetch_add(1, Ordering::Relaxed)
+                    .saturating_add(1)
+                    .min(progress_len);
+                payload_progress(AssetTaskProgress {
+                    stage: AssetTaskProgressStage::RegisteringPages,
+                    completed,
+                    total: progress_len,
+                });
                 (
                     page_entry_path(page.record.page_index, pixel_format),
                     crop_rgba_page(
@@ -341,7 +398,14 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
         options.compression,
         options.bc7_rdo_lambda,
     ));
-    payload_progress(AssetPayloadProgress {
+    payload_progress(AssetTaskProgress {
+        stage: if use_bc7 && options.bc7_rdo_lambda.is_finite() && options.bc7_rdo_lambda > f32::EPSILON {
+            AssetTaskProgressStage::ApplyingRdo
+        } else if use_bc7 {
+            AssetTaskProgressStage::EncodingBc7
+        } else {
+            AssetTaskProgressStage::RegisteringPages
+        },
         completed: progress_len,
         total: progress_len,
     });
@@ -360,6 +424,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
 fn decode_present_tiles(
     texmap_source: &TexMap,
     options: &TexLandCcAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<Vec<DecodedTexmapTile>> {
     let mut decoded_tiles = Vec::new();
     let max_id = texmap_source.len();
@@ -370,6 +435,11 @@ fn decode_present_tiles(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting CC texmaps ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: max_id as u64,
+    });
 
     for id in 0..max_id {
         if let Some(rgba_arc) = texmap_source.get_pixel_data(id, now) {
@@ -403,6 +473,11 @@ fn decode_present_tiles(
             });
         }
         pb.inc(1);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::Extracting,
+            completed: id.saturating_add(1) as u64,
+            total: max_id as u64,
+        });
     }
     pb.finish_with_message("CC texmaps extracted");
 
@@ -450,6 +525,7 @@ fn pack_tiles_into_pages(
     tiles: Vec<DecodedTexmapTile>,
     slot_count: u32,
     options: &TexLandCcAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(Vec<BuiltPage>, Vec<TexLandCcSlotRecord>)> {
     let mut pages = Vec::new();
     let mut slot_records = (0..slot_count)
@@ -464,6 +540,12 @@ fn pack_tiles_into_pages(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating CC texmap atlas pages");
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::PackingAtlas,
+        completed: 0,
+        total: total_tiles,
+    });
+    let mut packed_tiles = 0u64;
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating CC texmap atlas page {page_index}"));
@@ -489,6 +571,14 @@ fn pack_tiles_into_pages(
         }
 
         pb.inc(page.placed_tiles.len() as u64);
+        packed_tiles = packed_tiles
+            .saturating_add(page.placed_tiles.len() as u64)
+            .min(total_tiles);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::PackingAtlas,
+            completed: packed_tiles,
+            total: total_tiles,
+        });
         pages.push(page);
         remaining = merge_unplaced_tiles(remaining, unplaced, |tile| tile.id);
         page_index += 1;

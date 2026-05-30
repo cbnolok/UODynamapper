@@ -18,7 +18,7 @@ use udd_conv::{
     BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
-use udd_conv::package_progress::AssetPayloadProgress;
+use udd_conv::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use udd_conv_cli::{
     package_info::get_package_info_string,
     extract::extract_package,
@@ -47,9 +47,19 @@ struct AssetProgressReporter {
 impl AssetProgressReporter {
     fn set(&self, state: AssetPackProgressState, fraction: f32, text: impl Into<String>) {
         if let Ok(mut progress) = self.progress.lock() {
+            let fraction = fraction.clamp(0.0, 1.0);
+            if state == AssetPackProgressState::Running {
+                if let Some(current) = progress.get(&self.task) {
+                    if current.state == AssetPackProgressState::Running
+                        && fraction < current.fraction
+                    {
+                        return;
+                    }
+                }
+            }
             progress.insert(self.task, AssetPackProgress {
                 state,
-                fraction: fraction.clamp(0.0, 1.0),
+                fraction,
                 text: text.into(),
             });
         }
@@ -81,17 +91,24 @@ impl AssetProgressReporter {
         }
     }
 
-    fn payload_progress(&self, progress: AssetPayloadProgress) {
+    fn task_progress(&self, progress: AssetTaskProgress) {
         self.panic_if_cancelled();
         let fraction = if progress.total == 0 {
             0.0
         } else {
             progress.completed.min(progress.total) as f32 / progress.total as f32
         };
+        let (base, span, label) = match progress.stage {
+            AssetTaskProgressStage::Extracting => (0.0, 0.20, "Extracting"),
+            AssetTaskProgressStage::PackingAtlas => (0.20, 0.20, "Building atlas"),
+            AssetTaskProgressStage::EncodingBc7 => (0.40, 0.15, "BC7 encoding"),
+            AssetTaskProgressStage::ApplyingRdo => (0.55, 0.15, "Applying RDO"),
+            AssetTaskProgressStage::RegisteringPages => (0.40, 0.30, "Registering pages"),
+        };
         self.set(
             AssetPackProgressState::Running,
-            fraction * 0.55,
-            format!("Encoding atlas pages {}/{}", progress.completed, progress.total),
+            base + fraction * span,
+            format!("{label} {}/{}", progress.completed, progress.total),
         );
     }
 
@@ -103,9 +120,9 @@ impl AssetProgressReporter {
             progress.completed.min(progress.total) as f32 / progress.total as f32
         };
         let (base, span, phase_label) = match progress.phase {
-            BuildProgressPhase::TrainingDictionaries => (0.55, 0.05, "Training dictionaries"),
-            BuildProgressPhase::CompressingFiles => (0.60, 0.30, "Compressing package"),
-            BuildProgressPhase::Assembling => (0.90, 0.08, "Assembling package"),
+            BuildProgressPhase::TrainingDictionaries => (0.70, 0.05, "Training dictionaries"),
+            BuildProgressPhase::CompressingFiles => (0.75, 0.18, "Compressing package"),
+            BuildProgressPhase::Assembling => (0.93, 0.05, "Assembling package"),
         };
         let text = if progress.phase == BuildProgressPhase::CompressingFiles {
             if let Some(file) = progress.active_file {
@@ -317,7 +334,7 @@ impl UddConvApp {
                     source_preference: udd_conv::classic_sources::SourceFormatPreference::Uop,
                 },
                 &classic_patch_options(&settings),
-                |payload_progress| progress.payload_progress(payload_progress),
+                |task_progress| progress.task_progress(task_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -356,7 +373,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
                 &classic_patch_options(&settings),
-                |payload_progress| progress.payload_progress(payload_progress),
+                |task_progress| progress.task_progress(task_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -393,7 +410,7 @@ impl UddConvApp {
                     },
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                 },
-                |payload_progress| progress.payload_progress(payload_progress),
+                |task_progress| progress.task_progress(task_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))
@@ -436,7 +453,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: settings.bc7_rdo_lambda,
                     transcode_kdl_path: None,
                 },
-                |payload_progress| progress.payload_progress(payload_progress),
+                |task_progress| progress.task_progress(task_progress),
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!("Wrote {} pages to {}", summary.page_count, output.display()))

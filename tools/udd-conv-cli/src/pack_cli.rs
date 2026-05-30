@@ -75,8 +75,9 @@ use udd_conv::{
 };
 
 #[cfg(test)]
-const DEFAULT_ZSTD_LEVEL: i32 = 9;
-const DEFAULT_ZSTD_LEVEL_VALUE: &str = "9";
+const DEFAULT_ZSTD_LEVEL: i32 = 7;
+const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
+const DEFAULT_JXL_LEVEL: u8 = 6;
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
 #[derive(Parser)]
@@ -136,23 +137,15 @@ fn zstd_compression(level: i32) -> CompressionFlag {
     CompressionFlag::ZstdNoDictLevel(level)
 }
 
-fn jxl_zstd_compression(level: i32) -> CompressionFlag {
-    CompressionFlag::JpegXlZstdLevel(level)
-}
-
 fn jxl_compression_level(level: Option<u8>) -> CompressionFlag {
-    level
-        .map(CompressionFlag::JpegXlLevel)
-        .unwrap_or(CompressionFlag::JpegXl)
+    CompressionFlag::JpegXlLevel(level.unwrap_or(DEFAULT_JXL_LEVEL))
 }
 
 fn jxl_zstd_compression_levels(jxl_level: Option<u8>, zstd_level: i32) -> CompressionFlag {
-    jxl_level
-        .map(|jxl_level| CompressionFlag::JpegXlZstdLevels {
-            jxl_level,
-            zstd_level,
-        })
-        .unwrap_or_else(|| jxl_zstd_compression(zstd_level))
+    CompressionFlag::JpegXlZstdLevels {
+        jxl_level: jxl_level.unwrap_or(DEFAULT_JXL_LEVEL),
+        zstd_level,
+    }
 }
 
 fn resolve_texture_output_format(
@@ -575,7 +568,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Applies only with --jxl or default JXL output.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl or default JXL output.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -623,7 +616,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Applies only with --jxl or default JXL output.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl or default JXL output.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -659,7 +652,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Applies only with --jxl.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -691,7 +684,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Applies only with --jxl.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level, 1 fastest through 10 strongest. Default 6. Applies only with --jxl.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass after the selected output encoding. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -747,7 +740,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write EC RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for shared EC output, 1 fastest through 10 strongest.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for shared EC output, 1 fastest through 10 strongest. Default 6.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC art and land after the selected output encoding. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -759,7 +752,7 @@ enum Commands {
         art_raw: bool,
         #[arg(long, help = "Write EC art atlas pages as RGBA8888 with lossless JPEG XL payload compression, overriding the shared format flags.")]
         art_jxl: bool,
-        #[arg(long = "art-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC art output.")]
+        #[arg(long = "art-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC art output. Default 6.")]
         art_jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC art after the selected art output encoding. Optionally pass --art-zstd=LEVEL.")]
         art_zstd: Option<i32>,
@@ -771,7 +764,7 @@ enum Commands {
         land_raw: bool,
         #[arg(long, help = "Write EC land atlas pages as RGBA8888 with lossless JPEG XL payload compression, overriding the shared format flags.")]
         land_jxl: bool,
-        #[arg(long = "land-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC land output.")]
+        #[arg(long = "land-jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for EC land output. Default 6.")]
         land_jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Apply a file-level Zstd compression pass to EC land after the selected land output encoding. Optionally pass --land-zstd=LEVEL.")]
         land_zstd: Option<i32>,
@@ -1049,7 +1042,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write paperdoll equipment gump atlas pages with lossless JPEG XL payload compression. Single gump payloads remain raw RGBA8888.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages. Default 6.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -1072,7 +1065,7 @@ enum Commands {
         raw: bool,
         #[arg(long, help = "Write paperdoll equipment gump atlas pages with lossless JPEG XL payload compression. Single gump payloads remain raw RGBA8888.")]
         jxl: bool,
-        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages.")]
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10), help = "JPEG XL encoder level for gump atlas pages. Default 6.")]
         jxl_level: Option<u8>,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
@@ -2307,7 +2300,10 @@ mod tests {
                 let output_format =
                     resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
-                assert_eq!(output_format.compression, CompressionFlag::JpegXl);
+                assert_eq!(
+                    output_format.compression,
+                    CompressionFlag::JpegXlLevel(DEFAULT_JXL_LEVEL)
+                );
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -2472,7 +2468,10 @@ mod tests {
                 let output_format =
                     resolve_texture_output_format(raw, jxl, None, zstd, bc7, bc7_rdo, 1.0).unwrap();
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
-                assert_eq!(output_format.compression, CompressionFlag::JpegXl);
+                assert_eq!(
+                    output_format.compression,
+                    CompressionFlag::JpegXlLevel(DEFAULT_JXL_LEVEL)
+                );
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -2592,7 +2591,10 @@ mod tests {
                 assert_eq!(output_format.pixel_format, PagePixelFormat::Rgba8888);
                 assert_eq!(
                     output_format.compression,
-                    CompressionFlag::JpegXlZstdLevel(DEFAULT_ZSTD_LEVEL)
+                    CompressionFlag::JpegXlZstdLevels {
+                        jxl_level: DEFAULT_JXL_LEVEL,
+                        zstd_level: DEFAULT_ZSTD_LEVEL,
+                    }
                 );
             }
             _ => panic!("unexpected command parsed"),

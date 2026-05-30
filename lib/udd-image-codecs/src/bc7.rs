@@ -574,7 +574,11 @@ pub fn encode_to_bc7_with_rdo_lambda(
 }
 
 #[cfg(feature = "bc7-encode")]
-const BC7_RDO_PROGRESS_WEIGHT: usize = 4;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bc7ProgressStage {
+    Encode,
+    Rdo,
+}
 
 #[cfg(feature = "bc7-encode")]
 pub fn encode_to_bc7_with_rdo_lambda_and_progress<F>(
@@ -588,27 +592,48 @@ pub fn encode_to_bc7_with_rdo_lambda_and_progress<F>(
 where
     F: Fn(usize) + Sync,
 {
+    encode_to_bc7_with_rdo_lambda_and_stage_progress(
+        pixels,
+        extent,
+        input_format,
+        backend,
+        rdo_lambda,
+        |_, units| progress(units),
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_to_bc7_with_rdo_lambda_and_stage_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_lambda: f32,
+    progress: F,
+) -> Result<Bc7TextureData, TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
     validate_input_len(pixels, extent, input_format)?;
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
     let backend = resolve_bc7_encoder_backend(backend);
+    let encode_progress = |units| progress(Bc7ProgressStage::Encode, units);
 
     let mut encoded = match backend {
         Bc7EncoderBackend::Analytical => {
-            encode_with_analytical_and_progress(rgba_pixels.as_ref(), extent, &progress)
+            encode_with_analytical_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
         }
         Bc7EncoderBackend::AnalyticalWide => {
-            encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &progress)
+            encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
         }
     };
-    let weighted_rdo_progress = |units: usize| {
-        progress(units.saturating_mul(BC7_RDO_PROGRESS_WEIGHT));
-    };
+    let rdo_progress = |units| progress(Bc7ProgressStage::Rdo, units);
     apply_bc7_rdo_with_progress(
         &mut encoded,
         rgba_pixels.as_ref(),
         extent,
         rdo_lambda,
-        &weighted_rdo_progress,
+        &rdo_progress,
     );
 
     Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))
@@ -618,7 +643,7 @@ where
 pub fn bc7_encode_progress_units(extent: ImageExtent, rdo_lambda: f32) -> usize {
     let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
     if rdo_lambda > 0.0 && rdo_lambda.is_finite() {
-        blocks.saturating_mul(1 + BC7_RDO_PROGRESS_WEIGHT)
+        blocks * 2
     } else {
         blocks
     }
@@ -676,6 +701,28 @@ pub fn encode_for_vram_with_bc7_rdo_lambda_and_progress<F>(
 where
     F: Fn(usize) + Sync,
 {
+    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
+        pixels,
+        extent,
+        input_format,
+        encoding,
+        bc7_rdo_lambda,
+        |_, units| progress(units),
+    )
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_for_vram_with_bc7_rdo_lambda_and_stage_progress<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_lambda: f32,
+    progress: F,
+) -> Result<VramTextureData, TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
     match encoding {
         VramTextureEncoding::Rgba8UnormSrgb => {
             validate_input_len(pixels, extent, input_format)?;
@@ -687,7 +734,7 @@ where
             )
         }
         VramTextureEncoding::Bc7(backend) => {
-            Ok(encode_to_bc7_with_rdo_lambda_and_progress(
+            Ok(encode_to_bc7_with_rdo_lambda_and_stage_progress(
                 pixels,
                 extent,
                 input_format,
@@ -994,14 +1041,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bc7_progress_weights_rdo_pass_more_heavily() {
+    fn bc7_progress_counts_encode_and_rdo_passes_separately() {
         let extent = ImageExtent::new(8, 8).expect("extent");
         let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
 
         assert_eq!(bc7_encode_progress_units(extent, 0.0), blocks);
-        assert_eq!(
-            bc7_encode_progress_units(extent, 1.0),
-            blocks * (1 + BC7_RDO_PROGRESS_WEIGHT),
-        );
+        assert_eq!(bc7_encode_progress_units(extent, 1.0), blocks * 2);
     }
 }

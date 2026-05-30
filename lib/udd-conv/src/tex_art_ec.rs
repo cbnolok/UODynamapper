@@ -30,7 +30,7 @@ use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 
 use crate::bc7::{
-    bc7_encode_progress_units, encode_for_vram_with_bc7_rdo_lambda_and_progress,
+    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress, Bc7ProgressStage,
     preferred_bc7_encoder_backend, ImageExtent, RawImageFormat, VramTextureEncoding,
 };
 use crate::{
@@ -38,7 +38,8 @@ use crate::{
     resolve_packing_axis,
 };
 use crate::package_progress::{
-    atlas_payload_finish_message, atlas_payload_progress_message, AssetPayloadProgress,
+    atlas_payload_finish_message, atlas_payload_progress_message, AssetTaskProgress,
+    AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
@@ -305,7 +306,7 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_sources_with_progress(
     source_dirs: &[PathBuf],
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
-    payload_progress: impl Fn(AssetPayloadProgress) + Sync,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
     package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtEcBuildSummary> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
@@ -337,7 +338,7 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
     sources: &TexArtEcLoadedSources,
     out_file: &Path,
     options: &TexArtEcAtlasOptions,
-    payload_progress: impl Fn(AssetPayloadProgress) + Sync,
+    payload_progress: impl Fn(AssetTaskProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtEcBuildSummary> {
     validate_options(options)?;
@@ -369,9 +370,11 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
         options,
+        &payload_progress,
     )?;
 
-    let (pages, mut slot_records) = pack_tiles_into_pages(decoded_tiles, slot_count, options)?;
+    let (pages, mut slot_records) =
+        pack_tiles_into_pages(decoded_tiles, slot_count, options, &payload_progress)?;
     apply_slot_aliases(&mut slot_records, &aliases)?;
     let populated_slot_count = slot_records.iter().filter(|slot| slot.is_present()).count() as u32;
     let page_manifest = serialize_page_manifest(&pages, options)?;
@@ -422,11 +425,6 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
     } else {
         None
     };
-    let progress_len = if let Some(extent) = bc7_extent {
-        pages.len() as u64 * bc7_encode_progress_units(extent, options.bc7_rdo_lambda) as u64
-    } else {
-        pages.len() as u64
-    };
     let progress_message = atlas_payload_progress_message(
         "EC art atlas pages",
         use_bc7,
@@ -434,22 +432,11 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         options.bc7_rdo_lambda,
     );
 
-    payload_progress(AssetPayloadProgress {
-        completed: 0,
-        total: progress_len,
-    });
-    let payload_completed = AtomicU64::new(0);
-    let add_payload_progress = |units: u64| {
-        let completed = payload_completed
-            .fetch_add(units, Ordering::Relaxed)
-            .saturating_add(units)
-            .min(progress_len);
-        payload_progress(AssetPayloadProgress {
-            completed,
-            total: progress_len,
-        });
+    let progress_len = if let Some(extent) = bc7_extent {
+        pages.len() as u64 * extent.blocks_wide() as u64 * extent.blocks_high() as u64
+    } else {
+        pages.len() as u64
     };
-
     let pb = ProgressBar::new(progress_len);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -459,22 +446,73 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
 
     let encoded_pages = if use_bc7 {
         let extent = bc7_extent.expect("BC7 extent is initialized when BC7 output is selected");
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::EncodingBc7,
+            completed: 0,
+            total: progress_len,
+        });
+        let encode_completed = AtomicU64::new(0);
+        let rdo_enabled =
+            options.bc7_rdo_lambda.is_finite() && options.bc7_rdo_lambda > f32::EPSILON;
+        let rdo_completed = AtomicU64::new(0);
+        let rdo_pb = if rdo_enabled {
+            payload_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::ApplyingRdo,
+                completed: 0,
+                total: progress_len,
+            });
+            let rdo_pb = ProgressBar::new(progress_len);
+            rdo_pb.set_style(ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} applying BC7 RDO to EC art atlas pages ({eta})")
+                .unwrap()
+                .progress_chars("#>-"));
+            Some(rdo_pb)
+        } else {
+            None
+        };
+        let report_bc7_progress = |stage: Bc7ProgressStage, units: usize| {
+            let units = units as u64;
+            match stage {
+                Bc7ProgressStage::Encode => {
+                    pb.inc(units);
+                    let completed = encode_completed
+                        .fetch_add(units, Ordering::Relaxed)
+                        .saturating_add(units)
+                        .min(progress_len);
+                    payload_progress(AssetTaskProgress {
+                        stage: AssetTaskProgressStage::EncodingBc7,
+                        completed,
+                        total: progress_len,
+                    });
+                }
+                Bc7ProgressStage::Rdo => {
+                    if let Some(rdo_pb) = &rdo_pb {
+                        rdo_pb.inc(units);
+                    }
+                    let completed = rdo_completed
+                        .fetch_add(units, Ordering::Relaxed)
+                        .saturating_add(units)
+                        .min(progress_len);
+                    payload_progress(AssetTaskProgress {
+                        stage: AssetTaskProgressStage::ApplyingRdo,
+                        completed,
+                        total: progress_len,
+                    });
+                }
+            }
+        };
         let encoded_pages = pages
             .par_iter()
             .map(|page| {
                 let page_path = page_entry_path(page.record.page_index, pixel_format);
                 let encoded =
-                    encode_for_vram_with_bc7_rdo_lambda_and_progress(
+                    encode_for_vram_with_bc7_rdo_lambda_and_stage_progress(
                         &page.pixels,
                         extent,
                         RawImageFormat::Rgba8888,
                         encoding,
                         options.bc7_rdo_lambda,
-                        |units| {
-                            let units = units as u64;
-                            pb.inc(units);
-                            add_payload_progress(units);
-                        },
+                        &report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
@@ -494,13 +532,30 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         for page in encoded_pages {
             resolved.push(page?);
         }
+        if let Some(rdo_pb) = rdo_pb {
+            rdo_pb.finish_with_message("BC7 RDO applied to EC art atlas pages");
+        }
         resolved
     } else {
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::RegisteringPages,
+            completed: 0,
+            total: progress_len,
+        });
+        let payload_completed = AtomicU64::new(0);
         pages
             .iter()
             .map(|page| {
                 pb.inc(1);
-                add_payload_progress(1);
+                let completed = payload_completed
+                    .fetch_add(1, Ordering::Relaxed)
+                    .saturating_add(1)
+                    .min(progress_len);
+                payload_progress(AssetTaskProgress {
+                    stage: AssetTaskProgressStage::RegisteringPages,
+                    completed,
+                    total: progress_len,
+                });
                 (
                     page_entry_path(page.record.page_index, pixel_format),
                     crop_rgba_page(
@@ -534,7 +589,14 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         compression,
         options.bc7_rdo_lambda,
     ));
-    payload_progress(AssetPayloadProgress {
+    payload_progress(AssetTaskProgress {
+        stage: if use_bc7 && options.bc7_rdo_lambda.is_finite() && options.bc7_rdo_lambda > f32::EPSILON {
+            AssetTaskProgressStage::ApplyingRdo
+        } else if use_bc7 {
+            AssetTaskProgressStage::EncodingBc7
+        } else {
+            AssetTaskProgressStage::RegisteringPages
+        },
         completed: progress_len,
         total: progress_len,
     });
@@ -573,6 +635,7 @@ pub fn compute_tex_art_ec_crop_adjustments_from_loaded_sources(
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
         &options,
+        &|_| {},
     )?;
 
     Ok(build_crop_adjustment_lookup(
@@ -683,6 +746,7 @@ fn decode_present_tiles(
     world_textures: Option<&Textures>,
     legacy_textures: Option<&Textures>,
     options: &TexArtEcAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
@@ -712,10 +776,21 @@ fn decode_present_tiles(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting EC art tile sources ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    let resolve_total = art_ids.len() as u64;
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: resolve_total,
+    });
     let mut decode_groups: Vec<PreparedArtDecodeGroup> = Vec::new();
 
-    for art_id in art_ids {
+    for (index, art_id) in art_ids.into_iter().enumerate() {
         resolve_pb.inc(1);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::Extracting,
+            completed: (index + 1) as u64,
+            total: resolve_total,
+        });
         let art_data = art_definition
             .definitions
             .get(&art_id)
@@ -789,6 +864,13 @@ fn decode_present_tiles(
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting unique EC art tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    let decode_total = decode_groups.len() as u64;
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::Extracting,
+        completed: 0,
+        total: decode_total,
+    });
+    let decode_completed = AtomicU64::new(0);
     let decoded_groups = decode_groups
         .par_iter()
         .map(|group| -> eyre::Result<DecodedArtDecodeGroup> {
@@ -821,6 +903,15 @@ fn decode_present_tiles(
                 apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
 
             decode_pb.inc(1);
+            let completed = decode_completed
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
+                .min(decode_total);
+            task_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::Extracting,
+                completed,
+                total: decode_total,
+            });
             Ok(DecodedArtDecodeGroup {
                 canonical_art_id: group.canonical_art_id,
                 kind: group.kind,
@@ -1202,6 +1293,7 @@ pub fn pack_tiles_into_pages(
     tiles: Vec<DecodedArtTile>,
     slot_count: u32,
     options: &TexArtEcAtlasOptions,
+    task_progress: &(impl Fn(AssetTaskProgress) + Sync),
 ) -> eyre::Result<(Vec<BuiltPage>, Vec<TexArtEcSlotRecord>)> {
     // Like the CC path, keep a sparse slot table for the full art id range. That
     // makes runtime lookup deterministic even when many ids are absent.
@@ -1219,6 +1311,12 @@ pub fn pack_tiles_into_pages(
         .unwrap()
         .progress_chars("#>-"));
     pb.set_message("creating EC art atlas pages");
+    task_progress(AssetTaskProgress {
+        stage: AssetTaskProgressStage::PackingAtlas,
+        completed: 0,
+        total: total_tiles,
+    });
+    let mut packed_tiles = 0u64;
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating EC art atlas page {page_index}"));
@@ -1253,6 +1351,14 @@ pub fn pack_tiles_into_pages(
         }
 
         pb.inc(page.placed_tiles.len() as u64);
+        packed_tiles = packed_tiles
+            .saturating_add(page.placed_tiles.len() as u64)
+            .min(total_tiles);
+        task_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::PackingAtlas,
+            completed: packed_tiles,
+            total: total_tiles,
+        });
         pages.push(page);
         remaining = merge_unplaced_tiles(leftovers, unplaced, |tile| tile.art_id);
         page_index += 1;

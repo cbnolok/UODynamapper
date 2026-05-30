@@ -342,7 +342,8 @@ fn draw_asset_card(
                                                 egui::DragValue::new(lambda)
                                                     .speed(0.01)
                                                     .range(0.0..=1.0),
-                                            );
+                                            )
+                                                .on_hover_text("0 disables RDO. Higher lambda values usually improve BC7+zstd disk ratio but can be much slower and may add more loss.");
                                         });
                                     }
                                 }
@@ -454,7 +455,8 @@ fn draw_zstd_level_cell(ui: &mut egui::Ui, level: &mut i32) {
             egui::DragValue::new(level)
                 .speed(1)
                 .range(1..=22),
-        );
+        )
+            .on_hover_text("Lower levels are faster and larger. Level 7 is the balanced default; 19-22 can be much slower for smaller packages.");
     });
 }
 
@@ -464,7 +466,8 @@ fn draw_jxl_level_cell(ui: &mut egui::Ui, level: &mut u8) {
             egui::DragValue::new(level)
                 .speed(1)
                 .range(1..=10),
-        );
+        )
+            .on_hover_text("Lower levels are faster and larger. Level 6 is the balanced default; 9-10 can be much slower for smaller packages.");
     });
 }
 
