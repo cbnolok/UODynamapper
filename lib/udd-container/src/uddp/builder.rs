@@ -12,7 +12,8 @@ use rayon::prelude::*;
 
 use super::support::{
     jxl_compress, jxl_zstd_compress, jxl_zstd_compress_level, patch_header_package_hash64,
-    zstd_compress, zstd_compress_level, zstd_compress_with_dict,
+    zstd_compress, zstd_compress_level, zstd_compress_level_parallel, zstd_compress_parallel,
+    zstd_compress_with_dict, zstd_compress_with_dict_parallel,
 };
 use super::*;
 
@@ -20,6 +21,7 @@ const DICT_TRAIN_MIN_SAMPLE_BYTES: usize = 128;
 const DICT_TRAIN_AUTO_MAX_SAMPLE_BYTES: usize = 48 * 1024;
 const DICT_TRAIN_MAX_SAMPLE_COUNT: usize = 1024;
 const DICT_TRAIN_MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+const PARALLEL_ZSTD_MIN_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingKey {
@@ -548,30 +550,69 @@ where
         return Ok(Vec::new());
     }
 
-    if files.iter().any(uses_internal_parallel_compression) {
-        return compress_files_serial_with_progress(files, dicts_by_type, progress);
+    let mut compressed_files = vec![None; files.len()];
+    let mut completed = 0usize;
+    compress_files_parallel_with_progress(
+        files,
+        dicts_by_type,
+        &mut compressed_files,
+        &mut completed,
+        &mut progress,
+    )?;
+    compress_files_serial_with_progress(
+        files,
+        dicts_by_type,
+        &mut compressed_files,
+        &mut completed,
+        &mut progress,
+    )?;
+
+    compressed_files
+        .into_iter()
+        .map(|file| {
+            file.ok_or_else(|| {
+                BuildError::CodecError("compression worker did not return a file".to_string())
+            })
+        })
+        .collect()
+}
+
+fn compress_files_parallel_with_progress<F>(
+    files: &[PendingFile],
+    dicts_by_type: &HashMap<u8, Vec<u8>>,
+    compressed_files: &mut [Option<BuiltFile>],
+    completed: &mut usize,
+    progress: &mut F,
+) -> Result<(), BuildError>
+where
+    F: FnMut(CompressionProgress),
+{
+    let parallel_files = files
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| !uses_internal_parallel_compression(file))
+        .collect::<Vec<_>>();
+    if parallel_files.is_empty() {
+        return Ok(());
     }
 
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            files
+            parallel_files
                 .par_iter()
-                .enumerate()
                 .for_each_with(sender, |sender, (index, file)| {
                     let result = compress_file(file, dicts_by_type)
-                        .map(|built_file| (index, built_file));
+                        .map(|built_file| (*index, built_file));
                     let _ = sender.send(result);
                 });
         });
 
-        let mut completed = 0usize;
-        let mut compressed_files = vec![None; files.len()];
         let mut first_error = None;
         for result in receiver {
-            completed += 1;
+            *completed += 1;
             progress(CompressionProgress {
-                completed,
+                completed: *completed,
                 active_file: None,
             });
             match result {
@@ -590,14 +631,7 @@ where
             return Err(error);
         }
 
-        compressed_files
-            .into_iter()
-            .map(|file| {
-                file.ok_or_else(|| {
-                    BuildError::CodecError("compression worker did not return a file".to_string())
-                })
-            })
-            .collect()
+        Ok(())
     })
 }
 
@@ -610,15 +644,19 @@ struct CompressionProgress {
 fn compress_files_serial_with_progress<F>(
     files: &[PendingFile],
     dicts_by_type: &HashMap<u8, Vec<u8>>,
-    mut progress: F,
-) -> Result<Vec<BuiltFile>, BuildError>
+    compressed_files: &mut [Option<BuiltFile>],
+    completed: &mut usize,
+    progress: &mut F,
+) -> Result<(), BuildError>
 where
     F: FnMut(CompressionProgress),
 {
-    let mut compressed_files = Vec::with_capacity(files.len());
     for (index, file) in files.iter().enumerate() {
+        if !uses_internal_parallel_compression(file) {
+            continue;
+        }
         progress(CompressionProgress {
-            completed: index,
+            completed: *completed,
             active_file: Some(BuildProgressFile {
                 index,
                 total: files.len(),
@@ -628,20 +666,32 @@ where
                 height: file.height,
             }),
         });
-        compressed_files.push(compress_file(file, dicts_by_type)?);
+        compressed_files[index] = Some(compress_file(file, dicts_by_type)?);
+        *completed += 1;
         progress(CompressionProgress {
-            completed: index + 1,
+            completed: *completed,
             active_file: None,
         });
     }
-    Ok(compressed_files)
+    Ok(())
 }
 
 fn uses_internal_parallel_compression(file: &PendingFile) -> bool {
     matches!(
         file.compression,
         CompressionFlag::JpegXl | CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_)
-    )
+    ) || uses_parallel_zstd_compression(file)
+}
+
+fn uses_parallel_zstd_compression(file: &PendingFile) -> bool {
+    file.raw_data.len() >= PARALLEL_ZSTD_MIN_BYTES
+        && matches!(
+            file.compression,
+            CompressionFlag::ZstdNoDict
+                | CompressionFlag::ZstdNoDictLevel(_)
+                | CompressionFlag::ZstdDict
+                | CompressionFlag::Auto
+        )
 }
 
 fn compress_file(
@@ -653,20 +703,31 @@ fn compress_file(
     let (codec, encoded_payload) = match file.compression {
         CompressionFlag::None => (Codec::None, data_to_compress.to_vec()),
         CompressionFlag::ZstdNoDict => {
-            let encoded = zstd_compress(data_to_compress).map_err(BuildError::Io)?;
+            let encoded = if uses_parallel_zstd_compression(file) {
+                zstd_compress_parallel(data_to_compress).map_err(BuildError::Io)?
+            } else {
+                zstd_compress(data_to_compress).map_err(BuildError::Io)?
+            };
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdNoDictLevel(level) => {
-            let encoded =
-                zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?;
+            let encoded = if uses_parallel_zstd_compression(file) {
+                zstd_compress_level_parallel(data_to_compress, level).map_err(BuildError::Io)?
+            } else {
+                zstd_compress_level(data_to_compress, level).map_err(BuildError::Io)?
+            };
             (Codec::ZstdNoDict, encoded)
         }
         CompressionFlag::ZstdDict => {
             let dict = dicts_by_type
                 .get(&file.data_type)
                 .ok_or(BuildError::MissingDictionaryForType(file.data_type))?;
-            let encoded =
-                zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?;
+            let encoded = if uses_parallel_zstd_compression(file) {
+                zstd_compress_with_dict_parallel(data_to_compress, dict)
+                    .map_err(BuildError::Io)?
+            } else {
+                zstd_compress_with_dict(data_to_compress, dict).map_err(BuildError::Io)?
+            };
             (Codec::ZstdTypeDict, encoded)
         }
         CompressionFlag::JpegXl => {
@@ -805,7 +866,11 @@ fn choose_auto_compression(
         return Ok((Codec::None, file.raw_data.clone()));
     }
 
-    let compressed = zstd_compress(&file.raw_data).map_err(BuildError::Io)?;
+    let compressed = if uses_parallel_zstd_compression(file) {
+        zstd_compress_parallel(&file.raw_data).map_err(BuildError::Io)?
+    } else {
+        zstd_compress(&file.raw_data).map_err(BuildError::Io)?
+    };
     if compression_is_worth_it(len, compressed.len()) {
         Ok((Codec::ZstdNoDict, compressed))
     } else {
@@ -947,6 +1012,48 @@ mod tests {
                         raw_size: 16,
                         width: 2,
                         height: 2,
+                    })
+        }));
+        assert!(compression_events.iter().any(|progress| {
+            progress.completed == 1 && progress.active_file.is_none()
+        }));
+    }
+
+    #[test]
+    fn large_zstd_build_reports_active_compression_file() {
+        let mut builder = UddpBuilder::new(LookupMode::DenseId);
+        builder
+            .add_owned_file(AddOwnedFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: 0,
+                height: 0,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(0),
+                data: vec![7; PARALLEL_ZSTD_MIN_BYTES],
+            })
+            .expect("add large zstd payload");
+
+        let mut compression_events = Vec::new();
+        builder
+            .build_with_progress(|progress| {
+                if progress.phase == BuildProgressPhase::CompressingFiles {
+                    compression_events.push(progress);
+                }
+            })
+            .expect("build package");
+
+        assert!(compression_events.iter().any(|progress| {
+            progress.completed == 0
+                && progress.active_file
+                    == Some(BuildProgressFile {
+                        index: 0,
+                        total: 1,
+                        compression: CompressionFlag::ZstdNoDict,
+                        raw_size: PARALLEL_ZSTD_MIN_BYTES,
+                        width: 0,
+                        height: 0,
                     })
         }));
         assert!(compression_events.iter().any(|progress| {

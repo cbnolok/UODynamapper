@@ -9,6 +9,7 @@
 //! - error types and small filesystem convenience wrappers
 
 use std::fmt;
+use std::io::Write;
 use std::ops::Range;
 use std::path::Path;
 
@@ -127,10 +128,39 @@ pub(crate) fn zstd_compress_level(data: &[u8], level: i32) -> std::io::Result<Ve
     compressor.compress(data)
 }
 
+/// Plain Zstd compression helper using Zstd's internal worker pool.
+pub(crate) fn zstd_compress_parallel(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    zstd_compress_level_parallel(data, ZSTD_LEVEL)
+}
+
+/// Plain Zstd compression helper with an explicit level and Zstd's internal worker pool.
+pub(crate) fn zstd_compress_level_parallel(data: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
+    let mut encoder = zstd::Encoder::new(Vec::new(), level)?;
+    encoder.multithread(zstd_worker_count())?;
+    encoder.set_pledged_src_size(Some(data.len() as u64))?;
+    encoder.write_all(data)?;
+    encoder.finish()
+}
+
 /// Dictionary-backed Zstd compression helper.
 pub(crate) fn zstd_compress_with_dict(data: &[u8], dict: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut compressor = Compressor::with_dictionary(ZSTD_LEVEL, dict)?;
     compressor.compress(data)
+}
+
+/// Dictionary-backed Zstd compression helper using Zstd's internal worker pool.
+pub(crate) fn zstd_compress_with_dict_parallel(data: &[u8], dict: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut encoder = zstd::Encoder::with_dictionary(Vec::new(), ZSTD_LEVEL, dict)?;
+    encoder.multithread(zstd_worker_count())?;
+    encoder.set_pledged_src_size(Some(data.len() as u64))?;
+    encoder.write_all(data)?;
+    encoder.finish()
+}
+
+fn zstd_worker_count() -> u32 {
+    std::thread::available_parallelism()
+        .map(|threads| threads.get().saturating_sub(1).max(1) as u32)
+        .unwrap_or(1)
 }
 
 /// Jxl compression helper.

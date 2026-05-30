@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.dependencies]
-zstd = "0.13"
+zstd = { version = "0.13", features = ["zstdmt"] }
 
 
 # --------- Release
