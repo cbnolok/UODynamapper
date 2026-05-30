@@ -94,9 +94,75 @@ impl UddConvApp {
 }
 
 fn pick_folder(title: &str, current: Option<&Path>) -> Option<PathBuf> {
+    match pick_folder_with_kdialog(title, current) {
+        KdialogFolderResult::Selected(path) => return Some(path),
+        KdialogFolderResult::Cancelled => return None,
+        KdialogFolderResult::Unavailable => {}
+    }
+
     let mut dialog = rfd::FileDialog::new().set_title(title);
     if let Some(current) = current.filter(|path| path.is_dir()) {
         dialog = dialog.set_directory(current);
     }
     dialog.pick_folder()
+}
+
+enum KdialogFolderResult {
+    Selected(PathBuf),
+    Cancelled,
+    Unavailable,
+}
+
+#[cfg(target_os = "linux")]
+fn pick_folder_with_kdialog(title: &str, current: Option<&Path>) -> KdialogFolderResult {
+    if !is_kde_session() {
+        return KdialogFolderResult::Unavailable;
+    }
+
+    let mut command = std::process::Command::new("kdialog");
+    command.arg("--getexistingdirectory");
+    if let Some(current) = current.filter(|path| path.is_dir()) {
+        command.arg(current);
+    }
+    command.args(["--title", title]);
+
+    let output = match command.output() {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return KdialogFolderResult::Unavailable;
+        }
+        Err(error) => {
+            log::debug!("Failed to open kdialog folder picker: {error}");
+            return KdialogFolderResult::Unavailable;
+        }
+    };
+
+    if !output.status.success() {
+        return KdialogFolderResult::Cancelled;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout);
+    let path = path.trim_end_matches(['\r', '\n']);
+    if path.is_empty() {
+        KdialogFolderResult::Cancelled
+    } else {
+        KdialogFolderResult::Selected(PathBuf::from(path))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick_folder_with_kdialog(_title: &str, _current: Option<&Path>) -> KdialogFolderResult {
+    KdialogFolderResult::Unavailable
+}
+
+#[cfg(target_os = "linux")]
+fn is_kde_session() -> bool {
+    ["XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .any(|value| {
+            value
+                .split(':')
+                .any(|part| part.eq_ignore_ascii_case("KDE") || part.eq_ignore_ascii_case("PLASMA"))
+        })
 }
