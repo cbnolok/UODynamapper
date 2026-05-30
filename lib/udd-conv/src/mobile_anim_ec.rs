@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use color_eyre::eyre::{self, ContextCompat, WrapErr};
+use color_eyre::eyre::{self, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::info;
@@ -96,6 +96,7 @@ pub struct MobileAnimEcAtlasOptions {
     pub upscale_passes: Vec<UpscaleFilter>,
     pub metadata_path: Option<PathBuf>,
     pub tables_dir: Option<PathBuf>,
+    pub allow_missing_metadata: bool,
 }
 
 impl Default for MobileAnimEcAtlasOptions {
@@ -111,6 +112,7 @@ impl Default for MobileAnimEcAtlasOptions {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         }
     }
 }
@@ -237,10 +239,17 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         source_dirs,
         options.metadata_path.as_deref(),
         options.tables_dir.as_deref(),
-    )
-        .context("missing EcMobileAnimations.kdl for EC mobile animation metadata")?;
-    let metadata = EcMobileAnimationsKdl::load(&metadata_path)?;
-    let (items, source_hints) = build_item_metadata(&metadata)?;
+    );
+    let (items, source_hints) = if let Some(metadata_path) = metadata_path.as_ref() {
+        let metadata = EcMobileAnimationsKdl::load(metadata_path)?;
+        println!("Using EC mobile animation metadata: {}", metadata_path.display());
+        build_item_metadata(&metadata)?
+    } else if options.allow_missing_metadata {
+        println!("EcMobileAnimations.kdl was not found; writing empty EC mobile animation item metadata.");
+        (Vec::new(), Vec::new())
+    } else {
+        eyre::bail!("missing EcMobileAnimations.kdl for EC mobile animation metadata");
+    };
 
     info!(
         "Converting EC mobile animations from {} UOP files to {}",
@@ -248,7 +257,6 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         out_file.display()
     );
     println!("Using EC animation source dir: {}", client_dir.display());
-    println!("Using EC mobile animation metadata: {}", metadata_path.display());
 
     payload_progress(AssetTaskProgress {
         stage: AssetTaskProgressStage::Extracting,
@@ -2247,6 +2255,27 @@ mod tests {
         }
     }
 
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time is after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("udd_mobile_anim_ec_{}_{}", name, nanos))
+    }
+
+    #[test]
+    fn mobile_animation_kdl_resolver_uses_tables_dir() {
+        let dir = temp_test_dir("tables");
+        std::fs::create_dir_all(&dir).expect("create temp tables dir");
+        let kdl_path = dir.join("EcMobileAnimations.kdl");
+        std::fs::write(&kdl_path, "").expect("write temp kdl");
+
+        let resolved = find_ec_mobile_animations_kdl(&[], None, Some(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolved, Some(kdl_path));
+    }
+
     #[test]
     fn packer_uses_four_pixel_aligned_extents() {
         let options = MobileAnimEcAtlasOptions {
@@ -2260,6 +2289,7 @@ mod tests {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         };
 
         let (pages, placements) = pack_frames_into_pages(
@@ -2286,6 +2316,7 @@ mod tests {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![sparse_frame(42, 0)], &options).unwrap();
@@ -2313,6 +2344,7 @@ mod tests {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         };
 
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 16, 16)], &options).unwrap();
@@ -2336,6 +2368,7 @@ mod tests {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         };
         let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 4, 4)], &options).unwrap();
         let (animations, frames) = build_animation_records(
@@ -2427,6 +2460,7 @@ mod tests {
             upscale_passes: Vec::new(),
             metadata_path: None,
             tables_dir: None,
+            allow_missing_metadata: false,
         };
         let (_, placements) = pack_frames_into_pages(source_frames[&42].clone(), &options).unwrap();
         let (animations, frames) = build_animation_records(&source_frames, &placements, &HashMap::new()).unwrap();

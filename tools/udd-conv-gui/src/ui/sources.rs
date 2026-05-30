@@ -53,6 +53,34 @@ impl UddConvApp {
                         }
                         ui.end_row();
 
+                        ui.label("Dynamapper Routing Files:");
+                        if ui.button("Select Folder...").clicked() {
+                            if let Some(path) = pick_folder(
+                                "Select Dynamapper Routing Files Directory",
+                                self.settings.dynamapper_routing_dir.as_deref(),
+                            ) {
+                                self.settings.dynamapper_routing_dir = Some(path);
+                            }
+                        }
+                        if let Some(path) = &self.settings.dynamapper_routing_dir {
+                            ui.label(path.to_string_lossy());
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::YELLOW,
+                                "Not selected (uses source dirs or current working directory)",
+                            );
+                        }
+                        ui.end_row();
+
+                        ui.label("EC Mobile Animation KDL:");
+                        ui.checkbox(
+                            &mut self.settings.ec_mobile_anim_allow_missing_kdl,
+                            "Allow conversion without EcMobileAnimations.kdl",
+                        )
+                        .on_hover_text("Writes empty EC mobile animation item/source-hint metadata when the KDL is unavailable.");
+                        ui.label("");
+                        ui.end_row();
+
                         ui.label("Input UDDP Folder:");
                         ui.horizontal(|ui| {
                             if ui.button("Select Folder...").clicked() {

@@ -16,6 +16,8 @@ pub enum TextureOptimization {
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
     pub ec_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub dynamapper_routing_dir: Option<PathBuf>,
     pub input_uddp_dir: PathBuf,
     pub output_uddp_dir: PathBuf,
     pub link_uddp_dirs: bool,
@@ -78,6 +80,8 @@ pub struct AppSettings {
     pub include_map_difs: bool,
     #[serde(default)]
     pub include_static_difs: bool,
+    #[serde(default)]
+    pub ec_mobile_anim_allow_missing_kdl: bool,
 }
 
 impl Default for AppSettings {
@@ -85,6 +89,7 @@ impl Default for AppSettings {
         Self {
             cc_dir: None,
             ec_dir: None,
+            dynamapper_routing_dir: None,
             input_uddp_dir: PathBuf::from("packages"),
             output_uddp_dir: PathBuf::from("packages"),
             link_uddp_dirs: true,
@@ -125,6 +130,7 @@ impl Default for AppSettings {
             include_verdata: false,
             include_map_difs: false,
             include_static_difs: false,
+            ec_mobile_anim_allow_missing_kdl: false,
         }
     }
 }
@@ -243,6 +249,8 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(!settings.ec_mobile_anim_allow_missing_kdl);
+        assert_eq!(settings.dynamapper_routing_dir, None);
         assert!(settings.bc7_rdo_enabled);
         assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
@@ -255,6 +263,8 @@ mod tests {
             .lines()
             .filter(|line| {
                 !line.starts_with("include_") && !line.starts_with("bc7_rdo_enabled")
+                    && !line.starts_with("dynamapper_routing_dir")
+                    && !line.starts_with("ec_mobile_anim_allow_missing_kdl")
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -265,6 +275,8 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert!(!settings.ec_mobile_anim_allow_missing_kdl);
+        assert_eq!(settings.dynamapper_routing_dir, None);
         assert!(settings.bc7_rdo_enabled);
         assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
         assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
@@ -276,6 +288,8 @@ mod tests {
         settings.include_verdata = true;
         settings.include_map_difs = true;
         settings.include_static_difs = true;
+        settings.ec_mobile_anim_allow_missing_kdl = true;
+        settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
         let restored: AppSettings = toml::from_str(&serialized).expect("deserialize settings");
@@ -283,5 +297,10 @@ mod tests {
         assert!(restored.include_verdata);
         assert!(restored.include_map_difs);
         assert!(restored.include_static_difs);
+        assert!(restored.ec_mobile_anim_allow_missing_kdl);
+        assert_eq!(
+            restored.dynamapper_routing_dir,
+            Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"))
+        );
     }
 }

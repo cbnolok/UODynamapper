@@ -1311,6 +1311,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_passes: convert_upscale_passes(upscale_passes),
                     metadata_path: ec_mobile_animations_kdl,
                     tables_dir: tables,
+                    allow_missing_metadata: false,
                 },
             )?;
             println!(
