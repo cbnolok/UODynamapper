@@ -22,7 +22,7 @@ const DICT_TRAIN_MIN_SAMPLE_BYTES: usize = 128;
 const DICT_TRAIN_AUTO_MAX_SAMPLE_BYTES: usize = 48 * 1024;
 const DICT_TRAIN_MAX_SAMPLE_COUNT: usize = 1024;
 const DICT_TRAIN_MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
-const PARALLEL_ZSTD_MIN_BYTES: usize = 1024 * 1024;
+const PARALLEL_ZSTD_MIN_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingKey {
