@@ -1,0 +1,9 @@
+[package]
+name = "udd-logging"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_filter = "1.0.1"
+log = "0.4.29"
+paris = "1.5"

@@ -5,7 +5,7 @@ use app::UopPopulatorApp;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-    env_logger::init();
+    let _ = udd_logging::install_paris_logger();
     
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

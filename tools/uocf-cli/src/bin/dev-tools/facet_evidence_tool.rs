@@ -53,7 +53,7 @@ struct Evidence {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+    let _ = udd_logging::install_paris_logger();
 
     let cli = Cli::parse();
     let size = match cli.map_index {

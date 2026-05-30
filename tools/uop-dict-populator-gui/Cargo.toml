@@ -18,6 +18,6 @@ uocf = { path = "../../lib/uocf" }
 rfd = { version = "0.15", features = ["xdg-portal"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-env_logger = "0.11"
+udd-logging = { path = "../../lib/udd-logging" }
 color-eyre = "0.6"
 crossbeam-channel = "0.5"

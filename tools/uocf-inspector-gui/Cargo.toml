@@ -18,7 +18,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 udd-assets = { path = "../../lib/udd-assets" }
 uocf = { path = "../../lib/uocf" }
 rfd = { version = "0.15", features = ["xdg-portal"] }
-env_logger = "0.11"
+udd-logging = { path = "../../lib/udd-logging" }
 rodio = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 color-eyre = "0.6"

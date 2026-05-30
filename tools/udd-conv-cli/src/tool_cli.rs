@@ -154,7 +154,7 @@ struct AtlasPageBounds {
 
 pub fn run() -> eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+    let _ = udd_logging::install_paris_logger();
 
     match Cli::parse().command {
         Commands::Info { file } => package_info::print_package_info(&file)?,

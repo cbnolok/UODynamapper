@@ -44,7 +44,7 @@ struct PackageConfig {
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+    let _ = udd_logging::install_paris_logger();
 
     let args = Args::parse();
 

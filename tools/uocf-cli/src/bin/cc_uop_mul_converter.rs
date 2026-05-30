@@ -38,7 +38,7 @@ fn print_results(success: u32, total: u32) {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+    let _ = udd_logging::install_paris_logger();
 
     let cli = Cli::parse();
 

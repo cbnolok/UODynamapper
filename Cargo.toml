@@ -7,6 +7,7 @@ members = [
     "lib/udd-image-codecs",
     "lib/udd-container",
     "lib/udd-assets",
+    "lib/udd-logging",
     "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
