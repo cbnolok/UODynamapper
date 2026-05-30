@@ -1,5 +1,8 @@
 use super::statics_collect::StaticChunkBatchKey;
-use crate::configs::settings::{HueSourcePreference, Settings};
+use crate::configs::{
+    settings::{HueSourcePreference, Settings},
+    shader_presets::UniformState,
+};
 use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
@@ -19,17 +22,25 @@ const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
 const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
 const STATIC_LIGHT_Y_BIAS: f32 = 0.012;
 const STATIC_LIGHT_ALPHA: f32 = 0.65;
-const STATIC_LIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, STATIC_LIGHT_ALPHA);
 const STATIC_LIGHT_DEPTH_BIAS: f32 = 128.0;
 const STATIC_LIGHT_BILLBOARD_RIGHT: Vec3 = Vec3::new(-0.70710677, 0.0, 0.70710677);
 const STATIC_LIGHT_BILLBOARD_UP: Vec3 = Vec3::new(0.4082483, -0.8164966, 0.4082483);
 const STATIC_LIGHT_BILLBOARD_NORMAL: Vec3 = Vec3::new(0.57735026, 0.57735026, 0.57735026);
+const CLASSICUO_LIGHT_CURVES: [[u8; 32]; 6] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+    [0, 1, 2, 4, 6, 8, 11, 14, 17, 20, 23, 26, 29, 30, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31],
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 17, 19, 21, 23, 25, 27],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 10, 15, 20, 25, 30, 30, 18, 18, 18, 18, 18, 18, 18],
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum StaticLightHueSourceKind {
     StoredRgb,
     Classic,
     Enhanced,
+    ClassicLightShader,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -230,11 +241,13 @@ pub fn sys_sync_static_light_entities(
     classic_hues_res: Option<Res<ClassicHuesRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
     settings: Res<Settings>,
+    uniform_state: Res<UniformState>,
     mut material_cache: ResMut<StaticLightMaterialCache>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mesh_handle: Local<Option<Handle<Mesh>>>,
+    mut last_alpha: Local<Option<f32>>,
     existing_q: Query<(Entity, &StaticLightKey), With<StaticLightEntity>>,
 ) {
     let Some(world_lights) = world_lights_res else {
@@ -257,11 +270,14 @@ pub fn sys_sync_static_light_entities(
     let mesh_handle = mesh_handle
         .get_or_insert_with(|| meshes.add(build_static_light_mesh()))
         .clone();
+    let material_alpha = static_light_alpha_for_global_lighting(uniform_state.global_lighting);
     for instance in &instances.0 {
         let Some(material_handle) = static_light_material(
+            instance.key.graphic,
             instance.light_id,
             instance.hue_id,
             settings.graphics.hue_source,
+            material_alpha,
             &world_lights.0,
             classic_hues_res.as_deref(),
             hues_package_res.as_deref(),
@@ -290,6 +306,15 @@ pub fn sys_sync_static_light_entities(
         }
     }
 
+    if *last_alpha != Some(material_alpha) {
+        for handle in material_cache.materials_by_key.values() {
+            if let Some(material) = materials.get_mut(handle) {
+                material.base_color = static_light_base_color(material_alpha);
+            }
+        }
+        *last_alpha = Some(material_alpha);
+    }
+
     for (entity, key) in existing_q.iter() {
         if !desired_keys.contains(key) {
             let _ = commands.entity(entity).despawn();
@@ -298,9 +323,11 @@ pub fn sys_sync_static_light_entities(
 }
 
 fn static_light_material(
+    graphic: u16,
     light_id: u32,
     hue_id: u16,
     hue_preference: HueSourcePreference,
+    material_alpha: f32,
     world_lights: &udd_assets::world_lights::WorldLightsPackage,
     classic_hues: Option<&ClassicHuesRes>,
     hues_package: Option<&HuesPackageRes>,
@@ -309,6 +336,7 @@ fn static_light_material(
     materials: &mut Assets<StandardMaterial>,
 ) -> Option<Handle<StandardMaterial>> {
     let hue_source_kind = resolve_static_light_hue_source_kind(
+        graphic,
         hue_id,
         hue_preference,
         classic_hues,
@@ -317,11 +345,7 @@ fn static_light_material(
     );
     let material_key = StaticLightMaterialKey {
         light_id,
-        hue_id: if hue_source_kind == StaticLightHueSourceKind::StoredRgb {
-            0
-        } else {
-            hue_id
-        },
+        hue_id: static_light_material_color_key(graphic, hue_id, hue_source_kind),
         hue_source: hue_source_kind,
     };
     if let Some(handle) = material_cache.materials_by_key.get(&material_key) {
@@ -348,6 +372,7 @@ fn static_light_material(
 
     {
         let hue_source = resolve_static_light_hue_source(
+            graphic,
             hue_id,
             hue_preference,
             classic_hues,
@@ -371,7 +396,7 @@ fn static_light_material(
     image.sampler = bevy::image::ImageSampler::linear();
     let image_handle = images.add(image);
     let material_handle = materials.add(StandardMaterial {
-        base_color: STATIC_LIGHT_COLOR,
+        base_color: static_light_base_color(material_alpha),
         base_color_texture: Some(image_handle),
         alpha_mode: AlphaMode::Add,
         cull_mode: None,
@@ -386,7 +411,16 @@ fn static_light_material(
     Some(material_handle)
 }
 
+fn static_light_alpha_for_global_lighting(global_lighting: f32) -> f32 {
+    (1.0 - global_lighting).clamp(0.0, STATIC_LIGHT_ALPHA)
+}
+
+fn static_light_base_color(alpha: f32) -> Color {
+    Color::srgba(1.0, 1.0, 1.0, alpha)
+}
+
 fn resolve_static_light_hue_source_kind(
+    graphic: u16,
     hue_id: u16,
     preference: HueSourcePreference,
     classic_hues: Option<&ClassicHuesRes>,
@@ -394,6 +428,7 @@ fn resolve_static_light_hue_source_kind(
     material_cache: &mut StaticLightMaterialCache,
 ) -> StaticLightHueSourceKind {
     resolve_static_light_hue_source(
+        graphic,
         hue_id,
         preference,
         classic_hues,
@@ -407,6 +442,7 @@ fn resolve_static_light_hue_source_kind(
 enum StaticLightHueSource<'a> {
     StoredRgb,
     Classic(&'a HueEntry),
+    ClassicLightShader(u16),
     Enhanced {
         hue_id: u16,
         texture_bytes: &'a [u8],
@@ -418,18 +454,41 @@ impl StaticLightHueSource<'_> {
         match self {
             Self::StoredRgb => StaticLightHueSourceKind::StoredRgb,
             Self::Classic(_) => StaticLightHueSourceKind::Classic,
+            Self::ClassicLightShader(_) => StaticLightHueSourceKind::ClassicLightShader,
             Self::Enhanced { .. } => StaticLightHueSourceKind::Enhanced,
         }
     }
 }
 
+fn static_light_material_color_key(
+    graphic: u16,
+    hue_id: u16,
+    hue_source_kind: StaticLightHueSourceKind,
+) -> u16 {
+    match hue_source_kind {
+        StaticLightHueSourceKind::StoredRgb => 0,
+        StaticLightHueSourceKind::ClassicLightShader => {
+            classicuo_light_shader_id(graphic).unwrap_or(0)
+        }
+        _ => hue_id,
+    }
+}
+
 fn resolve_static_light_hue_source<'a>(
+    graphic: u16,
     hue_id: u16,
     preference: HueSourcePreference,
     classic_hues: Option<&'a ClassicHuesRes>,
     hues_package: Option<&'a HuesPackageRes>,
     material_cache: &'a mut StaticLightMaterialCache,
 ) -> StaticLightHueSource<'a> {
+    if let Some(shader_id) = classicuo_light_shader_id(graphic) {
+        if shader_id != 0 {
+            return StaticLightHueSource::ClassicLightShader(shader_id);
+        }
+        return StaticLightHueSource::StoredRgb;
+    }
+
     if hue_id == 0 {
         return StaticLightHueSource::StoredRgb;
     }
@@ -491,6 +550,11 @@ fn apply_static_light_hue(rgba: &mut [u8], source: StaticLightHueSource<'_>) {
                 argb1555_to_rgba8888(hue.color_table[index])
             });
         }
+        StaticLightHueSource::ClassicLightShader(shader_id) => {
+            apply_static_light_hue_with_sampler(rgba, |luma| {
+                sample_classicuo_light_shader(shader_id, luma)
+            });
+        }
         StaticLightHueSource::Enhanced {
             hue_id,
             texture_bytes,
@@ -546,6 +610,119 @@ fn argb1555_to_rgba8888(color16: u16) -> [u8; 4] {
         ((r5 * 255) / 31) as u8,
         ((g5 * 255) / 31) as u8,
         ((b5 * 255) / 31) as u8,
+        255,
+    ]
+}
+
+fn classicuo_light_shader_id(graphic: u16) -> Option<u16> {
+    let mut color = match graphic {
+        0x088C => Some(31),
+        0x0FAC => Some(30),
+        0x0FB1 => Some(60),
+        0x1647 => Some(61),
+        0x19BB | 0x1F2B => Some(40),
+        0x9F66 => Some(0),
+        _ => None,
+    };
+
+    if (0x09FB..=0x0A14).contains(&graphic) {
+        color = Some(30);
+    } else if (0x0A15..=0x0A29).contains(&graphic)
+        || (0x0B1A..=0x0B1F).contains(&graphic)
+        || (0x0B20..=0x0B25).contains(&graphic)
+        || (0x0B26..=0x0B28).contains(&graphic)
+    {
+        color = Some(0);
+    } else if (0x0DE1..=0x0DEA).contains(&graphic) {
+        color = Some(31);
+    } else if (0x1849..=0x1850).contains(&graphic)
+        || (0x1853..=0x185A).contains(&graphic)
+    {
+        color = Some(61);
+    } else if (0x197A..=0x19A9).contains(&graphic)
+        || (0x19AB..=0x19B6).contains(&graphic)
+    {
+        color = Some(60);
+    } else if (0x1ECD..=0x1ECF).contains(&graphic)
+        || (0x1ED0..=0x1ED2).contains(&graphic)
+    {
+        color = Some(1);
+    }
+
+    if graphic == 0x1FD4 || graphic == 0x0F6C {
+        color = Some(2);
+    }
+
+    if (0x0E2D..=0x0E30).contains(&graphic) {
+        color = Some(62);
+    } else if (0x0E31..=0x0E33).contains(&graphic) {
+        color = Some(40);
+    } else if (0x0E5C..=0x0E6A).contains(&graphic) {
+        color = Some(6);
+    } else if (0x12EE..=0x134D).contains(&graphic)
+        || (0x306A..=0x329B).contains(&graphic)
+        || (0x343B..=0x346C).contains(&graphic)
+        || (0x3547..=0x354C).contains(&graphic)
+    {
+        color = Some(31);
+    } else if (0x3914..=0x3929).contains(&graphic) {
+        color = Some(1);
+    } else if (0x3946..=0x3964).contains(&graphic)
+        || (0x3967..=0x397A).contains(&graphic)
+    {
+        color = Some(6);
+    } else if (0x398C..=0x399F).contains(&graphic) {
+        color = Some(31);
+    } else if (0x3E02..=0x3E0B).contains(&graphic) {
+        color = Some(1);
+    } else if (0x3E27..=0x3E3A).contains(&graphic) {
+        color = Some(31);
+    } else {
+        match graphic {
+            0x40FE => color = Some(40),
+            0x40FF => color = Some(10),
+            0x4100 => color = Some(20),
+            0x4101 => color = Some(32),
+            _ => {
+                if (0x983B..=0x983D).contains(&graphic)
+                    || (0x983F..=0x9841).contains(&graphic)
+                {
+                    color = Some(30);
+                }
+            }
+        }
+    }
+
+    color
+}
+
+fn classicuo_light_shader_data(shader_id: u16) -> ([u8; 3], [usize; 3]) {
+    match shader_id {
+        1 => ([0x00, 0xFF, 0x00], [0, 1, 0]),
+        2 => ([0x7F, 0x7F, 0xFF], [0, 0, 0]),
+        6 => ([0xFF, 0x00, 0xFF], [2, 0, 1]),
+        10 => ([0x3F, 0x3F, 0xFF], [0, 0, 0]),
+        20 => ([0x00, 0xFF, 0x00], [0, 0, 0]),
+        30 => ([0xFF, 0x7F, 0x00], [3, 3, 0]),
+        31 => ([0xFF, 0x7F, 0x00], [1, 1, 0]),
+        32 => ([0xFF, 0x00, 0xFF], [0, 0, 0]),
+        40 => ([0xFF, 0x00, 0x00], [0, 0, 0]),
+        50 => ([0xFF, 0xFF, 0x00], [0, 0, 0]),
+        60 => ([0xFF, 0xFF, 0x00], [1, 1, 0]),
+        61 => ([0xFF, 0xFF, 0x00], [4, 4, 0]),
+        62 => ([0xFF, 0xFF, 0xFF], [4, 4, 4]),
+        63 => ([0xFF, 0xFF, 0xFF], [5, 5, 5]),
+        _ => ([0xFF, 0xFF, 0xFF], [0, 0, 0]),
+    }
+}
+
+fn sample_classicuo_light_shader(shader_id: u16, luma: u8) -> [u8; 4] {
+    let index = (luma >> 3).min(31) as usize;
+    let (rgb, curves) = classicuo_light_shader_data(shader_id);
+    [
+        ((u16::from(CLASSICUO_LIGHT_CURVES[curves[0]][index]) * u16::from(rgb[0])) / 31) as u8,
+        ((u16::from(CLASSICUO_LIGHT_CURVES[curves[1]][index]) * u16::from(rgb[1])) / 31) as u8,
+        ((u16::from(CLASSICUO_LIGHT_CURVES[curves[2]][index]) * u16::from(rgb[2])) / 31) as u8,
         255,
     ]
 }
@@ -609,5 +786,22 @@ mod tests {
         apply_static_light_hue(&mut rgba, StaticLightHueSource::StoredRgb);
 
         assert_eq!(&rgba, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn classicuo_graphic_light_shader_recolors_mask() {
+        let mut rgba = vec![248, 248, 248, 255];
+
+        apply_static_light_hue(&mut rgba, StaticLightHueSource::ClassicLightShader(40));
+
+        assert_eq!(&rgba, &[255, 0, 0, 255]);
+        assert_eq!(classicuo_light_shader_id(0x0E31), Some(40));
+    }
+
+    #[test]
+    fn static_light_alpha_follows_global_lighting_gap() {
+        assert_eq!(static_light_alpha_for_global_lighting(1.0), 0.0);
+        assert_eq!(static_light_alpha_for_global_lighting(0.75), 0.25);
+        assert_eq!(static_light_alpha_for_global_lighting(0.0), STATIC_LIGHT_ALPHA);
     }
 }
