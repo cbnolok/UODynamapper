@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::app::UddConvApp;
+use std::path::{Path, PathBuf};
 
 impl UddConvApp {
     pub fn ui_sources(&mut self, ui: &mut egui::Ui) {
@@ -15,11 +16,11 @@ impl UddConvApp {
                     .spacing([10.0, 10.0])
                     .show(ui, |ui| {
                         ui.label("Classic Client (CC):");
-                        if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_title("Select Classic Client (CC) Directory")
-                                .pick_folder()
-                            {
+                        if ui.button("Select Folder...").clicked() {
+                            if let Some(path) = pick_folder(
+                                "Select Classic Client (CC) Directory",
+                                self.settings.cc_dir.as_deref(),
+                            ) {
                                 self.settings.cc_dir = Some(path);
                             }
                         }
@@ -34,11 +35,11 @@ impl UddConvApp {
                         ui.end_row();
 
                         ui.label("Enhanced Client (EC):");
-                        if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_title("Select Enhanced Client (EC) Directory")
-                                .pick_folder()
-                            {
+                        if ui.button("Select Folder...").clicked() {
+                            if let Some(path) = pick_folder(
+                                "Select Enhanced Client (EC) Directory",
+                                self.settings.ec_dir.as_deref(),
+                            ) {
                                 self.settings.ec_dir = Some(path);
                             }
                         }
@@ -54,11 +55,11 @@ impl UddConvApp {
 
                         ui.label("Input UDDP Folder:");
                         ui.horizontal(|ui| {
-                            if ui.button("Select...").clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .set_title("Select Input UDDP Folder")
-                                    .pick_folder()
-                                {
+                            if ui.button("Select Folder...").clicked() {
+                                if let Some(path) = pick_folder(
+                                    "Select Input UDDP Folder",
+                                    Some(&self.settings.input_uddp_dir),
+                                ) {
                                     self.settings.input_uddp_dir = path.clone();
                                     if self.settings.link_uddp_dirs {
                                         self.settings.output_uddp_dir = path;
@@ -72,11 +73,11 @@ impl UddConvApp {
 
                         ui.label("Output UDDP Folder:");
                         ui.add_enabled_ui(!self.settings.link_uddp_dirs, |ui| {
-                            if ui.button("Select...").clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .set_title("Select Output UDDP Folder")
-                                    .pick_folder()
-                                {
+                            if ui.button("Select Folder...").clicked() {
+                                if let Some(path) = pick_folder(
+                                    "Select Output UDDP Folder",
+                                    Some(&self.settings.output_uddp_dir),
+                                ) {
                                     self.settings.output_uddp_dir = path;
                                 }
                             }
@@ -90,4 +91,12 @@ impl UddConvApp {
             ui.label("Atlas size and gutter are automatically managed for optimal compatibility.");
         });
     }
+}
+
+fn pick_folder(title: &str, current: Option<&Path>) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    if let Some(current) = current.filter(|path| path.is_dir()) {
+        dialog = dialog.set_directory(current);
+    }
+    dialog.pick_folder()
 }
