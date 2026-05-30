@@ -295,7 +295,6 @@ impl UddConvApp {
                         &output,
                         &TileMetaBuildOptions {
                             adjust_tex_art_ec_sampling: false,
-                            adjust_tex_art_ec_draw_offsets: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                         },
@@ -309,7 +308,6 @@ impl UddConvApp {
                         &output,
                         &TileMetaBuildOptions {
                             adjust_tex_art_ec_sampling: false,
-                            adjust_tex_art_ec_draw_offsets: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                         },

@@ -48,8 +48,6 @@ pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
     /// start coordinates so they remain aligned with the shared EC texture pass.
     pub adjust_tex_art_ec_sampling: bool,
-    /// Deprecated no-op. Art draw offsets are stored in tex_art_* slot records.
-    pub adjust_tex_art_ec_draw_offsets: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
@@ -482,13 +480,9 @@ fn build_tilemeta_tables_from_resolved_paths(
             ec_texture_id: 0,
             ec_start_x: 0,
             ec_start_y: 0,
-            ec_offset_x: 0,
-            ec_offset_y: 0,
             cc_texture_id: tile.tile_id as u32,
             cc_start_x: 0,
             cc_start_y: 0,
-            cc_offset_x: 0,
-            cc_offset_y: 0,
         };
 
         let ref_start = u32::try_from(item_texture_refs.len())
@@ -676,25 +670,6 @@ pub fn adjusted_ec_sampling_start(
         })?,
         i16::try_from(adjusted_y).map_err(|_| {
             eyre::eyre!("tile {texture_id} adjusted EC start_y {adjusted_y} does not fit in i16")
-        })?,
-    ))
-}
-
-pub fn adjusted_ec_draw_offset(
-    texture_id: u32,
-    offset_x: i32,
-    offset_y: i32,
-    adjustment: Option<TexArtEcCropAdjustment>,
-) -> eyre::Result<(i16, i16)> {
-    let adjusted_x = offset_x + adjustment.map_or(0, |adjustment| i32::from(adjustment.trim_left));
-    let adjusted_y =
-        offset_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.trim_bottom));
-    Ok((
-        i16::try_from(adjusted_x).map_err(|_| {
-            eyre::eyre!("tile {texture_id} adjusted EC offset_x {adjusted_x} does not fit in i16")
-        })?,
-        i16::try_from(adjusted_y).map_err(|_| {
-            eyre::eyre!("tile {texture_id} adjusted EC offset_y {adjusted_y} does not fit in i16")
         })?,
     ))
 }

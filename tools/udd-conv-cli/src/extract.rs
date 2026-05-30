@@ -365,12 +365,12 @@ fn extract_tilemeta(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> 
     }
     write_text_file(&out_dir.join("land_tiles.csv"), &land_csv)?;
 
-    let mut item_csv = String::from("tile_id,weight,quality,quantity,hue_extra,flags,anim_id,stacking_offset,value,height,radar_r,radar_g,radar_b,radar_a,name,ec_texture_id,ec_start_x,ec_start_y,ec_offset_x,ec_offset_y,cc_texture_id,cc_start_x,cc_start_y,cc_offset_x,cc_offset_y\n");
+    let mut item_csv = String::from("tile_id,weight,quality,quantity,hue_extra,flags,anim_id,stacking_offset,value,height,radar_r,radar_g,radar_b,radar_a,name,ec_texture_id,ec_start_x,ec_start_y,cc_texture_id,cc_start_x,cc_start_y\n");
     for tile in package.item_tiles() {
         pb.inc(1);
         writeln!(
             item_csv,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             tile.tile_id,
             tile.weight,
             tile.quality,
@@ -389,13 +389,9 @@ fn extract_tilemeta(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool> 
             tile.ec_texture_id,
             tile.ec_start_x,
             tile.ec_start_y,
-            tile.ec_offset_x,
-            tile.ec_offset_y,
             tile.cc_texture_id,
             tile.cc_start_x,
-            tile.cc_start_y,
-            tile.cc_offset_x,
-            tile.cc_offset_y
+            tile.cc_start_y
         )
         .unwrap();
     }

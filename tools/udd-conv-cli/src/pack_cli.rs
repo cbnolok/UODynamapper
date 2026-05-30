@@ -906,8 +906,6 @@ enum Commands {
         zstd: Option<i32>,
         #[arg(long, default_value_t = false)]
         ec_art_cropped: bool,
-        #[arg(long = "ec-art-trimmed-draw-offsets", default_value_t = false, help = "Adjust EC draw offsets for tex_art_ec atlases built with --art-crop-transparent-bounds.")]
-        ec_art_trimmed_draw_offsets: bool,
         #[arg(long, default_value_t = false)]
         use_ec_radarcol: bool,
     },
@@ -1449,7 +1447,6 @@ pub fn run() -> eyre::Result<()> {
                     tilemeta_out_file,
                     &TileMetaBuildOptions {
                         adjust_tex_art_ec_sampling: tilemeta_ec_art_cropped,
-                        adjust_tex_art_ec_draw_offsets: art_crop_transparent_bounds,
                         use_ec_radarcol: tilemeta_use_ec_radarcol,
                         classic_patches: classic_patches.into(),
                     },
@@ -1585,14 +1582,12 @@ pub fn run() -> eyre::Result<()> {
             output,
             zstd: _,
             ec_art_cropped,
-            ec_art_trimmed_draw_offsets,
             use_ec_radarcol,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             let options = TileMetaBuildOptions {
                 adjust_tex_art_ec_sampling: ec_art_cropped,
-                adjust_tex_art_ec_draw_offsets: ec_art_trimmed_draw_offsets,
                 use_ec_radarcol,
                 classic_patches: classic_patches.into(),
             };
@@ -1998,7 +1993,6 @@ mod tests {
                 classic_patches,
                 output,
                 ec_art_cropped,
-                ec_art_trimmed_draw_offsets,
                 use_ec_radarcol,
                 ..
             } => {
@@ -2009,7 +2003,6 @@ mod tests {
                 assert!(!classic_patches.include_static_difs);
                 assert_eq!(output, PathBuf::from("tilemeta.uddp"));
                 assert!(!ec_art_cropped);
-                assert!(!ec_art_trimmed_draw_offsets);
                 assert!(!use_ec_radarcol);
             }
             _ => panic!("unexpected command parsed"),

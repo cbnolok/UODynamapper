@@ -61,7 +61,7 @@ Represents terrain data.
 | 0x10 | `[u8; 4]` | `radar_color` | RGBA values representing minimap colors. |
 | 0x14 | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 
-### 2.2 `TileMetaItemTile` Struct (80 Bytes, 8-Byte Aligned)
+### 2.2 `TileMetaItemTile` Struct (64 Bytes, 8-Byte Aligned)
 
 Represents static map items and artwork.
 
@@ -84,13 +84,9 @@ Represents static map items and artwork.
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
 | 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
 | 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
-| 0x38 | `i16` | `ec_offset_x` | Reserved legacy EC draw offset. Runtime art placement reads `tex_art_ec` slot metadata instead. |
-| 0x3A | `i16` | `ec_offset_y` | Reserved legacy EC draw offset. Runtime art placement reads `tex_art_ec` slot metadata instead. |
-| 0x3C | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
-| 0x40 | `i16` | `cc_start_x` | X bounding box start for CC. |
-| 0x42 | `i16` | `cc_start_y` | Y bounding box start for CC. |
-| 0x44 | `i16` | `cc_offset_x` | Reserved legacy CC draw offset. Runtime art placement reads `tex_art_cc` slot metadata instead. |
-| 0x46 | `i16` | `cc_offset_y` | Reserved legacy CC draw offset. Runtime art placement reads `tex_art_cc` slot metadata instead. |
+| 0x38 | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
+| 0x3C | `i16` | `cc_start_x` | X bounding box start for CC. |
+| 0x3E | `i16` | `cc_start_y` | Y bounding box start for CC. |
 
 When `tilemeta.uddp` is generated for the historical cropped EC-static layout, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped source payload. Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec.uddp`.
 

@@ -79,13 +79,9 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         ec_texture_id: 100,
         ec_start_x: 101,
         ec_start_y: 102,
-        ec_offset_x: 103,
-        ec_offset_y: 104,
         cc_texture_id: 200,
         cc_start_x: 201,
         cc_start_y: 202,
-        cc_offset_x: 203,
-        cc_offset_y: 204,
     };
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -145,26 +141,6 @@ fn tilemeta_crop_adjustment_shifts_ec_sampling_start_only() {
     .expect("adjust EC sampling start");
 
     assert_eq!(adjusted, (7, 11));
-}
-
-#[test]
-fn tilemeta_crop_adjustment_shifts_ec_draw_offset_to_trimmed_visual_bounds() {
-    let adjusted = adjusted_ec_draw_offset(
-        42,
-        12,
-        18,
-        Some(TexArtEcCropAdjustment {
-            source_left: 5,
-            source_top: 7,
-            trim_left: 2,
-            trim_top: 3,
-            trim_right: 4,
-            trim_bottom: 6,
-        }),
-    )
-    .expect("adjust EC draw offset");
-
-    assert_eq!(adjusted, (14, 12));
 }
 
 #[test]

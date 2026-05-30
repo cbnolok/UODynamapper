@@ -205,14 +205,10 @@ pub struct TileMetaItemTile {
     pub ec_texture_id: u32,
     pub ec_start_x: i16,
     pub ec_start_y: i16,
-    pub ec_offset_x: i16,
-    pub ec_offset_y: i16,
 
     pub cc_texture_id: u32,
     pub cc_start_x: i16,
     pub cc_start_y: i16,
-    pub cc_offset_x: i16,
-    pub cc_offset_y: i16,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
