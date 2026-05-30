@@ -84,6 +84,56 @@ impl Iterator for ModeHistoryRecent<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RelativeCandidate {
+    src_ofs: u8,
+    dst_ofs: u8,
+    dist_index: u8,
+}
+
+struct RelativeCandidateLayout {
+    candidates_by_len: [Vec<RelativeCandidate>; 17],
+    candidate_count_by_len: [u64; 17],
+    skipped_offsets_by_len: [u64; 17],
+}
+
+impl RelativeCandidateLayout {
+    fn new(max_relative_delta: usize) -> Self {
+        let mut candidate_count_by_len = [0u64; 17];
+        let mut skipped_offsets_by_len = [0u64; 17];
+        let candidates_by_len = std::array::from_fn(|len| {
+            let mut candidates = Vec::new();
+            if !(3..=16).contains(&len) {
+                return candidates;
+            }
+
+            for src_ofs in 0usize..=(16 - len) {
+                let full_dst_count = 17 - len;
+                let dst_start = src_ofs.saturating_sub(max_relative_delta);
+                let dst_end = (src_ofs + max_relative_delta).min(16 - len);
+                let dst_count = dst_end - dst_start + 1;
+                skipped_offsets_by_len[len] += (full_dst_count - dst_count) as u64;
+
+                for dst_ofs in dst_start..=dst_end {
+                    candidates.push(RelativeCandidate {
+                        src_ofs: src_ofs as u8,
+                        dst_ofs: dst_ofs as u8,
+                        dist_index: (dst_ofs as i32 - src_ofs as i32 + 15) as u8,
+                    });
+                }
+            }
+            candidate_count_by_len[len] = candidates.len() as u64;
+            candidates
+        });
+
+        Self {
+            candidates_by_len,
+            candidate_count_by_len,
+            skipped_offsets_by_len,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Bc7RdoParams {
     pub lambda: f32,
@@ -343,6 +393,11 @@ fn reduce_entropy_bc7_impl_with_progress(
     let mut previous_blocks_by_mode = (0..8)
         .map(|_| ModeHistory::with_capacity(history_capacity))
         .collect::<Vec<_>>();
+    let relative_candidate_layout = if params.allow_relative_movement {
+        Some(RelativeCandidateLayout::new(params.relative_movement_max_offset_delta.min(15)))
+    } else {
+        None
+    };
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
     //   prev_cont_window_ofs: source-window offset just past the last accepted match end.
@@ -403,7 +458,9 @@ fn reduce_entropy_bc7_impl_with_progress(
 
         if params.allow_relative_movement {
             // ── Main search window: full relative-offset search ──
-            let max_relative_delta = params.relative_movement_max_offset_delta.min(15);
+            let relative_candidate_layout = relative_candidate_layout
+                .as_ref()
+                .expect("relative candidate layout exists when relative movement is enabled");
             let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
             let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
             let mut relative_previous_blocks_checked = 0usize;
@@ -425,101 +482,97 @@ fn reduce_entropy_bc7_impl_with_progress(
                 let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
                 if let Some(stats) = stats.as_deref_mut() {
                     for len in 3..min_relative_match_len {
-                        stats.relative_length_skips += relative_offset_candidate_count(len, max_relative_delta) as u64;
+                        stats.relative_length_skips += relative_candidate_layout.candidate_count_by_len[len];
                     }
                 }
                 for len in (min_relative_match_len..=16).rev() {
                     let len_bits = match_len_bits[len];
-                    for src_ofs in 0usize..=(16 - len) {
-                        let full_dst_count = 17 - len;
-                        let dst_start = src_ofs.saturating_sub(max_relative_delta);
-                        let dst_end = (src_ofs + max_relative_delta).min(16 - len);
+                    if let Some(stats) = stats.as_deref_mut() {
+                        stats.relative_offset_skips += relative_candidate_layout.skipped_offsets_by_len[len];
+                    }
+                    for candidate in &relative_candidate_layout.candidates_by_len[len] {
+                        let src_ofs = candidate.src_ofs as usize;
+                        let dst_ofs = candidate.dst_ofs as usize;
                         if let Some(stats) = stats.as_deref_mut() {
-                            stats.relative_offset_skips += (full_dst_count - (dst_end - dst_start + 1)) as u64;
+                            stats.candidate_checks += 1;
                         }
-                        for dst_ofs in dst_start..=dst_end {
+                        let mb = relative_dist_bits[candidate.dist_index as usize] as f32 + len_bits;
+                        let trial_bits = literal_bits_by_match_len[len] + mb;
+                        let trial_bits_times_lambda = trial_bits * params.lambda;
+                        if trial_bits_times_lambda >= best_t {
                             if let Some(stats) = stats.as_deref_mut() {
-                                stats.candidate_checks += 1;
+                                stats.rate_skips += 1;
                             }
-                            let relative_dist_index = (dst_ofs as i32 - src_ofs as i32 + 15) as usize;
-                            let mb = relative_dist_bits[relative_dist_index] as f32 + len_bits;
-                            let trial_bits = literal_bits_by_match_len[len] + mb;
-                            let trial_bits_times_lambda = trial_bits * params.lambda;
-                            if trial_bits_times_lambda >= best_t {
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.rate_skips += 1;
-                                }
-                                continue;
-                            }
+                            continue;
+                        }
 
-                            // Hash check to skip redundant trials
-                            let hs = hash_hsieh_bc7_segment_bits(prev_bits, src_ofs, len, dst_ofs as u32);
-                            let hash_check = hash_table[hs as usize & hash_mask];
-                            if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
-                                && (hash_check >> 8) == (hs >> 8) {
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.hash_skips += 1;
-                                }
-                                continue;
-                            }
-                            hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
-
-                            if bc7_segments_equal(prev_bits, orig_bits, src_ofs, dst_ofs, len) {
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.original_block_skips += 1;
-                                }
-                                let trial_ms_err = cur_ms_err;
-                                if trial_ms_err < thresh_ms_err {
-                                    let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
-                                    if t < best_t {
-                                        best_t = t; best_block = orig_blk;
-                                        best_ms_err = trial_ms_err;
-                                        best_match_len = len; best_match_dst_block_ofs = dst_ofs;
-                                        best_match_bits = mb;
-                                        if let Some(stats) = stats.as_deref_mut() {
-                                            stats.accepted_matches += 1;
-                                        }
-                                    }
-                                }
-                                continue;
-                            }
-                            let trial_blk =
-                                bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
-                            let trust_mode_hint = dst_ofs > 0;
-                            if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.unsupported_mode_trials += 1;
-                                }
-                                continue;
-                            }
+                        // Hash check to skip redundant trials
+                        let hs = hash_hsieh_bc7_segment_bits(prev_bits, src_ofs, len, dst_ofs as u32);
+                        let hash_check = hash_table[hs as usize & hash_mask];
+                        if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
+                            && (hash_check >> 8) == (hs >> 8) {
                             if let Some(stats) = stats.as_deref_mut() {
-                                stats.decode_trials += 1;
+                                stats.hash_skips += 1;
                             }
-                            let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
-                            let Some(trial_err) = decode_bc7_error_bounded(
-                                &trial_blk,
-                                p_pixels,
-                                bc7_mode,
-                                trust_mode_hint,
-                                max_trial_err,
-                                stats.as_deref_mut(),
-                            ) else {
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.bounded_error_exits += 1;
-                                }
-                                continue;
-                            };
-                            let trial_ms_err = trial_err as f32 / 64.0;
+                            continue;
+                        }
+                        hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
+
+                        if bc7_segments_equal(prev_bits, orig_bits, src_ofs, dst_ofs, len) {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.original_block_skips += 1;
+                            }
+                            let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_block = trial_blk;
+                                    best_t = t; best_block = orig_blk;
                                     best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
                                     if let Some(stats) = stats.as_deref_mut() {
                                         stats.accepted_matches += 1;
                                     }
+                                }
+                            }
+                            continue;
+                        }
+                        let trial_blk =
+                            bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
+                        let trust_mode_hint = dst_ofs > 0;
+                        if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.unsupported_mode_trials += 1;
+                            }
+                            continue;
+                        }
+                        if let Some(stats) = stats.as_deref_mut() {
+                            stats.decode_trials += 1;
+                        }
+                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                        let Some(trial_err) = decode_bc7_error_bounded(
+                            &trial_blk,
+                            p_pixels,
+                            bc7_mode,
+                            trust_mode_hint,
+                            max_trial_err,
+                            stats.as_deref_mut(),
+                        ) else {
+                            if let Some(stats) = stats.as_deref_mut() {
+                                stats.bounded_error_exits += 1;
+                            }
+                            continue;
+                        };
+                        let trial_ms_err = trial_err as f32 / 64.0;
+                        if trial_ms_err < thresh_ms_err {
+                            let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                            if t < best_t {
+                                best_t = t; best_block = trial_blk;
+                                best_ms_err = trial_ms_err;
+                                best_match_len = len; best_match_dst_block_ofs = dst_ofs;
+                                best_match_bits = mb;
+                                if let Some(stats) = stats.as_deref_mut() {
+                                    stats.accepted_matches += 1;
                                 }
                             }
                         }
@@ -1626,16 +1679,6 @@ fn compute_relative_dist_costs(base_dist: u32) -> [u32; 31] {
         *cost = compute_dist_cost_estimate(dist);
     }
     costs
-}
-
-fn relative_offset_candidate_count(len: usize, max_relative_delta: usize) -> usize {
-    let mut count = 0usize;
-    for src_ofs in 0usize..=(16 - len) {
-        let dst_start = src_ofs.saturating_sub(max_relative_delta);
-        let dst_end = (src_ofs + max_relative_delta).min(16 - len);
-        count += dst_end - dst_start + 1;
-    }
-    count
 }
 
 fn compute_match_len_bits() -> [f32; 17] {
