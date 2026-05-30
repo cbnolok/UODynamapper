@@ -100,10 +100,6 @@ impl GumpMapRes {
     }
 }
 
-/// Optional Classic Client hues.
-#[derive(Resource)]
-pub struct ClassicHuesRes(pub Arc<Vec<uocf::classic::hues::HueEntry>>);
-
 /// Optional Classic Client bitmap fonts.
 #[derive(Resource)]
 pub struct ClassicFontsRes(pub Arc<uocf::classic::fonts::ClassicFonts>);
@@ -428,23 +424,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         load_classic_gumps()
     };
 
-    let hues_path = resolve_optional_uddp_path(&udd_path, "hues.mul");
-    let classic_hues = if let Some(hues_path) = hues_path {
-        match uocf::classic::hues::load_hues(&hues_path) {
-            Ok(hues) => {
-                lg(&format!("Loaded Classic Client hues from {}.", hues_path.display()));
-                Some(hues)
-            }
-            Err(error) => {
-                lg_err(&format!("Failed to load Classic Client hues: {error}"));
-                None
-            }
-        }
-    } else {
-        lg("No Classic Client hues source selected: hues.mul not found in udd_path.");
-        None
-    };
-
     let classic_fonts = match uocf::classic::fonts::ClassicFonts::load(&udd_path) {
         Ok(fonts) => {
             lg(&format!(
@@ -594,9 +573,6 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(gump_map) = gump_map {
         commands.insert_resource(gump_map);
-    }
-    if let Some(classic_hues) = classic_hues {
-        commands.insert_resource(ClassicHuesRes(Arc::new(classic_hues)));
     }
     if let Some(classic_fonts) = classic_fonts {
         commands.insert_resource(ClassicFontsRes(Arc::new(classic_fonts)));

@@ -1,6 +1,6 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleGumpDialog};
 use crate::core::render::scene::camera::UiCameraResource;
-use crate::core::uo_files_loader::{ClassicHuesRes, GumpMapRes, TileMetaPackageRes};
+use crate::core::uo_files_loader::{GumpMapRes, HuesPackageRes, TileMetaPackageRes};
 use crate::ingame_sysmessage_logger;
 use crate::{
     core::constants,
@@ -630,7 +630,7 @@ fn sys_render_gump_dialog(
     egui_ui_camera: Res<UiCameraResource>,
     gump_map: Option<Res<GumpMapRes>>,
     tilemeta: Option<Res<TileMetaPackageRes>>,
-    classic_hues: Option<Res<ClassicHuesRes>>,
+    hues_package: Option<Res<HuesPackageRes>>,
     paperdoll_profiles: Res<PaperdollProfilesRes>,
     wearable_rules: Res<PaperdollWearableRulesRes>,
     mut images: ResMut<Assets<Image>>,
@@ -702,7 +702,7 @@ fn sys_render_gump_dialog(
             &mut state,
             gump_map.as_deref(),
             tilemeta.as_deref(),
-            classic_hues.as_deref(),
+            hues_package.as_deref(),
             &paperdoll_profiles,
             &wearable_rules,
             &mut images,
@@ -848,7 +848,7 @@ fn open_paperdoll(
     state: &mut GumpDialogState,
     gump_map: Option<&GumpMapRes>,
     tilemeta: Option<&TileMetaPackageRes>,
-    classic_hues: Option<&ClassicHuesRes>,
+    hues_package: Option<&HuesPackageRes>,
     paperdoll_profiles: &PaperdollProfilesRes,
     wearable_rules: &PaperdollWearableRulesRes,
     images: &mut Assets<Image>,
@@ -948,7 +948,7 @@ fn open_paperdoll(
 
     layers[1..].sort_by_key(|layer| layer.sort_key);
 
-    let gump = match compose_paperdoll(gump_map, classic_hues, profile, &layers) {
+    let gump = match compose_paperdoll(gump_map, hues_package, profile, &layers) {
         Ok(composed) => composed,
         Err(error) => {
             ingame_sysmessage_logger::error(format!("Could not compose paperdoll: {error}"));
@@ -988,10 +988,22 @@ fn parse_optional_hue(text: &str) -> u16 {
 
 fn compose_paperdoll(
     gump_map: &GumpMapRes,
-    classic_hues: Option<&ClassicHuesRes>,
+    hues_package: Option<&HuesPackageRes>,
     profile: &PaperdollProfile,
     layers: &[PaperdollLayer],
 ) -> color_eyre::eyre::Result<udd_assets::gumps::GumpImage> {
+    let hue_texture_bytes = if layers.iter().any(|layer| layer.hue_id > 0) {
+        let package = hues_package
+            .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp is not loaded."))?;
+        Some(
+            package
+                .0
+                .read_texture_bytes()
+                .map_err(|error| color_eyre::eyre::eyre!("Could not read hues.uddp texture: {error}"))?,
+        )
+    } else {
+        None
+    };
     let mut decoded_layers = Vec::with_capacity(layers.len());
     let mut scratch = Vec::new();
     let mut min_x = 0i32;
@@ -1002,7 +1014,13 @@ fn compose_paperdoll(
     for layer in layers {
         let mut gump = gump_map.decode_gump(layer.gump_id, &mut scratch)?;
         if layer.hue_id > 0 {
-            apply_hue(&mut gump.rgba, classic_hues, layer.hue_id, layer.partial_hue)?;
+            apply_hue(
+                &mut gump.rgba,
+                hues_package,
+                hue_texture_bytes.as_deref(),
+                layer.hue_id,
+                layer.partial_hue,
+            )?;
         }
         min_x = min_x.min(layer.x);
         min_y = min_y.min(layer.y);
@@ -1082,13 +1100,19 @@ fn resize_rgba_nearest(
 
 fn apply_hue(
     pixels: &mut [u8],
-    classic_hues: Option<&ClassicHuesRes>,
+    hues_package: Option<&HuesPackageRes>,
+    hue_texture_bytes: Option<&[u8]>,
     hue_id: u16,
     partial_hue: bool,
 ) -> color_eyre::eyre::Result<()> {
-    let hue = classic_hues
-        .and_then(|hues| hues.0.get(hue_id.saturating_sub(1) as usize))
+    let package = hues_package
+        .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp is not loaded."))?;
+    package
+        .0
+        .texture_coord_for_hue(hue_id)
         .ok_or_else(|| color_eyre::eyre::eyre!("Hue {hue_id} is not loaded."))?;
+    let hue_texture_bytes = hue_texture_bytes
+        .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp texture is not loaded."))?;
 
     for pixel in pixels.chunks_exact_mut(4) {
         if pixel[3] == 0 {
@@ -1098,18 +1122,28 @@ fn apply_hue(
             continue;
         }
 
-        let intensity = (((pixel[0] as u16 >> 3)
-            + (pixel[1] as u16 >> 3)
-            + (pixel[2] as u16 >> 3))
-            / 3)
-            .min(31) as usize;
-        let color = hue.color_table[intensity];
-        pixel[0] = (((color >> 10) & 0x1F) as u8) << 3;
-        pixel[1] = (((color >> 5) & 0x1F) as u8) << 3;
-        pixel[2] = ((color & 0x1F) as u8) << 3;
+        let intensity = ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as u8;
+        let color = sample_hue_lookup(hue_texture_bytes, hue_id, intensity)
+            .ok_or_else(|| color_eyre::eyre::eyre!("Hue {hue_id} lookup is outside hues.uddp."))?;
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
     }
 
     Ok(())
+}
+
+fn sample_hue_lookup(texture_bytes: &[u8], hue_id: u16, intensity: u8) -> Option<[u8; 4]> {
+    let coord = uocf::enhanced::hues::atlas_coord_for_hue(hue_id)?;
+    let x = coord.x + u32::from(intensity).min(udd_assets::hues::HUE_STRIP_WIDTH - 1);
+    let y = coord.y;
+    if x >= udd_assets::hues::HUES_TEXTURE_WIDTH || y >= udd_assets::hues::HUES_TEXTURE_HEIGHT {
+        return None;
+    }
+
+    let offset = ((y * udd_assets::hues::HUES_TEXTURE_WIDTH + x) * 4) as usize;
+    let color = texture_bytes.get(offset..offset.checked_add(4)?)?;
+    Some([color[0], color[1], color[2], color[3]])
 }
 
 fn alpha_blend_at(

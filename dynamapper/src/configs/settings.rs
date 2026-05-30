@@ -256,8 +256,6 @@ pub struct SectGraphics {
     pub art_texture_source: ClientTextureSource,
     #[serde(default = "default_client_texture_source")]
     pub land_texture_source: ClientTextureSource,
-    #[serde(default)]
-    pub hue_source: HueSourcePreference,
     pub sharpening_strength: f32, // 0.0 to 1.0
 }
 
@@ -295,27 +293,6 @@ impl ClientTextureSource {
         match self {
             Self::Cc => "Classic (tex_land_cc.uddp)",
             Self::Ec => "Enhanced (tex_land_ec.uddp)",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
-pub enum HueSourcePreference {
-    #[default]
-    #[serde(rename = "auto")]
-    Auto,
-    #[serde(rename = "cc")]
-    Cc,
-    #[serde(rename = "ec")]
-    Ec,
-}
-
-impl HueSourcePreference {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "Auto",
-            Self::Cc => "Classic",
-            Self::Ec => "Enhanced",
         }
     }
 }

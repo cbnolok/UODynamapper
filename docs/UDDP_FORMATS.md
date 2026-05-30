@@ -185,7 +185,7 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 ## 4. `world_lights.uddp`
 
-This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime unless the placed static has a nonzero hue id, in which case the runtime can recolor the mask from `hues.uddp` or `hues.mul`.
+This package stores decoded light masks from Classic `light.mul`/`lightidx.mul` and optional EC light textures. `dynamapper` loads it when present and uses tilemeta light-source statics to place additive world light decals. Classic light masks are grayscale; colored EC light payloads keep their stored RGB at runtime unless the placed static has a nonzero hue id, in which case the runtime recolors the mask from `hues.uddp`. The `hues.uddp` package is the single runtime hue source and may be built from Classic `hues.mul` or EC `hues.uop`.
 
 **Virtual Files:**
 

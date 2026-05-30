@@ -11,6 +11,10 @@ use udd_assets::hues::{
 };
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::hues::{load_hues, HueEntry};
+use uocf::enhanced::hues::{
+    atlas_coord_for_hue, decode_hue_image_to_rgba, EcHuePackage, HUES_UOP_NAME,
+};
+use uocf::uop_container::package::{LoadMode, UopPackage};
 
 const BLUR_RADIUS: usize = 6;
 const BLUR_ALPHA_TABLE: [u32; 17] = [14, 10, 8, 6, 5, 5, 4, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2];
@@ -38,6 +42,22 @@ pub fn convert_hues_mul_to_hues_uddp_from_sources(
     convert_hues_mul_to_hues_uddp(&hues_path, out_file, options)
 }
 
+pub fn convert_hues_to_hues_uddp_from_sources(
+    source_dirs: &[PathBuf],
+    out_file: &Path,
+    options: &HuesOptions,
+) -> eyre::Result<()> {
+    if let Some(hues_path) = find_first_existing_file(source_dirs, &["hues.mul"]) {
+        println!("Using CC hues source file: {}", hues_path.display());
+        return convert_hues_mul_to_hues_uddp(&hues_path, out_file, options);
+    }
+
+    let hues_path = find_first_existing_file(source_dirs, &[HUES_UOP_NAME])
+        .ok_or_else(|| eyre::eyre!("missing hues.mul or hues.uop"))?;
+    println!("Using EC hues source file: {}", hues_path.display());
+    convert_hues_uop_to_hues_uddp(&hues_path, out_file, options)
+}
+
 pub fn convert_hues_mul_to_hues_uddp(
     hues_mul_path: &Path,
     out_file: &Path,
@@ -46,8 +66,29 @@ pub fn convert_hues_mul_to_hues_uddp(
     info!("Converting hues.mul to {}", out_file.display());
     let hues = load_hues(hues_mul_path).wrap_err("failed to load hues.mul")?;
     let (records, texture_bytes) = build_hues_texture_and_records(&hues)?;
-    let csv_bytes = encode_hues_csv(&records)?;
+    write_hues_uddp(&records, &texture_bytes, out_file, options)
+}
 
+pub fn convert_hues_uop_to_hues_uddp(
+    hues_uop_path: &Path,
+    out_file: &Path,
+    options: &HuesOptions,
+) -> eyre::Result<()> {
+    info!("Converting hues.uop to {}", out_file.display());
+    let mut package =
+        UopPackage::load_with_mode(hues_uop_path, LoadMode::Lazy).wrap_err("failed to load hues.uop")?;
+    let ec_hues = EcHuePackage::from_package(&package).wrap_err("failed to index hues.uop")?;
+    let (records, texture_bytes) = build_ec_hues_texture_and_records(&mut package, &ec_hues)?;
+    write_hues_uddp(&records, &texture_bytes, out_file, options)
+}
+
+fn write_hues_uddp(
+    records: &[HueSlotRecord],
+    texture_bytes: &[u8],
+    out_file: &Path,
+    options: &HuesOptions,
+) -> eyre::Result<()> {
+    let csv_bytes = encode_hues_csv(records)?;
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package
         .add_file(AddFileRequest {
@@ -76,6 +117,41 @@ pub fn convert_hues_mul_to_hues_uddp(
 
     build_and_write_package(&mut package, out_file)?;
     Ok(())
+}
+
+fn build_ec_hues_texture_and_records(
+    package: &mut UopPackage,
+    ec_hues: &EcHuePackage,
+) -> eyre::Result<(Vec<HueSlotRecord>, Vec<u8>)> {
+    let mut texture_bytes = vec![0u8; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * 4];
+    let mut records = Vec::new();
+
+    for entry in &ec_hues.bitmaps {
+        let coord = atlas_coord_for_hue(entry.hue_id)
+            .ok_or_else(|| eyre::eyre!("failed to compute atlas coord for hue {}", entry.hue_id))?;
+        let bytes = package
+            .unpack_file_by_hash_cached(entry.filename_hash)
+            .wrap_err_with(|| format!("failed to unpack EC hue {}", entry.hue_id))?
+            .ok_or_else(|| eyre::eyre!("missing EC hue bitmap {}", entry.hue_id))?;
+        let (width, height, pixels) = decode_hue_image_to_rgba(&bytes)
+            .wrap_err_with(|| format!("failed to decode EC hue bitmap {}", entry.hue_id))?;
+        let row = build_palette_row_from_rgba_image(width, height, &pixels)?;
+        blit_palette_row(&mut texture_bytes, coord.x, coord.y, &row)?;
+
+        records.push(HueSlotRecord {
+            hue_id: entry.hue_id,
+            name: ec_hues.hue_name(entry.hue_id).unwrap_or("").to_string(),
+            table_start: 0,
+            table_end: (HUE_STRIP_WIDTH - 1) as u16,
+            texture_column: coord.column,
+            texture_row: coord.row,
+            palette_width_pixels: HUE_STRIP_WIDTH,
+            flags: HUE_FLAG_PRESENT,
+        });
+    }
+
+    records.sort_by_key(|record| record.hue_id);
+    Ok((records, texture_bytes))
 }
 
 fn build_hues_texture_and_records(hues: &[HueEntry]) -> eyre::Result<(Vec<HueSlotRecord>, Vec<u8>)> {
@@ -123,6 +199,40 @@ fn build_palette_row_rgba(color_table: &[u16; 32]) -> Vec<u8> {
         }
     }
     out
+}
+
+fn build_palette_row_from_rgba_image(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+) -> eyre::Result<Vec<u8>> {
+    if width == 0 || height == 0 {
+        eyre::bail!("EC hue bitmap has empty dimensions");
+    }
+    let expected_len = width as usize * height as usize * 4;
+    if pixels.len() != expected_len {
+        eyre::bail!(
+            "EC hue bitmap has {} bytes, expected {} for {}x{} RGBA",
+            pixels.len(),
+            expected_len,
+            width,
+            height
+        );
+    }
+
+    let mut row = vec![0u8; HUE_STRIP_WIDTH as usize * 4];
+    let sample_y = height / 2;
+    for dst_x in 0..HUE_STRIP_WIDTH {
+        let src_x = if HUE_STRIP_WIDTH <= 1 {
+            0
+        } else {
+            dst_x * (width - 1) / (HUE_STRIP_WIDTH - 1)
+        };
+        let src_offset = ((sample_y * width + src_x) * 4) as usize;
+        let dst_offset = (dst_x * 4) as usize;
+        row[dst_offset..dst_offset + 4].copy_from_slice(&pixels[src_offset..src_offset + 4]);
+    }
+    Ok(row)
 }
 
 fn argb1555_to_rgba8888_exact(color16: u16) -> [u8; 4] {
@@ -307,5 +417,21 @@ mod tests {
         for pixel in strip.chunks_exact(4) {
             assert_eq!(pixel, &[255, 0, 0, 255]);
         }
+    }
+
+    #[test]
+    fn ec_hue_bitmap_row_is_resampled_to_lookup_strip() {
+        let pixels = vec![
+            1, 2, 3, 4,
+            5, 6, 7, 8,
+        ];
+
+        let row = build_palette_row_from_rgba_image(2, 1, &pixels).expect("build row");
+
+        assert_eq!(&row[..4], &[1, 2, 3, 4]);
+        assert_eq!(
+            &row[(HUE_STRIP_WIDTH as usize - 1) * 4..HUE_STRIP_WIDTH as usize * 4],
+            &[5, 6, 7, 8]
+        );
     }
 }

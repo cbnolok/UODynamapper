@@ -26,7 +26,7 @@ use udd_conv::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
         GUMPS_EC_DEFAULT_OUTPUT,
     },
-    hues::{convert_hues_mul_to_hues_uddp_from_sources, HuesOptions},
+    hues::{convert_hues_to_hues_uddp_from_sources, HuesOptions},
     mobile_anim_cc::{
         convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
@@ -990,7 +990,7 @@ enum Commands {
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
         zstd: Option<i32>,
     },
-    /// Packs Classic hues.mul into hues.uddp.
+    /// Packs Classic hues.mul or EC hues.uop into hues.uddp.
     PackHues {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -1814,7 +1814,7 @@ pub fn run() -> eyre::Result<()> {
             } else {
                 CompressionFlag::ZstdNoDict
             };
-            convert_hues_mul_to_hues_uddp_from_sources(
+            convert_hues_to_hues_uddp_from_sources(
                 &paths,
                 &out_file,
                 &HuesOptions { compression },
