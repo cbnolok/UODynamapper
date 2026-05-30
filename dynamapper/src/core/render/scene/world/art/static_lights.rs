@@ -37,10 +37,30 @@ enum StaticLightHueSourceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum StaticLightRenderStyle {
+    Classic,
+    Enhanced,
+    Kr,
+}
+
+#[derive(Clone, Copy)]
+struct StaticLightStyleProfile {
+    max_alpha: f32,
+    daylight_alpha: f32,
+    darkness_gamma: f32,
+    saturation: f32,
+    brightness: f32,
+    alpha_gamma: f32,
+    cool_edge_tint: f32,
+    mottle_strength: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct StaticLightMaterialKey {
     light_id: u32,
     hue_id: u16,
     hue_source: StaticLightHueSourceKind,
+    style: StaticLightRenderStyle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -261,12 +281,15 @@ pub fn sys_sync_static_light_entities(
     let mesh_handle = mesh_handle
         .get_or_insert_with(|| meshes.add(build_static_light_mesh()))
         .clone();
-    let material_alpha = static_light_alpha_for_global_lighting(uniform_state.global_lighting);
+    let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
+    let material_alpha =
+        static_light_alpha_for_global_lighting(uniform_state.global_lighting, render_style);
     for instance in &instances.0 {
         let Some(material_handle) = static_light_material(
             instance.key.graphic,
             instance.light_id,
             instance.hue_id,
+            render_style,
             material_alpha,
             &world_lights.0,
             hues_package_res.as_deref(),
@@ -282,7 +305,9 @@ pub fn sys_sync_static_light_entities(
             .with_scale(Vec3::new(instance.width_world, instance.height_world, 1.0));
 
         if let Some(entity) = existing_by_key.get(&instance.key) {
-            let _ = commands.entity(*entity).insert(transform);
+            let _ = commands
+                .entity(*entity)
+                .insert((transform, MeshMaterial3d(material_handle)));
         } else {
             commands.spawn((
                 Mesh3d(mesh_handle.clone()),
@@ -315,6 +340,7 @@ fn static_light_material(
     graphic: u16,
     light_id: u32,
     hue_id: u16,
+    render_style: StaticLightRenderStyle,
     material_alpha: f32,
     world_lights: &udd_assets::world_lights::WorldLightsPackage,
     hues_package: Option<&HuesPackageRes>,
@@ -332,6 +358,7 @@ fn static_light_material(
         light_id,
         hue_id: static_light_material_color_key(graphic, hue_id, hue_source_kind),
         hue_source: hue_source_kind,
+        style: render_style,
     };
     if let Some(handle) = material_cache.materials_by_key.get(&material_key) {
         return Some(handle.clone());
@@ -363,6 +390,7 @@ fn static_light_material(
             material_cache,
         );
         apply_static_light_hue(&mut rgba, hue_source);
+        apply_static_light_style(&mut rgba, slot.width as u32, slot.height as u32, render_style);
     }
 
     let mut image = Image::new(
@@ -394,8 +422,59 @@ fn static_light_material(
     Some(material_handle)
 }
 
-fn static_light_alpha_for_global_lighting(global_lighting: f32) -> f32 {
-    (1.0 - global_lighting).clamp(0.0, STATIC_LIGHT_ALPHA)
+impl StaticLightRenderStyle {
+    const fn from_shading_mode(shading_mode: u32) -> Self {
+        match shading_mode {
+            1 => Self::Enhanced,
+            2 => Self::Kr,
+            _ => Self::Classic,
+        }
+    }
+}
+
+fn static_light_style_profile(style: StaticLightRenderStyle) -> StaticLightStyleProfile {
+    match style {
+        StaticLightRenderStyle::Classic => StaticLightStyleProfile {
+            max_alpha: STATIC_LIGHT_ALPHA,
+            daylight_alpha: 0.0,
+            darkness_gamma: 1.0,
+            saturation: 1.05,
+            brightness: 1.0,
+            alpha_gamma: 1.0,
+            cool_edge_tint: 0.0,
+            mottle_strength: 0.0,
+        },
+        StaticLightRenderStyle::Enhanced => StaticLightStyleProfile {
+            max_alpha: 0.50,
+            daylight_alpha: 0.03,
+            darkness_gamma: 1.12,
+            saturation: 0.82,
+            brightness: 0.92,
+            alpha_gamma: 0.82,
+            cool_edge_tint: 0.0,
+            mottle_strength: 0.0,
+        },
+        StaticLightRenderStyle::Kr => StaticLightStyleProfile {
+            max_alpha: 0.42,
+            daylight_alpha: 0.0,
+            darkness_gamma: 1.35,
+            saturation: 0.70,
+            brightness: 0.82,
+            alpha_gamma: 1.22,
+            cool_edge_tint: 0.18,
+            mottle_strength: 0.16,
+        },
+    }
+}
+
+fn static_light_alpha_for_global_lighting(
+    global_lighting: f32,
+    style: StaticLightRenderStyle,
+) -> f32 {
+    let profile = static_light_style_profile(style);
+    let darkness = (1.0 - global_lighting).clamp(0.0, 1.0);
+    (profile.daylight_alpha + darkness.powf(profile.darkness_gamma))
+        .clamp(0.0, profile.daylight_alpha + profile.max_alpha)
 }
 
 fn static_light_base_color(alpha: f32) -> Color {
@@ -519,6 +598,70 @@ fn apply_static_light_hue(rgba: &mut [u8], source: StaticLightHueSource<'_>) {
             });
         }
     }
+}
+
+fn apply_static_light_style(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    style: StaticLightRenderStyle,
+) {
+    if style == StaticLightRenderStyle::Classic {
+        return;
+    }
+
+    let profile = static_light_style_profile(style);
+    for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+        if pixel[3] == 0 {
+            continue;
+        }
+
+        let alpha = f32::from(pixel[3]) / 255.0;
+        let luma = f32::from(linear_luma_u8(pixel[0], pixel[1], pixel[2])) / 255.0;
+        let mut rgb = [
+            f32::from(pixel[0]) / 255.0,
+            f32::from(pixel[1]) / 255.0,
+            f32::from(pixel[2]) / 255.0,
+        ];
+        for channel in &mut rgb {
+            *channel = (luma + (*channel - luma) * profile.saturation) * profile.brightness;
+        }
+
+        if profile.cool_edge_tint > 0.0 {
+            let edge = (1.0 - alpha).clamp(0.0, 1.0);
+            let cool = profile.cool_edge_tint * edge;
+            rgb[0] *= 1.0 - cool * 0.55;
+            rgb[1] *= 1.0 - cool * 0.20;
+            rgb[2] *= 1.0 + cool * 0.18;
+        }
+
+        let mut alpha_out = alpha.powf(profile.alpha_gamma);
+        if profile.mottle_strength > 0.0 && width > 0 && height > 0 {
+            let x = (index as u32) % width;
+            let y = ((index as u32) / width).min(height - 1);
+            let edge = (1.0 - alpha).clamp(0.0, 1.0);
+            let mottle = static_light_mottle(x, y);
+            alpha_out *= 1.0 - profile.mottle_strength * edge * mottle;
+            let shade = 1.0 - profile.mottle_strength * 0.35 * edge * mottle;
+            for channel in &mut rgb {
+                *channel *= shade;
+            }
+        }
+
+        pixel[0] = (rgb[0].clamp(0.0, 1.0) * 255.0) as u8;
+        pixel[1] = (rgb[1].clamp(0.0, 1.0) * 255.0) as u8;
+        pixel[2] = (rgb[2].clamp(0.0, 1.0) * 255.0) as u8;
+        pixel[3] = (alpha_out.clamp(0.0, 1.0) * 255.0) as u8;
+    }
+}
+
+fn static_light_mottle(x: u32, y: u32) -> f32 {
+    let hash = x
+        .wrapping_mul(0x8DA6_B343)
+        .wrapping_add(y.wrapping_mul(0xD816_3841))
+        .rotate_left(13)
+        ^ 0xA3C5_9AC3;
+    f32::from(((hash ^ (hash >> 16)) & 0xFF) as u8) / 255.0
 }
 
 fn apply_static_light_hue_with_sampler(
@@ -721,8 +864,42 @@ mod tests {
 
     #[test]
     fn static_light_alpha_follows_global_lighting_gap() {
-        assert_eq!(static_light_alpha_for_global_lighting(1.0), 0.0);
-        assert_eq!(static_light_alpha_for_global_lighting(0.75), 0.25);
-        assert_eq!(static_light_alpha_for_global_lighting(0.0), STATIC_LIGHT_ALPHA);
+        assert_eq!(
+            static_light_alpha_for_global_lighting(1.0, StaticLightRenderStyle::Classic),
+            0.0
+        );
+        assert_eq!(
+            static_light_alpha_for_global_lighting(0.75, StaticLightRenderStyle::Classic),
+            0.25
+        );
+        assert_eq!(
+            static_light_alpha_for_global_lighting(0.0, StaticLightRenderStyle::Classic),
+            STATIC_LIGHT_ALPHA
+        );
+    }
+
+    #[test]
+    fn static_light_alpha_differs_by_render_style() {
+        let classic = static_light_alpha_for_global_lighting(1.0, StaticLightRenderStyle::Classic);
+        let enhanced = static_light_alpha_for_global_lighting(1.0, StaticLightRenderStyle::Enhanced);
+        let kr_mid = static_light_alpha_for_global_lighting(0.75, StaticLightRenderStyle::Kr);
+
+        assert_eq!(classic, 0.0);
+        assert!(enhanced > classic);
+        assert!(
+            kr_mid
+                < static_light_alpha_for_global_lighting(0.75, StaticLightRenderStyle::Classic)
+        );
+    }
+
+    #[test]
+    fn kr_style_desaturates_and_tightens_light_mask() {
+        let mut rgba = vec![255, 96, 0, 128];
+
+        apply_static_light_style(&mut rgba, 1, 1, StaticLightRenderStyle::Kr);
+
+        assert!(rgba[0] < 255);
+        assert!(rgba[0] - rgba[1] < 255 - 96);
+        assert!(rgba[3] < 128);
     }
 }
