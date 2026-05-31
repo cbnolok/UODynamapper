@@ -706,7 +706,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                         let trial_blk =
                             bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
                         let trust_mode_hint = dst_ofs > 0;
-                        if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
+                        if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.unsupported_mode_trials += 1;
                             }
@@ -838,7 +838,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             continue;
                         }
                         let trial_blk = bc7_copy_segment(orig_bits, prev_bits, ofs, ofs, len);
-                        if get_bc7_mode(&trial_blk) != bc7_mode {
+                        if !bc7_block_has_mode(&trial_blk, bc7_mode) {
                             if let Some(stats) = stats.as_deref_mut() {
                                 stats.unsupported_mode_trials += 1;
                             }
@@ -931,7 +931,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 let trial_blk =
                                     bc7_copy_segment(orig_best_bits, prev_bits, ofs, ofs, len);
                                 let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
-                                if trust_mode_hint && get_bc7_mode(&trial_blk) != bc7_mode {
+                                if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
                                     if let Some(stats) = stats.as_deref_mut() {
                                         stats.unsupported_mode_trials += 1;
                                     }
@@ -1061,7 +1061,7 @@ fn decode_bc7_error_bounded(
     mut stats: Option<&mut Bc7RdoStats>,
 ) -> Option<u64> {
     let mode = if trust_mode_hint {
-        debug_assert_eq!(get_bc7_mode(block), mode_hint);
+        debug_assert!(bc7_block_has_mode(block, mode_hint));
         mode_hint
     } else {
         get_bc7_mode(block)
@@ -1779,13 +1779,19 @@ fn hash_hsieh_bc7_segment_bits(block_bits: u128, ofs: usize, len: usize, salt: u
 
 fn get_bc7_mode(block: &[u8; 16]) -> u32 {
     let first_byte = block[0];
-    if first_byte == 0 { return 8; }
-    for mode in 0..8 {
-        if (first_byte & (1 << mode)) != 0 {
-            return mode as u32;
-        }
+    if first_byte == 0 {
+        8
+    } else {
+        first_byte.trailing_zeros()
     }
-    8
+}
+
+#[inline(always)]
+fn bc7_block_has_mode(block: &[u8; 16], mode: u32) -> bool {
+    debug_assert!(mode < 8);
+    let first_byte = block[0] as u16;
+    let mode_bit = 1u16 << mode;
+    first_byte & ((mode_bit << 1) - 1) == mode_bit
 }
 
 fn lerp(a: f32, b: f32, s: f32) -> f32 {
