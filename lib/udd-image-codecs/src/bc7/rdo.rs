@@ -18,6 +18,50 @@ const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 
+macro_rules! stat_add {
+    ($collect:expr, $stats:ident, $field:ident, $value:expr) => {{
+        if $collect {
+            if let Some(stats) = $stats.as_deref_mut() {
+                stats.$field += $value;
+            }
+        }
+    }};
+}
+
+macro_rules! stat_array_add {
+    ($collect:expr, $stats:ident, $field:ident, $index:expr, $value:expr) => {{
+        if $collect {
+            if let Some(stats) = $stats.as_deref_mut() {
+                stats.$field[$index] += $value;
+            }
+        }
+    }};
+}
+
+macro_rules! decode_bc7_error_bounded_for_stats {
+    ($stats:ident, $block:expr, $source:expr, $mode_hint:expr, $trust_mode_hint:expr, $max_error:expr) => {{
+        if COLLECT_STATS {
+            decode_bc7_error_bounded::<true>(
+                $block,
+                $source,
+                $mode_hint,
+                $trust_mode_hint,
+                $max_error,
+                $stats.as_deref_mut(),
+            )
+        } else {
+            decode_bc7_error_bounded::<false>(
+                $block,
+                $source,
+                $mode_hint,
+                $trust_mode_hint,
+                $max_error,
+                None,
+            )
+        }
+    }};
+}
+
 const fn bc7_segment_masks() -> [u128; 17] {
     let mut masks = [0u128; 17];
     let mut len = 1usize;
@@ -393,7 +437,7 @@ pub fn reduce_entropy_bc7_with_progress<F>(
 where
     F: Fn(usize),
 {
-    reduce_entropy_bc7_impl_with_progress(
+    reduce_entropy_bc7_impl_with_progress::<false>(
         blocks,
         rgba_blocks,
         blocks_x,
@@ -436,15 +480,27 @@ fn reduce_entropy_bc7_impl(
     params: &Bc7RdoParams,
     mut stats: Option<&mut Bc7RdoStats>,
 ) -> u32 {
-    reduce_entropy_bc7_impl_with_progress(
-        blocks,
-        rgba_blocks,
-        blocks_x,
-        blocks_y,
-        params,
-        stats.as_deref_mut(),
-        None,
-    )
+    if let Some(stats) = stats.as_deref_mut() {
+        reduce_entropy_bc7_impl_with_progress::<true>(
+            blocks,
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params,
+            Some(stats),
+            None,
+        )
+    } else {
+        reduce_entropy_bc7_impl_with_progress::<false>(
+            blocks,
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params,
+            None,
+            None,
+        )
+    }
 }
 
 fn reduce_entropy_bc7_parallel_impl(
@@ -460,7 +516,7 @@ fn reduce_entropy_bc7_parallel_impl(
     debug_assert_eq!(rgba_blocks.len(), num_blocks * 16);
 
     if params.lambda <= 0.0 || num_blocks < PARALLEL_RDO_BLOCK_THRESHOLD || blocks_x == 0 {
-        return reduce_entropy_bc7_impl_with_progress(
+        return reduce_entropy_bc7_impl_with_progress::<false>(
             blocks,
             rgba_blocks,
             blocks_x,
@@ -486,7 +542,7 @@ fn reduce_entropy_bc7_parallel_impl(
         .zip(rgba_blocks.par_chunks(chunk_blocks * 16))
         .map(|(block_chunk, rgba_chunk)| {
             let chunk_blocks_y = block_chunk.len() / blocks_x;
-            reduce_entropy_bc7_impl_with_progress(
+            reduce_entropy_bc7_impl_with_progress::<false>(
                 block_chunk,
                 rgba_chunk,
                 blocks_x,
@@ -499,7 +555,7 @@ fn reduce_entropy_bc7_parallel_impl(
         .sum()
 }
 
-fn reduce_entropy_bc7_impl_with_progress(
+fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     blocks: &mut [[u8; 16]],
     rgba_blocks: &[[u8; 4]],
     blocks_x: usize,
@@ -587,7 +643,7 @@ fn reduce_entropy_bc7_impl_with_progress(
             continue; // Invalid block or mode 8 (reserved)
         }
 
-        let cur_err = decode_bc7_error_bounded(&orig_blk, p_pixels, bc7_mode, true, u64::MAX, stats.as_deref_mut())
+        let cur_err = decode_bc7_error_bounded_for_stats!(stats, &orig_blk, p_pixels, bc7_mode, true, u64::MAX)
             .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
@@ -637,38 +693,40 @@ fn reduce_entropy_bc7_impl_with_progress(
                 if max_relative_previous_blocks > 0
                     && relative_previous_blocks_checked >= max_relative_previous_blocks
                 {
-                    if let Some(stats) = stats.as_deref_mut() {
-                        stats.relative_previous_block_limit_hits += 1;
-                    }
+                    stat_add!(COLLECT_STATS, stats, relative_previous_block_limit_hits, 1);
                     break;
                 }
                 relative_previous_blocks_checked += 1;
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
                 let relative_dist_bits = distance_cost_layout.relative_bits(block_delta);
-                if let Some(stats) = stats.as_deref_mut() {
+                if COLLECT_STATS {
                     for len in 3..min_relative_match_len {
-                        stats.relative_length_skips += relative_candidate_layout.candidate_count_by_len[len];
+                        stat_add!(
+                            COLLECT_STATS,
+                            stats,
+                            relative_length_skips,
+                            relative_candidate_layout.candidate_count_by_len[len]
+                        );
                     }
                 }
                 for len in (min_relative_match_len..=16).rev() {
                     let len_bits = rate_costs.match_len_bits[len];
-                    if let Some(stats) = stats.as_deref_mut() {
-                        stats.relative_offset_skips += relative_candidate_layout.skipped_offsets_by_len[len];
-                    }
+                    stat_add!(
+                        COLLECT_STATS,
+                        stats,
+                        relative_offset_skips,
+                        relative_candidate_layout.skipped_offsets_by_len[len]
+                    );
                     for candidate in &relative_candidate_layout.candidates_by_len[len] {
                         let src_ofs = candidate.src_ofs as usize;
                         let dst_ofs = candidate.dst_ofs as usize;
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.candidate_checks += 1;
-                        }
+                        stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
                         let mb = relative_dist_bits[candidate.dist_index as usize] + len_bits;
                         let trial_bits = rate_costs.literal_bits_by_match_len[len] + mb;
                         let trial_bits_times_lambda = trial_bits * params.lambda;
                         if trial_bits_times_lambda >= best_t {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.rate_skips += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, rate_skips, 1);
                             continue;
                         }
 
@@ -677,17 +735,13 @@ fn reduce_entropy_bc7_impl_with_progress(
                         let hash_check = hash_table[hs as usize & hash_mask];
                         if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                             && (hash_check >> 8) == (hs >> 8) {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.hash_skips += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                             continue;
                         }
                         hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
 
                         if bc7_segments_equal(prev_bits, orig_bits, src_ofs, dst_ofs, len) {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.original_block_skips += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
@@ -696,9 +750,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.accepted_matches += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                                 }
                             }
                             continue;
@@ -707,26 +759,20 @@ fn reduce_entropy_bc7_impl_with_progress(
                             bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
                         let trust_mode_hint = dst_ofs > 0;
                         if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.unsupported_mode_trials += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
                         }
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.decode_trials += 1;
-                        }
+                        stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
-                        let Some(trial_err) = decode_bc7_error_bounded(
+                        let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
+                            stats,
                             &trial_blk,
                             p_pixels,
                             bc7_mode,
                             trust_mode_hint,
-                            max_trial_err,
-                            stats.as_deref_mut(),
+                            max_trial_err
                         ) else {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.bounded_error_exits += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
                             continue;
                         };
                         let trial_ms_err = trial_err as f32 / 64.0;
@@ -737,9 +783,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                 best_match_bits = mb;
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.accepted_matches += 1;
-                                }
+                                stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
                     }
@@ -765,18 +809,14 @@ fn reduce_entropy_bc7_impl_with_progress(
                         && !continuation_possible
                         && !rep0_possible
                     {
-                        if let Some(stats) = stats.as_deref_mut() {
-                            let skipped_offsets = 17 - len;
-                            stats.candidate_checks += skipped_offsets as u64;
-                            stats.rate_skips += skipped_offsets as u64;
-                        }
+                        let skipped_offsets = (17 - len) as u64;
+                        stat_add!(COLLECT_STATS, stats, candidate_checks, skipped_offsets);
+                        stat_add!(COLLECT_STATS, stats, rate_skips, skipped_offsets);
                         continue;
                     }
 
                     for ofs in 0..=(16 - len) {
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.candidate_checks += 1;
-                        }
+                        stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
                         let src_win_ofs = (prev_block_index * 16 + ofs) as i64;
                         let dst_win_ofs = (block_index      * 16 + ofs) as i64;
 
@@ -790,9 +830,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 (MATCH_REP0_BITS, rate_costs.rep0_trial_lambda_by_len[len])
                             } else {
                                 if normal_trial_bits_times_lambda >= best_t {
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.rate_skips += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, rate_skips, 1);
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
@@ -800,9 +838,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                     && (hash_check >> 8) == (hs >> 8) {
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.hash_skips += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                                     continue;
                                 }
                                 hash_table[hs as usize & hash_mask] =
@@ -810,16 +846,12 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 (normal_match_bits, normal_trial_bits_times_lambda)
                             };
                         if trial_bits_times_lambda >= best_t {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.rate_skips += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, rate_skips, 1);
                             continue;
                         }
 
                         if bc7_segments_equal(prev_bits, orig_bits, ofs, ofs, len) {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.original_block_skips += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
@@ -830,35 +862,27 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     best_match_bits = trial_match_bits;
                                     prev_cont_window_ofs = src_win_ofs + len as i64;
                                     prev_rep0_dist       = dst_win_ofs - src_win_ofs;
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.accepted_matches += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                                 }
                             }
                             continue;
                         }
                         let trial_blk = bc7_copy_segment(orig_bits, prev_bits, ofs, ofs, len);
                         if !bc7_block_has_mode(&trial_blk, bc7_mode) {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.unsupported_mode_trials += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
                         }
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.decode_trials += 1;
-                        }
+                        stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
-                        let Some(trial_err) = decode_bc7_error_bounded(
+                        let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
+                            stats,
                             &trial_blk,
                             p_pixels,
                             bc7_mode,
                             true,
-                            max_trial_err,
-                            stats.as_deref_mut(),
+                            max_trial_err
                         ) else {
-                            if let Some(stats) = stats.as_deref_mut() {
-                                stats.bounded_error_exits += 1;
-                            }
+                            stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
                             continue;
                         };
                         let trial_ms_err = trial_err as f32 / 64.0;
@@ -872,9 +896,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                                 // Update continuation/REP0 state for the next block
                                 prev_cont_window_ofs = src_win_ofs + len as i64;
                                 prev_rep0_dist       = dst_win_ofs - src_win_ofs;
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.accepted_matches += 1;
-                                }
+                                stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
                     }
@@ -906,23 +928,21 @@ fn reduce_entropy_bc7_impl_with_progress(
                         + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
                     if trial_bits_times_lambda >= best_t {
-                        if let Some(stats) = stats.as_deref_mut() {
-                            let skipped_offsets = 17 - len;
-                            stats.candidate_checks += skipped_offsets as u64;
-                            stats.rate_skips += skipped_offsets as u64;
-                        }
+                        let skipped_offsets = (17 - len) as u64;
+                        stat_add!(COLLECT_STATS, stats, candidate_checks, skipped_offsets);
+                        stat_add!(COLLECT_STATS, stats, rate_skips, skipped_offsets);
                         continue;
                     }
 
-                    if let Some(stats) = stats.as_deref_mut() {
-                        stats.candidate_checks +=
-                            second_match_layout.overlap_count(best_match_dst_block_ofs, best_match_len, len);
-                    }
+                    stat_add!(
+                        COLLECT_STATS,
+                        stats,
+                        candidate_checks,
+                        second_match_layout.overlap_count(best_match_dst_block_ofs, best_match_len, len)
+                    );
                     for &ofs in second_match_layout.offsets(best_match_dst_block_ofs, best_match_len, len) {
                         let ofs = ofs as usize;
-                        if let Some(stats) = stats.as_deref_mut() {
-                            stats.candidate_checks += 1;
-                        }
+                        stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
 
                         let (trial_block, trial_ms_err) =
                             if bc7_segments_equal(prev_bits, orig_best_bits, ofs, ofs, len) {
@@ -932,27 +952,21 @@ fn reduce_entropy_bc7_impl_with_progress(
                                     bc7_copy_segment(orig_best_bits, prev_bits, ofs, ofs, len);
                                 let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
                                 if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.unsupported_mode_trials += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                                     continue;
                                 }
 
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.decode_trials += 1;
-                                }
+                                stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                                 let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
-                                let Some(trial_err) = decode_bc7_error_bounded(
+                                let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
+                                    stats,
                                     &trial_blk,
                                     p_pixels,
                                     bc7_mode,
                                     trust_mode_hint,
-                                    max_trial_err,
-                                    stats.as_deref_mut(),
+                                    max_trial_err
                                 ) else {
-                                    if let Some(stats) = stats.as_deref_mut() {
-                                        stats.bounded_error_exits += 1;
-                                    }
+                                    stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
                                     continue;
                                 };
                                 (trial_blk, trial_err as f32 / 64.0)
@@ -962,9 +976,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                             if t < best_t {
                                 best_t = t;
                                 best_block = trial_block;
-                                if let Some(stats) = stats.as_deref_mut() {
-                                    stats.accepted_matches += 1;
-                                }
+                                stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
                     }
@@ -977,9 +989,7 @@ fn reduce_entropy_bc7_impl_with_progress(
             block_modes[block_index] = get_bc7_mode(&best_block);
             block_bits[block_index] = bc7_block_bits(best_block);
             total_modified += 1;
-            if let Some(stats) = stats.as_deref_mut() {
-                stats.modified_blocks += 1;
-            }
+            stat_add!(COLLECT_STATS, stats, modified_blocks, 1);
         }
         if block_modes[block_index] < 8 {
             previous_blocks_by_mode[block_modes[block_index] as usize].push(block_index);
@@ -1052,7 +1062,7 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error
 }
 
 #[inline(always)]
-fn decode_bc7_error_bounded(
+fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     block: &[u8; 16],
     source: &[[u8; 4]],
     mode_hint: u32,
@@ -1066,63 +1076,43 @@ fn decode_bc7_error_bounded(
     } else {
         get_bc7_mode(block)
     };
-    if let Some(stats) = stats.as_deref_mut() {
-        if mode < 8 {
-            stats.decode_mode_trials[mode as usize] += 1;
-        }
+    if COLLECT_STATS && mode < 8 {
+        stat_array_add!(COLLECT_STATS, stats, decode_mode_trials, mode as usize, 1);
     }
     if mode == 0 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode0_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode0_trials, 1);
         return decode_bc7_mode0_error_bounded(block, source, max_error);
     }
     if mode == 1 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode1_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode1_trials, 1);
         return decode_bc7_mode1_error_bounded(block, source, max_error);
     }
     if mode == 2 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode2_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode2_trials, 1);
         return decode_bc7_mode2_error_bounded(block, source, max_error);
     }
     if mode == 3 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode3_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode3_trials, 1);
         return decode_bc7_mode3_error_bounded(block, source, max_error);
     }
     if mode == 4 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode4_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode4_trials, 1);
         return decode_bc7_mode4_error_bounded(block, source, max_error);
     }
     if mode == 5 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode5_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode5_trials, 1);
         return decode_bc7_mode5_error_bounded(block, source, max_error);
     }
     if mode == 6 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode6_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode6_trials, 1);
         return decode_bc7_mode6_error_bounded(block, source, max_error);
     }
     if mode == 7 {
-        if let Some(stats) = stats.as_deref_mut() {
-            stats.fused_mode7_trials += 1;
-        }
+        stat_add!(COLLECT_STATS, stats, fused_mode7_trials, 1);
         return decode_bc7_mode7_error_bounded(block, source, max_error);
     }
 
-    if let Some(stats) = stats.as_deref_mut() {
-        stats.unsupported_mode_trials += 1;
-    }
+    stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
     None
 }
 
@@ -2077,7 +2067,7 @@ mod tests {
         let mut sse = 0u64;
         for (block_index, block) in blocks.iter().enumerate() {
             let pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
-            sse += decode_bc7_error_bounded(block, pixels, get_bc7_mode(block), true, u64::MAX, None)
+            sse += decode_bc7_error_bounded::<false>(block, pixels, get_bc7_mode(block), true, u64::MAX, None)
                 .expect("RDO should only emit supported BC7 modes");
         }
         sse as f32 / (blocks.len() * 16 * 4) as f32
