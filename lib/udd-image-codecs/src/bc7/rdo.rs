@@ -136,28 +136,47 @@ impl RelativeCandidateLayout {
 
 struct DistanceCostLayout {
     normal_bits_by_delta: Vec<f32>,
-    relative_bits_by_delta: Option<Vec<[u32; 31]>>,
+    normal_match_bits_by_delta: Vec<[f32; 17]>,
+    normal_trial_lambda_by_delta: Vec<[f32; 17]>,
+    relative_bits_by_delta: Option<Vec<[f32; 31]>>,
 }
 
 impl DistanceCostLayout {
-    fn new(max_block_delta: usize, include_relative: bool) -> Self {
+    fn new(max_block_delta: usize, include_relative: bool, rate_costs: &RateCostLayout) -> Self {
         let mut normal_bits_by_delta = vec![0.0f32; max_block_delta + 1];
+        let mut normal_match_bits_by_delta = vec![[0.0f32; 17]; max_block_delta + 1];
+        let mut normal_trial_lambda_by_delta = vec![[0.0f32; 17]; max_block_delta + 1];
         let mut relative_bits_by_delta = if include_relative {
-            Some(vec![[0u32; 31]; max_block_delta + 1])
+            Some(vec![[0.0f32; 31]; max_block_delta + 1])
         } else {
             None
         };
 
         for block_delta in 1..=max_block_delta {
             let dist = (block_delta * 16) as u32;
-            normal_bits_by_delta[block_delta] = compute_dist_cost_estimate(dist) as f32;
+            let normal_bits = compute_dist_cost_estimate(dist) as f32;
+            normal_bits_by_delta[block_delta] = normal_bits;
+            for len in 3..=16 {
+                let normal_match_bits = normal_bits + rate_costs.match_len_bits[len];
+                normal_match_bits_by_delta[block_delta][len] = normal_match_bits;
+                normal_trial_lambda_by_delta[block_delta][len] =
+                    (rate_costs.literal_bits_by_match_len[len] + normal_match_bits) * rate_costs.lambda;
+            }
             if let Some(ref mut relative_bits_by_delta) = relative_bits_by_delta {
-                relative_bits_by_delta[block_delta] = compute_relative_dist_costs(dist);
+                let relative_bits = compute_relative_dist_costs(dist);
+                for (dst, src) in relative_bits_by_delta[block_delta]
+                    .iter_mut()
+                    .zip(relative_bits.iter())
+                {
+                    *dst = *src as f32;
+                }
             }
         }
 
         Self {
             normal_bits_by_delta,
+            normal_match_bits_by_delta,
+            normal_trial_lambda_by_delta,
             relative_bits_by_delta,
         }
     }
@@ -168,11 +187,52 @@ impl DistanceCostLayout {
     }
 
     #[inline(always)]
-    fn relative_bits(&self, block_delta: usize) -> &[u32; 31] {
+    fn normal_match_bits(&self, block_delta: usize, len: usize) -> f32 {
+        self.normal_match_bits_by_delta[block_delta][len]
+    }
+
+    #[inline(always)]
+    fn normal_trial_lambda(&self, block_delta: usize, len: usize) -> f32 {
+        self.normal_trial_lambda_by_delta[block_delta][len]
+    }
+
+    #[inline(always)]
+    fn relative_bits(&self, block_delta: usize) -> &[f32; 31] {
         &self
             .relative_bits_by_delta
             .as_ref()
             .expect("relative distance costs exist when relative movement is enabled")[block_delta]
+    }
+}
+
+struct RateCostLayout {
+    lambda: f32,
+    match_len_bits: [f32; 17],
+    literal_bits_by_match_len: [f32; 17],
+    continuation_trial_lambda_by_len: [f32; 17],
+    rep0_trial_lambda_by_len: [f32; 17],
+}
+
+impl RateCostLayout {
+    fn new(lambda: f32) -> Self {
+        let match_len_bits = compute_match_len_bits();
+        let literal_bits_by_match_len = compute_literal_bits_by_match_len();
+        let mut continuation_trial_lambda_by_len = [0.0f32; 17];
+        let mut rep0_trial_lambda_by_len = [0.0f32; 17];
+        for len in 3..=16 {
+            continuation_trial_lambda_by_len[len] =
+                (literal_bits_by_match_len[len] + MATCH_CONTINUE_BITS) * lambda;
+            rep0_trial_lambda_by_len[len] =
+                (literal_bits_by_match_len[len] + MATCH_REP0_BITS) * lambda;
+        }
+
+        Self {
+            lambda,
+            match_len_bits,
+            literal_bits_by_match_len,
+            continuation_trial_lambda_by_len,
+            rep0_trial_lambda_by_len,
+        }
     }
 }
 
@@ -425,10 +485,10 @@ fn reduce_entropy_bc7_impl_with_progress(
 
     // 4. Main loop
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
-    let match_len_bits = compute_match_len_bits();
-    let literal_bits_by_match_len = compute_literal_bits_by_match_len();
+    let rate_costs = RateCostLayout::new(params.lambda);
     let max_block_delta = total_blocks_to_check.min(num_blocks.saturating_sub(1)).max(1);
-    let distance_cost_layout = DistanceCostLayout::new(max_block_delta, params.allow_relative_movement);
+    let distance_cost_layout =
+        DistanceCostLayout::new(max_block_delta, params.allow_relative_movement, &rate_costs);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
     let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
@@ -530,7 +590,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                     }
                 }
                 for len in (min_relative_match_len..=16).rev() {
-                    let len_bits = match_len_bits[len];
+                    let len_bits = rate_costs.match_len_bits[len];
                     if let Some(stats) = stats.as_deref_mut() {
                         stats.relative_offset_skips += relative_candidate_layout.skipped_offsets_by_len[len];
                     }
@@ -540,8 +600,8 @@ fn reduce_entropy_bc7_impl_with_progress(
                         if let Some(stats) = stats.as_deref_mut() {
                             stats.candidate_checks += 1;
                         }
-                        let mb = relative_dist_bits[candidate.dist_index as usize] as f32 + len_bits;
-                        let trial_bits = literal_bits_by_match_len[len] + mb;
+                        let mb = relative_dist_bits[candidate.dist_index as usize] + len_bits;
+                        let trial_bits = rate_costs.literal_bits_by_match_len[len] + mb;
                         let trial_bits_times_lambda = trial_bits * params.lambda;
                         if trial_bits_times_lambda >= best_t {
                             if let Some(stats) = stats.as_deref_mut() {
@@ -632,12 +692,11 @@ fn reduce_entropy_bc7_impl_with_progress(
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
                 let dist = block_delta * 16;
-                let normal_dist_bits = distance_cost_layout.normal_bits(block_delta);
                 for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
-                    let normal_match_bits = normal_dist_bits + match_len_bits[len];
+                    let normal_match_bits = distance_cost_layout.normal_match_bits(block_delta, len);
                     let normal_trial_bits_times_lambda =
-                        (literal_bits_by_match_len[len] + normal_match_bits) * params.lambda;
+                        distance_cost_layout.normal_trial_lambda(block_delta, len);
                     let continuation_possible = prev_block_index as i64 * 16 == prev_cont_window_ofs;
                     let rep0_possible = prev_rep0_dist >= 0 && dist as i64 == prev_rep0_dist;
                     if normal_trial_bits_times_lambda >= best_t
@@ -663,12 +722,10 @@ fn reduce_entropy_bc7_impl_with_progress(
                         let (trial_match_bits, trial_bits_times_lambda) =
                             if src_win_ofs == prev_cont_window_ofs && ofs == 0 {
                                 // Continuation: the match continues directly from the previous block's match
-                                let tb = literal_bits_by_match_len[len] + MATCH_CONTINUE_BITS;
-                                (MATCH_CONTINUE_BITS, tb * params.lambda)
+                                (MATCH_CONTINUE_BITS, rate_costs.continuation_trial_lambda_by_len[len])
                             } else if prev_rep0_dist >= 0 && src_win_ofs == dst_win_ofs - prev_rep0_dist {
                                 // REP0: re-using the last accepted match distance costs only MATCH_REP0_BITS
-                                let tb = literal_bits_by_match_len[len] + MATCH_REP0_BITS;
-                                (MATCH_REP0_BITS, tb * params.lambda)
+                                (MATCH_REP0_BITS, rate_costs.rep0_trial_lambda_by_len[len])
                             } else {
                                 if normal_trial_bits_times_lambda >= best_t {
                                     if let Some(stats) = stats.as_deref_mut() {
@@ -781,7 +838,7 @@ fn reduce_entropy_bc7_impl_with_progress(
                 for len in 3..=(16 - best_match_len) {
                     let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS
                         + dist_bits
-                        + match_len_bits[len]
+                        + rate_costs.match_len_bits[len]
                         + best_match_bits;
                     let trial_bits_times_lambda = trial_bits * params.lambda;
                     if trial_bits_times_lambda >= best_t {
