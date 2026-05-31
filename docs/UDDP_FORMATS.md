@@ -103,7 +103,7 @@ These are GPU texture atlases packed into fixed-size pages to avoid texture arra
 `tex_art_cc` packages Classic Art sprites, `tex_art_ec` packages Enhanced Client Art sprites from the shared EC texture pass, and `tex_land_ec` packages Enhanced Client Terrain Textures from the same pass.
 
 The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
-Do not use lossy BC7 compression for art tiles.
+Avoid BC7 RDO for art and mobile-animation sprites unless a specific asset class has been visually validated. Plain BC7 is a GPU-ready storage format; RDO is a separate lossy entropy-reduction pass that permanently changes BC7 block bytes and cannot be undone by the runtime.
 
 Current EC packing semantics:
 
@@ -127,7 +127,25 @@ This rule matters because different art ids can reference the same source textur
 It also explains why `tileart.uop` must be treated as the source of entry-local EC art semantics rather than as a blunt texture-id list.
 When the cropped payload is consumed as an atlas slot by the renderer, the `tex_art_ec` slot record preserves the original on-screen placement by applying the visual trim to EC draw offsets. BC7 output still keeps atlas allocation and stored page extents aligned to 4x4 blocks.
 
-### 2.1 Metadata Structures
+### 2.1 Atlas Gutters, Extrusion, and BC7 Alignment
+
+Atlas packers distinguish three rectangles:
+
+- **content rectangle**: the source pixels addressed by slot or frame metadata
+- **allocation rectangle**: content plus padding/gutter reserved in the atlas allocator
+- **stored page bounds**: the cropped `used_width x used_height` payload written into the package
+
+The gutter is not part of logical art placement. It exists to keep texture filtering and block compression from seeing unrelated texels. If the runtime samples with linear filtering, applies UV perturbation, or the asset is a terrain/material surface, the packer must fill the allocation gutter by edge extrusion and include the extruded allocation in stored page bounds. Otherwise the stored page can crop back to transparent black and linear previewers or BC7 blocks can blend against black padding.
+
+BC7-oriented atlas packing uses 4x4 alignment because BC7 encodes independent 4x4 pixel blocks. Content extents are rounded up to 4 pixels and the leading gutter is rounded up to 4 pixels. This prevents two unrelated assets from sharing one BC7 block and keeps row byte calculations valid for direct GPU upload. A greater gutter should be chosen only when the sampler can reach farther than one texel, such as mipmapping, strong UV animation, or post-upscale linear minification. For nearest-sampled masked sprites, a reserved but unextruded gutter can be valid because no filter footprint should cross the content edge.
+
+Current package policy:
+
+- Land/material atlases are filter-ready and edge-extrude allocation gutters.
+- Mobile animation atlases edge-extrude allocation gutters, including BC7 alignment padding, because they are inspected and previewed as atlas textures and frequently have transparent silhouettes near frame edges.
+- Static art sprite atlases reserve gutters for packing and BC7 block separation, but ordinary static sprite gutters are not a promise of filter-ready extrusion. Runtime world art uses nearest sampling for these masked sprites; a renderer that switches them to linear sampling must also make the package filter-ready or clamp sampling inside the content rectangle.
+
+### 2.2 Metadata Structures
 
 **Page Record (16 Bytes)**
 
@@ -159,11 +177,11 @@ When the cropped payload is consumed as an atlas slot by the renderer, the `tex_
 
 `tex_art_cc.uddp` may include tileart-derived owner aliases when built with EC metadata available. Those alias slots reuse the packed Classic source rectangle selected by tileart `cc_texture_id`, but keep the owning item id and its own `draw_offset_x/draw_offset_y`. Runtime CC placement resolves the owning item slot first and falls back to the raw Classic texture slot only for packages built without those aliases.
 
-### 2.2 Gump Atlas Metadata
+### 2.3 Gump Atlas Metadata
 
 `gumps_cc.uddp` and `gumps_ec.uddp` can store paperdoll equipment gumps in atlas pages. Their atlas slot records also carry a per-slot `upscale_factor`. The stored page rectangle remains physical pixels; UI and paperdoll placement use logical dimensions derived by dividing physical width/height by the factor. Single-gump payloads without atlas slot metadata are treated as `upscale_factor = 1`.
 
-### 2.3 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
+### 2.4 Texture Compression Strategies (BC1 vs BC7 and Supercompression)
 
 The `tex_land_ec.uddp` pipeline commonly utilizes **BC7** block compression. The original EC `Texture.uop` generally contains textures encoded in **DXT1 (BC1)** (4 bits per pixel), with some relying on **DXT5 (BC3)** (8 bits per pixel) for alpha transparency.
 
@@ -181,7 +199,7 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` can trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
 
-Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges.
+Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
 
 ---
 

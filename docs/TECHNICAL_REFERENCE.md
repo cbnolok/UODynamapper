@@ -172,7 +172,21 @@ Mesh selection uses a two-level dispatch:
 - **Alignment**: `bytes_per_row = (width + 3) / 4 * 16`.
 - **Block Size**: 4x4 pixels, 16 bytes per block.
 
-### 3.4 UDDP And UDDF Layout Rules
+### 3.4 Atlas Gutters, Extrusion, and Samplers
+
+Atlas gutters are package-time data, not a runtime cleanup pass. The generator decides whether an asset class is filter-ready by filling reserved allocation padding with edge pixels and keeping that padding inside the stored page bounds.
+
+Use these rules when changing packers or samplers:
+
+- BC7 atlas allocations must respect 4x4 block boundaries so unrelated assets do not share one compressed block.
+- Linear-sampled terrain/material surfaces require edge-extruded gutters.
+- Mobile animation atlases require edge-extruded gutters because inspector views and animation preview paths can sample or display the page as an atlas texture.
+- Nearest-sampled masked static sprites may reserve unextruded gutters for block separation without making the gutter part of the visual contract.
+- Do not expect the renderer to undo BC7 RDO. Zstd/JXL supercompression is decoded before upload, but BC7 RDO has already changed the GPU blocks.
+
+Dynamapper currently sets Bevy's default image sampler to nearest for ordinary images. Land texture arrays override this with linear sampling, so land package gutters must stay filter-ready. Any future change that makes world art linear-sampled must either add static-art edge extrusion at package time or clamp/sample inside the sprite content rectangle in the shader.
+
+### 3.5 UDDP And UDDF Layout Rules
 
 - Container package: `UDDP`
 - Single-object wrapper: `UDDF`
