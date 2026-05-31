@@ -134,6 +134,48 @@ impl RelativeCandidateLayout {
     }
 }
 
+struct DistanceCostLayout {
+    normal_bits_by_delta: Vec<f32>,
+    relative_bits_by_delta: Option<Vec<[u32; 31]>>,
+}
+
+impl DistanceCostLayout {
+    fn new(max_block_delta: usize, include_relative: bool) -> Self {
+        let mut normal_bits_by_delta = vec![0.0f32; max_block_delta + 1];
+        let mut relative_bits_by_delta = if include_relative {
+            Some(vec![[0u32; 31]; max_block_delta + 1])
+        } else {
+            None
+        };
+
+        for block_delta in 1..=max_block_delta {
+            let dist = (block_delta * 16) as u32;
+            normal_bits_by_delta[block_delta] = compute_dist_cost_estimate(dist) as f32;
+            if let Some(ref mut relative_bits_by_delta) = relative_bits_by_delta {
+                relative_bits_by_delta[block_delta] = compute_relative_dist_costs(dist);
+            }
+        }
+
+        Self {
+            normal_bits_by_delta,
+            relative_bits_by_delta,
+        }
+    }
+
+    #[inline(always)]
+    fn normal_bits(&self, block_delta: usize) -> f32 {
+        self.normal_bits_by_delta[block_delta]
+    }
+
+    #[inline(always)]
+    fn relative_bits(&self, block_delta: usize) -> &[u32; 31] {
+        &self
+            .relative_bits_by_delta
+            .as_ref()
+            .expect("relative distance costs exist when relative movement is enabled")[block_delta]
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Bc7RdoParams {
     pub lambda: f32,
@@ -385,6 +427,8 @@ fn reduce_entropy_bc7_impl_with_progress(
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
     let match_len_bits = compute_match_len_bits();
     let literal_bits_by_match_len = compute_literal_bits_by_match_len();
+    let max_block_delta = total_blocks_to_check.min(num_blocks.saturating_sub(1)).max(1);
+    let distance_cost_layout = DistanceCostLayout::new(max_block_delta, params.allow_relative_movement);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
     let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
@@ -478,8 +522,8 @@ fn reduce_entropy_bc7_impl_with_progress(
                 }
                 relative_previous_blocks_checked += 1;
                 let prev_bits = block_bits[prev_block_index];
-                let base_dist = (block_index - prev_block_index) * 16;
-                let relative_dist_bits = compute_relative_dist_costs(base_dist as u32);
+                let block_delta = block_index - prev_block_index;
+                let relative_dist_bits = distance_cost_layout.relative_bits(block_delta);
                 if let Some(stats) = stats.as_deref_mut() {
                     for len in 3..min_relative_match_len {
                         stats.relative_length_skips += relative_candidate_layout.candidate_count_by_len[len];
@@ -586,8 +630,9 @@ fn reduce_entropy_bc7_impl_with_progress(
                     break;
                 }
                 let prev_bits = block_bits[prev_block_index];
-                let dist = (block_index - prev_block_index) * 16;
-                let normal_dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
+                let block_delta = block_index - prev_block_index;
+                let dist = block_delta * 16;
+                let normal_dist_bits = distance_cost_layout.normal_bits(block_delta);
                 for len in (3..=16).rev() {
                     // Fixed-offset search: src_ofs == dst_ofs
                     let normal_match_bits = normal_dist_bits + match_len_bits[len];
@@ -731,8 +776,8 @@ fn reduce_entropy_bc7_impl_with_progress(
                 }
                 let prev_bits = block_bits[prev_block_index];
 
-                let dist = (block_index - prev_block_index) * 16;
-                let dist_bits = compute_dist_cost_estimate(dist as u32) as f32;
+                let block_delta = block_index - prev_block_index;
+                let dist_bits = distance_cost_layout.normal_bits(block_delta);
                 for len in 3..=(16 - best_match_len) {
                     let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS
                         + dist_bits
