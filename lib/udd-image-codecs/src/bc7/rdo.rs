@@ -762,10 +762,6 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         let trial_blk =
                             bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
                         let trust_mode_hint = dst_ofs > 0;
-                        if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
-                            stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
-                            continue;
-                        }
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
@@ -871,11 +867,12 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             }
                             continue;
                         }
-                        let trial_blk = bc7_copy_segment(orig_bits, prev_bits, ofs, ofs, len);
-                        if !bc7_block_has_mode(&trial_blk, bc7_mode) {
+                        let trial_bits = bc7_copy_segment_bits(orig_bits, prev_bits, ofs, ofs, len);
+                        if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
                             stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
                         }
+                        let trial_blk = trial_bits.to_le_bytes();
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
@@ -952,13 +949,17 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             if bc7_segments_equal(prev_bits, orig_best_bits, ofs, ofs, len) {
                                 (orig_best_block, orig_best_ms_err)
                             } else {
-                                let trial_blk =
-                                    bc7_copy_segment(orig_best_bits, prev_bits, ofs, ofs, len);
+                                let trial_bits =
+                                    bc7_copy_segment_bits(orig_best_bits, prev_bits, ofs, ofs, len);
                                 let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
-                                if trust_mode_hint && !bc7_block_has_mode(&trial_blk, bc7_mode) {
+                                if !params.allow_relative_movement
+                                    && ofs == 0
+                                    && !bc7_block_bits_has_mode(trial_bits, bc7_mode)
+                                {
                                     stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                                     continue;
                                 }
+                                let trial_blk = trial_bits.to_le_bytes();
 
                                 stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                                 let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
@@ -1050,11 +1051,22 @@ fn bc7_copy_segment(
     dst_ofs: usize,
     len: usize,
 ) -> [u8; 16] {
+    bc7_copy_segment_bits(orig_bits, prev_bits, src_ofs, dst_ofs, len).to_le_bytes()
+}
+
+#[inline(always)]
+fn bc7_copy_segment_bits(
+    orig_bits: u128,
+    prev_bits: u128,
+    src_ofs: usize,
+    dst_ofs: usize,
+    len: usize,
+) -> u128 {
     let src_mask = BC7_SEGMENT_MASKS[len];
     let dst_shift = dst_ofs * 8;
     let dst_mask = src_mask << dst_shift;
     let src_segment = ((prev_bits >> (src_ofs * 8)) & src_mask) << dst_shift;
-    (orig_bits & !dst_mask | src_segment).to_le_bytes()
+    orig_bits & !dst_mask | src_segment
 }
 
 #[inline(always)]
@@ -1782,8 +1794,18 @@ fn get_bc7_mode(block: &[u8; 16]) -> u32 {
 
 #[inline(always)]
 fn bc7_block_has_mode(block: &[u8; 16], mode: u32) -> bool {
+    bc7_first_byte_has_mode(block[0], mode)
+}
+
+#[inline(always)]
+fn bc7_block_bits_has_mode(block_bits: u128, mode: u32) -> bool {
+    bc7_first_byte_has_mode(block_bits as u8, mode)
+}
+
+#[inline(always)]
+fn bc7_first_byte_has_mode(first_byte: u8, mode: u32) -> bool {
     debug_assert!(mode < 8);
-    let first_byte = block[0] as u16;
+    let first_byte = first_byte as u16;
     let mode_bit = 1u16 << mode;
     first_byte & ((mode_bit << 1) - 1) == mode_bit
 }
