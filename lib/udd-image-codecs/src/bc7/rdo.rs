@@ -134,6 +134,63 @@ impl RelativeCandidateLayout {
     }
 }
 
+struct SecondMatchLayout {
+    offsets_by_span_len: Vec<[Vec<u8>; 17]>,
+    overlap_count_by_span_len: Vec<[u64; 17]>,
+}
+
+impl SecondMatchLayout {
+    fn new() -> Self {
+        let mut offsets_by_span_len = Vec::with_capacity(16 * 17);
+        let mut overlap_count_by_span_len = Vec::with_capacity(16 * 17);
+
+        for first_start in 0usize..16 {
+            for first_len in 0usize..=16 {
+                let first_end = first_start + first_len;
+                let mut overlap_counts = [0u64; 17];
+                let offsets_by_len = std::array::from_fn(|len| {
+                    let mut offsets = Vec::new();
+                    if !(3..=16).contains(&len) || first_len == 0 || first_end > 16 {
+                        return offsets;
+                    }
+
+                    for ofs in 0usize..=(16 - len) {
+                        if ofs < first_end && ofs + len > first_start {
+                            overlap_counts[len] += 1;
+                        } else {
+                            offsets.push(ofs as u8);
+                        }
+                    }
+                    offsets
+                });
+
+                offsets_by_span_len.push(offsets_by_len);
+                overlap_count_by_span_len.push(overlap_counts);
+            }
+        }
+
+        Self {
+            offsets_by_span_len,
+            overlap_count_by_span_len,
+        }
+    }
+
+    #[inline(always)]
+    fn span_index(first_start: usize, first_len: usize) -> usize {
+        first_start * 17 + first_len
+    }
+
+    #[inline(always)]
+    fn offsets(&self, first_start: usize, first_len: usize, len: usize) -> &[u8] {
+        &self.offsets_by_span_len[Self::span_index(first_start, first_len)][len]
+    }
+
+    #[inline(always)]
+    fn overlap_count(&self, first_start: usize, first_len: usize, len: usize) -> u64 {
+        self.overlap_count_by_span_len[Self::span_index(first_start, first_len)][len]
+    }
+}
+
 struct DistanceCostLayout {
     normal_bits_by_delta: Vec<f32>,
     normal_match_bits_by_delta: Vec<[f32; 17]>,
@@ -502,6 +559,11 @@ fn reduce_entropy_bc7_impl_with_progress(
     } else {
         None
     };
+    let second_match_layout = if params.try_two_matches {
+        Some(SecondMatchLayout::new())
+    } else {
+        None
+    };
 
     // REP0 and match-continuation tracking (ert.cpp ERT_FAVOR_CONT_AND_REP0_MATCHES):
     //   prev_cont_window_ofs: source-window offset just past the last accepted match end.
@@ -822,10 +884,12 @@ fn reduce_entropy_bc7_impl_with_progress(
 
         // Try a second non-overlapping match — only attempted when the first was accepted (best_t < cur_t)
         if params.try_two_matches && best_t < cur_t && best_match_len > 0 && best_match_len <= (16 - 3) {
+            let second_match_layout = second_match_layout
+                .as_ref()
+                .expect("second-match layout exists when second matches are enabled");
             let orig_best_block = best_block;
             let orig_best_bits = bc7_block_bits(orig_best_block);
             let orig_best_ms_err = best_ms_err;
-            let best_match_end = best_match_dst_block_ofs + best_match_len;
 
             for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
                 if prev_block_index < first_block_to_check {
@@ -850,12 +914,14 @@ fn reduce_entropy_bc7_impl_with_progress(
                         continue;
                     }
 
-                    for ofs in 0..=(16 - len) {
+                    if let Some(stats) = stats.as_deref_mut() {
+                        stats.candidate_checks +=
+                            second_match_layout.overlap_count(best_match_dst_block_ofs, best_match_len, len);
+                    }
+                    for &ofs in second_match_layout.offsets(best_match_dst_block_ofs, best_match_len, len) {
+                        let ofs = ofs as usize;
                         if let Some(stats) = stats.as_deref_mut() {
                             stats.candidate_checks += 1;
-                        }
-                        if ofs < best_match_end && ofs + len > best_match_dst_block_ofs {
-                            continue;
                         }
 
                         let (trial_block, trial_ms_err) =
