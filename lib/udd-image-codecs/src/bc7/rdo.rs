@@ -41,10 +41,10 @@ macro_rules! stat_array_add {
 }
 
 macro_rules! decode_bc7_error_bounded_for_stats {
-    ($stats:ident, $block:expr, $source:expr, $mode_hint:expr, $trust_mode_hint:expr, $max_error:expr) => {{
+    ($stats:ident, $block_bits:expr, $source:expr, $mode_hint:expr, $trust_mode_hint:expr, $max_error:expr) => {{
         if COLLECT_STATS {
             decode_bc7_error_bounded::<true>(
-                $block,
+                $block_bits,
                 $source,
                 $mode_hint,
                 $trust_mode_hint,
@@ -53,7 +53,7 @@ macro_rules! decode_bc7_error_bounded_for_stats {
             )
         } else {
             decode_bc7_error_bounded::<false>(
-                $block,
+                $block_bits,
                 $source,
                 $mode_hint,
                 $trust_mode_hint,
@@ -647,7 +647,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             continue; // Invalid block or mode 8 (reserved)
         }
 
-        let cur_err = decode_bc7_error_bounded_for_stats!(stats, &orig_blk, p_pixels, bc7_mode, true, u64::MAX)
+        let cur_err = decode_bc7_error_bounded_for_stats!(stats, orig_bits, p_pixels, bc7_mode, true, u64::MAX)
             .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
@@ -759,14 +759,14 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             }
                             continue;
                         }
-                        let trial_blk =
-                            bc7_copy_segment(orig_bits, prev_bits, src_ofs, dst_ofs, len);
+                        let trial_bits =
+                            bc7_copy_segment_bits(orig_bits, prev_bits, src_ofs, dst_ofs, len);
                         let trust_mode_hint = dst_ofs > 0;
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
-                            &trial_blk,
+                            trial_bits,
                             p_pixels,
                             bc7_mode,
                             trust_mode_hint,
@@ -779,7 +779,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_block = trial_blk;
+                                best_t = t; best_block = trial_bits.to_le_bytes();
                                 best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                 best_match_bits = mb;
@@ -872,12 +872,11 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
                         }
-                        let trial_blk = trial_bits.to_le_bytes();
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
-                            &trial_blk,
+                            trial_bits,
                             p_pixels,
                             bc7_mode,
                             true,
@@ -890,7 +889,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_block = trial_blk;
+                                best_t = t; best_block = trial_bits.to_le_bytes();
                                 best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = ofs;
                                 best_match_bits = trial_match_bits;
@@ -910,8 +909,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let second_match_layout = second_match_layout
                 .as_ref()
                 .expect("second-match layout exists when second matches are enabled");
-            let orig_best_block = best_block;
-            let orig_best_bits = bc7_block_bits(orig_best_block);
+            let orig_best_bits = bc7_block_bits(best_block);
             let orig_best_ms_err = best_ms_err;
 
             for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
@@ -945,9 +943,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         let ofs = ofs as usize;
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
 
-                        let (trial_block, trial_ms_err) =
+                        let (trial_bits, trial_ms_err) =
                             if bc7_segments_equal(prev_bits, orig_best_bits, ofs, ofs, len) {
-                                (orig_best_block, orig_best_ms_err)
+                                (orig_best_bits, orig_best_ms_err)
                             } else {
                                 let trial_bits =
                                     bc7_copy_segment_bits(orig_best_bits, prev_bits, ofs, ofs, len);
@@ -959,13 +957,12 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                     stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                                     continue;
                                 }
-                                let trial_blk = trial_bits.to_le_bytes();
 
                                 stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                                 let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                                 let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                                     stats,
-                                    &trial_blk,
+                                    trial_bits,
                                     p_pixels,
                                     bc7_mode,
                                     trust_mode_hint,
@@ -974,13 +971,13 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                     stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
                                     continue;
                                 };
-                                (trial_blk, trial_err as f32 / 64.0)
+                                (trial_bits, trial_err as f32 / 64.0)
                             };
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
                                 best_t = t;
-                                best_block = trial_block;
+                                best_block = trial_bits.to_le_bytes();
                                 stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
@@ -1044,17 +1041,6 @@ fn bc7_segments_equal(
 }
 
 #[inline(always)]
-fn bc7_copy_segment(
-    orig_bits: u128,
-    prev_bits: u128,
-    src_ofs: usize,
-    dst_ofs: usize,
-    len: usize,
-) -> [u8; 16] {
-    bc7_copy_segment_bits(orig_bits, prev_bits, src_ofs, dst_ofs, len).to_le_bytes()
-}
-
-#[inline(always)]
 fn bc7_copy_segment_bits(
     orig_bits: u128,
     prev_bits: u128,
@@ -1079,7 +1065,7 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error
 
 #[inline(always)]
 fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     mode_hint: u32,
     trust_mode_hint: bool,
@@ -1087,45 +1073,45 @@ fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     mut stats: Option<&mut Bc7RdoStats>,
 ) -> Option<u64> {
     let mode = if trust_mode_hint {
-        debug_assert!(bc7_block_has_mode(block, mode_hint));
+        debug_assert!(bc7_block_bits_has_mode(block_bits, mode_hint));
         mode_hint
     } else {
-        get_bc7_mode(block)
+        get_bc7_mode_bits(block_bits)
     };
     if COLLECT_STATS && mode < 8 {
         stat_array_add!(COLLECT_STATS, stats, decode_mode_trials, mode as usize, 1);
     }
     if mode == 0 {
         stat_add!(COLLECT_STATS, stats, fused_mode0_trials, 1);
-        return decode_bc7_mode0_error_bounded(block, source, max_error);
+        return decode_bc7_mode0_error_bounded(block_bits, source, max_error);
     }
     if mode == 1 {
         stat_add!(COLLECT_STATS, stats, fused_mode1_trials, 1);
-        return decode_bc7_mode1_error_bounded(block, source, max_error);
+        return decode_bc7_mode1_error_bounded(block_bits, source, max_error);
     }
     if mode == 2 {
         stat_add!(COLLECT_STATS, stats, fused_mode2_trials, 1);
-        return decode_bc7_mode2_error_bounded(block, source, max_error);
+        return decode_bc7_mode2_error_bounded(block_bits, source, max_error);
     }
     if mode == 3 {
         stat_add!(COLLECT_STATS, stats, fused_mode3_trials, 1);
-        return decode_bc7_mode3_error_bounded(block, source, max_error);
+        return decode_bc7_mode3_error_bounded(block_bits, source, max_error);
     }
     if mode == 4 {
         stat_add!(COLLECT_STATS, stats, fused_mode4_trials, 1);
-        return decode_bc7_mode4_error_bounded(block, source, max_error);
+        return decode_bc7_mode4_error_bounded(block_bits, source, max_error);
     }
     if mode == 5 {
         stat_add!(COLLECT_STATS, stats, fused_mode5_trials, 1);
-        return decode_bc7_mode5_error_bounded(block, source, max_error);
+        return decode_bc7_mode5_error_bounded(block_bits, source, max_error);
     }
     if mode == 6 {
         stat_add!(COLLECT_STATS, stats, fused_mode6_trials, 1);
-        return decode_bc7_mode6_error_bounded(block, source, max_error);
+        return decode_bc7_mode6_error_bounded(block_bits, source, max_error);
     }
     if mode == 7 {
         stat_add!(COLLECT_STATS, stats, fused_mode7_trials, 1);
-        return decode_bc7_mode7_error_bounded(block, source, max_error);
+        return decode_bc7_mode7_error_bounded(block_bits, source, max_error);
     }
 
     stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
@@ -1133,12 +1119,12 @@ fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
 }
 
 fn decode_bc7_mode0_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 0 low word"));
-    let high = u64::from_le_bytes(block[8..16].try_into().expect("mode 0 high word"));
+    let low = block_bits as u64;
+    let high = (block_bits >> 64) as u64;
     let partition = ((low >> 1) & 0x0F) as usize;
     let partitions = &BC7_PARTITION3[partition * 16..partition * 16 + 16];
     let anchors = [
@@ -1228,12 +1214,12 @@ fn decode_bc7_mode0_error_bounded(
 }
 
 fn decode_bc7_mode2_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 2 low word"));
-    let tail = u64::from_le_bytes(block[8..16].try_into().expect("mode 2 tail word"));
+    let low = block_bits as u64;
+    let tail = (block_bits >> 64) as u64;
     let partition = ((low >> 3) & 0x3F) as usize;
     let partitions = &BC7_PARTITION3[partition * 16..partition * 16 + 16];
     let anchors = [
@@ -1284,12 +1270,12 @@ fn decode_bc7_mode2_error_bounded(
 }
 
 fn decode_bc7_mode3_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 3 low word"));
-    let high = u64::from_le_bytes(block[8..16].try_into().expect("mode 3 high word"));
+    let low = block_bits as u64;
+    let high = (block_bits >> 64) as u64;
     let partition = ((low >> 4) & 0x3F) as usize;
     let partitions = &BC7_PARTITION2[partition * 16..partition * 16 + 16];
     let anchors = [0usize, BC7_ANCHOR_SECOND_SUBSET[partition] as usize];
@@ -1330,19 +1316,15 @@ fn decode_bc7_mode3_error_bounded(
 }
 
 fn decode_bc7_mode4_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let rotation = ((block[0] >> 5) & 0x03) as usize;
-    let index_flag = (block[0] >> 7) != 0;
-    let mut x_bytes = [0u8; 8];
-    x_bytes[0..5].copy_from_slice(&block[1..6]);
-    let y_low = u32::from_le_bytes(block[6..10].try_into().expect("mode 4 y bytes")) as u64;
-    let mut z_bytes = [0u8; 8];
-    z_bytes[0..6].copy_from_slice(&block[10..16]);
-    let z = u64::from_le_bytes(z_bytes);
-    let x = u64::from_le_bytes(x_bytes) | ((y_low & 0x03) << 40);
+    let rotation = ((block_bits >> 5) & 0x03) as usize;
+    let index_flag = ((block_bits >> 7) & 1) != 0;
+    let x = ((block_bits >> 8) & ((1u128 << 42) - 1)) as u64;
+    let y_low = ((block_bits >> 48) & 0xFFFF_FFFF) as u64;
+    let z = (block_bits >> 80) as u64;
 
     let lr = expand_5_endpoint(x & 0x1F);
     let hr = expand_5_endpoint((x >> 5) & 0x1F);
@@ -1393,12 +1375,12 @@ fn decode_bc7_mode4_error_bounded(
 }
 
 fn decode_bc7_mode5_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 5 low word"));
-    let high = u64::from_le_bytes(block[8..16].try_into().expect("mode 5 high word"));
+    let low = block_bits as u64;
+    let high = (block_bits >> 64) as u64;
     let rotation = ((low >> 6) & 0x03) as usize;
 
     let lr = expand_7_endpoint((low >> 8) & 0x7F);
@@ -1446,17 +1428,14 @@ fn decode_bc7_mode5_error_bounded(
 }
 
 fn decode_bc7_mode1_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let part_id = (block[0] >> 2) as usize;
-    let mut x_bytes = [0u8; 8];
-    x_bytes.copy_from_slice(&block[1..9]);
-    let x = u64::from_le_bytes(x_bytes);
-    let mut y_bytes = [0u8; 8];
-    y_bytes[0..6].copy_from_slice(&block[10..16]);
-    let y = u64::from_le_bytes(y_bytes);
+    let part_id = ((block_bits >> 2) & 0x3F) as usize;
+    let x = (block_bits >> 8) as u64;
+    let y = (block_bits >> 80) as u64;
+    let block9 = ((block_bits >> 72) & 0xFF) as u64;
 
     let pbits = [(y & 1) as u32, ((y >> 1) & 1) as u32];
     let lr = [
@@ -1475,14 +1454,14 @@ fn decode_bc7_mode1_error_bounded(
         expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]),
         expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1]),
     ];
-    let lb1 = ((x >> 60) & 0xF) | (((block[9] & 0x03) as u64) << 4);
+    let lb1 = ((x >> 60) & 0xF) | ((block9 & 0x03) << 4);
     let lb = [
         expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]),
         expand_mode1_endpoint(lb1, pbits[1]),
     ];
     let hb = [
         expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]),
-        expand_mode1_endpoint(((block[9] >> 2) & 0x3F) as u64, pbits[1]),
+        expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1]),
     ];
 
     let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
@@ -1515,12 +1494,12 @@ fn decode_bc7_mode1_error_bounded(
 }
 
 fn decode_bc7_mode6_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let lo = u64::from_le_bytes(block[0..8].try_into().expect("BC7 block has 8-byte low word"));
-    let hi = u64::from_le_bytes(block[8..16].try_into().expect("BC7 block has 8-byte high word"));
+    let lo = block_bits as u64;
+    let hi = (block_bits >> 64) as u64;
 
     let p0 = (lo >> 63) as u32;
     let p1 = (hi & 1) as u32;
@@ -1560,12 +1539,12 @@ fn decode_bc7_mode6_error_bounded(
 }
 
 fn decode_bc7_mode7_error_bounded(
-    block: &[u8; 16],
+    block_bits: u128,
     source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
-    let lo = u64::from_le_bytes(block[0..8].try_into().expect("BC7 block has 8-byte low word"));
-    let hi = u64::from_le_bytes(block[8..16].try_into().expect("BC7 block has 8-byte high word"));
+    let lo = block_bits as u64;
+    let hi = (block_bits >> 64) as u64;
 
     let part_id = ((lo >> 8) & 0x3F) as usize;
     let pbits = [
@@ -1784,17 +1763,21 @@ fn hash_hsieh_bc7_segment_bits(block_bits: u128, ofs: usize, len: usize, salt: u
 }
 
 fn get_bc7_mode(block: &[u8; 16]) -> u32 {
-    let first_byte = block[0];
+    get_bc7_mode_from_first_byte(block[0])
+}
+
+#[inline(always)]
+fn get_bc7_mode_bits(block_bits: u128) -> u32 {
+    get_bc7_mode_from_first_byte(block_bits as u8)
+}
+
+#[inline(always)]
+fn get_bc7_mode_from_first_byte(first_byte: u8) -> u32 {
     if first_byte == 0 {
         8
     } else {
         first_byte.trailing_zeros()
     }
-}
-
-#[inline(always)]
-fn bc7_block_has_mode(block: &[u8; 16], mode: u32) -> bool {
-    bc7_first_byte_has_mode(block[0], mode)
 }
 
 #[inline(always)]
@@ -2097,7 +2080,7 @@ mod tests {
             let pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
                 .try_into()
                 .expect("RDO source block has 16 pixels");
-            sse += decode_bc7_error_bounded::<false>(block, pixels, get_bc7_mode(block), true, u64::MAX, None)
+            sse += decode_bc7_error_bounded::<false>(bc7_block_bits(*block), pixels, get_bc7_mode(block), true, u64::MAX, None)
                 .expect("RDO should only emit supported BC7 modes");
         }
         sse as f32 / (blocks.len() * 16 * 4) as f32
@@ -2138,11 +2121,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode0_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode0_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 0 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode0_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode0_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2174,11 +2158,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode6_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode6_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 6 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode6_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode6_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2209,11 +2194,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode1_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode1_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 1 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode1_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode1_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2242,11 +2228,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode2_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode2_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 2 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode2_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode2_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2276,11 +2263,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode3_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode3_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 3 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode3_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode3_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2314,11 +2302,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode4_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode4_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 4 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode4_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode4_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2351,11 +2340,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode5_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode5_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 5 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode5_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode5_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
@@ -2387,11 +2377,12 @@ mod tests {
             ];
         }
 
-        let actual = decode_bc7_mode7_error_bounded(&block, &pixels, u64::MAX)
+        let block_bits = bc7_block_bits(block);
+        let actual = decode_bc7_mode7_error_bounded(block_bits, &pixels, u64::MAX)
             .expect("unbounded fused mode 7 error should not early-exit");
 
         assert_bounded_error_exits_at_exact_error(actual, |max_error| {
-            decode_bc7_mode7_error_bounded(&block, &pixels, max_error)
+            decode_bc7_mode7_error_bounded(block_bits, &pixels, max_error)
         });
     }
 
