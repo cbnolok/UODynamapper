@@ -181,6 +181,8 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 `mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` can trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
 
+Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges.
+
 ---
 
 ## 4. `world_lights.uddp`

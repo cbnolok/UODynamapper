@@ -38,7 +38,7 @@ use crate::package_progress::{
 };
 use crate::source_paths::{find_first_dir_matching, source_path_label};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
-use crate::{resolve_packing_axis, AtlasPackingMode};
+use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_cc::{
     page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
     MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord, MobileAnimCcPageRecord,
@@ -1937,9 +1937,22 @@ fn build_page(
                 frame.height as u32,
                 &frame.rgba,
             )?;
+            extrude_rgba_rect_edges(
+                pixels,
+                page_size.width,
+                page_size.height,
+                allocation.rectangle.min.x as u32,
+                allocation.rectangle.min.y as u32,
+                width_axis.alloc_extent,
+                height_axis.alloc_extent,
+                inner_x as u32,
+                inner_y as u32,
+                frame.width as u32,
+                frame.height as u32,
+            );
 
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+            used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
             let record = frame_records
                 .get_mut(frame.global_frame_index as usize)
                 .context("placed mobile animation frame outside frame table")?;
@@ -2040,6 +2053,19 @@ fn build_planned_page(
         source_frame_index: u16,
     }
 
+    struct PlannedExtrusion {
+        rect_x: u32,
+        rect_y: u32,
+        rect_width: u32,
+        rect_height: u32,
+        content_x: u32,
+        content_y: u32,
+        content_width: u32,
+        content_height: u32,
+    }
+
+    let mut planned_extrusions = Vec::new();
+
     sort_planned_frames_within_page(&mut frames, page_size, options);
 
     for frame in frames {
@@ -2054,6 +2080,16 @@ fn build_planned_page(
             let source_frame_index = frame.source_frame_index;
             let width = frame.width;
             let height = frame.height;
+            planned_extrusions.push(PlannedExtrusion {
+                rect_x: allocation.rectangle.min.x as u32,
+                rect_y: allocation.rectangle.min.y as u32,
+                rect_width: width_axis.alloc_extent,
+                rect_height: height_axis.alloc_extent,
+                content_x: inner_x as u32,
+                content_y: inner_y as u32,
+                content_width: width as u32,
+                content_height: height as u32,
+            });
             if upscale_active {
                 let decoded_frames = cached_decode_planned_animation_source(
                     &frame.source,
@@ -2099,8 +2135,8 @@ fn build_planned_page(
                 });
             }
 
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+            used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
             let record = frame_records
                 .get_mut(global_frame_index as usize)
                 .context("placed mobile animation frame outside frame table")?;
@@ -2218,6 +2254,21 @@ fn build_planned_page(
             )
             .wrap_err_with(|| format!("blit mobile animation frame {}", pending.global_frame_index))?;
         }
+    }
+    for extrusion in planned_extrusions {
+        extrude_rgba_rect_edges(
+            &mut pixels,
+            used_width,
+            used_height,
+            extrusion.rect_x,
+            extrusion.rect_y,
+            extrusion.rect_width,
+            extrusion.rect_height,
+            extrusion.content_x,
+            extrusion.content_y,
+            extrusion.content_width,
+            extrusion.content_height,
+        );
     }
 
     Ok((
@@ -2778,6 +2829,48 @@ mod tests {
         assert_eq!(records[0].x % 4, 0);
         assert_eq!(records[1].x % 4, 0);
         assert!(pages[0].record.used_width % 4 == 0 || pages[0].record.used_height % 4 == 0);
+    }
+
+    #[test]
+    fn packer_retains_extruded_filter_gutter() {
+        let options = MobileAnimCcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 4,
+            crop_transparent_bounds: false,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            upscale_passes: Vec::new(),
+        };
+        let mut records = vec![MobileAnimCcFrameRecord {
+            animation_index: 0,
+            frame_index: 0,
+            page_index: MISSING_PAGE_INDEX,
+            page_frame_index: MISSING_PAGE_FRAME_INDEX,
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 5,
+            center_x: 0,
+            center_y: 0,
+        }];
+
+        let pages = pack_frames_into_pages(vec![frame(0, 5, 5)], &mut records, &options).unwrap();
+
+        assert_eq!(pages.len(), 1);
+        let page = &pages[0];
+        assert_eq!(page.record.used_width, 16);
+        assert_eq!(page.record.used_height, 16);
+        let placed = records[0];
+        let right_gutter = ((placed.y as u32 * page.record.used_width
+            + placed.x as u32
+            + placed.width as u32)
+            * 4) as usize;
+        let left_gutter = ((placed.y as u32 * page.record.used_width + placed.x as u32 - 1) * 4) as usize;
+        assert_eq!(&page.pixels[right_gutter..right_gutter + 4], &[255, 255, 255, 255]);
+        assert_eq!(&page.pixels[left_gutter..left_gutter + 4], &[255, 255, 255, 255]);
     }
 
     #[test]

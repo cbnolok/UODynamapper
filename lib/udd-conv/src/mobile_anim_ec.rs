@@ -31,7 +31,7 @@ use crate::package_progress::{
 };
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
-use crate::{resolve_packing_axis, AtlasPackingMode};
+use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
     page_entry_path, MobileAnimEcAnimationRecord, MobileAnimEcFrameRecord,
@@ -1608,8 +1608,21 @@ fn build_page(
                 frame.height as u32,
                 &frame.rgba,
             )?;
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            extrude_rgba_rect_edges(
+                pixels,
+                page_size.width,
+                page_size.height,
+                allocation.rectangle.min.x as u32,
+                allocation.rectangle.min.y as u32,
+                width_axis.alloc_extent,
+                height_axis.alloc_extent,
+                inner_x as u32,
+                inner_y as u32,
+                frame.width as u32,
+                frame.height as u32,
+            );
+            used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+            used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
             placements.insert((frame.body_id, frame.source_frame_index), FramePlacement {
                 page_index,
                 page_frame_index,
@@ -1698,6 +1711,19 @@ fn build_planned_page(
         rgba: Vec<u8>,
     }
 
+    struct PlannedExtrusion {
+        rect_x: u32,
+        rect_y: u32,
+        rect_width: u32,
+        rect_height: u32,
+        content_x: u32,
+        content_y: u32,
+        content_width: u32,
+        content_height: u32,
+    }
+
+    let mut planned_extrusions = Vec::new();
+
     sort_planned_frames_within_page(&mut frames, page_size, options);
 
     for frame in frames {
@@ -1722,6 +1748,16 @@ fn build_planned_page(
             };
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
+            planned_extrusions.push(PlannedExtrusion {
+                rect_x: allocation.rectangle.min.x as u32,
+                rect_y: allocation.rectangle.min.y as u32,
+                rect_width: width_axis.alloc_extent,
+                rect_height: height_axis.alloc_extent,
+                content_x: inner_x as u32,
+                content_y: inner_y as u32,
+                content_width: frame.width as u32,
+                content_height: frame.height as u32,
+            });
             pending_blits.push(PendingPlannedBlit {
                 body_id: frame.body_id,
                 source_frame_index: frame.source_frame_index,
@@ -1736,8 +1772,8 @@ fn build_planned_page(
                 animation,
                 source_entry,
             });
-            used_width = used_width.max(inner_x as u32 + width_axis.used_extent);
-            used_height = used_height.max(inner_y as u32 + height_axis.used_extent);
+            used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
+            used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
             placements.insert((frame.body_id, frame.source_frame_index), FramePlacement {
                 page_index,
                 page_frame_index,
@@ -1857,6 +1893,21 @@ fn build_planned_page(
                 pending.source_frame_index
             ))?;
         }
+    }
+    for extrusion in planned_extrusions {
+        extrude_rgba_rect_edges(
+            &mut pixels,
+            used_width,
+            used_height,
+            extrusion.rect_x,
+            extrusion.rect_y,
+            extrusion.rect_width,
+            extrusion.rect_height,
+            extrusion.content_x,
+            extrusion.content_y,
+            extrusion.content_width,
+            extrusion.content_height,
+        );
     }
 
     Ok((
@@ -2382,6 +2433,39 @@ mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(placements[&(42, 0)].x % 4, 0);
         assert_eq!(placements[&(42, 1)].x % 4, 0);
+    }
+
+    #[test]
+    fn packer_retains_extruded_filter_gutter() {
+        let options = MobileAnimEcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 4,
+            crop_transparent_bounds: false,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            upscale_passes: Vec::new(),
+            metadata_path: None,
+            tables_dir: None,
+            allow_missing_metadata: false,
+        };
+
+        let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 5, 5)], &options).unwrap();
+
+        assert_eq!(pages.len(), 1);
+        let page = &pages[0];
+        assert_eq!(page.record.used_width, 16);
+        assert_eq!(page.record.used_height, 16);
+        let placed = placements[&(42, 0)];
+        let right_gutter = ((placed.y as u32 * page.record.used_width
+            + placed.x as u32
+            + placed.width as u32)
+            * 4) as usize;
+        let left_gutter = ((placed.y as u32 * page.record.used_width + placed.x as u32 - 1) * 4) as usize;
+        assert_eq!(&page.pixels[right_gutter..right_gutter + 4], &[255, 255, 255, 255]);
+        assert_eq!(&page.pixels[left_gutter..left_gutter + 4], &[255, 255, 255, 255]);
     }
 
     #[test]
