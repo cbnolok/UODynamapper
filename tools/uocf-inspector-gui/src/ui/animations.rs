@@ -332,22 +332,36 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                     | frame_idx as u64
                             };
 
-                            let handle = app.texture_previews.entry(key).or_insert_with(|| {
-                                let image = egui::ColorImage::from_rgba_unmultiplied(
-                                    [frame.width as usize, frame.height as usize],
-                                    &frame.data[..],
-                                );
-                                ctx.load_texture(
-                                    format!(
-                                        "anim_{}_{}_{}",
-                                        body_id, app.selected_action_id, frame_idx
-                                    ),
-                                    image,
-                                    Default::default(),
-                                )
-                            });
+                            let handle = app
+                                .texture_previews
+                                .entry(key)
+                                .or_insert_with(|| {
+                                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                                        [frame.width as usize, frame.height as usize],
+                                        &frame.data[..],
+                                    );
+                                    ctx.load_texture(
+                                        format!(
+                                            "anim_{}_{}_{}",
+                                            body_id, app.selected_action_id, frame_idx
+                                        ),
+                                        image,
+                                        Default::default(),
+                                    )
+                                })
+                                .clone();
+                            app.register_current_image_preview(
+                                key,
+                                format!(
+                                    "animation {} action {} frame {}",
+                                    body_id, app.selected_action_id, frame_idx
+                                ),
+                                frame.width as u32,
+                                frame.height as u32,
+                                &frame.data,
+                            );
 
-                            ui.image(&*handle);
+                            ui.image(&handle);
                         } else {
                             ui.label("(Empty frame)");
                         }

@@ -13,6 +13,7 @@ pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
 pub mod sounds;
+pub mod upscale_preview;
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -32,6 +33,11 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 }
             });
             
+            ui.separator();
+            if ui.button("Upscale Preview").clicked() {
+                app.show_upscale_preview = true;
+            }
+
             ui.separator();
             
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Home, "Home");
@@ -202,4 +208,6 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             sounds::ui_sounds(app, ctx);
         }
     }
+
+    upscale_preview::ui_upscale_preview_window(app, ctx);
 }

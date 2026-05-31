@@ -734,6 +734,14 @@ fn render_paperdoll(
         [width as usize, height as usize],
         &pixels,
     );
+    let key = 0x7000000000000000 | u64::from(body_id);
+    app.register_current_image_preview(
+        key,
+        format!("paperdoll {} {}", app.selected_paperdoll_profile, body_id),
+        width,
+        height,
+        &pixels,
+    );
     Ok(ctx.load_texture(
         format!("paperdoll_{:?}_{}", app.selected_gump_source, app.selected_paperdoll_profile),
         image,

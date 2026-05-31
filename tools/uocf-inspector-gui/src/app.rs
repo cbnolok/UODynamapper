@@ -1,5 +1,6 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
 use eframe::egui;
+use image_postprocess::upscaling::UpscaleFilter;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -71,6 +72,145 @@ pub enum GumpSource {
     Enhanced,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum UpscalePreviewAlgorithm {
+    None,
+    Nearest,
+    Bilinear,
+    CatmullRom,
+    Lanczos3,
+    Lq,
+    SuperSai,
+    FsrEasu,
+    FsrEasuRcas,
+    KLDepixelize,
+    Nedi,
+    TwoSai,
+    SuperEagle,
+    HqSimple,
+    HqTrue,
+    Epx,
+    Xbr,
+    Mmpx,
+}
+
+impl Default for UpscalePreviewAlgorithm {
+    fn default() -> Self {
+        Self::FsrEasuRcas
+    }
+}
+
+impl UpscalePreviewAlgorithm {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::None,
+            Self::Nearest,
+            Self::Bilinear,
+            Self::CatmullRom,
+            Self::Lanczos3,
+            Self::Lq,
+            Self::SuperSai,
+            Self::FsrEasu,
+            Self::FsrEasuRcas,
+            Self::KLDepixelize,
+            Self::Nedi,
+            Self::TwoSai,
+            Self::SuperEagle,
+            Self::HqSimple,
+            Self::HqTrue,
+            Self::Epx,
+            Self::Xbr,
+            Self::Mmpx,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "No Upscaling",
+            Self::Nearest => "Nearest",
+            Self::Bilinear => "Bilinear",
+            Self::CatmullRom => "CatmullRom",
+            Self::Lanczos3 => "Lanczos3",
+            Self::Lq => "lqx",
+            Self::SuperSai => "Super2xSaI",
+            Self::FsrEasu => "FSR EASU",
+            Self::FsrEasuRcas => "FSR EASU + RCAS",
+            Self::KLDepixelize => "Kopf-Lischinski",
+            Self::Nedi => "NEDI",
+            Self::TwoSai => "2xSaI",
+            Self::SuperEagle => "SuperEagle",
+            Self::HqSimple => "hqx simple",
+            Self::HqTrue => "hqx true",
+            Self::Epx => "EPX",
+            Self::Xbr => "xBR",
+            Self::Mmpx => "MMPX",
+        }
+    }
+
+    pub fn scale_options(self) -> &'static [u32] {
+        match self {
+            Self::None => &[1],
+            Self::SuperSai | Self::Nedi | Self::TwoSai | Self::SuperEagle => &[2],
+            Self::Mmpx => &[2, 4],
+            _ => &[2, 3, 4],
+        }
+    }
+
+    pub fn to_filter(self, scale: u32) -> UpscaleFilter {
+        let scale = if self.scale_options().contains(&scale) {
+            scale
+        } else {
+            self.scale_options()[0]
+        };
+
+        match (self, scale) {
+            (Self::None, _) => UpscaleFilter::None,
+            (Self::Nearest, 2) => UpscaleFilter::Nearest2x,
+            (Self::Nearest, 3) => UpscaleFilter::Nearest3x,
+            (Self::Nearest, _) => UpscaleFilter::Nearest4x,
+            (Self::Bilinear, 2) => UpscaleFilter::Bilinear2x,
+            (Self::Bilinear, 3) => UpscaleFilter::Bilinear3x,
+            (Self::Bilinear, _) => UpscaleFilter::Bilinear4x,
+            (Self::CatmullRom, 2) => UpscaleFilter::CatmullRom2x,
+            (Self::CatmullRom, 3) => UpscaleFilter::CatmullRom3x,
+            (Self::CatmullRom, _) => UpscaleFilter::CatmullRom4x,
+            (Self::Lanczos3, 2) => UpscaleFilter::Lanczos3_2x,
+            (Self::Lanczos3, 3) => UpscaleFilter::Lanczos3_3x,
+            (Self::Lanczos3, _) => UpscaleFilter::Lanczos3_4x,
+            (Self::Lq, 2) => UpscaleFilter::Lq2x,
+            (Self::Lq, 3) => UpscaleFilter::Lq3x,
+            (Self::Lq, _) => UpscaleFilter::Lq4x,
+            (Self::SuperSai, _) => UpscaleFilter::SuperSai2x,
+            (Self::FsrEasu, 2) => UpscaleFilter::FsrEasu2x,
+            (Self::FsrEasu, 3) => UpscaleFilter::FsrEasu3x,
+            (Self::FsrEasu, _) => UpscaleFilter::FsrEasu4x,
+            (Self::FsrEasuRcas, 2) => UpscaleFilter::FsrEasuRcas2x,
+            (Self::FsrEasuRcas, 3) => UpscaleFilter::FsrEasuRcas3x,
+            (Self::FsrEasuRcas, _) => UpscaleFilter::FsrEasuRcas4x,
+            (Self::KLDepixelize, 2) => UpscaleFilter::KLDepixelize2x,
+            (Self::KLDepixelize, 3) => UpscaleFilter::KLDepixelize3x,
+            (Self::KLDepixelize, _) => UpscaleFilter::KLDepixelize4x,
+            (Self::Nedi, _) => UpscaleFilter::Nedi2x,
+            (Self::TwoSai, _) => UpscaleFilter::TwoSai2x,
+            (Self::SuperEagle, _) => UpscaleFilter::SuperEagle2x,
+            (Self::HqSimple, 2) => UpscaleFilter::Hq2xSimple,
+            (Self::HqSimple, 3) => UpscaleFilter::Hq3xSimple,
+            (Self::HqSimple, _) => UpscaleFilter::Hq4xSimple,
+            (Self::HqTrue, 2) => UpscaleFilter::Hq2xTrue,
+            (Self::HqTrue, 3) => UpscaleFilter::Hq3xTrue,
+            (Self::HqTrue, _) => UpscaleFilter::Hq4xTrue,
+            (Self::Epx, 2) => UpscaleFilter::Epx2x,
+            (Self::Epx, 3) => UpscaleFilter::Epx3x,
+            (Self::Epx, _) => UpscaleFilter::Epx4x,
+            (Self::Xbr, 2) => UpscaleFilter::Xbr2x,
+            (Self::Xbr, 3) => UpscaleFilter::Xbr3x,
+            (Self::Xbr, _) => UpscaleFilter::Xbr4x,
+            (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
+            (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PaperdollEquipmentInput {
     pub slot: String,
@@ -114,6 +254,15 @@ pub struct SoundPlayer {
     _stream: rodio::OutputStream,
     handle: rodio::OutputStreamHandle,
     sink: Option<rodio::Sink>,
+}
+
+#[derive(Clone)]
+pub struct InspectorImagePreview {
+    pub key: u64,
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
 }
 
 impl SoundPlayer {
@@ -246,7 +395,19 @@ pub struct UopInspectorApp {
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
+    pub ec_texture_preview_source_keys: HashMap<u32, u64>,
     pub multimap_texture: Option<egui::TextureHandle>,
+    pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
+    pub current_image_preview_key: Option<u64>,
+    pub show_upscale_preview: bool,
+    pub upscale_preview_algorithm: UpscalePreviewAlgorithm,
+    pub upscale_preview_scale: u32,
+    pub upscale_preview_zoom: f32,
+    pub upscale_original_texture: Option<egui::TextureHandle>,
+    pub upscale_original_texture_key: Option<u64>,
+    pub upscale_preview_texture: Option<egui::TextureHandle>,
+    pub upscale_preview_texture_key: Option<(u64, UpscaleFilter)>,
+    pub upscale_preview_size: [u32; 2],
 
     // Gumps and paperdolls
     pub selected_gump_source: GumpSource,
@@ -344,7 +505,19 @@ impl UopInspectorApp {
             multi_collection: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
+            ec_texture_preview_source_keys: HashMap::new(),
             multimap_texture: None,
+            image_preview_sources: HashMap::new(),
+            current_image_preview_key: None,
+            show_upscale_preview: false,
+            upscale_preview_algorithm: UpscalePreviewAlgorithm::default(),
+            upscale_preview_scale: 2,
+            upscale_preview_zoom: 1.0,
+            upscale_original_texture: None,
+            upscale_original_texture_key: None,
+            upscale_preview_texture: None,
+            upscale_preview_texture_key: None,
+            upscale_preview_size: [0, 0],
             selected_gump_source: GumpSource::Classic,
             selected_gump_id: String::new(),
             selected_paperdoll_profile: "human_male".to_string(),
@@ -405,8 +578,18 @@ impl UopInspectorApp {
         self.cc_gumps = None;
         self.cc_multimap = None;
         self.cc_multimap_path = None;
+        self.texture_previews.clear();
+        self.ec_texture_previews.clear();
         self.multimap_texture = None;
         self.paperdoll_preview = None;
+        self.image_preview_sources.clear();
+        self.ec_texture_preview_source_keys.clear();
+        self.current_image_preview_key = None;
+        self.upscale_original_texture = None;
+        self.upscale_original_texture_key = None;
+        self.upscale_preview_texture = None;
+        self.upscale_preview_texture_key = None;
+        self.upscale_preview_size = [0, 0];
         if let Some(player) = &mut self.sound_player {
             player.stop();
         }
@@ -862,6 +1045,106 @@ impl UopInspectorApp {
         }
     }
 
+    pub fn register_current_image_preview(
+        &mut self,
+        key: u64,
+        label: impl Into<String>,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        let expected_len = width as usize * height as usize * 4;
+        if rgba.len() != expected_len {
+            return;
+        }
+
+        if !self.image_preview_sources.contains_key(&key) {
+            self.image_preview_sources.insert(
+                key,
+                InspectorImagePreview {
+                    key,
+                    label: label.into(),
+                    width,
+                    height,
+                    rgba: Arc::<[u8]>::from(rgba),
+                },
+            );
+        }
+        self.select_image_preview(key);
+    }
+
+    pub fn select_image_preview(&mut self, key: u64) {
+        if !self.image_preview_sources.contains_key(&key) {
+            return;
+        }
+        if self.current_image_preview_key != Some(key) {
+            self.current_image_preview_key = Some(key);
+            self.upscale_original_texture_key = None;
+            self.upscale_preview_texture_key = None;
+        }
+    }
+
+    pub fn current_image_preview(&self) -> Option<&InspectorImagePreview> {
+        self.current_image_preview_key
+            .and_then(|key| self.image_preview_sources.get(&key))
+    }
+
+    pub fn current_upscale_filter(&self) -> UpscaleFilter {
+        self.upscale_preview_algorithm.to_filter(self.upscale_preview_scale)
+    }
+
+    pub fn clamp_upscale_preview_scale(&mut self) {
+        let options = self.upscale_preview_algorithm.scale_options();
+        if !options.contains(&self.upscale_preview_scale) {
+            self.upscale_preview_scale = options[0];
+        }
+    }
+
+    pub fn refresh_upscale_preview_textures(&mut self, ctx: &egui::Context) {
+        self.clamp_upscale_preview_scale();
+        let Some(source) = self.current_image_preview().cloned() else {
+            self.upscale_original_texture = None;
+            self.upscale_original_texture_key = None;
+            self.upscale_preview_texture = None;
+            self.upscale_preview_texture_key = None;
+            self.upscale_preview_size = [0, 0];
+            return;
+        };
+
+        if self.upscale_original_texture_key != Some(source.key) {
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [source.width as usize, source.height as usize],
+                &source.rgba,
+            );
+            self.upscale_original_texture = Some(ctx.load_texture(
+                format!("uocf_upscale_original_{:016X}", source.key),
+                color_image,
+                egui::TextureOptions::NEAREST,
+            ));
+            self.upscale_original_texture_key = Some(source.key);
+        }
+
+        let filter = self.current_upscale_filter();
+        let texture_key = (source.key, filter);
+        if self.upscale_preview_texture_key != Some(texture_key) {
+            let (width, height, rgba) = filter.apply(source.width, source.height, &source.rgba);
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [width as usize, height as usize],
+                &rgba,
+            );
+            self.upscale_preview_texture = Some(ctx.load_texture(
+                format!("uocf_upscale_preview_{:016X}_{:?}", source.key, filter),
+                color_image,
+                egui::TextureOptions::NEAREST,
+            ));
+            self.upscale_preview_texture_key = Some(texture_key);
+            self.upscale_preview_size = [width, height];
+        }
+    }
+
     pub fn open_uop(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("UOP Packages", &["uop"])
@@ -888,8 +1171,9 @@ impl UopInspectorApp {
         data: &[u8],
         name: &str,
     ) -> Option<egui::TextureHandle> {
-        if let Some(handle) = self.texture_previews.get(&hash) {
-            return Some(handle.clone());
+        if let Some(handle) = self.texture_previews.get(&hash).cloned() {
+            self.select_image_preview(hash);
+            return Some(handle);
         }
 
         let lower_name = name.to_lowercase();
@@ -901,6 +1185,7 @@ impl UopInspectorApp {
             );
             let handle = ctx.load_texture(name, color_image, Default::default());
             self.texture_previews.insert(hash, handle.clone());
+            self.register_current_image_preview(hash, name, width, height, &pixels);
             return Some(handle);
         }
 
@@ -927,6 +1212,13 @@ impl UopInspectorApp {
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
                 let handle = ctx.load_texture(name, color_image, Default::default());
                 self.texture_previews.insert(hash, handle.clone());
+                self.register_current_image_preview(
+                    hash,
+                    name,
+                    size[0] as u32,
+                    size[1] as u32,
+                    pixels.as_raw(),
+                );
                 Some(handle)
             }
             Err(_) => None,
@@ -967,8 +1259,11 @@ impl UopInspectorApp {
         ctx: &egui::Context,
         texture_id: u32,
     ) -> Option<egui::TextureHandle> {
-        if let Some(handle) = self.ec_texture_previews.get(&texture_id) {
-            return Some(handle.clone());
+        if let Some(handle) = self.ec_texture_previews.get(&texture_id).cloned() {
+            if let Some(key) = self.ec_texture_preview_source_keys.get(&texture_id).copied() {
+                self.select_image_preview(key);
+            }
+            return Some(handle);
         }
 
         let loaded_uops = self.uop_cache.loaded_uops.clone();
@@ -988,6 +1283,7 @@ impl UopInspectorApp {
                     if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
                         if let Some(handle) = self.get_uop_texture(ctx, hash, &data, &path) {
                             self.ec_texture_previews.insert(texture_id, handle.clone());
+                            self.ec_texture_preview_source_keys.insert(texture_id, hash);
                             return Some(handle);
                         }
                     }
@@ -1003,8 +1299,9 @@ impl UopInspectorApp {
         gump_id: u32,
     ) -> Option<egui::TextureHandle> {
         let key = 0x6D00000000000000 | gump_id as u64;
-        if let Some(handle) = self.texture_previews.get(&key) {
-            return Some(handle.clone());
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
         }
 
         let (width, height, pixels) = if let Some(package) = &self.cc_gumps_package {
@@ -1029,6 +1326,13 @@ impl UopInspectorApp {
         );
         let handle = ctx.load_texture(format!("cc_gump_{gump_id}"), image, Default::default());
         self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("CC gump {gump_id}"),
+            width,
+            height,
+            &pixels,
+        );
         Some(handle)
     }
 
@@ -1040,8 +1344,9 @@ impl UopInspectorApp {
         if let Some(package) = &self.ec_gumps_package {
             if let Ok((width, height, pixels)) = package.read_gump_rgba(gump_id) {
                 let key = 0x6E00000000000000 | gump_id as u64;
-                if let Some(handle) = self.texture_previews.get(&key) {
-                    return Some(handle.clone());
+                if let Some(handle) = self.texture_previews.get(&key).cloned() {
+                    self.select_image_preview(key);
+                    return Some(handle);
                 }
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [width as usize, height as usize],
@@ -1049,6 +1354,13 @@ impl UopInspectorApp {
                 );
                 let handle = ctx.load_texture(format!("ec_gump_{gump_id}"), image, Default::default());
                 self.texture_previews.insert(key, handle.clone());
+                self.register_current_image_preview(
+                    key,
+                    format!("EC gump {gump_id}"),
+                    width,
+                    height,
+                    &pixels,
+                );
                 return Some(handle);
             }
         }
@@ -1128,6 +1440,13 @@ impl UopInspectorApp {
             Default::default(),
         );
         self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("art {} {:?} hue {}", art_id, source, self.selected_hue_id),
+            rgba.width(),
+            rgba.height(),
+            rgba.as_raw(),
+        );
         Some(handle)
     }
 
@@ -1139,8 +1458,9 @@ impl UopInspectorApp {
     ) -> Option<egui::TextureHandle> {
         let hue_id = self.selected_hue_id;
         let key = 0xCC000000 | (source as u64) << 48 | (hue_id as u64) << 32 | art_id as u64;
-        if let Some(handle) = self.texture_previews.get(&key) {
-            return Some(handle.clone());
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
         }
 
         if let Some(client) = &self.client_data {
@@ -1175,6 +1495,13 @@ impl UopInspectorApp {
                             Default::default(),
                         );
                         self.texture_previews.insert(key, handle.clone());
+                        self.register_current_image_preview(
+                            key,
+                            format!("land art {} {:?} hue {}", art_id, source, hue_id),
+                            44,
+                            44,
+                            &pixels[..],
+                        );
                         return Some(handle);
                     }
                 }
@@ -1223,6 +1550,13 @@ impl UopInspectorApp {
                         Default::default(),
                     );
                     self.texture_previews.insert(key, handle.clone());
+                    self.register_current_image_preview(
+                        key,
+                        format!("static art {} {:?} hue {}", art_id, source, hue_id),
+                        w as u32,
+                        h as u32,
+                        &pixels[..],
+                    );
                     return Some(handle);
                 }
             }
@@ -1248,11 +1582,13 @@ impl UopInspectorApp {
     }
 
     pub fn get_multimap_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
-        if let Some(handle) = &self.multimap_texture {
-            return Some(handle.clone());
+        let key = 0x6F00000000000000;
+        if let Some(handle) = self.multimap_texture.clone() {
+            self.select_image_preview(key);
+            return Some(handle);
         }
 
-        let multimap = self.cc_multimap.as_ref()?;
+        let multimap = Arc::clone(self.cc_multimap.as_ref()?);
         let rgba = multimap.to_rgba8();
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [multimap.width as usize, multimap.height as usize],
@@ -1260,6 +1596,13 @@ impl UopInspectorApp {
         );
         let handle = ctx.load_texture("cc_multimap_rle", image, Default::default());
         self.multimap_texture = Some(handle.clone());
+        self.register_current_image_preview(
+            key,
+            "multimap.rle",
+            multimap.width,
+            multimap.height,
+            &rgba,
+        );
         Some(handle)
     }
 
@@ -1457,7 +1800,19 @@ mod tests {
             localized_strings_source: LocalizedStringsSource::Cliloc,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
+            ec_texture_preview_source_keys: HashMap::new(),
             multimap_texture: None,
+            image_preview_sources: HashMap::new(),
+            current_image_preview_key: None,
+            show_upscale_preview: false,
+            upscale_preview_algorithm: UpscalePreviewAlgorithm::default(),
+            upscale_preview_scale: 2,
+            upscale_preview_zoom: 1.0,
+            upscale_original_texture: None,
+            upscale_original_texture_key: None,
+            upscale_preview_texture: None,
+            upscale_preview_texture_key: None,
+            upscale_preview_size: [0, 0],
             selected_gump_source: GumpSource::Classic,
             selected_gump_id: String::new(),
             selected_paperdoll_profile: "human_male".to_string(),
