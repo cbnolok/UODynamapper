@@ -18,6 +18,8 @@ const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 
+type RgbaBlock = [[u8; 4]; 16];
+
 macro_rules! stat_add {
     ($collect:expr, $stats:ident, $field:ident, $value:expr) => {{
         if $collect {
@@ -636,7 +638,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
         let orig_blk = blocks[block_index];
         let orig_bits = block_bits[block_index];
-        let p_pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
+        let p_pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
+            .try_into()
+            .expect("RDO source block has 16 pixels");
         let bc7_mode = block_modes[block_index];
         if bc7_mode == 8 {
             report_progress(progress, &mut pending_progress, 1);
@@ -1064,7 +1068,7 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error
 #[inline(always)]
 fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     mode_hint: u32,
     trust_mode_hint: bool,
     max_error: u64,
@@ -1118,7 +1122,7 @@ fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
 
 fn decode_bc7_mode0_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 0 low word"));
@@ -1213,7 +1217,7 @@ fn decode_bc7_mode0_error_bounded(
 
 fn decode_bc7_mode2_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 2 low word"));
@@ -1269,7 +1273,7 @@ fn decode_bc7_mode2_error_bounded(
 
 fn decode_bc7_mode3_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 3 low word"));
@@ -1315,7 +1319,7 @@ fn decode_bc7_mode3_error_bounded(
 
 fn decode_bc7_mode4_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let rotation = ((block[0] >> 5) & 0x03) as usize;
@@ -1378,7 +1382,7 @@ fn decode_bc7_mode4_error_bounded(
 
 fn decode_bc7_mode5_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let low = u64::from_le_bytes(block[0..8].try_into().expect("mode 5 low word"));
@@ -1431,7 +1435,7 @@ fn decode_bc7_mode5_error_bounded(
 
 fn decode_bc7_mode1_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let part_id = (block[0] >> 2) as usize;
@@ -1500,7 +1504,7 @@ fn decode_bc7_mode1_error_bounded(
 
 fn decode_bc7_mode6_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let lo = u64::from_le_bytes(block[0..8].try_into().expect("BC7 block has 8-byte low word"));
@@ -1545,7 +1549,7 @@ fn decode_bc7_mode6_error_bounded(
 
 fn decode_bc7_mode7_error_bounded(
     block: &[u8; 16],
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
 ) -> Option<u64> {
     let lo = u64::from_le_bytes(block[0..8].try_into().expect("BC7 block has 8-byte low word"));
@@ -1621,7 +1625,7 @@ fn decode_bc7_mode7_error_bounded(
 }
 
 fn decode_bc7_partitioned_rgb_error_bounded(
-    source: &[[u8; 4]],
+    source: &RgbaBlock,
     max_error: u64,
     partitions: &[u8],
     anchors: &[usize],
@@ -1788,7 +1792,7 @@ fn lerp(a: f32, b: f32, s: f32) -> f32 {
     a + (b - a) * s
 }
 
-fn compute_block_max_std_dev(pixels: &[[u8; 4]]) -> f32 {
+fn compute_block_max_std_dev(pixels: &RgbaBlock) -> f32 {
     let mut max_std_dev = 0.0f32;
     for c in 0..4 {
         let mut sum = 0.0f64;
@@ -1899,7 +1903,9 @@ fn compute_block_mse_scales(
         .par_iter_mut()
         .enumerate()
         .for_each(|(block_index, is_ultrasmooth)| {
-            let pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
+            let pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
+                .try_into()
+                .expect("RDO source block has 16 pixels");
 
             let mut luma_sum = 0.0f64;
             for i in 0..16 {
@@ -2066,7 +2072,9 @@ mod tests {
     fn supported_blocks_mse(blocks: &[[u8; 16]], rgba_blocks: &[[u8; 4]]) -> f32 {
         let mut sse = 0u64;
         for (block_index, block) in blocks.iter().enumerate() {
-            let pixels = &rgba_blocks[block_index * 16..(block_index + 1) * 16];
+            let pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
+                .try_into()
+                .expect("RDO source block has 16 pixels");
             sse += decode_bc7_error_bounded::<false>(block, pixels, get_bc7_mode(block), true, u64::MAX, None)
                 .expect("RDO should only emit supported BC7 modes");
         }
