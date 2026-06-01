@@ -1175,11 +1175,8 @@ fn decode_bc7_mode0_error_bounded(
     let high = (block_bits >> 64) as u64;
     let partition = ((low >> 1) & 0x0F) as usize;
     let partitions = &BC7_PARTITION3[partition * 16..partition * 16 + 16];
-    let anchors = [
-        0usize,
-        BC7_ANCHOR_THIRD_SUBSET1[partition] as usize,
-        BC7_ANCHOR_THIRD_SUBSET2[partition] as usize,
-    ];
+    let anchor1 = BC7_ANCHOR_THIRD_SUBSET1[partition] as usize;
+    let anchor2 = BC7_ANCHOR_THIRD_SUBSET2[partition] as usize;
 
     let lr = [
         (low >> 5) & 0x0F,
@@ -1258,7 +1255,15 @@ fn decode_bc7_mode0_error_bounded(
             ],
         ],
     ];
-    decode_bc7_partitioned_rgb_error_bounded(source, max_error, partitions, &anchors, &endpoints, high >> 19, 3, &BC7_WEIGHTS3)
+    decode_bc7_partitioned_rgb3_weights3_error_bounded(
+        source,
+        max_error,
+        partitions,
+        anchor1,
+        anchor2,
+        &endpoints,
+        high >> 19,
+    )
 }
 
 fn decode_bc7_mode2_error_bounded(
@@ -1270,11 +1275,8 @@ fn decode_bc7_mode2_error_bounded(
     let tail = (block_bits >> 64) as u64;
     let partition = ((low >> 3) & 0x3F) as usize;
     let partitions = &BC7_PARTITION3[partition * 16..partition * 16 + 16];
-    let anchors = [
-        0usize,
-        BC7_ANCHOR_THIRD_SUBSET1[partition] as usize,
-        BC7_ANCHOR_THIRD_SUBSET2[partition] as usize,
-    ];
+    let anchor1 = BC7_ANCHOR_THIRD_SUBSET1[partition] as usize;
+    let anchor2 = BC7_ANCHOR_THIRD_SUBSET2[partition] as usize;
 
     let endpoints = [
         [
@@ -1314,7 +1316,15 @@ fn decode_bc7_mode2_error_bounded(
             ],
         ],
     ];
-    decode_bc7_partitioned_rgb_error_bounded(source, max_error, partitions, &anchors, &endpoints, tail >> 35, 2, &BC7_WEIGHTS2)
+    decode_bc7_partitioned_rgb3_weights2_error_bounded(
+        source,
+        max_error,
+        partitions,
+        anchor1,
+        anchor2,
+        &endpoints,
+        tail >> 35,
+    )
 }
 
 fn decode_bc7_mode3_error_bounded(
@@ -1326,7 +1336,7 @@ fn decode_bc7_mode3_error_bounded(
     let high = (block_bits >> 64) as u64;
     let partition = ((low >> 4) & 0x3F) as usize;
     let partitions = &BC7_PARTITION2[partition * 16..partition * 16 + 16];
-    let anchors = [0usize, BC7_ANCHOR_SECOND_SUBSET[partition] as usize];
+    let anchor = BC7_ANCHOR_SECOND_SUBSET[partition] as usize;
     let p = [
         (high >> 30) & 0x01,
         (high >> 31) & 0x01,
@@ -1360,7 +1370,14 @@ fn decode_bc7_mode3_error_bounded(
             ],
         ],
     ];
-    decode_bc7_partitioned_rgb_error_bounded(source, max_error, partitions, &anchors, &endpoints, high >> 34, 2, &BC7_WEIGHTS2)
+    decode_bc7_partitioned_rgb2_weights2_error_bounded(
+        source,
+        max_error,
+        partitions,
+        anchor,
+        &endpoints,
+        high >> 34,
+    )
 }
 
 fn decode_bc7_mode4_error_bounded(
@@ -1385,41 +1402,34 @@ fn decode_bc7_mode4_error_bounded(
 
     let p2_stream = y_low | ((z & 1) << 32);
     let p3_stream = z >> 1;
-    let mut p2_bit_ofs = 2usize;
-    let mut p3_bit_ofs = 0usize;
-    let mut err = 0u64;
 
-    for i in 0..16 {
-        let p2_bits = if i == 0 { 1 } else { 2 };
-        let p3_bits = if i == 0 { 2 } else { 3 };
-        let p2_index = ((p2_stream >> p2_bit_ofs) & ((1u64 << p2_bits) - 1)) as usize;
-        let p3_index = ((p3_stream >> p3_bit_ofs) & ((1u64 << p3_bits) - 1)) as usize;
-        p2_bit_ofs += p2_bits;
-        p3_bit_ofs += p3_bits;
-
-        let (rgb_weight, scalar_weight) = if index_flag {
-            (BC7_WEIGHTS3[p3_index] as i32, BC7_WEIGHTS2[p2_index] as i32)
-        } else {
-            (BC7_WEIGHTS2[p2_index] as i32, BC7_WEIGHTS3[p3_index] as i32)
-        };
-        let mut decoded = [
-            interpolate_bc7(lr, hr, rgb_weight),
-            interpolate_bc7(lg, hg, rgb_weight),
-            interpolate_bc7(lb, hb, rgb_weight),
-            interpolate_bc7(la, ha, scalar_weight),
-        ];
-        unrotate_mode45_pixel(&mut decoded, rotation);
-
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
-        if err >= max_error {
-            return None;
-        }
+    match (rotation, index_flag) {
+        (0, false) => decode_bc7_mode4_pixels_error_bounded::<0, false>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (1, false) => decode_bc7_mode4_pixels_error_bounded::<1, false>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (2, false) => decode_bc7_mode4_pixels_error_bounded::<2, false>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (3, false) => decode_bc7_mode4_pixels_error_bounded::<3, false>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (0, true) => decode_bc7_mode4_pixels_error_bounded::<0, true>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (1, true) => decode_bc7_mode4_pixels_error_bounded::<1, true>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (2, true) => decode_bc7_mode4_pixels_error_bounded::<2, true>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        (3, true) => decode_bc7_mode4_pixels_error_bounded::<3, true>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, p2_stream, p3_stream,
+        ),
+        _ => unreachable!("BC7 mode 4 rotation is two bits"),
     }
-
-    Some(err)
 }
 
 fn decode_bc7_mode5_error_bounded(
@@ -1442,37 +1452,174 @@ fn decode_bc7_mode5_error_bounded(
 
     let rgb_stream = high >> 2;
     let alpha_stream = high >> 33;
-    let mut rgb_bit_ofs = 0usize;
-    let mut alpha_bit_ofs = 0usize;
+
+    match rotation {
+        0 => decode_bc7_mode5_pixels_error_bounded::<0>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+        ),
+        1 => decode_bc7_mode5_pixels_error_bounded::<1>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+        ),
+        2 => decode_bc7_mode5_pixels_error_bounded::<2>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+        ),
+        3 => decode_bc7_mode5_pixels_error_bounded::<3>(
+            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+        ),
+        _ => unreachable!("BC7 mode 5 rotation is two bits"),
+    }
+}
+
+fn decode_bc7_mode4_pixels_error_bounded<const ROTATION: usize, const INDEX_FLAG: bool>(
+    source: &RgbaBlock,
+    max_error: u64,
+    lr: i32,
+    hr: i32,
+    lg: i32,
+    hg: i32,
+    lb: i32,
+    hb: i32,
+    la: i32,
+    ha: i32,
+    p2_stream: u64,
+    p3_stream: u64,
+) -> Option<u64> {
     let mut err = 0u64;
+    let p2_index = ((p2_stream >> 2) & 0x01) as usize;
+    let p3_index = (p3_stream & 0x03) as usize;
+    let (rgb_weight, scalar_weight) = if INDEX_FLAG {
+        (BC7_WEIGHTS3[p3_index] as i32, BC7_WEIGHTS2[p2_index] as i32)
+    } else {
+        (BC7_WEIGHTS2[p2_index] as i32, BC7_WEIGHTS3[p3_index] as i32)
+    };
+    err += mode45_pixel_sse::<ROTATION>(
+        &source[0],
+        interpolate_bc7(lr, hr, rgb_weight),
+        interpolate_bc7(lg, hg, rgb_weight),
+        interpolate_bc7(lb, hb, rgb_weight),
+        interpolate_bc7(la, ha, scalar_weight),
+    );
+    if err >= max_error {
+        return None;
+    }
 
-    for i in 0..16 {
-        let bits = if i == 0 { 1 } else { 2 };
-        let rgb_index = ((rgb_stream >> rgb_bit_ofs) & ((1u64 << bits) - 1)) as usize;
-        let alpha_index = ((alpha_stream >> alpha_bit_ofs) & ((1u64 << bits) - 1)) as usize;
-        rgb_bit_ofs += bits;
-        alpha_bit_ofs += bits;
-
-        let rgb_weight = BC7_WEIGHTS2[rgb_index] as i32;
-        let alpha_weight = BC7_WEIGHTS2[alpha_index] as i32;
-        let mut decoded = [
+    let mut p2_bit_ofs = 3usize;
+    let mut p3_bit_ofs = 2usize;
+    for i in 1..16 {
+        let p2_index = ((p2_stream >> p2_bit_ofs) & 0x03) as usize;
+        let p3_index = ((p3_stream >> p3_bit_ofs) & 0x07) as usize;
+        p2_bit_ofs += 2;
+        p3_bit_ofs += 3;
+        let (rgb_weight, scalar_weight) = if INDEX_FLAG {
+            (BC7_WEIGHTS3[p3_index] as i32, BC7_WEIGHTS2[p2_index] as i32)
+        } else {
+            (BC7_WEIGHTS2[p2_index] as i32, BC7_WEIGHTS3[p3_index] as i32)
+        };
+        err += mode45_pixel_sse::<ROTATION>(
+            &source[i],
             interpolate_bc7(lr, hr, rgb_weight),
             interpolate_bc7(lg, hg, rgb_weight),
             interpolate_bc7(lb, hb, rgb_weight),
-            interpolate_bc7(la, ha, alpha_weight),
-        ];
-        unrotate_mode45_pixel(&mut decoded, rotation);
-
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
+            interpolate_bc7(la, ha, scalar_weight),
+        );
         if err >= max_error {
             return None;
         }
     }
 
     Some(err)
+}
+
+fn decode_bc7_mode5_pixels_error_bounded<const ROTATION: usize>(
+    source: &RgbaBlock,
+    max_error: u64,
+    lr: i32,
+    hr: i32,
+    lg: i32,
+    hg: i32,
+    lb: i32,
+    hb: i32,
+    la: i32,
+    ha: i32,
+    rgb_stream: u64,
+    alpha_stream: u64,
+) -> Option<u64> {
+    let mut err = 0u64;
+    let rgb_index = (rgb_stream & 0x01) as usize;
+    let alpha_index = (alpha_stream & 0x01) as usize;
+    let rgb_weight = BC7_WEIGHTS2[rgb_index] as i32;
+    let alpha_weight = BC7_WEIGHTS2[alpha_index] as i32;
+    err += mode45_pixel_sse::<ROTATION>(
+        &source[0],
+        interpolate_bc7(lr, hr, rgb_weight),
+        interpolate_bc7(lg, hg, rgb_weight),
+        interpolate_bc7(lb, hb, rgb_weight),
+        interpolate_bc7(la, ha, alpha_weight),
+    );
+    if err >= max_error {
+        return None;
+    }
+
+    let mut rgb_bit_ofs = 1usize;
+    let mut alpha_bit_ofs = 1usize;
+    for i in 1..16 {
+        let rgb_index = ((rgb_stream >> rgb_bit_ofs) & 0x03) as usize;
+        let alpha_index = ((alpha_stream >> alpha_bit_ofs) & 0x03) as usize;
+        rgb_bit_ofs += 2;
+        alpha_bit_ofs += 2;
+        let rgb_weight = BC7_WEIGHTS2[rgb_index] as i32;
+        let alpha_weight = BC7_WEIGHTS2[alpha_index] as i32;
+        err += mode45_pixel_sse::<ROTATION>(
+            &source[i],
+            interpolate_bc7(lr, hr, rgb_weight),
+            interpolate_bc7(lg, hg, rgb_weight),
+            interpolate_bc7(lb, hb, rgb_weight),
+            interpolate_bc7(la, ha, alpha_weight),
+        );
+        if err >= max_error {
+            return None;
+        }
+    }
+
+    Some(err)
+}
+
+#[inline(always)]
+fn mode45_pixel_sse<const ROTATION: usize>(
+    source: &[u8; 4],
+    r: i32,
+    g: i32,
+    b: i32,
+    scalar: i32,
+) -> u64 {
+    let (dr, dg, db, da) = match ROTATION {
+        0 => (
+            source[0] as i32 - r,
+            source[1] as i32 - g,
+            source[2] as i32 - b,
+            source[3] as i32 - scalar,
+        ),
+        1 => (
+            source[0] as i32 - scalar,
+            source[1] as i32 - g,
+            source[2] as i32 - b,
+            source[3] as i32 - r,
+        ),
+        2 => (
+            source[0] as i32 - r,
+            source[1] as i32 - scalar,
+            source[2] as i32 - b,
+            source[3] as i32 - g,
+        ),
+        3 => (
+            source[0] as i32 - r,
+            source[1] as i32 - g,
+            source[2] as i32 - scalar,
+            source[3] as i32 - b,
+        ),
+        _ => unreachable!("BC7 mode 4/5 rotation is two bits"),
+    };
+    (dr * dr + dg * dg + db * db + da * da) as u64
 }
 
 fn decode_bc7_mode1_error_bounded(
@@ -1675,47 +1822,114 @@ fn decode_bc7_mode7_error_bounded(
     Some(err)
 }
 
-fn decode_bc7_partitioned_rgb_error_bounded(
+fn decode_bc7_partitioned_rgb3_weights3_error_bounded(
     source: &RgbaBlock,
     max_error: u64,
     partitions: &[u8],
-    anchors: &[usize],
-    endpoints: &[[[i32; 3]; 2]],
+    anchor1: usize,
+    anchor2: usize,
+    endpoints: &[[[i32; 3]; 2]; 3],
     index_stream: u64,
-    index_bits: usize,
-    weights: &[u8],
 ) -> Option<u64> {
-    let anchor_bits = index_bits - 1;
-    let anchor_mask = (1u64 << anchor_bits) - 1;
-    let index_mask = (1u64 << index_bits) - 1;
     let mut bit_ofs = 0usize;
     let mut err = 0u64;
 
     for i in 0..16 {
         let subset = partitions[i] as usize;
-        let bits = if anchors.contains(&i) { anchor_bits } else { index_bits };
-        let mask = if bits == anchor_bits { anchor_mask } else { index_mask };
+        let bits = if i == 0 || i == anchor1 || i == anchor2 { 2 } else { 3 };
+        let mask = if bits == 2 { 0x03 } else { 0x07 };
         let index = ((index_stream >> bit_ofs) & mask) as usize;
         bit_ofs += bits;
 
-        let weight = weights[index] as i32;
-        let decoded = [
+        let weight = BC7_WEIGHTS3[index] as i32;
+        err += rgb_alpha_255_pixel_sse(
+            &source[i],
             interpolate_bc7(endpoints[subset][0][0], endpoints[subset][1][0], weight),
             interpolate_bc7(endpoints[subset][0][1], endpoints[subset][1][1], weight),
             interpolate_bc7(endpoints[subset][0][2], endpoints[subset][1][2], weight),
-            255,
-        ];
-
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
+        );
         if err >= max_error {
             return None;
         }
     }
 
     Some(err)
+}
+
+fn decode_bc7_partitioned_rgb3_weights2_error_bounded(
+    source: &RgbaBlock,
+    max_error: u64,
+    partitions: &[u8],
+    anchor1: usize,
+    anchor2: usize,
+    endpoints: &[[[i32; 3]; 2]; 3],
+    index_stream: u64,
+) -> Option<u64> {
+    let mut bit_ofs = 0usize;
+    let mut err = 0u64;
+
+    for i in 0..16 {
+        let subset = partitions[i] as usize;
+        let bits = if i == 0 || i == anchor1 || i == anchor2 { 1 } else { 2 };
+        let mask = if bits == 1 { 0x01 } else { 0x03 };
+        let index = ((index_stream >> bit_ofs) & mask) as usize;
+        bit_ofs += bits;
+
+        let weight = BC7_WEIGHTS2[index] as i32;
+        err += rgb_alpha_255_pixel_sse(
+            &source[i],
+            interpolate_bc7(endpoints[subset][0][0], endpoints[subset][1][0], weight),
+            interpolate_bc7(endpoints[subset][0][1], endpoints[subset][1][1], weight),
+            interpolate_bc7(endpoints[subset][0][2], endpoints[subset][1][2], weight),
+        );
+        if err >= max_error {
+            return None;
+        }
+    }
+
+    Some(err)
+}
+
+fn decode_bc7_partitioned_rgb2_weights2_error_bounded(
+    source: &RgbaBlock,
+    max_error: u64,
+    partitions: &[u8],
+    anchor: usize,
+    endpoints: &[[[i32; 3]; 2]; 2],
+    index_stream: u64,
+) -> Option<u64> {
+    let mut bit_ofs = 0usize;
+    let mut err = 0u64;
+
+    for i in 0..16 {
+        let subset = partitions[i] as usize;
+        let bits = if i == 0 || i == anchor { 1 } else { 2 };
+        let mask = if bits == 1 { 0x01 } else { 0x03 };
+        let index = ((index_stream >> bit_ofs) & mask) as usize;
+        bit_ofs += bits;
+
+        let weight = BC7_WEIGHTS2[index] as i32;
+        err += rgb_alpha_255_pixel_sse(
+            &source[i],
+            interpolate_bc7(endpoints[subset][0][0], endpoints[subset][1][0], weight),
+            interpolate_bc7(endpoints[subset][0][1], endpoints[subset][1][1], weight),
+            interpolate_bc7(endpoints[subset][0][2], endpoints[subset][1][2], weight),
+        );
+        if err >= max_error {
+            return None;
+        }
+    }
+
+    Some(err)
+}
+
+#[inline(always)]
+fn rgb_alpha_255_pixel_sse(source: &[u8; 4], r: i32, g: i32, b: i32) -> u64 {
+    let dr = source[0] as i32 - r;
+    let dg = source[1] as i32 - g;
+    let db = source[2] as i32 - b;
+    let da = source[3] as i32 - 255;
+    (dr * dr + dg * dg + db * db + da * da) as u64
 }
 
 #[inline(always)]
@@ -1751,14 +1965,6 @@ fn expand_6_endpoint(v: u64) -> i32 {
 fn expand_7_endpoint(v: u64) -> i32 {
     let v = v as u32;
     ((v << 1) | (v >> 6)) as i32
-}
-
-#[inline(always)]
-fn unrotate_mode45_pixel(pixel: &mut [i32; 4], rotation: usize) {
-    if rotation != 0 {
-        let dp_chan = rotation - 1;
-        pixel.swap(dp_chan, 3);
-    }
 }
 
 #[inline(always)]
