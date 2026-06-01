@@ -866,14 +866,16 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
                 let dist = block_delta * 16;
+                let dist_i64 = dist as i64;
+                let prev_block_base_i64 = (prev_block_index * 16) as i64;
                 for len in (3..=16).rev() {
                     let segment_mask = BC7_SEGMENT_MASKS[len];
                     // Fixed-offset search: src_ofs == dst_ofs
                     let normal_match_bits = distance_cost_layout.normal_match_bits(block_delta, len);
                     let normal_trial_bits_times_lambda =
                         distance_cost_layout.normal_trial_lambda(block_delta, len);
-                    let continuation_possible = prev_block_index as i64 * 16 == prev_cont_window_ofs;
-                    let rep0_possible = prev_rep0_dist >= 0 && dist as i64 == prev_rep0_dist;
+                    let continuation_possible = prev_block_base_i64 == prev_cont_window_ofs;
+                    let rep0_possible = prev_rep0_dist >= 0 && dist_i64 == prev_rep0_dist;
                     if normal_trial_bits_times_lambda >= best_t
                         && !continuation_possible
                         && !rep0_possible
@@ -886,18 +888,16 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
                     for ofs in 0..=(16 - len) {
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
-                        let src_win_ofs = (prev_block_index * 16 + ofs) as i64;
-                        let dst_win_ofs = (block_index      * 16 + ofs) as i64;
                         let shift = ofs * 8;
                         let mut prev_segment = 0u128;
                         let mut prev_segment_loaded = false;
 
                         // REP0 / match-continuation cost reduction (ERT_FAVOR_CONT_AND_REP0_MATCHES)
                         let (trial_match_bits, trial_bits_times_lambda) =
-                            if src_win_ofs == prev_cont_window_ofs && ofs == 0 {
+                            if prev_block_base_i64 == prev_cont_window_ofs && ofs == 0 {
                                 // Continuation: the match continues directly from the previous block's match
                                 (MATCH_CONTINUE_BITS, rate_costs.continuation_trial_lambda_by_len[len])
-                            } else if prev_rep0_dist >= 0 && src_win_ofs == dst_win_ofs - prev_rep0_dist {
+                            } else if prev_rep0_dist >= 0 && dist_i64 == prev_rep0_dist {
                                 // REP0: re-using the last accepted match distance costs only MATCH_REP0_BITS
                                 (MATCH_REP0_BITS, rate_costs.rep0_trial_lambda_by_len[len])
                             } else {
@@ -933,8 +933,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                     best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = ofs;
                                     best_match_bits = trial_match_bits;
-                                    prev_cont_window_ofs = src_win_ofs + len as i64;
-                                    prev_rep0_dist       = dst_win_ofs - src_win_ofs;
+                                    prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
+                                    prev_rep0_dist       = dist_i64;
                                     stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                                 }
                             }
@@ -973,8 +973,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                 best_match_len = len; best_match_dst_block_ofs = ofs;
                                 best_match_bits = trial_match_bits;
                                 // Update continuation/REP0 state for the next block
-                                prev_cont_window_ofs = src_win_ofs + len as i64;
-                                prev_rep0_dist       = dst_win_ofs - src_win_ofs;
+                                prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
+                                prev_rep0_dist       = dist_i64;
                                 stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
