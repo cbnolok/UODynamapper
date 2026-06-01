@@ -306,9 +306,9 @@ fn decode_ec_gump_payload(
         format,
         props: None,
         raw_data: Arc::from(source_payload),
+        image_data_offset: 0,
     };
-    let image = tex_file.decode_to_rgba()?;
-    let rgba = image.to_rgba8();
+    let rgba = tex_file.decode_to_rgba8()?;
     let width = rgba.width();
     let height = rgba.height();
     if width > u16::MAX as u32 || height > u16::MAX as u32 {

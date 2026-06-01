@@ -144,17 +144,18 @@ pub struct TextureFile {
     pub format: ECImageFormat,
     /// Detailed Tile Art metadata if linked against `tileart.uop` definitions.
     pub props: Option<ArtData>,
-    /// The unadultered bytes (such as DXT1/5 DDS byte-blocks or TGA blobs) extracted
-    /// directly from `UopPackage` z-lib, without heavy CPU scalar decoding.
+    /// The unpacked UOP payload. `image_data_offset` skips optional texture metadata
+    /// so `raw_bytes()` can expose the DDS/TGA bytes without copying them.
     /// This saves ~8x memory space and makes it extremely fast to upload to GPU VRAM mappings.
     pub raw_data: Arc<[u8]>,
+    pub image_data_offset: usize,
 }
 
 impl TextureFile {
     /// Provides access to textures natively mapped in UOP layout without
     /// decompressing the format through `dds` to raw RGBA.
     pub fn raw_bytes(&self) -> &[u8] {
-        &self.raw_data
+        &self.raw_data[self.image_data_offset..]
     }
 
     /// CPU Software Decompression fallback primarily reserved for tooling or legacy UI extraction.
@@ -167,7 +168,7 @@ impl TextureFile {
     pub fn decode_to_rgba8(&self) -> eyre::Result<RgbaImage> {
         match self.format {
             ECImageFormat::DDS => {
-                let cursor = Cursor::new(&self.raw_data[..]);
+                let cursor = Cursor::new(self.raw_bytes());
                 let mut decoder = dds::Decoder::new(cursor).wrap_err("Failed reading DDS header")?;
                 let size = decoder.main_size();
                 let rgba_len = dds::ColorFormat::RGBA_U8
@@ -184,7 +185,7 @@ impl TextureFile {
                 Ok(image_buffer)
             }
             ECImageFormat::TGA => {
-                image::load(Cursor::new(&self.raw_data[..]), image::ImageFormat::Tga)
+                image::load(Cursor::new(self.raw_bytes()), image::ImageFormat::Tga)
                     .wrap_err("Failed reading TGA")
                     .map(|image| image.to_rgba8())
             }
@@ -267,18 +268,18 @@ impl Textures {
     ) -> eyre::Result<Option<TextureFile>> {
         if let Some(file) = self.package.get_file_by_hash(hash) {
             let data: Arc<[u8]> = file.unpack()?.into();
-            let (metadata, sliced_image) = if payload_starts_with_raw_image(&data, format) {
+            let (metadata, image_data_offset) = if payload_starts_with_raw_image(&data, format) {
                 // The EC texture UOPs typically store the DDS/TGA payload directly.
                 // Treat the whole unpacked file as image data in that common case.
-                (TextureItem::absent(), Arc::clone(&data))
+                (TextureItem::absent(), 0)
             } else {
                 let mut cursor = Cursor::new(&*data);
                 match TextureItem::read(&mut cursor) {
                     Ok(metadata) => {
                         let image_data_pos = cursor.position() as usize;
-                        (metadata, data[image_data_pos..].into())
+                        (metadata, image_data_pos)
                     }
-                    Err(_) => (TextureItem::absent(), Arc::clone(&data)),
+                    Err(_) => (TextureItem::absent(), 0),
                 }
             };
 
@@ -314,7 +315,8 @@ impl Textures {
                 metadata,
                 format,
                 props,
-                raw_data: sliced_image,
+                raw_data: data,
+                image_data_offset,
                 is_ec: self.is_ec_texture,
             }));
         }
