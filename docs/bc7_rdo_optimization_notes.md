@@ -160,6 +160,24 @@ Practical guidance:
 - Do not precompute full Mode 7 palettes in the bounded decoder.
 - Mode 7 optimization should preserve lazy per-pixel work or first measure average bounded-exit depth before moving work ahead of the exit checks.
 
+### Partial max-trial-error branch hoist
+
+Attempt:
+- Split `max_trial_error` into a scaled helper and hoisted the `trial_error_scale > 0.0` flag once per block.
+- Replaced the helper's internal branch with per-call-site conditionals before each bounded decode.
+
+Why it looked promising:
+- The max-trial-error calculation happens before nearly every bounded decode trial.
+- The zero-scale case is block-invariant and should be rare in normal RDO settings.
+
+Why it was reverted:
+- Focused tests passed and checksums stayed stable, but the benchmark moved alpha-mobile and mixed-atlas down versus the current hash-probe baseline.
+- The change did not actually remove the per-decode branch; it only moved it from the helper to each call site and added code size.
+
+Practical guidance:
+- Do not repeat this partial hoist.
+- If optimizing this path, split the whole candidate search into scaled/unbounded outer paths or prove the zero-scale case can be eliminated for the relevant public parameters.
+
 ## Benchmark Context
 
 Commands used for these decisions:
