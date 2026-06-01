@@ -114,6 +114,26 @@ Practical guidance:
 - Do not reintroduce broad endpoint-delta arrays in the bounded decoders without assembly evidence.
 - If revisiting interpolation, prefer a narrower mode-specific change with measured register pressure and the same bounded-exit behavior.
 
+### Mode 7 bounded decoder palette predecode
+
+Attempt:
+- Precomputed two Mode 7 subset palettes with four RGBA colors each.
+- Replaced per-pixel interpolation in `decode_bc7_mode7_error_bounded` with palette lookups.
+- Kept the same pixel order and the same bounded-error exit after each pixel, so checksums and focused Mode 7 tests stayed stable.
+
+Why it looked promising:
+- Alpha-mobile RDO stats showed Mode 7 dominates the bounded decode count.
+- Mode 7 uses only 2-bit weights, so an 8-color palette can reduce repeated interpolation in full-block decodes.
+
+Why it was reverted:
+- The RDO benchmark regressed badly on all cases after two consecutive runs.
+- Alpha-mobile dropped to roughly `451-454 blk/s` in those runs, much worse than the current baseline.
+- The likely cause is that most bounded decodes exit early, so paying to build all subset palette entries upfront is wasted work and increases register/cache pressure.
+
+Practical guidance:
+- Do not precompute full Mode 7 palettes in the bounded decoder.
+- Mode 7 optimization should preserve lazy per-pixel work or first measure average bounded-exit depth before moving work ahead of the exit checks.
+
 ## Benchmark Context
 
 Commands used for these decisions:
