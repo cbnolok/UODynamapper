@@ -633,6 +633,28 @@ Practical guidance:
 - If revisiting, inspect generated assembly first and prefer reducing work inside the helper without increasing live SIMD state.
 - Be especially suspicious of changes that look cheaper by instruction count but add register pressure across AVX2/AVX512 caller boundaries.
 
+### Mode 4/5 alpha-weight const specialization
+
+Attempt:
+- Replaced the Mode 4/5 alpha-weight helper's runtime endpoint-expander function pointer and `max_w` table branch with const generics for the three real call shapes.
+- Hoisted `f32x4` splats for alpha low endpoint, scale, and half outside the four-lane loop.
+- Removed the identity `from_8i` helper used only by Mode 5 alpha endpoints.
+
+Why it looked promising:
+- The helper is called repeatedly by `pack_mode4_or_5` for Mode 5 and both Mode 4 index-flag paths.
+- The call shapes are fixed: 2-bit raw 8-bit alpha, 2-bit expanded 6-bit alpha, and 3-bit expanded 6-bit alpha.
+- Specialization should remove runtime branches and avoid repeated SIMD setup without changing weights, endpoint expansion, or candidate order.
+
+Why it was reverted:
+- Focused compile/tests passed and output checksums stayed stable.
+- Clean-worktree benchmark comparison regressed encode throughput, especially the wide path.
+- In one comparison, wide throughput dropped from roughly 38718 to 29491 blk/s on opaque, 159263 to 104236 blk/s on alpha/mobile, and 214367 to 156449 blk/s on mixed.
+- The specialization likely increased code size or inhibited inlining/vector codegen enough to outweigh the removed helper branches.
+
+Practical guidance:
+- Do not const-specialize `eval_alpha_weights` in its current shape.
+- If revisiting Mode 4/5 alpha, inspect assembly first and consider a smaller change that only hoists splats without cloning the helper by const parameters.
+
 ### Const-generic no-progress RDO loop specialization
 
 Attempt:
