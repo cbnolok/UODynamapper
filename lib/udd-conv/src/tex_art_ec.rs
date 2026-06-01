@@ -1376,8 +1376,8 @@ fn take_page_tile_prefix(
         );
     }
 
-    let mut leftovers = tiles;
-    let selected = leftovers.drain(..prefix_len).collect::<Vec<_>>();
+    let mut selected = tiles;
+    let leftovers = selected.split_off(prefix_len);
     Ok((selected, leftovers))
 }
 
@@ -1403,8 +1403,8 @@ fn max_fitting_page_prefix_len(
 }
 
 fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) -> eyre::Result<bool> {
-    let mut to_pack = tiles.to_vec();
-    sort_tiles_within_page(&mut to_pack, options);
+    let mut to_pack = tiles.iter().collect::<Vec<_>>();
+    sort_tile_refs_within_page(&mut to_pack, options);
 
     let mut allocator = AtlasAllocator::new(size2(
         options.atlas_width as i32,
@@ -1450,6 +1450,16 @@ fn page_prefix_fits(tiles: &[DecodedArtTile], options: &TexArtEcAtlasOptions) ->
 }
 
 fn sort_tiles_within_page(tiles: &mut [DecodedArtTile], options: &TexArtEcAtlasOptions) {
+    tiles.sort_by(|left, right| {
+        let left_area = sort_area(left, options);
+        let right_area = sort_area(right, options);
+        right_area
+            .cmp(&left_area)
+            .then_with(|| left.art_id.cmp(&right.art_id))
+    });
+}
+
+fn sort_tile_refs_within_page(tiles: &mut [&DecodedArtTile], options: &TexArtEcAtlasOptions) {
     tiles.sort_by(|left, right| {
         let left_area = sort_area(left, options);
         let right_area = sort_area(right, options);
