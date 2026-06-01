@@ -2491,6 +2491,9 @@ fn compute_block_mse_scales(
 ) -> Vec<f32> {
     let total_blocks = blocks_x * blocks_y;
     let mut block_mse_scales = vec![-1.0f32; total_blocks];
+    if total_blocks == 0 || blocks_x == 0 {
+        return block_mse_scales;
+    }
     let use_parallel = total_blocks >= PARALLEL_RDO_BLOCK_THRESHOLD;
 
     let mut is_ultrasmooth = vec![0u8; total_blocks];
@@ -2515,14 +2518,14 @@ fn compute_block_mse_scales(
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
     if use_parallel {
         next_mask
-            .par_iter_mut()
+            .par_chunks_mut(blocks_x)
             .enumerate()
-            .for_each(|(idx, next)| {
-                *next = erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+            .for_each(|(y, next_row)| {
+                erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
             });
     } else {
-        for (idx, next) in next_mask.iter_mut().enumerate() {
-            *next = erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+        for (y, next_row) in next_mask.chunks_mut(blocks_x).enumerate() {
+            erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
         }
     }
     std::mem::swap(&mut current_mask, &mut next_mask);
@@ -2531,14 +2534,14 @@ fn compute_block_mse_scales(
     for _ in 0..32 {
         if use_parallel {
             next_mask
-                .par_iter_mut()
+                .par_chunks_mut(blocks_x)
                 .enumerate()
-                .for_each(|(idx, next)| {
-                    *next = median_erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+                .for_each(|(y, next_row)| {
+                    median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
                 });
         } else {
-            for (idx, next) in next_mask.iter_mut().enumerate() {
-                *next = median_erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+            for (y, next_row) in next_mask.chunks_mut(blocks_x).enumerate() {
+                median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
             }
         }
         std::mem::swap(&mut current_mask, &mut next_mask);
@@ -2603,63 +2606,73 @@ fn is_ultrasmooth_seed_block(pixels: &RgbaBlock) -> bool {
 }
 
 #[inline]
-fn erode_ultrasmooth_mask_at(
-    idx: usize,
+fn erode_ultrasmooth_mask_row(
+    next_row: &mut [u8],
+    y: usize,
     current_mask: &[u8],
     blocks_x: usize,
     blocks_y: usize,
-) -> u8 {
-    if current_mask[idx] == 0 {
-        return 0;
-    }
+) {
+    let row_start = y * blocks_x;
+    let min_y = y.saturating_sub(1);
+    let max_y = (y + 1).min(blocks_y - 1);
+    for (x, next) in next_row.iter_mut().enumerate() {
+        let idx = row_start + x;
+        if current_mask[idx] == 0 {
+            *next = 0;
+            continue;
+        }
 
-    let x = idx % blocks_x;
-    let y = idx / blocks_x;
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
-            if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                if current_mask[nx as usize + ny as usize * blocks_x] == 0 {
-                    return 0;
+        let min_x = x.saturating_sub(1);
+        let max_x = (x + 1).min(blocks_x - 1);
+        let mut keep = 1;
+        'neighbors: for ny in min_y..=max_y {
+            let neighbor_row = ny * blocks_x;
+            for nx in min_x..=max_x {
+                if current_mask[neighbor_row + nx] == 0 {
+                    keep = 0;
+                    break 'neighbors;
                 }
             }
         }
+        *next = keep;
     }
-
-    1
 }
 
 #[inline]
-fn median_erode_ultrasmooth_mask_at(
-    idx: usize,
+fn median_erode_ultrasmooth_mask_row(
+    next_row: &mut [u8],
+    y: usize,
     current_mask: &[u8],
     blocks_x: usize,
     blocks_y: usize,
-) -> u8 {
-    if current_mask[idx] == 0 {
-        return 0;
-    }
+) {
+    let row_start = y * blocks_x;
+    let min_y = y.saturating_sub(1);
+    let max_y = (y + 1).min(blocks_y - 1);
+    for (x, next) in next_row.iter_mut().enumerate() {
+        let idx = row_start + x;
+        if current_mask[idx] == 0 {
+            *next = 0;
+            continue;
+        }
 
-    let x = idx % blocks_x;
-    let y = idx / blocks_x;
-    let mut non_ultrasmooth_count = 0;
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
-            if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                if current_mask[nx as usize + ny as usize * blocks_x] == 0 {
+        let min_x = x.saturating_sub(1);
+        let max_x = (x + 1).min(blocks_x - 1);
+        let mut non_ultrasmooth_count = 0;
+        'neighbors: for ny in min_y..=max_y {
+            let neighbor_row = ny * blocks_x;
+            for nx in min_x..=max_x {
+                if current_mask[neighbor_row + nx] == 0 {
                     non_ultrasmooth_count += 1;
                     if non_ultrasmooth_count >= 5 {
-                        return 0;
+                        break 'neighbors;
                     }
                 }
             }
         }
+        *next = (non_ultrasmooth_count < 5) as u8;
     }
-
-    (non_ultrasmooth_count < 5) as u8
 }
 
 #[cfg(test)]
