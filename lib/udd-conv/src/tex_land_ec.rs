@@ -1272,51 +1272,47 @@ fn decode_present_tiles(
         .collect::<Vec<_>>();
     texture_pb.finish_with_message("Unique EC land textures extracted");
 
-    let mut decoded_texture_cache = HashMap::with_capacity(decoded_textures.len());
-    for decoded_texture in decoded_textures {
-        let (texture_id, decoded) = decoded_texture?;
-        if let Some(mut decoded) = decoded {
-            let upscale_config = match (decoded.width, decoded.height) {
-                (64, 64) => Some((&options.upscale_64, options.upscale_64_passes.as_slice())),
-                (128, 128) => Some((&options.upscale_128, options.upscale_128_passes.as_slice())),
-                (256, 256) => Some((&options.upscale_256, options.upscale_256_passes.as_slice())),
-                (512, 512) => Some((&options.upscale_512, options.upscale_512_passes.as_slice())),
-                _ => None,
-            };
-
-            if let Some((cfg, passes)) = upscale_config {
-                if !passes.is_empty() {
-                    let (width, height, rgba, _, _) =
-                        apply_filter_passes(decoded.width, decoded.height, &decoded.rgba, passes);
-                    decoded.width = width;
-                    decoded.height = height;
-                    decoded.rgba = rgba;
-                } else if cfg.target_size > 0 && !matches!(cfg.filter, UpscaleFilter::None) {
-                    let rgba = cfg.filter.apply_to_size(
-                        decoded.width,
-                        decoded.height,
-                        &decoded.rgba,
-                        cfg.target_size,
-                        cfg.target_size,
-                    );
-                    decoded.width = cfg.target_size;
-                    decoded.height = cfg.target_size;
-                    decoded.rgba = rgba;
-                }
-            }
-            decoded_texture_cache.insert(texture_id, decoded);
-        }
-    }
-
-    for texture_id in &texture_ids {
-        let Some(decoded) = decoded_texture_cache.remove(texture_id) else {
-            ignored_source_texture_ids.push(*texture_id);
+    decoded_tiles.reserve(texture_ids.len());
+    for (&texture_id, decoded_texture) in texture_ids.iter().zip(decoded_textures) {
+        let (decoded_texture_id, decoded) = decoded_texture?;
+        debug_assert_eq!(texture_id, decoded_texture_id);
+        let Some(mut decoded) = decoded else {
+            ignored_source_texture_ids.push(texture_id);
             continue;
         };
 
+        let upscale_config = match (decoded.width, decoded.height) {
+            (64, 64) => Some((&options.upscale_64, options.upscale_64_passes.as_slice())),
+            (128, 128) => Some((&options.upscale_128, options.upscale_128_passes.as_slice())),
+            (256, 256) => Some((&options.upscale_256, options.upscale_256_passes.as_slice())),
+            (512, 512) => Some((&options.upscale_512, options.upscale_512_passes.as_slice())),
+            _ => None,
+        };
+
+        if let Some((cfg, passes)) = upscale_config {
+            if !passes.is_empty() {
+                let (width, height, rgba, _, _) =
+                    apply_filter_passes(decoded.width, decoded.height, &decoded.rgba, passes);
+                decoded.width = width;
+                decoded.height = height;
+                decoded.rgba = rgba;
+            } else if cfg.target_size > 0 && !matches!(cfg.filter, UpscaleFilter::None) {
+                let rgba = cfg.filter.apply_to_size(
+                    decoded.width,
+                    decoded.height,
+                    &decoded.rgba,
+                    cfg.target_size,
+                    cfg.target_size,
+                );
+                decoded.width = cfg.target_size;
+                decoded.height = cfg.target_size;
+                decoded.rgba = rgba;
+            }
+        }
+
         let synthetic_slot_id = next_synthetic_slot_id;
         next_synthetic_slot_id += 1;
-        texture_slot_by_texture_id.insert(*texture_id, synthetic_slot_id);
+        texture_slot_by_texture_id.insert(texture_id, synthetic_slot_id);
 
         decoded_tiles.push(DecodedArtTile {
             art_id: synthetic_slot_id,
