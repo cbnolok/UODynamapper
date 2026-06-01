@@ -568,6 +568,26 @@ Practical guidance:
 - Do not add a per-block no-history early-out before the initial error decode.
 - If revisiting, only consider it with a cheap mode-history non-empty flag that does not call `recent_from` on the hot path.
 
+### Cheap no-history block early-out
+
+Attempt:
+- Added `ModeHistory::has_recent_from` using only the last stored block index for each mode.
+- Used that cheap check before the initial block-error decode in no-stats builds, skipping blocks whose same-mode history could not contain recent candidates.
+- Avoided the earlier rejected `recent_from` pruning call on every block.
+
+Why it looked promising:
+- It preserved the exact-output no-history skip while reducing the hot-path check to one `last()` lookup and comparison.
+- It followed the practical guidance from the broader no-history early-out rejection.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Active-workspace baseline benchmarking under the same Cargo config was faster on opaque, alpha/mobile, and mixed fixtures.
+- Even the cheap extra branch and mode-history lookup did not pay for the rare skipped decode/smooth-scale work.
+
+Practical guidance:
+- Do not add any unconditional no-history check before the initial error decode for the current default path.
+- If this ever matters for sparse real pages, gate it behind instrumentation showing a high no-history rate.
+
 ## Benchmark Context
 
 Commands used for these decisions:
