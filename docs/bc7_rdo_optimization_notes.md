@@ -429,6 +429,26 @@ Practical guidance:
 - Do not add row-level relative minimum-rate tables by default.
 - If revisiting relative pruning, target dynamic cases with high observed `rate_skips` and validate against same-state baseline worktrees, not old benchmark anchors.
 
+### Interior-specialized ultrasmooth erosion
+
+Attempt:
+- Added an interior fast path for `erode_ultrasmooth_mask_at` and `median_erode_ultrasmooth_mask_at`.
+- Interior blocks used fixed 3x3 neighbor offsets and skipped the boundary checks inside the `dx/dy` loops.
+- Border blocks kept the existing boundary-aware loop, preserving exact mask semantics.
+
+Why it looked promising:
+- The ultrasmooth mask prepass runs one erosion plus 32 median-like erosion passes.
+- Most blocks in large pages are interior, so removing repeated boundary tests looked like a branch-reduction win.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state benchmarking was mixed and too small to justify the extra code: tiny gains on opaque/alpha, but a loss on mixed.
+- The fixed-offset path checks all nine neighbors even when an early false neighbor could have ended the original loop, so lower branch count did not translate into consistent throughput.
+
+Practical guidance:
+- Keep the compact boundary-aware erosion helpers for now.
+- If revisiting, measure mask-shape distributions first; an interior path may only help when most active mask cells have all neighbors true.
+
 ## Benchmark Context
 
 Commands used for these decisions:
