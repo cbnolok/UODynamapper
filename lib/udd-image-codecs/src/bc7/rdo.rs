@@ -2543,7 +2543,6 @@ fn compute_block_mse_scales(
     }
 
     // Flood fill to remove small ULTRASMOOTH regions
-    let mut final_mask = current_mask.clone();
     let mut visited = vec![false; total_blocks];
     let mut component = Vec::new();
     let mut stack = Vec::new();
@@ -2569,28 +2568,11 @@ fn compute_block_mse_scales(
                         }
                     }
                 }
-                if component.len() < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
+                if component.len() >= ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
                     for &(cx, cy) in &component {
-                        final_mask[cx + cy * blocks_x] = false;
+                        block_mse_scales[cx + cy * blocks_x] = ULTRASMOOTH_BLOCK_MSE_SCALE;
                     }
                 }
-            }
-        }
-    }
-
-    if use_parallel {
-        block_mse_scales
-            .par_iter_mut()
-            .zip(final_mask.par_iter())
-            .for_each(|(scale, is_ultrasmooth)| {
-                if *is_ultrasmooth {
-                    *scale = ULTRASMOOTH_BLOCK_MSE_SCALE;
-                }
-            });
-    } else {
-        for (scale, is_ultrasmooth) in block_mse_scales.iter_mut().zip(final_mask.iter()) {
-            if *is_ultrasmooth {
-                *scale = ULTRASMOOTH_BLOCK_MSE_SCALE;
             }
         }
     }
