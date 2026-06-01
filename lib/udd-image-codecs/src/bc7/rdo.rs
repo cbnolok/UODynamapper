@@ -2172,12 +2172,9 @@ fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 
 fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, block_index: usize, hs: u32) -> bool {
     let entry = (((block_index as u64) + 1) << 32) | ((hs >> 8) as u64);
     let slot = &mut hash_table[hs as usize & hash_mask];
-    if *slot == entry {
-        true
-    } else {
-        *slot = entry;
-        false
-    }
+    let seen = *slot == entry;
+    *slot = entry;
+    seen
 }
 
 #[inline(always)]
