@@ -508,6 +508,26 @@ Practical guidance:
 - Do not specialize only the first Mode 1/7 pixel by hand.
 - If revisiting these decoders, use assembly/perf evidence and target a larger structure than removing the first descriptor branch.
 
+### Seed-only scalar stddev accumulator
+
+Attempt:
+- Kept the accepted luma early-out in `is_ultrasmooth_seed_block`.
+- Replaced the seed pass's channel-first `compute_block_max_std_dev` call with a scalar single-pass RGBA accumulator for luma-in-range blocks only.
+- Left the main-loop fallback `compute_block_max_std_dev` implementation unchanged.
+
+Why it looked promising:
+- The seed path already paid a luma pass, then scanned each channel separately for stddev.
+- A scalar one-pass accumulator should reduce memory reads without changing integer sums, variance, sqrt order, or output decisions.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state default RDO benchmarking improved the opaque fixture but regressed the alpha/mobile and mixed fixtures.
+- The extra scalar accumulator pressure likely outweighed fewer memory reads on the mobile-heavy path.
+
+Practical guidance:
+- Keep seed stddev on the simple channel-first helper.
+- Avoid scalar RGBA accumulator variants unless a target workload is known to be opaque-heavy and validated separately.
+
 ## Benchmark Context
 
 Commands used for these decisions:
