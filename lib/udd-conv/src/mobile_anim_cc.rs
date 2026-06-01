@@ -10,6 +10,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -204,7 +205,7 @@ struct PagePackCandidate<Key> {
 }
 
 struct CachedPlannedAnimation {
-    frames: Vec<AnimFrame>,
+    frames: Arc<Vec<AnimFrame>>,
     last_used: u64,
 }
 
@@ -933,18 +934,18 @@ fn decode_planned_animation_source(
     }
 }
 
-fn cached_decode_planned_animation_source<'a>(
+fn cached_decode_planned_animation_source(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
     animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
-    cache: &'a mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
+    cache: &mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
     use_tick: &mut u64,
-) -> eyre::Result<&'a Vec<AnimFrame>> {
+) -> eyre::Result<Arc<Vec<AnimFrame>>> {
     *use_tick = use_tick.saturating_add(1);
     if !cache.contains_key(source) {
         let decoded = decode_planned_animation_source(source, anim_map, animationframe_packages)?;
         cache.insert(source.clone(), CachedPlannedAnimation {
-            frames: decoded,
+            frames: Arc::new(decoded),
             last_used: *use_tick,
         });
         while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
@@ -964,7 +965,7 @@ fn cached_decode_planned_animation_source<'a>(
         .get_mut(source)
         .expect("planned mobile animation source was just cached");
     entry.last_used = *use_tick;
-    Ok(&entry.frames)
+    Ok(Arc::clone(&entry.frames))
 }
 
 fn decode_classic_animationframe_uop_frames_from_package(
@@ -2018,9 +2019,8 @@ fn build_planned_page(
         source_top: u16,
         source_crop_width: u16,
         source_crop_height: u16,
-        source_width: u16,
-        source_height: u16,
-        rgba: Vec<u8>,
+        decoded_frames: Arc<Vec<AnimFrame>>,
+        source_frame_index: u16,
     }
 
     struct PreparedPlannedBlit {
@@ -2042,7 +2042,7 @@ fn build_planned_page(
         source_top: u16,
         source_crop_width: u16,
         source_crop_height: u16,
-        source: PlannedAnimationSource,
+        decoded_frames: Arc<Vec<AnimFrame>>,
         source_frame_index: u16,
     }
 
@@ -2108,11 +2108,24 @@ fn build_planned_page(
                     source_top: frame.source_top,
                     source_crop_width: frame.source_width,
                     source_crop_height: frame.source_height,
-                    source_width: decoded_frame.width,
-                    source_height: decoded_frame.height,
-                    rgba: decoded_frame.data.clone(),
+                    decoded_frames,
+                    source_frame_index,
                 });
             } else {
+                let decoded_frames = cached_decode_planned_animation_source(
+                    &frame.source,
+                    anim_map,
+                    animationframe_packages,
+                    decoded_sources,
+                    decoded_source_use_tick,
+                )?;
+                if decoded_frames.get(source_frame_index as usize).is_none() {
+                    eyre::bail!(
+                        "planned mobile animation frame {} missing source frame {}",
+                        global_frame_index,
+                        source_frame_index
+                    );
+                }
                 pending_direct_blits.push(DirectPlannedBlit {
                     global_frame_index,
                     inner_x: inner_x as u32,
@@ -2123,7 +2136,7 @@ fn build_planned_page(
                     source_top: frame.source_top,
                     source_crop_width: frame.source_width,
                     source_crop_height: frame.source_height,
-                    source: frame.source,
+                    decoded_frames,
                     source_frame_index,
                 });
             }
@@ -2148,15 +2161,23 @@ fn build_planned_page(
         let prepared_blits = pending_blits
             .into_par_iter()
             .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
-                let rgba = crop_rgba_frame_window(
-                    pending.source_width,
-                    pending.source_height,
-                    pending.rgba,
+                let Some(decoded_frame) = pending.decoded_frames.get(pending.source_frame_index as usize) else {
+                    eyre::bail!(
+                        "planned mobile animation frame {} missing source frame {}",
+                        pending.global_frame_index,
+                        pending.source_frame_index
+                    );
+                };
+                let rgba = crop_rgba_frame_window_borrowed(
+                    decoded_frame.width,
+                    decoded_frame.height,
+                    &decoded_frame.data,
                     u32::from(pending.source_left),
                     u32::from(pending.source_top),
                     u32::from(pending.source_crop_width),
                     u32::from(pending.source_crop_height),
-                )?;
+                )?
+                .into_owned();
                 let (width, height, rgba, _, _) = apply_filter_passes_owned(
                     pending.source_crop_width as u32,
                     pending.source_crop_height as u32,
@@ -2199,14 +2220,7 @@ fn build_planned_page(
         }
     } else {
         for pending in pending_direct_blits {
-            let decoded_frames = cached_decode_planned_animation_source(
-                &pending.source,
-                anim_map,
-                animationframe_packages,
-                decoded_sources,
-                decoded_source_use_tick,
-            )?;
-            let Some(decoded_frame) = decoded_frames.get(pending.source_frame_index as usize) else {
+            let Some(decoded_frame) = pending.decoded_frames.get(pending.source_frame_index as usize) else {
                 eyre::bail!(
                     "planned mobile animation frame {} missing source frame {}",
                     pending.global_frame_index,
