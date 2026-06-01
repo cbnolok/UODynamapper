@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -142,7 +142,7 @@ struct PresentAnimationCandidate {
 enum PresentAnimationFrames {
     Mul,
     AnimationFrameUop {
-        path: PathBuf,
+        path: Arc<PathBuf>,
         file_hash: u64,
         frame_metadata: Vec<AnimFrameInfo>,
     },
@@ -155,7 +155,7 @@ enum PlannedAnimationSource {
         source_index: u32,
     },
     AnimationFrameUop {
-        path: PathBuf,
+        path: Arc<PathBuf>,
         file_hash: u64,
     },
 }
@@ -806,7 +806,7 @@ fn planned_animation_source(candidate: &PresentAnimationCandidate) -> PlannedAni
         },
         PresentAnimationFrames::AnimationFrameUop { path, file_hash, .. } => {
             PlannedAnimationSource::AnimationFrameUop {
-                path: path.clone(),
+                path: Arc::clone(path),
                 file_hash: *file_hash,
             }
         }
@@ -855,7 +855,7 @@ fn apply_planned_transparent_trim(
         return Ok(());
     }
 
-    let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
+    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedAnimationSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
 
@@ -960,21 +960,21 @@ fn decode_candidate_animation_frame_metadata<'a>(
 fn decode_planned_animation_source(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
 ) -> eyre::Result<Vec<AnimFrame>> {
     match source {
         PlannedAnimationSource::Mul { file_index, source_index } => {
             anim_map.decode_animation_index(*file_index, *source_index)
         }
         PlannedAnimationSource::AnimationFrameUop { path, file_hash } => {
-            if !animationframe_packages.contains_key(path) {
-                let package = UopPackage::load_with_mode(path, LoadMode::Lazy)
-                    .wrap_err_with(|| format!("load {}", path.display()))?;
-                animationframe_packages.insert(path.clone(), package);
-            }
-            let package = animationframe_packages
-                .get_mut(path)
-                .expect("Classic AnimationFrame UOP package was just cached");
+            let package = match animationframe_packages.entry(Arc::clone(path)) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let package = UopPackage::load_with_mode(path.as_ref(), LoadMode::Lazy)
+                        .wrap_err_with(|| format!("load {}", path.display()))?;
+                    entry.insert(package)
+                }
+            };
             decode_classic_animationframe_uop_frames_from_package(package, path, *file_hash)
         }
     }
@@ -983,35 +983,34 @@ fn decode_planned_animation_source(
 fn cached_decode_planned_animation_source(
     source: &PlannedAnimationSource,
     anim_map: &AnimMap,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
     cache: &mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
     use_tick: &mut u64,
 ) -> eyre::Result<Arc<Vec<AnimFrame>>> {
     *use_tick = use_tick.saturating_add(1);
-    if !cache.contains_key(source) {
-        let decoded = decode_planned_animation_source(source, anim_map, animationframe_packages)?;
-        cache.insert(source.clone(), CachedPlannedAnimation {
-            frames: Arc::new(decoded),
-            last_used: *use_tick,
-        });
-        while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
-            let Some(oldest) = cache
-                .iter()
-                .filter(|(key, _)| *key != source)
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            cache.remove(&oldest);
-        }
+    if let Some(entry) = cache.get_mut(source) {
+        entry.last_used = *use_tick;
+        return Ok(Arc::clone(&entry.frames));
     }
 
-    let entry = cache
-        .get_mut(source)
-        .expect("planned mobile animation source was just cached");
-    entry.last_used = *use_tick;
-    Ok(Arc::clone(&entry.frames))
+    let decoded = Arc::new(decode_planned_animation_source(source, anim_map, animationframe_packages)?);
+    cache.insert(source.clone(), CachedPlannedAnimation {
+        frames: Arc::clone(&decoded),
+        last_used: *use_tick,
+    });
+    while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
+        let Some(oldest) = cache
+            .iter()
+            .filter(|(key, _)| *key != source)
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+
+    Ok(decoded)
 }
 
 fn decode_classic_animationframe_uop_frames_from_package(
@@ -1135,6 +1134,7 @@ fn decode_classic_animationframe_package(
         .map(|file| file.filename_hash())
         .collect::<Vec<_>>();
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("AnimationFrame*.uop");
+    let source_path = Arc::new(path.to_path_buf());
     let pb = ProgressBar::new(file_hashes.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -1173,7 +1173,7 @@ fn decode_classic_animationframe_package(
                     source_index: animation.anim_id,
                     flags: 0,
                     frames: PresentAnimationFrames::AnimationFrameUop {
-                        path: path.to_path_buf(),
+                        path: Arc::clone(&source_path),
                         file_hash,
                         frame_metadata: animation.frames,
                     },
@@ -1618,7 +1618,7 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
+    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedAnimationSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
 
@@ -2070,7 +2070,7 @@ fn build_planned_page(
     frame_records: &mut [MobileAnimCcFrameRecord],
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
     decoded_sources: &mut HashMap<PlannedAnimationSource, CachedPlannedAnimation>,
     decoded_source_use_tick: &mut u64,
 ) -> eyre::Result<(BuiltMobileAnimPage, Vec<PlannedMobileAnimFrame>, u64)> {
