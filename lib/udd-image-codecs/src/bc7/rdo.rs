@@ -851,6 +851,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
                         let src_win_ofs = (prev_block_index * 16 + ofs) as i64;
                         let dst_win_ofs = (block_index      * 16 + ofs) as i64;
+                        let shift = ofs * 8;
+                        let mut prev_segment = 0u128;
+                        let mut prev_segment_loaded = false;
 
                         // REP0 / match-continuation cost reduction (ERT_FAVOR_CONT_AND_REP0_MATCHES)
                         let (trial_match_bits, trial_bits_times_lambda) =
@@ -866,8 +869,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
-                                let shift = ofs * 8;
-                                let prev_segment = (prev_bits >> shift) & segment_mask;
+                                prev_segment = (prev_bits >> shift) & segment_mask;
+                                prev_segment_loaded = true;
                                 let hs = hash_hsieh_bc7_segment(prev_segment, len, ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
@@ -884,8 +887,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             continue;
                         }
 
-                        let shift = ofs * 8;
-                        let prev_segment = (prev_bits >> shift) & segment_mask;
+                        if !prev_segment_loaded {
+                            prev_segment = (prev_bits >> shift) & segment_mask;
+                        }
                         if prev_segment == ((orig_bits >> shift) & segment_mask) {
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
