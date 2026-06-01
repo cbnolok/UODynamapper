@@ -668,7 +668,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     let max_block_delta = total_blocks_to_check.min(num_blocks.saturating_sub(1)).max(1);
     let distance_cost_layout =
         DistanceCostLayout::new(max_block_delta, params.allow_relative_movement, &rate_costs);
-    let mut hash_table = vec![0u32; 8192];
+    let mut hash_table = vec![0u64; 8192];
     let hash_mask = hash_table.len() - 1;
     let (mut block_bits, mut block_modes) = if num_blocks < PARALLEL_RDO_BLOCK_THRESHOLD {
         let block_bits = blocks.iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
@@ -703,10 +703,6 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     let mut pending_progress = 0usize;
 
     for block_index in 0..num_blocks {
-        if (block_index & 0xFF) == 0 {
-            hash_table.fill(0);
-        }
-
         let orig_bits = block_bits[block_index];
         let p_pixels = rgba_block_at(rgba_blocks, block_index);
         let bc7_mode = block_modes[block_index];
@@ -806,13 +802,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         // Hash check to skip redundant trials
                         let prev_segment = (prev_bits >> candidate.src_shift) & segment_mask;
                         let hs = hash_hsieh_bc7_segment(prev_segment, len, candidate.dst_ofs as u32);
-                        let hash_check = hash_table[hs as usize & hash_mask];
-                        if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
-                            && (hash_check >> 8) == (hs >> 8) {
+                        if rdo_hash_seen(&mut hash_table, hash_mask, block_index, hs) {
                             stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                             continue;
                         }
-                        hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
 
                         if prev_segment == ((orig_bits >> candidate.dst_shift) & segment_mask) {
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
@@ -916,14 +909,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                 prev_segment = (prev_bits >> shift) & segment_mask;
                                 prev_segment_loaded = true;
                                 let hs = hash_hsieh_bc7_segment(prev_segment, len, ofs as u32);
-                                let hash_check = hash_table[hs as usize & hash_mask];
-                                if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
-                                    && (hash_check >> 8) == (hs >> 8) {
+                                if rdo_hash_seen(&mut hash_table, hash_mask, block_index, hs) {
                                     stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                                     continue;
                                 }
-                                hash_table[hs as usize & hash_mask] =
-                                    (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
                                 (normal_match_bits, normal_trial_bits_times_lambda)
                             };
                         if trial_bits_times_lambda >= best_t {
@@ -2177,6 +2166,18 @@ fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 
     h = h.wrapping_add(h >> 6);
 
     h
+}
+
+#[inline]
+fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, block_index: usize, hs: u32) -> bool {
+    let entry = (((block_index as u64) + 1) << 32) | ((hs >> 8) as u64);
+    let slot = &mut hash_table[hs as usize & hash_mask];
+    if *slot == entry {
+        true
+    } else {
+        *slot = entry;
+        false
+    }
 }
 
 #[inline(always)]
