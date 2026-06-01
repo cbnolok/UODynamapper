@@ -712,16 +712,24 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             continue;
         }
 
-        let max_std_dev = compute_block_max_std_dev(p_pixels);
-        let mut yl = (max_std_dev / actual_params.max_smooth_block_std_dev).clamp(0.0, 1.0);
-        yl = yl * yl;
-        
-        let mut smooth_block_error_scale = lerp(actual_params.smooth_block_max_mse_scale, 1.0, yl);
-        if let Some(ref scales) = block_mse_scales {
-            if scales[block_index] > 0.0 {
-                smooth_block_error_scale = scales[block_index];
+        let smooth_block_error_scale = if let Some(ref scales) = block_mse_scales {
+            let scale = scales[block_index];
+            if scale > 0.0 {
+                scale
+            } else {
+                smooth_block_error_scale_from_pixels(
+                    p_pixels,
+                    actual_params.max_smooth_block_std_dev,
+                    actual_params.smooth_block_max_mse_scale,
+                )
             }
-        }
+        } else {
+            smooth_block_error_scale_from_pixels(
+                p_pixels,
+                actual_params.max_smooth_block_std_dev,
+                actual_params.smooth_block_max_mse_scale,
+            )
+        };
 
         let cur_ms_err = cur_err as f32 / 64.0;
         let cur_t = cur_ms_err * smooth_block_error_scale + (LITERAL_BITS * 16.0) * params.lambda;
@@ -1287,6 +1295,18 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_sc
         return u64::MAX;
     }
     ((best_t - trial_bits_times_lambda) * max_trial_error_scale).max(0.0).ceil() as u64
+}
+
+#[inline(always)]
+fn smooth_block_error_scale_from_pixels(
+    pixels: &RgbaBlock,
+    max_smooth_block_std_dev: f32,
+    smooth_block_max_mse_scale: f32,
+) -> f32 {
+    let max_std_dev = compute_block_max_std_dev(pixels);
+    let mut yl = (max_std_dev / max_smooth_block_std_dev).clamp(0.0, 1.0);
+    yl = yl * yl;
+    lerp(smooth_block_max_mse_scale, 1.0, yl)
 }
 
 #[inline(always)]
