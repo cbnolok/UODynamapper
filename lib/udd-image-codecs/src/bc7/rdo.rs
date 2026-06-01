@@ -872,77 +872,36 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                     }
 
                     if !continuation_possible && !rep0_possible {
-                        for ofs in 0..=(16 - len) {
-                            if normal_trial_bits_times_lambda >= best_t {
-                                let skipped_offsets = (17 - len - ofs) as u64;
-                                stat_add!(COLLECT_STATS, stats, candidate_checks, skipped_offsets);
-                                stat_add!(COLLECT_STATS, stats, rate_skips, skipped_offsets);
-                                break;
-                            }
-
-                            stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
-                            let shift = ofs * 8;
-                            let prev_segment = (prev_bits >> shift) & segment_mask;
-                            let hs = hash_hsieh_bc7_segment(prev_segment, len, ofs as u32);
-                            if rdo_hash_seen(&mut hash_table, hash_mask, hash_epoch, hs) {
-                                stat_add!(COLLECT_STATS, stats, hash_skips, 1);
-                                continue;
-                            }
-
-                            if prev_segment == ((orig_bits >> shift) & segment_mask) {
-                                stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
-                                let trial_ms_err = cur_ms_err;
-                                if trial_ms_err < thresh_ms_err {
-                                    let t = trial_ms_err * smooth_block_error_scale + normal_trial_bits_times_lambda;
-                                    if t < best_t {
-                                        best_t = t; best_bits = orig_bits;
-                                        best_ms_err = trial_ms_err;
-                                        best_match_len = len; best_match_dst_block_ofs = ofs;
-                                        best_match_bits = normal_match_bits;
-                                        prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
-                                        prev_rep0_dist       = dist_i64;
-                                        stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
-                                    }
-                                }
-                                continue;
-                            }
-                            let trial_bits =
-                                bc7_copy_segment_bits_from_segment(
-                                    orig_bits,
-                                    prev_segment,
-                                    shift,
-                                    segment_mask,
-                                );
-                            if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
-                                stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
-                                continue;
-                            }
-                            stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                            let max_trial_err = max_trial_error(best_t, normal_trial_bits_times_lambda, trial_error_scale);
-                            let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
-                                stats,
-                                trial_bits,
-                                p_pixels,
-                                bc7_mode,
-                                true,
-                                max_trial_err
-                            ) else {
-                                stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
-                                continue;
+                        macro_rules! reduce_len {
+                            ($len:literal) => {
+                                reduce_fixed_normal_len::<$len, COLLECT_STATS>(
+                                    prev_bits, orig_bits, p_pixels, bc7_mode, dist_i64,
+                                    prev_block_base_i64, normal_match_bits,
+                                    normal_trial_bits_times_lambda, cur_ms_err, thresh_ms_err,
+                                    smooth_block_error_scale, trial_error_scale, &mut hash_table,
+                                    hash_mask, hash_epoch, &mut best_t, &mut best_bits,
+                                    &mut best_ms_err, &mut best_match_len,
+                                    &mut best_match_dst_block_ofs, &mut best_match_bits,
+                                    &mut prev_cont_window_ofs, &mut prev_rep0_dist, &mut stats,
+                                )
                             };
-                            let trial_ms_err = trial_err as f32 / 64.0;
-                            if trial_ms_err < thresh_ms_err {
-                                let t = trial_ms_err * smooth_block_error_scale + normal_trial_bits_times_lambda;
-                                if t < best_t {
-                                    best_t = t; best_bits = trial_bits;
-                                    best_ms_err = trial_ms_err;
-                                    best_match_len = len; best_match_dst_block_ofs = ofs;
-                                    best_match_bits = normal_match_bits;
-                                    prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
-                                    prev_rep0_dist       = dist_i64;
-                                    stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
-                                }
-                            }
+                        }
+                        match len {
+                            16 => reduce_len!(16),
+                            15 => reduce_len!(15),
+                            14 => reduce_len!(14),
+                            13 => reduce_len!(13),
+                            12 => reduce_len!(12),
+                            11 => reduce_len!(11),
+                            10 => reduce_len!(10),
+                            9 => reduce_len!(9),
+                            8 => reduce_len!(8),
+                            7 => reduce_len!(7),
+                            6 => reduce_len!(6),
+                            5 => reduce_len!(5),
+                            4 => reduce_len!(4),
+                            3 => reduce_len!(3),
+                            _ => unreachable!("fixed BC7 RDO lengths are 3..=16"),
                         }
                         continue;
                     }
@@ -1168,6 +1127,116 @@ fn flush_progress(progress: Option<&dyn Fn(usize)>, pending_progress: &mut usize
             progress(*pending_progress);
         }
         *pending_progress = 0;
+    }
+}
+
+#[inline(always)]
+fn reduce_fixed_normal_len<const LEN: usize, const COLLECT_STATS: bool>(
+    prev_bits: u128,
+    orig_bits: u128,
+    p_pixels: &RgbaBlock,
+    bc7_mode: u8,
+    dist_i64: i64,
+    prev_block_base_i64: i64,
+    normal_match_bits: f32,
+    normal_trial_bits_times_lambda: f32,
+    cur_ms_err: f32,
+    thresh_ms_err: f32,
+    smooth_block_error_scale: f32,
+    trial_error_scale: f32,
+    hash_table: &mut [u64],
+    hash_mask: usize,
+    hash_epoch: u64,
+    best_t: &mut f32,
+    best_bits: &mut u128,
+    best_ms_err: &mut f32,
+    best_match_len: &mut usize,
+    best_match_dst_block_ofs: &mut usize,
+    best_match_bits: &mut f32,
+    prev_cont_window_ofs: &mut i64,
+    prev_rep0_dist: &mut i64,
+    stats: &mut Option<&mut Bc7RdoStats>,
+) {
+    debug_assert!((3..=16).contains(&LEN));
+    let segment_mask = BC7_SEGMENT_MASKS[LEN];
+
+    for ofs in 0..=(16 - LEN) {
+        if normal_trial_bits_times_lambda >= *best_t {
+            let skipped_offsets = (17 - LEN - ofs) as u64;
+            stat_add!(COLLECT_STATS, stats, candidate_checks, skipped_offsets);
+            stat_add!(COLLECT_STATS, stats, rate_skips, skipped_offsets);
+            break;
+        }
+
+        stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
+        let shift = ofs * 8;
+        let prev_segment = (prev_bits >> shift) & segment_mask;
+        let hs = hash_hsieh_bc7_segment_fixed::<LEN>(prev_segment, ofs as u32);
+        if rdo_hash_seen(hash_table, hash_mask, hash_epoch, hs) {
+            stat_add!(COLLECT_STATS, stats, hash_skips, 1);
+            continue;
+        }
+
+        if prev_segment == ((orig_bits >> shift) & segment_mask) {
+            stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
+            let trial_ms_err = cur_ms_err;
+            if trial_ms_err < thresh_ms_err {
+                let t = trial_ms_err * smooth_block_error_scale + normal_trial_bits_times_lambda;
+                if t < *best_t {
+                    *best_t = t;
+                    *best_bits = orig_bits;
+                    *best_ms_err = trial_ms_err;
+                    *best_match_len = LEN;
+                    *best_match_dst_block_ofs = ofs;
+                    *best_match_bits = normal_match_bits;
+                    *prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + LEN as i64;
+                    *prev_rep0_dist = dist_i64;
+                    stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
+                }
+            }
+            continue;
+        }
+
+        let trial_bits =
+            bc7_copy_segment_bits_from_segment(
+                orig_bits,
+                prev_segment,
+                shift,
+                segment_mask,
+            );
+        if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
+            stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
+            continue;
+        }
+
+        stat_add!(COLLECT_STATS, stats, decode_trials, 1);
+        let max_trial_err = max_trial_error(*best_t, normal_trial_bits_times_lambda, trial_error_scale);
+        let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
+            stats,
+            trial_bits,
+            p_pixels,
+            bc7_mode,
+            true,
+            max_trial_err
+        ) else {
+            stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
+            continue;
+        };
+        let trial_ms_err = trial_err as f32 / 64.0;
+        if trial_ms_err < thresh_ms_err {
+            let t = trial_ms_err * smooth_block_error_scale + normal_trial_bits_times_lambda;
+            if t < *best_t {
+                *best_t = t;
+                *best_bits = trial_bits;
+                *best_ms_err = trial_ms_err;
+                *best_match_len = LEN;
+                *best_match_dst_block_ofs = ofs;
+                *best_match_bits = normal_match_bits;
+                *prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + LEN as i64;
+                *prev_rep0_dist = dist_i64;
+                stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
+            }
+        }
     }
 }
 
