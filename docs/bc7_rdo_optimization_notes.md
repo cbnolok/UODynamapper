@@ -349,6 +349,25 @@ Practical guidance:
 - Keep the compact Mode 1/Mode 7 pixel loops.
 - Avoid broad decoder-loop unrolling unless perf data shows a specific loop branch or bounds check survived optimization.
 
+### Post-rate-check max trial error helper
+
+Attempt:
+- Replaced hot `max_trial_error(...)` calls with a helper used only after rate checks had already proven `best_t > trial_bits_times_lambda`.
+- Removed the redundant `.max(0.0)` clamp from those hot call sites while preserving the zero-scale `u64::MAX` behavior.
+- Kept output checksums and RDO stats stable.
+
+Why it looked promising:
+- `max_trial_error` runs before every bounded decode trial.
+- The hot call sites already skip candidates where the trial rate is not below the current best score, so the error budget delta should be positive.
+
+Why it was reverted:
+- Focused tests passed, but stats/no-stats default RDO benchmarks were below the accepted baseline.
+- The clamp removal was likely optimized well already or lost in noise next to the subsequent bounded decoder work.
+
+Practical guidance:
+- Keep the existing `max_trial_error` helper shape for now.
+- If revisiting budget calculation, split the whole search by `trial_error_scale > 0.0` instead of shaving one clamp at individual call sites.
+
 ## Benchmark Context
 
 Commands used for these decisions:
