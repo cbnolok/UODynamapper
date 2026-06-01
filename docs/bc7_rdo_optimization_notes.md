@@ -235,6 +235,24 @@ Practical guidance:
 - Do not move the 8192-entry RDO hash table to the stack by default.
 - Stack storage is still preferred for small fixed hot-path state, but validate larger arrays carefully against cache and stack-frame costs.
 
+### Rolling fixed-offset bit windows
+
+Attempt:
+- In the normal fixed-offset RDO path, replaced repeated `ofs * 8` plus variable `u128` shifts with rolling `prev_bits`/`orig_bits` windows shifted by one byte per offset.
+- Kept the same candidate order, hash-before-original-compare order, accepted candidates, stats, and output checksums.
+
+Why it looked promising:
+- The default fixed-offset path performs many segment extractions for each length and previous block.
+- Rolling windows should replace repeated variable shifts and offset multiplication with cheaper fixed shifts.
+
+Why it was reverted:
+- Focused tests passed and benchmark stats/checksums stayed stable, but no-stats throughput dropped versus the immediately preceding committed descriptor-table baseline.
+- The nested control flow needed to advance windows once per offset likely increased branch pressure and register pressure enough to erase the arithmetic savings.
+
+Practical guidance:
+- Do not repeat the broad rolling-window rewrite for the normal fixed-offset path.
+- If revisiting this idea, isolate a narrower path or use generated length/offset-specialized code that preserves straight-line control flow.
+
 ## Benchmark Context
 
 Commands used for these decisions:
