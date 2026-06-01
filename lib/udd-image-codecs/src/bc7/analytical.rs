@@ -1241,8 +1241,23 @@ pub fn encode_mode6(block:&mut[u8;16],lr:u32,lg:u32,lb:u32,la:u32,p0:u32,hr:u32,
     let mut inv=0u8;if w[0]&8!=0{inv=15;std::mem::swap(&mut lr,&mut hr);std::mem::swap(&mut lg,&mut hg);std::mem::swap(&mut lb,&mut hb);std::mem::swap(&mut la,&mut ha);std::mem::swap(&mut p0,&mut p1);}
     let x=0b1000000u64|(lr as u64)<<7|(hr as u64)<<14|(lg as u64)<<21|(hg as u64)<<28|(lb as u64)<<35|(hb as u64)<<42|(la as u64)<<49|(ha as u64)<<56;
     block[0..7].copy_from_slice(&x.to_le_bytes()[0..7]);block[7]=(x>>56)as u8|(p0 as u8)<<7;
-    let mut y=p1 as u64;let mut ofs=1usize;
-    for i in 0..16{let ww=(w[i]^inv)as u64;y|=ww<<ofs;ofs+=3+(i>0)as usize;}
+    let y=(p1 as u64)
+        | ((w[0]^inv)as u64)<<1
+        | ((w[1]^inv)as u64)<<4
+        | ((w[2]^inv)as u64)<<8
+        | ((w[3]^inv)as u64)<<12
+        | ((w[4]^inv)as u64)<<16
+        | ((w[5]^inv)as u64)<<20
+        | ((w[6]^inv)as u64)<<24
+        | ((w[7]^inv)as u64)<<28
+        | ((w[8]^inv)as u64)<<32
+        | ((w[9]^inv)as u64)<<36
+        | ((w[10]^inv)as u64)<<40
+        | ((w[11]^inv)as u64)<<44
+        | ((w[12]^inv)as u64)<<48
+        | ((w[13]^inv)as u64)<<52
+        | ((w[14]^inv)as u64)<<56
+        | ((w[15]^inv)as u64)<<60;
     block[8..16].copy_from_slice(&y.to_le_bytes());
 }
 
