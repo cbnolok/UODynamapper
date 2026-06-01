@@ -449,6 +449,26 @@ Practical guidance:
 - Keep the compact boundary-aware erosion helpers for now.
 - If revisiting, measure mask-shape distributions first; an interior path may only help when most active mask cells have all neighbors true.
 
+### Linear-index ultrasmooth flood fill
+
+Attempt:
+- Changed the ultrasmooth-region flood fill from `(x, y)` tuple stacks/components to linear block indices.
+- Replaced the small neighbor tuple loop with explicit left/right/up/down index pushes through an inlined helper.
+- Kept the same 4-connected components and size threshold decisions.
+
+Why it looked promising:
+- Linear indices halve the stack/component element width and avoid repeated `x + y * blocks_x` reconstruction.
+- Explicit neighbor branches should avoid iterating a tiny tuple array for every popped component cell.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- The no-stats default RDO benchmark regressed sharply on the opaque fixture and did not improve the alpha/mixed fixtures enough to justify the change.
+- The extra `%` and `/` needed to recover `x`/`y` per popped index likely cost more than the tuple storage saved.
+
+Practical guidance:
+- Keep the tuple-based flood fill unless the traversal is redesigned to avoid per-cell division.
+- If revisiting, consider row-aware runs or a queue that carries edge flags, not a simple linear-index stack.
+
 ## Benchmark Context
 
 Commands used for these decisions:
