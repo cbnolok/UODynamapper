@@ -41,6 +41,7 @@
 crate::eyre_imports!();
 
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -265,19 +266,39 @@ pub enum ArtSource {
     Any,
 }
 
-fn uop_art_candidates(art_id: u32, source: ArtSource) -> Vec<String> {
-    let mut candidates = Vec::new();
+fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; 6], usize) {
+    let mut hashes = [0u64; 6];
+    let mut count = 0usize;
     if source == ArtSource::CcUop || source == ArtSource::Any {
-        candidates.push(format!("build/artlegacymul/{:08}.tga", art_id));
-        candidates.push(format!("build/artlegacy/{:08}.dat", art_id));
-        candidates.push(format!("build/art/{:08}.tga", art_id));
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/artlegacymul/", art_id, ".tga");
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/artlegacy/", art_id, ".dat");
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/art/", art_id, ".tga");
     }
     if source == ArtSource::EcUop || source == ArtSource::Any {
-        candidates.push(format!("build/tileartlegacy/{:08}.dds", art_id));
-        candidates.push(format!("build/tileartlegacy/{:08}.tga", art_id));
-        candidates.push(format!("build/legacytexture/{:08}.tga", art_id));
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/tileartlegacy/", art_id, ".dds");
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/tileartlegacy/", art_id, ".tga");
+        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/legacytexture/", art_id, ".tga");
     }
-    candidates
+    (hashes, count)
+}
+
+fn push_uop_art_candidate_hash(
+    hashes: &mut [u64; 6],
+    count: &mut usize,
+    prefix: &str,
+    art_id: u32,
+    suffix: &str,
+) {
+    let mut path_buf = [0u8; 64];
+    let len = {
+        let full_len = path_buf.len();
+        let mut slice = &mut path_buf[..];
+        write!(slice, "{prefix}{art_id:08}{suffix}").expect("art UOP candidate path fits stack buffer");
+        full_len - slice.len()
+    };
+    let path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
+    hashes[*count] = crate::uop_container::hash::hash_file_name_single(path);
+    *count += 1;
 }
 
 impl ArtMap {
@@ -401,8 +422,8 @@ impl ArtMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            for file_name in uop_art_candidates(art_id, source) {
-                let hash = crate::uop_container::hash::hash_file_name_single(&file_name);
+            let (hashes, hash_count) = uop_art_candidate_hashes(art_id, source);
+            for &hash in &hashes[..hash_count] {
                 if let Some(file) = uop.get_file_by_hash(hash) {
                     file.unpack_to(scratch_buffer)?;
                     return Ok(());
@@ -543,11 +564,9 @@ impl ArtMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            for name in uop_art_candidates(art_id, source) {
-                if uop
-                    .get_file_by_hash(crate::uop_container::hash::hash_file_name_single(&name))
-                    .is_some()
-                {
+            let (hashes, hash_count) = uop_art_candidate_hashes(art_id, source);
+            for &hash in &hashes[..hash_count] {
+                if uop.get_file_by_hash(hash).is_some() {
                     return true;
                 }
             }
