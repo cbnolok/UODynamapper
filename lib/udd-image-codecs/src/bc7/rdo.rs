@@ -2493,22 +2493,24 @@ fn compute_block_mse_scales(
     let mut block_mse_scales = vec![-1.0f32; total_blocks];
     let use_parallel = total_blocks >= PARALLEL_RDO_BLOCK_THRESHOLD;
 
-    let mut is_ultrasmooth = vec![false; total_blocks];
+    let mut is_ultrasmooth = vec![0u8; total_blocks];
     if use_parallel {
         is_ultrasmooth
             .par_iter_mut()
             .enumerate()
             .for_each(|(block_index, is_ultrasmooth)| {
-                *is_ultrasmooth = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index));
+                *is_ultrasmooth =
+                    is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
             });
     } else {
         for (block_index, is_ultrasmooth) in is_ultrasmooth.iter_mut().enumerate() {
-            *is_ultrasmooth = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index));
+            *is_ultrasmooth =
+                is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
         }
     }
 
     let mut current_mask = is_ultrasmooth;
-    let mut next_mask = vec![false; total_blocks];
+    let mut next_mask = vec![0u8; total_blocks];
 
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
     if use_parallel {
@@ -2543,17 +2545,17 @@ fn compute_block_mse_scales(
     }
 
     // Flood fill to remove small ULTRASMOOTH regions
-    let mut visited = vec![false; total_blocks];
+    let mut visited = vec![0u8; total_blocks];
     let mut component = Vec::new();
     let mut stack = Vec::new();
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
             let idx = bx + by * blocks_x;
-            if current_mask[idx] && !visited[idx] {
+            if current_mask[idx] != 0 && visited[idx] == 0 {
                 component.clear();
                 stack.clear();
                 stack.push((bx, by));
-                visited[idx] = true;
+                visited[idx] = 1;
                 while let Some((cx, cy)) = stack.pop() {
                     component.push((cx, cy));
                     for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
@@ -2561,8 +2563,8 @@ fn compute_block_mse_scales(
                         let ny = cy as i32 + dy;
                         if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
                             let nidx = nx as usize + ny as usize * blocks_x;
-                            if current_mask[nidx] && !visited[nidx] {
-                                visited[nidx] = true;
+                            if current_mask[nidx] != 0 && visited[nidx] == 0 {
+                                visited[nidx] = 1;
                                 stack.push((nx as usize, ny as usize));
                             }
                         }
@@ -2603,12 +2605,12 @@ fn is_ultrasmooth_seed_block(pixels: &RgbaBlock) -> bool {
 #[inline]
 fn erode_ultrasmooth_mask_at(
     idx: usize,
-    current_mask: &[bool],
+    current_mask: &[u8],
     blocks_x: usize,
     blocks_y: usize,
-) -> bool {
-    if !current_mask[idx] {
-        return false;
+) -> u8 {
+    if current_mask[idx] == 0 {
+        return 0;
     }
 
     let x = idx % blocks_x;
@@ -2618,25 +2620,25 @@ fn erode_ultrasmooth_mask_at(
             let nx = x as i32 + dx;
             let ny = y as i32 + dy;
             if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                if !current_mask[nx as usize + ny as usize * blocks_x] {
-                    return false;
+                if current_mask[nx as usize + ny as usize * blocks_x] == 0 {
+                    return 0;
                 }
             }
         }
     }
 
-    true
+    1
 }
 
 #[inline]
 fn median_erode_ultrasmooth_mask_at(
     idx: usize,
-    current_mask: &[bool],
+    current_mask: &[u8],
     blocks_x: usize,
     blocks_y: usize,
-) -> bool {
-    if !current_mask[idx] {
-        return false;
+) -> u8 {
+    if current_mask[idx] == 0 {
+        return 0;
     }
 
     let x = idx % blocks_x;
@@ -2647,14 +2649,14 @@ fn median_erode_ultrasmooth_mask_at(
             let nx = x as i32 + dx;
             let ny = y as i32 + dy;
             if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                if !current_mask[nx as usize + ny as usize * blocks_x] {
+                if current_mask[nx as usize + ny as usize * blocks_x] == 0 {
                     non_ultrasmooth_count += 1;
                 }
             }
         }
     }
 
-    non_ultrasmooth_count < 5
+    (non_ultrasmooth_count < 5) as u8
 }
 
 #[cfg(test)]
