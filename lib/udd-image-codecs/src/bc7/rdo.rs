@@ -716,6 +716,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
         let cur_ms_err = cur_err as f32 / 64.0;
         let cur_t = cur_ms_err * smooth_block_error_scale + (LITERAL_BITS * 16.0) * params.lambda;
+        let trial_error_scale = max_trial_error_scale(smooth_block_error_scale);
         let first_block_to_check = block_index.saturating_sub(total_blocks_to_check);
 
         let mut best_bits = orig_bits;
@@ -816,7 +817,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             );
                         let trust_mode_hint = candidate.dst_shift > 0;
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
                             trial_bits,
@@ -941,7 +942,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             continue;
                         }
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
                             trial_bits,
@@ -1035,7 +1036,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                 }
 
                                 stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                                let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
+                                let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
                                 let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                                     stats,
                                     trial_bits,
@@ -1127,11 +1128,20 @@ fn bc7_copy_segment_bits_from_segment(
 }
 
 #[inline(always)]
-fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error_scale: f32) -> u64 {
+fn max_trial_error_scale(smooth_block_error_scale: f32) -> f32 {
     if smooth_block_error_scale <= 0.0 {
+        0.0
+    } else {
+        64.0 / smooth_block_error_scale
+    }
+}
+
+#[inline(always)]
+fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_scale: f32) -> u64 {
+    if max_trial_error_scale <= 0.0 {
         return u64::MAX;
     }
-    (((best_t - trial_bits_times_lambda) * 64.0) / smooth_block_error_scale).max(0.0).ceil() as u64
+    ((best_t - trial_bits_times_lambda) * max_trial_error_scale).max(0.0).ceil() as u64
 }
 
 #[inline(always)]
