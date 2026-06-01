@@ -439,7 +439,9 @@ impl UddpBuilder {
             package_hash64: 0,
         };
 
-        let mut out = Vec::new();
+        let output_capacity = usize::try_from(blob_cursor)
+            .map_err(|_| BuildError::PackageTooLarge(blob_cursor))?;
+        let mut out = Vec::with_capacity(output_capacity);
         header.write_to(&mut out);
         for dict in &dict_refs {
             dict.write_to(&mut out);
@@ -790,7 +792,9 @@ fn compress_file(
     // delta. If compression grows the payload, the file must fall back to raw
     // storage even when the caller requested compression explicitly.
     let (codec, encoded_payload): (Codec, Vec<u8>) =
-        if codec != Codec::None && encoded_payload.len() < file.raw_data.len() {
+        if codec == Codec::None {
+            (codec, encoded_payload)
+        } else if encoded_payload.len() < file.raw_data.len() {
             (codec, encoded_payload)
         } else {
             (Codec::None, file.raw_data.clone())
