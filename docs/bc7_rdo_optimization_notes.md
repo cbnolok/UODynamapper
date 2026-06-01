@@ -253,6 +253,25 @@ Practical guidance:
 - Do not repeat the broad rolling-window rewrite for the normal fixed-offset path.
 - If revisiting this idea, isolate a narrower path or use generated length/offset-specialized code that preserves straight-line control flow.
 
+### Grouped relative candidates by source offset
+
+Attempt:
+- Replaced the flat relative candidate list with source-offset runs plus destination candidates.
+- Preserved the existing `src_ofs` then `dst_ofs` candidate order and loaded the previous segment lazily once per source run after the rate check passed.
+
+Why it looked promising:
+- Relative movement can test multiple destination offsets for the same previous-block source segment.
+- Reusing `(prev_bits >> src_shift) & segment_mask` should reduce repeated variable `u128` shifts without adding current-block segment caches.
+
+Why it was reverted:
+- Focused RDO tests passed and relative-mix checksums stayed stable, but the no-stats `rdo_relative_mix` benchmark regressed versus a temporary `HEAD` baseline.
+- Baseline was roughly `1511/1293/3721 blk/s` for opaque/alpha/mixed; grouped runs were roughly `1421/1262/3566 blk/s`.
+- The extra nested slices and lazy-load branch cost more than the saved source-segment shifts.
+
+Practical guidance:
+- Keep the flat relative candidate layout for now.
+- If revisiting relative movement, prefer length-specialized hashing or a flatter grouped representation that does not add an inner lazy-load branch.
+
 ## Benchmark Context
 
 Commands used for these decisions:
