@@ -77,6 +77,23 @@ Why it was reverted:
 Practical guidance:
 - Do not add this branch to the default fixed path unless a workload shows meaningful unsupported offset-zero trials.
 
+### Analytical Mode 1 weight descriptor table
+
+Attempt:
+- Replaced the Mode 1 encode weight-packing loop with a compile-time table containing partition subset and bit offset per pixel.
+- Preserved the original unmasked weight write behavior, so benchmark checksums stayed stable.
+
+Why it looked promising:
+- The RDO bounded Mode 1 decoder benefited from a similar descriptor-table approach.
+- The encode loop also performs per-pixel partition lookup and anchor offset adjustment.
+
+Why it was reverted:
+- The BC7 encode benchmark did not show a win; scalar and wide timings moved sideways to slightly worse in the tested run.
+
+Practical guidance:
+- Do not assume the RDO decoder descriptor win transfers to analytical encode packing.
+- Revisit only with assembly evidence or a benchmark case where Mode 1 encode packing is isolated as a measurable bottleneck.
+
 ## Benchmark Context
 
 Commands used for these decisions:
