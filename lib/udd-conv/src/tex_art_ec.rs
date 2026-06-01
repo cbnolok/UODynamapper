@@ -1033,14 +1033,13 @@ pub fn register_rendered_tile_alias(
     width: u16,
     height: u16,
     rgba: &[u8],
-    canonical_by_rendered_tile: &mut HashMap<Vec<u8>, u32>,
+    canonical_by_rendered_tile: &mut HashMap<RenderedTileKey, u32>,
 ) -> Option<u32> {
-    let key = [
-        width.to_le_bytes().to_vec(),
-        height.to_le_bytes().to_vec(),
-        rgba.to_vec(),
-    ]
-    .concat();
+    let key = RenderedTileKey {
+        width,
+        height,
+        rgba: rgba.to_vec(),
+    };
     if let Some(&canonical_art_id) = canonical_by_rendered_tile.get(&key) {
         Some(canonical_art_id)
     } else {
