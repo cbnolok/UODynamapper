@@ -1309,7 +1309,7 @@ fn decode_present_tiles(
     }
 
     for texture_id in &texture_ids {
-        let Some(decoded) = decoded_texture_cache.get(texture_id).cloned() else {
+        let Some(decoded) = decoded_texture_cache.remove(texture_id) else {
             ignored_source_texture_ids.push(*texture_id);
             continue;
         };
