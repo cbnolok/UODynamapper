@@ -2507,7 +2507,7 @@ fn compute_block_mse_scales(
         }
     }
 
-    let mut current_mask = is_ultrasmooth.clone();
+    let mut current_mask = is_ultrasmooth;
     let mut next_mask = vec![false; total_blocks];
 
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
