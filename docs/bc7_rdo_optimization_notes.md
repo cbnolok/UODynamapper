@@ -310,6 +310,26 @@ Practical guidance:
 - Keep the simple channel-first `compute_block_max_std_dev` loop.
 - If revisiting, try a fully scalar unrolled accumulator only with assembly or benchmark evidence, not an indexed `[u32; 4]` implementation.
 
+### Mode-specialized fixed-path bounded decode
+
+Attempt:
+- Specialized the common fixed-offset RDO helper by both match length and BC7 mode.
+- Replaced the per-candidate generic trusted-mode decoder dispatch with a const-mode decoder helper.
+- Left relative, REP0/continuation, and second-match paths on the generic decoder.
+
+Why it looked promising:
+- The default fixed path performs millions of bounded decode trials.
+- The block mode is known for the whole block, so dispatching on mode for every decoded candidate should be avoidable.
+
+Why it was reverted:
+- Focused tests passed and stats/checksums stayed identical.
+- Stats runs improved, but no-stats benchmark repeats did not beat the current accepted baseline overall.
+- The added mode x length specialization likely increased code size and instruction-cache pressure enough to offset the removed per-candidate mode match.
+
+Practical guidance:
+- Do not add broad mode-specialized copies of the fixed candidate helper.
+- If revisiting, target one dominant mode-specific decoder path at a time, or use assembly/perf evidence to prove the mode dispatch is still a real bottleneck.
+
 ## Benchmark Context
 
 Commands used for these decisions:
