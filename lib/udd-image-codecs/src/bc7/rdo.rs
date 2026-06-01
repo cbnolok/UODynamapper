@@ -2607,13 +2607,13 @@ fn is_ultrasmooth_seed_block(pixels: &RgbaBlock) -> bool {
     }
     let luma_avg = luma_sum / 16.0;
 
+    if luma_avg < ULTRASMOOTH_DARK_THRESHOLD || luma_avg >= ULTRASMOOTH_BRIGHT_THRESHOLD {
+        return false;
+    }
+
     let max_std_dev = compute_block_max_std_dev(pixels);
     let mut yl = (max_std_dev / ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD).clamp(0.0, 1.0);
     yl = yl * yl;
-
-    if luma_avg < ULTRASMOOTH_DARK_THRESHOLD || luma_avg >= ULTRASMOOTH_BRIGHT_THRESHOLD {
-        yl = 1.0;
-    }
 
     yl == 0.0
 }
