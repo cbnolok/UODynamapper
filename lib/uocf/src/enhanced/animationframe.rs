@@ -7,9 +7,8 @@
 // TODO: the format should be the same also for KR!
 
 crate::eyre_imports!();
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{cast_slice_mut, Pod, Zeroable};
 use std::sync::Arc;
-use wide::u8x16;
 
 /// Represents a single decoded animation frame.
 #[derive(Debug, Clone)]
@@ -248,32 +247,34 @@ impl AnimationFrame {
             eyre::bail!("Frame data offset out of bounds");
         }
 
-        let mut data_cursor = &self.image_data[relative_offset..];
+        let source = &self.image_data[relative_offset..];
+        let mut source_pos = 0usize;
         let width_usize = width as usize;
         let height_usize = height as usize;
         let mut pixel_index = 0usize;
         let pixel_count = width_usize * height_usize;
+        let colour_words = rgba_palette_words(&self.colours);
 
-        while pixel_index < pixel_count && !data_cursor.is_empty() {
-            let curr = data_cursor[0];
-            data_cursor = &data_cursor[1..];
+        while pixel_index < pixel_count && source_pos < source.len() {
+            let curr = source[source_pos];
+            source_pos += 1;
 
             if curr < 128 {
                 pixel_index = pixel_index.saturating_add(curr as usize);
             } else {
                 // Run of pixels
-                if data_cursor.is_empty() { break; }
-                let next = data_cursor[0];
-                data_cursor = &data_cursor[1..];
+                if source_pos >= source.len() { break; }
+                let next = source[source_pos];
+                source_pos += 1;
 
                 let factor1 = next / 16;
                 let factor2 = next % 16;
 
                 // Handle first pixel with factor1
                 if factor1 > 0 {
-                    if data_cursor.is_empty() { break; }
-                    let color_idx = data_cursor[0] as usize;
-                    data_cursor = &data_cursor[1..];
+                    if source_pos >= source.len() { break; }
+                    let color_idx = source[source_pos] as usize;
+                    source_pos += 1;
                     if let Some(&color) = self.colours.get(color_idx) {
                         blend_pixel(&mut decoded_data, pixel_index, color, factor1);
                     }
@@ -283,20 +284,21 @@ impl AnimationFrame {
                 // Solid run
                 let count = curr - 128;
                 let consumed = copy_solid_pixels(
-                    &mut decoded_data,
+                    cast_slice_mut(&mut decoded_data),
                     pixel_index,
                     pixel_count,
-                    &mut data_cursor,
+                    source,
+                    &mut source_pos,
                     count as usize,
-                    &self.colours,
+                    &colour_words,
                 );
                 pixel_index += consumed;
 
                 // Handle last pixel with factor2
                 if factor2 > 0 {
-                    if data_cursor.is_empty() { break; }
-                    let color_idx = data_cursor[0] as usize;
-                    data_cursor = &data_cursor[1..];
+                    if source_pos >= source.len() { break; }
+                    let color_idx = source[source_pos] as usize;
+                    source_pos += 1;
                     if let Some(&color) = self.colours.get(color_idx) {
                         blend_pixel(&mut decoded_data, pixel_index, color, factor2);
                     }
@@ -328,67 +330,59 @@ fn blend_pixel(data: &mut [u8], pixel_index: usize, color: [u8; 4], factor: u8) 
         return;
     }
 
-    let factor = factor as u16;
-    let inv_factor = 16 - factor;
-    data[idx] = blend_channel(color[0], data[idx], factor, inv_factor);
-    data[idx + 1] = blend_channel(color[1], data[idx + 1], factor, inv_factor);
-    data[idx + 2] = blend_channel(color[2], data[idx + 2], factor, inv_factor);
-    data[idx + 3] = blend_channel(color[3], data[idx + 3], factor, inv_factor);
+    data[idx] = blend_channel_over_zero(color[0], factor);
+    data[idx + 1] = blend_channel_over_zero(color[1], factor);
+    data[idx + 2] = blend_channel_over_zero(color[2], factor);
+    data[idx + 3] = blend_channel_over_zero(color[3], factor);
 }
 
-fn blend_channel(src: u8, dst: u8, factor: u16, inv_factor: u16) -> u8 {
-    ((src as u16 * factor + dst as u16 * inv_factor) >> 4) as u8
+fn blend_channel_over_zero(src: u8, factor: u8) -> u8 {
+    ((src as u16 * factor as u16) >> 4) as u8
 }
 
 fn copy_solid_pixels(
-    data: &mut [u8],
+    data: &mut [u32],
     pixel_index: usize,
     pixel_count: usize,
-    cursor: &mut &[u8],
+    source: &[u8],
+    source_pos: &mut usize,
     count: usize,
-    colours: &[[u8; 4]],
+    colours: &[u32; 256],
 ) -> usize {
-    let available_count = count.min(cursor.len());
+    let available_count = count.min(source.len().saturating_sub(*source_pos));
     let writable_count = available_count.min(pixel_count.saturating_sub(pixel_index));
-    let (indices, rest) = cursor.split_at(available_count);
-    *cursor = rest;
+    let indices = &source[*source_pos..*source_pos + writable_count];
+    *source_pos += available_count;
 
-    let mut copied = 0usize;
-    let mut dst = &mut data[pixel_index * 4..(pixel_index + writable_count) * 4];
-    let mut remaining_indices = &indices[..writable_count];
+    let mut dst = &mut data[pixel_index..pixel_index + writable_count];
+    let mut remaining_indices = indices;
 
-    while remaining_indices.len() >= 4 && dst.len() >= 16 {
-        let colors = [
-            colours.get(remaining_indices[0] as usize).copied(),
-            colours.get(remaining_indices[1] as usize).copied(),
-            colours.get(remaining_indices[2] as usize).copied(),
-            colours.get(remaining_indices[3] as usize).copied(),
+    while remaining_indices.len() >= 4 && dst.len() >= 4 {
+        let packed = [
+            colours[remaining_indices[0] as usize],
+            colours[remaining_indices[1] as usize],
+            colours[remaining_indices[2] as usize],
+            colours[remaining_indices[3] as usize],
         ];
-        if let [Some(c0), Some(c1), Some(c2), Some(c3)] = colors {
-            let packed = u8x16::from([
-                c0[0], c0[1], c0[2], c0[3],
-                c1[0], c1[1], c1[2], c1[3],
-                c2[0], c2[1], c2[2], c2[3],
-                c3[0], c3[1], c3[2], c3[3],
-            ]);
-            dst[..16].copy_from_slice(&packed.to_array());
-            dst = &mut dst[16..];
-            remaining_indices = &remaining_indices[4..];
-            copied += 4;
-        } else {
-            break;
-        }
+        dst[..4].copy_from_slice(&packed);
+        dst = &mut dst[4..];
+        remaining_indices = &remaining_indices[4..];
     }
 
     for &color_idx in remaining_indices {
-        if let Some(&color) = colours.get(color_idx as usize) {
-            dst[..4].copy_from_slice(&color);
-        }
-        dst = &mut dst[4..];
-        copied += 1;
+        dst[0] = colours[color_idx as usize];
+        dst = &mut dst[1..];
     }
 
-    copied + (available_count - writable_count)
+    available_count
+}
+
+fn rgba_palette_words(colours: &[[u8; 4]]) -> [u32; 256] {
+    let mut words = [0u32; 256];
+    for (dst, colour) in words.iter_mut().zip(colours.iter().take(256)) {
+        *dst = u32::from_le_bytes(*colour);
+    }
+    words
 }
 
 #[cfg(test)]
