@@ -30,3 +30,7 @@ image-postprocess = { path = "../image-postprocess" }
 
 [features]
 default = []
+
+[[bench]]
+name = "mobile_anim_blit"
+harness = false

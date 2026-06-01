@@ -2548,14 +2548,21 @@ fn blit_rgba_frame(
         let dst_start = ((dst_y as usize + row) * dst_stride) + dst_x as usize * 4;
         let dst_end = dst_start + src_stride;
         let src_row = &src[src_start..src_start + src_stride];
-        filled_pixel_count += src_row
-            .chunks_exact(4)
-            .filter(|pixel| pixel[3] != 0)
-            .count() as u64;
+        filled_pixel_count += count_nonzero_alpha(src_row);
         dst[dst_start..dst_end].copy_from_slice(src_row);
     }
 
     Ok(filled_pixel_count)
+}
+
+fn count_nonzero_alpha(row: &[u8]) -> u64 {
+    let mut count = 0u64;
+    let mut index = 3usize;
+    while index < row.len() {
+        count += u64::from(row[index] != 0);
+        index += 4;
+    }
+    count
 }
 
 pub fn serialize_page_manifest(
