@@ -6,11 +6,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use uocf::classic::anim::AnimMap;
 use uocf::classic::gump::decode_gump_from_raw;
+use uocf::enhanced::animationframe::AnimationFrame;
 
 const GUMP_WIDTH: u16 = 128;
 const GUMP_HEIGHT: u16 = 128;
 const ANIM_WIDTH: u16 = 128;
 const ANIM_HEIGHT: u16 = 128;
+const EC_ANIM_WIDTH: u16 = 128;
+const EC_ANIM_HEIGHT: u16 = 128;
 
 struct GumpCase {
     name: &'static str,
@@ -23,6 +26,11 @@ struct AnimCase {
     name: &'static str,
     map: AnimMap,
     cleanup_dir: PathBuf,
+}
+
+struct EcAnimCase {
+    name: &'static str,
+    animation: AnimationFrame,
 }
 
 impl Drop for AnimCase {
@@ -68,6 +76,16 @@ fn main() {
         let result = bench_anim(case, min_duration);
         print_result(case.name, "decode", result);
     }
+
+    let ec_anim_cases = [
+        ec_anim_case("ec_anim_solid_runs", EcAnimRunPattern::SolidRuns),
+        ec_anim_case("ec_anim_skip_solid_pairs", EcAnimRunPattern::SkipSolidPairs),
+        ec_anim_case("ec_anim_blend_pairs", EcAnimRunPattern::BlendPairs),
+    ];
+    for case in &ec_anim_cases {
+        let result = bench_ec_anim(case, min_duration);
+        print_result(case.name, "decode", result);
+    }
 }
 
 fn bench_gump(case: &GumpCase, min_duration: Duration) -> BenchResult {
@@ -105,6 +123,27 @@ fn bench_anim(case: &AnimCase, min_duration: Duration) -> BenchResult {
             .iter()
             .fold(0u64, |sum, frame| sum.wrapping_add(checksum(black_box(&frame.data))));
         checksum_acc = checksum_acc.wrapping_add(frame_checksum);
+        iterations += 1;
+    }
+
+    BenchResult {
+        iterations,
+        elapsed: start.elapsed(),
+        checksum: checksum_acc,
+    }
+}
+
+fn bench_ec_anim(case: &EcAnimCase, min_duration: Duration) -> BenchResult {
+    let mut iterations = 0u64;
+    let mut checksum_acc = 0u64;
+    let frame_entry = case.animation.frames[0];
+    let start = Instant::now();
+    while iterations == 0 || start.elapsed() < min_duration {
+        let frame = case
+            .animation
+            .decode_frame(black_box(&frame_entry))
+            .expect("synthetic EC animation RLE payload should decode");
+        checksum_acc = checksum_acc.wrapping_add(checksum(black_box(&frame.data)));
         iterations += 1;
     }
 
@@ -265,6 +304,133 @@ fn write_anim_pair(dir: &Path, payload: &[u8]) -> std::io::Result<()> {
     idx.write_all(&(payload.len() as u32).to_le_bytes())?;
     idx.write_all(&0u32.to_le_bytes())?;
     fs::write(dir.join("anim.mul"), payload)
+}
+
+#[derive(Clone, Copy)]
+enum EcAnimRunPattern {
+    SolidRuns,
+    SkipSolidPairs,
+    BlendPairs,
+}
+
+fn ec_anim_case(name: &'static str, pattern: EcAnimRunPattern) -> EcAnimCase {
+    let rle = build_ec_anim_rle(EC_ANIM_WIDTH, EC_ANIM_HEIGHT, pattern);
+    let payload = build_ec_animation_payload(EC_ANIM_WIDTH, EC_ANIM_HEIGHT, &rle);
+    EcAnimCase {
+        name,
+        animation: AnimationFrame::load(&payload).expect("synthetic EC animation should load"),
+    }
+}
+
+fn build_ec_anim_rle(width: u16, height: u16, pattern: EcAnimRunPattern) -> Vec<u8> {
+    let pixel_count = width as usize * height as usize;
+    let mut rle = Vec::new();
+    let mut remaining = pixel_count;
+    let mut state = 0x1234_5678u32;
+
+    match pattern {
+        EcAnimRunPattern::SolidRuns => {
+            while remaining > 0 {
+                let count = remaining.min(127);
+                append_ec_solid_run(&mut rle, count, &mut state);
+                remaining -= count;
+            }
+        }
+        EcAnimRunPattern::SkipSolidPairs => {
+            while remaining > 0 {
+                rle.push(1);
+                remaining = remaining.saturating_sub(1);
+                if remaining == 0 {
+                    break;
+                }
+                append_ec_solid_run(&mut rle, 1, &mut state);
+                remaining -= 1;
+            }
+        }
+        EcAnimRunPattern::BlendPairs => {
+            while remaining > 1 {
+                rle.push(129);
+                rle.push(0x80);
+                rle.push(next_ec_color(&mut state));
+                rle.push(next_ec_color(&mut state));
+                remaining -= 2;
+            }
+            if remaining == 1 {
+                append_ec_solid_run(&mut rle, 1, &mut state);
+            }
+        }
+    }
+
+    rle
+}
+
+fn append_ec_solid_run(out: &mut Vec<u8>, count: usize, state: &mut u32) {
+    debug_assert!((1..=127).contains(&count));
+    out.push(128 + count as u8);
+    out.push(0);
+    for _ in 0..count {
+        out.push(next_ec_color(state));
+    }
+}
+
+fn next_ec_color(state: &mut u32) -> u8 {
+    *state = xorshift32(*state);
+    (*state & 3) as u8
+}
+
+fn build_ec_animation_payload(width: u16, height: u16, frame_bytes: &[u8]) -> Vec<u8> {
+    let colours = [
+        [255u8, 0, 0, 255],
+        [0u8, 255, 0, 255],
+        [0u8, 0, 255, 255],
+        [255u8, 255, 255, 255],
+    ];
+    let header_size = 40u32;
+    let colours_offset = header_size;
+    let frames_offset = colours_offset + colours.len() as u32 * 4;
+    let image_offset = frames_offset + 16;
+    let total_size = image_offset + frame_bytes.len() as u32;
+    let mut bytes = Vec::with_capacity(total_size as usize);
+
+    bytes.extend_from_slice(b"AMO\x04");
+    push_u32(&mut bytes, 4);
+    push_u32(&mut bytes, total_size);
+    push_u32(&mut bytes, 42);
+    push_i16(&mut bytes, 0);
+    push_i16(&mut bytes, 0);
+    push_i16(&mut bytes, width as i16);
+    push_i16(&mut bytes, height as i16);
+    push_u32(&mut bytes, colours.len() as u32);
+    push_u32(&mut bytes, colours_offset);
+    push_u32(&mut bytes, 1);
+    push_u32(&mut bytes, frames_offset);
+
+    for colour in colours {
+        bytes.extend_from_slice(&colour);
+    }
+
+    push_u16(&mut bytes, 0);
+    push_u16(&mut bytes, 0);
+    push_i16(&mut bytes, 0);
+    push_i16(&mut bytes, 0);
+    push_i16(&mut bytes, width as i16);
+    push_i16(&mut bytes, height as i16);
+    push_u32(&mut bytes, image_offset - frames_offset);
+    bytes.extend_from_slice(frame_bytes);
+
+    bytes
+}
+
+fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_i16(out: &mut Vec<u8>, value: i16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {
