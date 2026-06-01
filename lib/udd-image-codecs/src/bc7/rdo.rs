@@ -104,72 +104,23 @@ const fn mode1_pixel_descs() -> [[u16; 16]; 64] {
 
 struct ModeHistory {
     entries: Vec<usize>,
-    start: usize,
-    len: usize,
 }
 
 impl ModeHistory {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            entries: vec![0; capacity],
-            start: 0,
-            len: 0,
+            entries: Vec::with_capacity(capacity),
         }
     }
 
     #[inline]
     fn push(&mut self, block_index: usize) {
-        let capacity = self.entries.len();
-        if self.len < capacity {
-            self.entries[self.len] = block_index;
-            self.len += 1;
-        } else {
-            self.entries[self.start] = block_index;
-            self.start = (self.start + 1) % capacity;
-        }
+        self.entries.push(block_index);
     }
 
     #[inline]
-    fn iter_recent(&self) -> ModeHistoryRecent<'_> {
-        let next_index = if self.len == 0 {
-            0
-        } else if self.len < self.entries.len() {
-            self.len - 1
-        } else if self.start == 0 {
-            self.entries.len() - 1
-        } else {
-            self.start - 1
-        };
-        ModeHistoryRecent {
-            history: self,
-            remaining: self.len,
-            next_index,
-        }
-    }
-}
-
-struct ModeHistoryRecent<'a> {
-    history: &'a ModeHistory,
-    remaining: usize,
-    next_index: usize,
-}
-
-impl Iterator for ModeHistoryRecent<'_> {
-    type Item = usize;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        self.remaining -= 1;
-        let index = self.next_index;
-        if self.next_index == 0 {
-            self.next_index = self.history.entries.len() - 1;
-        } else {
-            self.next_index -= 1;
-        }
-        Some(self.history.entries[index])
+    fn iter_recent(&self) -> impl Iterator<Item = usize> + '_ {
+        self.entries.iter().rev().copied()
     }
 }
 
