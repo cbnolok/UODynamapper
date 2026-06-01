@@ -330,6 +330,25 @@ Practical guidance:
 - Do not add broad mode-specialized copies of the fixed candidate helper.
 - If revisiting, target one dominant mode-specific decoder path at a time, or use assembly/perf evidence to prove the mode dispatch is still a real bottleneck.
 
+### Unrolled Mode 1 and Mode 7 bounded decoder loops
+
+Attempt:
+- Manually unrolled the per-pixel loops in `decode_bc7_mode1_error_bounded` and `decode_bc7_mode7_error_bounded`.
+- Preserved the same pixel order and the same bounded-error early exit after every pixel.
+
+Why it looked promising:
+- Mode 1 dominates opaque land RDO decode trials and Mode 7 dominates alpha/mobile decode trials.
+- Removing loop control and bounds/index bookkeeping looked like a direct fit for the manual-unroll objective.
+
+Why it was reverted:
+- Focused tests passed and checksums stayed stable, but default RDO stats/no-stats benchmarks regressed overall.
+- Mode 7-only unroll helped one no-stats alpha/mixed run, but combining Mode 1 and Mode 7 reduced opaque and alpha enough to reject the pass.
+- The extra instruction footprint appears more expensive than the loop overhead LLVM already handles well.
+
+Practical guidance:
+- Keep the compact Mode 1/Mode 7 pixel loops.
+- Avoid broad decoder-loop unrolling unless perf data shows a specific loop branch or bounds check survived optimization.
+
 ## Benchmark Context
 
 Commands used for these decisions:
