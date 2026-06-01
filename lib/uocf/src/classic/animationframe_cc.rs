@@ -8,7 +8,9 @@ crate::eyre_imports!();
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Cursor, Seek, SeekFrom};
 
-use crate::classic::anim::{decode_classic_rle_frame, rgb555_palette_to_rgba, AnimFrame, AnimFrameInfo};
+use crate::classic::anim::{
+    decode_classic_rle_frame, rgb555_palette_to_rgba_words, AnimFrame, AnimFrameInfo,
+};
 
 /// Represents the data inside a single CC AnimationFrame entry.
 pub struct AnimationFrameCc {
@@ -64,7 +66,7 @@ impl AnimationFrameCc {
             let mut palette = [0u16; 256];
             reader.read_u16_into::<LittleEndian>(&mut palette)?;
 
-            let rgba_palette = rgb555_palette_to_rgba(&palette);
+            let rgba_palette = rgb555_palette_to_rgba_words(&palette);
 
             let center_x = reader.read_i16::<LittleEndian>()?;
             let center_y = reader.read_i16::<LittleEndian>()?;

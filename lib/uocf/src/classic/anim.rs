@@ -6,10 +6,11 @@
 crate::eyre_imports!();
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use bytemuck::cast_slice_mut;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use wide::{u16x8, u8x16};
+use wide::u16x8;
 
 use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
@@ -192,7 +193,7 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
             palette[i] = mul_ptr.read_u16::<LittleEndian>()?;
         }
 
-        let rgba_palette = rgb555_palette_to_rgba(&palette);
+        let rgba_palette = rgb555_palette_to_rgba_words(&palette);
 
         let frame_offset_base = lookup
             .checked_add(512)
@@ -322,8 +323,8 @@ fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result
         Ok(frames)
 }
 
-pub(crate) fn rgb555_palette_to_rgba(palette: &[u16; 256]) -> [[u8; 4]; 256] {
-    let mut rgba_palette = [[0u8; 4]; 256];
+pub(crate) fn rgb555_palette_to_rgba_words(palette: &[u16; 256]) -> [u32; 256] {
+    let mut rgba_palette = [0u32; 256];
     let mask = u16x8::splat(0x1F);
     for (chunk_index, chunk) in palette.chunks_exact(8).enumerate() {
         let colors = u16x8::from([
@@ -336,7 +337,12 @@ pub(crate) fn rgb555_palette_to_rgba(palette: &[u16; 256]) -> [[u8; 4]; 256] {
         let base = chunk_index * 8;
         for lane in 0..8 {
             if chunk[lane] != 0 {
-                rgba_palette[base + lane] = [r[lane] as u8, g[lane] as u8, b[lane] as u8, 255];
+                rgba_palette[base + lane] = u32::from_le_bytes([
+                    r[lane] as u8,
+                    g[lane] as u8,
+                    b[lane] as u8,
+                    255,
+                ]);
             }
         }
     }
@@ -350,8 +356,13 @@ pub(crate) fn decode_classic_rle_frame(
     height: u16,
     center_x: i16,
     center_y: i16,
-    rgba_palette: &[[u8; 4]; 256],
+    rgba_palette: &[u32; 256],
 ) -> eyre::Result<()> {
+    let pixel_words = cast_slice_mut::<u8, u32>(pixel_data);
+    let width_usize = width as usize;
+    let height_i32 = height as i32;
+    let width_i32 = width as i32;
+
     loop {
         let header = match data.read_u32::<LittleEndian>() {
             Ok(h) => h,
@@ -380,23 +391,34 @@ pub(crate) fn decode_classic_rle_frame(
         }
 
         let x = x_offset + center_x as i32;
-        let y = y_offset + center_y as i32 + height as i32;
+        let y = y_offset + center_y as i32 + height_i32;
 
-        if y < 0 || y >= height as i32 {
+        if y < 0 || y >= height_i32 {
+            continue;
+        }
+
+        let run_end = x + x_run as i32;
+        if x >= 0 && run_end <= width_i32 {
+            let dst_start = y as usize * width_usize + x as usize;
+            write_palette_run_words(
+                &mut pixel_words[dst_start..dst_start + x_run],
+                run,
+                rgba_palette,
+            );
             continue;
         }
 
         let start_x = x.max(0);
-        let end_x = (x + x_run as i32).min(width as i32);
+        let end_x = run_end.min(width_i32);
         if start_x >= end_x {
             continue;
         }
 
         let src_start = (start_x - x) as usize;
         let src_end = (end_x - x) as usize;
-        let dst_start = frame_pixel_offset(y, start_x, width)?;
-        write_palette_run_rgba(
-            &mut pixel_data[dst_start..dst_start + (src_end - src_start) * 4],
+        let dst_start = y as usize * width_usize + start_x as usize;
+        write_palette_run_words(
+            &mut pixel_words[dst_start..dst_start + (src_end - src_start)],
             &run[src_start..src_end],
             rgba_palette,
         );
@@ -404,28 +426,34 @@ pub(crate) fn decode_classic_rle_frame(
     Ok(())
 }
 
-fn write_palette_run_rgba(dst: &mut [u8], indices: &[u8], rgba_palette: &[[u8; 4]; 256]) {
-    let mut dst_chunks = dst.chunks_exact_mut(16);
-    let mut index_chunks = indices.chunks_exact(4);
-    for (dst_chunk, index_chunk) in dst_chunks.by_ref().zip(index_chunks.by_ref()) {
-        let c0 = rgba_palette[index_chunk[0] as usize];
-        let c1 = rgba_palette[index_chunk[1] as usize];
-        let c2 = rgba_palette[index_chunk[2] as usize];
-        let c3 = rgba_palette[index_chunk[3] as usize];
-        let packed = u8x16::from([
-            c0[0], c0[1], c0[2], c0[3],
-            c1[0], c1[1], c1[2], c1[3],
-            c2[0], c2[1], c2[2], c2[3],
-            c3[0], c3[1], c3[2], c3[3],
-        ]);
-        dst_chunk.copy_from_slice(&packed.to_array());
+fn write_palette_run_words(dst: &mut [u32], indices: &[u8], rgba_palette: &[u32; 256]) {
+    debug_assert_eq!(dst.len(), indices.len());
+
+    if indices.len() < 4 {
+        for (pixel, &palette_index) in dst.iter_mut().zip(indices) {
+            *pixel = rgba_palette[palette_index as usize];
+        }
+        return;
     }
 
-    for (pixel, &palette_index) in dst_chunks.into_remainder()
-        .chunks_exact_mut(4)
+    let mut dst_chunks = dst.chunks_exact_mut(4);
+    let mut index_chunks = indices.chunks_exact(4);
+    for (dst_chunk, index_chunk) in dst_chunks.by_ref().zip(index_chunks.by_ref()) {
+        let packed = [
+            rgba_palette[index_chunk[0] as usize],
+            rgba_palette[index_chunk[1] as usize],
+            rgba_palette[index_chunk[2] as usize],
+            rgba_palette[index_chunk[3] as usize],
+        ];
+        dst_chunk.copy_from_slice(&packed);
+    }
+
+    for (pixel, &palette_index) in dst_chunks
+        .into_remainder()
+        .iter_mut()
         .zip(index_chunks.remainder())
     {
-        pixel.copy_from_slice(&rgba_palette[palette_index as usize]);
+        *pixel = rgba_palette[palette_index as usize];
     }
 }
 
