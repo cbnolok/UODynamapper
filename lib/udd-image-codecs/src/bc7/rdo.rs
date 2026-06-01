@@ -24,6 +24,7 @@ const ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD: usize = 64;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 const FIXED_RATE_SKIP_OFFSETS_THROUGH_LEN: [u64; 17] = fixed_rate_skip_offsets_through_len();
 const MODE1_PIXEL_DESCS: [[u16; 16]; 64] = mode1_pixel_descs();
+const MODE7_PIXEL_DESCS: [[u16; 16]; 64] = mode7_pixel_descs();
 
 type RgbaBlock = [[u8; 4]; 16];
 
@@ -105,6 +106,27 @@ const fn mode1_pixel_descs() -> [[u16; 16]; 64] {
             let subset = BC7_PARTITION2[partition_id * 16 + pixel] as u16;
             let weight_bits = if pixel == 0 || pixel == anchor { 2usize } else { 3usize };
             let weight_mask = if weight_bits == 2 { 0x03u16 } else { 0x07u16 };
+            descs[partition_id][pixel] =
+                subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
+            bit_ofs += weight_bits;
+            pixel += 1;
+        }
+        partition_id += 1;
+    }
+    descs
+}
+
+const fn mode7_pixel_descs() -> [[u16; 16]; 64] {
+    let mut descs = [[0u16; 16]; 64];
+    let mut partition_id = 0usize;
+    while partition_id < 64 {
+        let anchor = BC7_ANCHOR_SECOND_SUBSET[partition_id] as usize;
+        let mut bit_ofs = 34usize;
+        let mut pixel = 0usize;
+        while pixel < 16 {
+            let subset = BC7_PARTITION2[partition_id * 16 + pixel] as u16;
+            let weight_bits = if pixel == 0 || pixel == anchor { 1usize } else { 2usize };
+            let weight_mask = if weight_bits == 1 { 0x01u16 } else { 0x03u16 };
             descs[partition_id][pixel] =
                 subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
             bit_ofs += weight_bits;
@@ -1872,10 +1894,11 @@ fn decode_bc7_mode7_error_bounded(
         ((hi >> 33) & 1) as u32,
     ];
 
-    let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
+    let pixel_descs = &MODE7_PIXEL_DESCS[part_id];
     let mut err = 0u64;
-    let subset = partition[0] as usize;
-    let weight_index = ((hi >> 34) & 0x01) as usize;
+    let desc = pixel_descs[0];
+    let subset = (desc & 0x01) as usize;
+    let weight_index = ((hi >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
     let weight = BC7_WEIGHTS2[weight_index] as i32;
     let (first_lr, first_hr, first_lg, first_hg, first_lb, first_hb, first_la, first_ha) =
         if subset == 0 {
@@ -1945,15 +1968,10 @@ fn decode_bc7_mode7_error_bounded(
         expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3]),
     ];
 
-    let anchor = BC7_ANCHOR_SECOND_SUBSET[part_id] as usize;
-    let mut weight_bit_ofs = 35usize;
-
     for i in 1..16 {
-        let subset = partition[i] as usize;
-        let weight_bits = if i == anchor { 1 } else { 2 };
-        let weight_mask = if weight_bits == 1 { 0x01 } else { 0x03 };
-        let weight_index = ((hi >> weight_bit_ofs) & weight_mask) as usize;
-        weight_bit_ofs += weight_bits;
+        let desc = pixel_descs[i];
+        let subset = (desc & 0x01) as usize;
+        let weight_index = ((hi >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
         let weight = BC7_WEIGHTS2[weight_index] as i32;
         err += rgba_pixel_sse(
             &source[i],
