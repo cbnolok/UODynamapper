@@ -588,6 +588,51 @@ Practical guidance:
 - Do not add any unconditional no-history check before the initial error decode for the current default path.
 - If this ever matters for sparse real pages, gate it behind instrumentation showing a high no-history rate.
 
+### Mode 6 x86 SIMD setup hoist
+
+Attempt:
+- Added small x86 context structs for Mode 6 SSE4.1/SSSE3 reconstruction-error helpers.
+- Hoisted byte shuffle masks, endpoint splats, delta splats, and half-rounding vectors out of the 4-pixel error helpers.
+- Also hoisted AVX512 selector constants and AVX2 f/half/zero vectors out of their 8-pixel loops.
+
+Why it looked promising:
+- The 4-pixel SSE error helpers are reused by SSE4.1, AVX2, and AVX512 Mode 6 paths.
+- The old code rebuilt several SIMD constants per helper call.
+- Hoisting matched the project goals of setting up SIMD registers earlier and fewer times.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-command benchmark comparison against a detached `HEAD` worktree regressed RDO throughput on all fixtures.
+- Patched/default RDO throughput was 16454 vs 16582 blk/s on opaque, 11743 vs 12138 blk/s on alpha/mobile, and 39701 vs 40753 blk/s on mixed.
+- Wide encode also regressed on alpha/mobile, likely from extra context loads/register pressure or less favorable inlining across target-feature helpers.
+
+Practical guidance:
+- Do not hoist Mode 6 SSE error helper setup through large register context structs.
+- If revisiting, inspect generated assembly first and prefer reducing work inside the helper without increasing live SIMD state.
+- Be especially suspicious of changes that look cheaper by instruction count but add register pressure across AVX2/AVX512 caller boundaries.
+
+### Const-generic no-progress RDO loop specialization
+
+Attempt:
+- Added a `REPORT_PROGRESS` const generic to the main RDO loop.
+- Dispatched once at entry so no-callback calls used a monomorphized loop where `report_progress` and `flush_progress` were compile-time false.
+- Kept progress-enabled calls on the existing 256-block batching behavior.
+
+Why it looked promising:
+- The default no-callback path called `report_progress` once per block.
+- Removing the `progress.is_some()` branch and pending counter updates matched the branch-prediction and callback-throttling goals.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state active benchmark was faster after reverting the change.
+- Patched/default RDO throughput was about 16252-16294 vs 16391 blk/s on opaque, 12003-12037 vs 12139 blk/s on alpha/mobile, and 37343-40411 vs 41170 blk/s on mixed.
+- The extra monomorphization and entry dispatch did not translate into better generated hot code for the benchmark cases.
+
+Practical guidance:
+- Do not split the main RDO loop only to remove the progress callback branch.
+- The current `Option` check appears cheap enough relative to the surrounding decode/search work.
+- If progress overhead is revisited, measure full-page progress-enabled builds instead of optimizing the no-callback path speculatively.
+
 ## Benchmark Context
 
 Commands used for these decisions:
