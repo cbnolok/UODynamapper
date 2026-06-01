@@ -368,6 +368,26 @@ Practical guidance:
 - Keep the existing `max_trial_error` helper shape for now.
 - If revisiting budget calculation, split the whole search by `trial_error_scale > 0.0` instead of shaving one clamp at individual call sites.
 
+### Unchecked RDO hash-table slot
+
+Attempt:
+- Replaced the hot `hash_table[hs as usize & hash_mask]` probe in `rdo_hash_seen` with `get_unchecked_mut`.
+- Added debug assertions that the table length is a power of two and that `hash_mask == hash_table.len() - 1`.
+- Kept the same hash entry encoding and overwrite semantics.
+
+Why it looked promising:
+- The hash table is fixed at 8192 entries, so the masked hash index is provably in range.
+- The helper is called in the candidate loops for relative, fixed, and specialized fixed-match search.
+- It was a narrow unsafe change with no image-quality or feature impact.
+
+Why it was reverted:
+- Focused tests passed and checksums stayed stable, but repeated no-stats default RDO benchmarks regressed versus the accepted baseline.
+- The safe indexing bounds check was likely optimized well, or the unsafe version inhibited code generation enough to lose.
+
+Practical guidance:
+- Do not replace `rdo_hash_seen` indexing with unchecked access without new assembly/perf evidence.
+- Prefer unsafe only where benchmark data shows a real hot bounds check survived optimization.
+
 ## Benchmark Context
 
 Commands used for these decisions:
