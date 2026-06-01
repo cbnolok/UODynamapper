@@ -272,6 +272,26 @@ Practical guidance:
 - Keep the flat relative candidate layout for now.
 - If revisiting relative movement, prefer length-specialized hashing or a flatter grouped representation that does not add an inner lazy-load branch.
 
+### Relative-path length-specialized hashing
+
+Attempt:
+- Kept the flat relative candidate layout, but moved the `len` dispatch outside the per-candidate loop with a const-generic relative helper.
+- Replaced `hash_hsieh_bc7_segment(prev_segment, len, dst_ofs)` with `hash_hsieh_bc7_segment_fixed::<LEN>(...)`.
+- Preserved candidate order, stats, accepted candidates, and output checksums.
+
+Why it looked promising:
+- The fixed-offset path benefited from length-specializing the common candidate loop.
+- Relative RDO performs many hash checks, so removing per-candidate length dispatch looked transferable without adding the grouped-layout branch cost.
+
+Why it was reverted:
+- Focused tests passed and checksums stayed stable, but `rdo_relative_mix` no-stats benchmarks were mixed and regressed alpha/mobile.
+- Fresh `HEAD` baseline was roughly `1512/1343/3874 blk/s` for opaque/alpha/mixed; specialized relative was roughly `1507/1288/3948 blk/s`.
+- The mixed-atlas gain did not justify the alpha/mobile regression.
+
+Practical guidance:
+- Do not length-specialize the full relative candidate loop with the current helper shape.
+- If revisiting, use profile data to target only modes or workloads where relative movement is actually selected and avoid increasing code size for alpha-heavy pages.
+
 ## Benchmark Context
 
 Commands used for these decisions:
