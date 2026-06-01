@@ -472,7 +472,7 @@ fn validate_options(options: &MobileAnimCcAtlasOptions) -> eyre::Result<()> {
 
 fn encode_and_add_mobile_anim_page_chunk(
     package: &mut UddpBuilder,
-    pages: &[BuiltMobileAnimPage],
+    pages: &mut Vec<BuiltMobileAnimPage>,
     options: &MobileAnimCcAtlasOptions,
     payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
     payload_stage: AssetTaskProgressStage,
@@ -489,6 +489,31 @@ fn encode_and_add_mobile_anim_page_chunk(
     } else {
         0
     };
+    if options.pixel_format != PagePixelFormat::Bc7 {
+        for page in pages.drain(..) {
+            package.add_owned_file(AddOwnedFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: options.compression,
+                width: page.record.used_width,
+                height: page.record.used_height,
+                virtual_path: Some(page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888)),
+                path_hash64: None,
+                id: None,
+                data: page.pixels,
+            })?;
+        }
+        let completed = payload_completed
+            .fetch_add(chunk_frames, Ordering::Relaxed)
+            .saturating_add(chunk_frames)
+            .min(payload_total);
+        payload_progress(AssetTaskProgress {
+            stage: payload_stage,
+            completed,
+            total: payload_total,
+        });
+        return Ok(());
+    }
+
     let encode_units_completed = AtomicU64::new(0);
     let rdo_units_completed = AtomicU64::new(0);
     let rdo_enabled =
@@ -539,35 +564,24 @@ fn encode_and_add_mobile_anim_page_chunk(
             data: stored_page,
         })?;
     }
-    if options.pixel_format == PagePixelFormat::Bc7 {
-        let completed = payload_completed
-            .fetch_add(chunk_frames, Ordering::Relaxed)
-            .saturating_add(chunk_frames)
-            .min(payload_total);
-        if rdo_enabled {
-            let completed = rdo_payload_completed
-                .fetch_add(chunk_frames, Ordering::Relaxed)
-                .saturating_add(chunk_frames)
-                .min(payload_total);
-            payload_progress(AssetTaskProgress {
-                stage: AssetTaskProgressStage::ApplyingRdo,
-                completed,
-                total: payload_total,
-            });
-        } else {
-            payload_progress(AssetTaskProgress {
-                stage: AssetTaskProgressStage::EncodingBc7,
-                completed,
-                total: payload_total,
-            });
-        }
-    } else {
-        let completed = payload_completed
+    pages.clear();
+    let completed = payload_completed
+        .fetch_add(chunk_frames, Ordering::Relaxed)
+        .saturating_add(chunk_frames)
+        .min(payload_total);
+    if rdo_enabled {
+        let completed = rdo_payload_completed
             .fetch_add(chunk_frames, Ordering::Relaxed)
             .saturating_add(chunk_frames)
             .min(payload_total);
         payload_progress(AssetTaskProgress {
-            stage: payload_stage,
+            stage: AssetTaskProgressStage::ApplyingRdo,
+            completed,
+            total: payload_total,
+        });
+    } else {
+        payload_progress(AssetTaskProgress {
+            stage: AssetTaskProgressStage::EncodingBc7,
             completed,
             total: payload_total,
         });
@@ -581,58 +595,45 @@ fn encode_mobile_anim_page_chunk(
     pb: Option<&ProgressBar>,
     progress: Option<&(dyn Fn(Bc7ProgressStage, u64) + Sync)>,
 ) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
-    if options.pixel_format == PagePixelFormat::Bc7 {
-        let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
-        let rdo_options = Bc7RdoOptions::sparse_atlas(
-            options.bc7_rdo_lambda,
-            options.bc7_rdo_lookback_blocks,
-        );
-        let pending_progress = AtomicU64::new(0);
-        let mut encoded_pages = Vec::with_capacity(pages.len());
-        for page in pages {
-            let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
-                .map_err(|e| eyre::eyre!("{e}"))?;
-            let encoded = encode_for_vram_with_bc7_rdo_options_and_stage_progress(
-                &page.pixels,
-                extent,
-                RawImageFormat::Rgba8888,
-                encoding,
-                &rdo_options,
-                |stage, units| {
-                    let units = units as u64;
-                    add_bc7_progress(pb, &pending_progress, units);
-                    if let Some(progress) = progress {
-                        progress(stage, units);
-                    }
-                },
-            )
-            .map_err(|e| {
-                eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
-            })?
-            .into_bytes()
-            .to_vec();
-            encoded_pages.push((
-                page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
-                encoded,
-                page.record.used_width,
-                page.record.used_height,
-            ));
-        }
-        flush_bc7_progress(pb, &pending_progress);
-        Ok(encoded_pages)
-    } else {
-        Ok(pages
-            .iter()
-            .map(|page| {
-                (
-                    page_entry_path(page.record.page_index, PagePixelFormat::Rgba8888),
-                    page.pixels.clone(),
-                    page.record.used_width,
-                    page.record.used_height,
-                )
-            })
-            .collect())
+    debug_assert!(options.pixel_format == PagePixelFormat::Bc7);
+    let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
+    let rdo_options = Bc7RdoOptions::sparse_atlas(
+        options.bc7_rdo_lambda,
+        options.bc7_rdo_lookback_blocks,
+    );
+    let pending_progress = AtomicU64::new(0);
+    let mut encoded_pages = Vec::with_capacity(pages.len());
+    for page in pages {
+        let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        let encoded = encode_for_vram_with_bc7_rdo_options_and_stage_progress(
+            &page.pixels,
+            extent,
+            RawImageFormat::Rgba8888,
+            encoding,
+            &rdo_options,
+            |stage, units| {
+                let units = units as u64;
+                add_bc7_progress(pb, &pending_progress, units);
+                if let Some(progress) = progress {
+                    progress(stage, units);
+                }
+            },
+        )
+        .map_err(|e| {
+            eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
+        })?
+        .into_bytes()
+        .to_vec();
+        encoded_pages.push((
+            page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
+            encoded,
+            page.record.used_width,
+            page.record.used_height,
+        ));
     }
+    flush_bc7_progress(pb, &pending_progress);
+    Ok(encoded_pages)
 }
 
 fn mobile_anim_chunk_bc7_blocks(pages: &[BuiltMobileAnimPage]) -> u64 {
@@ -1508,7 +1509,7 @@ fn pack_frames_into_package(
         if pending_pages.len() >= chunk_size {
             encode_and_add_mobile_anim_page_chunk(
                 package,
-                &pending_pages,
+                &mut pending_pages,
                 options,
                 &payload_progress,
                 payload_stage,
@@ -1516,7 +1517,6 @@ fn pack_frames_into_package(
                 &rdo_payload_completed,
                 total_frames,
             )?;
-            pending_pages.clear();
         }
         page_index += 1;
     }
@@ -1524,7 +1524,7 @@ fn pack_frames_into_package(
     if !pending_pages.is_empty() {
         encode_and_add_mobile_anim_page_chunk(
             package,
-            &pending_pages,
+            &mut pending_pages,
             options,
             &payload_progress,
             payload_stage,
@@ -1633,7 +1633,7 @@ fn pack_planned_frames_into_package(
         if pending_pages.len() >= chunk_size {
             encode_and_add_mobile_anim_page_chunk(
                 package,
-                &pending_pages,
+                &mut pending_pages,
                 options,
                 payload_progress,
                 payload_stage,
@@ -1641,7 +1641,6 @@ fn pack_planned_frames_into_package(
                 &rdo_payload_completed,
                 total_frames,
             )?;
-            pending_pages.clear();
         }
         page_index += 1;
     }
@@ -1649,7 +1648,7 @@ fn pack_planned_frames_into_package(
     if !pending_pages.is_empty() {
         encode_and_add_mobile_anim_page_chunk(
             package,
-            &pending_pages,
+            &mut pending_pages,
             options,
             payload_progress,
             payload_stage,
