@@ -14,7 +14,7 @@ const MATCH_CONTINUE_BITS: f32 = 1.0;
 const MATCH_REP0_BITS: f32 = 4.0;
 
 const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
-const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 512;
+const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 2048;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 
@@ -548,14 +548,8 @@ fn reduce_entropy_bc7_parallel_impl(
     }
 
     let lookback_blocks = max(1, params.lookback_window_size / 16);
-    let lookback_rows = lookback_blocks.div_ceil(blocks_x);
-    let target_parallel_blocks = (num_blocks / (rayon::current_num_threads() * 4).max(1)).max(1);
-    let chunk_blocks = max(
-        PARALLEL_RDO_MIN_CHUNK_BLOCKS,
-        max(lookback_blocks, target_parallel_blocks),
-    );
-    let chunk_rows = max(1, chunk_blocks.div_ceil(blocks_x).max(lookback_rows));
-    let chunk_blocks = chunk_rows * blocks_x;
+    let chunk_blocks =
+        parallel_rdo_chunk_blocks(num_blocks, blocks_x, lookback_blocks, rayon::current_num_threads());
 
     blocks
         .par_chunks_mut(chunk_blocks)
@@ -573,6 +567,22 @@ fn reduce_entropy_bc7_parallel_impl(
             )
         })
         .sum()
+}
+
+fn parallel_rdo_chunk_blocks(
+    num_blocks: usize,
+    blocks_x: usize,
+    lookback_blocks: usize,
+    thread_count: usize,
+) -> usize {
+    let lookback_rows = lookback_blocks.div_ceil(blocks_x);
+    let target_parallel_blocks = (num_blocks / (thread_count * 2).max(1)).max(1);
+    let chunk_blocks = max(
+        PARALLEL_RDO_MIN_CHUNK_BLOCKS,
+        max(lookback_blocks, target_parallel_blocks),
+    );
+    let chunk_rows = max(1, chunk_blocks.div_ceil(blocks_x).max(lookback_rows));
+    chunk_rows * blocks_x
 }
 
 fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
@@ -1116,41 +1126,44 @@ fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     if COLLECT_STATS && mode < 8 {
         stat_array_add!(COLLECT_STATS, stats, decode_mode_trials, mode as usize, 1);
     }
-    if mode == 0 {
-        stat_add!(COLLECT_STATS, stats, fused_mode0_trials, 1);
-        return decode_bc7_mode0_error_bounded(block_bits, source, max_error);
+    match mode {
+        0 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode0_trials, 1);
+            decode_bc7_mode0_error_bounded(block_bits, source, max_error)
+        }
+        1 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode1_trials, 1);
+            decode_bc7_mode1_error_bounded(block_bits, source, max_error)
+        }
+        2 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode2_trials, 1);
+            decode_bc7_mode2_error_bounded(block_bits, source, max_error)
+        }
+        3 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode3_trials, 1);
+            decode_bc7_mode3_error_bounded(block_bits, source, max_error)
+        }
+        4 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode4_trials, 1);
+            decode_bc7_mode4_error_bounded(block_bits, source, max_error)
+        }
+        5 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode5_trials, 1);
+            decode_bc7_mode5_error_bounded(block_bits, source, max_error)
+        }
+        6 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode6_trials, 1);
+            decode_bc7_mode6_error_bounded(block_bits, source, max_error)
+        }
+        7 => {
+            stat_add!(COLLECT_STATS, stats, fused_mode7_trials, 1);
+            decode_bc7_mode7_error_bounded(block_bits, source, max_error)
+        }
+        _ => {
+            stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
+            None
+        }
     }
-    if mode == 1 {
-        stat_add!(COLLECT_STATS, stats, fused_mode1_trials, 1);
-        return decode_bc7_mode1_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 2 {
-        stat_add!(COLLECT_STATS, stats, fused_mode2_trials, 1);
-        return decode_bc7_mode2_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 3 {
-        stat_add!(COLLECT_STATS, stats, fused_mode3_trials, 1);
-        return decode_bc7_mode3_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 4 {
-        stat_add!(COLLECT_STATS, stats, fused_mode4_trials, 1);
-        return decode_bc7_mode4_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 5 {
-        stat_add!(COLLECT_STATS, stats, fused_mode5_trials, 1);
-        return decode_bc7_mode5_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 6 {
-        stat_add!(COLLECT_STATS, stats, fused_mode6_trials, 1);
-        return decode_bc7_mode6_error_bounded(block_bits, source, max_error);
-    }
-    if mode == 7 {
-        stat_add!(COLLECT_STATS, stats, fused_mode7_trials, 1);
-        return decode_bc7_mode7_error_bounded(block_bits, source, max_error);
-    }
-
-    stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
-    None
 }
 
 fn decode_bc7_mode0_error_bounded(
@@ -1548,23 +1561,35 @@ fn decode_bc7_mode6_error_bounded(
     let ha = expand_mode6_endpoint((lo >> 56) & 0x7F, p1);
 
     let mut err = 0u64;
-    let mut weight_bit_ofs = 1usize;
-    for i in 0..16 {
-        let weight_bits = if i == 0 { 3 } else { 4 };
-        let weight_index = ((hi >> weight_bit_ofs) & ((1u64 << weight_bits) - 1)) as usize;
-        weight_bit_ofs += weight_bits;
-        let weight = BC7_WEIGHTS4[weight_index] as i32;
-        let decoded = [
-            interpolate_bc7(lr, hr, weight),
-            interpolate_bc7(lg, hg, weight),
-            interpolate_bc7(lb, hb, weight),
-            interpolate_bc7(la, ha, weight),
-        ];
+    let weight_index = ((hi >> 1) & 0x07) as usize;
+    let weight = BC7_WEIGHTS4[weight_index] as i32;
+    let r = interpolate_bc7(lr, hr, weight);
+    let g = interpolate_bc7(lg, hg, weight);
+    let b = interpolate_bc7(lb, hb, weight);
+    let a = interpolate_bc7(la, ha, weight);
+    let dr = source[0][0] as i32 - r;
+    let dg = source[0][1] as i32 - g;
+    let db = source[0][2] as i32 - b;
+    let da = source[0][3] as i32 - a;
+    err += (dr * dr + dg * dg + db * db + da * da) as u64;
+    if err >= max_error {
+        return None;
+    }
 
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
+    let mut weight_bit_ofs = 4usize;
+    for i in 1..16 {
+        let weight_index = ((hi >> weight_bit_ofs) & 0x0F) as usize;
+        weight_bit_ofs += 4;
+        let weight = BC7_WEIGHTS4[weight_index] as i32;
+        let r = interpolate_bc7(lr, hr, weight);
+        let g = interpolate_bc7(lg, hg, weight);
+        let b = interpolate_bc7(lb, hb, weight);
+        let a = interpolate_bc7(la, ha, weight);
+        let dr = source[i][0] as i32 - r;
+        let dg = source[i][1] as i32 - g;
+        let db = source[i][2] as i32 - b;
+        let da = source[i][3] as i32 - a;
+        err += (dr * dr + dg * dg + db * db + da * da) as u64;
         if err >= max_error {
             return None;
         }
@@ -2119,6 +2144,48 @@ mod tests {
         assert_eq!(error_fn(u64::MAX), Some(actual));
         assert_eq!(error_fn(actual), None);
         assert_eq!(error_fn(actual + 1), Some(actual));
+    }
+
+    #[test]
+    fn parallel_rdo_chunk_blocks_respects_rows_and_lookback() {
+        let chunk_blocks = parallel_rdo_chunk_blocks(4096, 64, 1024, 8);
+        assert_eq!(chunk_blocks % 64, 0);
+        assert!(chunk_blocks >= 1024);
+        assert!(chunk_blocks >= PARALLEL_RDO_MIN_CHUNK_BLOCKS);
+
+        let tall_chunk_blocks = parallel_rdo_chunk_blocks(4096, 32, 2048, 8);
+        assert_eq!(tall_chunk_blocks % 32, 0);
+        assert!(tall_chunk_blocks >= 2048);
+    }
+
+    #[test]
+    fn parallel_rdo_progress_reports_all_blocks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let blocks_x = 64;
+        let blocks_y = 33;
+        let num_blocks = blocks_x * blocks_y;
+        let mut blocks = vec![[0u8; 16]; num_blocks];
+        let rgba_blocks = vec![[0u8; 4]; num_blocks * 16];
+        let progress_blocks = AtomicUsize::new(0);
+        let params = Bc7RdoParams {
+            use_ultrasmooth_block_handling: false,
+            ..Default::default()
+        };
+
+        let modified = reduce_entropy_bc7_parallel_with_progress(
+            &mut blocks,
+            &rgba_blocks,
+            blocks_x,
+            blocks_y,
+            &params,
+            |blocks| {
+                progress_blocks.fetch_add(blocks, Ordering::Relaxed);
+            },
+        );
+
+        assert_eq!(modified, 0);
+        assert_eq!(progress_blocks.load(Ordering::Relaxed), num_blocks);
     }
 
     #[test]
