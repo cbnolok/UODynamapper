@@ -16,6 +16,11 @@ const MATCH_REP0_BITS: f32 = 4.0;
 const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 2048;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
+const ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD: f32 = 2.9;
+const ULTRASMOOTH_DARK_THRESHOLD: f64 = 13.0;
+const ULTRASMOOTH_BRIGHT_THRESHOLD: f64 = 222.0;
+const ULTRASMOOTH_BLOCK_MSE_SCALE: f32 = 120.0;
+const ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD: usize = 64;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
 const MODE1_PIXEL_DESCS: [[u16; 16]; 64] = mode1_pixel_descs();
 
@@ -641,11 +646,20 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
     // 3. Adjust ultrasmooth scales with lambda and smooth_block_max_mse_scale
     if let Some(ref mut scales) = block_mse_scales {
-        scales.par_iter_mut().for_each(|s| {
-            if *s > 0.0 {
-                *s = actual_params.smooth_block_max_mse_scale.max(*s * params.lambda.min(3.0));
+        let lambda_scale = params.lambda.min(3.0);
+        if scales.len() < PARALLEL_RDO_BLOCK_THRESHOLD {
+            for s in scales.iter_mut() {
+                if *s > 0.0 {
+                    *s = actual_params.smooth_block_max_mse_scale.max(*s * lambda_scale);
+                }
             }
-        });
+        } else {
+            scales.par_iter_mut().for_each(|s| {
+                if *s > 0.0 {
+                    *s = actual_params.smooth_block_max_mse_scale.max(*s * lambda_scale);
+                }
+            });
+        }
     }
 
     // 4. Main loop
@@ -2295,98 +2309,55 @@ fn compute_block_mse_scales(
 ) -> Vec<f32> {
     let total_blocks = blocks_x * blocks_y;
     let mut block_mse_scales = vec![-1.0f32; total_blocks];
-
-    let ultrasmooth_block_std_dev_threshold = 2.9f32;
-    let dark_threshold = 13.0f32;
-    let bright_threshold = 222.0f32;
-    let ultrasmooth_block_mse_scale = 120.0f32;
-    let ultrasmooth_region_too_small_threshold = 64;
+    let use_parallel = total_blocks >= PARALLEL_RDO_BLOCK_THRESHOLD;
 
     let mut is_ultrasmooth = vec![false; total_blocks];
-
-    is_ultrasmooth
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(block_index, is_ultrasmooth)| {
-            let pixels = rgba_block_at(rgba_blocks, block_index);
-
-            let mut luma_sum = 0.0f64;
-            for i in 0..16 {
-                let l = 0.299 * pixels[i][0] as f64 + 0.587 * pixels[i][1] as f64 + 0.114 * pixels[i][2] as f64;
-                luma_sum += l;
-            }
-            let luma_avg = luma_sum / 16.0;
-
-            let max_std_dev = compute_block_max_std_dev(pixels);
-            let mut yl = (max_std_dev / ultrasmooth_block_std_dev_threshold).clamp(0.0, 1.0);
-            yl = yl * yl;
-
-            if luma_avg < dark_threshold as f64 || luma_avg >= bright_threshold as f64 {
-                yl = 1.0;
-            }
-
-            if yl == 0.0 {
-                *is_ultrasmooth = true;
-            }
-        });
+    if use_parallel {
+        is_ultrasmooth
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(block_index, is_ultrasmooth)| {
+                *is_ultrasmooth = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index));
+            });
+    } else {
+        for (block_index, is_ultrasmooth) in is_ultrasmooth.iter_mut().enumerate() {
+            *is_ultrasmooth = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index));
+        }
+    }
 
     let mut current_mask = is_ultrasmooth.clone();
 
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
     let mut next_mask = current_mask.clone();
-    next_mask
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(idx, next)| {
-            let x = idx % blocks_x;
-            let y = idx / blocks_x;
-            let mut any_non_ultrasmooth = false;
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                        if !current_mask[nx as usize + ny as usize * blocks_x] {
-                            any_non_ultrasmooth = true;
-                            break;
-                        }
-                    }
-                }
-                if any_non_ultrasmooth { break; }
-            }
-            if any_non_ultrasmooth {
-                *next = false;
-            }
-        });
+    if use_parallel {
+        next_mask
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, next)| {
+                *next = erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+            });
+    } else {
+        for (idx, next) in next_mask.iter_mut().enumerate() {
+            *next = erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+        }
+    }
     current_mask = next_mask;
 
     // 32 passes of "median-like" erosion
     for _ in 0..32 {
         let mut next_mask = current_mask.clone();
-        next_mask
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(idx, next)| {
-                let x = idx % blocks_x;
-                let y = idx / blocks_x;
-                if current_mask[idx] {
-                    let mut non_ultrasmooth_count = 0;
-                    for dy in -1..=1 {
-                        for dx in -1..=1 {
-                            let nx = x as i32 + dx;
-                            let ny = y as i32 + dy;
-                            if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                                if !current_mask[nx as usize + ny as usize * blocks_x] {
-                                    non_ultrasmooth_count += 1;
-                                }
-                            }
-                        }
-                    }
-                    if non_ultrasmooth_count >= 5 {
-                        *next = false;
-                    }
-                }
-            });
+        if use_parallel {
+            next_mask
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(idx, next)| {
+                    *next = median_erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+                });
+        } else {
+            for (idx, next) in next_mask.iter_mut().enumerate() {
+                *next = median_erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
+            }
+        }
         current_mask = next_mask;
     }
 
@@ -2414,7 +2385,7 @@ fn compute_block_mse_scales(
                         }
                     }
                 }
-                if component.len() < ultrasmooth_region_too_small_threshold {
+                if component.len() < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
                     for (cx, cy) in component {
                         final_mask[cx + cy * blocks_x] = false;
                     }
@@ -2423,16 +2394,101 @@ fn compute_block_mse_scales(
         }
     }
 
-    block_mse_scales
-        .par_iter_mut()
-        .zip(final_mask.par_iter())
-        .for_each(|(scale, is_ultrasmooth)| {
+    if use_parallel {
+        block_mse_scales
+            .par_iter_mut()
+            .zip(final_mask.par_iter())
+            .for_each(|(scale, is_ultrasmooth)| {
+                if *is_ultrasmooth {
+                    *scale = ULTRASMOOTH_BLOCK_MSE_SCALE;
+                }
+            });
+    } else {
+        for (scale, is_ultrasmooth) in block_mse_scales.iter_mut().zip(final_mask.iter()) {
             if *is_ultrasmooth {
-                *scale = ultrasmooth_block_mse_scale;
+                *scale = ULTRASMOOTH_BLOCK_MSE_SCALE;
             }
-        });
+        }
+    }
 
     block_mse_scales
+}
+
+#[inline]
+fn is_ultrasmooth_seed_block(pixels: &RgbaBlock) -> bool {
+    let mut luma_sum = 0.0f64;
+    for i in 0..16 {
+        let l = 0.299 * pixels[i][0] as f64 + 0.587 * pixels[i][1] as f64 + 0.114 * pixels[i][2] as f64;
+        luma_sum += l;
+    }
+    let luma_avg = luma_sum / 16.0;
+
+    let max_std_dev = compute_block_max_std_dev(pixels);
+    let mut yl = (max_std_dev / ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD).clamp(0.0, 1.0);
+    yl = yl * yl;
+
+    if luma_avg < ULTRASMOOTH_DARK_THRESHOLD || luma_avg >= ULTRASMOOTH_BRIGHT_THRESHOLD {
+        yl = 1.0;
+    }
+
+    yl == 0.0
+}
+
+#[inline]
+fn erode_ultrasmooth_mask_at(
+    idx: usize,
+    current_mask: &[bool],
+    blocks_x: usize,
+    blocks_y: usize,
+) -> bool {
+    if !current_mask[idx] {
+        return false;
+    }
+
+    let x = idx % blocks_x;
+    let y = idx / blocks_x;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+            if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
+                if !current_mask[nx as usize + ny as usize * blocks_x] {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+#[inline]
+fn median_erode_ultrasmooth_mask_at(
+    idx: usize,
+    current_mask: &[bool],
+    blocks_x: usize,
+    blocks_y: usize,
+) -> bool {
+    if !current_mask[idx] {
+        return false;
+    }
+
+    let x = idx % blocks_x;
+    let y = idx / blocks_x;
+    let mut non_ultrasmooth_count = 0;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+            if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
+                if !current_mask[nx as usize + ny as usize * blocks_x] {
+                    non_ultrasmooth_count += 1;
+                }
+            }
+        }
+    }
+
+    non_ultrasmooth_count < 5
 }
 
 #[cfg(test)]
