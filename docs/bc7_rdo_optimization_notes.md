@@ -292,6 +292,24 @@ Practical guidance:
 - Do not length-specialize the full relative candidate loop with the current helper shape.
 - If revisiting, use profile data to target only modes or workloads where relative movement is actually selected and avoid increasing code size for alpha-heavy pages.
 
+### Single-pass block standard deviation
+
+Attempt:
+- Rewrote `compute_block_max_std_dev` from a channel-first loop over the 16 pixels to one pass accumulating RGBA sums and squared sums together.
+- Preserved the same variance formula and output checksums.
+
+Why it looked promising:
+- The original code scans each 4x4 block four times, once per channel.
+- One pass should be more cache-friendly and reduce loop overhead before candidate search begins.
+
+Why it was reverted:
+- Focused tests passed and RDO checksums stayed stable, but both stats and no-stats default benchmarks regressed.
+- The array-based accumulators likely added register pressure and indexing overhead, while the original tiny channel loop is easy for LLVM to optimize.
+
+Practical guidance:
+- Keep the simple channel-first `compute_block_max_std_dev` loop.
+- If revisiting, try a fully scalar unrolled accumulator only with assembly or benchmark evidence, not an indexed `[u32; 4]` implementation.
+
 ## Benchmark Context
 
 Commands used for these decisions:
