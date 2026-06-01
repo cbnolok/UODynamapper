@@ -94,7 +94,7 @@ impl ModeHistory {
     fn push(&mut self, block_index: usize) {
         let capacity = self.entries.len();
         if self.len < capacity {
-            self.entries[(self.start + self.len) % capacity] = block_index;
+            self.entries[self.len] = block_index;
             self.len += 1;
         } else {
             self.entries[self.start] = block_index;
@@ -104,9 +104,19 @@ impl ModeHistory {
 
     #[inline]
     fn iter_recent(&self) -> ModeHistoryRecent<'_> {
+        let next_index = if self.len == 0 {
+            0
+        } else if self.len < self.entries.len() {
+            self.len - 1
+        } else if self.start == 0 {
+            self.entries.len() - 1
+        } else {
+            self.start - 1
+        };
         ModeHistoryRecent {
             history: self,
             remaining: self.len,
+            next_index,
         }
     }
 }
@@ -114,6 +124,7 @@ impl ModeHistory {
 struct ModeHistoryRecent<'a> {
     history: &'a ModeHistory,
     remaining: usize,
+    next_index: usize,
 }
 
 impl Iterator for ModeHistoryRecent<'_> {
@@ -125,7 +136,12 @@ impl Iterator for ModeHistoryRecent<'_> {
             return None;
         }
         self.remaining -= 1;
-        let index = (self.history.start + self.remaining) % self.history.entries.len();
+        let index = self.next_index;
+        if self.next_index == 0 {
+            self.next_index = self.history.entries.len() - 1;
+        } else {
+            self.next_index -= 1;
+        }
         Some(self.history.entries[index])
     }
 }
@@ -606,8 +622,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         DistanceCostLayout::new(max_block_delta, params.allow_relative_movement, &rate_costs);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
-    let mut block_modes = blocks.par_iter().map(get_bc7_mode).collect::<Vec<_>>();
     let mut block_bits = blocks.par_iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
+    let mut block_modes = block_bits.par_iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
     let history_capacity = total_blocks_to_check.min(num_blocks).max(1);
     let mut previous_blocks_by_mode = (0..8)
         .map(|_| ModeHistory::with_capacity(history_capacity))
@@ -636,11 +652,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             hash_table.fill(0);
         }
 
-        let orig_blk = blocks[block_index];
         let orig_bits = block_bits[block_index];
-        let p_pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
-            .try_into()
-            .expect("RDO source block has 16 pixels");
+        let p_pixels = rgba_block_at(rgba_blocks, block_index);
         let bc7_mode = block_modes[block_index];
         if bc7_mode == 8 {
             report_progress(progress, &mut pending_progress, 1);
@@ -671,7 +684,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         let cur_t = cur_ms_err * smooth_block_error_scale + (LITERAL_BITS * 16.0) * params.lambda;
         let first_block_to_check = block_index.saturating_sub(total_blocks_to_check);
 
-        let mut best_block = orig_blk;
+        let mut best_bits = orig_bits;
         let mut best_t = cur_t;
         let mut best_ms_err = cur_ms_err;
         let mut best_match_len = 0usize;
@@ -750,7 +763,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_block = orig_blk;
+                                    best_t = t; best_bits = orig_bits;
                                     best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
@@ -779,7 +792,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_block = trial_bits.to_le_bytes();
+                                best_t = t; best_bits = trial_bits;
                                 best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = dst_ofs;
                                 best_match_bits = mb;
@@ -856,7 +869,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             if trial_ms_err < thresh_ms_err {
                                 let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_block = orig_blk;
+                                    best_t = t; best_bits = orig_bits;
                                     best_ms_err = trial_ms_err;
                                     best_match_len = len; best_match_dst_block_ofs = ofs;
                                     best_match_bits = trial_match_bits;
@@ -889,7 +902,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         if trial_ms_err < thresh_ms_err {
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_block = trial_bits.to_le_bytes();
+                                best_t = t; best_bits = trial_bits;
                                 best_ms_err = trial_ms_err;
                                 best_match_len = len; best_match_dst_block_ofs = ofs;
                                 best_match_bits = trial_match_bits;
@@ -909,7 +922,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let second_match_layout = second_match_layout
                 .as_ref()
                 .expect("second-match layout exists when second matches are enabled");
-            let orig_best_bits = bc7_block_bits(best_block);
+            let orig_best_bits = best_bits;
             let orig_best_ms_err = best_ms_err;
 
             for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
@@ -977,7 +990,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
                                 best_t = t;
-                                best_block = trial_bits.to_le_bytes();
+                                best_bits = trial_bits;
                                 stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
@@ -987,9 +1000,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         }
 
         if best_t < cur_t {
+            let best_block = best_bits.to_le_bytes();
             blocks[block_index] = best_block;
-            block_modes[block_index] = get_bc7_mode(&best_block);
-            block_bits[block_index] = bc7_block_bits(best_block);
+            block_modes[block_index] = get_bc7_mode_bits(best_bits);
+            block_bits[block_index] = best_bits;
             total_modified += 1;
             stat_add!(COLLECT_STATS, stats, modified_blocks, 1);
         }
@@ -1026,6 +1040,15 @@ fn flush_progress(progress: Option<&dyn Fn(usize)>, pending_progress: &mut usize
 #[inline(always)]
 fn bc7_block_bits(block: [u8; 16]) -> u128 {
     u128::from_le_bytes(block)
+}
+
+#[inline(always)]
+fn rgba_block_at(rgba_blocks: &[[u8; 4]], block_index: usize) -> &RgbaBlock {
+    let start = block_index * 16;
+    debug_assert!(start + 16 <= rgba_blocks.len());
+    // SAFETY: `RgbaBlock` is exactly 16 contiguous RGBA pixels with the same
+    // alignment as `[u8; 4]`; callers validate that the source is block-raster.
+    unsafe { &*(rgba_blocks.as_ptr().add(start) as *const RgbaBlock) }
 }
 
 #[inline(always)]
@@ -1067,7 +1090,7 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, smooth_block_error
 fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
     block_bits: u128,
     source: &RgbaBlock,
-    mode_hint: u32,
+    mode_hint: u8,
     trust_mode_hint: bool,
     max_error: u64,
     mut stats: Option<&mut Bc7RdoStats>,
@@ -1762,31 +1785,27 @@ fn hash_hsieh_bc7_segment_bits(block_bits: u128, ofs: usize, len: usize, salt: u
     h
 }
 
-fn get_bc7_mode(block: &[u8; 16]) -> u32 {
-    get_bc7_mode_from_first_byte(block[0])
-}
-
 #[inline(always)]
-fn get_bc7_mode_bits(block_bits: u128) -> u32 {
+fn get_bc7_mode_bits(block_bits: u128) -> u8 {
     get_bc7_mode_from_first_byte(block_bits as u8)
 }
 
 #[inline(always)]
-fn get_bc7_mode_from_first_byte(first_byte: u8) -> u32 {
+fn get_bc7_mode_from_first_byte(first_byte: u8) -> u8 {
     if first_byte == 0 {
         8
     } else {
-        first_byte.trailing_zeros()
+        first_byte.trailing_zeros() as u8
     }
 }
 
 #[inline(always)]
-fn bc7_block_bits_has_mode(block_bits: u128, mode: u32) -> bool {
+fn bc7_block_bits_has_mode(block_bits: u128, mode: u8) -> bool {
     bc7_first_byte_has_mode(block_bits as u8, mode)
 }
 
 #[inline(always)]
-fn bc7_first_byte_has_mode(first_byte: u8, mode: u32) -> bool {
+fn bc7_first_byte_has_mode(first_byte: u8, mode: u8) -> bool {
     debug_assert!(mode < 8);
     let first_byte = first_byte as u16;
     let mode_bit = 1u16 << mode;
@@ -1908,9 +1927,7 @@ fn compute_block_mse_scales(
         .par_iter_mut()
         .enumerate()
         .for_each(|(block_index, is_ultrasmooth)| {
-            let pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
-                .try_into()
-                .expect("RDO source block has 16 pixels");
+            let pixels = rgba_block_at(rgba_blocks, block_index);
 
             let mut luma_sum = 0.0f64;
             for i in 0..16 {
@@ -2077,10 +2094,9 @@ mod tests {
     fn supported_blocks_mse(blocks: &[[u8; 16]], rgba_blocks: &[[u8; 4]]) -> f32 {
         let mut sse = 0u64;
         for (block_index, block) in blocks.iter().enumerate() {
-            let pixels: &RgbaBlock = rgba_blocks[block_index * 16..(block_index + 1) * 16]
-                .try_into()
-                .expect("RDO source block has 16 pixels");
-            sse += decode_bc7_error_bounded::<false>(bc7_block_bits(*block), pixels, get_bc7_mode(block), true, u64::MAX, None)
+            let pixels = rgba_block_at(rgba_blocks, block_index);
+            let block_bits = bc7_block_bits(*block);
+            sse += decode_bc7_error_bounded::<false>(block_bits, pixels, get_bc7_mode_bits(block_bits), true, u64::MAX, None)
                 .expect("RDO should only emit supported BC7 modes");
         }
         sse as f32 / (blocks.len() * 16 * 4) as f32
