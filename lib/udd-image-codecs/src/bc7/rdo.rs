@@ -16,7 +16,6 @@ const MATCH_REP0_BITS: f32 = 4.0;
 const PARALLEL_RDO_BLOCK_THRESHOLD: usize = 2048;
 const PARALLEL_RDO_MIN_CHUNK_BLOCKS: usize = 2048;
 const RDO_PROGRESS_BLOCK_BATCH: usize = 256;
-const ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD: f32 = 2.9;
 const ULTRASMOOTH_DARK_THRESHOLD: f64 = 13.0;
 const ULTRASMOOTH_BRIGHT_THRESHOLD: f64 = 222.0;
 const ULTRASMOOTH_BLOCK_MSE_SCALE: f32 = 120.0;
@@ -2497,19 +2496,31 @@ fn compute_block_mse_scales(
     let use_parallel = total_blocks >= PARALLEL_RDO_BLOCK_THRESHOLD;
 
     let mut is_ultrasmooth = vec![0u8; total_blocks];
-    if use_parallel {
+    let seed_count = if use_parallel {
         is_ultrasmooth
             .par_iter_mut()
             .enumerate()
-            .for_each(|(block_index, is_ultrasmooth)| {
-                *is_ultrasmooth =
-                    is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
-            });
+            .map(|(block_index, is_ultrasmooth)| {
+                let seed = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
+                *is_ultrasmooth = seed;
+                seed as usize
+            })
+            .sum::<usize>()
     } else {
+        let mut seed_count = 0usize;
         for (block_index, is_ultrasmooth) in is_ultrasmooth.iter_mut().enumerate() {
-            *is_ultrasmooth =
-                is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
+            let seed = is_ultrasmooth_seed_block(rgba_block_at(rgba_blocks, block_index)) as u8;
+            *is_ultrasmooth = seed;
+            seed_count += seed as usize;
         }
+        seed_count
+    };
+    if seed_count < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
+        return block_mse_scales;
+    }
+    if seed_count == total_blocks {
+        block_mse_scales.fill(ULTRASMOOTH_BLOCK_MSE_SCALE);
+        return block_mse_scales;
     }
 
     let mut current_mask = is_ultrasmooth;
@@ -2532,26 +2543,36 @@ fn compute_block_mse_scales(
 
     // 32 passes of "median-like" erosion
     for _ in 0..32 {
-        if use_parallel {
+        let changed = if use_parallel {
             next_mask
                 .par_chunks_mut(blocks_x)
                 .enumerate()
-                .for_each(|(y, next_row)| {
-                    median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
-                });
+                .map(|(y, next_row)| {
+                    median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y)
+                })
+                .sum::<usize>()
         } else {
+            let mut changed = 0usize;
             for (y, next_row) in next_mask.chunks_mut(blocks_x).enumerate() {
-                median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
+                changed |= median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
             }
-        }
+            changed
+        };
         std::mem::swap(&mut current_mask, &mut next_mask);
+        if changed == 0 {
+            break;
+        }
     }
 
     // Flood fill to remove small ULTRASMOOTH regions
+    let mut remaining_ultrasmooth = current_mask.iter().map(|&v| v as usize).sum::<usize>();
+    if remaining_ultrasmooth < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
+        return block_mse_scales;
+    }
     let mut visited = vec![0u8; total_blocks];
     let mut component = Vec::new();
     let mut stack = Vec::new();
-    for by in 0..blocks_y {
+    'scan: for by in 0..blocks_y {
         for bx in 0..blocks_x {
             let idx = bx + by * blocks_x;
             if current_mask[idx] != 0 && visited[idx] == 0 {
@@ -2573,10 +2594,15 @@ fn compute_block_mse_scales(
                         }
                     }
                 }
-                if component.len() >= ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
+                let component_len = component.len();
+                remaining_ultrasmooth -= component_len;
+                if component_len >= ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
                     for &(cx, cy) in &component {
                         block_mse_scales[cx + cy * blocks_x] = ULTRASMOOTH_BLOCK_MSE_SCALE;
                     }
+                }
+                if remaining_ultrasmooth == 0 {
+                    break 'scan;
                 }
             }
         }
@@ -2587,26 +2613,65 @@ fn compute_block_mse_scales(
 
 #[inline]
 fn is_ultrasmooth_seed_block(pixels: &RgbaBlock) -> bool {
-    let mut luma_sum = 0.0f64;
-    for i in 0..16 {
-        let l = 0.299 * pixels[i][0] as f64 + 0.587 * pixels[i][1] as f64 + 0.114 * pixels[i][2] as f64;
-        luma_sum += l;
-    }
-    let luma_avg = luma_sum / 16.0;
-
-    if luma_avg < ULTRASMOOTH_DARK_THRESHOLD || luma_avg >= ULTRASMOOTH_BRIGHT_THRESHOLD {
+    if !rgba_block_pixels_are_equal(pixels) {
         return false;
     }
 
-    let max_std_dev = compute_block_max_std_dev(pixels);
-    let mut yl = (max_std_dev / ULTRASMOOTH_BLOCK_STD_DEV_THRESHOLD).clamp(0.0, 1.0);
-    yl = yl * yl;
+    let pixel = pixels[0];
+    let luma = 0.299 * pixel[0] as f64 + 0.587 * pixel[1] as f64 + 0.114 * pixel[2] as f64;
+    luma >= ULTRASMOOTH_DARK_THRESHOLD && luma < ULTRASMOOTH_BRIGHT_THRESHOLD
+}
 
-    yl == 0.0
+#[inline(always)]
+fn rgba_block_pixels_are_equal(pixels: &RgbaBlock) -> bool {
+    let first = u32::from_ne_bytes(pixels[0]) as u128;
+    let repeated = first | (first << 32) | (first << 64) | (first << 96);
+    let ptr = pixels.as_ptr() as *const u8;
+
+    // SAFETY: `RgbaBlock` is 64 contiguous bytes. Unaligned reads avoid imposing
+    // a stronger alignment than the `[u8; 4]` source actually has.
+    unsafe {
+        std::ptr::read_unaligned(ptr as *const u128) == repeated
+            && std::ptr::read_unaligned(ptr.add(16) as *const u128) == repeated
+            && std::ptr::read_unaligned(ptr.add(32) as *const u128) == repeated
+            && std::ptr::read_unaligned(ptr.add(48) as *const u128) == repeated
+    }
 }
 
 #[inline]
 fn erode_ultrasmooth_mask_row(
+    next_row: &mut [u8],
+    y: usize,
+    current_mask: &[u8],
+    blocks_x: usize,
+    blocks_y: usize,
+) {
+    if blocks_x < 3 || y == 0 || y + 1 == blocks_y {
+        erode_ultrasmooth_mask_row_generic(next_row, y, current_mask, blocks_x, blocks_y);
+        return;
+    }
+
+    let row_start = y * blocks_x;
+    let prev_row = &current_mask[row_start - blocks_x..row_start];
+    let curr_row = &current_mask[row_start..row_start + blocks_x];
+    let below_row = &current_mask[row_start + blocks_x..row_start + blocks_x * 2];
+    let last_x = blocks_x - 1;
+
+    next_row[0] = prev_row[0] & prev_row[1] & curr_row[0] & curr_row[1] & below_row[0] & below_row[1];
+    for x in 1..last_x {
+        next_row[x] =
+            prev_row[x - 1] & prev_row[x] & prev_row[x + 1] &
+            curr_row[x - 1] & curr_row[x] & curr_row[x + 1] &
+            below_row[x - 1] & below_row[x] & below_row[x + 1];
+    }
+    next_row[last_x] =
+        prev_row[last_x - 1] & prev_row[last_x] &
+        curr_row[last_x - 1] & curr_row[last_x] &
+        below_row[last_x - 1] & below_row[last_x];
+}
+
+#[inline]
+fn erode_ultrasmooth_mask_row_generic(
     next_row: &mut [u8],
     y: usize,
     current_mask: &[u8],
@@ -2646,10 +2711,59 @@ fn median_erode_ultrasmooth_mask_row(
     current_mask: &[u8],
     blocks_x: usize,
     blocks_y: usize,
-) {
+) -> usize {
+    if blocks_x < 3 || y == 0 || y + 1 == blocks_y {
+        return median_erode_ultrasmooth_mask_row_generic(next_row, y, current_mask, blocks_x, blocks_y);
+    }
+
+    let row_start = y * blocks_x;
+    let prev_row = &current_mask[row_start - blocks_x..row_start];
+    let curr_row = &current_mask[row_start..row_start + blocks_x];
+    let below_row = &current_mask[row_start + blocks_x..row_start + blocks_x * 2];
+    let last_x = blocks_x - 1;
+    let mut changed = 0usize;
+
+    let old = curr_row[0];
+    let sum = prev_row[0] + prev_row[1] + curr_row[0] + curr_row[1] + below_row[0] + below_row[1];
+    let value = old & ((sum > 1) as u8);
+    next_row[0] = value;
+    changed |= (value ^ old) as usize;
+
+    for x in 1..last_x {
+        let old = curr_row[x];
+        let sum =
+            prev_row[x - 1] + prev_row[x] + prev_row[x + 1] +
+            curr_row[x - 1] + curr_row[x] + curr_row[x + 1] +
+            below_row[x - 1] + below_row[x] + below_row[x + 1];
+        let value = old & ((sum > 4) as u8);
+        next_row[x] = value;
+        changed |= (value ^ old) as usize;
+    }
+
+    let old = curr_row[last_x];
+    let sum =
+        prev_row[last_x - 1] + prev_row[last_x] +
+        curr_row[last_x - 1] + curr_row[last_x] +
+        below_row[last_x - 1] + below_row[last_x];
+    let value = old & ((sum > 1) as u8);
+    next_row[last_x] = value;
+    changed |= (value ^ old) as usize;
+
+    changed
+}
+
+#[inline]
+fn median_erode_ultrasmooth_mask_row_generic(
+    next_row: &mut [u8],
+    y: usize,
+    current_mask: &[u8],
+    blocks_x: usize,
+    blocks_y: usize,
+) -> usize {
     let row_start = y * blocks_x;
     let min_y = y.saturating_sub(1);
     let max_y = (y + 1).min(blocks_y - 1);
+    let mut changed = 0usize;
     for (x, next) in next_row.iter_mut().enumerate() {
         let idx = row_start + x;
         if current_mask[idx] == 0 {
@@ -2671,8 +2785,11 @@ fn median_erode_ultrasmooth_mask_row(
                 }
             }
         }
-        *next = (non_ultrasmooth_count < 5) as u8;
+        let value = (non_ultrasmooth_count < 5) as u8;
+        *next = value;
+        changed |= (value ^ current_mask[idx]) as usize;
     }
+    changed
 }
 
 #[cfg(test)]
@@ -2772,6 +2889,58 @@ mod tests {
 
         assert_eq!(modified, 0);
         assert_eq!(progress_blocks.load(Ordering::Relaxed), num_blocks);
+    }
+
+    #[test]
+    fn ultrasmooth_seed_requires_constant_rgba_inside_luma_window() {
+        let mid = [[64, 96, 128, 192]; 16];
+        assert!(is_ultrasmooth_seed_block(&mid));
+
+        let mut alpha_varies = mid;
+        alpha_varies[7][3] = 191;
+        assert!(!is_ultrasmooth_seed_block(&alpha_varies));
+
+        let mut color_varies = mid;
+        color_varies[5][1] = 97;
+        assert!(!is_ultrasmooth_seed_block(&color_varies));
+
+        let dark = [[0, 0, 0, 255]; 16];
+        assert!(!is_ultrasmooth_seed_block(&dark));
+
+        let dark_cutoff = [[13, 13, 13, 255]; 16];
+        assert!(!is_ultrasmooth_seed_block(&dark_cutoff));
+
+        let just_inside_dark_cutoff = [[14, 14, 14, 255]; 16];
+        assert!(is_ultrasmooth_seed_block(&just_inside_dark_cutoff));
+
+        let bright = [[255, 255, 255, 255]; 16];
+        assert!(!is_ultrasmooth_seed_block(&bright));
+    }
+
+    #[test]
+    fn ultrasmooth_fast_rows_match_generic_rows() {
+        let blocks_x = 7usize;
+        let blocks_y = 5usize;
+        let current_mask = (0..blocks_x * blocks_y)
+            .map(|idx| ((idx * 37 + idx / blocks_x * 11) % 5 != 0) as u8)
+            .collect::<Vec<_>>();
+
+        for y in 0..blocks_y {
+            let mut fast = vec![0u8; blocks_x];
+            let mut generic = vec![0u8; blocks_x];
+            erode_ultrasmooth_mask_row(&mut fast, y, &current_mask, blocks_x, blocks_y);
+            erode_ultrasmooth_mask_row_generic(&mut generic, y, &current_mask, blocks_x, blocks_y);
+            assert_eq!(fast, generic);
+
+            fast.fill(0);
+            generic.fill(0);
+            let fast_changed =
+                median_erode_ultrasmooth_mask_row(&mut fast, y, &current_mask, blocks_x, blocks_y);
+            let generic_changed =
+                median_erode_ultrasmooth_mask_row_generic(&mut generic, y, &current_mask, blocks_x, blocks_y);
+            assert_eq!(fast, generic);
+            assert_eq!(fast_changed, generic_changed);
+        }
     }
 
     #[test]
