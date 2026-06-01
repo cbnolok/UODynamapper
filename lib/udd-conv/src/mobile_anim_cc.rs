@@ -2235,10 +2235,10 @@ fn build_planned_page(
                     decoded_frame.height
                 );
             }
-            let rgba = crop_rgba_frame_window(
+            let rgba = crop_rgba_frame_window_borrowed(
                 decoded_frame.width,
                 decoded_frame.height,
-                decoded_frame.data.clone(),
+                &decoded_frame.data,
                 u32::from(pending.source_left),
                 u32::from(pending.source_top),
                 u32::from(pending.source_crop_width),
@@ -2251,7 +2251,7 @@ fn build_planned_page(
                 pending.inner_y,
                 pending.width as u32,
                 pending.height as u32,
-                &rgba,
+                rgba.as_ref(),
             )
             .wrap_err_with(|| format!("blit mobile animation frame {}", pending.global_frame_index))?;
         }
@@ -2512,6 +2512,42 @@ fn crop_rgba_frame_window(
             .copy_from_slice(&rgba[source_start..source_start + target_stride]);
     }
     Ok(cropped)
+}
+
+fn crop_rgba_frame_window_borrowed<'a>(
+    source_width: u16,
+    source_height: u16,
+    rgba: &'a [u8],
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+) -> eyre::Result<Cow<'a, [u8]>> {
+    if left == 0 && top == 0 && width == u32::from(source_width) && height == u32::from(source_height) {
+        return Ok(Cow::Borrowed(rgba));
+    }
+    if left + width > u32::from(source_width) || top + height > u32::from(source_height) {
+        eyre::bail!(
+            "mobile animation frame crop {},{} {}x{} is outside source {}x{}",
+            left,
+            top,
+            width,
+            height,
+            source_width,
+            source_height
+        );
+    }
+
+    let source_stride = source_width as usize * 4;
+    let target_stride = width as usize * 4;
+    let mut cropped = vec![0u8; width as usize * height as usize * 4];
+    for row in 0..height as usize {
+        let source_start = ((top as usize + row) * source_stride) + left as usize * 4;
+        let target_start = row * target_stride;
+        cropped[target_start..target_start + target_stride]
+            .copy_from_slice(&rgba[source_start..source_start + target_stride]);
+    }
+    Ok(Cow::Owned(cropped))
 }
 
 fn adjusted_frame_center(center: i16, trim_start: u32, label: &str) -> eyre::Result<i16> {
