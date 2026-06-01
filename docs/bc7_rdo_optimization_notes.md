@@ -469,6 +469,25 @@ Practical guidance:
 - Keep the tuple-based flood fill unless the traversal is redesigned to avoid per-cell division.
 - If revisiting, consider row-aware runs or a queue that carries edge flags, not a simple linear-index stack.
 
+### Reused seed-pass smooth scales
+
+Attempt:
+- Moved smooth-scale parameter derivation before the ultrasmooth seed pass.
+- Changed the ultrasmooth prepass to compute and store per-block fallback smooth scales for luma-in-range blocks while it already had each block's max stddev.
+- Overwrote only surviving large ultrasmooth components with the adjusted ultrasmooth scale and removed the later scale-adjustment pass.
+
+Why it looked promising:
+- The seed pass computes max stddev for many blocks, and the main RDO loop otherwise recomputes the same stddev for non-ultrasmooth blocks.
+- Reusing those values should remove duplicated `sqrt`/channel scans and one post-pass over the scale vector.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state default RDO benchmarking regressed on all fixtures. The stored scale vector increased memory traffic and branch work enough to outweigh the avoided fallback stddev calculations.
+
+Practical guidance:
+- Do not cache per-block fallback smooth scales in the ultrasmooth vector by default.
+- If revisiting, first measure how many blocks both pass the luma gate and reach the fallback path; broad caching is too expensive on the current fixtures.
+
 ## Benchmark Context
 
 Commands used for these decisions:
