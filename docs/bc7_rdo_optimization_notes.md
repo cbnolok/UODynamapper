@@ -61,6 +61,22 @@ Practical guidance:
 - Do not repeat this exact row-hoist unless assembly or a stronger benchmark shows a target-specific gain.
 - Prefer changes that reduce candidate work or decode trials over reshuffling cheap layout accessors.
 
+### Fixed-path pre-copy mode rejection
+
+Attempt:
+- For fixed-offset candidates at offset zero, checked `bc7_first_byte_has_mode(prev_segment as u8, bc7_mode)` before constructing the copied trial block.
+- This is equivalent because the copied segment supplies the first byte when `ofs == 0`.
+
+Why it looked promising:
+- It can skip `bc7_copy_segment_bits_from_segment` for candidates that would be rejected immediately by the mode check.
+
+Why it was reverted:
+- The default benchmark cases reported `unsupported_modes=0`, so the new branch did not skip any work.
+- Benchmark timing was neutral to slightly worse.
+
+Practical guidance:
+- Do not add this branch to the default fixed path unless a workload shows meaningful unsupported offset-zero trials.
+
 ## Benchmark Context
 
 Commands used for these decisions:
