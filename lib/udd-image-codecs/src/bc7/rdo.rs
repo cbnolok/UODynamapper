@@ -2508,9 +2508,9 @@ fn compute_block_mse_scales(
     }
 
     let mut current_mask = is_ultrasmooth.clone();
+    let mut next_mask = vec![false; total_blocks];
 
     // Pass 1: Erosion of ultrasmooth (dilation of non-ultrasmooth)
-    let mut next_mask = current_mask.clone();
     if use_parallel {
         next_mask
             .par_iter_mut()
@@ -2523,11 +2523,10 @@ fn compute_block_mse_scales(
             *next = erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
         }
     }
-    current_mask = next_mask;
+    std::mem::swap(&mut current_mask, &mut next_mask);
 
     // 32 passes of "median-like" erosion
     for _ in 0..32 {
-        let mut next_mask = current_mask.clone();
         if use_parallel {
             next_mask
                 .par_iter_mut()
@@ -2540,7 +2539,7 @@ fn compute_block_mse_scales(
                 *next = median_erode_ultrasmooth_mask_at(idx, &current_mask, blocks_x, blocks_y);
             }
         }
-        current_mask = next_mask;
+        std::mem::swap(&mut current_mask, &mut next_mask);
     }
 
     // Flood fill to remove small ULTRASMOOTH regions
