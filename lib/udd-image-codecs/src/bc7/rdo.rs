@@ -735,6 +735,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         let cur_t = cur_ms_err * smooth_block_error_scale + (LITERAL_BITS * 16.0) * params.lambda;
         let trial_error_scale = max_trial_error_scale(smooth_block_error_scale);
         let first_block_to_check = block_index.saturating_sub(total_blocks_to_check);
+        let hash_epoch = ((block_index as u64) + 1) << 32;
 
         let mut best_bits = orig_bits;
         let mut best_t = cur_t;
@@ -802,7 +803,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         // Hash check to skip redundant trials
                         let prev_segment = (prev_bits >> candidate.src_shift) & segment_mask;
                         let hs = hash_hsieh_bc7_segment(prev_segment, len, candidate.dst_ofs as u32);
-                        if rdo_hash_seen(&mut hash_table, hash_mask, block_index, hs) {
+                        if rdo_hash_seen(&mut hash_table, hash_mask, hash_epoch, hs) {
                             stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                             continue;
                         }
@@ -909,7 +910,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                 prev_segment = (prev_bits >> shift) & segment_mask;
                                 prev_segment_loaded = true;
                                 let hs = hash_hsieh_bc7_segment(prev_segment, len, ofs as u32);
-                                if rdo_hash_seen(&mut hash_table, hash_mask, block_index, hs) {
+                                if rdo_hash_seen(&mut hash_table, hash_mask, hash_epoch, hs) {
                                     stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                                     continue;
                                 }
@@ -2169,8 +2170,8 @@ fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 
 }
 
 #[inline]
-fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, block_index: usize, hs: u32) -> bool {
-    let entry = (((block_index as u64) + 1) << 32) | ((hs >> 8) as u64);
+fn rdo_hash_seen(hash_table: &mut [u64], hash_mask: usize, hash_epoch: u64, hs: u32) -> bool {
+    let entry = hash_epoch | ((hs >> 8) as u64);
     let slot = &mut hash_table[hs as usize & hash_mask];
     let seen = *slot == entry;
     *slot = entry;
