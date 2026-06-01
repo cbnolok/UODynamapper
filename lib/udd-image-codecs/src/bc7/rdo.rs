@@ -1851,31 +1851,26 @@ fn decode_bc7_mode1_error_bounded(
         return None;
     }
 
-    let lr = [
-        expand_mode1_endpoint(x & 0x3F, pbits[0]),
-        expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1]),
-    ];
-    let hr = [
-        expand_mode1_endpoint((x >> 6) & 0x3F, pbits[0]),
-        expand_mode1_endpoint((x >> 18) & 0x3F, pbits[1]),
-    ];
-    let lg = [
-        expand_mode1_endpoint((x >> 24) & 0x3F, pbits[0]),
-        expand_mode1_endpoint((x >> 36) & 0x3F, pbits[1]),
-    ];
-    let hg = [
-        expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]),
-        expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1]),
-    ];
     let lb1 = ((x >> 60) & 0xF) | ((block9 & 0x03) << 4);
-    let lb = [
-        expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]),
-        expand_mode1_endpoint(lb1, pbits[1]),
-    ];
-    let hb = [
-        expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]),
-        expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1]),
-    ];
+    let (lr, hr, lg, hg, lb, hb) = if subset == 0 {
+        (
+            [first_lr, expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1])],
+            [first_hr, expand_mode1_endpoint((x >> 18) & 0x3F, pbits[1])],
+            [first_lg, expand_mode1_endpoint((x >> 36) & 0x3F, pbits[1])],
+            [first_hg, expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1])],
+            [first_lb, expand_mode1_endpoint(lb1, pbits[1])],
+            [first_hb, expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1])],
+        )
+    } else {
+        (
+            [expand_mode1_endpoint(x & 0x3F, pbits[0]), first_lr],
+            [expand_mode1_endpoint((x >> 6) & 0x3F, pbits[0]), first_hr],
+            [expand_mode1_endpoint((x >> 24) & 0x3F, pbits[0]), first_lg],
+            [expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]), first_hg],
+            [expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]), first_lb],
+            [expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]), first_hb],
+        )
+    };
 
     for i in 1..16 {
         let desc = pixel_descs[i];
@@ -2010,38 +2005,29 @@ fn decode_bc7_mode7_error_bounded(
         return None;
     }
 
-    let lr = [
-        expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]),
-        expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2]),
-    ];
-    let hr = [
-        expand_mode7_endpoint((lo >> 19) & 0x1F, pbits[1]),
-        expand_mode7_endpoint((lo >> 29) & 0x1F, pbits[3]),
-    ];
-    let lg = [
-        expand_mode7_endpoint((lo >> 34) & 0x1F, pbits[0]),
-        expand_mode7_endpoint((lo >> 44) & 0x1F, pbits[2]),
-    ];
-    let hg = [
-        expand_mode7_endpoint((lo >> 39) & 0x1F, pbits[1]),
-        expand_mode7_endpoint((lo >> 49) & 0x1F, pbits[3]),
-    ];
-    let lb = [
-        expand_mode7_endpoint((lo >> 54) & 0x1F, pbits[0]),
-        expand_mode7_endpoint(hi & 0x1F, pbits[2]),
-    ];
-    let hb = [
-        expand_mode7_endpoint((lo >> 59) & 0x1F, pbits[1]),
-        expand_mode7_endpoint((hi >> 5) & 0x1F, pbits[3]),
-    ];
-    let la = [
-        expand_mode7_endpoint((hi >> 10) & 0x1F, pbits[0]),
-        expand_mode7_endpoint((hi >> 20) & 0x1F, pbits[2]),
-    ];
-    let ha = [
-        expand_mode7_endpoint((hi >> 15) & 0x1F, pbits[1]),
-        expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3]),
-    ];
+    let (lr, hr, lg, hg, lb, hb, la, ha) = if subset == 0 {
+        (
+            [first_lr, expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2])],
+            [first_hr, expand_mode7_endpoint((lo >> 29) & 0x1F, pbits[3])],
+            [first_lg, expand_mode7_endpoint((lo >> 44) & 0x1F, pbits[2])],
+            [first_hg, expand_mode7_endpoint((lo >> 49) & 0x1F, pbits[3])],
+            [first_lb, expand_mode7_endpoint(hi & 0x1F, pbits[2])],
+            [first_hb, expand_mode7_endpoint((hi >> 5) & 0x1F, pbits[3])],
+            [first_la, expand_mode7_endpoint((hi >> 20) & 0x1F, pbits[2])],
+            [first_ha, expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3])],
+        )
+    } else {
+        (
+            [expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]), first_lr],
+            [expand_mode7_endpoint((lo >> 19) & 0x1F, pbits[1]), first_hr],
+            [expand_mode7_endpoint((lo >> 34) & 0x1F, pbits[0]), first_lg],
+            [expand_mode7_endpoint((lo >> 39) & 0x1F, pbits[1]), first_hg],
+            [expand_mode7_endpoint((lo >> 54) & 0x1F, pbits[0]), first_lb],
+            [expand_mode7_endpoint((lo >> 59) & 0x1F, pbits[1]), first_hb],
+            [expand_mode7_endpoint((hi >> 10) & 0x1F, pbits[0]), first_la],
+            [expand_mode7_endpoint((hi >> 15) & 0x1F, pbits[1]), first_ha],
+        )
+    };
 
     for i in 1..16 {
         let desc = pixel_descs[i];
