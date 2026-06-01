@@ -1774,6 +1774,47 @@ fn decode_bc7_mode7_error_bounded(
         ((hi >> 32) & 1) as u32,
         ((hi >> 33) & 1) as u32,
     ];
+
+    let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
+    let mut err = 0u64;
+    let subset = partition[0] as usize;
+    let weight_index = ((hi >> 34) & 0x01) as usize;
+    let weight = BC7_WEIGHTS2[weight_index] as i32;
+    let (first_lr, first_hr, first_lg, first_hg, first_lb, first_hb, first_la, first_ha) =
+        if subset == 0 {
+            (
+                expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]),
+                expand_mode7_endpoint((lo >> 19) & 0x1F, pbits[1]),
+                expand_mode7_endpoint((lo >> 34) & 0x1F, pbits[0]),
+                expand_mode7_endpoint((lo >> 39) & 0x1F, pbits[1]),
+                expand_mode7_endpoint((lo >> 54) & 0x1F, pbits[0]),
+                expand_mode7_endpoint((lo >> 59) & 0x1F, pbits[1]),
+                expand_mode7_endpoint((hi >> 10) & 0x1F, pbits[0]),
+                expand_mode7_endpoint((hi >> 15) & 0x1F, pbits[1]),
+            )
+        } else {
+            (
+                expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2]),
+                expand_mode7_endpoint((lo >> 29) & 0x1F, pbits[3]),
+                expand_mode7_endpoint((lo >> 44) & 0x1F, pbits[2]),
+                expand_mode7_endpoint((lo >> 49) & 0x1F, pbits[3]),
+                expand_mode7_endpoint(hi & 0x1F, pbits[2]),
+                expand_mode7_endpoint((hi >> 5) & 0x1F, pbits[3]),
+                expand_mode7_endpoint((hi >> 20) & 0x1F, pbits[2]),
+                expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3]),
+            )
+        };
+    err += rgba_pixel_sse(
+        &source[0],
+        interpolate_bc7(first_lr, first_hr, weight),
+        interpolate_bc7(first_lg, first_hg, weight),
+        interpolate_bc7(first_lb, first_hb, weight),
+        interpolate_bc7(first_la, first_ha, weight),
+    );
+    if err >= max_error {
+        return None;
+    }
+
     let lr = [
         expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]),
         expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2]),
@@ -1807,23 +1848,8 @@ fn decode_bc7_mode7_error_bounded(
         expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3]),
     ];
 
-    let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
     let anchor = BC7_ANCHOR_SECOND_SUBSET[part_id] as usize;
-    let mut err = 0u64;
     let mut weight_bit_ofs = 35usize;
-    let subset = partition[0] as usize;
-    let weight_index = ((hi >> 34) & 0x01) as usize;
-    let weight = BC7_WEIGHTS2[weight_index] as i32;
-    err += rgba_pixel_sse(
-        &source[0],
-        interpolate_bc7(lr[subset], hr[subset], weight),
-        interpolate_bc7(lg[subset], hg[subset], weight),
-        interpolate_bc7(lb[subset], hb[subset], weight),
-        interpolate_bc7(la[subset], ha[subset], weight),
-    );
-    if err >= max_error {
-        return None;
-    }
 
     for i in 1..16 {
         let subset = partition[i] as usize;
