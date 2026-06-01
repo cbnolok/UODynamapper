@@ -510,25 +510,45 @@ Practical guidance:
 - Do not cache per-block fallback smooth scales in the ultrasmooth vector by default.
 - If revisiting, first measure how many blocks both pass the luma gate and reach the fallback path; broad caching is too expensive on the current fixtures.
 
-### Mode 1/7 first-pixel descriptor specialization
+### Removing Mode 1/7 first-pixel descriptor specialization
 
 Attempt:
-- Specialized the first pixel in `decode_bc7_mode1_error_bounded` and `decode_bc7_mode7_error_bounded`.
-- Used the BC7 invariant that pixel 0 is subset 0 with a fixed selector bit offset in those modes.
-- Kept the existing pixel loop for pixels 1..15 and preserved the same bounded-error early exit after pixel 0.
+- Restored the older descriptor-table first-pixel path in `decode_bc7_mode1_error_bounded` and `decode_bc7_mode7_error_bounded`.
+- Removed the current direct pixel-0 subset/selector specialization while keeping the flood-fill optimization intact.
+- Kept decoded output and bounded-error behavior unchanged.
 
 Why it looked promising:
-- Mode 1 dominates the opaque fixture and Mode 7 dominates the alpha/mobile fixture.
-- The existing code loaded `MODE*_PIXEL_DESCS[part_id][0]` and branched on a subset that is effectively constant.
+- A prior benchmark note suggested the first-pixel specialization hurt instruction layout or register allocation.
+- The descriptor-table path is more compact source and might give LLVM a better code shape.
 
 Why it was reverted:
 - Focused compile/tests passed and checksums stayed stable.
-- Same-state default RDO benchmarking regressed on all fixtures, including the Mode 7-heavy alpha/mobile case.
-- The compiler likely optimized much of the descriptor path already, and the hand-specialized shape hurt instruction layout or register allocation.
+- Same-state 2024 alpha/mobile benchmarking regressed from roughly `38790 blk/s` to `36338 blk/s`.
+- The current first-pixel specialization is therefore kept in code.
 
 Practical guidance:
-- Do not specialize only the first Mode 1/7 pixel by hand.
-- If revisiting these decoders, use assembly/perf evidence and target a larger structure than removing the first descriptor branch.
+- Do not remove the current Mode 1/7 first-pixel specialization without stronger same-state evidence.
+- If revisiting these decoders, use assembly/perf evidence and target a larger structure than only toggling the first-pixel setup.
+
+### Mode 7 alpha-first bounded pixel error
+
+Attempt:
+- Changed `decode_bc7_mode7_error_bounded` to compute the alpha interpolation and alpha squared error before RGB interpolation.
+- Returned early when the current accumulated error plus alpha error already exceeded the bounded decode budget.
+- Preserved exact output because RGB error terms are non-negative and the full pixel error would also exceed the same bound.
+
+Why it looked promising:
+- Large alpha/mobile stats showed Mode 7 dominates bounded decode trials.
+- Alpha-heavy sparse art can reject bad candidates from alpha alone, potentially avoiding three RGB interpolations and channel differences.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state 2024 alpha/mobile benchmark comparison was essentially neutral after reruns.
+- The repeated paired run was roughly `39861 blk/s` baseline versus `40073 blk/s` patched, too small to justify extra helper plumbing and branch pressure.
+
+Practical guidance:
+- Do not add alpha-first Mode 7 bounded error by default.
+- If revisiting, first instrument how often alpha alone triggers the early exit on real mobile pages; without a high hit rate, the added branch is not enough to move throughput.
 
 ### Seed-only scalar stddev accumulator
 
@@ -549,6 +569,25 @@ Why it was reverted:
 Practical guidance:
 - Keep seed stddev on the simple channel-first helper.
 - Avoid scalar RGBA accumulator variants unless a target workload is known to be opaque-heavy and validated separately.
+
+### Uniform-block smooth-scale fast path
+
+Attempt:
+- Added `rgba_block_pixels_are_equal` as an early return in `smooth_block_error_scale_from_pixels`.
+- Returned `smooth_block_max_mse_scale` for constant RGBA blocks, which is exact because the current max standard deviation is zero.
+
+Why it looked promising:
+- Sparse/mobile atlases can contain many constant transparent or gutter blocks.
+- Avoiding the channel-first stddev scan should be useful for blocks that were not promoted to ultrasmooth and still reach fallback smooth-scale calculation.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state 2024 alpha/mobile benchmark regressed from roughly `37815 blk/s` to `34936 blk/s`.
+- The extra uniform check added another full-block memory probe to every fallback scale calculation, and the skipped stddev work was not frequent enough to compensate.
+
+Practical guidance:
+- Do not add a broad uniform-block fast path in `smooth_block_error_scale_from_pixels`.
+- If revisiting, gate it with instrumentation proving a high uniform fallback rate after `skip_zero_mse_blocks` and ultrasmooth handling.
 
 ### Stable-mask early exit for ultrasmooth erosion
 
