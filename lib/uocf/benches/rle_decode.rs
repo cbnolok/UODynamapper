@@ -586,15 +586,10 @@ fn next_ec_color(state: &mut u32) -> u8 {
 }
 
 fn build_ec_animation_payload(width: u16, height: u16, frame_bytes: &[u8]) -> Vec<u8> {
-    let colours = [
-        [255u8, 0, 0, 255],
-        [0u8, 255, 0, 255],
-        [0u8, 0, 255, 255],
-        [255u8, 255, 255, 255],
-    ];
     let header_size = 40u32;
     let colours_offset = header_size;
-    let frames_offset = colours_offset + colours.len() as u32 * 4;
+    let colours_count = 256u32;
+    let frames_offset = colours_offset + colours_count * 4;
     let image_offset = frames_offset + 16;
     let total_size = image_offset + frame_bytes.len() as u32;
     let mut bytes = Vec::with_capacity(total_size as usize);
@@ -607,12 +602,18 @@ fn build_ec_animation_payload(width: u16, height: u16, frame_bytes: &[u8]) -> Ve
     push_i16(&mut bytes, 0);
     push_i16(&mut bytes, width as i16);
     push_i16(&mut bytes, height as i16);
-    push_u32(&mut bytes, colours.len() as u32);
+    push_u32(&mut bytes, colours_count);
     push_u32(&mut bytes, colours_offset);
     push_u32(&mut bytes, 1);
     push_u32(&mut bytes, frames_offset);
 
-    for colour in colours {
+    for index in 0..colours_count {
+        let colour = match index & 3 {
+            0 => [255u8, 0, 0, 255],
+            1 => [0u8, 255, 0, 255],
+            2 => [0u8, 0, 255, 255],
+            _ => [255u8, 255, 255, 255],
+        };
         bytes.extend_from_slice(&colour);
     }
 

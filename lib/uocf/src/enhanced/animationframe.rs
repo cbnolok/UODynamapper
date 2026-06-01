@@ -337,7 +337,15 @@ fn blend_pixel(data: &mut [u8], pixel_index: usize, color: [u8; 4], factor: u8) 
 }
 
 fn blend_channel_over_zero(src: u8, factor: u8) -> u8 {
-    ((src as u16 * factor as u16) >> 4) as u8
+    match factor {
+        0 => 0,
+        1 => src >> 4,
+        2 => src >> 3,
+        4 => src >> 2,
+        8 => src >> 1,
+        16 => src,
+        _ => ((src as u16 * factor as u16) >> 4) as u8,
+    }
 }
 
 fn copy_solid_pixels(
