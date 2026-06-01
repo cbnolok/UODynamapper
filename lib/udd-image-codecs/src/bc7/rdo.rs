@@ -148,7 +148,8 @@ impl Iterator for ModeHistoryRecent<'_> {
 
 #[derive(Clone, Copy)]
 struct RelativeCandidate {
-    src_ofs: u8,
+    src_shift: u8,
+    dst_shift: u8,
     dst_ofs: u8,
     dist_index: u8,
 }
@@ -178,7 +179,8 @@ impl RelativeCandidateLayout {
 
                 for dst_ofs in dst_start..=dst_end {
                     candidates.push(RelativeCandidate {
-                        src_ofs: src_ofs as u8,
+                        src_shift: (src_ofs * 8) as u8,
+                        dst_shift: (dst_ofs * 8) as u8,
                         dst_ofs: dst_ofs as u8,
                         dist_index: (dst_ofs as i32 - src_ofs as i32 + 15) as u8,
                     });
@@ -728,6 +730,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                     }
                 }
                 for len in (min_relative_match_len..=16).rev() {
+                    let segment_mask = BC7_SEGMENT_MASKS[len];
                     let len_bits = rate_costs.match_len_bits[len];
                     stat_add!(
                         COLLECT_STATS,
@@ -736,7 +739,6 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         relative_candidate_layout.skipped_offsets_by_len[len]
                     );
                     for candidate in &relative_candidate_layout.candidates_by_len[len] {
-                        let src_ofs = candidate.src_ofs as usize;
                         let dst_ofs = candidate.dst_ofs as usize;
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
                         let mb = relative_dist_bits[candidate.dist_index as usize] + len_bits;
@@ -748,7 +750,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         }
 
                         // Hash check to skip redundant trials
-                        let hs = hash_hsieh_bc7_segment_bits(prev_bits, src_ofs, len, dst_ofs as u32);
+                        let prev_segment = (prev_bits >> candidate.src_shift) & segment_mask;
+                        let hs = hash_hsieh_bc7_segment(prev_segment, len, candidate.dst_ofs as u32);
                         let hash_check = hash_table[hs as usize & hash_mask];
                         if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                             && (hash_check >> 8) == (hs >> 8) {
@@ -757,7 +760,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         }
                         hash_table[hs as usize & hash_mask] = (hs & 0xFFFFFF00) | (block_index as u32 & 0xFF);
 
-                        if bc7_segments_equal(prev_bits, orig_bits, src_ofs, dst_ofs, len) {
+                        if prev_segment == ((orig_bits >> candidate.dst_shift) & segment_mask) {
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
@@ -773,8 +776,13 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             continue;
                         }
                         let trial_bits =
-                            bc7_copy_segment_bits(orig_bits, prev_bits, src_ofs, dst_ofs, len);
-                        let trust_mode_hint = dst_ofs > 0;
+                            bc7_copy_segment_bits_from_segment(
+                                orig_bits,
+                                prev_segment,
+                                candidate.dst_shift as usize,
+                                segment_mask,
+                            );
+                        let trust_mode_hint = candidate.dst_shift > 0;
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
                         let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, smooth_block_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
@@ -812,6 +820,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                 let block_delta = block_index - prev_block_index;
                 let dist = block_delta * 16;
                 for len in (3..=16).rev() {
+                    let segment_mask = BC7_SEGMENT_MASKS[len];
                     // Fixed-offset search: src_ofs == dst_ofs
                     let normal_match_bits = distance_cost_layout.normal_match_bits(block_delta, len);
                     let normal_trial_bits_times_lambda =
@@ -847,7 +856,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                                     continue;
                                 }
                                 // Normal match: deduplicate via hash before decoding
-                                let hs = hash_hsieh_bc7_segment_bits(prev_bits, ofs, len, ofs as u32);
+                                let shift = ofs * 8;
+                                let prev_segment = (prev_bits >> shift) & segment_mask;
+                                let hs = hash_hsieh_bc7_segment(prev_segment, len, ofs as u32);
                                 let hash_check = hash_table[hs as usize & hash_mask];
                                 if (hash_check & 0xFF) == (block_index as u32 & 0xFF)
                                     && (hash_check >> 8) == (hs >> 8) {
@@ -863,7 +874,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             continue;
                         }
 
-                        if bc7_segments_equal(prev_bits, orig_bits, ofs, ofs, len) {
+                        let shift = ofs * 8;
+                        let prev_segment = (prev_bits >> shift) & segment_mask;
+                        if prev_segment == ((orig_bits >> shift) & segment_mask) {
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
@@ -880,7 +893,13 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             }
                             continue;
                         }
-                        let trial_bits = bc7_copy_segment_bits(orig_bits, prev_bits, ofs, ofs, len);
+                        let trial_bits =
+                            bc7_copy_segment_bits_from_segment(
+                                orig_bits,
+                                prev_segment,
+                                shift,
+                                segment_mask,
+                            );
                         if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
                             stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
@@ -934,6 +953,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                 let block_delta = block_index - prev_block_index;
                 let dist_bits = distance_cost_layout.normal_bits(block_delta);
                 for len in 3..=(16 - best_match_len) {
+                    let segment_mask = BC7_SEGMENT_MASKS[len];
                     let trial_bits = (16.0 - len as f32 - best_match_len as f32) * LITERAL_BITS
                         + dist_bits
                         + rate_costs.match_len_bits[len]
@@ -956,12 +976,19 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         let ofs = ofs as usize;
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
 
+                        let shift = ofs * 8;
+                        let prev_segment = (prev_bits >> shift) & segment_mask;
                         let (trial_bits, trial_ms_err) =
-                            if bc7_segments_equal(prev_bits, orig_best_bits, ofs, ofs, len) {
+                            if prev_segment == ((orig_best_bits >> shift) & segment_mask) {
                                 (orig_best_bits, orig_best_ms_err)
                             } else {
                                 let trial_bits =
-                                    bc7_copy_segment_bits(orig_best_bits, prev_bits, ofs, ofs, len);
+                                    bc7_copy_segment_bits_from_segment(
+                                        orig_best_bits,
+                                        prev_segment,
+                                        shift,
+                                        segment_mask,
+                                    );
                                 let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
                                 if !params.allow_relative_movement
                                     && ofs == 0
@@ -1052,29 +1079,14 @@ fn rgba_block_at(rgba_blocks: &[[u8; 4]], block_index: usize) -> &RgbaBlock {
 }
 
 #[inline(always)]
-fn bc7_segments_equal(
-    prev_bits: u128,
-    dst_bits: u128,
-    src_ofs: usize,
-    dst_ofs: usize,
-    len: usize,
-) -> bool {
-    let mask = BC7_SEGMENT_MASKS[len];
-    ((prev_bits >> (src_ofs * 8)) ^ (dst_bits >> (dst_ofs * 8))) & mask == 0
-}
-
-#[inline(always)]
-fn bc7_copy_segment_bits(
+fn bc7_copy_segment_bits_from_segment(
     orig_bits: u128,
-    prev_bits: u128,
-    src_ofs: usize,
-    dst_ofs: usize,
-    len: usize,
+    src_segment: u128,
+    dst_shift: usize,
+    src_mask: u128,
 ) -> u128 {
-    let src_mask = BC7_SEGMENT_MASKS[len];
-    let dst_shift = dst_ofs * 8;
     let dst_mask = src_mask << dst_shift;
-    let src_segment = ((prev_bits >> (src_ofs * 8)) & src_mask) << dst_shift;
+    let src_segment = src_segment << dst_shift;
     orig_bits & !dst_mask | src_segment
 }
 
@@ -1734,11 +1746,9 @@ const BC7_WEIGHTS3: [u8; 8] = [0, 9, 18, 27, 37, 46, 55, 64];
 const BC7_WEIGHTS2: [u8; 4] = [0, 21, 43, 64];
 
 #[inline(always)]
-fn hash_hsieh_bc7_segment_bits(block_bits: u128, ofs: usize, len: usize, salt: u32) -> u32 {
+fn hash_hsieh_bc7_segment(segment: u128, len: usize, salt: u32) -> u32 {
     debug_assert!(len > 0);
-    debug_assert!(ofs + len <= 16);
     let mut h = (len as u32).wrapping_add(salt << 16);
-    let segment = (block_bits >> (ofs * 8)) & BC7_SEGMENT_MASKS[len];
     let mut i = 0usize;
     let mut rem = len;
 
