@@ -139,12 +139,14 @@ const fn mode7_pixel_descs() -> [[u16; 16]; 64] {
 
 struct ModeHistory {
     entries: Vec<usize>,
+    first_recent_index: usize,
 }
 
 impl ModeHistory {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
+            first_recent_index: 0,
         }
     }
 
@@ -154,9 +156,13 @@ impl ModeHistory {
     }
 
     #[inline]
-    fn iter_recent_from(&self, first_block_to_check: usize) -> impl Iterator<Item = usize> + '_ {
-        let first_index = self.entries.partition_point(|&block_index| block_index < first_block_to_check);
-        self.entries[first_index..].iter().rev().copied()
+    fn recent_from(&mut self, first_block_to_check: usize) -> &[usize] {
+        while self.first_recent_index < self.entries.len()
+            && self.entries[self.first_recent_index] < first_block_to_check
+        {
+            self.first_recent_index += 1;
+        }
+        &self.entries[self.first_recent_index..]
     }
 }
 
@@ -742,9 +748,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
             let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
             let mut relative_previous_blocks_checked = 0usize;
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
-                .iter_recent_from(first_block_to_check)
-            {
+            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
+                .recent_from(first_block_to_check);
+            for &prev_block_index in previous_blocks.iter().rev() {
                 if max_relative_previous_blocks > 0
                     && relative_previous_blocks_checked >= max_relative_previous_blocks
                 {
@@ -845,9 +851,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             }
         } else {
             // ── Main search window: fixed-offset default path ──
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
-                .iter_recent_from(first_block_to_check)
-            {
+            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
+                .recent_from(first_block_to_check);
+            for &prev_block_index in previous_blocks.iter().rev() {
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
                 let dist = block_delta * 16;
@@ -1011,9 +1017,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let orig_best_bits = best_bits;
             let orig_best_ms_err = best_ms_err;
 
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
-                .iter_recent_from(first_block_to_check)
-            {
+            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
+                .recent_from(first_block_to_check);
+            for &prev_block_index in previous_blocks.iter().rev() {
                 let prev_bits = block_bits[prev_block_index];
 
                 let block_delta = block_index - prev_block_index;
