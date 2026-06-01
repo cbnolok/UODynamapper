@@ -364,10 +364,11 @@ pub(crate) fn decode_classic_rle_frame(
     let width_i32 = width as i32;
 
     loop {
-        let header = match data.read_u32::<LittleEndian>() {
-            Ok(h) => h,
-            Err(_) => break,
-        };
+        if data.len() < 4 {
+            break;
+        }
+        let header = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        *data = &data[4..];
 
         if header == 0x7FFF7FFF {
             break;
