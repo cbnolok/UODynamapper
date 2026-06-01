@@ -29,6 +29,7 @@ use crate::bc7::{
 use crate::package_progress::{
     build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
 };
+use crate::rgba_bounds::{nonzero_alpha_bounds, RgbaBounds};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
@@ -775,8 +776,8 @@ fn apply_planned_transparent_trim(
             };
             if bounds.left == 0
                 && bounds.top == 0
-                && bounds.right == u32::from(frame.width)
-                && bounds.bottom == u32::from(frame.height)
+                && bounds.right == usize::from(frame.width)
+                && bounds.bottom == usize::from(frame.height)
             {
                 continue;
             }
@@ -789,12 +790,12 @@ fn apply_planned_transparent_trim(
             frame.source_height = frame.height;
             frame.center_x = adjusted_frame_center(
                 frame.center_x,
-                bounds.left,
+                bounds.left as u32,
                 "EC mobile animation frame center_x",
             )?;
             frame.center_y = adjusted_frame_center(
                 frame.center_y,
-                bounds.top,
+                bounds.top as u32,
                 "EC mobile animation frame center_y",
             )?;
         }
@@ -2043,14 +2044,6 @@ fn planned_sort_area(
         .unwrap_or(0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TransparentBounds {
-    left: u32,
-    top: u32,
-    right: u32,
-    bottom: u32,
-}
-
 fn prepare_decoded_frames(
     frames: Vec<DecodedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
@@ -2068,8 +2061,8 @@ fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMo
     };
     if bounds.left == 0
         && bounds.top == 0
-        && bounds.right == u32::from(frame.width)
-        && bounds.bottom == u32::from(frame.height)
+        && bounds.right == usize::from(frame.width)
+        && bounds.bottom == usize::from(frame.height)
     {
         return Ok(frame);
     }
@@ -2078,12 +2071,12 @@ fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMo
     let height = (bounds.bottom - bounds.top) as u16;
     let center_x = adjusted_frame_center(
         frame.center_x,
-        bounds.left,
+        bounds.left as u32,
         "EC mobile animation frame center_x",
     )?;
     let center_y = adjusted_frame_center(
         frame.center_y,
-        bounds.top,
+        bounds.top as u32,
         "EC mobile animation frame center_y",
     )?;
     let body_id = frame.body_id;
@@ -2092,8 +2085,8 @@ fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMo
         frame.width,
         frame.height,
         frame.rgba,
-        bounds.left,
-        bounds.top,
+        bounds.left as u32,
+        bounds.top as u32,
         u32::from(width),
         u32::from(height),
     )?;
@@ -2113,7 +2106,7 @@ fn transparent_bounds(
     width: u16,
     height: u16,
     rgba: &[u8],
-) -> eyre::Result<Option<TransparentBounds>> {
+) -> eyre::Result<Option<RgbaBounds>> {
     let expected_len = width as usize * height as usize * 4;
     if rgba.len() != expected_len {
         eyre::bail!(
@@ -2125,30 +2118,7 @@ fn transparent_bounds(
         );
     }
 
-    let mut min_x = width as u32;
-    let mut min_y = height as u32;
-    let mut max_x = 0u32;
-    let mut max_y = 0u32;
-    let mut found_opaque = false;
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let alpha = rgba[(y * width as usize + x) * 4 + 3];
-            if alpha != 0 {
-                found_opaque = true;
-                min_x = min_x.min(x as u32);
-                min_y = min_y.min(y as u32);
-                max_x = max_x.max(x as u32);
-                max_y = max_y.max(y as u32);
-            }
-        }
-    }
-
-    Ok(found_opaque.then_some(TransparentBounds {
-        left: min_x,
-        top: min_y,
-        right: max_x + 1,
-        bottom: max_y + 1,
-    }))
+    Ok(nonzero_alpha_bounds(rgba, width as usize, height as usize))
 }
 
 fn crop_rgba_frame_window(

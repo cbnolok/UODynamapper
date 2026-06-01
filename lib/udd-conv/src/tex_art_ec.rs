@@ -42,6 +42,7 @@ use crate::package_progress::{
     AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
+use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
 use crate::source_paths::{find_first_existing_file, source_path_label};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use udd_assets::tex_art_ec::{
@@ -1101,26 +1102,16 @@ pub fn crop_rgba_tile_to_bounds(
     let clip_bottom = clip_rect
         .map(|clip| clip.bottom as usize)
         .unwrap_or(height_usize);
-    let mut min_x = clip_right;
-    let mut min_y = clip_bottom;
-    let mut max_x = clip_left;
-    let mut max_y = clip_top;
-    let mut found_opaque = false;
 
-    for y in clip_top..clip_bottom {
-        for x in clip_left..clip_right {
-            let alpha = rgba[(y * width_usize + x) * 4 + 3];
-            if alpha != 0 {
-                found_opaque = true;
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
-            }
-        }
-    }
-
-    if !found_opaque {
+    let Some(bounds) = nonzero_alpha_bounds_in_rect(
+        &rgba,
+        width_usize,
+        height_usize,
+        clip_left,
+        clip_top,
+        clip_right,
+        clip_bottom,
+    ) else {
         if let Some(clip) = clip_rect {
             return crop_rgba_subrect(
                 width,
@@ -1137,12 +1128,12 @@ pub fn crop_rgba_tile_to_bounds(
             );
         }
         return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
-    }
+    };
 
-    if min_x == clip_left
-        && min_y == clip_top
-        && max_x + 1 == clip_right
-        && max_y + 1 == clip_bottom
+    if bounds.left == clip_left
+        && bounds.top == clip_top
+        && bounds.right == clip_right
+        && bounds.bottom == clip_bottom
     {
         if let Some(clip) = clip_rect {
             return crop_rgba_subrect(
@@ -1170,10 +1161,10 @@ pub fn crop_rgba_tile_to_bounds(
         clip_top,
         clip_right,
         clip_bottom,
-        min_x,
-        min_y,
-        max_x + 1,
-        max_y + 1,
+        bounds.left,
+        bounds.top,
+        bounds.right,
+        bounds.bottom,
     )
 }
 
