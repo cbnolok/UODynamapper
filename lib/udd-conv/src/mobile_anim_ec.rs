@@ -1228,7 +1228,6 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut next_frame = 0usize;
     let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
@@ -1241,9 +1240,9 @@ fn pack_planned_frames_into_package(
     let payload_completed = AtomicU64::new(0);
     let rdo_payload_completed = AtomicU64::new(0);
 
-    while next_frame < remaining.len() {
+    while !remaining.is_empty() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
-        let (page_size, prefix_len) = select_planned_page_bucket(&remaining[next_frame..], options)?;
+        let (page_size, prefix_len) = select_planned_page_bucket(&remaining, options)?;
         if prefix_len == 0 {
             eyre::bail!(
                 "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -1251,8 +1250,8 @@ fn pack_planned_frames_into_package(
                 options.atlas_height
             );
         }
-        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
-        next_frame += prefix_len;
+        let tail = remaining.split_off(prefix_len);
+        let page_frames = std::mem::replace(&mut remaining, tail);
         let (page, unplaced, filled_pixel_count) = build_planned_page(
             page_index,
             page_size,

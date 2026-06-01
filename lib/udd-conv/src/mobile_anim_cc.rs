@@ -1394,7 +1394,6 @@ pub fn pack_frames_into_pages(
     let mut pages = Vec::new();
     let mut page_index = 0u32;
     let mut page_pixels = Vec::new();
-    let mut next_frame = 0usize;
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -1403,9 +1402,9 @@ pub fn pack_frames_into_pages(
     pb.set_message("creating mobile animation atlas pages");
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    while next_frame < remaining.len() {
+    while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, prefix_len) = select_page_bucket(&remaining[next_frame..], options)?;
+        let (page_size, prefix_len) = select_page_bucket(&remaining, options)?;
         if prefix_len == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1413,8 +1412,8 @@ pub fn pack_frames_into_pages(
                 options.atlas_height
             );
         }
-        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
-        next_frame += prefix_len;
+        let tail = remaining.split_off(prefix_len);
+        let page_frames = std::mem::replace(&mut remaining, tail);
         let (page, unplaced, _) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
@@ -1456,7 +1455,6 @@ fn pack_frames_into_package(
     let mut pending_pages = Vec::new();
     let mut page_pixels = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut next_frame = 0usize;
     let payload_progress = |_progress: AssetTaskProgress| {};
     let payload_stage = if options.pixel_format == PagePixelFormat::Bc7 {
         AssetTaskProgressStage::EncodingBc7
@@ -1474,9 +1472,9 @@ fn pack_frames_into_package(
     pb.set_message("creating mobile animation atlas pages");
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    while next_frame < remaining.len() {
+    while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, prefix_len) = select_page_bucket(&remaining[next_frame..], options)?;
+        let (page_size, prefix_len) = select_page_bucket(&remaining, options)?;
         if prefix_len == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1484,8 +1482,8 @@ fn pack_frames_into_package(
                 options.atlas_height
             );
         }
-        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
-        next_frame += prefix_len;
+        let tail = remaining.split_off(prefix_len);
+        let page_frames = std::mem::replace(&mut remaining, tail);
         let (page, unplaced, filled_pixel_count) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
         if page.record.frame_count == 0 {
@@ -1557,7 +1555,6 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut next_frame = 0usize;
     let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedAnimationSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
@@ -1583,9 +1580,9 @@ fn pack_planned_frames_into_package(
     let payload_completed = AtomicU64::new(0);
     let rdo_payload_completed = AtomicU64::new(0);
 
-    while next_frame < remaining.len() {
+    while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
-        let (page_size, prefix_len) = select_planned_page_bucket(&remaining[next_frame..], options)?;
+        let (page_size, prefix_len) = select_planned_page_bucket(&remaining, options)?;
         if prefix_len == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1593,8 +1590,8 @@ fn pack_planned_frames_into_package(
                 options.atlas_height
             );
         }
-        let page_frames = remaining[next_frame..next_frame + prefix_len].to_vec();
-        next_frame += prefix_len;
+        let tail = remaining.split_off(prefix_len);
+        let page_frames = std::mem::replace(&mut remaining, tail);
         let (page, unplaced, filled_pixel_count) = build_planned_page(
             page_index,
             page_size,
