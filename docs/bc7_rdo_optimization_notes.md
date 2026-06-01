@@ -42,6 +42,25 @@ Practical guidance:
 - Do not cache all current-block segments by default.
 - Prefer optimizations that remove decode trials, reduce candidate count, or avoid work before the bounded decoder, rather than adding per-block setup.
 
+### Fixed-path distance-cost row hoist
+
+Attempt:
+- In the fixed-offset RDO path, loaded the `normal_match_bits` and `normal_trial_lambda` arrays once per previous block.
+- Indexed those arrays inside the match-length loop instead of calling the small per-length accessors.
+
+Why it looked promising:
+- The fixed-offset search loops over many lengths and offsets for the same previous block.
+- Hoisting row lookup removes repeated vector indexing through tiny accessor calls.
+
+Why it was reverted:
+- Correctness tests passed, but the benchmark did not support the change.
+- It slightly improved the mode1-heavy land case, but regressed the alpha-mobile and mixed-atlas cases in the same run.
+- The compiler likely already handled the tiny accessors well enough, and the extra local references did not improve the generated hot path consistently.
+
+Practical guidance:
+- Do not repeat this exact row-hoist unless assembly or a stronger benchmark shows a target-specific gain.
+- Prefer changes that reduce candidate work or decode trials over reshuffling cheap layout accessors.
+
 ## Benchmark Context
 
 Commands used for these decisions:
