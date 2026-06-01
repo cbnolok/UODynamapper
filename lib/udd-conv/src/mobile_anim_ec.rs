@@ -134,7 +134,7 @@ pub struct DecodedMobileAnimEcFrame {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PlannedMobileAnimEcSource {
-    path: PathBuf,
+    path: Arc<PathBuf>,
     file_hash: u64,
 }
 
@@ -781,7 +781,7 @@ fn apply_planned_transparent_trim(
         return Ok(());
     }
 
-    let mut animationframe_packages = HashMap::<PathBuf, UopPackage>::new();
+    let mut animationframe_packages = HashMap::<Arc<PathBuf>, UopPackage>::new();
     let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
 
@@ -879,6 +879,7 @@ fn plan_animationframe_package(
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("AnimationFrame UOP");
+    let source_path = Arc::new(path.to_path_buf());
     let pb = ProgressBar::new(file_hashes.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
@@ -910,7 +911,7 @@ fn plan_animationframe_package(
                         &animation,
                         entry,
                         index as u16,
-                        path.to_path_buf(),
+                        Arc::clone(&source_path),
                         file_hash,
                     ));
                 }
@@ -932,7 +933,7 @@ fn planned_frame_from_entry(
     animation: &AnimationFrameMetadata,
     entry: &FrameEntry,
     source_entry_index: u16,
-    path: PathBuf,
+    path: Arc<PathBuf>,
     file_hash: u64,
 ) -> PlannedMobileAnimEcFrame {
     let width = (entry.end_coords_x - entry.init_coords_x).abs() as u16;
@@ -963,12 +964,12 @@ fn planned_frame_from_entry(
 
 fn decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
 ) -> eyre::Result<AnimationFrame> {
     if !animationframe_packages.contains_key(&source.path) {
-        let package = UopPackage::load_with_mode(&source.path, LoadMode::Lazy)
+        let package = UopPackage::load_with_mode(source.path.as_ref(), LoadMode::Lazy)
             .wrap_err_with(|| format!("load {}", source.path.display()))?;
-        animationframe_packages.insert(source.path.clone(), package);
+        animationframe_packages.insert(Arc::clone(&source.path), package);
     }
     let package = animationframe_packages
         .get_mut(&source.path)
@@ -985,7 +986,7 @@ fn decode_planned_animation_source(
 
 fn cached_decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
     cache: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
     use_tick: &mut u64,
 ) -> eyre::Result<Arc<AnimationFrame>> {
@@ -1274,7 +1275,7 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut animationframe_package_cache = HashMap::<PathBuf, UopPackage>::new();
+    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, UopPackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
     let mut packed_frames = 0u64;
@@ -1727,7 +1728,7 @@ fn build_planned_page(
     mut frames: Vec<PlannedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
-    animationframe_packages: &mut HashMap<PathBuf, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
     decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
     decoded_source_use_tick: &mut u64,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>, u64)> {
