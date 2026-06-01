@@ -1662,24 +1662,33 @@ fn decode_bc7_mode1_error_bounded(
     let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
     let anchor = BC7_ANCHOR_SECOND_SUBSET[part_id] as usize;
     let mut err = 0u64;
-    let mut weight_bit_ofs = 2usize;
-    for i in 0..16 {
+    let mut weight_bit_ofs = 4usize;
+    let subset = partition[0] as usize;
+    let weight_index = ((y >> 2) & 0x03) as usize;
+    let weight = BC7_WEIGHTS3[weight_index] as i32;
+    err += rgb_alpha_255_pixel_sse(
+        &source[0],
+        interpolate_bc7(lr[subset], hr[subset], weight),
+        interpolate_bc7(lg[subset], hg[subset], weight),
+        interpolate_bc7(lb[subset], hb[subset], weight),
+    );
+    if err >= max_error {
+        return None;
+    }
+
+    for i in 1..16 {
         let subset = partition[i] as usize;
-        let weight_bits = if i == 0 || i == anchor { 2 } else { 3 };
-        let weight_index = ((y >> weight_bit_ofs) & ((1u64 << weight_bits) - 1)) as usize;
+        let weight_bits = if i == anchor { 2 } else { 3 };
+        let weight_mask = if weight_bits == 2 { 0x03 } else { 0x07 };
+        let weight_index = ((y >> weight_bit_ofs) & weight_mask) as usize;
         weight_bit_ofs += weight_bits;
         let weight = BC7_WEIGHTS3[weight_index] as i32;
-        let decoded = [
+        err += rgb_alpha_255_pixel_sse(
+            &source[i],
             interpolate_bc7(lr[subset], hr[subset], weight),
             interpolate_bc7(lg[subset], hg[subset], weight),
             interpolate_bc7(lb[subset], hb[subset], weight),
-            255,
-        ];
-
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
+        );
         if err >= max_error {
             return None;
         }
@@ -1796,24 +1805,35 @@ fn decode_bc7_mode7_error_bounded(
     let partition = &BC7_PARTITION2[part_id * 16..part_id * 16 + 16];
     let anchor = BC7_ANCHOR_SECOND_SUBSET[part_id] as usize;
     let mut err = 0u64;
-    let mut weight_bit_ofs = 34usize;
-    for i in 0..16 {
+    let mut weight_bit_ofs = 35usize;
+    let subset = partition[0] as usize;
+    let weight_index = ((hi >> 34) & 0x01) as usize;
+    let weight = BC7_WEIGHTS2[weight_index] as i32;
+    err += rgba_pixel_sse(
+        &source[0],
+        interpolate_bc7(lr[subset], hr[subset], weight),
+        interpolate_bc7(lg[subset], hg[subset], weight),
+        interpolate_bc7(lb[subset], hb[subset], weight),
+        interpolate_bc7(la[subset], ha[subset], weight),
+    );
+    if err >= max_error {
+        return None;
+    }
+
+    for i in 1..16 {
         let subset = partition[i] as usize;
-        let weight_bits = if i == 0 || i == anchor { 1 } else { 2 };
-        let weight_index = ((hi >> weight_bit_ofs) & ((1u64 << weight_bits) - 1)) as usize;
+        let weight_bits = if i == anchor { 1 } else { 2 };
+        let weight_mask = if weight_bits == 1 { 0x01 } else { 0x03 };
+        let weight_index = ((hi >> weight_bit_ofs) & weight_mask) as usize;
         weight_bit_ofs += weight_bits;
         let weight = BC7_WEIGHTS2[weight_index] as i32;
-        let decoded = [
+        err += rgba_pixel_sse(
+            &source[i],
             interpolate_bc7(lr[subset], hr[subset], weight),
             interpolate_bc7(lg[subset], hg[subset], weight),
             interpolate_bc7(lb[subset], hb[subset], weight),
             interpolate_bc7(la[subset], ha[subset], weight),
-        ];
-
-        for c in 0..4 {
-            let d = source[i][c] as i32 - decoded[c];
-            err += (d * d) as u64;
-        }
+        );
         if err >= max_error {
             return None;
         }
@@ -1929,6 +1949,15 @@ fn rgb_alpha_255_pixel_sse(source: &[u8; 4], r: i32, g: i32, b: i32) -> u64 {
     let dg = source[1] as i32 - g;
     let db = source[2] as i32 - b;
     let da = source[3] as i32 - 255;
+    (dr * dr + dg * dg + db * db + da * da) as u64
+}
+
+#[inline(always)]
+fn rgba_pixel_sse(source: &[u8; 4], r: i32, g: i32, b: i32, a: i32) -> u64 {
+    let dr = source[0] as i32 - r;
+    let dg = source[1] as i32 - g;
+    let db = source[2] as i32 - b;
+    let da = source[3] as i32 - a;
     (dr * dr + dg * dg + db * db + da * da) as u64
 }
 
