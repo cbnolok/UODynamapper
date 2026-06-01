@@ -196,6 +196,25 @@ Practical guidance:
 - Keep append-only history iteration, but do not pre-count mode capacities for current page sizes.
 - Revisit only if much larger RDO chunks show allocator growth as a measurable cost.
 
+### Precomputed shifted segment masks
+
+Attempt:
+- Added a `len`/offset table of shifted BC7 segment destination masks.
+- Reused the shifted mask for original-block comparisons and segment copies in relative, fixed, and second-match paths.
+
+Why it looked promising:
+- Candidate loops repeatedly compute `segment_mask << shift` and compare `(orig_bits >> shift) & segment_mask`.
+- A small static table could replace per-candidate mask shifts with a cache-resident load and use `orig_bits & dst_mask`.
+
+Why it was reverted:
+- Correctness tests passed and checksums stayed stable, but benchmark results were mixed.
+- Mixed/opaque cases improved slightly, while alpha-mobile moved down in both stats and no-stats runs.
+- The extra table load/cache footprint did not clearly beat the direct shift/mask arithmetic for the mobile-heavy target.
+
+Practical guidance:
+- Do not add a broad shifted-mask table for all RDO copy paths.
+- Revisit only if a narrower path, such as second-match only or relative only, shows a clear workload-specific gain.
+
 ## Benchmark Context
 
 Commands used for these decisions:
