@@ -256,6 +256,43 @@ fn apply_kr_material_micro_contrast(
   return max(shaped, vec3<f32>(0.0));
 }
 
+fn apply_kr_land_atmosphere_depth(
+  color: vec3<f32>,
+  world_pos: vec3<f32>,
+  camera_pos: vec3<f32>,
+  normal_world: vec3<f32>,
+  enable_fog: u32,
+  visual_profile: u32,
+) -> vec3<f32> {
+  if (enable_fog != 1u || visual_profile != 2u) {
+    return color;
+  }
+
+  let dist_density = clamp(global_light.fog_params.x, 0.0, 1.0);
+  let height_density = clamp(global_light.fog_params.y, 0.0, 1.0);
+  if (dist_density <= 0.0001 && height_density <= 0.0001) {
+    return color;
+  }
+
+  let dist_tiles = distance(world_pos.xz, camera_pos.xz);
+  let distance_term = smoothstep(96.0, 520.0, dist_tiles) * dist_density * 5.5;
+  let height_term = smoothstep(2.0, 14.0, max(world_pos.y, 0.0)) * height_density * 10.0;
+  let slope_term = clamp(1.0 - dot(normalize(normal_world), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0) * height_density * 3.0;
+
+  let fog_cap = clamp(global_light.fog_color.a, 0.0, 0.45);
+  let amount = clamp((distance_term + height_term + slope_term) * fog_cap * 0.38, 0.0, 0.14);
+  if (amount <= 0.0001) {
+    return color;
+  }
+
+  let night_blend = clamp(global_light.fog_night_color.a, 0.0, 1.0);
+  let fog_tint = mix(global_light.fog_color.rgb, global_light.fog_night_color.rgb, night_blend);
+  let atmosphere_tint = mix(global_light.atmosphere_tint, fog_tint, 0.25);
+  let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let softened = mix(color, vec3<f32>(luma), amount * 0.22);
+  return max(mix(softened, atmosphere_tint, amount), vec3<f32>(0.0));
+}
+
 fn kr_height_contact_shadow(world_tile: vec2<i32>, center_height: f32, strength: f32) -> f32 {
   let relief_strength = clamp(strength, 0.0, 1.5);
   if (relief_strength <= 0.0001) {
@@ -676,6 +713,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
 
   hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
+  hdr_rgb = apply_kr_land_atmosphere_depth(
+    hdr_rgb,
+    in.world_position.xyz,
+    scene.camera_position,
+    Nw,
+    enable_fog,
+    visual_profile,
+  );
 
   // ============================================================================
   // Grading (vibrant, neutral contrast) + Tonemap (Reinhard + exposure)
