@@ -1,7 +1,7 @@
 //! Build-time support for `mobile_anim_ec.uddp`.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -966,14 +966,14 @@ fn decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
     animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
 ) -> eyre::Result<AnimationFrame> {
-    if !animationframe_packages.contains_key(&source.path) {
-        let package = UopPackage::load_with_mode(source.path.as_ref(), LoadMode::Lazy)
-            .wrap_err_with(|| format!("load {}", source.path.display()))?;
-        animationframe_packages.insert(Arc::clone(&source.path), package);
-    }
-    let package = animationframe_packages
-        .get_mut(&source.path)
-        .expect("EC AnimationFrame UOP package was just cached");
+    let package = match animationframe_packages.entry(Arc::clone(&source.path)) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let package = UopPackage::load_with_mode(source.path.as_ref(), LoadMode::Lazy)
+                .wrap_err_with(|| format!("load {}", source.path.display()))?;
+            entry.insert(package)
+        }
+    };
     let data = package
         .unpack_file_by_hash_cached(source.file_hash)?
         .ok_or_else(|| eyre::eyre!(
