@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -177,7 +178,7 @@ struct PreparedArtDecodeGroup {
     canonical_art_id: u32,
     kind: ArtTileKind,
     texture_bounds: ArtTexture,
-    file: TextureFile,
+    file: Arc<TextureFile>,
     alias_art_ids: Vec<(u32, i16, i16)>,
 }
 
@@ -767,7 +768,7 @@ fn decode_present_tiles(
     let mut canonical_by_source: HashMap<CanonicalTileKey, usize> = HashMap::new();
     let mut canonical_by_rendered_tile = HashMap::new();
     let mut crop_adjustments = HashMap::new();
-    let mut texture_files_by_source = HashMap::<TextureSourceKey, Option<TextureFile>>::new();
+    let mut texture_files_by_source = HashMap::<TextureSourceKey, Option<Arc<TextureFile>>>::new();
 
     let mut art_ids = art_definition
         .definitions
@@ -841,7 +842,8 @@ fn decode_present_tiles(
                     TextureSourceKey::Legacy(texture_id) => legacy_textures
                         .expect("legacy texture source was selected only when available")
                         .get_from_id(texture_id)?,
-                };
+                }
+                .map(Arc::new);
                 texture_files_by_source.insert(source_key, file.clone());
                 file
             };
