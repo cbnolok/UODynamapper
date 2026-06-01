@@ -656,8 +656,15 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         DistanceCostLayout::new(max_block_delta, params.allow_relative_movement, &rate_costs);
     let mut hash_table = vec![0u32; 8192];
     let hash_mask = hash_table.len() - 1;
-    let mut block_bits = blocks.par_iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
-    let mut block_modes = block_bits.par_iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
+    let (mut block_bits, mut block_modes) = if num_blocks < PARALLEL_RDO_BLOCK_THRESHOLD {
+        let block_bits = blocks.iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
+        let block_modes = block_bits.iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
+        (block_bits, block_modes)
+    } else {
+        let block_bits = blocks.par_iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
+        let block_modes = block_bits.par_iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
+        (block_bits, block_modes)
+    };
     let history_capacity = total_blocks_to_check.min(num_blocks).max(1);
     let mut previous_blocks_by_mode = (0..8)
         .map(|_| ModeHistory::with_capacity(history_capacity))
