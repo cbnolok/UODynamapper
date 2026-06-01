@@ -177,9 +177,17 @@ pub struct DecodedArtTile {
 struct PreparedArtDecodeGroup {
     canonical_art_id: u32,
     kind: ArtTileKind,
+    source: TextureSourceKey,
     texture_bounds: ArtTexture,
     file: Arc<TextureFile>,
     alias_art_ids: Vec<(u32, i16, i16)>,
+}
+
+#[derive(Debug)]
+struct DecodedSourceTexture {
+    width: u16,
+    height: u16,
+    rgba: Arc<[u8]>,
 }
 
 #[derive(Debug, Clone)]
@@ -866,6 +874,7 @@ fn decode_present_tiles(
             decode_groups.push(PreparedArtDecodeGroup {
                 canonical_art_id: art_id as u32,
                 kind: art_tile_kind_for_tileart(art_data.tile_type, art_data.flags),
+                source: source_key,
                 texture_bounds: texture_bounds.clone(),
                 file,
                 alias_art_ids: Vec::new(),
@@ -874,30 +883,81 @@ fn decode_present_tiles(
     }
     resolve_pb.finish_with_message("EC art tile sources extracted");
 
-    let decode_pb = ProgressBar::new(decode_groups.len() as u64);
+    let mut source_files_by_key = HashMap::<TextureSourceKey, Arc<TextureFile>>::new();
+    for group in &decode_groups {
+        source_files_by_key
+            .entry(group.source)
+            .or_insert_with(|| Arc::clone(&group.file));
+    }
+    let source_files = source_files_by_key.into_iter().collect::<Vec<_>>();
+
+    let decode_total = (source_files.len() + decode_groups.len()) as u64;
+    let decode_pb = ProgressBar::new(decode_total);
     decode_pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} extracting unique EC art tiles ({eta})")
         .unwrap()
         .progress_chars("#>-"));
-    let decode_total = decode_groups.len() as u64;
     task_progress(AssetTaskProgress {
         stage: AssetTaskProgressStage::Extracting,
         completed: 0,
         total: decode_total,
     });
     let decode_completed = AtomicU64::new(0);
+    let decoded_sources = source_files
+        .par_iter()
+        .map(|(source, file)| -> eyre::Result<(TextureSourceKey, Arc<DecodedSourceTexture>)> {
+            let rgba = file.decode_to_rgba8()?;
+            decode_pb.inc(1);
+            let completed = decode_completed
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
+                .min(decode_total);
+            task_progress(AssetTaskProgress {
+                stage: AssetTaskProgressStage::Extracting,
+                completed,
+                total: decode_total,
+            });
+            Ok((
+                *source,
+                Arc::new(DecodedSourceTexture {
+                    width: rgba.width() as u16,
+                    height: rgba.height() as u16,
+                    rgba: rgba.into_raw().into(),
+                }),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut decoded_sources_by_key =
+        HashMap::<TextureSourceKey, Arc<DecodedSourceTexture>>::with_capacity(decoded_sources.len());
+    for decoded_source in decoded_sources {
+        let (source, decoded) = decoded_source?;
+        decoded_sources_by_key.insert(source, decoded);
+    }
+
     let decoded_groups = decode_groups
         .par_iter()
         .map(|group| -> eyre::Result<DecodedArtDecodeGroup> {
-            let rgba = group.file.decode_to_rgba8()?;
-            let source_width = rgba.width() as u16;
-            let source_height = rgba.height() as u16;
+            let source = decoded_sources_by_key
+                .get(&group.source)
+                .context("missing decoded EC art source texture")?;
+            let source_width = source.width;
+            let source_height = source.height;
             let clip_rect =
                 normalized_source_clip_rect(source_width, source_height, &group.texture_bounds);
             let (width, height, rgba, crop_adjustment) = if options.crop_transparent_bounds {
-                crop_rgba_tile_to_bounds(source_width, source_height, rgba.into_raw(), clip_rect)?
+                crop_rgba_tile_to_bounds_from_slice(
+                    source_width,
+                    source_height,
+                    &source.rgba,
+                    clip_rect,
+                )?
             } else {
-                apply_requested_clip_rect(source_width, source_height, rgba.into_raw(), clip_rect)?
+                apply_requested_clip_rect_from_slice(
+                    source_width,
+                    source_height,
+                    &source.rgba,
+                    clip_rect,
+                )?
             };
             let (draw_offset_x, draw_offset_y) =
                 adjusted_draw_offset(group.canonical_art_id, &group.texture_bounds, crop_adjustment)?;
@@ -1125,7 +1185,7 @@ pub fn crop_rgba_tile_to_bounds(
             return crop_rgba_subrect(
                 width,
                 height,
-                rgba,
+                &rgba,
                 clip.left as usize,
                 clip.top as usize,
                 clip.right as usize,
@@ -1148,7 +1208,7 @@ pub fn crop_rgba_tile_to_bounds(
             return crop_rgba_subrect(
                 width,
                 height,
-                rgba,
+                &rgba,
                 clip.left as usize,
                 clip.top as usize,
                 clip.right as usize,
@@ -1160,6 +1220,99 @@ pub fn crop_rgba_tile_to_bounds(
             );
         }
         return Ok((width, height, rgba, TexArtEcCropAdjustment::default()));
+    }
+
+    crop_rgba_subrect(
+        width,
+        height,
+        &rgba,
+        clip_left,
+        clip_top,
+        clip_right,
+        clip_bottom,
+        bounds.left,
+        bounds.top,
+        bounds.right,
+        bounds.bottom,
+    )
+}
+
+fn crop_rgba_tile_to_bounds_from_slice(
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+    clip_rect: Option<SourceClipRect>,
+) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
+    let expected_len = width as usize * height as usize * 4;
+    if rgba.len() != expected_len {
+        eyre::bail!(
+            "invalid RGBA payload length for crop {}x{}: expected {}, got {}",
+            width,
+            height,
+            expected_len,
+            rgba.len()
+        );
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let clip_left = clip_rect.map(|clip| clip.left as usize).unwrap_or(0);
+    let clip_top = clip_rect.map(|clip| clip.top as usize).unwrap_or(0);
+    let clip_right = clip_rect
+        .map(|clip| clip.right as usize)
+        .unwrap_or(width_usize);
+    let clip_bottom = clip_rect
+        .map(|clip| clip.bottom as usize)
+        .unwrap_or(height_usize);
+
+    let Some(bounds) = nonzero_alpha_bounds_in_rect(
+        rgba,
+        width_usize,
+        height_usize,
+        clip_left,
+        clip_top,
+        clip_right,
+        clip_bottom,
+    ) else {
+        if let Some(clip) = clip_rect {
+            return crop_rgba_subrect(
+                width,
+                height,
+                rgba,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+            );
+        }
+        return Ok((width, height, rgba.to_vec(), TexArtEcCropAdjustment::default()));
+    };
+
+    if bounds.left == clip_left
+        && bounds.top == clip_top
+        && bounds.right == clip_right
+        && bounds.bottom == clip_bottom
+    {
+        if let Some(clip) = clip_rect {
+            return crop_rgba_subrect(
+                width,
+                height,
+                rgba,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+                clip.left as usize,
+                clip.top as usize,
+                clip.right as usize,
+                clip.bottom as usize,
+            );
+        }
+        return Ok((width, height, rgba.to_vec(), TexArtEcCropAdjustment::default()));
     }
 
     crop_rgba_subrect(
@@ -1187,7 +1340,7 @@ pub fn apply_requested_clip_rect(
         crop_rgba_subrect(
             width,
             height,
-            rgba,
+            &rgba,
             clip.left as usize,
             clip.top as usize,
             clip.right as usize,
@@ -1202,10 +1355,35 @@ pub fn apply_requested_clip_rect(
     }
 }
 
+fn apply_requested_clip_rect_from_slice(
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+    clip_rect: Option<SourceClipRect>,
+) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
+    if let Some(clip) = clip_rect {
+        crop_rgba_subrect(
+            width,
+            height,
+            rgba,
+            clip.left as usize,
+            clip.top as usize,
+            clip.right as usize,
+            clip.bottom as usize,
+            clip.left as usize,
+            clip.top as usize,
+            clip.right as usize,
+            clip.bottom as usize,
+        )
+    } else {
+        Ok((width, height, rgba.to_vec(), TexArtEcCropAdjustment::default()))
+    }
+}
+
 fn crop_rgba_subrect(
     width: u16,
     _height: u16,
-    rgba: Vec<u8>,
+    rgba: &[u8],
     clip_left: usize,
     clip_top: usize,
     clip_right: usize,
