@@ -94,6 +94,26 @@ Practical guidance:
 - Do not assume the RDO decoder descriptor win transfers to analytical encode packing.
 - Revisit only with assembly evidence or a benchmark case where Mode 1 encode packing is isolated as a measurable bottleneck.
 
+### Bounded decoder endpoint-delta interpolation
+
+Attempt:
+- Precomputed endpoint deltas (`hi - lo`) once in the bounded BC7 decoders.
+- Replaced repeated `interpolate_bc7(lo, hi, weight)` calls with `interpolate_bc7_delta(lo, delta, weight)` in Mode 1, Mode 4, Mode 5, Mode 6, Mode 7, and the shared partitioned RGB helpers.
+- Preserved the same per-pixel bounded-exit checks and produced stable benchmark checksums.
+
+Why it looked promising:
+- RDO stats showed Mode 1 and Mode 7 bounded decoders dominate the default fixture cases.
+- Avoiding repeated endpoint subtraction inside those loops looked cheaper than full palette predecode and kept early exits intact.
+
+Why it was reverted:
+- Focused RDO tests passed, but the release RDO benchmark regressed against the immediately preceding hash-table baseline.
+- The alpha-mobile and mixed-atlas cases were both slower, which are the important sparse/mobile-style workloads.
+- The extra local arrays and helper plumbing likely increased register pressure enough to outweigh the saved subtractions.
+
+Practical guidance:
+- Do not reintroduce broad endpoint-delta arrays in the bounded decoders without assembly evidence.
+- If revisiting interpolation, prefer a narrower mode-specific change with measured register pressure and the same bounded-exit behavior.
+
 ## Benchmark Context
 
 Commands used for these decisions:
