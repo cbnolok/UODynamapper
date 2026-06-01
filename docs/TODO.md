@@ -238,6 +238,19 @@ Current execution decisions:
 - Improve art response beyond per-instance accumulated intensity by considering projected mask coverage or screen-space/local UV coverage.
 - Validate against torch, window, brazier, and spell-light scenes in day, night, and cave presets.
 
+### KR-Style Visual Enhancement Effects
+
+- Add height-aware contact darkening for terrain, statics, tree bases, cliffs, walls, and art feet.
+- Strengthen directional slope shading for land while keeping broad painterly roll-off instead of sharp modern normal-map lighting.
+- Add material-specific wet and highlight response for water, lava, swamp, ice, and snow; avoid global shine on ordinary terrain.
+- Add transition dirt or grime accumulation near material boundaries such as grass-to-road, snow-to-rock, cliff-to-ground, and plaza edges.
+- Improve sprite grounding with soft contact shadows under statics and mobiles plus subtle side darkening for tall art.
+- Replace white blob-like static light emphasis with soft local color influence on nearby art and land, keeping visible decals optional.
+- Add restrained elevation or distance atmosphere for large terrain views without obscuring tile readability.
+- Add material-class micro-contrast controls so grass, rock, snow, roads, and liquid surfaces can separate without one global sharpening curve.
+- Keep these effects modular and independently tunable in shader settings; each effect must be disableable for regression comparison.
+- Preserve original UO/KR stylistic intent: no heavy bloom, screen-space outlines, modern PBR material treatment, or procedural noise pasted uniformly over every surface.
+
 ### Future-Readiness Preservation
 
 - Preserve future blend candidates distinctly from generic support refs.
