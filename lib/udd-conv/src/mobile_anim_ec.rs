@@ -29,7 +29,7 @@ use crate::bc7::{
 use crate::package_progress::{
     build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
 };
-use crate::rgba_bounds::{nonzero_alpha_bounds, RgbaBounds};
+use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
@@ -335,11 +335,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimEcPage]) -> MobileAnimPageStats {
     let mut stats = MobileAnimPageStats::default();
     for page in pages {
-        let filled_pixels = page
-            .pixels
-            .chunks_exact(4)
-            .filter(|pixel| pixel[3] != 0)
-            .count() as u64;
+        let filled_pixels = count_nonzero_alpha(&page.pixels);
         stats.add_page_bounds(page.record.used_width, page.record.used_height, filled_pixels);
     }
     stats
@@ -2194,16 +2190,6 @@ fn blit_rgba_frame(
         dst[dst_start..dst_end].copy_from_slice(src_row);
     }
     Ok(filled_pixel_count)
-}
-
-fn count_nonzero_alpha(row: &[u8]) -> u64 {
-    let mut count = 0u64;
-    let mut index = 3usize;
-    while index < row.len() {
-        count += u64::from(row[index] != 0);
-        index += 4;
-    }
-    count
 }
 
 pub fn serialize_page_manifest(

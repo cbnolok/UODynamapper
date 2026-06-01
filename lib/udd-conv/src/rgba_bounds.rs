@@ -16,6 +16,18 @@ pub(crate) fn nonzero_alpha_bounds(
     nonzero_alpha_bounds_in_rect(rgba, width, height, 0, 0, width, height)
 }
 
+pub(crate) fn count_nonzero_alpha(rgba: &[u8]) -> u64 {
+    debug_assert_eq!(rgba.len() % 4, 0);
+
+    let mut count = 0u64;
+    let mut index = 3usize;
+    while index < rgba.len() {
+        count += u64::from(rgba[index] != 0);
+        index += 4;
+    }
+    count
+}
+
 pub(crate) fn nonzero_alpha_bounds_in_rect(
     rgba: &[u8],
     width: usize,
@@ -172,6 +184,16 @@ mod tests {
     fn returns_none_for_empty_alpha() {
         let rgba = vec![0u8; 5 * 5 * 4];
         assert_eq!(nonzero_alpha_bounds(&rgba, 5, 5), None);
+    }
+
+    #[test]
+    fn counts_nonzero_alpha_pixels() {
+        let mut rgba = vec![0u8; 6 * 4];
+        rgba[3] = 1;
+        rgba[11] = 255;
+        rgba[19] = 7;
+
+        assert_eq!(count_nonzero_alpha(&rgba), 3);
     }
 
     fn set_alpha(rgba: &mut [u8], width: usize, x: usize, y: usize, alpha: u8) {
