@@ -2,6 +2,32 @@
 
 This file records local optimization attempts that were reverted after validation or benchmark review. Keep it short and evidence-focused so future agent runs do not repeat plausible but slower changes.
 
+## Optimization Constraints And Objectives
+
+Primary constraints:
+- Do not compromise image quality or RDO decision quality for speed unless the maintainer explicitly asks for a quality/speed tradeoff.
+- For a fixed parameter set, prefer exact-output optimizations: same accepted candidates, same block bytes, same checksums.
+- If a change intentionally alters RDO search scope, thresholds, candidate ordering, tie handling, or defaults, treat it as a behavior change and validate quality separately from throughput.
+- Keep sparse/mobile atlas behavior first-class. Transparent gutters and alpha-heavy content are important workloads, not edge cases.
+
+CPU and memory objectives:
+- Reduce candidate count and bounded decode count before micro-optimizing individual arithmetic instructions.
+- Preserve early-exit behavior in bounded decoders. Do not move expensive setup ahead of a likely early rejection unless benchmark evidence supports it.
+- Prefer branchless code in hot paths when it preserves semantics and does not add worse memory traffic.
+- Reduce branch mispredictions by separating rare paths, hoisting invariant decisions, and keeping highly predictable checks outside inner loops.
+- Choose the SIMD backend early, outside hot loops. Do not poll CPU feature support or dispatch between SIMD variants inside per-block/per-candidate paths.
+- Make extensive use of SIMD where the operation maps cleanly and exactness can be preserved. Keep scalar fallbacks correct and measurable.
+- Consider explicit loop unrolling for tiny fixed loops when it reduces bounds checks, branch overhead, or register shuffling. Validate because unrolling can increase code size and pressure instruction cache.
+- Reason in terms of cache lines: avoid per-block tables, scratch buffers, or wider entries unless they remove enough hot work to pay for extra loads/stores.
+- Prefer compact bitwise operations over byte/slice manipulation when working with BC7 block fields, masks, selectors, and fixed-size segments.
+- Avoid atomics, callbacks, allocation, dynamic dispatch, and repeated Rayon scheduling in per-candidate/per-block hot paths.
+
+Validation expectations:
+- Check correctness with focused RDO tests and stable fixture checksums.
+- Benchmark with `bc7_encode --rdo-stats` when the change affects candidate loops or bounded decoders.
+- Compare stats as well as throughput. A useful optimization should explain changes in candidates, decodes, hash skips, bounded exits, or mode mix.
+- If a plausible optimization regresses, revert it and record the attempt below with enough detail to prevent repeat work.
+
 ## Reverted Attempts
 
 ### Precomputed bounded-decoder color tables
