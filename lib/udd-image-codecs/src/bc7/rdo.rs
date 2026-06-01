@@ -1641,6 +1641,43 @@ fn decode_bc7_mode1_error_bounded(
     let block9 = ((block_bits >> 72) & 0xFF) as u64;
 
     let pbits = [(y & 1) as u32, ((y >> 1) & 1) as u32];
+    let pixel_descs = &MODE1_PIXEL_DESCS[part_id];
+    let mut err = 0u64;
+    let desc = pixel_descs[0];
+    let subset = (desc & 0x01) as usize;
+    let weight_index = ((y >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
+    let weight = BC7_WEIGHTS3[weight_index] as i32;
+    let (first_lr, first_hr, first_lg, first_hg, first_lb, first_hb) =
+        if subset == 0 {
+            (
+                expand_mode1_endpoint(x & 0x3F, pbits[0]),
+                expand_mode1_endpoint((x >> 6) & 0x3F, pbits[0]),
+                expand_mode1_endpoint((x >> 24) & 0x3F, pbits[0]),
+                expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]),
+                expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]),
+                expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]),
+            )
+        } else {
+            let lb1 = ((x >> 60) & 0xF) | ((block9 & 0x03) << 4);
+            (
+                expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1]),
+                expand_mode1_endpoint((x >> 18) & 0x3F, pbits[1]),
+                expand_mode1_endpoint((x >> 36) & 0x3F, pbits[1]),
+                expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1]),
+                expand_mode1_endpoint(lb1, pbits[1]),
+                expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1]),
+            )
+        };
+    err += rgb_alpha_255_pixel_sse(
+        &source[0],
+        interpolate_bc7(first_lr, first_hr, weight),
+        interpolate_bc7(first_lg, first_hg, weight),
+        interpolate_bc7(first_lb, first_hb, weight),
+    );
+    if err >= max_error {
+        return None;
+    }
+
     let lr = [
         expand_mode1_endpoint(x & 0x3F, pbits[0]),
         expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1]),
@@ -1666,22 +1703,6 @@ fn decode_bc7_mode1_error_bounded(
         expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]),
         expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1]),
     ];
-
-    let pixel_descs = &MODE1_PIXEL_DESCS[part_id];
-    let mut err = 0u64;
-    let desc = pixel_descs[0];
-    let subset = (desc & 0x01) as usize;
-    let weight_index = ((y >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
-    let weight = BC7_WEIGHTS3[weight_index] as i32;
-    err += rgb_alpha_255_pixel_sse(
-        &source[0],
-        interpolate_bc7(lr[subset], hr[subset], weight),
-        interpolate_bc7(lg[subset], hg[subset], weight),
-        interpolate_bc7(lb[subset], hb[subset], weight),
-    );
-    if err >= max_error {
-        return None;
-    }
 
     for i in 1..16 {
         let desc = pixel_descs[i];
