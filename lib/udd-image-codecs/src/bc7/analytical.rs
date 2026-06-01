@@ -2229,11 +2229,30 @@ pub fn encode_mode5(
             | (la as u64)<<50 | (ha as u64)<<58;
     block[0..8].copy_from_slice(&low.to_le_bytes());
     // high word: 2 leftover bits from ha (bits 56-57 of la+ha span bytes 7 onwards)
-    let mut high = (ha as u64 >> 6) & 3;
-    let mut ofs = 2usize;
-    for i in 0..16 { let w = (wrgb[i] ^ c_inv) as u64; high |= w << ofs; ofs += 2 - (i==0) as usize; }
-    for i in 0..16 { let w = (wa[i]   ^ a_inv) as u64; high |= w << ofs; ofs += 2 - (i==0) as usize; }
+    let high = ((ha as u64 >> 6) & 3)
+        | (pack_2bit_anchor0_weights(&wrgb, c_inv) << 2)
+        | (pack_2bit_anchor0_weights(&wa, a_inv) << 33);
     block[8..16].copy_from_slice(&high.to_le_bytes());
+}
+
+#[inline(always)]
+fn pack_2bit_anchor0_weights(w: &[u8; 16], inv: u8) -> u64 {
+    ((w[0] ^ inv) as u64 & 0x01)
+        | (((w[1] ^ inv) as u64) << 1)
+        | (((w[2] ^ inv) as u64) << 3)
+        | (((w[3] ^ inv) as u64) << 5)
+        | (((w[4] ^ inv) as u64) << 7)
+        | (((w[5] ^ inv) as u64) << 9)
+        | (((w[6] ^ inv) as u64) << 11)
+        | (((w[7] ^ inv) as u64) << 13)
+        | (((w[8] ^ inv) as u64) << 15)
+        | (((w[9] ^ inv) as u64) << 17)
+        | (((w[10] ^ inv) as u64) << 19)
+        | (((w[11] ^ inv) as u64) << 21)
+        | (((w[12] ^ inv) as u64) << 23)
+        | (((w[13] ^ inv) as u64) << 25)
+        | (((w[14] ^ inv) as u64) << 27)
+        | (((w[15] ^ inv) as u64) << 29)
 }
 
 /// Dual-plane channel detection from 4D covariance.
