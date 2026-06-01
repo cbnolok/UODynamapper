@@ -224,6 +224,38 @@ fn apply_kr_transition_grime(
   return mix(color, color * vec3<f32>(0.74, 0.70, 0.60), amount * 0.32);
 }
 
+fn apply_kr_material_micro_contrast(
+  color: vec3<f32>,
+  tile: TileUniform,
+  world_xz: vec2<f32>,
+  strength: f32,
+) -> vec3<f32> {
+  let material_strength = clamp(strength, 0.0, 1.5);
+  let is_liquid = tile.is_wet == 1u || (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  if (material_strength <= 0.0001 || is_liquid) {
+    return color;
+  }
+
+  let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let max_channel = max(color.r, max(color.g, color.b));
+  let min_channel = min(color.r, min(color.g, color.b));
+  let chroma = max_channel - min_channel;
+  let green_bias = clamp(color.g - max(color.r, color.b), 0.0, 1.0);
+  let cool_bright = smoothstep(0.58, 0.90, luma) * smoothstep(0.00, 0.16, color.b - color.r);
+  let foliage_like = smoothstep(0.03, 0.18, green_bias) * smoothstep(0.10, 0.42, chroma);
+  let stone_like = (1.0 - foliage_like) * (1.0 - cool_bright) * (1.0 - smoothstep(0.46, 0.82, chroma));
+  let material_mask = clamp(cool_bright * 0.75 + foliage_like * 0.55 + stone_like * 0.42, 0.0, 1.0);
+  if (material_mask <= 0.0001) {
+    return color;
+  }
+
+  let grain = hash(floor(world_xz * 2.7) + vec2<f32>(f32(tile.texture_payload & 0xFFu), f32((tile.texture_payload >> 8u) & 0xFFu)));
+  let contrast = 1.0 + material_strength * material_mask * (0.045 + (grain - 0.5) * 0.025);
+  let saturated = vec3<f32>(luma) + (color - vec3<f32>(luma)) * (1.0 + material_strength * material_mask * 0.06);
+  let shaped = vec3<f32>(luma) + (saturated - vec3<f32>(luma)) * contrast;
+  return max(shaped, vec3<f32>(0.0));
+}
+
 fn kr_height_contact_shadow(world_tile: vec2<i32>, center_height: f32, strength: f32) -> f32 {
   let relief_strength = clamp(strength, 0.0, 1.5);
   if (relief_strength <= 0.0001) {
@@ -596,6 +628,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       effects.grunge_strength,
       visual_profile,
       grunge_shadow,
+    );
+  }
+  if (visual_profile == 2u) {
+    base_albedo = apply_kr_material_micro_contrast(
+      base_albedo,
+      tile,
+      in.world_position.xz,
+      effects.kr_land_shadow_mottle_strength,
     );
   }
 
