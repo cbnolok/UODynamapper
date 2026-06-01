@@ -2041,6 +2041,76 @@ const BC7_WEIGHTS2: [u8; 4] = [0, 21, 43, 64];
 #[inline(always)]
 fn hash_hsieh_bc7_segment(segment: u128, len: usize, salt: u32) -> u32 {
     debug_assert!(len > 0);
+    match len {
+        3 => hash_hsieh_bc7_segment_fixed::<3>(segment, salt),
+        4 => hash_hsieh_bc7_segment_fixed::<4>(segment, salt),
+        5 => hash_hsieh_bc7_segment_fixed::<5>(segment, salt),
+        6 => hash_hsieh_bc7_segment_fixed::<6>(segment, salt),
+        7 => hash_hsieh_bc7_segment_fixed::<7>(segment, salt),
+        8 => hash_hsieh_bc7_segment_fixed::<8>(segment, salt),
+        9 => hash_hsieh_bc7_segment_fixed::<9>(segment, salt),
+        10 => hash_hsieh_bc7_segment_fixed::<10>(segment, salt),
+        11 => hash_hsieh_bc7_segment_fixed::<11>(segment, salt),
+        12 => hash_hsieh_bc7_segment_fixed::<12>(segment, salt),
+        13 => hash_hsieh_bc7_segment_fixed::<13>(segment, salt),
+        14 => hash_hsieh_bc7_segment_fixed::<14>(segment, salt),
+        15 => hash_hsieh_bc7_segment_fixed::<15>(segment, salt),
+        16 => hash_hsieh_bc7_segment_fixed::<16>(segment, salt),
+        _ => hash_hsieh_bc7_segment_variable(segment, len, salt),
+    }
+}
+
+#[inline(always)]
+fn hash_hsieh_bc7_segment_fixed<const LEN: usize>(segment: u128, salt: u32) -> u32 {
+    let mut h = (LEN as u32).wrapping_add(salt << 16);
+    let mut i = 0usize;
+    let mut rem = LEN;
+
+    while rem >= 4 {
+        let w0 = ((segment >> (i * 8)) & 0xFFFF) as u32;
+        let w1 = ((segment >> ((i + 2) * 8)) & 0xFFFF) as u32;
+
+        h = h.wrapping_add(w0);
+        let t = (w1 << 11) ^ h;
+        h = (h << 16) ^ t;
+
+        i += 4;
+        rem -= 4;
+        h = h.wrapping_add(h >> 11);
+    }
+
+    match rem {
+        3 => {
+            h = h.wrapping_add(((segment >> (i * 8)) & 0xFFFF) as u32);
+            h ^= h << 16;
+            h ^= ((segment >> ((i + 2) * 8)) as u8 as i8 as u32) << 18;
+            h = h.wrapping_add(h >> 11);
+        }
+        2 => {
+            h = h.wrapping_add(((segment >> (i * 8)) & 0xFFFF) as u32);
+            h ^= h << 11;
+            h = h.wrapping_add(h >> 17);
+        }
+        1 => {
+            h = h.wrapping_add((segment >> (i * 8)) as u8 as i8 as u32);
+            h ^= h << 10;
+            h = h.wrapping_add(h >> 1);
+        }
+        _ => {}
+    }
+
+    h ^= h << 3;
+    h = h.wrapping_add(h >> 5);
+    h ^= h << 4;
+    h = h.wrapping_add(h >> 17);
+    h ^= h << 25;
+    h = h.wrapping_add(h >> 6);
+
+    h
+}
+
+#[inline(always)]
+fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 {
     let mut h = (len as u32).wrapping_add(salt << 16);
     let mut i = 0usize;
     let mut rem = len;
