@@ -2651,6 +2651,9 @@ fn median_erode_ultrasmooth_mask_at(
             if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
                 if current_mask[nx as usize + ny as usize * blocks_x] == 0 {
                     non_ultrasmooth_count += 1;
+                    if non_ultrasmooth_count >= 5 {
+                        return 0;
+                    }
                 }
             }
         }
