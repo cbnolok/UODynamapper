@@ -2196,14 +2196,12 @@ pub fn encode_mode4(
     block[1..6].copy_from_slice(&x.to_le_bytes()[0..5]);
     // 2 leftover bits from ha (ha is 6-bit, 30+6+6=42 total, 42-40=2 left)
     let mut y = (x >> 40) & 3;
-    let mut ofs = 2usize;
     // 2-bit alpha indices (if index_flag=1, w1 is alpha; if 0, w1 is RGB)
     let (p2, p3) = if index_flag == 1 { (&w1, &w0) } else { (&w0, &w1) };
-    for i in 0..16 { let w = (p2[i] ^ inv1) as u64; y |= w << ofs; ofs += 2 - (i==0) as usize; }
+    y |= pack_2bit_anchor0_weights(p2, inv1) << 2;
     block[6..10].copy_from_slice(&y.to_le_bytes()[0..4]);
     // 3-bit RGB indices
-    let mut z = y >> 32; ofs = 1;
-    for i in 0..16 { let w = (p3[i] ^ inv0) as u64; z |= w << ofs; ofs += 3 - (i==0) as usize; }
+    let z = (y >> 32) | (pack_3bit_anchor0_weights(p3, inv0) << 1);
     block[10..16].copy_from_slice(&z.to_le_bytes()[0..6]);
 }
 
@@ -2237,7 +2235,7 @@ pub fn encode_mode5(
 
 #[inline(always)]
 fn pack_2bit_anchor0_weights(w: &[u8; 16], inv: u8) -> u64 {
-    ((w[0] ^ inv) as u64 & 0x01)
+    ((w[0] ^ inv) as u64)
         | (((w[1] ^ inv) as u64) << 1)
         | (((w[2] ^ inv) as u64) << 3)
         | (((w[3] ^ inv) as u64) << 5)
@@ -2253,6 +2251,26 @@ fn pack_2bit_anchor0_weights(w: &[u8; 16], inv: u8) -> u64 {
         | (((w[13] ^ inv) as u64) << 25)
         | (((w[14] ^ inv) as u64) << 27)
         | (((w[15] ^ inv) as u64) << 29)
+}
+
+#[inline(always)]
+fn pack_3bit_anchor0_weights(w: &[u8; 16], inv: u8) -> u64 {
+    ((w[0] ^ inv) as u64)
+        | (((w[1] ^ inv) as u64) << 2)
+        | (((w[2] ^ inv) as u64) << 5)
+        | (((w[3] ^ inv) as u64) << 8)
+        | (((w[4] ^ inv) as u64) << 11)
+        | (((w[5] ^ inv) as u64) << 14)
+        | (((w[6] ^ inv) as u64) << 17)
+        | (((w[7] ^ inv) as u64) << 20)
+        | (((w[8] ^ inv) as u64) << 23)
+        | (((w[9] ^ inv) as u64) << 26)
+        | (((w[10] ^ inv) as u64) << 29)
+        | (((w[11] ^ inv) as u64) << 32)
+        | (((w[12] ^ inv) as u64) << 35)
+        | (((w[13] ^ inv) as u64) << 38)
+        | (((w[14] ^ inv) as u64) << 41)
+        | (((w[15] ^ inv) as u64) << 44)
 }
 
 /// Dual-plane channel detection from 4D covariance.
