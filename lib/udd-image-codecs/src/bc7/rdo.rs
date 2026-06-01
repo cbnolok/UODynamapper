@@ -22,6 +22,7 @@ const ULTRASMOOTH_BRIGHT_THRESHOLD: f64 = 222.0;
 const ULTRASMOOTH_BLOCK_MSE_SCALE: f32 = 120.0;
 const ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD: usize = 64;
 const BC7_SEGMENT_MASKS: [u128; 17] = bc7_segment_masks();
+const FIXED_RATE_SKIP_OFFSETS_THROUGH_LEN: [u64; 17] = fixed_rate_skip_offsets_through_len();
 const MODE1_PIXEL_DESCS: [[u16; 16]; 64] = mode1_pixel_descs();
 
 type RgbaBlock = [[u8; 4]; 16];
@@ -81,6 +82,18 @@ const fn bc7_segment_masks() -> [u128; 17] {
     masks
 }
 
+const fn fixed_rate_skip_offsets_through_len() -> [u64; 17] {
+    let mut offsets = [0u64; 17];
+    let mut len = 3usize;
+    let mut total = 0u64;
+    while len <= 16 {
+        total += (17 - len) as u64;
+        offsets[len] = total;
+        len += 1;
+    }
+    offsets
+}
+
 const fn mode1_pixel_descs() -> [[u16; 16]; 64] {
     let mut descs = [[0u16; 16]; 64];
     let mut partition_id = 0usize;
@@ -119,8 +132,9 @@ impl ModeHistory {
     }
 
     #[inline]
-    fn iter_recent(&self) -> impl Iterator<Item = usize> + '_ {
-        self.entries.iter().rev().copied()
+    fn iter_recent_from(&self, first_block_to_check: usize) -> impl Iterator<Item = usize> + '_ {
+        let first_index = self.entries.partition_point(|&block_index| block_index < first_block_to_check);
+        self.entries[first_index..].iter().rev().copied()
     }
 }
 
@@ -631,9 +645,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         (block_bits, block_modes)
     };
     let history_capacity = total_blocks_to_check.min(num_blocks).max(1);
-    let mut previous_blocks_by_mode = (0..8)
-        .map(|_| ModeHistory::with_capacity(history_capacity))
-        .collect::<Vec<_>>();
+    let mut previous_blocks_by_mode: [ModeHistory; 8] =
+        std::array::from_fn(|_| ModeHistory::with_capacity(history_capacity));
     let relative_candidate_layout = if params.allow_relative_movement {
         Some(RelativeCandidateLayout::new(params.relative_movement_max_offset_delta.min(15)))
     } else {
@@ -707,10 +720,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
             let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
             let mut relative_previous_blocks_checked = 0usize;
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
-                if prev_block_index < first_block_to_check {
-                    break;
-                }
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
+                .iter_recent_from(first_block_to_check)
+            {
                 if max_relative_previous_blocks > 0
                     && relative_previous_blocks_checked >= max_relative_previous_blocks
                 {
@@ -811,10 +823,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             }
         } else {
             // ── Main search window: fixed-offset default path ──
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
-                if prev_block_index < first_block_to_check {
-                    break;
-                }
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
+                .iter_recent_from(first_block_to_check)
+            {
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
                 let dist = block_delta * 16;
@@ -832,10 +843,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         && !continuation_possible
                         && !rep0_possible
                     {
-                        let skipped_offsets = (17 - len) as u64;
+                        let skipped_offsets = FIXED_RATE_SKIP_OFFSETS_THROUGH_LEN[len];
                         stat_add!(COLLECT_STATS, stats, candidate_checks, skipped_offsets);
                         stat_add!(COLLECT_STATS, stats, rate_skips, skipped_offsets);
-                        continue;
+                        break;
                     }
 
                     for ofs in 0..=(16 - len) {
@@ -943,10 +954,9 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let orig_best_bits = best_bits;
             let orig_best_ms_err = best_ms_err;
 
-            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize].iter_recent() {
-                if prev_block_index < first_block_to_check {
-                    break;
-                }
+            for prev_block_index in previous_blocks_by_mode[bc7_mode as usize]
+                .iter_recent_from(first_block_to_check)
+            {
                 let prev_bits = block_bits[prev_block_index];
 
                 let block_delta = block_index - prev_block_index;
