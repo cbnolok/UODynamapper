@@ -488,6 +488,26 @@ Practical guidance:
 - Do not cache per-block fallback smooth scales in the ultrasmooth vector by default.
 - If revisiting, first measure how many blocks both pass the luma gate and reach the fallback path; broad caching is too expensive on the current fixtures.
 
+### Mode 1/7 first-pixel descriptor specialization
+
+Attempt:
+- Specialized the first pixel in `decode_bc7_mode1_error_bounded` and `decode_bc7_mode7_error_bounded`.
+- Used the BC7 invariant that pixel 0 is subset 0 with a fixed selector bit offset in those modes.
+- Kept the existing pixel loop for pixels 1..15 and preserved the same bounded-error early exit after pixel 0.
+
+Why it looked promising:
+- Mode 1 dominates the opaque fixture and Mode 7 dominates the alpha/mobile fixture.
+- The existing code loaded `MODE*_PIXEL_DESCS[part_id][0]` and branched on a subset that is effectively constant.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state default RDO benchmarking regressed on all fixtures, including the Mode 7-heavy alpha/mobile case.
+- The compiler likely optimized much of the descriptor path already, and the hand-specialized shape hurt instruction layout or register allocation.
+
+Practical guidance:
+- Do not specialize only the first Mode 1/7 pixel by hand.
+- If revisiting these decoders, use assembly/perf evidence and target a larger structure than removing the first descriptor branch.
+
 ## Benchmark Context
 
 Commands used for these decisions:
