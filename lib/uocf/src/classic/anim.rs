@@ -189,9 +189,7 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
 
         // Read Palette (256 colors, RGB555)
         let mut palette = [0u16; 256];
-        for i in 0..256 {
-            palette[i] = mul_ptr.read_u16::<LittleEndian>()?;
-        }
+        mul_ptr.read_u16_into::<LittleEndian>(&mut palette)?;
 
         let rgba_palette = rgb555_palette_to_rgba_words(&palette);
 
@@ -203,15 +201,19 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
         if frame_count > 1000 {
             eyre::bail!("Suspiciously high frame count: {}", frame_count);
         }
+        let frame_count = frame_count as usize;
 
-        let mut frame_offsets = Vec::with_capacity(frame_count as usize);
-        for _ in 0..frame_count {
-            frame_offsets.push(mul_ptr.read_u32::<LittleEndian>()?);
+        let offset_table_len = frame_count
+            .checked_mul(4)
+            .ok_or_else(|| eyre!("Animation frame offset table length overflows"))?;
+        if mul_ptr.len() < offset_table_len {
+            eyre::bail!("Animation frame offset table truncated");
         }
+        let frame_offsets = &mul_ptr[..offset_table_len];
 
-        let mut frames = Vec::with_capacity(frame_count as usize);
+        let mut frames = Vec::with_capacity(frame_count);
         for i in 0..frame_count {
-            let offset = frame_offsets[i as usize] as usize;
+            let offset = read_frame_offset(frame_offsets, i)? as usize;
             let frame_start = frame_offset_base
                 .checked_add(offset)
                 .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;
@@ -269,29 +271,30 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
 }
 
 fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result<Vec<AnimFrameInfo>> {
-        let mut mul_ptr = &data[lookup..];
-
-        for _ in 0..256 {
-            let _ = mul_ptr.read_u16::<LittleEndian>()?;
-        }
-
         let frame_offset_base = lookup
             .checked_add(512)
             .ok_or_else(|| eyre!("Animation frame offset base overflows"))?;
+        let mut mul_ptr = data
+            .get(frame_offset_base..)
+            .ok_or_else(|| eyre!("Animation palette truncated"))?;
 
         let frame_count = mul_ptr.read_u32::<LittleEndian>()?;
         if frame_count > 1000 {
             eyre::bail!("Suspiciously high frame count: {}", frame_count);
         }
+        let frame_count = frame_count as usize;
 
-        let mut frame_offsets = Vec::with_capacity(frame_count as usize);
-        for _ in 0..frame_count {
-            frame_offsets.push(mul_ptr.read_u32::<LittleEndian>()?);
+        let offset_table_len = frame_count
+            .checked_mul(4)
+            .ok_or_else(|| eyre!("Animation frame offset table length overflows"))?;
+        if mul_ptr.len() < offset_table_len {
+            eyre::bail!("Animation frame offset table truncated");
         }
+        let frame_offsets = &mul_ptr[..offset_table_len];
 
-        let mut frames = Vec::with_capacity(frame_count as usize);
+        let mut frames = Vec::with_capacity(frame_count);
         for i in 0..frame_count {
-            let offset = frame_offsets[i as usize] as usize;
+            let offset = read_frame_offset(frame_offsets, i)? as usize;
             let frame_start = frame_offset_base
                 .checked_add(offset)
                 .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;
@@ -321,6 +324,19 @@ fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result
         }
 
         Ok(frames)
+}
+
+fn read_frame_offset(frame_offsets: &[u8], index: usize) -> eyre::Result<u32> {
+    let start = index
+        .checked_mul(4)
+        .ok_or_else(|| eyre!("Animation frame offset index overflows"))?;
+    let end = start
+        .checked_add(4)
+        .ok_or_else(|| eyre!("Animation frame offset index overflows"))?;
+    let bytes = frame_offsets
+        .get(start..end)
+        .ok_or_else(|| eyre!("Animation frame offset table truncated"))?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 pub(crate) fn rgb555_palette_to_rgba_words(palette: &[u16; 256]) -> [u32; 256] {
