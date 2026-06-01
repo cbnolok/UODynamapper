@@ -19,6 +19,7 @@ CPU and memory objectives:
 - Make extensive use of SIMD where the operation maps cleanly and exactness can be preserved. Keep scalar fallbacks correct and measurable.
 - Consider explicit loop unrolling for tiny fixed loops when it reduces bounds checks, branch overhead, or register shuffling. Validate because unrolling can increase code size and pressure instruction cache.
 - Reason in terms of cache lines: avoid per-block tables, scratch buffers, or wider entries unless they remove enough hot work to pay for extra loads/stores.
+- Prefer fixed-size stack storage over heap allocation for small hot-path state, as long as it does not inflate stack frames enough to hurt cache locality or recursion/thread scaling.
 - Prefer compact bitwise operations over byte/slice manipulation when working with BC7 block fields, masks, selectors, and fixed-size segments.
 - Avoid atomics, callbacks, allocation, dynamic dispatch, and repeated Rayon scheduling in per-candidate/per-block hot paths.
 
@@ -214,6 +215,25 @@ Why it was reverted:
 Practical guidance:
 - Do not add a broad shifted-mask table for all RDO copy paths.
 - Revisit only if a narrower path, such as second-match only or relative only, shows a clear workload-specific gain.
+
+### Stack-allocated RDO hash table
+
+Attempt:
+- Replaced the fixed 8192-entry duplicate-candidate hash table allocation with a stack array.
+- Kept lookup behavior and candidate order unchanged.
+
+Why it looked promising:
+- The table size is fixed and local to each RDO pass/chunk.
+- Avoiding heap allocation matches the stack-preference objective for fixed-size hot-path state.
+
+Why it was reverted:
+- Correctness tests passed and checksums stayed stable, but benchmark behavior was mixed.
+- Opaque and alpha-mobile no-stats runs were neutral to slightly positive, while mixed-atlas regressed enough to reject the change.
+- The larger stack frame likely hurt cache/stack locality more than the removed allocation helped.
+
+Practical guidance:
+- Do not move the 8192-entry RDO hash table to the stack by default.
+- Stack storage is still preferred for small fixed hot-path state, but validate larger arrays carefully against cache and stack-frame costs.
 
 ## Benchmark Context
 
