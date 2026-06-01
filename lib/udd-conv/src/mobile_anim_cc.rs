@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -30,8 +30,8 @@ use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::bc7::{
-    encode_for_vram_with_bc7_rdo_options_and_stage_progress, Bc7ProgressStage,
-    Bc7RdoOptions, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
+    encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
+    Bc7RdoOptions, Bc7StageTimings, preferred_bc7_encoder_backend, ImageExtent, RawImageFormat,
     VramTextureEncoding,
 };
 use crate::package_progress::{
@@ -216,6 +216,19 @@ struct MobileAnimPageStats {
     empty_pixel_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct MobileAnimEncodeTimings {
+    bc7: Bc7StageTimings,
+    register_pages: Duration,
+}
+
+impl MobileAnimEncodeTimings {
+    fn add_assign(&mut self, other: Self) {
+        self.bc7.add_assign(other.bc7);
+        self.register_pages += other.register_pages;
+    }
+}
+
 pub fn convert_anim_mul_to_mobile_anim_cc_uddp(
     client_dir: &Path,
     out_file: &Path,
@@ -246,6 +259,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<MobileAnimCcBuildSummary> {
     validate_options(options)?;
+    let total_timer = Instant::now();
 
     let client_dir = find_first_dir_matching(source_dirs, &[&["anim.idx", "anim.mul"]])
         .ok_or_else(|| eyre::eyre!(
@@ -258,6 +272,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     );
     print_classic_animation_source_files(&client_dir);
 
+    let planning_timer = Instant::now();
     let anim_map = AnimMap::load(&client_dir)
         .wrap_err_with(|| format!("load animation sources from {}", client_dir.display()))?;
     payload_progress(AssetTaskProgress {
@@ -282,8 +297,16 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     let packed_frame_count = planned_frames.len() as u32;
     let body_resolve_records = build_body_resolve_records(&client_dir)?;
     let body_type_records = build_body_type_records(&client_dir)?;
+    info!(
+        "CC mobile animation planning prepared {} frames, {} animations, {} body resolves in {:.3}s",
+        packed_frame_count,
+        animation_records.len(),
+        body_resolve_records.len(),
+        planning_timer.elapsed().as_secs_f64()
+    );
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    let pack_timer = Instant::now();
     let packed_pages = pack_planned_frames_into_package(
         &mut package,
         planned_frames,
@@ -292,6 +315,11 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         options,
         &payload_progress,
     )?;
+    info!(
+        "CC mobile animation atlas and texture payload build wrote {} pages in {:.3}s",
+        packed_pages.records.len(),
+        pack_timer.elapsed().as_secs_f64()
+    );
 
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animation_records)?;
@@ -318,9 +346,14 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         })?;
     }
 
+    let package_timer = Instant::now();
     build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    info!(
+        "CC mobile animation package build and write completed in {:.3}s",
+        package_timer.elapsed().as_secs_f64()
+    );
 
-    Ok(MobileAnimCcBuildSummary {
+    let summary = MobileAnimCcBuildSummary {
         animation_count: animation_records.len() as u32,
         frame_count: frame_records.len() as u32,
         packed_frame_count,
@@ -330,7 +363,12 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         empty_pixel_count: packed_pages.stats.empty_pixel_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
-    })
+    };
+    info!(
+        "CC mobile animation conversion completed in {:.3}s",
+        total_timer.elapsed().as_secs_f64()
+    );
+    Ok(summary)
 }
 
 fn summarize_mobile_anim_pages(pages: &[BuiltMobileAnimPage]) -> MobileAnimPageStats {
@@ -480,7 +518,7 @@ fn encode_and_add_mobile_anim_page_chunk(
     payload_completed: &AtomicU64,
     rdo_payload_completed: &AtomicU64,
     payload_total: u64,
-) -> eyre::Result<()> {
+) -> eyre::Result<MobileAnimEncodeTimings> {
     let chunk_frames = pages
         .iter()
         .map(|page| page.record.frame_count as u64)
@@ -512,7 +550,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             completed,
             total: payload_total,
         });
-        return Ok(());
+        return Ok(MobileAnimEncodeTimings::default());
     }
 
     let encode_units_completed = AtomicU64::new(0);
@@ -543,7 +581,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             total: payload_total,
         });
     };
-    let encoded_pages = encode_mobile_anim_page_chunk(
+    let (encoded_pages, bc7_timings) = encode_mobile_anim_page_chunk(
         pages,
         options,
         None,
@@ -553,6 +591,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             None
         },
     )?;
+    let register_timer = Instant::now();
     for (page_path, stored_page, width, height) in encoded_pages {
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
@@ -565,6 +604,7 @@ fn encode_and_add_mobile_anim_page_chunk(
             data: stored_page,
         })?;
     }
+    let register_pages = register_timer.elapsed();
     pages.clear();
     let completed = payload_completed
         .fetch_add(chunk_frames, Ordering::Relaxed)
@@ -587,7 +627,10 @@ fn encode_and_add_mobile_anim_page_chunk(
             total: payload_total,
         });
     }
-    Ok(())
+    Ok(MobileAnimEncodeTimings {
+        bc7: bc7_timings,
+        register_pages,
+    })
 }
 
 fn encode_mobile_anim_page_chunk(
@@ -595,7 +638,7 @@ fn encode_mobile_anim_page_chunk(
     options: &MobileAnimCcAtlasOptions,
     pb: Option<&ProgressBar>,
     progress: Option<&(dyn Fn(Bc7ProgressStage, u64) + Sync)>,
-) -> eyre::Result<Vec<(String, Vec<u8>, u32, u32)>> {
+) -> eyre::Result<(Vec<(String, Vec<u8>, u32, u32)>, Bc7StageTimings)> {
     debug_assert!(options.pixel_format == PagePixelFormat::Bc7);
     let encoding = VramTextureEncoding::Bc7(preferred_bc7_encoder_backend());
     let rdo_options = Bc7RdoOptions::sparse_atlas(
@@ -604,10 +647,11 @@ fn encode_mobile_anim_page_chunk(
     );
     let pending_progress = AtomicU64::new(0);
     let mut encoded_pages = Vec::with_capacity(pages.len());
+    let mut bc7_timings = Bc7StageTimings::default();
     for page in pages {
         let extent = ImageExtent::new(page.record.used_width, page.record.used_height)
             .map_err(|e| eyre::eyre!("{e}"))?;
-        let encoded = encode_for_vram_with_bc7_rdo_options_and_stage_progress(
+        let (encoded, timings) = encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(
             &page.pixels,
             extent,
             RawImageFormat::Rgba8888,
@@ -623,9 +667,11 @@ fn encode_mobile_anim_page_chunk(
         )
         .map_err(|e| {
             eyre::eyre!("BC7 encode mobile animation page {}: {e}", page.record.page_index)
-        })?
-        .into_bytes()
-        .to_vec();
+        })?;
+        bc7_timings.add_assign(timings);
+        let encoded = encoded
+            .into_bytes()
+            .to_vec();
         encoded_pages.push((
             page_entry_path(page.record.page_index, PagePixelFormat::Bc7),
             encoded,
@@ -634,7 +680,7 @@ fn encode_mobile_anim_page_chunk(
         ));
     }
     flush_bc7_progress(pb, &pending_progress);
-    Ok(encoded_pages)
+    Ok((encoded_pages, bc7_timings))
 }
 
 fn mobile_anim_chunk_bc7_blocks(pages: &[BuiltMobileAnimPage]) -> u64 {
@@ -1465,6 +1511,8 @@ fn pack_frames_into_package(
     };
     let payload_completed = AtomicU64::new(0);
     let rdo_payload_completed = AtomicU64::new(0);
+    let mut atlas_build_time = Duration::ZERO;
+    let mut encode_timings = MobileAnimEncodeTimings::default();
 
     let pb = ProgressBar::new(total_frames);
     pb.set_style(ProgressStyle::default_bar()
@@ -1486,8 +1534,10 @@ fn pack_frames_into_package(
         }
         let tail = remaining.split_off(prefix_len);
         let page_frames = std::mem::replace(&mut remaining, tail);
+        let page_timer = Instant::now();
         let (page, unplaced, filled_pixel_count) =
             build_page(page_index, page_size, page_frames, frame_records, options, &mut page_pixels)?;
+        atlas_build_time += page_timer.elapsed();
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1508,7 +1558,7 @@ fn pack_frames_into_package(
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(
+            let timings = encode_and_add_mobile_anim_page_chunk(
                 package,
                 &mut pending_pages,
                 options,
@@ -1518,12 +1568,13 @@ fn pack_frames_into_package(
                 &rdo_payload_completed,
                 total_frames,
             )?;
+            encode_timings.add_assign(timings);
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(
+        let timings = encode_and_add_mobile_anim_page_chunk(
             package,
             &mut pending_pages,
             options,
@@ -1533,9 +1584,20 @@ fn pack_frames_into_package(
             &rdo_payload_completed,
             total_frames,
         )?;
+        encode_timings.add_assign(timings);
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
+    info!(
+        "CC mobile animation decoded atlas timing: pages {}, atlas build/blit {:.3}s, BC7 input {:.3}s, BC7 encode {:.3}s, BC7 RDO {:.3}s, BC7 flatten {:.3}s, page registration {:.3}s",
+        page_index,
+        atlas_build_time.as_secs_f64(),
+        encode_timings.bc7.input.as_secs_f64(),
+        encode_timings.bc7.encode.as_secs_f64(),
+        encode_timings.bc7.rdo.as_secs_f64(),
+        encode_timings.bc7.flatten.as_secs_f64(),
+        encode_timings.register_pages.as_secs_f64()
+    );
 
     Ok(PackedMobileAnimPages { records, stats })
 }
@@ -1580,6 +1642,8 @@ fn pack_planned_frames_into_package(
     };
     let payload_completed = AtomicU64::new(0);
     let rdo_payload_completed = AtomicU64::new(0);
+    let mut atlas_build_time = Duration::ZERO;
+    let mut encode_timings = MobileAnimEncodeTimings::default();
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating mobile animation atlas page {page_index}"));
@@ -1593,6 +1657,7 @@ fn pack_planned_frames_into_package(
         }
         let tail = remaining.split_off(prefix_len);
         let page_frames = std::mem::replace(&mut remaining, tail);
+        let page_timer = Instant::now();
         let (page, unplaced, filled_pixel_count) = build_planned_page(
             page_index,
             page_size,
@@ -1604,6 +1669,7 @@ fn pack_planned_frames_into_package(
             &mut decoded_source_cache,
             &mut decoded_source_use_tick,
         )?;
+        atlas_build_time += page_timer.elapsed();
         if page.record.frame_count == 0 {
             eyre::bail!(
                 "could not fit any mobile animation frame into atlas page {}x{}",
@@ -1632,7 +1698,7 @@ fn pack_planned_frames_into_package(
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            encode_and_add_mobile_anim_page_chunk(
+            let timings = encode_and_add_mobile_anim_page_chunk(
                 package,
                 &mut pending_pages,
                 options,
@@ -1642,12 +1708,13 @@ fn pack_planned_frames_into_package(
                 &rdo_payload_completed,
                 total_frames,
             )?;
+            encode_timings.add_assign(timings);
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        encode_and_add_mobile_anim_page_chunk(
+        let timings = encode_and_add_mobile_anim_page_chunk(
             package,
             &mut pending_pages,
             options,
@@ -1657,9 +1724,20 @@ fn pack_planned_frames_into_package(
             &rdo_payload_completed,
             total_frames,
         )?;
+        encode_timings.add_assign(timings);
     }
 
     pb.finish_with_message(format!("Mobile animation atlas pages created ({page_index} pages)"));
+    info!(
+        "CC mobile animation planned atlas timing: pages {}, atlas build/blit {:.3}s, BC7 input {:.3}s, BC7 encode {:.3}s, BC7 RDO {:.3}s, BC7 flatten {:.3}s, page registration {:.3}s",
+        page_index,
+        atlas_build_time.as_secs_f64(),
+        encode_timings.bc7.input.as_secs_f64(),
+        encode_timings.bc7.encode.as_secs_f64(),
+        encode_timings.bc7.rdo.as_secs_f64(),
+        encode_timings.bc7.flatten.as_secs_f64(),
+        encode_timings.register_pages.as_secs_f64()
+    );
 
     Ok(PackedMobileAnimPages { records, stats })
 }
@@ -2227,37 +2305,18 @@ fn build_planned_page(
                     pending.source_frame_index
                 );
             };
-            if u32::from(pending.source_left) + u32::from(pending.source_crop_width) > u32::from(decoded_frame.width)
-                || u32::from(pending.source_top) + u32::from(pending.source_crop_height) > u32::from(decoded_frame.height)
-            {
-                eyre::bail!(
-                    "planned mobile animation frame {} crop window is outside decoded frame: crop {},{} {}x{}, decoded {}x{}",
-                    pending.global_frame_index,
-                    pending.source_left,
-                    pending.source_top,
-                    pending.source_crop_width,
-                    pending.source_crop_height,
-                    decoded_frame.width,
-                    decoded_frame.height
-                );
-            }
-            let rgba = crop_rgba_frame_window_borrowed(
-                decoded_frame.width,
-                decoded_frame.height,
+            filled_pixel_count += blit_rgba_frame_window(
+                &mut pixels,
+                used_width,
+                pending.inner_x,
+                pending.inner_y,
+                u32::from(decoded_frame.width),
+                u32::from(decoded_frame.height),
                 &decoded_frame.data,
                 u32::from(pending.source_left),
                 u32::from(pending.source_top),
                 u32::from(pending.source_crop_width),
                 u32::from(pending.source_crop_height),
-            )?;
-            filled_pixel_count += blit_rgba_frame(
-                &mut pixels,
-                used_width,
-                pending.inner_x,
-                pending.inner_y,
-                pending.width as u32,
-                pending.height as u32,
-                rgba.as_ref(),
             )
             .wrap_err_with(|| format!("blit mobile animation frame {}", pending.global_frame_index))?;
         }
@@ -2571,30 +2630,105 @@ fn blit_rgba_frame(
     frame_height: u32,
     src: &[u8],
 ) -> eyre::Result<u64> {
-    let expected_len = frame_width as usize * frame_height as usize * 4;
+    blit_rgba_frame_window(
+        dst,
+        dst_width,
+        dst_x,
+        dst_y,
+        frame_width,
+        frame_height,
+        src,
+        0,
+        0,
+        frame_width,
+        frame_height,
+    )
+}
+
+fn blit_rgba_frame_window(
+    dst: &mut [u8],
+    dst_width: u32,
+    dst_x: u32,
+    dst_y: u32,
+    source_width: u32,
+    source_height: u32,
+    src: &[u8],
+    source_left: u32,
+    source_top: u32,
+    frame_width: u32,
+    frame_height: u32,
+) -> eyre::Result<u64> {
+    let expected_len = source_width as usize * source_height as usize * 4;
     if src.len() != expected_len {
         eyre::bail!(
             "invalid RGBA payload length for mobile animation frame {}x{}: expected {}, got {}",
-            frame_width,
-            frame_height,
+            source_width,
+            source_height,
             expected_len,
             src.len()
         );
     }
+    if source_left + frame_width > source_width || source_top + frame_height > source_height {
+        eyre::bail!(
+            "mobile animation frame crop {},{} {}x{} is outside source {}x{}",
+            source_left,
+            source_top,
+            frame_width,
+            frame_height,
+            source_width,
+            source_height
+        );
+    }
 
     let dst_stride = dst_width as usize * 4;
+    if dst_stride == 0 || dst.len() % dst_stride != 0 {
+        eyre::bail!("invalid mobile animation atlas row stride for width {}", dst_width);
+    }
+    let dst_height = dst.len() / dst_stride;
+    if dst_x + frame_width > dst_width || dst_y + frame_height > dst_height as u32 {
+        eyre::bail!(
+            "mobile animation frame destination {},{} {}x{} is outside atlas {}x{}",
+            dst_x,
+            dst_y,
+            frame_width,
+            frame_height,
+            dst_width,
+            dst_height
+        );
+    }
+
+    let source_stride = source_width as usize * 4;
     let src_stride = frame_width as usize * 4;
     let mut filled_pixel_count = 0u64;
-    for row in 0..frame_height as usize {
-        let src_start = row * src_stride;
-        let dst_start = ((dst_y as usize + row) * dst_stride) + dst_x as usize * 4;
-        let dst_end = dst_start + src_stride;
-        let src_row = &src[src_start..src_start + src_stride];
-        filled_pixel_count += count_nonzero_alpha(src_row);
-        dst[dst_start..dst_end].copy_from_slice(src_row);
+    let source_base = source_top as usize * source_stride + source_left as usize * 4;
+    let dst_base = dst_y as usize * dst_stride + dst_x as usize * 4;
+    let row_count = frame_height as usize;
+    let row_pixels = frame_width as usize;
+
+    // SAFETY: lengths and crop/destination bounds are validated above. The source
+    // frame and destination atlas are distinct buffers in all call sites.
+    unsafe {
+        let source_base_ptr = src.as_ptr().add(source_base);
+        let dst_base_ptr = dst.as_mut_ptr().add(dst_base);
+        for row in 0..row_count {
+            let source_row = source_base_ptr.add(row * source_stride);
+            let dst_row = dst_base_ptr.add(row * dst_stride);
+            filled_pixel_count += count_nonzero_alpha_pixels_unchecked(source_row, row_pixels);
+            std::ptr::copy_nonoverlapping(source_row, dst_row, src_stride);
+        }
     }
 
     Ok(filled_pixel_count)
+}
+
+unsafe fn count_nonzero_alpha_pixels_unchecked(row: *const u8, pixels: usize) -> u64 {
+    let mut count = 0u64;
+    let mut alpha = unsafe { row.add(3) };
+    for _ in 0..pixels {
+        count += unsafe { (*alpha != 0) as u64 };
+        alpha = unsafe { alpha.add(4) };
+    }
+    count
 }
 
 pub fn serialize_page_manifest(
@@ -2747,6 +2881,44 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn cropped_window_blit_copies_source_rect_and_counts_alpha() {
+        let mut src = vec![0u8; 4 * 3 * 4];
+        for y in 0..3usize {
+            for x in 0..4usize {
+                let index = (y * 4 + x) * 4;
+                let alpha = if x == 2 && y == 1 { 0 } else { 255 };
+                src[index..index + 4].copy_from_slice(&[x as u8, y as u8, (x + y) as u8, alpha]);
+            }
+        }
+        let mut dst = vec![0u8; 5 * 4 * 4];
+
+        let filled = blit_rgba_frame_window(
+            &mut dst,
+            5,
+            2,
+            1,
+            4,
+            3,
+            &src,
+            1,
+            1,
+            2,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(filled, 3);
+        for y in 0..2usize {
+            for x in 0..2usize {
+                let dst_index = ((y + 1) * 5 + x + 2) * 4;
+                let src_index = ((y + 1) * 4 + x + 1) * 4;
+                assert_eq!(&dst[dst_index..dst_index + 4], &src[src_index..src_index + 4]);
+            }
+        }
+        assert_eq!(&dst[0..4], &[0, 0, 0, 0]);
     }
 
     #[test]

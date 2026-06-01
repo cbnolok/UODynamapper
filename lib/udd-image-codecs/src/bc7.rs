@@ -1,5 +1,7 @@
 #[cfg(feature = "bc7-encode")]
 use std::borrow::Cow;
+#[cfg(feature = "bc7-encode")]
+use std::time::{Duration, Instant};
 use std::{error::Error, fmt, sync::Arc};
 pub use wgpu_types::TextureFormat;
 
@@ -667,6 +669,29 @@ pub enum Bc7ProgressStage {
 }
 
 #[cfg(feature = "bc7-encode")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Bc7StageTimings {
+    pub input: Duration,
+    pub encode: Duration,
+    pub rdo: Duration,
+    pub flatten: Duration,
+}
+
+#[cfg(feature = "bc7-encode")]
+impl Bc7StageTimings {
+    pub fn add_assign(&mut self, other: Self) {
+        self.input += other.input;
+        self.encode += other.encode;
+        self.rdo += other.rdo;
+        self.flatten += other.flatten;
+    }
+
+    pub fn total(self) -> Duration {
+        self.input + self.encode + self.rdo + self.flatten
+    }
+}
+
+#[cfg(feature = "bc7-encode")]
 pub fn encode_to_bc7_with_rdo_lambda_and_progress<F>(
     pixels: &[u8],
     extent: ImageExtent,
@@ -746,11 +771,37 @@ pub fn encode_to_bc7_with_rdo_options_and_stage_progress<F>(
 where
     F: Fn(Bc7ProgressStage, usize) + Sync,
 {
+    let (texture, _) = encode_to_bc7_with_rdo_options_and_stage_progress_timed(
+        pixels,
+        extent,
+        input_format,
+        backend,
+        rdo_options,
+        progress,
+    )?;
+    Ok(texture)
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_to_bc7_with_rdo_options_and_stage_progress_timed<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    backend: Bc7EncoderBackend,
+    rdo_options: &Bc7RdoOptions,
+    progress: F,
+) -> Result<(Bc7TextureData, Bc7StageTimings), TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
+    let input_timer = Instant::now();
     validate_input_len(pixels, extent, input_format)?;
     let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
+    let input_time = input_timer.elapsed();
     let backend = resolve_bc7_encoder_backend(backend);
     let encode_progress = |units| progress(Bc7ProgressStage::Encode, units);
 
+    let encode_timer = Instant::now();
     let mut encoded = match backend {
         Bc7EncoderBackend::Analytical => {
             encode_with_analytical_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
@@ -759,7 +810,9 @@ where
             encode_with_analytical_wide_and_progress(rgba_pixels.as_ref(), extent, &encode_progress)
         }
     };
+    let encode_time = encode_timer.elapsed();
     let rdo_progress = |units| progress(Bc7ProgressStage::Rdo, units);
+    let rdo_timer = Instant::now();
     apply_bc7_rdo_with_progress(
         &mut encoded,
         rgba_pixels.as_ref(),
@@ -767,8 +820,21 @@ where
         rdo_options,
         &rdo_progress,
     );
+    let rdo_time = rdo_timer.elapsed();
 
-    Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))
+    let flatten_timer = Instant::now();
+    let texture = Bc7TextureData::new(extent, flatten_bc7_blocks(encoded.blocks))?;
+    let flatten_time = flatten_timer.elapsed();
+
+    Ok((
+        texture,
+        Bc7StageTimings {
+            input: input_time,
+            encode: encode_time,
+            rdo: rdo_time,
+            flatten: flatten_time,
+        },
+    ))
 }
 
 #[cfg(feature = "bc7-encode")]
@@ -937,25 +1003,50 @@ pub fn encode_for_vram_with_bc7_rdo_options_and_stage_progress<F>(
 where
     F: Fn(Bc7ProgressStage, usize) + Sync,
 {
+    let (texture, _) = encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed(
+        pixels,
+        extent,
+        input_format,
+        encoding,
+        bc7_rdo_options,
+        progress,
+    )?;
+    Ok(texture)
+}
+
+#[cfg(feature = "bc7-encode")]
+pub fn encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed<F>(
+    pixels: &[u8],
+    extent: ImageExtent,
+    input_format: RawImageFormat,
+    encoding: VramTextureEncoding,
+    bc7_rdo_options: &Bc7RdoOptions,
+    progress: F,
+) -> Result<(VramTextureData, Bc7StageTimings), TextureError>
+where
+    F: Fn(Bc7ProgressStage, usize) + Sync,
+{
     match encoding {
         VramTextureEncoding::Rgba8UnormSrgb => {
             validate_input_len(pixels, extent, input_format)?;
             let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent).into_owned();
-            VramTextureData::new(
+            let texture = VramTextureData::new(
                 extent,
                 VramTextureFormat::Rgba8UnormSrgb,
                 Arc::from(rgba_pixels),
-            )
+            )?;
+            Ok((texture, Bc7StageTimings::default()))
         }
         VramTextureEncoding::Bc7(backend) => {
-            Ok(encode_to_bc7_with_rdo_options_and_stage_progress(
+            let (texture, timings) = encode_to_bc7_with_rdo_options_and_stage_progress_timed(
                 pixels,
                 extent,
                 input_format,
                 backend,
                 bc7_rdo_options,
                 progress,
-            )?.into())
+            )?;
+            Ok((texture.into(), timings))
         }
     }
 }

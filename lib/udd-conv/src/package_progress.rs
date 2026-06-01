@@ -1,8 +1,9 @@
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
 use udd_container::{
     BuildProgress, BuildProgressFile, BuildProgressPhase, CompressionFlag, CompressionSummary,
     UddpBuilder,
@@ -192,11 +193,24 @@ where
     let compression_summary = builder.compression_summary();
 
     let mut active_phase = None;
+    let mut active_phase_started = Instant::now();
+    let mut dictionary_time = Duration::ZERO;
+    let mut compression_time = Duration::ZERO;
+    let mut assembly_time = Duration::ZERO;
     let bytes = builder.build_with_progress(|progress: BuildProgress| {
         progress_callback(progress);
         let total = progress.total.max(1) as u64;
         if active_phase != Some(progress.phase) || bar.length() != Some(total) {
+            if let Some(phase) = active_phase {
+                let elapsed = active_phase_started.elapsed();
+                match phase {
+                    BuildProgressPhase::TrainingDictionaries => dictionary_time += elapsed,
+                    BuildProgressPhase::CompressingFiles => compression_time += elapsed,
+                    BuildProgressPhase::Assembling => assembly_time += elapsed,
+                }
+            }
             active_phase = Some(progress.phase);
+            active_phase_started = Instant::now();
             match progress.phase {
                 BuildProgressPhase::TrainingDictionaries => {
                     bar.set_style(spinner_style());
@@ -236,12 +250,30 @@ where
             }
         }
     })?;
+    if let Some(phase) = active_phase {
+        let elapsed = active_phase_started.elapsed();
+        match phase {
+            BuildProgressPhase::TrainingDictionaries => dictionary_time += elapsed,
+            BuildProgressPhase::CompressingFiles => compression_time += elapsed,
+            BuildProgressPhase::Assembling => assembly_time += elapsed,
+        }
+    }
 
     bar.set_style(save_style());
     bar.enable_steady_tick(Duration::from_millis(100));
     bar.set_message(format!("writing {}", out_file.display()));
+    let write_timer = Instant::now();
     std::fs::write(out_file, bytes).wrap_err_with(|| format!("save {}", out_file.display()))?;
+    let write_time = write_timer.elapsed();
     bar.finish_with_message(format!("saved {}", out_file.display()));
+    info!(
+        "UDDP package timing for {}: dictionaries {:.3}s, compression {:.3}s, assembly {:.3}s, write {:.3}s",
+        out_file.display(),
+        dictionary_time.as_secs_f64(),
+        compression_time.as_secs_f64(),
+        assembly_time.as_secs_f64(),
+        write_time.as_secs_f64()
+    );
 
     Ok(())
 }

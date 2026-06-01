@@ -66,6 +66,11 @@ Current execution decisions:
 - Add cache diagnostics for LRU hit rate, eviction reason, hysteresis counters, and queue backlog depth.
 - Define golden benchmark scenes and reproducible camera paths.
 - Make metrics visible in the debug overlay and persist them in logs for A/B runs.
+- Add mobile conversion timing breakdowns for atlas creation/blit, BC7 encode, RDO precompute or ultrasmooth work, RDO search, package compression, and package write.
+- Optimize mobile atlas page build and blit paths before further RDO micro-tuning; atlas pages are approximately `2048x2048`, so full-page clears, crop/copy passes, and alpha scans can dominate.
+- Audit BC7 encode work before RDO for uniform and gutter-heavy pages, including safe reuse of repeated transparent or solid blocks without compromising image quality.
+- Continue RDO algorithmic reduction after timings isolate it, prioritizing branch predictability, bitwise operations, SIMD-friendly data layout, early backend dispatch, stack-local scratch where sensible, and cache-line-aware traversal.
+- Profile package compression and write time separately from image processing so storage overhead is not misattributed to BC7/RDO.
 
 ### EC Material And Texture Ownership Pipeline
 
