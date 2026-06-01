@@ -388,6 +388,26 @@ Practical guidance:
 - Do not replace `rdo_hash_seen` indexing with unchecked access without new assembly/perf evidence.
 - Prefer unsafe only where benchmark data shows a real hot bounds check survived optimization.
 
+### Unchecked distance-cost table accessors
+
+Attempt:
+- Replaced the hot `DistanceCostLayout` vector/array indexing in `normal_bits`, `normal_match_bits`, `normal_trial_lambda`, and `relative_bits` with `get_unchecked`.
+- Added debug assertions for the established invariants: previous-block deltas are within the lookback-derived table, and match lengths are emitted only from `3..=16` loops.
+- Kept the distance-cost table layout, candidate order, scoring, and decode decisions unchanged.
+
+Why it looked promising:
+- These accessors are called from fixed, relative, and second-match RDO search loops.
+- The bounds are guaranteed by `recent_from(first_block_to_check)` and by the precomputed table length.
+- The change avoided unsafe decoder rewrites and targeted only small cache-resident cost tables.
+
+Why it was reverted:
+- Focused compile/tests passed and output checksums stayed stable, but the no-stats default RDO benchmark regressed on opaque, alpha/mobile, and mixed fixtures.
+- LLVM likely already eliminated or hid most of these bounds checks, while unchecked access added no useful instruction-cache or branch benefit.
+
+Practical guidance:
+- Keep the safe `DistanceCostLayout` accessors unless assembly evidence shows remaining checks in the final hot loops.
+- Unsafe indexing should not be assumed faster for tiny table lookups; validate it against no-stats throughput before keeping it.
+
 ## Benchmark Context
 
 Commands used for these decisions:
