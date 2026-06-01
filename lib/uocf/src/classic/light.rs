@@ -153,7 +153,7 @@ impl LightMap {
             let path = format!("build/terraintexture/{:08}.dds", light_id);
             if let Ok(Some(file)) = ec.get_from_name(&path) {
                 let img = file.decode_to_rgba()?;
-                let rgba = img.to_rgba8();
+                let rgba = img.into_rgba8();
                 return Ok((rgba.width() as u16, rgba.height() as u16, rgba.into_raw()));
             }
         }

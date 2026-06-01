@@ -187,7 +187,7 @@ impl TextureFile {
             ECImageFormat::TGA => {
                 image::load(Cursor::new(self.raw_bytes()), image::ImageFormat::Tga)
                     .wrap_err("Failed reading TGA")
-                    .map(|image| image.to_rgba8())
+                    .map(|image| image.into_rgba8())
             }
             ECImageFormat::Unknown => {
                 eyre::bail!("Unknown image format payload")
