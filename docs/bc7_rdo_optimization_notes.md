@@ -548,6 +548,26 @@ Practical guidance:
 - Do not add fixed-point checks to every ultrasmooth erosion pass by default.
 - If revisiting, first instrument pass counts on real full mobile pages and consider checking only every few passes or only after a known erosion horizon.
 
+### No-history block early-out
+
+Attempt:
+- In no-stats RDO builds, checked before the initial block-error decode whether the current block had any recent previous block with the same BC7 mode.
+- If the same-mode history was empty, pushed the current block into history and skipped the current error/smooth-scale work because no match candidates could be generated.
+- Left stats builds on the old path so decode counters stayed comparable.
+
+Why it looked promising:
+- Blocks with no same-mode history cannot be modified by the fixed or relative search.
+- Skipping their full bounded decode and smooth-scale calculation is exact-output and quality-neutral.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- The no-stats default benchmark regressed badly on alpha/mobile and mixed fixtures.
+- The added same-mode history lookup on every block outweighed the rare no-history skips.
+
+Practical guidance:
+- Do not add a per-block no-history early-out before the initial error decode.
+- If revisiting, only consider it with a cheap mode-history non-empty flag that does not call `recent_from` on the hot path.
+
 ## Benchmark Context
 
 Commands used for these decisions:
