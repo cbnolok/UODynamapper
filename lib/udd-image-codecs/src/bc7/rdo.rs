@@ -2545,12 +2545,15 @@ fn compute_block_mse_scales(
     // Flood fill to remove small ULTRASMOOTH regions
     let mut final_mask = current_mask.clone();
     let mut visited = vec![false; total_blocks];
+    let mut component = Vec::new();
+    let mut stack = Vec::new();
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
             let idx = bx + by * blocks_x;
             if current_mask[idx] && !visited[idx] {
-                let mut component = Vec::new();
-                let mut stack = vec![(bx, by)];
+                component.clear();
+                stack.clear();
+                stack.push((bx, by));
                 visited[idx] = true;
                 while let Some((cx, cy)) = stack.pop() {
                     component.push((cx, cy));
@@ -2567,7 +2570,7 @@ fn compute_block_mse_scales(
                     }
                 }
                 if component.len() < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
-                    for (cx, cy) in component {
+                    for &(cx, cy) in &component {
                         final_mask[cx + cy * blocks_x] = false;
                     }
                 }
