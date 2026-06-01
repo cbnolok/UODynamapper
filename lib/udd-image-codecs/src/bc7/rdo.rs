@@ -1832,34 +1832,21 @@ fn decode_bc7_mode1_error_bounded(
     let y = (block_bits >> 80) as u64;
     let block9 = ((block_bits >> 72) & 0xFF) as u64;
 
-    let pbits = [(y & 1) as u32, ((y >> 1) & 1) as u32];
+    let p0 = (y & 1) as u32;
+    let p1 = ((y >> 1) & 1) as u32;
     let pixel_descs = &MODE1_PIXEL_DESCS[part_id];
     let mut err = 0u64;
-    let desc = pixel_descs[0];
-    let subset = (desc & 0x01) as usize;
-    let weight_index = ((y >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
+    debug_assert_eq!(pixel_descs[0] & 0x01, 0);
+    debug_assert_eq!((pixel_descs[0] >> 1) & 0x7F, 2);
+    debug_assert_eq!(pixel_descs[0] >> 8, 0x03);
+    let weight_index = ((y >> 2) & 0x03) as usize;
     let weight = BC7_WEIGHTS3[weight_index] as i32;
-    let (first_lr, first_hr, first_lg, first_hg, first_lb, first_hb) =
-        if subset == 0 {
-            (
-                expand_mode1_endpoint(x & 0x3F, pbits[0]),
-                expand_mode1_endpoint((x >> 6) & 0x3F, pbits[0]),
-                expand_mode1_endpoint((x >> 24) & 0x3F, pbits[0]),
-                expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]),
-                expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]),
-                expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]),
-            )
-        } else {
-            let lb1 = ((x >> 60) & 0xF) | ((block9 & 0x03) << 4);
-            (
-                expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1]),
-                expand_mode1_endpoint((x >> 18) & 0x3F, pbits[1]),
-                expand_mode1_endpoint((x >> 36) & 0x3F, pbits[1]),
-                expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1]),
-                expand_mode1_endpoint(lb1, pbits[1]),
-                expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1]),
-            )
-        };
+    let first_lr = expand_mode1_endpoint(x & 0x3F, p0);
+    let first_hr = expand_mode1_endpoint((x >> 6) & 0x3F, p0);
+    let first_lg = expand_mode1_endpoint((x >> 24) & 0x3F, p0);
+    let first_hg = expand_mode1_endpoint((x >> 30) & 0x3F, p0);
+    let first_lb = expand_mode1_endpoint((x >> 48) & 0x3F, p0);
+    let first_hb = expand_mode1_endpoint((x >> 54) & 0x3F, p0);
     err += rgb_alpha_255_pixel_sse(
         &source[0],
         interpolate_bc7(first_lr, first_hr, weight),
@@ -1871,25 +1858,12 @@ fn decode_bc7_mode1_error_bounded(
     }
 
     let lb1 = ((x >> 60) & 0xF) | ((block9 & 0x03) << 4);
-    let (lr, hr, lg, hg, lb, hb) = if subset == 0 {
-        (
-            [first_lr, expand_mode1_endpoint((x >> 12) & 0x3F, pbits[1])],
-            [first_hr, expand_mode1_endpoint((x >> 18) & 0x3F, pbits[1])],
-            [first_lg, expand_mode1_endpoint((x >> 36) & 0x3F, pbits[1])],
-            [first_hg, expand_mode1_endpoint((x >> 42) & 0x3F, pbits[1])],
-            [first_lb, expand_mode1_endpoint(lb1, pbits[1])],
-            [first_hb, expand_mode1_endpoint((block9 >> 2) & 0x3F, pbits[1])],
-        )
-    } else {
-        (
-            [expand_mode1_endpoint(x & 0x3F, pbits[0]), first_lr],
-            [expand_mode1_endpoint((x >> 6) & 0x3F, pbits[0]), first_hr],
-            [expand_mode1_endpoint((x >> 24) & 0x3F, pbits[0]), first_lg],
-            [expand_mode1_endpoint((x >> 30) & 0x3F, pbits[0]), first_hg],
-            [expand_mode1_endpoint((x >> 48) & 0x3F, pbits[0]), first_lb],
-            [expand_mode1_endpoint((x >> 54) & 0x3F, pbits[0]), first_hb],
-        )
-    };
+    let lr = [first_lr, expand_mode1_endpoint((x >> 12) & 0x3F, p1)];
+    let hr = [first_hr, expand_mode1_endpoint((x >> 18) & 0x3F, p1)];
+    let lg = [first_lg, expand_mode1_endpoint((x >> 36) & 0x3F, p1)];
+    let hg = [first_hg, expand_mode1_endpoint((x >> 42) & 0x3F, p1)];
+    let lb = [first_lb, expand_mode1_endpoint(lb1, p1)];
+    let hb = [first_hb, expand_mode1_endpoint((block9 >> 2) & 0x3F, p1)];
 
     for i in 1..16 {
         let desc = pixel_descs[i];
@@ -1976,43 +1950,26 @@ fn decode_bc7_mode7_error_bounded(
     let hi = (block_bits >> 64) as u64;
 
     let part_id = ((lo >> 8) & 0x3F) as usize;
-    let pbits = [
-        ((hi >> 30) & 1) as u32,
-        ((hi >> 31) & 1) as u32,
-        ((hi >> 32) & 1) as u32,
-        ((hi >> 33) & 1) as u32,
-    ];
+    let p0 = ((hi >> 30) & 1) as u32;
+    let p1 = ((hi >> 31) & 1) as u32;
+    let p2 = ((hi >> 32) & 1) as u32;
+    let p3 = ((hi >> 33) & 1) as u32;
 
     let pixel_descs = &MODE7_PIXEL_DESCS[part_id];
     let mut err = 0u64;
-    let desc = pixel_descs[0];
-    let subset = (desc & 0x01) as usize;
-    let weight_index = ((hi >> ((desc >> 1) & 0x7F)) & ((desc >> 8) as u64)) as usize;
+    debug_assert_eq!(pixel_descs[0] & 0x01, 0);
+    debug_assert_eq!((pixel_descs[0] >> 1) & 0x7F, 34);
+    debug_assert_eq!(pixel_descs[0] >> 8, 0x01);
+    let weight_index = ((hi >> 34) & 0x01) as usize;
     let weight = BC7_WEIGHTS2[weight_index] as i32;
-    let (first_lr, first_hr, first_lg, first_hg, first_lb, first_hb, first_la, first_ha) =
-        if subset == 0 {
-            (
-                expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]),
-                expand_mode7_endpoint((lo >> 19) & 0x1F, pbits[1]),
-                expand_mode7_endpoint((lo >> 34) & 0x1F, pbits[0]),
-                expand_mode7_endpoint((lo >> 39) & 0x1F, pbits[1]),
-                expand_mode7_endpoint((lo >> 54) & 0x1F, pbits[0]),
-                expand_mode7_endpoint((lo >> 59) & 0x1F, pbits[1]),
-                expand_mode7_endpoint((hi >> 10) & 0x1F, pbits[0]),
-                expand_mode7_endpoint((hi >> 15) & 0x1F, pbits[1]),
-            )
-        } else {
-            (
-                expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2]),
-                expand_mode7_endpoint((lo >> 29) & 0x1F, pbits[3]),
-                expand_mode7_endpoint((lo >> 44) & 0x1F, pbits[2]),
-                expand_mode7_endpoint((lo >> 49) & 0x1F, pbits[3]),
-                expand_mode7_endpoint(hi & 0x1F, pbits[2]),
-                expand_mode7_endpoint((hi >> 5) & 0x1F, pbits[3]),
-                expand_mode7_endpoint((hi >> 20) & 0x1F, pbits[2]),
-                expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3]),
-            )
-        };
+    let first_lr = expand_mode7_endpoint((lo >> 14) & 0x1F, p0);
+    let first_hr = expand_mode7_endpoint((lo >> 19) & 0x1F, p1);
+    let first_lg = expand_mode7_endpoint((lo >> 34) & 0x1F, p0);
+    let first_hg = expand_mode7_endpoint((lo >> 39) & 0x1F, p1);
+    let first_lb = expand_mode7_endpoint((lo >> 54) & 0x1F, p0);
+    let first_hb = expand_mode7_endpoint((lo >> 59) & 0x1F, p1);
+    let first_la = expand_mode7_endpoint((hi >> 10) & 0x1F, p0);
+    let first_ha = expand_mode7_endpoint((hi >> 15) & 0x1F, p1);
     err += rgba_pixel_sse(
         &source[0],
         interpolate_bc7(first_lr, first_hr, weight),
@@ -2024,29 +1981,14 @@ fn decode_bc7_mode7_error_bounded(
         return None;
     }
 
-    let (lr, hr, lg, hg, lb, hb, la, ha) = if subset == 0 {
-        (
-            [first_lr, expand_mode7_endpoint((lo >> 24) & 0x1F, pbits[2])],
-            [first_hr, expand_mode7_endpoint((lo >> 29) & 0x1F, pbits[3])],
-            [first_lg, expand_mode7_endpoint((lo >> 44) & 0x1F, pbits[2])],
-            [first_hg, expand_mode7_endpoint((lo >> 49) & 0x1F, pbits[3])],
-            [first_lb, expand_mode7_endpoint(hi & 0x1F, pbits[2])],
-            [first_hb, expand_mode7_endpoint((hi >> 5) & 0x1F, pbits[3])],
-            [first_la, expand_mode7_endpoint((hi >> 20) & 0x1F, pbits[2])],
-            [first_ha, expand_mode7_endpoint((hi >> 25) & 0x1F, pbits[3])],
-        )
-    } else {
-        (
-            [expand_mode7_endpoint((lo >> 14) & 0x1F, pbits[0]), first_lr],
-            [expand_mode7_endpoint((lo >> 19) & 0x1F, pbits[1]), first_hr],
-            [expand_mode7_endpoint((lo >> 34) & 0x1F, pbits[0]), first_lg],
-            [expand_mode7_endpoint((lo >> 39) & 0x1F, pbits[1]), first_hg],
-            [expand_mode7_endpoint((lo >> 54) & 0x1F, pbits[0]), first_lb],
-            [expand_mode7_endpoint((lo >> 59) & 0x1F, pbits[1]), first_hb],
-            [expand_mode7_endpoint((hi >> 10) & 0x1F, pbits[0]), first_la],
-            [expand_mode7_endpoint((hi >> 15) & 0x1F, pbits[1]), first_ha],
-        )
-    };
+    let lr = [first_lr, expand_mode7_endpoint((lo >> 24) & 0x1F, p2)];
+    let hr = [first_hr, expand_mode7_endpoint((lo >> 29) & 0x1F, p3)];
+    let lg = [first_lg, expand_mode7_endpoint((lo >> 44) & 0x1F, p2)];
+    let hg = [first_hg, expand_mode7_endpoint((lo >> 49) & 0x1F, p3)];
+    let lb = [first_lb, expand_mode7_endpoint(hi & 0x1F, p2)];
+    let hb = [first_hb, expand_mode7_endpoint((hi >> 5) & 0x1F, p3)];
+    let la = [first_la, expand_mode7_endpoint((hi >> 20) & 0x1F, p2)];
+    let ha = [first_ha, expand_mode7_endpoint((hi >> 25) & 0x1F, p3)];
 
     for i in 1..16 {
         let desc = pixel_descs[i];
@@ -2569,46 +2511,72 @@ fn compute_block_mse_scales(
     if remaining_ultrasmooth < ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
         return block_mse_scales;
     }
-    let mut visited = vec![0u8; total_blocks];
-    let mut component = Vec::new();
-    let mut stack = Vec::new();
+    let mut component = Vec::with_capacity(ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD);
+    let mut stack = Vec::with_capacity(ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD);
     'scan: for by in 0..blocks_y {
+        let row_start = by * blocks_x;
         for bx in 0..blocks_x {
-            let idx = bx + by * blocks_x;
-            if current_mask[idx] != 0 && visited[idx] == 0 {
-                component.clear();
-                stack.clear();
-                stack.push((bx, by));
-                visited[idx] = 1;
-                while let Some((cx, cy)) = stack.pop() {
-                    component.push((cx, cy));
-                    for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                        let nx = cx as i32 + dx;
-                        let ny = cy as i32 + dy;
-                        if nx >= 0 && nx < blocks_x as i32 && ny >= 0 && ny < blocks_y as i32 {
-                            let nidx = nx as usize + ny as usize * blocks_x;
-                            if current_mask[nidx] != 0 && visited[nidx] == 0 {
-                                visited[nidx] = 1;
-                                stack.push((nx as usize, ny as usize));
-                            }
+            let start_idx = row_start + bx;
+            if current_mask[start_idx] == 0 {
+                continue;
+            }
+
+            component.clear();
+            stack.clear();
+            current_mask[start_idx] = 0;
+            stack.push((start_idx, bx));
+            let mut component_len = 0usize;
+            let mut keep_component = true;
+            while let Some((idx, x)) = stack.pop() {
+                component_len += 1;
+                if keep_component {
+                    component.push(idx);
+                    if component.len() == ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
+                        for &idx in &component {
+                            block_mse_scales[idx] = ULTRASMOOTH_BLOCK_MSE_SCALE;
                         }
+                        component.clear();
+                        keep_component = false;
                     }
+                } else {
+                    block_mse_scales[idx] = ULTRASMOOTH_BLOCK_MSE_SCALE;
                 }
-                let component_len = component.len();
-                remaining_ultrasmooth -= component_len;
-                if component_len >= ULTRASMOOTH_REGION_TOO_SMALL_THRESHOLD {
-                    for &(cx, cy) in &component {
-                        block_mse_scales[cx + cy * blocks_x] = ULTRASMOOTH_BLOCK_MSE_SCALE;
-                    }
+
+                if x > 0 {
+                    push_ultrasmooth_neighbor(idx - 1, x - 1, &mut current_mask, &mut stack);
                 }
-                if remaining_ultrasmooth == 0 {
-                    break 'scan;
+                if x + 1 < blocks_x {
+                    push_ultrasmooth_neighbor(idx + 1, x + 1, &mut current_mask, &mut stack);
                 }
+                if idx >= blocks_x {
+                    push_ultrasmooth_neighbor(idx - blocks_x, x, &mut current_mask, &mut stack);
+                }
+                let below_idx = idx + blocks_x;
+                if below_idx < total_blocks {
+                    push_ultrasmooth_neighbor(below_idx, x, &mut current_mask, &mut stack);
+                }
+            }
+            remaining_ultrasmooth -= component_len;
+            if remaining_ultrasmooth == 0 {
+                break 'scan;
             }
         }
     }
 
     block_mse_scales
+}
+
+#[inline(always)]
+fn push_ultrasmooth_neighbor(
+    idx: usize,
+    x: usize,
+    current_mask: &mut [u8],
+    stack: &mut Vec<(usize, usize)>,
+) {
+    if current_mask[idx] != 0 {
+        current_mask[idx] = 0;
+        stack.push((idx, x));
+    }
 }
 
 #[inline]
