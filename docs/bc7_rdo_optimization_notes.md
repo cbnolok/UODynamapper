@@ -429,6 +429,28 @@ Practical guidance:
 - Do not add row-level relative minimum-rate tables by default.
 - If revisiting relative pruning, target dynamic cases with high observed `rate_skips` and validate against same-state baseline worktrees, not old benchmark anchors.
 
+### Second-match fixed masks and rate-dead lengths
+
+Attempt:
+- Replaced `SecondMatchLayout`'s nested tiny heap `Vec<u8>` offset lists with fixed `[u16; 17]` bitmasks and byte overlap counts.
+- Iterated offsets with `trailing_zeros()` to preserve ascending candidate order.
+- Added a per-block `u32` mask of second-match lengths that had become rate-dead for older previous blocks.
+
+Why it looked promising:
+- `try_two_matches` builds a deterministic layout, so fixed masks avoid many small heap allocations.
+- Offset masks fit naturally in 16 bits, matching the 16 BC7 block positions.
+- For a fixed second-match length, older previous blocks have nondecreasing normal distance cost, so a rate-dead length can remain dead.
+
+Why it was reverted:
+- Focused compile/tests passed, and stats/checksums/modified counts stayed stable.
+- Clean-worktree stats runs improved, but no-stats `rdo_two_matches` regressed on the important opaque and alpha/mobile fixtures.
+- In one clean-worktree comparison, patched no-stats throughput was roughly 11988 vs 13148 blk/s on opaque and 8778 vs 9062 blk/s on alpha/mobile, with only a tiny mixed gain.
+- The rate-dead mask did not change candidate/rate-skip counters on the benchmark fixtures, so it mostly added a branch without skipping useful work.
+
+Practical guidance:
+- Keep the existing slice-based `SecondMatchLayout` unless a real workload shows `try_two_matches` layout allocation or second-match rate checks dominating.
+- Do not add second-match rate-dead length pruning by default; benchmark stats should first show that it actually skips rows beyond the existing rate check.
+
 ### Interior-specialized ultrasmooth erosion
 
 Attempt:
