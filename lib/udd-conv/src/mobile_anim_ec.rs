@@ -991,30 +991,29 @@ fn cached_decode_planned_animation_source(
     use_tick: &mut u64,
 ) -> eyre::Result<Arc<AnimationFrame>> {
     *use_tick = use_tick.saturating_add(1);
-    if !cache.contains_key(source) {
-        let decoded = Arc::new(decode_planned_animation_source(source, animationframe_packages)?);
-        cache.insert(source.clone(), CachedPlannedAnimation {
-            animation: decoded,
-            last_used: *use_tick,
-        });
-        while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
-            let Some(oldest) = cache
-                .iter()
-                .filter(|(key, _)| *key != source)
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            cache.remove(&oldest);
-        }
+    if let Some(entry) = cache.get_mut(source) {
+        entry.last_used = *use_tick;
+        return Ok(Arc::clone(&entry.animation));
     }
 
-    let entry = cache
-        .get_mut(source)
-        .expect("planned EC mobile animation source was just cached");
-    entry.last_used = *use_tick;
-    Ok(Arc::clone(&entry.animation))
+    let decoded = Arc::new(decode_planned_animation_source(source, animationframe_packages)?);
+    cache.insert(source.clone(), CachedPlannedAnimation {
+        animation: Arc::clone(&decoded),
+        last_used: *use_tick,
+    });
+    while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
+        let Some(oldest) = cache
+            .iter()
+            .filter(|(key, _)| *key != source)
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+
+    Ok(decoded)
 }
 
 fn planned_frame_indices_by_body(
