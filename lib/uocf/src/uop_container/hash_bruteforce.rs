@@ -1,6 +1,6 @@
 //! Brute-force implementation to find a string that matches a given UOP hash.
 
-use crate::uop_container::hash::{hash_file_name_single, hash_file_name_simd_batch_strs};
+use crate::uop_container::hash::{hash_file_name_single, hash_file_name_simd_batch_strs_into};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -170,12 +170,14 @@ pub fn bruteforce_hash_simd(
             .into_par_iter()
             .find_map_any(|i| {
                 let mut generator = CandidateGenerator::new(len, charset, prefix, suffix, i);
+                let mut hashes = Vec::new();
                 while let Some(batch) = generator.next_batch(1024) {
                     if stop_signal.load(Ordering::Relaxed) {
                         return None;
                     }
                     let batch_strs: Vec<&str> = batch.iter().map(|s| s.as_str()).collect();
-                    let hashes = hash_file_name_simd_batch_strs(&batch_strs);
+                    hashes.resize(batch_strs.len(), 0);
+                    hash_file_name_simd_batch_strs_into(&batch_strs, &mut hashes);
                     for (j, &h) in hashes.iter().enumerate() {
                         if h == hash {
                             stop_signal.store(true, Ordering::Relaxed);
@@ -260,4 +262,3 @@ impl<'a> CandidateGenerator<'a> {
         Some(batch)
     }
 }
-

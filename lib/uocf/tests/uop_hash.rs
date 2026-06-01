@@ -28,6 +28,20 @@ fn scalar_and_simd_agree_small() {
 }
 
 #[test]
+fn simd_batch_can_write_into_caller_buffer() {
+    let samples: Vec<String> = (0..48)
+        .map(|index| format!("build/worldart/{index:08}.dds"))
+        .collect();
+    let refs: Vec<u64> = samples.iter().map(|s| hash_file_name_single(s)).collect();
+    let s_refs: Vec<&str> = samples.iter().map(|s| s.as_str()).collect();
+    let mut hashes = vec![u64::MAX; s_refs.len()];
+
+    hash_file_name_simd_batch_strs_into(&s_refs, &mut hashes);
+
+    assert_eq!(refs, hashes);
+}
+
+#[test]
 fn randomized_matches() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(0x12345678);
     let mut samples: Vec<String> = Vec::new();

@@ -233,6 +233,20 @@ impl UopPackage {
         self.files_by_hash.get(&filename_hash)
     }
 
+    /// Find the first file entry matching one of the provided hashes.
+    ///
+    /// Candidate order is preserved, so callers can list preferred paths first
+    /// and still hash or probe those candidates as one batch.
+    pub fn get_file_by_hash_batch(&self, filename_hashes: &[u64]) -> Option<(usize, u64, &UopFile)> {
+        for (index, &filename_hash) in filename_hashes.iter().enumerate() {
+            if let Some(file) = self.get_file_by_hash(filename_hash) {
+                return Some((index, filename_hash, file));
+            }
+        }
+
+        None
+    }
+
     /// Find a mutable file entry by its normalized filename hash.
     pub fn get_file_by_hash_mut(&mut self, filename_hash: u64) -> Option<&mut UopFile> {
         self.hash_index_dirty = true;
@@ -252,6 +266,20 @@ impl UopPackage {
     /// that still have the original UOP logical path string available.
     pub fn get_file_by_name(&self, packed_file_name: &str) -> Option<&UopFile> {
         self.get_file_by_hash(hash::hash_file_name_single(packed_file_name))
+    }
+
+    /// Find the first file entry matching one of the provided internal packed paths.
+    ///
+    /// The caller-owned scratch buffer is resized and filled with SIMD-batched
+    /// UOP filename hashes before probing the package index.
+    pub fn get_file_by_name_batch<'a>(
+        &'a self,
+        packed_file_names: &[&str],
+        scratch_hashes: &mut Vec<u64>,
+    ) -> Option<(usize, u64, &'a UopFile)> {
+        scratch_hashes.resize(packed_file_names.len(), 0);
+        hash::hash_file_name_simd_batch_strs_into(packed_file_names, scratch_hashes);
+        self.get_file_by_hash_batch(scratch_hashes)
     }
 
     /// Read bytes from an arbitrary source and append them as one UOP file.

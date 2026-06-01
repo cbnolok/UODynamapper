@@ -243,6 +243,36 @@ fn get_file_by_hash_returns_none_for_missing_entry() {
 }
 
 #[test]
+fn get_file_by_name_batch_returns_first_matching_candidate() {
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"second", "build/candidates/00000002.bin", CompressionFlag::None)
+        .expect("add second candidate");
+    package
+        .add_file_from_memory(b"third", "build/candidates/00000003.bin", CompressionFlag::None)
+        .expect("add third candidate");
+
+    let candidates = [
+        "build/candidates/00000000.bin",
+        "build/candidates/00000001.bin",
+        "build/candidates/00000002.bin",
+        "build/candidates/00000003.bin",
+    ];
+    let mut scratch_hashes = Vec::new();
+    let (index, hash, file) = package
+        .get_file_by_name_batch(&candidates, &mut scratch_hashes)
+        .expect("find first matching candidate");
+
+    assert_eq!(index, 2);
+    assert_eq!(hash, hash_file_name_single(candidates[2]));
+    assert_eq!(scratch_hashes.len(), candidates.len());
+    assert_eq!(
+        file.unpack().expect("unpack matched candidate"),
+        b"second"
+    );
+}
+
+#[test]
 fn load_rejects_invalid_magic() {
     let path = temp_uop_path("uop_invalid_magic");
     let mut file = fs::File::create(&path).expect("create temp file");

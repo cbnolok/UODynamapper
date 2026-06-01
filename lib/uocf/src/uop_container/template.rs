@@ -103,7 +103,8 @@ impl UopTemplate {
                 }
 
                 let candidate_strs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
-                let hashes = hash::hash_file_name_simd_batch_strs(&candidate_strs);
+                let mut hashes = vec![0u64; candidate_strs.len()];
+                hash::hash_file_name_simd_batch_strs_into(&candidate_strs, &mut hashes);
                 
                 let mut found = HashMap::new();
                 for (j, &h) in hashes.iter().enumerate() {

@@ -334,13 +334,18 @@ impl GumpMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            for file_name in uop_gump_candidates(gump_id) {
-                let hash = crate::uop_container::hash::hash_file_name_single(&file_name);
-                if let Some(uop_payload) = uop.unpack_file_by_hash(hash)? {
-                    let (dimensions, rle_payload) = decode_uop_gump_header(&uop_payload)?;
-                    scratch_buffer.extend_from_slice(rle_payload);
-                    return Ok(RawGumpData::Scratch(dimensions));
-                }
+            let candidates = uop_gump_candidates(gump_id);
+            let candidate_refs = [candidates[0].as_str(), candidates[1].as_str()];
+            let mut scratch_hashes = Vec::new();
+            if let Some((_index, hash, _file)) =
+                uop.get_file_by_name_batch(&candidate_refs, &mut scratch_hashes)
+            {
+                let uop_payload = uop
+                    .unpack_file_by_hash(hash)?
+                    .ok_or_else(|| eyre!("matched UOP gump entry disappeared"))?;
+                let (dimensions, rle_payload) = decode_uop_gump_header(&uop_payload)?;
+                scratch_buffer.extend_from_slice(rle_payload);
+                return Ok(RawGumpData::Scratch(dimensions));
             }
         }
 
@@ -401,13 +406,14 @@ impl GumpMap {
         }
 
         if let Some(uop) = &self.uop_package {
-            for name in uop_gump_candidates(gump_id) {
-                if uop
-                    .get_file_by_hash(crate::uop_container::hash::hash_file_name_single(&name))
-                    .is_some()
-                {
-                    return true;
-                }
+            let candidates = uop_gump_candidates(gump_id);
+            let candidate_refs = [candidates[0].as_str(), candidates[1].as_str()];
+            let mut scratch_hashes = Vec::new();
+            if uop
+                .get_file_by_name_batch(&candidate_refs, &mut scratch_hashes)
+                .is_some()
+            {
+                return true;
             }
         }
 

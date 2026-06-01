@@ -322,12 +322,15 @@ const PREFERRED_LANES: &[usize] = &[4, 8];
 #[cfg(not(target_arch = "aarch64"))]
 const PREFERRED_LANES: &[usize] = &[8, 4];
 
-pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
-    let bytes: Vec<&[u8]> = inputs.iter().map(|input| input.as_bytes()).collect();
-    let mut out = vec![0u64; inputs.len()];
+pub fn hash_file_name_simd_batch_bytes_into(inputs: &[&[u8]], out: &mut [u64]) {
+    assert_eq!(
+        inputs.len(),
+        out.len(),
+        "UOP batch hash input and output lengths must match"
+    );
 
     let mut chunk_buckets: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (index, bytes) in bytes.iter().enumerate() {
+    for (index, bytes) in inputs.iter().enumerate() {
         let full_chunks = bytes.len().saturating_sub(1) / 12;
         chunk_buckets.entry(full_chunks).or_default().push(index);
     }
@@ -335,7 +338,7 @@ pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
     for (full_chunks, chunk_group) in chunk_buckets {
         let mut tail_buckets = vec![Vec::new(); 13];
         for index in chunk_group {
-            let tail = bytes[index].len() - full_chunks * 12;
+            let tail = inputs[index].len() - full_chunks * 12;
             tail_buckets[tail].push(index);
         }
 
@@ -344,16 +347,16 @@ pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
                 match lanes {
                     8 => process_same_width::<8>(
                         indices,
-                        &bytes,
-                        &mut out,
+                        inputs,
+                        out,
                         full_chunks,
                         tail,
                         hash_same_width_x8,
                     ),
                     4 => process_same_width::<4>(
                         indices,
-                        &bytes,
-                        &mut out,
+                        inputs,
+                        out,
                         full_chunks,
                         tail,
                         hash_same_width_x4,
@@ -372,15 +375,15 @@ pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
             match lanes {
                 8 => process_mixed_tail::<8>(
                     &mut leftovers,
-                    &bytes,
-                    &mut out,
+                    inputs,
+                    out,
                     full_chunks,
                     hash_mixed_tail_x8,
                 ),
                 4 => process_mixed_tail::<4>(
                     &mut leftovers,
-                    &bytes,
-                    &mut out,
+                    inputs,
+                    out,
                     full_chunks,
                     hash_mixed_tail_x4,
                 ),
@@ -389,10 +392,19 @@ pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
         }
 
         for index in leftovers {
-            out[index] = hash_file_name_single(inputs[index]);
+            out[index] = hash_file_name_bytes(inputs[index]);
         }
     }
+}
+
+pub fn hash_file_name_simd_batch_strs_into(inputs: &[&str], out: &mut [u64]) {
+    let bytes: Vec<&[u8]> = inputs.iter().map(|input| input.as_bytes()).collect();
+    hash_file_name_simd_batch_bytes_into(&bytes, out);
+}
+
+pub fn hash_file_name_simd_batch_strs(inputs: &[&str]) -> Vec<u64> {
+    let mut out = vec![0u64; inputs.len()];
+    hash_file_name_simd_batch_strs_into(inputs, &mut out);
 
     out
 }
-

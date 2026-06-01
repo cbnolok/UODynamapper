@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
-use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 use crate::gump_atlas::{
@@ -246,14 +245,17 @@ fn unpack_ec_gump_payload(
     package: &UopPackage,
     gump_id: u32,
 ) -> eyre::Result<Option<(ECImageFormat, Vec<u8>)>> {
-    for (path, format) in ec_gump_candidates(gump_id) {
-        let hash = hash_file_name_single(&path);
-        if package.get_file_by_hash(hash).is_some() {
-            let payload = package
-                .unpack_file_by_hash(hash)?
-                .ok_or_else(|| eyre::eyre!("EC gump entry disappeared from interface.uop"))?;
-            return Ok(Some((infer_ec_image_format(&payload, format), payload)));
-        }
+    let candidates = ec_gump_candidates(gump_id);
+    let candidate_refs = [candidates[0].0.as_str(), candidates[1].0.as_str()];
+    let mut scratch_hashes = Vec::new();
+    if let Some((index, hash, _file)) =
+        package.get_file_by_name_batch(&candidate_refs, &mut scratch_hashes)
+    {
+        let format = candidates[index].1;
+        let payload = package
+            .unpack_file_by_hash(hash)?
+            .ok_or_else(|| eyre::eyre!("EC gump entry disappeared from interface.uop"))?;
+        return Ok(Some((infer_ec_image_format(&payload, format), payload)));
     }
     Ok(None)
 }
