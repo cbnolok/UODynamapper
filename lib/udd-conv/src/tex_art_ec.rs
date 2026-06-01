@@ -767,6 +767,7 @@ fn decode_present_tiles(
     let mut canonical_by_source: HashMap<CanonicalTileKey, usize> = HashMap::new();
     let mut canonical_by_rendered_tile = HashMap::new();
     let mut crop_adjustments = HashMap::new();
+    let mut texture_files_by_source = HashMap::<TextureSourceKey, Option<TextureFile>>::new();
 
     let mut art_ids = art_definition
         .definitions
@@ -830,13 +831,19 @@ fn decode_present_tiles(
                 continue;
             }
 
-            let file = match source_key {
-                TextureSourceKey::World(texture_id) => world_textures
-                    .expect("world texture source was selected only when available")
-                    .get_from_id(texture_id)?,
-                TextureSourceKey::Legacy(texture_id) => legacy_textures
-                    .expect("legacy texture source was selected only when available")
-                    .get_from_id(texture_id)?,
+            let file = if let Some(file) = texture_files_by_source.get(&source_key) {
+                file.clone()
+            } else {
+                let file = match source_key {
+                    TextureSourceKey::World(texture_id) => world_textures
+                        .expect("world texture source was selected only when available")
+                        .get_from_id(texture_id)?,
+                    TextureSourceKey::Legacy(texture_id) => legacy_textures
+                        .expect("legacy texture source was selected only when available")
+                        .get_from_id(texture_id)?,
+                };
+                texture_files_by_source.insert(source_key, file.clone());
+                file
             };
             let Some(file) = file else {
                 continue;
