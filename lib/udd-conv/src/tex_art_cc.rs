@@ -456,6 +456,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
         .progress_chars("#>-"));
     pb.set_message(progress_message);
 
+    let page_count = pages.len() as u32;
     let encoded_pages = if use_bc7 {
         let extent = bc7_extent.expect("BC7 extent is initialized when BC7 output is selected");
         payload_progress(AssetTaskProgress {
@@ -557,7 +558,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
         });
         let payload_completed = AtomicU64::new(0);
         pages
-            .iter()
+            .into_iter()
             .map(|page| {
                 pb.inc(1);
                 let completed = payload_completed
@@ -569,16 +570,17 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
                     completed,
                     total: progress_len,
                 });
+                let record = page.record;
                 (
-                    page_entry_path(page.record.page_index, pixel_format),
-                    crop_rgba_page(
-                        &page.pixels,
+                    page_entry_path(record.page_index, pixel_format),
+                    crop_rgba_page_owned(
+                        page.pixels,
                         options.atlas_width,
-                        page.record.used_width,
-                        page.record.used_height,
+                        record.used_width,
+                        record.used_height,
                     ),
-                    page.record.used_width,
-                    page.record.used_height,
+                    record.used_width,
+                    record.used_height,
                 )
             })
             .collect()
@@ -619,7 +621,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
     Ok(TexArtCcBuildSummary {
         slot_count,
         populated_slot_count,
-        page_count: pages.len() as u32,
+        page_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
     })
@@ -1335,6 +1337,21 @@ pub fn crop_rgba_page(src: &[u8], src_width: u32, crop_width: u32, crop_height: 
     }
 
     cropped
+}
+
+pub fn crop_rgba_page_owned(
+    mut src: Vec<u8>,
+    src_width: u32,
+    crop_width: u32,
+    crop_height: u32,
+) -> Vec<u8> {
+    let dst_len = crop_width as usize * crop_height as usize * 4;
+    if crop_width == src_width && dst_len <= src.len() {
+        src.truncate(dst_len);
+        return src;
+    }
+
+    crop_rgba_page(&src, src_width, crop_width, crop_height)
 }
 
 pub fn serialize_page_manifest(
