@@ -2192,14 +2192,15 @@ fn lerp(a: f32, b: f32, s: f32) -> f32 {
 fn compute_block_max_std_dev(pixels: &RgbaBlock) -> f32 {
     let mut max_std_dev = 0.0f32;
     for c in 0..4 {
-        let mut sum = 0.0f64;
-        let mut sum2 = 0.0f64;
+        let mut sum = 0u32;
+        let mut sum2 = 0u32;
         for i in 0..16 {
-            let val = pixels[i][c] as f64;
+            let val = pixels[i][c] as u32;
             sum += val;
             sum2 += val * val;
         }
-        let std_dev = ((16.0 * sum2 - sum * sum).max(0.0).sqrt() / 16.0) as f32;
+        let variance = (16 * sum2).saturating_sub(sum * sum);
+        let std_dev = (variance as f64).sqrt() as f32 * (1.0 / 16.0);
         if std_dev > max_std_dev {
             max_std_dev = std_dev;
         }
