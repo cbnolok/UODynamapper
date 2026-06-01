@@ -39,5 +39,9 @@ memmap2 = "0.9"
 profiling = []
 tile_mappings_builder = []
 
+[[bench]]
+name = "rle_decode"
+harness = false
+
 [dev-dependencies]
 rand = "0.8.6"
