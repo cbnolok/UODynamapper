@@ -61,6 +61,37 @@ const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.82;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 
+fn apply_kr_liquid_material_response(color: vec3<f32>,
+                                     base_albedo: vec3<f32>,
+                                     world_pos: vec3<f32>,
+                                     Nw: vec3<f32>,
+                                     V: vec3<f32>,
+                                     L: vec3<f32>,
+                                     tile: TileUniform,
+                                     specular_strength: f32,
+                                     enable_water: u32) -> vec3<f32> {
+  let is_liquid = tile.is_wet == 1u || (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  if (!is_liquid || specular_strength <= 0.0001) {
+    return color;
+  }
+
+  let N = normalize(Nw);
+  let view_dir = normalize(V);
+  let light_dir = normalize(L);
+  let H = normalize(view_dir + light_dir);
+  let view_glance = pow(max(1.0 - dot(N, view_dir), 0.0), 2.0);
+  let sun_glint = pow(max(dot(N, H), 0.0), 22.0);
+  let phase_time = select(0.0, globals.time * 1.35, enable_water == 1u);
+  let ripple = 0.72 + 0.28 * sin(dot(world_pos.xz, vec2<f32>(1.7, 2.3)) + phase_time);
+
+  let warm_liquid = clamp(base_albedo.r - max(base_albedo.g, base_albedo.b), 0.0, 1.0);
+  let cool_tint = vec3<f32>(0.70, 0.92, 1.04);
+  let warm_tint = vec3<f32>(1.08, 0.58, 0.24);
+  let tint = mix(cool_tint, warm_tint, warm_liquid);
+  let response = (sun_glint * 0.55 + view_glance * 0.18) * ripple;
+  return color + tint * response * clamp(specular_strength, 0.0, 0.25);
+}
+
 fn ec_transition_edge_weight(edge_distance: f32) -> f32 {
   return 1.0 - smoothstep(0.0, EC_TERRAIN_TRANSITION_WIDTH, edge_distance);
 }
@@ -477,6 +508,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       base_albedo, in.world_position.xyz, Nw, V, L,
       ambient_strength, diffuse_strength, sharpness_factor, sharpness_mix,
       fill_strength, rim_strength, specular_strength, enable_gloom
+    );
+    hdr_rgb = apply_kr_liquid_material_response(
+      hdr_rgb,
+      base_albedo,
+      in.world_position.xyz,
+      Nw,
+      V,
+      L,
+      tile,
+      specular_strength,
+      enable_water,
     );
   }
   hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
