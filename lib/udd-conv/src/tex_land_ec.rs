@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1410,12 +1410,11 @@ fn decode_layer_texture_rgba(
     legacy_textures: Option<&Textures>,
 ) -> eyre::Result<Option<DecodedLayerTexture>> {
     let file = if let Some(wt) = world_textures {
-        let world_terrain_path = format!("build/worldart/land/{texture_id:08}.dds");
         let world_terrain_hash =
-            uocf::uop_container::hash::hash_file_name_single(&world_terrain_path);
+            texture_path_hash("build/worldart/land/", texture_id, ".dds");
         wt.get_from_hash(
             world_terrain_hash,
-            Some(&world_terrain_path),
+            None,
             ECImageFormat::DDS,
         )?
     } else {
@@ -1424,12 +1423,11 @@ fn decode_layer_texture_rgba(
 
     let file = if file.is_none() {
         if let Some(lt) = legacy_textures {
-            let legacy_terrain_path = format!("build/legacyland/{texture_id:08}.dat");
             let legacy_terrain_hash =
-                uocf::uop_container::hash::hash_file_name_single(&legacy_terrain_path);
+                texture_path_hash("build/legacyland/", texture_id, ".dat");
             lt.get_from_hash(
                 legacy_terrain_hash,
-                Some(&legacy_terrain_path),
+                None,
                 ECImageFormat::DDS,
             )?
         } else {
@@ -1471,6 +1469,19 @@ fn decode_layer_texture_rgba(
     };
 
     Ok(decoded)
+}
+
+fn texture_path_hash(prefix: &str, texture_id: u32, suffix: &str) -> u64 {
+    let mut path_buf = [0u8; 64];
+    let len = {
+        let full_len = path_buf.len();
+        let mut slice = &mut path_buf[..];
+        write!(slice, "{prefix}{texture_id:08}{suffix}")
+            .expect("texture path fits stack buffer");
+        full_len - slice.len()
+    };
+    let path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
+    uocf::uop_container::hash::hash_file_name_single(path)
 }
 
 pub fn apply_slot_aliases(
