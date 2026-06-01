@@ -408,6 +408,27 @@ Practical guidance:
 - Keep the safe `DistanceCostLayout` accessors unless assembly evidence shows remaining checks in the final hot loops.
 - Unsafe indexing should not be assumed faster for tiny table lookups; validate it against no-stats throughput before keeping it.
 
+### Relative-RDO minimum-rate row skip
+
+Attempt:
+- Added a per-length bitmask of relative distance indices used by `RelativeCandidateLayout`.
+- Precomputed the minimum possible relative trial lambda for each `(block_delta, len)` row.
+- Skipped an entire relative candidate length row when that minimum rate was already `>= best_t`, preserving the same condition used by the existing per-candidate rate skip.
+
+Why it looked promising:
+- Relative rows can contain many source/destination candidates for each previous block and match length.
+- A row-level skip should avoid candidate iteration, segment extraction, hashing, hash-table probes, and decode attempts once `best_t` is tight.
+- The exactness invariant is strong: if the minimum possible rate cannot beat `best_t`, no candidate in that row can beat it.
+
+Why it was reverted:
+- Focused compile/tests passed and relative RDO checksums stayed stable.
+- Same-machine baseline benchmarking from a temporary worktree showed the patch regressed `rdo_relative`: the added precompute/table access cost was higher than the saved inner-loop work on the benchmark fixtures.
+- The existing per-candidate rate skip is already cheap, and many relative rows still need to be visited.
+
+Practical guidance:
+- Do not add row-level relative minimum-rate tables by default.
+- If revisiting relative pruning, target dynamic cases with high observed `rate_skips` and validate against same-state baseline worktrees, not old benchmark anchors.
+
 ## Benchmark Context
 
 Commands used for these decisions:
