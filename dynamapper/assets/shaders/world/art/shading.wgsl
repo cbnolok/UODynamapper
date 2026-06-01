@@ -17,6 +17,45 @@ fn art_saturate(c: vec3<f32>, saturation: f32) -> vec3<f32> {
     return mix(vec3<f32>(luma), c, saturation);
 }
 
+fn apply_art_atmosphere_depth(
+    rgb: vec3<f32>,
+    alpha: f32,
+    world_pos: vec3<f32>,
+    camera_pos: vec3<f32>,
+    atmosphere_tint: vec3<f32>,
+    fog_color: vec4<f32>,
+    fog_night_color: vec4<f32>,
+    fog_params: vec4<f32>,
+    enable_fog: u32,
+    visual_profile: u32,
+) -> vec3<f32> {
+    if (enable_fog != 1u || visual_profile != 2u) {
+        return rgb;
+    }
+
+    let dist_density = clamp(fog_params.x, 0.0, 1.0);
+    let height_density = clamp(fog_params.y, 0.0, 1.0);
+    if (dist_density <= 0.0001 && height_density <= 0.0001) {
+        return rgb;
+    }
+
+    let dist_tiles = distance(world_pos.xz, camera_pos.xz);
+    let distance_term = smoothstep(96.0, 520.0, dist_tiles) * dist_density * 4.5;
+    let height_term = smoothstep(2.0, 16.0, max(world_pos.y, 0.0)) * height_density * 7.0;
+    let alpha_weight = smoothstep(0.05, 0.65, alpha);
+    let amount = clamp((distance_term + height_term) * clamp(fog_color.a, 0.0, 0.45) * 0.30 * alpha_weight, 0.0, 0.10);
+    if (amount <= 0.0001) {
+        return rgb;
+    }
+
+    let night_blend = clamp(fog_night_color.a, 0.0, 1.0);
+    let fog_tint = mix(fog_color.rgb, fog_night_color.rgb, night_blend);
+    let depth_tint = mix(atmosphere_tint, fog_tint, 0.20);
+    let luma = art_luminance(rgb);
+    let softened = mix(rgb, vec3<f32>(luma), amount * 0.18);
+    return max(mix(softened, depth_tint, amount), vec3<f32>(0.0));
+}
+
 fn art_fake_normal(uv_in_tile: vec2<f32>, depth_class: u32, is_ground_art: bool) -> vec3<f32> {
     let center = uv_in_tile - vec2<f32>(0.5);
     var side_slope = clamp(center.x * 1.65, -0.9, 0.9);

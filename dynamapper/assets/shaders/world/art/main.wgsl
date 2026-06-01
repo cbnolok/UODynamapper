@@ -18,7 +18,7 @@
     PASS_MODE_TRANSPARENT, SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 }
 #import "shaders/world/art/hue.wgsl"::apply_static_hue
-#import "shaders/world/art/shading.wgsl"::apply_art_surface_shading
+#import "shaders/world/art/shading.wgsl"::{apply_art_surface_shading, apply_art_atmosphere_depth}
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -168,6 +168,18 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
+    shaded = vec4<f32>(apply_art_atmosphere_depth(
+        shaded.rgb,
+        shaded.a,
+        in.world_pos,
+        scene.camera_position,
+        global_light.atmosphere_tint,
+        global_light.fog_color,
+        global_light.fog_night_color,
+        global_light.fog_params,
+        global_light.enable_fog,
+        effects.post_process_profile,
+    ), shaded.a);
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {
