@@ -8,7 +8,7 @@ use crate::enhanced::tileart::{self, ArtData};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::UopPackage;
 use byteorder::{LittleEndian, ReadBytesExt};
-use image::{DynamicImage, ImageBuffer};
+use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
@@ -161,6 +161,10 @@ impl TextureFile {
     /// Engine renderer (e.g., Bevy) should strictly utilize `raw_bytes` and forward the BC blocks payload
     /// directly to VRAM relying on `format`.
     pub fn decode_to_rgba(&self) -> eyre::Result<DynamicImage> {
+        Ok(DynamicImage::ImageRgba8(self.decode_to_rgba8()?))
+    }
+
+    pub fn decode_to_rgba8(&self) -> eyre::Result<RgbaImage> {
         match self.format {
             ECImageFormat::DDS => {
                 let cursor = Cursor::new(&self.raw_data[..]);
@@ -177,11 +181,12 @@ impl TextureFile {
                     .wrap_err("Failed decoding DDS image")?;
                 let image_buffer = ImageBuffer::from_raw(size.width, size.height, rgba)
                     .ok_or_else(|| eyre::eyre!("Could not map buffer"))?;
-                Ok(DynamicImage::ImageRgba8(image_buffer))
+                Ok(image_buffer)
             }
             ECImageFormat::TGA => {
                 image::load(Cursor::new(&self.raw_data[..]), image::ImageFormat::Tga)
                     .wrap_err("Failed reading TGA")
+                    .map(|image| image.to_rgba8())
             }
             ECImageFormat::Unknown => {
                 eyre::bail!("Unknown image format payload")

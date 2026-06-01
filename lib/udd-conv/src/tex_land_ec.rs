@@ -1460,7 +1460,7 @@ fn decode_layer_texture_rgba(
     };
 
     let decoded = if let Some(file) = file {
-        let rgba = file.decode_to_rgba()?.to_rgba8();
+        let rgba = file.decode_to_rgba8()?;
         Some(DecodedLayerTexture {
             width: rgba.width(),
             height: rgba.height(),

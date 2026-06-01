@@ -878,8 +878,7 @@ fn decode_present_tiles(
     let decoded_groups = decode_groups
         .par_iter()
         .map(|group| -> eyre::Result<DecodedArtDecodeGroup> {
-            let img = group.file.decode_to_rgba()?;
-            let rgba = img.to_rgba8();
+            let rgba = group.file.decode_to_rgba8()?;
             let source_width = rgba.width() as u16;
             let source_height = rgba.height() as u16;
             let clip_rect =
