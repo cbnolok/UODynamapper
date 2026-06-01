@@ -61,6 +61,7 @@ const BODY_RESOLVE_MANIFEST_MAGIC: [u8; 4] = *b"MABR";
 const BODY_TYPE_MANIFEST_MAGIC: [u8; 4] = *b"MABT";
 const MOBILE_ANIM_CC_METADATA_VERSION: u32 = 3;
 const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
+const PAGE_PACK_CANDIDATE_INITIAL_CAPACITY_LIMIT: usize = 4096;
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const MOBILE_ANIM_CC_FLAG_UNMAPPED_SOURCE_INDEX: u16 = 1 << 15;
 const CLASSIC_ANIMATIONFRAME_FILES: &[&str] = &[
@@ -1911,7 +1912,7 @@ fn page_prefix_pack_candidates(
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<Vec<PagePackCandidate<u32>>> {
-    let mut candidates = Vec::with_capacity(frames.len());
+    let mut candidates = Vec::with_capacity(page_pack_candidate_initial_capacity(frames.len()));
     for frame in frames {
         let Ok((width_axis, height_axis)) = packing_axes(frame, page_size, options) else {
             break;
@@ -1931,7 +1932,7 @@ fn planned_page_prefix_pack_candidates(
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
 ) -> eyre::Result<Vec<PagePackCandidate<u32>>> {
-    let mut candidates = Vec::with_capacity(frames.len());
+    let mut candidates = Vec::with_capacity(page_pack_candidate_initial_capacity(frames.len()));
     for frame in frames {
         let Ok((width_axis, height_axis)) = planned_packing_axes(frame, page_size, options) else {
             break;
@@ -1944,6 +1945,10 @@ fn planned_page_prefix_pack_candidates(
         });
     }
     Ok(candidates)
+}
+
+fn page_pack_candidate_initial_capacity(frame_count: usize) -> usize {
+    frame_count.min(PAGE_PACK_CANDIDATE_INITIAL_CAPACITY_LIMIT)
 }
 
 fn page_pack_candidates_fit<Key: Ord + Copy>(
