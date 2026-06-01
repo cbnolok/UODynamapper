@@ -178,6 +178,24 @@ Practical guidance:
 - Do not repeat this partial hoist.
 - If optimizing this path, split the whole candidate search into scaled/unbounded outer paths or prove the zero-scale case can be eliminated for the relevant public parameters.
 
+### Mode-history capacity pre-count
+
+Attempt:
+- After replacing the per-mode ring history with append-only histories, counted initial block modes and allocated each mode history to its expected final size.
+- Intended to avoid `Vec` growth in alpha/mobile cases dominated by one BC7 mode.
+
+Why it looked promising:
+- The append-only history improves iteration but can grow beyond the initial lookback-sized capacity.
+- Alpha-mobile is heavily Mode 7, so one history vector grows from the default 64-block capacity to most of the page.
+
+Why it was reverted:
+- Correctness tests passed and checksums stayed stable, but no-stats benchmark timing did not improve.
+- The extra full pass over `block_modes` outweighed avoiding a small number of vector growth events on the tested 1024-block pages.
+
+Practical guidance:
+- Keep append-only history iteration, but do not pre-count mode capacities for current page sizes.
+- Revisit only if much larger RDO chunks show allocator growth as a measurable cost.
+
 ## Benchmark Context
 
 Commands used for these decisions:
