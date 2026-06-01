@@ -114,6 +114,27 @@ fn ec_transition_neighbor_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f3
   return weight;
 }
 
+fn ec_transition_boundary_neighbor_weight(
+  current_tile: TileUniform,
+  neighbor_tile: TileUniform,
+  offset: vec2<i32>,
+  uv_in_tile: vec2<f32>,
+) -> f32 {
+  if (neighbor_tile.texture_size != 2u) {
+    return 0.0;
+  }
+
+  if (neighbor_tile.texture_payload == current_tile.texture_payload) {
+    return 0.0;
+  }
+
+  if (neighbor_tile.texture_extent.x == 0u || neighbor_tile.texture_extent.y == 0u) {
+    return 0.0;
+  }
+
+  return ec_transition_neighbor_weight(offset, uv_in_tile);
+}
+
 fn ec_transition_neighbor_color(
   current_tile: TileUniform,
   neighbor_tile: TileUniform,
@@ -140,6 +161,81 @@ fn ec_transition_diagonal_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f3
   let x_weight = ec_transition_neighbor_weight(vec2<i32>(offset.x, 0), uv_in_tile);
   let y_weight = ec_transition_neighbor_weight(vec2<i32>(0, offset.y), uv_in_tile);
   return min(x_weight, y_weight) * 0.75;
+}
+
+fn ec_transition_boundary_diagonal_weight(
+  current_tile: TileUniform,
+  neighbor_tile: TileUniform,
+  offset: vec2<i32>,
+  uv_in_tile: vec2<f32>,
+) -> f32 {
+  if (neighbor_tile.texture_size != 2u) {
+    return 0.0;
+  }
+
+  if (neighbor_tile.texture_payload == current_tile.texture_payload) {
+    return 0.0;
+  }
+
+  if (neighbor_tile.texture_extent.x == 0u || neighbor_tile.texture_extent.y == 0u) {
+    return 0.0;
+  }
+
+  return ec_transition_diagonal_weight(offset, uv_in_tile);
+}
+
+fn ec_transition_boundary_weight(
+  current_tile: TileUniform,
+  world_tile: vec2<i32>,
+  uv_in_tile: vec2<f32>,
+) -> f32 {
+  if (current_tile.texture_size != 2u) {
+    return 0.0;
+  }
+
+  var weight = 0.0;
+  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y), vec2<i32>(-1, 0), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y), vec2<i32>(1, 0), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x, world_tile.y - 1), vec2<i32>(0, -1), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x, world_tile.y + 1), vec2<i32>(0, 1), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y - 1), vec2<i32>(-1, -1), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y - 1), vec2<i32>(1, -1), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y + 1), vec2<i32>(-1, 1), uv_in_tile));
+  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y + 1), vec2<i32>(1, 1), uv_in_tile));
+  return clamp(weight, 0.0, 1.0);
+}
+
+fn apply_kr_transition_grime(
+  color: vec3<f32>,
+  current_tile: TileUniform,
+  world_tile: vec2<i32>,
+  uv_in_tile: vec2<f32>,
+  world_xz: vec2<f32>,
+  strength: f32,
+) -> vec3<f32> {
+  let boundary = ec_transition_boundary_weight(current_tile, world_tile, uv_in_tile);
+  let grime_strength = clamp(strength, 0.0, 1.0);
+  if (boundary <= 0.0001 || grime_strength <= 0.0001) {
+    return color;
+  }
+
+  let breakup = 0.78 + 0.22 * hash(floor(world_xz * 2.0));
+  let amount = boundary * grime_strength * breakup;
+  return mix(color, color * vec3<f32>(0.74, 0.70, 0.60), amount * 0.32);
+}
+
+fn kr_height_contact_shadow(world_tile: vec2<i32>, center_height: f32, strength: f32) -> f32 {
+  let relief_strength = clamp(strength, 0.0, 1.5);
+  if (relief_strength <= 0.0001) {
+    return 0.0;
+  }
+
+  let west = atlas_read_height(world_tile.x - 1, world_tile.y);
+  let east = atlas_read_height(world_tile.x + 1, world_tile.y);
+  let north = atlas_read_height(world_tile.x, world_tile.y - 1);
+  let south = atlas_read_height(world_tile.x, world_tile.y + 1);
+  let cover_height = max(max(west, east), max(north, south)) - center_height;
+  return smoothstep(0.04, 0.55, max(cover_height, 0.0)) * relief_strength;
 }
 
 fn blend_ec_terrain_transitions(
@@ -484,6 +580,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
     let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
     let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
+    if (visual_profile == 2u) {
+      base_albedo = apply_kr_transition_grime(
+        base_albedo,
+        tile,
+        world_tile,
+        uv_in_tile,
+        in.world_position.xz,
+        effects.grunge_strength,
+      );
+    }
     base_albedo = apply_shadow_aware_land_grunge(
       base_albedo,
       in.world_position.xz,
@@ -509,6 +615,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       ambient_strength, diffuse_strength, sharpness_factor, sharpness_mix,
       fill_strength, rim_strength, specular_strength, enable_gloom
     );
+    let contact_shadow = kr_height_contact_shadow(
+      world_tile,
+      tile.tile_height,
+      effects.kr_land_relief_shadow_strength,
+    );
+    hdr_rgb *= 1.0 - contact_shadow * 0.10;
     hdr_rgb = apply_kr_liquid_material_response(
       hdr_rgb,
       base_albedo,
