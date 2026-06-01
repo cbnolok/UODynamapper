@@ -200,11 +200,13 @@ fn run_case(
     let wide = bench_wide(case, min_duration);
 
     println!(
-        "{:<18} blocks={:<5} scalar={:>10.2} blk/s wide={:>10.2} blk/s speedup={:>5.2}x checksums={:016x}/{:016x}",
+        "{:<18} blocks={:<5} scalar={:>10.2} blk/s {:>8.6} ms/block wide={:>10.2} blk/s {:>8.6} ms/block speedup={:>5.2}x checksums={:016x}/{:016x}",
         case.name,
         blocks,
         scalar.blocks_per_second,
+        scalar.ms_per_block,
         wide.blocks_per_second,
+        wide.ms_per_block,
         wide.blocks_per_second / scalar.blocks_per_second,
         scalar.checksum,
         wide.checksum
@@ -215,9 +217,11 @@ fn run_case(
         }
         let rdo = bench_rdo(case, min_duration, &rdo_case.params, rdo_stats);
         println!(
-            "  {:<16} rdo={:>10.2} blk/s checksum={:016x}",
+            "  {:<16} rdo={:>10.2} blk/s {:>8.6} ms/block modified={} checksum={:016x}",
             rdo_case.name,
             rdo.bench.blocks_per_second,
+            rdo.bench.ms_per_block,
+            rdo.modified_blocks,
             rdo.bench.checksum
         );
         if let Some(stats) = rdo.stats {
@@ -315,8 +319,9 @@ fn bench_rdo(case: &Case, min_duration: Duration, params: &Bc7RdoParams, collect
             blocks_x * blocks_y,
             iterations,
             start.elapsed(),
-            checksum(&flat) ^ modified as u64,
+            checksum(&flat),
         ),
+        modified_blocks: modified,
         stats: collect_stats.then_some(stats),
     }
 }
@@ -426,11 +431,13 @@ fn image_case(
 
 struct BenchResult {
     blocks_per_second: f64,
+    ms_per_block: f64,
     checksum: u64,
 }
 
 struct RdoBenchResult {
     bench: BenchResult,
+    modified_blocks: u32,
     stats: Option<Bc7RdoStats>,
 }
 
@@ -439,6 +446,7 @@ impl BenchResult {
         let blocks = blocks_per_iteration as f64 * iterations as f64;
         Self {
             blocks_per_second: blocks / elapsed.as_secs_f64(),
+            ms_per_block: elapsed.as_secs_f64() * 1000.0 / blocks,
             checksum,
         }
     }
