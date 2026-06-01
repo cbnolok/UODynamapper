@@ -431,7 +431,7 @@ impl Default for Bc7RdoParams {
     fn default() -> Self {
         Self {
             lambda: 0.5,
-            lookback_window_size: 16 * 1024,
+            lookback_window_size: 16 * 64,
             smooth_block_max_mse_scale: 0.0, // 0.0 means automatic if custom is false
             max_smooth_block_std_dev: 18.0,
             try_two_matches: false,
