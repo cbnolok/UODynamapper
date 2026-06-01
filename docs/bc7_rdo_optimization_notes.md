@@ -528,6 +528,26 @@ Practical guidance:
 - Keep seed stddev on the simple channel-first helper.
 - Avoid scalar RGBA accumulator variants unless a target workload is known to be opaque-heavy and validated separately.
 
+### Stable-mask early exit for ultrasmooth erosion
+
+Attempt:
+- Tracked whether the initial erosion and each median-like erosion pass changed any mask entry.
+- Broke out of the 32 median passes once a pass produced the same mask.
+- Used per-pass local reduction for the parallel path, with no atomics.
+
+Why it looked promising:
+- Once the ultrasmooth mask reaches a fixed point, the remaining median passes are exact no-ops.
+- Sparse or fully-eroded pages could avoid many repeated full-mask scans.
+
+Why it was reverted:
+- Focused compile/tests passed and checksums stayed stable.
+- Same-state default RDO benchmarking regressed on the opaque and alpha/mobile fixtures; mixed was only roughly flat.
+- The per-entry changed comparison and reduction cost more than the saved passes for the benchmark masks.
+
+Practical guidance:
+- Do not add fixed-point checks to every ultrasmooth erosion pass by default.
+- If revisiting, first instrument pass counts on real full mobile pages and consider checking only every few passes or only after a known erosion horizon.
+
 ## Benchmark Context
 
 Commands used for these decisions:
