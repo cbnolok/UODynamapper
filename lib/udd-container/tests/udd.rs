@@ -106,6 +106,45 @@ fn path_hash_package_roundtrip_reads_explicit_level_zstd_entry() {
 }
 
 #[test]
+fn decoded_entry_cache_reads_repeated_compressed_entry() {
+    let path = "data/cacheable.bin";
+    let payload = b"cacheable zstd payload cacheable zstd payload cacheable zstd payload";
+    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(path),
+            path_hash64: None,
+            id: None,
+            data: payload,
+        })
+        .expect("add cacheable zstd file");
+
+    let reader = UddpReader::open_with_options(
+        builder.build().expect("build package"),
+        UddpReaderOptions::enable_decoded_entry_cache(),
+    )
+    .expect("open package with decoded entry cache");
+
+    assert!(reader.decoded_entry_cache_enabled());
+    assert_eq!(
+        reader
+            .read_file_by_path_hash(xxh64_virtual_path(path))
+            .expect("read cacheable file"),
+        payload
+    );
+    assert_eq!(
+        reader
+            .read_file_by_path_hash(xxh64_virtual_path(path))
+            .expect("read cacheable file again"),
+        payload
+    );
+}
+
+#[test]
 fn path_hash_package_roundtrip_reads_jpegxl_rgba_entry() {
     let width = 32u32;
     let height = 32u32;

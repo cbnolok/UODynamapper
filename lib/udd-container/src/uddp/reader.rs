@@ -100,10 +100,10 @@ impl DecodedEntryCache {
         }
 
         let bytes = load()?;
-        let cached: Arc<[u8]> = Arc::from(bytes.clone());
+        let cached: Arc<[u8]> = Arc::from(bytes.as_slice());
         let mut entries = self.entries.write().expect("decoded entry cache poisoned");
-        let bytes = entries.entry(key).or_insert_with(|| cached).clone();
-        Ok(bytes.as_ref().to_vec())
+        entries.entry(key).or_insert(cached);
+        Ok(bytes)
     }
 }
 
