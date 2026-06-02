@@ -268,36 +268,39 @@ pub enum ArtSource {
 
 fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; 6], usize) {
     let mut hashes = [0u64; 6];
+    let mut paths = [[0u8; 64]; 6];
+    let mut lengths = [0usize; 6];
     let mut count = 0usize;
     if source == ArtSource::CcUop || source == ArtSource::Any {
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/artlegacymul/", art_id, ".tga");
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/artlegacy/", art_id, ".dat");
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/art/", art_id, ".tga");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/artlegacymul/", art_id, ".tga");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/artlegacy/", art_id, ".dat");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/art/", art_id, ".tga");
     }
     if source == ArtSource::EcUop || source == ArtSource::Any {
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/tileartlegacy/", art_id, ".dds");
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/tileartlegacy/", art_id, ".tga");
-        push_uop_art_candidate_hash(&mut hashes, &mut count, "build/legacytexture/", art_id, ".tga");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".dds");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".tga");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/legacytexture/", art_id, ".tga");
     }
+    let path_refs: [&[u8]; 6] = std::array::from_fn(|index| &paths[index][..lengths[index]]);
+    crate::uop_container::hash::hash_file_name_simd_batch_bytes_into(
+        &path_refs[..count],
+        &mut hashes[..count],
+    );
     (hashes, count)
 }
 
-fn push_uop_art_candidate_hash(
-    hashes: &mut [u64; 6],
+fn push_uop_art_candidate_path(
+    paths: &mut [[u8; 64]; 6],
+    lengths: &mut [usize; 6],
     count: &mut usize,
     prefix: &str,
     art_id: u32,
     suffix: &str,
 ) {
-    let mut path_buf = [0u8; 64];
-    let len = {
-        let full_len = path_buf.len();
-        let mut slice = &mut path_buf[..];
-        write!(slice, "{prefix}{art_id:08}{suffix}").expect("art UOP candidate path fits stack buffer");
-        full_len - slice.len()
-    };
-    let path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-    hashes[*count] = crate::uop_container::hash::hash_file_name_single(path);
+    let full_len = paths[*count].len();
+    let mut slice = &mut paths[*count][..];
+    write!(slice, "{prefix}{art_id:08}{suffix}").expect("art UOP candidate path fits stack buffer");
+    lengths[*count] = full_len - slice.len();
     *count += 1;
 }
 
