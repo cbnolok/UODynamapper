@@ -5,6 +5,7 @@
 //! reason about the exact on-disk bytes when recomputing canonical hashes,
 //! rebuilding packages, or applying patches.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
@@ -249,27 +250,51 @@ impl UddpReader {
 
     /// Decode the file addressed by a dense logical id.
     pub fn read_file_by_dense_id(&self, id: u32) -> Result<Vec<u8>, FormatError> {
+        self.read_file_by_dense_id_cow(id).map(Cow::into_owned)
+    }
+
+    /// Read a file addressed by a dense logical id.
+    ///
+    /// Uncompressed entries are borrowed directly from the package image.
+    /// Compressed entries are decoded into owned bytes.
+    pub fn read_file_by_dense_id_cow(&self, id: u32) -> Result<Cow<'_, [u8]>, FormatError> {
         let dense = self.dense_index.as_ref().ok_or(FormatError::WrongLookupMode)?;
         let loc = dense.get(id as usize).ok_or(FormatError::FileNotFound)?;
-        self.decode_locator(loc)
+        self.decode_locator_cow(loc)
     }
 
     /// Decode the file addressed by a sparse logical id.
     pub fn read_file_by_sparse_id(&self, id: u32) -> Result<Vec<u8>, FormatError> {
+        self.read_file_by_sparse_id_cow(id).map(Cow::into_owned)
+    }
+
+    /// Read a file addressed by a sparse logical id.
+    ///
+    /// Uncompressed entries are borrowed directly from the package image.
+    /// Compressed entries are decoded into owned bytes.
+    pub fn read_file_by_sparse_id_cow(&self, id: u32) -> Result<Cow<'_, [u8]>, FormatError> {
         let sparse = self.sparse_index.as_ref().ok_or(FormatError::WrongLookupMode)?;
         let pos = sparse
             .binary_search_by_key(&id, |e| e.id)
             .map_err(|_| FormatError::FileNotFound)?;
-        self.decode_locator(&sparse[pos].locator)
+        self.decode_locator_cow(&sparse[pos].locator)
     }
 
     /// Decode the file addressed by a normalized path hash.
     pub fn read_file_by_path_hash(&self, path_hash64: u64) -> Result<Vec<u8>, FormatError> {
+        self.read_file_by_path_hash_cow(path_hash64).map(Cow::into_owned)
+    }
+
+    /// Read a file addressed by a normalized path hash.
+    ///
+    /// Uncompressed entries are borrowed directly from the package image.
+    /// Compressed entries are decoded into owned bytes.
+    pub fn read_file_by_path_hash_cow(&self, path_hash64: u64) -> Result<Cow<'_, [u8]>, FormatError> {
         let path = self.path_index.as_ref().ok_or(FormatError::WrongLookupMode)?;
         let pos = path
             .binary_search_by_key(&path_hash64, |e| e.path_hash64)
             .map_err(|_| FormatError::FileNotFound)?;
-        self.decode_locator(&path[pos].locator)
+        self.decode_locator_cow(&path[pos].locator)
     }
 
     /// Enumerate all logical records in the package.
@@ -421,12 +446,25 @@ impl UddpReader {
         Ok(())
     }
 
+    fn locator_payload(&self, locator: &UddpLocator) -> Result<&[u8], FormatError> {
+        let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
+        let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
+        let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
+        self.data.get(offset..end).ok_or(FormatError::Truncated)
+    }
+
+    fn decode_locator_cow(&self, locator: &UddpLocator) -> Result<Cow<'_, [u8]>, FormatError> {
+        match unpack_codec(locator.meta32) {
+            Codec::None => Ok(Cow::Borrowed(self.locator_payload(locator)?)),
+            Codec::ZstdNoDict | Codec::ZstdTypeDict | Codec::JpegXl => {
+                self.decode_locator(locator).map(Cow::Owned)
+            }
+        }
+    }
+
     fn decode_locator(&self, locator: &UddpLocator) -> Result<Vec<u8>, FormatError> {
         self.decoded_entry_cache.get_or_load(locator, || {
-            let offset = usize::try_from(unpack_offset40(locator.pos64)).map_err(|_| FormatError::Overflow)?;
-            let stored_size = reconstruct_stored_size(locator.raw_size, locator.meta32, locator.pos64) as usize;
-            let end = offset.checked_add(stored_size).ok_or(FormatError::Overflow)?;
-            let data = self.data.get(offset..end).ok_or(FormatError::Truncated)?;
+            let data = self.locator_payload(locator)?;
 
             let decoded = match unpack_codec(locator.meta32) {
                 Codec::None => data.to_vec(),

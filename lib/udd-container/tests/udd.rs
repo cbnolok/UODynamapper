@@ -80,6 +80,35 @@ fn path_hash_package_roundtrip_reads_entries() {
 }
 
 #[test]
+fn path_hash_cow_read_borrows_uncompressed_entries() {
+    let path = "pages/raw.rgba";
+    let payload = b"raw texture bytes";
+    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: CompressionFlag::None,
+            width: 0,
+            height: 0,
+            virtual_path: Some(path),
+            path_hash64: None,
+            id: None,
+            data: payload,
+        })
+        .expect("add raw texture file");
+
+    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
+    let bytes = reader
+        .read_file_by_path_hash_cow(xxh64_virtual_path(path))
+        .expect("read raw texture through cow api");
+
+    match bytes {
+        std::borrow::Cow::Borrowed(bytes) => assert_eq!(bytes, payload),
+        std::borrow::Cow::Owned(_) => panic!("raw entry should borrow package bytes"),
+    }
+}
+
+#[test]
 fn path_hash_package_roundtrip_reads_explicit_level_zstd_entry() {
     let payload = b"explicit-level zstd payload explicit-level zstd payload";
     let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -103,6 +132,35 @@ fn path_hash_package_roundtrip_reads_explicit_level_zstd_entry() {
             .expect("read explicit-level zstd file"),
         payload
     );
+}
+
+#[test]
+fn path_hash_cow_read_owns_compressed_entries() {
+    let path = "data/repeated-cow.bin";
+    let payload = b"explicit-level zstd payload explicit-level zstd payload";
+    let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDictLevel(5),
+            width: 0,
+            height: 0,
+            virtual_path: Some(path),
+            path_hash64: None,
+            id: None,
+            data: payload,
+        })
+        .expect("add explicit-level zstd file");
+
+    let reader = UddpReader::open(builder.build().expect("build package")).expect("open package");
+    let bytes = reader
+        .read_file_by_path_hash_cow(xxh64_virtual_path(path))
+        .expect("read compressed payload through cow api");
+
+    match bytes {
+        std::borrow::Cow::Owned(bytes) => assert_eq!(bytes, payload),
+        std::borrow::Cow::Borrowed(_) => panic!("compressed entry should decode into owned bytes"),
+    }
 }
 
 #[test]
