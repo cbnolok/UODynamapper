@@ -465,7 +465,7 @@ impl UddpBuilder {
                 }
             }
             LookupMode::VirtualPathHash => {
-                let mut entries = Vec::new();
+                let mut entries = Vec::with_capacity(locator_records.len());
                 for (key, locator) in &locator_records {
                     let PendingKey::PathHash(path_hash64) = key else {
                         return Err(BuildError::WrongKeyForLookupMode);
@@ -481,7 +481,7 @@ impl UddpBuilder {
                 }
             }
             LookupMode::SparseId => {
-                let mut entries = Vec::new();
+                let mut entries = Vec::with_capacity(locator_records.len());
                 for (key, locator) in &locator_records {
                     let PendingKey::Id(id) = key else {
                         return Err(BuildError::WrongKeyForLookupMode);
