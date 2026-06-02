@@ -46,8 +46,10 @@ impl UoStringDictionary {
             first_file
         };
 
-        let decompressed_data = file.unpack_arc()?;
-        Self::from_payload_bytes(decompressed_data.as_ref(), &path.display().to_string())
+        // Extracting decompressed payload using zero-copy extraction to a scratch buffer is optimal,
+        // but since `unpack()` handles its own z-lib, we take the whole array
+        let decompressed_data: Vec<u8> = file.unpack()?;
+        Self::from_payload_bytes(&decompressed_data, &path.display().to_string())
     }
 
     pub fn from_payload_bytes(bytes: &[u8], source_label: &str) -> eyre::Result<Self> {

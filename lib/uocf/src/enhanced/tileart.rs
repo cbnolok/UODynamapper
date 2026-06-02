@@ -312,8 +312,8 @@ pub struct TileArtEntry {
 
 impl TileArtEntry {
     pub fn parse_raw(uop_file: &UopFile) -> color_eyre::eyre::Result<Self> {
-        let decompressed_data = uop_file.unpack_arc()?;
-        let mut reader = Cursor::new(decompressed_data.as_ref());
+        let decompressed_data = uop_file.unpack()?;
+        let mut reader = Cursor::new(&*decompressed_data);
         let mut entry = TileArtEntry::default();
 
         macro_rules! read_value {
