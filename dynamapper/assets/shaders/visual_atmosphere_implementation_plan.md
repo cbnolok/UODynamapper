@@ -63,6 +63,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   Light masks without a known ClassicUO shader derive local-response color from alpha-weighted colored mask pixels when the mask has meaningful chroma.
     *   Land and art local-light response consume that color instead of a single fixed warm tint.
     *   Land local-light uniforms select the visible strongest/nearest lights with stable ordering instead of taking the first visible chunk-order entries.
+    *   Static art local-light response samples sprite and ground-art bounds so wide/tall art can catch nearby lights outside the tile origin.
     *   Remaining work: validate hue precedence against known light-source scenes.
 
 10. **KR cliff/high-bank compression**

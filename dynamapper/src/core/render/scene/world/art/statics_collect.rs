@@ -37,6 +37,7 @@ const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
+const STATIC_BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(0.70710677, -0.70710677);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -942,6 +943,110 @@ fn static_local_light_rgba(
     ]
 }
 
+fn strongest_static_local_light_sample(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    samples: &[(f32, f32, f32)],
+) -> [f32; 4] {
+    let mut best = [0.0; 4];
+    for &(world_x, world_z, world_y) in samples {
+        let sample = static_local_light_rgba(lights, map_id, world_x, world_z, world_y);
+        if sample[3] > best[3] {
+            best = sample;
+        }
+    }
+    best
+}
+
+fn static_billboard_sample_world(
+    world_x: f32,
+    world_z: f32,
+    base_world_y: f32,
+    local_x: f32,
+    local_y: f32,
+) -> (f32, f32, f32) {
+    (
+        world_x + local_x * STATIC_BILLBOARD_RIGHT_XZ.x,
+        world_z + local_x * STATIC_BILLBOARD_RIGHT_XZ.y,
+        base_world_y + local_y,
+    )
+}
+
+fn static_billboard_local_light_rgba(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    base_world_y: f32,
+    bounds: StaticBillboardBounds,
+) -> [f32; 4] {
+    let center_x = (bounds.local_min_x + bounds.local_max_x) * 0.5;
+    let center_y = (bounds.local_min_y + bounds.local_max_y) * 0.5;
+    let samples = [
+        (world_x, world_z, base_world_y),
+        static_billboard_sample_world(world_x, world_z, base_world_y, center_x, center_y),
+        static_billboard_sample_world(
+            world_x,
+            world_z,
+            base_world_y,
+            bounds.local_min_x,
+            bounds.local_min_y,
+        ),
+        static_billboard_sample_world(
+            world_x,
+            world_z,
+            base_world_y,
+            bounds.local_max_x,
+            bounds.local_min_y,
+        ),
+        static_billboard_sample_world(
+            world_x,
+            world_z,
+            base_world_y,
+            center_x,
+            bounds.local_max_y,
+        ),
+    ];
+    strongest_static_local_light_sample(lights, map_id, &samples)
+}
+
+fn static_ground_local_light_rgba(
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    base_world_y: f32,
+    bounds: GroundQuadBounds,
+) -> [f32; 4] {
+    let center_x = (bounds.local_min_x + bounds.local_max_x) * 0.5;
+    let center_z = (bounds.local_min_z + bounds.local_max_z) * 0.5;
+    let samples = [
+        (world_x, world_z, base_world_y),
+        (world_x + center_x, world_z + center_z, base_world_y),
+        (
+            world_x + bounds.local_min_x,
+            world_z + bounds.local_min_z,
+            base_world_y,
+        ),
+        (
+            world_x + bounds.local_max_x,
+            world_z + bounds.local_min_z,
+            base_world_y,
+        ),
+        (
+            world_x + bounds.local_max_x,
+            world_z + bounds.local_max_z,
+            base_world_y,
+        ),
+        (
+            world_x + bounds.local_min_x,
+            world_z + bounds.local_max_z,
+            base_world_y,
+        ),
+    ];
+    strongest_static_local_light_sample(lights, map_id, &samples)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StaticArtCollectStats {
     pub map_id: u32,
@@ -1305,15 +1410,15 @@ pub fn sys_collect_visible_statics(
                                 if m.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
                             });
                             let base_world_y = (render_tile.z as f32) * height_scale;
-                            let local_light_rgba = static_local_light_rgba(
-                                &static_lights,
-                                map_id,
-                                world_x,
-                                world_z,
-                                base_world_y,
-                            );
 
                             if is_dot_mode {
+                                let local_light_rgba = static_local_light_rgba(
+                                    &static_lights,
+                                    map_id,
+                                    world_x,
+                                    world_z,
+                                    base_world_y,
+                                );
                                 let priority_z_units =
                                     resolve_priority_z_units(render_tile.z, tilemeta, depth_class);
                                 let bias = depth_class_y_bias(depth_class);
@@ -1473,19 +1578,20 @@ pub fn sys_collect_visible_statics(
 
                             let (anchored_world_x, anchored_world_z) =
                                 surface_like_static_world_anchor(visual_kind, world_x, world_z);
-                            let local_light_rgba = static_local_light_rgba(
-                                &static_lights,
-                                map_id,
-                                anchored_world_x,
-                                anchored_world_z,
-                                base_world_y,
-                            );
 
                             if let Some(resolved) = resolved_sprite {
                                 chunk_stats.atlas_hits += 1;
                                 if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
                                     chunk_stats.ground_land_tiles += 1;
                                     let bounds = resolve_surface_like_ground_quad_bounds();
+                                    let local_light_rgba = static_ground_local_light_rgba(
+                                        &static_lights,
+                                        map_id,
+                                        anchored_world_x,
+                                        anchored_world_z,
+                                        base_world_y,
+                                        bounds,
+                                    );
                                     let (material_payload, material_flags) =
                                         surface_like_ground_material_payload(is_wet_flags);
                                     chunk_ground_instances.push(GroundTileInstance {
@@ -1519,6 +1625,14 @@ pub fn sys_collect_visible_statics(
                                         resolved.offset_y,
                                         resolved.logical_width,
                                         resolved.logical_height,
+                                    );
+                                    let local_light_rgba = static_billboard_local_light_rgba(
+                                        &static_lights,
+                                        map_id,
+                                        anchored_world_x,
+                                        anchored_world_z,
+                                        base_world_y,
+                                        bounds,
                                     );
 
                                     chunk_sprite_instances.push(SpriteInstance {
@@ -2303,6 +2417,16 @@ mod tests {
         hue_id: u16,
         color_rgb: [f32; 3],
     ) -> super::super::static_lights::StaticLightInstance {
+        test_static_light_at(hue_id, color_rgb, 10.5, 20.5, 0.0)
+    }
+
+    fn test_static_light_at(
+        hue_id: u16,
+        color_rgb: [f32; 3],
+        world_x: f32,
+        world_z: f32,
+        world_y: f32,
+    ) -> super::super::static_lights::StaticLightInstance {
         super::super::static_lights::StaticLightInstance {
             key: super::super::static_lights::StaticLightKey {
                 map_id: 1,
@@ -2316,9 +2440,9 @@ mod tests {
             light_id: 5,
             hue_id,
             color_rgb,
-            world_x: 10.5,
-            world_z: 20.5,
-            world_y: 0.0,
+            world_x,
+            world_z,
+            world_y,
             width_world: 2.0,
             height_world: 2.0,
         }
@@ -2346,6 +2470,39 @@ mod tests {
         ]);
 
         assert_ne!(static_light_signature(&first, 1), static_light_signature(&second, 1));
+    }
+
+    #[test]
+    fn billboard_local_light_samples_bounds_not_only_origin() {
+        let bounds = StaticBillboardBounds {
+            local_min_x: 4.0,
+            local_max_x: 4.0,
+            local_min_y: 0.0,
+            local_max_y: 0.0,
+        };
+        let sample = static_billboard_sample_world(0.0, 0.0, 0.0, 4.0, 0.0);
+        let lights = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light_at(0, [1.0, 0.72, 0.42], sample.0, sample.1, sample.2),
+        ]);
+
+        assert_eq!(static_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0)[3], 0.0);
+        assert!(static_billboard_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0, bounds)[3] > 0.0);
+    }
+
+    #[test]
+    fn ground_local_light_samples_quad_extent() {
+        let bounds = GroundQuadBounds {
+            local_min_x: 0.0,
+            local_max_x: 4.0,
+            local_min_z: 0.0,
+            local_max_z: 0.0,
+        };
+        let lights = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light_at(0, [1.0, 0.72, 0.42], 4.0, 0.0, 0.0),
+        ]);
+
+        assert_eq!(static_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0)[3], 0.0);
+        assert!(static_ground_local_light_rgba(&lights, 1, 0.0, 0.0, 0.0, bounds)[3] > 0.0);
     }
 
     #[test]
