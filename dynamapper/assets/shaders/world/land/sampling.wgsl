@@ -147,14 +147,25 @@ fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
   return read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL).present;
 }
 
-fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform) -> vec4<f32> {
+fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_seconds: f32, animate_liquid: bool) -> vec4<f32> {
   let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
   if (!normal.present) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
   }
 
-  let normal_uv = ec_slot_world_uv(world_xz, normal);
+  let follow_center = (tile.terrain_flags & TERRAIN_FLAG_FOLLOW_CENTER) != 0u;
+  let wind_force = select(0.01, 0.1, follow_center);
+  let normal_world_xz = select(
+    world_xz,
+    vec2<f32>(world_xz.x, world_xz.y - time_seconds * wind_force * 10.0),
+    animate_liquid,
+  );
+  let normal_uv = ec_slot_world_uv(normal_world_xz, normal);
   let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal).rgb;
+  if (normal_sample.b < 0.35) {
+    return vec4<f32>(0.0, 1.0, 0.0, 0.0);
+  }
+
   let tangent_normal = normal_sample * 2.0 - vec3<f32>(1.0);
   let world_normal = normalize(vec3<f32>(
     tangent_normal.x,

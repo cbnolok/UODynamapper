@@ -137,6 +137,8 @@ Current packaging facts:
 - `ec_land` and `ec_art` may legitimately duplicate the same source image when semantics differ.
 - Cross-material dedupe by one `primary_texture_id` is unsafe for terrain because layered materials can share a base while differing visually through overlays or masks.
 - Tileart clip windows matter; art dedupe must account for sampling window, not only source texture id.
+- EC land runtime sampling uses role lookup entries per material id. Role `0` is base, role `1` is detail, role `2` is mask, and role `3` is normal. The active normal-map path samples role `3` from the existing land page atlas when `enable_normal_maps` is enabled and the fragment is rendered by Enhanced or KR land shading.
+- Normal-map source files can be DXT1 RGB DDS textures rather than BC5-style normal maps. The shader therefore decodes stored RGB tangent normals directly; the current convention uses red as tangent X, green as tangent Z, and blue as up before blending with the geometric/bicubic terrain normal.
 
 ---
 

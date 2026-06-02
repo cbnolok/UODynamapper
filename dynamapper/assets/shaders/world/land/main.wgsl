@@ -642,9 +642,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     Nw = get_bent_normal(in.world_position.xyz, Nw);
   }
   if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u) {
-    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile);
+    let animate_normal_map = enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && ec_liquid_normal;
+    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map);
     if (normal_map.w > 0.5) {
-      Nw = normalize(mix(Nw, normal_map.xyz, 0.45));
+      let normal_map_strength = select(0.45, 0.58, animate_normal_map);
+      Nw = normalize(mix(Nw, normal_map.xyz, normal_map_strength));
     }
   }
 

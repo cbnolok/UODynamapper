@@ -109,8 +109,13 @@ Current EC packing semantics:
 
 - `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
 - `tex_land_ec.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
+- `tex_land_ec.uddp` also carries EC land material roles in the runtime lookup table: role `0` is base/diffuse, role `1` is detail, role `2` is mask/alpha, and role `3` is normal/normal_map. These role entries point into the same page atlas and are selected by semantic material id, not by raw texture-id ranges.
 - `ec_textures_layers.uddp` is the planned destination for extra shared layers, masks, and noise-like resources that are referenced semantically but do not belong to the primary land/art splits.
 - If a source texture is claimed by both art and land semantics, duplication across outputs is valid and should be decided by ownership, not by avoiding repeated ids.
+
+Normal-map format note:
+
+- EC/KR normal maps are currently decoded as RGB tangent-space textures from the stored DDS payload, not as a special two-channel normal format. A known KR sample, `/home/claudio/test/unpacks/kr_squared/01000013.dds`, is `256x256` DXT1. Runtime shader decode maps RGB from `[0, 1]` to `[-1, 1]`, uses blue as the up component, and may need a green-channel flip only if visual validation shows inverted relief.
 
 **Virtual Files:**
 

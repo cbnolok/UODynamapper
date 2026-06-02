@@ -88,6 +88,17 @@ Stores Enhanced Client static/art textures from the shared EC texture classifica
 
 Stores representative terrain images and required terrain provenance metadata. The package preserves how `TerrainDefinition` material entries, aliases, selected texture ids, and canonical packed slots relate to each other.
 
+EC land materials are role-based, not single-texture records. The runtime lookup table currently uses these material roles:
+
+| Role | Meaning | Runtime use |
+|------|---------|-------------|
+| `0` | base/diffuse/albedo | primary EC land color |
+| `1` | detail | optional detail color blended by role `2` |
+| `2` | mask/alpha | blend mask for role `1` |
+| `3` | normal/normal_map | optional texture normal for lighting and liquid UV perturbation |
+
+Normal maps are stored in the same page-atlas infrastructure as visible EC land textures. Do not assume a separate normal-map atlas exists at runtime. Known KR/EC normal-map inputs can be ordinary DXT1 DDS files, for example `01000013.dds` from a KR unpack is `256x256` DXT1, so the renderer treats normal maps as RGB tangent-space data rather than BC5/ATI2 two-channel normals.
+
 ### `tilemeta.uddp`
 
 Stores dense land/item metadata tables used by the runtime to merge Classic Client tiledata with Enhanced Client metadata and sidecars.

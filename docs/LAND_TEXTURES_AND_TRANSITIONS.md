@@ -135,6 +135,17 @@ This means:
 - EC texture packages are probably sufficient as a physical image pool for many KR land experiments.
 - A separate `tex_land_kr.uddp` should not be added until a report proves that KR uses visible texture refs or layer roles that cannot be represented by EC packages plus KR routing metadata.
 
+EC land material records can reference multiple texture roles. Current runtime role mapping is:
+
+| Role | Texture role |
+|------|--------------|
+| `0` | base/diffuse/albedo |
+| `1` | detail |
+| `2` | mask/alpha |
+| `3` | normal/normal_map |
+
+Normal maps remain land-owned material support data when they are reached through `TerrainDefinition` material roles. They should not be reclassified as art or effect textures only because the physical DDS came from a shared source pool. Known KR normal maps can be DXT1 RGB DDS files, so the renderer must preserve and sample their RGB channels rather than assuming a special normal-map compression format.
+
 Recommended near-term KR model:
 
 ```text

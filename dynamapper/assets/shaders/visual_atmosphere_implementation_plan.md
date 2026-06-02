@@ -151,12 +151,14 @@ We have confirmed that the assets contain tangent-space normal maps (the purplis
 *   **EC Approach:** Normal maps were largely discarded or ignored to improve performance and flatten the look back to the classic 2D aesthetic.
 
 ### Implementation Steps (UODynamapper)
-1.  **TODO:** Expand the current tile atlas (`tex_land_ec_page_atlas`) or add parallel texture arrays/pages to hold corresponding normal maps.
-2.  **TODO:** Add Rust material bindings for the normal-map atlas.
-3.  **TODO:** Add metadata linking albedo pages to normal-map pages.
-4.  **TODO:** Add `sample_tile_normal()` in `sampling.wgsl`.
-5.  **TODO:** Use `enable_normal_maps` to switch between texture normals and current geometry/bicubic terrain normals.
-6.  **Target directional lighting:** In the main fragment shader, calculate basic N dot L lighting:
+1.  **Current:** EC land normal maps are carried as material role `3` in the existing `tex_land_ec` page atlas and lookup table. No separate normal-map binding is required for the active path.
+2.  **Current:** `sampling.wgsl` exposes EC role-based normal sampling and `main.wgsl` blends the decoded texture normal into the geometric/bicubic terrain normal when `enable_normal_maps` is enabled. Liquid materials animate the sampled normal using the same role-3 scroll convention used by liquid UV perturbation.
+3.  **Format:** Known KR normal-map inputs can be ordinary DXT1 RGB DDS files, not BC5/ATI2. Decode stored RGB from `[0,1]` to `[-1,1]`; use blue as up, red as tangent X, and green as tangent Z unless visual validation proves a channel flip is needed.
+4.  **Validity:** Role-3 samples with an implausibly low blue/up channel are rejected so unresolved or misrouted non-normal textures do not corrupt terrain lighting.
+5.  **Current scope:** The first implementation is EC land only and excludes Classic shading mode. Art/static normal maps are not active yet.
+6.  **TODO:** Validate channel orientation on water, stone, snow, and grass material families using side-by-side screenshots with `enable_normal_maps` toggled.
+7.  **TODO:** Add a tunable strength if visual validation shows the fixed blend is too strong or too weak across material families.
+8.  **Target directional lighting:** In the main fragment shader, calculate basic N dot L lighting:
     ```wgsl
     let normal_sample = sample_tile_normal(uv);
     let world_normal = normalize(normal_sample.xyz * 2.0 - 1.0); // Convert from [0,1] to [-1,1]
