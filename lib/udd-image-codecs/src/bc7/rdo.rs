@@ -4,7 +4,6 @@ use super::tables::{
 };
 use rayon::prelude::*;
 use std::cmp::max;
-use wide::i32x4;
 
 // ─── ERT constants (matching bc7enc_rdo ert.cpp) ─────────────────────────────
 /// Bits charged per literal byte when estimating match cost.
@@ -1920,142 +1919,26 @@ fn decode_bc7_mode6_error_bounded(
         return None;
     }
 
-    err += mode6_pixels4_sse(
-        source,
-        1,
-        mode6_weights4(hi, 4),
-        lr,
-        hr,
-        lg,
-        hg,
-        lb,
-        hb,
-        la,
-        ha,
-    );
-    if err >= max_error {
-        return None;
-    }
-
-    err += mode6_pixels4_sse(
-        source,
-        5,
-        mode6_weights4(hi, 20),
-        lr,
-        hr,
-        lg,
-        hg,
-        lb,
-        hb,
-        la,
-        ha,
-    );
-    if err >= max_error {
-        return None;
-    }
-
-    err += mode6_pixels4_sse(
-        source,
-        9,
-        mode6_weights4(hi, 36),
-        lr,
-        hr,
-        lg,
-        hg,
-        lb,
-        hb,
-        la,
-        ha,
-    );
-    if err >= max_error {
-        return None;
-    }
-
-    let mut weight_bit_ofs = 52usize;
-    for i in 13..16 {
+    let mut weight_bit_ofs = 4usize;
+    for i in 1..16 {
         let weight_index = ((hi >> weight_bit_ofs) & 0x0F) as usize;
         weight_bit_ofs += 4;
         let weight = BC7_WEIGHTS4[weight_index] as i32;
-        err += rgba_pixel_sse(
-            &source[i],
-            interpolate_bc7(lr, hr, weight),
-            interpolate_bc7(lg, hg, weight),
-            interpolate_bc7(lb, hb, weight),
-            interpolate_bc7(la, ha, weight),
-        );
+        let r = interpolate_bc7(lr, hr, weight);
+        let g = interpolate_bc7(lg, hg, weight);
+        let b = interpolate_bc7(lb, hb, weight);
+        let a = interpolate_bc7(la, ha, weight);
+        let dr = source[i][0] as i32 - r;
+        let dg = source[i][1] as i32 - g;
+        let db = source[i][2] as i32 - b;
+        let da = source[i][3] as i32 - a;
+        err += (dr * dr + dg * dg + db * db + da * da) as u64;
         if err >= max_error {
             return None;
         }
     }
 
     Some(err)
-}
-
-#[inline(always)]
-fn mode6_weights4(hi: u64, bit_ofs: usize) -> [i32; 4] {
-    [
-        BC7_WEIGHTS4[((hi >> bit_ofs) & 0x0F) as usize] as i32,
-        BC7_WEIGHTS4[((hi >> (bit_ofs + 4)) & 0x0F) as usize] as i32,
-        BC7_WEIGHTS4[((hi >> (bit_ofs + 8)) & 0x0F) as usize] as i32,
-        BC7_WEIGHTS4[((hi >> (bit_ofs + 12)) & 0x0F) as usize] as i32,
-    ]
-}
-
-#[inline(always)]
-fn mode6_interpolate4(lo: i32, hi: i32, weight: i32x4) -> i32x4 {
-    i32x4::splat(lo) + (((i32x4::splat(hi - lo) * weight) + i32x4::splat(32)) >> 6)
-}
-
-#[inline(always)]
-fn mode6_pixels4_sse(
-    source: &RgbaBlock,
-    base: usize,
-    weights: [i32; 4],
-    lr: i32,
-    hr: i32,
-    lg: i32,
-    hg: i32,
-    lb: i32,
-    hb: i32,
-    la: i32,
-    ha: i32,
-) -> u64 {
-    let weight = i32x4::from(weights);
-    let r = mode6_interpolate4(lr, hr, weight);
-    let g = mode6_interpolate4(lg, hg, weight);
-    let b = mode6_interpolate4(lb, hb, weight);
-    let a = mode6_interpolate4(la, ha, weight);
-
-    let sr = i32x4::from([
-        source[base][0] as i32,
-        source[base + 1][0] as i32,
-        source[base + 2][0] as i32,
-        source[base + 3][0] as i32,
-    ]);
-    let sg = i32x4::from([
-        source[base][1] as i32,
-        source[base + 1][1] as i32,
-        source[base + 2][1] as i32,
-        source[base + 3][1] as i32,
-    ]);
-    let sb = i32x4::from([
-        source[base][2] as i32,
-        source[base + 1][2] as i32,
-        source[base + 2][2] as i32,
-        source[base + 3][2] as i32,
-    ]);
-    let sa = i32x4::from([
-        source[base][3] as i32,
-        source[base + 1][3] as i32,
-        source[base + 2][3] as i32,
-        source[base + 3][3] as i32,
-    ]);
-
-    let dr = sr - r;
-    let dg = sg - g;
-    let db = sb - b;
-    let da = sa - a;
-    (dr * dr + dg * dg + db * db + da * da).reduce_add() as u64
 }
 
 fn decode_bc7_mode7_error_bounded(
