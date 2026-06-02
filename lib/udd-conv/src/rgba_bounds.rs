@@ -25,19 +25,35 @@ pub(crate) fn nonzero_alpha_bounds(
 pub(crate) fn count_nonzero_alpha(rgba: &[u8]) -> u64 {
     debug_assert_eq!(rgba.len() % 4, 0);
 
+    count_nonzero_alpha_backend()(rgba)
+}
+
+type CountNonzeroAlphaBackend = fn(&[u8]) -> u64;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+static COUNT_NONZERO_ALPHA_BACKEND: std::sync::OnceLock<CountNonzeroAlphaBackend> = std::sync::OnceLock::new();
+
+#[inline(always)]
+fn count_nonzero_alpha_backend() -> CountNonzeroAlphaBackend {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::is_x86_feature_detected!("avx2") {
-        return unsafe { count_nonzero_alpha_avx2(rgba) };
+    {
+        return *COUNT_NONZERO_ALPHA_BACKEND.get_or_init(|| {
+            if std::is_x86_feature_detected!("avx2") {
+                count_nonzero_alpha_avx2_dispatch
+            } else {
+                count_nonzero_alpha_scalar
+            }
+        });
     }
 
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { count_nonzero_alpha_neon(rgba) }
+        count_nonzero_alpha_neon_dispatch
     }
 
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
     {
-        count_nonzero_alpha_scalar(rgba)
+        count_nonzero_alpha_scalar
     }
 }
 
@@ -209,6 +225,11 @@ fn last_alpha_lane(alpha_bits: u128) -> usize {
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn count_nonzero_alpha_avx2_dispatch(rgba: &[u8]) -> u64 {
+    unsafe { count_nonzero_alpha_avx2(rgba) }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn count_nonzero_alpha_avx2(rgba: &[u8]) -> u64 {
     let mut count = 0u64;
@@ -231,6 +252,11 @@ unsafe fn avx2_nonzero_alpha_mask_32(ptr: *const u8) -> u32 {
     let zero = _mm256_setzero_si256();
     let zero_mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(bytes, zero)) as u32;
     !zero_mask & AVX2_ALPHA_BYTE_MASK
+}
+
+#[cfg(target_arch = "aarch64")]
+fn count_nonzero_alpha_neon_dispatch(rgba: &[u8]) -> u64 {
+    unsafe { count_nonzero_alpha_neon(rgba) }
 }
 
 #[cfg(target_arch = "aarch64")]
