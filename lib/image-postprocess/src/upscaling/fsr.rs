@@ -2,6 +2,8 @@
 //!
 //! Reference: https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/master/ffx-fsr/ffx_fsr1.h
 
+use wide::f32x4;
+
 pub fn apply_easu(
     width: u32,
     height: u32,
@@ -317,15 +319,16 @@ pub fn apply_rcas(
     let sharp_val = (-sharpness).exp2();
     const FSR_RCAS_LIMIT: f32 = 0.1875;
     
-    let get_p = |x: i32, y: i32| -> [f32; 3] {
+    let get_p = |x: i32, y: i32| -> f32x4 {
         let px = x.clamp(0, width as i32 - 1) as usize;
         let py = y.clamp(0, height as i32 - 1) as usize;
         let idx = (py * width as usize + px) * 4;
-        [
+        f32x4::from([
             rgba[idx] as f32 / 255.0,
             rgba[idx + 1] as f32 / 255.0,
             rgba[idx + 2] as f32 / 255.0,
-        ]
+            0.0,
+        ])
     };
 
     for y in 0..height as i32 {
@@ -341,11 +344,11 @@ pub fn apply_rcas(
             let h = get_p(x, y + 1);
 
             // Approximate luma
-            let b_l = b[1] + 0.5 * (b[0] + b[2]);
-            let d_l = d[1] + 0.5 * (d[0] + d[2]);
-            let e_l = e[1] + 0.5 * (e[0] + e[2]);
-            let f_l = f[1] + 0.5 * (f[0] + f[2]);
-            let h_l = h[1] + 0.5 * (h[0] + h[2]);
+            let b_l = fsr_luma4(b);
+            let d_l = fsr_luma4(d);
+            let e_l = fsr_luma4(e);
+            let f_l = fsr_luma4(f);
+            let h_l = fsr_luma4(h);
 
             // Noise detection
             let nz = 0.25 * b_l + 0.25 * d_l + 0.25 * f_l + 0.25 * h_l - e_l;
@@ -356,28 +359,19 @@ pub fn apply_rcas(
             let nz = -0.5 * nz + 1.0;
 
             // Min and max of ring
-            let mn4 = [
-                b[0].min(d[0]).min(f[0]).min(h[0]),
-                b[1].min(d[1]).min(f[1]).min(h[1]),
-                b[2].min(d[2]).min(f[2]).min(h[2]),
-            ];
-            let mx4 = [
-                b[0].max(d[0]).max(f[0]).max(h[0]),
-                b[1].max(d[1]).max(f[1]).max(h[1]),
-                b[2].max(d[2]).max(f[2]).max(h[2]),
-            ];
+            let mn4 = b.min(d).min(f).min(h);
+            let mx4 = b.max(d).max(f).max(h);
 
             // Limiters (as per ffx_fsr1.h)
-            let mut lobe = [0.0f32; 3];
-            for i in 0..3 {
-                // hitMin = min(mn4, e) * rcp(4.0 * mx4)
-                let hit_min = mn4[i].min(e[i]) / (4.0 * mx4[i]).max(1e-6);
-                // hitMax = (1.0 - max(mx4, e)) * rcp(4.0 * mn4 - 4.0)
-                // Using abs() and max(1e-6) to avoid division by zero
-                let hit_max = (1.0 - mx4[i].max(e[i])) / (4.0 * mn4[i] - 4.0).abs().max(1e-6);
-                
-                lobe[i] = (-hit_min).max(hit_max);
-            }
+            // hitMin = min(mn4, e) * rcp(4.0 * mx4)
+            let hit_min = mn4.min(e) / (mx4 * f32x4::splat(4.0)).max(f32x4::splat(1e-6));
+            // hitMax = (1.0 - max(mx4, e)) * rcp(4.0 * mn4 - 4.0)
+            // Using abs() and max(1e-6) to avoid division by zero
+            let hit_max = (f32x4::splat(1.0) - mx4.max(e))
+                / (mn4 * f32x4::splat(4.0) - f32x4::splat(4.0))
+                    .abs()
+                    .max(f32x4::splat(1e-6));
+            let lobe = (f32x4::splat(0.0) - hit_min).max(hit_max).to_array();
             
             // final_lobe = clamp(max(lobeR, lobeG, lobeB), -limit, 0.0) * sharp_val
             let mut final_lobe = lobe[0].max(lobe[1]).max(lobe[2]).min(0.0).max(-FSR_RCAS_LIMIT);
@@ -385,11 +379,8 @@ pub fn apply_rcas(
             
             // Resolve
             let rcp_l = 1.0 / (4.0 * final_lobe + 1.0);
-            let res = [
-                (final_lobe * (b[0] + d[0] + h[0] + f[0]) + e[0]) * rcp_l,
-                (final_lobe * (b[1] + d[1] + h[1] + f[1]) + e[1]) * rcp_l,
-                (final_lobe * (b[2] + d[2] + h[2] + f[2]) + e[2]) * rcp_l,
-            ];
+            let res = ((b + d + h + f) * f32x4::splat(final_lobe) + e) * f32x4::splat(rcp_l);
+            let res = res.to_array();
 
             let out_idx = (y as u32 * width + x as u32) as usize * 4;
             out_rgba[out_idx] = (res[0].clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -403,6 +394,11 @@ pub fn apply_rcas(
 }
 
 fn fsr_luma(c: [f32; 3]) -> f32 {
+    c[1] + 0.5 * (c[0] + c[2])
+}
+
+fn fsr_luma4(c: f32x4) -> f32 {
+    let c = c.to_array();
     c[1] + 0.5 * (c[0] + c[2])
 }
 
@@ -465,4 +461,27 @@ fn fsr_easu_tap(
     a_c[1] += c[1] * w;
     a_c[2] += c[2] * w;
     *a_w += w;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rcas_preserves_size_and_alpha() {
+        let rgba = vec![
+            0, 0, 0, 10,
+            255, 0, 0, 20,
+            0, 255, 0, 30,
+            0, 0, 255, 40,
+        ];
+
+        let out = apply_rcas(2, 2, &rgba, 0.0);
+
+        assert_eq!(out.len(), rgba.len());
+        assert_eq!(out[3], 10);
+        assert_eq!(out[7], 20);
+        assert_eq!(out[11], 30);
+        assert_eq!(out[15], 40);
+    }
 }
