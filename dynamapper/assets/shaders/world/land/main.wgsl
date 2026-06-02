@@ -324,6 +324,26 @@ fn kr_height_contact_shadow(world_tile: vec2<i32>, center_height: f32, strength:
   return smoothstep(0.04, 0.55, max(cover_height, 0.0)) * relief_strength;
 }
 
+fn kr_cliff_bank_shadow(world_tile: vec2<i32>, center_height: f32, Nw: vec3<f32>, L: vec3<f32>, strength: f32) -> f32 {
+  let relief_strength = clamp(strength, 0.0, 1.5);
+  if (relief_strength <= 0.0001) {
+    return 0.0;
+  }
+
+  let west = atlas_read_height(world_tile.x - 1, world_tile.y);
+  let east = atlas_read_height(world_tile.x + 1, world_tile.y);
+  let north = atlas_read_height(world_tile.x, world_tile.y - 1);
+  let south = atlas_read_height(world_tile.x, world_tile.y + 1);
+  let max_height = max(max(west, east), max(north, south));
+  let min_height = min(min(west, east), min(north, south));
+  let height_range = max(max_height - min_height, 0.0);
+  let height_step = max(max_height - center_height, center_height - min_height);
+  let steep_height = smoothstep(0.18, 0.95, height_range) * smoothstep(0.08, 0.62, height_step);
+  let slope_steepness = smoothstep(0.12, 0.55, 1.0 - normalize(Nw).y);
+  let unlit_side = 1.0 - smoothstep(0.18, 0.72, max(dot(normalize(Nw), normalize(L)), 0.0));
+  return steep_height * (0.35 + 0.65 * max(slope_steepness, unlit_side)) * relief_strength;
+}
+
 fn blend_ec_terrain_transitions(
   base_color: vec3<f32>,
   current_tile: TileUniform,
@@ -723,7 +743,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       tile.tile_height,
       effects.kr_land_relief_shadow_strength,
     );
-    hdr_rgb *= 1.0 - contact_shadow * 0.10;
+    let bank_shadow = kr_cliff_bank_shadow(
+      world_tile,
+      tile.tile_height,
+      Nw,
+      L,
+      effects.kr_land_relief_shadow_strength,
+    );
+    hdr_rgb *= 1.0 - contact_shadow * 0.10 - bank_shadow * 0.08;
     hdr_rgb = apply_kr_liquid_material_response(
       hdr_rgb,
       base_albedo,
