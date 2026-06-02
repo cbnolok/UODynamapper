@@ -4,7 +4,6 @@
 //! Reference: https://github.com/vvanirudh/Pixel-Art
 
 #![allow(unused_parens)]
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PixelPos {
@@ -21,13 +20,13 @@ impl PixelPos {
 pub struct SimilarityGraph {
     pub width: u32,
     pub height: u32,
-    /// Edges between pixels. stored as (from, to) where from.idx < to.idx.
-    pub edges: HashSet<(usize, usize)>,
+    /// Symmetric 8-neighbor connectivity mask per source pixel.
+    connections: Vec<u8>,
 }
 
 impl SimilarityGraph {
     pub fn new(width: u32, height: u32, rgba: &[u8]) -> Self {
-        let mut edges = HashSet::new();
+        let mut connections = vec![0u8; (width * height) as usize];
 
         let get_color = |x: i32, y: i32| -> Option<[u8; 4]> {
             if x < 0 || x >= width as i32 || y < 0 || y >= height as i32 {
@@ -77,7 +76,7 @@ impl SimilarityGraph {
                     if let Some(nc) = get_color(nx, ny) {
                         if is_similar(c, nc) {
                             let n_idx = pos_to_idx(nx, ny);
-                            edges.insert((idx.min(n_idx), idx.max(n_idx)));
+                            connect(&mut connections, width, idx, n_idx);
                         }
                     }
                 }
@@ -92,19 +91,18 @@ impl SimilarityGraph {
                 let i01 = pos_to_idx(x, y + 1);
                 let i11 = pos_to_idx(x + 1, y + 1);
 
-                let d1 = (i00.min(i11), i00.max(i11)); // (0,0) - (1,1)
-                let d2 = (i10.min(i01), i10.max(i01)); // (1,0) - (0,1)
-
-                if edges.contains(&d1) && edges.contains(&d2) {
+                if connected_by_idx(&connections, width, i00, i11)
+                    && connected_by_idx(&connections, width, i10, i01)
+                {
                     let score_d1 =
                         calculate_curve_score(x, y, x + 1, y + 1, width, height, rgba, is_similar);
                     let score_d2 =
                         calculate_curve_score(x + 1, y, x, y + 1, width, height, rgba, is_similar);
 
                     if score_d1 >= score_d2 {
-                        edges.remove(&d2);
+                        disconnect(&mut connections, width, i10, i01);
                     } else {
-                        edges.remove(&d1);
+                        disconnect(&mut connections, width, i00, i11);
                     }
                 }
             }
@@ -113,9 +111,63 @@ impl SimilarityGraph {
         SimilarityGraph {
             width,
             height,
-            edges,
+            connections,
         }
     }
+}
+
+fn neighbor_bit(dx: i32, dy: i32) -> Option<u8> {
+    match (dx, dy) {
+        (-1, -1) => Some(1 << 0),
+        (0, -1) => Some(1 << 1),
+        (1, -1) => Some(1 << 2),
+        (-1, 0) => Some(1 << 3),
+        (1, 0) => Some(1 << 4),
+        (-1, 1) => Some(1 << 5),
+        (0, 1) => Some(1 << 6),
+        (1, 1) => Some(1 << 7),
+        _ => None,
+    }
+}
+
+fn pixel_xy(width: u32, idx: usize) -> (i32, i32) {
+    let width = width as usize;
+    ((idx % width) as i32, (idx / width) as i32)
+}
+
+fn set_connection(connections: &mut [u8], width: u32, from: usize, to: usize, enabled: bool) {
+    let (from_x, from_y) = pixel_xy(width, from);
+    let (to_x, to_y) = pixel_xy(width, to);
+    let Some(bit) = neighbor_bit(to_x - from_x, to_y - from_y) else {
+        return;
+    };
+
+    if enabled {
+        connections[from] |= bit;
+    } else {
+        connections[from] &= !bit;
+    }
+}
+
+fn connect(connections: &mut [u8], width: u32, a: usize, b: usize) {
+    set_connection(connections, width, a, b, true);
+    set_connection(connections, width, b, a, true);
+}
+
+fn disconnect(connections: &mut [u8], width: u32, a: usize, b: usize) {
+    set_connection(connections, width, a, b, false);
+    set_connection(connections, width, b, a, false);
+}
+
+fn connected_by_idx(connections: &[u8], width: u32, a: usize, b: usize) -> bool {
+    let (a_x, a_y) = pixel_xy(width, a);
+    let (b_x, b_y) = pixel_xy(width, b);
+    let Some(bit) = neighbor_bit(b_x - a_x, b_y - a_y) else {
+        return false;
+    };
+    connections
+        .get(a)
+        .map_or(false, |mask| (mask & bit) != 0)
 }
 
 fn calculate_curve_score<F>(
@@ -217,7 +269,7 @@ fn is_connected(graph: &SimilarityGraph, p1: PixelPos, p2: PixelPos) -> bool {
     }
     let i1 = (p1.y * graph.width as i32 + p1.x) as usize;
     let i2 = (p2.y * graph.width as i32 + p2.x) as usize;
-    graph.edges.contains(&(i1.min(i2), i1.max(i2)))
+    connected_by_idx(&graph.connections, graph.width, i1, i2)
 }
 
 fn resolve_best_pixel(graph: &SimilarityGraph, sx: i32, sy: i32, fx: f32, fy: f32) -> PixelPos {
@@ -258,4 +310,61 @@ fn resolve_best_pixel(graph: &SimilarityGraph, sx: i32, sy: i32, fx: f32, fy: f3
     }
 
     p00
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgba(colors: &[[u8; 4]]) -> Vec<u8> {
+        colors.iter().flat_map(|color| color.iter().copied()).collect()
+    }
+
+    #[test]
+    fn graph_connections_are_symmetric() {
+        let pixels = rgba(&[
+            [10, 20, 30, 255],
+            [10, 20, 30, 255],
+            [10, 20, 30, 255],
+            [10, 20, 30, 255],
+        ]);
+
+        let graph = SimilarityGraph::new(2, 2, &pixels);
+
+        assert!(is_connected(&graph, PixelPos::new(0, 0), PixelPos::new(1, 0)));
+        assert!(is_connected(&graph, PixelPos::new(1, 0), PixelPos::new(0, 0)));
+        assert!(is_connected(&graph, PixelPos::new(0, 0), PixelPos::new(0, 1)));
+        assert!(is_connected(&graph, PixelPos::new(0, 1), PixelPos::new(0, 0)));
+    }
+
+    #[test]
+    fn graph_resolves_crossed_diagonals() {
+        let pixels = rgba(&[
+            [20, 20, 20, 255],
+            [20, 20, 20, 255],
+            [20, 20, 20, 255],
+            [20, 20, 20, 255],
+        ]);
+
+        let graph = SimilarityGraph::new(2, 2, &pixels);
+        let first_diagonal = is_connected(&graph, PixelPos::new(0, 0), PixelPos::new(1, 1));
+        let second_diagonal = is_connected(&graph, PixelPos::new(1, 0), PixelPos::new(0, 1));
+
+        assert_ne!(first_diagonal, second_diagonal);
+    }
+
+    #[test]
+    fn depixelize_preserves_expected_output_size() {
+        let pixels = rgba(&[
+            [0, 0, 0, 255],
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+        ]);
+
+        let (width, height, out) = apply_depixelize(2, 2, &pixels, 3);
+
+        assert_eq!((width, height), (6, 6));
+        assert_eq!(out.len(), 6 * 6 * 4);
+    }
 }
