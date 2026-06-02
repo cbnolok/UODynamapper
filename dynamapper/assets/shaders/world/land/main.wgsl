@@ -37,6 +37,7 @@
   ec_world_uv,
   ec_material_has_liquid_normal,
   ec_liquid_perturbed_base_uv,
+  sample_ec_material_normal_world,
   sample_tile_albedo,
   sample_ec_material_albedo,
   sample_ec_material_albedo_at_world,
@@ -639,6 +640,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   if (enable_bent == 1u) {
     Nw = get_bent_normal(in.world_position.xyz, Nw);
+  }
+  if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u) {
+    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile);
+    if (normal_map.w > 0.5) {
+      Nw = normalize(mix(Nw, normal_map.xyz, 0.45));
+    }
   }
 
   // Light & view vectors

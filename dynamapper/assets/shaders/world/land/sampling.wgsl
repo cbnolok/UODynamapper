@@ -147,6 +147,23 @@ fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
   return read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL).present;
 }
 
+fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform) -> vec4<f32> {
+  let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
+  if (!normal.present) {
+    return vec4<f32>(0.0, 1.0, 0.0, 0.0);
+  }
+
+  let normal_uv = ec_slot_world_uv(world_xz, normal);
+  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal).rgb;
+  let tangent_normal = normal_sample * 2.0 - vec3<f32>(1.0);
+  let world_normal = normalize(vec3<f32>(
+    tangent_normal.x,
+    max(tangent_normal.z, 0.08),
+    tangent_normal.y,
+  ));
+  return vec4<f32>(world_normal, 1.0);
+}
+
 fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, time_seconds: f32) -> vec2<f32> {
   let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
   if (!normal.present) {
