@@ -287,6 +287,7 @@ pub fn sys_update_shared_land_material(
     tile_atlas: Res<tile_atlas::TileAtlas>,
     uniform_state: Res<crate::configs::shader_presets::UniformState>,
     static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
+    player_q: Query<&Transform, With<crate::core::render::scene::player::Player>>,
     mut last_atlas_params: Local<Option<tile_atlas::AtlasParams>>,
     mut last_global_lighting: Local<f32>,
     mut last_render_zoom: Local<f32>,
@@ -309,7 +310,12 @@ pub fn sys_update_shared_land_material(
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
-    let static_light_uniform = build_land_static_light_uniform(static_lights.as_deref());
+    let static_light_focus_xz = player_q
+        .iter()
+        .next()
+        .map(|t| Vec2::new(t.translation.x, t.translation.z));
+    let static_light_uniform =
+        build_land_static_light_uniform(static_lights.as_deref(), static_light_focus_xz);
     let static_light_signature = land_static_light_signature(&static_light_uniform);
     let static_lights_changed = static_light_signature != *last_static_light_signature;
 
@@ -355,25 +361,62 @@ pub fn sys_update_shared_land_material(
 
 fn build_land_static_light_uniform(
     static_lights: Option<&crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>,
+    focus_xz: Option<Vec2>,
 ) -> LandStaticLightUniform {
     let mut uniform = LandStaticLightUniform::default();
     let Some(static_lights) = static_lights else {
         return uniform;
     };
 
-    let light_count = static_lights.0.len().min(LAND_STATIC_LIGHT_MAX);
+    let mut selected_lights = static_lights.0.iter().collect::<Vec<_>>();
+    selected_lights.sort_by(|a, b| {
+        let a_score = land_static_light_selection_score(a, focus_xz);
+        let b_score = land_static_light_selection_score(b, focus_xz);
+        b_score
+            .total_cmp(&a_score)
+            .then_with(|| a.key.tile_y.cmp(&b.key.tile_y))
+            .then_with(|| a.key.tile_x.cmp(&b.key.tile_x))
+            .then_with(|| a.key.z.cmp(&b.key.z))
+            .then_with(|| a.key.graphic.cmp(&b.key.graphic))
+            .then_with(|| a.key.light_id.cmp(&b.key.light_id))
+            .then_with(|| a.key.hue_id.cmp(&b.key.hue_id))
+    });
+
+    let light_count = selected_lights.len().min(LAND_STATIC_LIGHT_MAX);
     for ((dst, color_dst), light) in uniform
         .lights
         .iter_mut()
         .zip(uniform.colors.iter_mut())
-        .zip(static_lights.0.iter().take(light_count))
+        .zip(selected_lights.into_iter().take(light_count))
     {
-        let radius = light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25;
+        let radius = land_static_light_radius(light);
         *dst = Vec4::new(light.world_x, light.world_y, light.world_z, radius);
         *color_dst = Vec4::new(light.color_rgb[0], light.color_rgb[1], light.color_rgb[2], 0.0);
     }
     uniform.params = UVec4::new(light_count as u32, 0, 0, 0);
     uniform
+}
+
+fn land_static_light_radius(
+    light: &crate::core::render::scene::world::art::static_lights::StaticLightInstance,
+) -> f32 {
+    light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25
+}
+
+fn land_static_light_selection_score(
+    light: &crate::core::render::scene::world::art::static_lights::StaticLightInstance,
+    focus_xz: Option<Vec2>,
+) -> f32 {
+    let radius = land_static_light_radius(light);
+    let strength = radius * radius;
+    let Some(focus_xz) = focus_xz else {
+        return strength;
+    };
+
+    let dx = light.world_x - focus_xz.x;
+    let dz = light.world_z - focus_xz.y;
+    let distance_sq = dx * dx + dz * dz;
+    strength / (1.0 + distance_sq / strength.max(1.0))
 }
 
 fn land_static_light_signature(uniform: &LandStaticLightUniform) -> u64 {
@@ -400,6 +443,80 @@ fn land_static_light_signature(uniform: &LandStaticLightUniform) -> u64 {
         }
     }
     signature
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::render::scene::world::art::static_lights::{
+        RenderStaticLightInstances, StaticLightInstance, StaticLightKey,
+    };
+
+    fn test_light(tile_x: u32, tile_y: u32, width_world: f32) -> StaticLightInstance {
+        StaticLightInstance {
+            key: StaticLightKey {
+                map_id: 0,
+                tile_x,
+                tile_y,
+                z: 0,
+                graphic: tile_x as u16,
+                light_id: tile_x,
+                hue_id: 0,
+            },
+            light_id: tile_x,
+            hue_id: 0,
+            color_rgb: [1.0, 0.72, 0.42],
+            world_x: tile_x as f32,
+            world_z: tile_y as f32,
+            world_y: 0.0,
+            width_world,
+            height_world: width_world,
+        }
+    }
+
+    #[test]
+    fn land_static_light_uniform_prefers_near_focus_lights() {
+        let mut lights = vec![test_light(1000, 1000, 1.0)];
+        for i in 0..LAND_STATIC_LIGHT_MAX {
+            lights.push(test_light(i as u32, 0, 1.0));
+        }
+
+        let uniform = build_land_static_light_uniform(
+            Some(&RenderStaticLightInstances(lights)),
+            Some(Vec2::ZERO),
+        );
+
+        assert_eq!(uniform.params.x, LAND_STATIC_LIGHT_MAX as u32);
+        assert!(
+            uniform
+                .lights
+                .iter()
+                .take(uniform.params.x as usize)
+                .all(|light| light.x < 1000.0)
+        );
+    }
+
+    #[test]
+    fn land_static_light_uniform_without_focus_prefers_stronger_lights() {
+        let mut lights = (0..LAND_STATIC_LIGHT_MAX)
+            .map(|i| test_light(i as u32, 0, 1.0))
+            .collect::<Vec<_>>();
+        lights.push(test_light(1000, 1000, 8.0));
+
+        let uniform = build_land_static_light_uniform(
+            Some(&RenderStaticLightInstances(lights)),
+            None,
+        );
+
+        assert_eq!(uniform.params.x, LAND_STATIC_LIGHT_MAX as u32);
+        assert!(
+            uniform
+                .lights
+                .iter()
+                .take(uniform.params.x as usize)
+                .any(|light| light.x == 1000.0)
+        );
+    }
 }
 
 use bevy::time::common_conditions::on_real_timer;

@@ -62,6 +62,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   Placed package hues can tint local-response color when the light source has no known ClassicUO shader color.
     *   Light masks without a known ClassicUO shader derive local-response color from alpha-weighted colored mask pixels when the mask has meaningful chroma.
     *   Land and art local-light response consume that color instead of a single fixed warm tint.
+    *   Land local-light uniforms select the visible strongest/nearest lights with stable ordering instead of taking the first visible chunk-order entries.
     *   Remaining work: validate hue precedence against known light-source scenes.
 
 10. **KR cliff/high-bank compression**
@@ -94,7 +95,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 3.  **Dynamic additive light decals**
     *   Static light-source tiles now collect visible light masks and local-light influence.
     *   `light_decal_intensity` scales the visible decal material and land/art light response.
-    *   Remaining work: support mobile/spell/temporary lights, stronger color provenance, and ordering guarantees before fullscreen tonemap/bloom.
+    *   Remaining work: support mobile/spell/temporary lights and ordering guarantees before fullscreen tonemap/bloom.
 
 4.  **Texture normal maps**
     *   `enable_normal_maps` toggles EC land role-3 texture normals.
