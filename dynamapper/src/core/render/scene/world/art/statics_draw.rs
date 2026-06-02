@@ -62,6 +62,8 @@ pub struct ArtSpriteMaterialExtension {
     #[texture(109, visibility(fragment))]
     #[sampler(108, visibility(fragment))]
     pub hues: Handle<Image>,
+    #[texture(110, visibility(fragment))]
+    pub visual_grunge_texture: Handle<Image>,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -86,6 +88,8 @@ pub struct ArtGroundMaterialExtension {
     pub land_page_atlas: Handle<Image>,
     #[texture(112, sample_type = "u_int", visibility(fragment))]
     pub land_page_lookup: Handle<Image>,
+    #[texture(113, visibility(fragment))]
+    pub visual_grunge_texture: Handle<Image>,
 }
 
 #[derive(Resource, Clone)]
@@ -724,6 +728,7 @@ pub fn sys_setup_art_page_atlas(
     let buffer_handle = storage_buffers.add(initial_buffer);
     let opaque_sprite_atlas_handle = sprite_atlas_handle.clone();
     let transparent_sprite_atlas_handle = sprite_atlas_handle.clone();
+    let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
 
     let opaque_material_handle = materials.add(ArtSpriteMaterial {
         base: StandardMaterial {
@@ -748,6 +753,7 @@ pub fn sys_setup_art_page_atlas(
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
+            visual_grunge_texture: visual_grunge_texture.clone(),
         },
     });
 
@@ -774,6 +780,7 @@ pub fn sys_setup_art_page_atlas(
             effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
+            visual_grunge_texture: visual_grunge_texture.clone(),
         },
     });
 
@@ -830,6 +837,7 @@ pub fn sys_setup_art_page_atlas(
             hues: hue_lookup_handle.clone(),
             land_page_atlas: land_page_bindings.atlas.clone(),
             land_page_lookup: land_page_bindings.lookup.clone(),
+            visual_grunge_texture: visual_grunge_texture.clone(),
         },
     });
 
@@ -858,6 +866,7 @@ pub fn sys_setup_art_page_atlas(
             hues: hue_lookup_handle,
             land_page_atlas: land_page_bindings.atlas,
             land_page_lookup: land_page_bindings.lookup,
+            visual_grunge_texture,
         },
     });
 

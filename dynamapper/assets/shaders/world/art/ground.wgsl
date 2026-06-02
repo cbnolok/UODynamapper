@@ -6,13 +6,13 @@
 #import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_visual_grunge}
+#import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 
 #import "shaders/world/art/art_ground_bindings.wgsl"::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
-    hue_sampler, hue_texture, land_page_atlas, land_page_lookup,
+    hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
     HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
@@ -248,7 +248,8 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         ), shaded.a);
     }
     if (effects.enable_grunge == 1u) {
-        shaded = vec4<f32>(apply_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile), shaded.a);
+        let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
+        shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);

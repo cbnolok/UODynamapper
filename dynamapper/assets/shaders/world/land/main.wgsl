@@ -24,6 +24,7 @@
 #import "shaders/world/land/land_bindings.wgsl"::{
   TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
+  visual_grunge_texture,
   ATLAS, scene, effects, global_light, land_light
 }
 #import "shaders/world/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
@@ -31,7 +32,7 @@
 #import "shaders/world/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_shadow_aware_land_grunge}
+#import "shaders/postprocess/grunge.wgsl"::{apply_texture_shadow_aware_land_grunge, visual_grunge_uv}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
@@ -705,12 +706,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         effects.grunge_strength,
       );
     }
-    base_albedo = apply_shadow_aware_land_grunge(
+    let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;
+    base_albedo = apply_texture_shadow_aware_land_grunge(
       base_albedo,
       in.world_position.xz,
       effects.grunge_strength,
       visual_profile,
       grunge_shadow,
+      visual_grunge,
     );
   }
   if (visual_profile == 2u) {

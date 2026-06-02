@@ -51,6 +51,7 @@ struct SpriteParams {
 @group(3) @binding(109) var hue_texture: texture_2d<f32>;
 @group(3) @binding(111) var land_page_atlas: texture_2d_array<f32>;
 @group(3) @binding(112) var land_page_lookup: texture_2d<u32>;
+@group(3) @binding(113) var visual_grunge_texture: texture_2d<f32>;
 
 const HEIGHT_SCALE: f32 = 0.1;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;

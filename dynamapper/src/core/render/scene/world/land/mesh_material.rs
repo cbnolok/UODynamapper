@@ -65,6 +65,10 @@ pub struct LandMaterialExtension {
     /// Small visible static-light set for KR-style terrain light catch.
     #[uniform(111, visibility(fragment))]
     pub static_light_uniform: LandStaticLightUniform,
+
+    /// Shared generated grunge/noise texture for EC/KR weathering overlays.
+    #[texture(112, visibility(fragment))]
+    pub visual_grunge_texture: Handle<Image>,
 }
 
 impl MaterialExtension for LandMaterialExtension {

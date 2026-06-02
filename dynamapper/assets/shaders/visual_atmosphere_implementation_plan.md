@@ -31,8 +31,9 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   `dynamapper/assets/shaders/postprocess/color_grading.wgsl` contains the shared vibrant grading logic.
     *   Land and art shaders use the same grading path before tonemapping.
 
-5.  **Procedural grunge/weathering**
+5.  **Texture-backed grunge/weathering fallback**
     *   `dynamapper/assets/shaders/postprocess/grunge.wgsl` contains procedural world-space grunge.
+    *   Runtime land/art materials bind a generated repeatable grunge texture and blend it with the procedural fallback.
     *   The effect applies to land, art sprites, and ground art.
     *   `enable_grunge` and `grunge_strength` are exposed in `LandEffectsUniform`.
     *   Presets use:
@@ -76,10 +77,10 @@ By breaking the visual styles down into specific "atmospheric components," we ca
         *   `dynamapper/assets/shaders/postprocess_ec_doc/`
         *   `dynamapper/assets/shaders/postprocess_kr_doc/`
 
-2.  **Texture-backed grunge**
-    *   Current grunge is procedural.
-    *   KR/EC-style grunge texture loading and binding (`noise.tga` or equivalent DDS) is not implemented.
-    *   A future implementation should add a shared grunge texture binding and replace or blend with the procedural fallback.
+2.  **Official texture-backed grunge provenance**
+    *   Current grunge uses a generated repeatable texture blended with procedural variation.
+    *   KR/EC-style grunge texture loading from `noise.tga` or equivalent DDS is not implemented because the official source texture has not been identified in the packaged asset path.
+    *   A future implementation should replace the generated fallback image with the verified support texture while preserving the same shader bindings and procedural fallback.
 
 3.  **Dynamic additive light decals**
     *   Static light-source tiles now collect visible light masks and local-light influence.
@@ -128,9 +129,9 @@ To make repeating tiles look organic and "painterly," the engine multiplies surf
 1.  **DONE (procedural fallback):** Add procedural world-space grunge in `postprocess/grunge.wgsl`.
 2.  **DONE:** Apply grunge to land, art sprites, and ground art.
 3.  **DONE:** Expose `enable_grunge` and `grunge_strength`.
-4.  **TODO (texture-backed KR/EC parity):** Load `noise.tga` (or the equivalent DDS) as a global `Image` resource.
-5.  **TODO (texture-backed KR/EC parity):** Bind the noise texture to land/art shader materials.
-6.  **TODO (texture-backed KR/EC parity):** Sample the noise texture using world-space UVs (e.g., `world_pos.xz * 0.05`) so it spans seamlessly across multiple terrain tiles.
+4.  **DONE (generated fallback):** Create a repeatable grunge `Image` at runtime and bind it to land, art sprite, and ground-art shader materials.
+5.  **DONE (generated fallback):** Sample the texture with world-space UVs and blend it with procedural variation to avoid uniform single-scale noise.
+6.  **TODO (official KR/EC parity):** Identify and load `noise.tga` or the equivalent DDS support texture, replacing the generated image without changing the shader binding model.
 7.  **Target application:** 
     *   `out_color.rgb *= mix(vec3(1.0), noise_sample.rgb, grunge_strength);`
     *   Expose `grunge_strength` as a uniform (1.0 for KR, 0.0-0.2 for EC).

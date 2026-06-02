@@ -785,6 +785,7 @@ pub fn sys_setup_terrain_cache(
 
     let atlas_image_handle = images.add(image);
     cmd.insert_resource(TileAtlasImageHandle(atlas_image_handle.clone()));
+    let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
 
     let shared_mat =
         crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial {
@@ -813,6 +814,7 @@ pub fn sys_setup_terrain_cache(
                 global_lighting_uniform: Default::default(),
                 land_lighting_uniform: Default::default(),
                 static_light_uniform: Default::default(),
+                visual_grunge_texture,
             },
         };
 

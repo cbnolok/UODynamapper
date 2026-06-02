@@ -82,6 +82,7 @@ struct LandStaticLightUniform {
 @group(3) @binding(107) var<uniform> global_light:  GlobalLightingUniforms;
 @group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
 @group(3) @binding(111) var<uniform> static_lights: LandStaticLightUniform;
+@group(3) @binding(112) var visual_grunge_texture: texture_2d<f32>;
 
 // ============================================================================
 // Grid / chunk constants

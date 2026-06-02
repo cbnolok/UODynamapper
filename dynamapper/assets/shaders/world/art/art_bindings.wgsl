@@ -74,6 +74,7 @@ struct SpriteParams {
 @group(3) @binding(107) var<uniform> global_light: GlobalLightingUniforms;
 @group(3) @binding(108) var hue_sampler: sampler;
 @group(3) @binding(109) var hue_texture: texture_2d<f32>;
+@group(3) @binding(110) var visual_grunge_texture: texture_2d<f32>;
 
 // Constants
 const INV_SQRT_2: f32 = 0.70710678118;
