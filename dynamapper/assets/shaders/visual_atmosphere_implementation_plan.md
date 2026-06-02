@@ -69,6 +69,11 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   Art fake-normal shading adds a subtle one-sided depth tint for foliage, roofs, and tall non-ground statics.
     *   Remaining work: validate against KR tree, wall, and large-static screenshots and tune depth-class profiles if needed.
 
+12. **KR projected art shadows**
+    *   Sprite statics have an opt-in bounds-projected shadow material pass controlled by `enable_art_projected_shadows`, `art_projected_shadow_strength`, `art_projected_shadow_length`, and `art_projected_shadow_softness`.
+    *   The first pass uses a soft bounds/ellipse mask and reuses existing sprite batches and instance buffers.
+    *   Remaining work: validate draw ordering over land/water and add the second version that samples sprite atlas alpha for softened silhouette shadows.
+
 ### Still Missing
 1.  **Real fullscreen EC/KR post-process pipeline**
     *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.

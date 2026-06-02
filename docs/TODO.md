@@ -258,6 +258,8 @@ Current execution decisions:
 - Continue light-color provenance for static lights: first pass feeds ClassicUO light-shader colors into land/art local response, with warm fallback; remaining work is package-hue and sampled-mask color provenance.
 - Continue terrain shadow/compression for vertical cliffs and high banks: first KR pass darkens steep neighbor-height transitions through `kr_land_relief_shadow_strength`; remaining work is screenshot validation and metadata-aware cliff family tuning.
 - Continue roof/tree/large-static side falloff: first KR shader pass adds subtle one-sided depth tint for foliage, roofs, and tall non-ground statics; remaining work is screenshot validation and family-specific tuning.
+- Continue projected art shadows: first pass renders opt-in bounds-based soft shadows for tall sprite statics; remaining work is screenshot validation, draw ordering review, and material/depth-family tuning.
+- Add alpha-mask projected art shadows as the second version: sample the sprite atlas alpha into the shadow pass so trees, walls, and large statics cast softened silhouettes instead of generic bounds ellipses.
 - Continue texture-backed grunge/noise: first pass binds a generated repeatable texture to land/art/ground-art and blends it with procedural variation; remaining work is identifying the official KR/EC support texture and replacing the fallback image.
 - Keep these effects modular and independently tunable in shader settings; each effect must be disableable for regression comparison.
 - Preserve original UO/KR stylistic intent: no heavy bloom, screen-space outlines, modern PBR material treatment, or procedural noise pasted uniformly over every surface.

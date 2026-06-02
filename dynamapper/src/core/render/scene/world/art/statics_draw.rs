@@ -40,6 +40,7 @@ pub struct SpriteParams {
 
 const PASS_MODE_OPAQUE: u32 = 0;
 const PASS_MODE_TRANSPARENT: u32 = 1;
+const PASS_MODE_SHADOW: u32 = 2;
 
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
 pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
@@ -97,6 +98,7 @@ pub struct ArtSpriteRenderAssets {
     pub mesh: Handle<Mesh>,
     pub opaque_material: Handle<ArtSpriteMaterial>,
     pub transparent_material: Handle<ArtSpriteMaterial>,
+    pub shadow_material: Handle<ArtSpriteMaterial>,
 }
 
 #[derive(Resource, Clone)]
@@ -165,6 +167,9 @@ pub struct StaticsDrawEntity;
 
 #[derive(Component)]
 pub struct StaticsTransparentDrawEntity;
+
+#[derive(Component)]
+pub struct StaticsShadowDrawEntity;
 
 #[derive(Component)]
 pub struct StaticsGroundDrawEntity;
@@ -560,6 +565,9 @@ fn apply_sprite_art_atlas_resize(
         material.extension.atlas = new_handle.clone();
     }
     if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+        material.extension.atlas = new_handle.clone();
+    }
+    if let Some(material) = materials.get_mut(&render_assets.shadow_material) {
         material.extension.atlas = new_handle;
     }
 }
@@ -643,6 +651,9 @@ fn rebind_active_art_atlases(
         material.extension.atlas = next_sprite_handle.clone();
     }
     if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+        material.extension.atlas = next_sprite_handle.clone();
+    }
+    if let Some(material) = materials.get_mut(&render_assets.shadow_material) {
         material.extension.atlas = next_sprite_handle;
     }
 
@@ -784,6 +795,33 @@ pub fn sys_setup_art_page_atlas(
         },
     });
 
+    let shadow_material_handle = materials.add(ArtSpriteMaterial {
+        base: StandardMaterial {
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            unlit: true,
+            ..default()
+        },
+        extension: ArtSpriteMaterialExtension {
+            atlas: sprite_atlas_handle.clone(),
+            instances: buffer_handle.clone(),
+            params: SpriteParams {
+                render_mode: 0,
+                alpha_cutoff: 0.0,
+                pass_mode: PASS_MODE_SHADOW,
+                hue_enabled: 0,
+                map_width_tiles: 1.0,
+                map_height_tiles: 1.0,
+                _pad_sp: UVec2::ZERO,
+            },
+            scene_uniform: world::land::mesh_material::SceneUniform::default(),
+            effects_uniform: world::land::mesh_material::LandEffectsUniform::default(),
+            global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
+            hues: hue_lookup_handle.clone(),
+            visual_grunge_texture: visual_grunge_texture.clone(),
+        },
+    });
+
     let initial_ground_buffer = ShaderStorageBuffer::from(vec![GroundTileInstance {
         world_x: 0.0,
         world_z: 0.0,
@@ -898,6 +936,7 @@ pub fn sys_setup_art_page_atlas(
         mesh: mesh_handle.clone(),
         opaque_material: opaque_material_handle,
         transparent_material: transparent_material_handle,
+        shadow_material: shadow_material_handle,
     });
     commands.insert_resource(ArtGroundRenderAssets {
         mesh: mesh_handle,
@@ -1056,6 +1095,59 @@ pub fn sys_sync_static_sprite_entities(
             ),
         );
         debug_state.last_entity_count = Some(desired_count);
+    }
+}
+
+pub fn sys_sync_static_sprite_shadow_entities(
+    mut commands: Commands,
+    chunk_batches: Res<RenderStaticChunkBatches>,
+    render_assets: Res<ArtSpriteRenderAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsShadowDrawEntity>>,
+) {
+    let existing_by_key: HashMap<_, _> = existing_q
+        .iter()
+        .map(|(entity, batch)| (batch.key, (entity, *batch)))
+        .collect();
+
+    for batch in &chunk_batches.sprite {
+        if let Some((entity, current_batch)) = existing_by_key.get(&batch.key) {
+            if current_batch.start != batch.start || current_batch.count != batch.count {
+                let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+                let _ = commands.entity(*entity).insert((
+                    Mesh3d(mesh_handle),
+                    StaticChunkBatchEntity {
+                        key: batch.key,
+                        start: batch.start,
+                        count: batch.count,
+                    },
+                ));
+            }
+        } else {
+            let mesh_handle = meshes.add(build_art_batch_mesh(batch.start, batch.count));
+            commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(render_assets.shadow_material.clone()),
+                Transform::IDENTITY,
+                NoFrustumCulling,
+                StaticChunkBatchEntity {
+                    key: batch.key,
+                    start: batch.start,
+                    count: batch.count,
+                },
+                StaticsShadowDrawEntity,
+            ));
+        }
+    }
+
+    for (entity, batch) in existing_q.iter() {
+        if !chunk_batches
+            .sprite
+            .iter()
+            .any(|desired| desired.key == batch.key)
+        {
+            let _ = commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -1286,6 +1378,14 @@ pub fn sys_update_sprite_instance_buffer(
         transparent_material.extension.params.map_width_tiles = map_width_tiles;
         transparent_material.extension.params.map_height_tiles = map_height_tiles;
     }
+    {
+        let Some(shadow_material) = materials.get_mut(&render_assets.shadow_material) else {
+            return;
+        };
+        shadow_material.extension.params.render_mode = render_mode;
+        shadow_material.extension.params.map_width_tiles = map_width_tiles;
+        shadow_material.extension.params.map_height_tiles = map_height_tiles;
+    }
 
     let upload_changed = upload_cache.sprite_instances != instances.0;
     if upload_changed {
@@ -1434,6 +1534,15 @@ pub fn sys_update_art_materials(
             );
         }
         if let Some(mat) = materials.get_mut(&assets.transparent_material) {
+            update_art_material_uniforms(
+                mat,
+                &uniform_state,
+                current_global_lighting,
+                current_render_zoom,
+                camera_pos,
+            );
+        }
+        if let Some(mat) = materials.get_mut(&assets.shadow_material) {
             update_art_material_uniforms(
                 mat,
                 &uniform_state,

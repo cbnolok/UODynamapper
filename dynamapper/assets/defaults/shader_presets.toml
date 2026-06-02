@@ -82,6 +82,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -139,6 +143,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -196,6 +204,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [classic.night.lighting]
 enable_fog = 0
@@ -253,6 +265,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -315,6 +331,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -371,6 +391,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -427,6 +451,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -483,6 +511,10 @@ kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 0
+art_projected_shadow_strength = 0.0
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -548,6 +580,10 @@ kr_land_relief_shadow_strength = 0.70
 kr_land_shadow_mottle_strength = 0.60
 kr_art_temperature_strength = 0.75
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.22
+art_projected_shadow_length = 0.42
+art_projected_shadow_softness = 0.62
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -607,6 +643,10 @@ kr_land_relief_shadow_strength = 0.70
 kr_land_shadow_mottle_strength = 0.60
 kr_art_temperature_strength = 0.75
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.24
+art_projected_shadow_length = 0.44
+art_projected_shadow_softness = 0.62
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -666,6 +706,10 @@ kr_land_relief_shadow_strength = 0.62
 kr_land_shadow_mottle_strength = 0.52
 kr_art_temperature_strength = 0.70
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.18
+art_projected_shadow_length = 0.36
+art_projected_shadow_softness = 0.68
 
 [kr.night.lighting]
 enable_fog = 1
@@ -725,6 +769,10 @@ kr_land_relief_shadow_strength = 0.58
 kr_land_shadow_mottle_strength = 0.48
 kr_art_temperature_strength = 0.65
 land_normal_map_strength = 0.45
+enable_art_projected_shadows = 1
+art_projected_shadow_strength = 0.16
+art_projected_shadow_length = 0.28
+art_projected_shadow_softness = 0.74
 
 [kr.cave.lighting]
 enable_fog = 1

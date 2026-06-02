@@ -56,6 +56,8 @@ impl Plugin for DrawStaticSpritesPlugin {
                    .after(static_lights::sys_collect_visible_static_lights),
                statics_draw::sys_sync_static_sprite_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
+               statics_draw::sys_sync_static_sprite_shadow_entities
+                   .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_sprite_transparent_entities
                    .after(SceneRenderArtSysSet::CollectVisibleStatics),
                statics_draw::sys_sync_static_ground_entities

@@ -15,7 +15,8 @@
     hue_sampler, hue_texture, visual_grunge_texture,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
+    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
+    STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 }
 #import "shaders/world/art/hue.wgsl"::apply_static_hue
 #import "shaders/world/art/shading.wgsl"::{apply_art_surface_shading, apply_art_atmosphere_depth}
@@ -85,15 +86,37 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         inst.world_y + local.y,
         inst.world_z + local.x * BILLBOARD_RIGHT_XZ.y,
     );
+    var projected_world_pos = world_pos;
+    if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
+        let caster_height = max(world_pos.y - inst.base_world_y, 0.0);
+        let light_xz_len = max(length(scene.light_direction.xz), 0.001);
+        let shadow_dir = -scene.light_direction.xz / light_xz_len;
+        var profile_length = 1.0;
+        if (inst.depth_class == DEPTH_CLASS_FOLIAGE) {
+            profile_length = 1.18;
+        } else if (inst.depth_class == DEPTH_CLASS_ROOF) {
+            profile_length = 0.68;
+        }
+        let shadow_offset = shadow_dir * caster_height * effects.art_projected_shadow_length * profile_length;
+        projected_world_pos = vec3<f32>(
+            world_pos.x + shadow_offset.x,
+            inst.base_world_y + 0.012,
+            world_pos.z + shadow_offset.y,
+        );
+    }
     var out: ArtVertexOutput;
-    out.position = view_transformations::position_world_to_clip(world_pos);
+    out.position = view_transformations::position_world_to_clip(projected_world_pos);
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;
-    out.logical_depth = apply_sort_bias_to_frag_depth(
-        logical_depth_from_projected_priority(inst),
-        inst.sort_bias_ordinal,
-    );
+    if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
+        out.logical_depth = clip_depth_to_frag_depth(out.position);
+    } else {
+        out.logical_depth = apply_sort_bias_to_frag_depth(
+            logical_depth_from_projected_priority(inst),
+            inst.sort_bias_ordinal,
+        );
+    }
     out.depth_class = inst.depth_class;
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
@@ -116,11 +139,38 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     let inst = instances[in.instance_index];
     var uv = in.uv;
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
+    let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
+
+    if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
+        if (effects.enable_art_projected_shadows == 0u || effects.art_projected_shadow_strength <= 0.0001 || sprite_params.render_mode == 1u) {
+            discard;
+        }
+        var depth_profile = 0.0;
+        if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
+            depth_profile = 1.0;
+        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
+            depth_profile = 0.16;
+        } else if (in.depth_class != DEPTH_CLASS_BACKGROUND && in.depth_class != DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
+            depth_profile = 0.55;
+        }
+        let caster_height = max(inst.local_max.y - inst.local_min.y, 0.0);
+        let height_profile = smoothstep(0.45, 3.2, caster_height);
+        let centered = (uv_in_tile_for_shading - vec2<f32>(0.5, 0.56)) / vec2<f32>(0.54, 0.42);
+        let ellipse = dot(centered, centered);
+        let softness = clamp(effects.art_projected_shadow_softness, 0.05, 1.0);
+        let mask = 1.0 - smoothstep(1.0 - softness * 0.48, 1.0, ellipse);
+        let alpha = mask * height_profile * depth_profile * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
+        if (alpha <= 0.001) {
+            discard;
+        }
+        out.color = vec4<f32>(0.025, 0.030, 0.036, alpha);
+        return out;
+    }
+
     if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
-    let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
     let color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {

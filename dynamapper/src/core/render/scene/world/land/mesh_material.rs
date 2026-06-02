@@ -198,10 +198,30 @@ pub struct LandEffectsUniform {
     /// 0 disables KR art warm/cool split; 1 preserves the preset strength.
     pub kr_art_temperature_strength: f32,
 
-    // --- Texture normal controls (vec4 slot 6, tail padded by uniform layout) ---
+    // --- Texture normal / art projected shadow controls (vec4 slot 6) ---
     /// Strength for EC land role-3 texture normal contribution.
     #[serde(default = "default_land_normal_map_strength")]
     pub land_normal_map_strength: f32,
+    /// 1 = render KR-style projected bounds shadows for tall art sprites.
+    #[serde(default)]
+    pub enable_art_projected_shadows: u32,
+    /// Opacity multiplier for projected art shadows.
+    #[serde(default = "default_art_projected_shadow_strength")]
+    pub art_projected_shadow_strength: f32,
+    /// Directional projection length in world tiles per sprite height unit.
+    #[serde(default = "default_art_projected_shadow_length")]
+    pub art_projected_shadow_length: f32,
+
+    // --- Art projected shadow softness (vec4 slot 7) ---
+    /// Edge softness for bounds-projected art shadows.
+    #[serde(default = "default_art_projected_shadow_softness")]
+    pub art_projected_shadow_softness: f32,
+    #[serde(default)]
+    pub _pad_art_shadow0: f32,
+    #[serde(default)]
+    pub _pad_art_shadow1: f32,
+    #[serde(default)]
+    pub _pad_art_shadow2: f32,
 }
 
 fn default_art_shadow_strength() -> f32 {
@@ -218,6 +238,18 @@ fn default_art_depth_tint_strength() -> f32 {
 
 fn default_land_normal_map_strength() -> f32 {
     0.45
+}
+
+fn default_art_projected_shadow_strength() -> f32 {
+    0.22
+}
+
+fn default_art_projected_shadow_length() -> f32 {
+    0.42
+}
+
+fn default_art_projected_shadow_softness() -> f32 {
+    0.62
 }
 
 fn default_atmosphere_tint() -> Vec3 {
