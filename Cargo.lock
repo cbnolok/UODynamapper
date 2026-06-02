@@ -4307,6 +4307,7 @@ dependencies = [
  "image",
  "mmpx",
  "serde",
+ "wide",
  "xbrz-rs",
 ]
 
