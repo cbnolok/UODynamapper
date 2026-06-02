@@ -117,11 +117,21 @@ impl UopFile {
         let mut buffer = Vec::new();
         file_data.read_to_end(&mut buffer)?;
 
+        self.create_file_from_bytes(&buffer, filename_hash, compression)
+    }
+
+    /// Creates a new `UopFile` from an in-memory payload.
+    pub fn create_file_from_bytes(
+        mut self,
+        file_data: &[u8],
+        filename_hash: u64,
+        compression: CompressionFlag,
+    ) -> Result<Self, std::io::Error> {
         self.filename_hash = filename_hash;
-        self.decompressed_size = buffer.len() as u32;
+        self.decompressed_size = file_data.len() as u32;
         self.compression = compression;
 
-        let final_data = encode_payload(&buffer, compression.as_uop_compression())?;
+        let final_data = encode_payload(file_data, compression.as_uop_compression())?;
         self.compressed_size = final_data.len() as u32;
 
         self.data_block_hash = super::hash::hash_data_block(&final_data)?;

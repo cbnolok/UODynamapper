@@ -15,7 +15,7 @@
 //!   at its own payload through `data_block_address`.
 
 use std::fs::File;
-use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -320,7 +320,10 @@ impl UopPackage {
         packed_file_name: &str,
         compression: CompressionFlag,
     ) -> io::Result<()> {
-        self.add_file_from_reader(&mut Cursor::new(file_content), packed_file_name, compression)
+        let filename_hash = hash::hash_file_name_single(packed_file_name);
+        let file = UopFile::new().create_file_from_bytes(file_content, filename_hash, compression)?;
+        self.push_file(file);
+        Ok(())
     }
 
     /// Finalize layout-sensitive fields and write a complete package to disk.
@@ -496,12 +499,13 @@ impl UopPackage {
         self.ensure_all_data_loaded()?;
 
         for file in self.iter_files_mut() {
-            let unpacked = file.unpack()?;
+            let unpacked = file.unpack_arc()?;
+            let filename_hash = file.filename_hash();
             let recompressed_flag = file.compression();
 
-            *file = UopFile::new().create_file(
-                &mut Cursor::new(unpacked),
-                file.filename_hash(),
+            *file = UopFile::new().create_file_from_bytes(
+                unpacked.as_ref(),
+                filename_hash,
                 recompressed_flag,
             )?;
         }
