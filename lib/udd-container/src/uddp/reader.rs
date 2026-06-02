@@ -131,7 +131,7 @@ pub struct UddpReader {
     data: Arc<UddpData>,
     header: UddpHeader,
     lookup_mode: LookupMode,
-    dict_by_type: HashMap<u8, RuntimeDictRef>,
+    dict_by_type: [Option<RuntimeDictRef>; MAX_TYPES],
     dense_index: Option<Vec<UddpLocator>>,
     path_index: Option<Vec<UddpPathEntry>>,
     sparse_index: Option<Vec<UddpSparseIdEntry>>,
@@ -195,7 +195,7 @@ impl UddpReader {
             data: Arc::new(data),
             header,
             lookup_mode,
-            dict_by_type: HashMap::new(),
+            dict_by_type: [None; MAX_TYPES],
             dense_index: None,
             path_index: None,
             sparse_index: None,
@@ -314,7 +314,7 @@ impl UddpReader {
 
     /// Return the trained dictionary bytes associated with a data type.
     pub fn dictionary_for_type(&self, data_type: u8) -> Option<&[u8]> {
-        let dict = self.dict_by_type.get(&data_type)?;
+        let dict = self.dict_by_type.get(data_type as usize)?.as_ref()?;
         let start = usize::try_from(dict.offset).ok()?;
         let end = start.checked_add(dict.size as usize)?;
         self.data.get(start..end)
@@ -342,13 +342,15 @@ impl UddpReader {
     }
 
     pub fn dictionary_records(&self) -> Vec<(u8, Codec, u32)> {
-        let mut records = self
+        self
             .dict_by_type
             .iter()
-            .map(|(&data_type, dict)| (data_type, dict.codec, dict.size))
-            .collect::<Vec<_>>();
-        records.sort_by_key(|(data_type, _, _)| *data_type);
-        records
+            .enumerate()
+            .filter_map(|(data_type, dict)| {
+                let dict = dict.as_ref()?;
+                Some((data_type as u8, dict.codec, dict.size))
+            })
+            .collect()
     }
 
     fn resolved_from_locator(locator: &UddpLocator) -> ResolvedFile {
@@ -369,14 +371,14 @@ impl UddpReader {
 
         for _ in 0..len {
             let dict = UddpDictRef::read_from(&mut cur)?;
-            self.dict_by_type.insert(
-                dict.data_type,
-                RuntimeDictRef {
-                    offset: dict.offset,
-                    size: dict.size,
-                    codec: Codec::from_u8(dict.codec)?,
-                },
-            );
+            if dict.data_type as usize >= MAX_TYPES {
+                return Err(FormatError::InvalidType(dict.data_type));
+            }
+            self.dict_by_type[dict.data_type as usize] = Some(RuntimeDictRef {
+                offset: dict.offset,
+                size: dict.size,
+                codec: Codec::from_u8(dict.codec)?,
+            });
         }
 
         Ok(())

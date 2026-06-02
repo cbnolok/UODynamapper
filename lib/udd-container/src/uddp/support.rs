@@ -428,6 +428,7 @@ pub(crate) fn checked_region(
 pub enum FormatError {
     InvalidMagic(u32),
     InvalidLookupMode(u8),
+    InvalidType(u8),
     InvalidCodec(u8),
     MissingDictionary(u8),
     FileNotFound,
@@ -443,6 +444,7 @@ impl fmt::Display for FormatError {
         match self {
             Self::InvalidMagic(v) => write!(f, "invalid magic: {v:#010x}"),
             Self::InvalidLookupMode(v) => write!(f, "invalid lookup mode: {v}"),
+            Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::InvalidCodec(v) => write!(f, "invalid codec: {v}"),
             Self::MissingDictionary(t) => write!(f, "missing dictionary for type {t}"),
             Self::FileNotFound => write!(f, "file not found"),
