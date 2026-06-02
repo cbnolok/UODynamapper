@@ -159,7 +159,32 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let ellipse = dot(centered, centered);
         let softness = clamp(effects.art_projected_shadow_softness, 0.05, 1.0);
         let mask = 1.0 - smoothstep(1.0 - softness * 0.48, 1.0, ellipse);
-        let alpha = mask * height_profile * depth_profile * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
+        let alpha_blur_radius = atlas_extent * (0.008 + 0.018 * softness);
+        let alpha_center = clamp(uv, inst.uv_min, inst.uv_max);
+        let alpha_x0 = clamp(uv + vec2<f32>(alpha_blur_radius.x, 0.0), inst.uv_min, inst.uv_max);
+        let alpha_x1 = clamp(uv - vec2<f32>(alpha_blur_radius.x, 0.0), inst.uv_min, inst.uv_max);
+        let alpha_y0 = clamp(uv + vec2<f32>(0.0, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
+        let alpha_y1 = clamp(uv - vec2<f32>(0.0, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
+        let alpha_d0 = clamp(uv + alpha_blur_radius, inst.uv_min, inst.uv_max);
+        let alpha_d1 = clamp(uv - alpha_blur_radius, inst.uv_min, inst.uv_max);
+        let alpha_d2 = clamp(uv + vec2<f32>(alpha_blur_radius.x, -alpha_blur_radius.y), inst.uv_min, inst.uv_max);
+        let alpha_d3 = clamp(uv + vec2<f32>(-alpha_blur_radius.x, alpha_blur_radius.y), inst.uv_min, inst.uv_max);
+        let blurred_alpha =
+            textureSample(art_atlas, art_atlas_sampler, alpha_center, i32(layer)).a * 0.28 +
+            (
+                textureSample(art_atlas, art_atlas_sampler, alpha_x0, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_x1, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_y0, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_y1, i32(layer)).a
+            ) * 0.11 +
+            (
+                textureSample(art_atlas, art_atlas_sampler, alpha_d0, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_d1, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_d2, i32(layer)).a +
+                textureSample(art_atlas, art_atlas_sampler, alpha_d3, i32(layer)).a
+            ) * 0.08;
+        let silhouette = smoothstep(0.03, 0.44, blurred_alpha);
+        let alpha = mask * silhouette * height_profile * depth_profile * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
         if (alpha <= 0.001) {
             discard;
         }
