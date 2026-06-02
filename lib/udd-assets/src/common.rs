@@ -61,6 +61,10 @@ impl AtlasPageCache {
     where
         F: FnOnce() -> eyre::Result<Vec<u8>>,
     {
+        if !self.enabled {
+            return load_page();
+        }
+
         Ok(self.read_page_bytes_arc(page_index, load_page)?.as_ref().to_vec())
     }
 
