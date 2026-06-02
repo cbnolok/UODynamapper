@@ -41,6 +41,7 @@ pub struct SpriteParams {
 const PASS_MODE_OPAQUE: u32 = 0;
 const PASS_MODE_TRANSPARENT: u32 = 1;
 const PASS_MODE_SHADOW: u32 = 2;
+const ART_PROJECTED_SHADOW_DEPTH_BIAS: f32 = 64.0;
 
 pub type ArtSpriteMaterial = ExtendedMaterial<StandardMaterial, ArtSpriteMaterialExtension>;
 pub type ArtGroundMaterial = ExtendedMaterial<StandardMaterial, ArtGroundMaterialExtension>;
@@ -106,6 +107,16 @@ pub struct ArtGroundRenderAssets {
     pub mesh: Handle<Mesh>,
     pub opaque_material: Handle<ArtGroundMaterial>,
     pub transparent_material: Handle<ArtGroundMaterial>,
+}
+
+fn projected_art_shadow_base_material() -> StandardMaterial {
+    StandardMaterial {
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        unlit: true,
+        depth_bias: ART_PROJECTED_SHADOW_DEPTH_BIAS,
+        ..default()
+    }
 }
 
 #[derive(Clone)]
@@ -796,12 +807,7 @@ pub fn sys_setup_art_page_atlas(
     });
 
     let shadow_material_handle = materials.add(ArtSpriteMaterial {
-        base: StandardMaterial {
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            unlit: true,
-            ..default()
-        },
+        base: projected_art_shadow_base_material(),
         extension: ArtSpriteMaterialExtension {
             atlas: sprite_atlas_handle.clone(),
             instances: buffer_handle.clone(),
@@ -1695,5 +1701,14 @@ mod tests {
         assert_eq!(hue_enabled, 0);
         assert_eq!(image.texture_descriptor.size.width, udd_assets::hues::HUES_TEXTURE_WIDTH);
         assert_eq!(image.texture_descriptor.size.height, udd_assets::hues::HUES_TEXTURE_HEIGHT);
+    }
+
+    #[test]
+    fn projected_shadow_material_sorts_behind_transparent_art() {
+        let material = projected_art_shadow_base_material();
+
+        assert_eq!(material.alpha_mode, AlphaMode::Blend);
+        assert!(material.unlit);
+        assert!(material.depth_bias > 0.0);
     }
 }
