@@ -80,6 +80,79 @@ fn path_hash_package_roundtrip_reads_entries() {
 }
 
 #[test]
+fn consuming_builder_matches_reusable_builder_output() {
+    let mut reusable_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    reusable_builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some("metadata/demo.bin"),
+            path_hash64: None,
+            id: None,
+            data: b"metadata payload metadata payload metadata payload",
+        })
+        .expect("add compressed metadata");
+    reusable_builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: CompressionFlag::None,
+            width: 0,
+            height: 0,
+            virtual_path: Some("pages/0000.rgba"),
+            path_hash64: None,
+            id: None,
+            data: b"raw texture bytes",
+        })
+        .expect("add raw texture");
+
+    let mut consuming_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    consuming_builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some("metadata/demo.bin"),
+            path_hash64: None,
+            id: None,
+            data: b"metadata payload metadata payload metadata payload",
+        })
+        .expect("add compressed metadata");
+    consuming_builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: CompressionFlag::None,
+            width: 0,
+            height: 0,
+            virtual_path: Some("pages/0000.rgba"),
+            path_hash64: None,
+            id: None,
+            data: b"raw texture bytes",
+        })
+        .expect("add raw texture");
+
+    let reusable_bytes = reusable_builder.build().expect("build reusable package");
+    let consuming_bytes = consuming_builder.into_bytes().expect("build consuming package");
+    assert_eq!(consuming_bytes, reusable_bytes);
+
+    let reader = UddpReader::open(consuming_bytes).expect("open consuming package");
+    assert_eq!(
+        reader
+            .read_file_by_path_hash(xxh64_virtual_path("metadata/demo.bin"))
+            .expect("read metadata"),
+        b"metadata payload metadata payload metadata payload"
+    );
+    assert_eq!(
+        reader
+            .read_file_by_path_hash(xxh64_virtual_path("pages/0000.rgba"))
+            .expect("read texture"),
+        b"raw texture bytes"
+    );
+}
+
+#[test]
 fn path_hash_cow_read_borrows_uncompressed_entries() {
     let path = "pages/raw.rgba";
     let payload = b"raw texture bytes";
