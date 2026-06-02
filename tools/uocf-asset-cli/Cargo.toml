@@ -1,0 +1,14 @@
+[package]
+name = "uocf-asset-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uocf = { path = "../../lib/uocf" }
+clap = { version = "4.6.1", features = ["derive", "unicode"] }
+color-eyre = "0.6.5"
+udd-logging = { path = "../../lib/udd-logging" }
+
+[[bin]]
+name = "uocf-asset-cli"
+path = "src/main.rs"

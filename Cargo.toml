@@ -11,6 +11,7 @@ members = [
     "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
+    "tools/uocf-asset-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",
     "tools/uocf-inspector-gui",
@@ -170,6 +171,12 @@ debug = true
 strip = false
 
 [profile.dev.package.uocf-cli]
+opt-level = 1
+debug = true
+debug-assertions = true
+strip = false
+
+[profile.dev.package.uocf-asset-cli]
 opt-level = 1
 debug = true
 debug-assertions = true

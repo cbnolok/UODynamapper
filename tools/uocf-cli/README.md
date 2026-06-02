@@ -6,8 +6,7 @@ the `uocf` parser library.
 ## End-User Binaries
 
 - `uop-tool`: hash UOP paths, brute-force hashes, extract packages, merge DIC
-  dictionaries, replace package payloads, rebuild packages, and export Classic
-  animation patch records as `.vd` or Michelangelo/UOAnimTool `.uop` files.
+  dictionaries, replace package payloads, and rebuild packages.
 - `cc-uop-mul-converter`: convert supported Classic Client `.mul`/`.idx`
   files to and from modern `.uop` packages.
 - `sound-tool`: export Classic Client sound entries.
@@ -40,8 +39,6 @@ Validated coverage currently includes:
 - `uop-tool extract` failure on malformed UOP input.
 - `uop-tool extract --dictionary` failure on a bad explicit dictionary.
 - `uop-tool replace` and `uop-tool rebuild` against generated UOP fixtures.
-- `uop-tool export-anim-patch` `.vd` and Michelangelo/UOAnimTool `.uop`
-  output against synthetic `anim.mul` / `anim.idx` fixtures.
 - `multimap-tool` RLE to image to RLE round trip.
 - `sound-tool` WAV export from synthetic `sound.mul` / `soundidx.mul` files.
 - `uop-dict-populator-cli` with a generated UOP and TOML template config.

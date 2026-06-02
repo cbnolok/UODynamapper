@@ -5,8 +5,11 @@ use eframe::egui;
 use std::path::{Path, PathBuf};
 use uocf::classic::anim::AnimMap;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
-use uocf::classic::michelangelo_uop_codec::export_anim_blocks_from_mul;
+use uocf::classic::michelangelo_uop_codec::{
+    export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
+};
 use uocf::classic::vd_codec::VdFile;
+use uocf::uop_container::hash::hash_file_name_single;
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("anim_controls")
@@ -51,14 +54,14 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.radio_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP");
             });
 
-            if app.selected_legacy_source == ArtSource::Mul {
+            if app.selected_legacy_source != ArtSource::Any {
                 let export_context = app.client_data.as_ref().map(|client| {
                     let body_id = client
                         .anim_defs
                         .as_ref()
                         .map(|defs| defs.resolve(app.selected_anim_id))
                         .unwrap_or(app.selected_anim_id);
-                    (client.path.clone(), body_id)
+                    body_id
                 });
 
                 ui.separator();
@@ -69,7 +72,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         .add_enabled(can_export, egui::Button::new("Export VD"))
                         .clicked()
                     {
-                        if let Some((client_path, body_id)) = export_context.clone() {
+                        if let Some(body_id) = export_context {
                             let default_name = format!(
                                 "anim_{}_{}.vd",
                                 app.selected_anim_file_idx, body_id
@@ -78,9 +81,8 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 .set_file_name(default_name)
                                 .save_file()
                             {
-                                match export_selected_mul_animation_patch(
-                                    &client_path,
-                                    app.selected_anim_file_idx,
+                                match export_selected_animation_patch(
+                                    app,
                                     body_id,
                                     AnimationPatchExportFormat::Vd,
                                     &path,
@@ -101,10 +103,10 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     }
 
                     if ui
-                        .add_enabled(can_export, egui::Button::new("Export UOP"))
+                        .add_enabled(can_export, egui::Button::new("Export Michelangelo UOP"))
                         .clicked()
                     {
-                        if let Some((client_path, body_id)) = export_context.clone() {
+                        if let Some(body_id) = export_context {
                             let default_name = format!(
                                 "anim_{}_{}.uop",
                                 app.selected_anim_file_idx, body_id
@@ -113,11 +115,10 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 .set_file_name(default_name)
                                 .save_file()
                             {
-                                match export_selected_mul_animation_patch(
-                                    &client_path,
-                                    app.selected_anim_file_idx,
+                                match export_selected_animation_patch(
+                                    app,
                                     body_id,
-                                    AnimationPatchExportFormat::Uop,
+                                    AnimationPatchExportFormat::MichelangeloUop,
                                     &path,
                                 ) {
                                     Ok(entry_count) => {
@@ -480,18 +481,16 @@ fn animation_source_label(source: ArtSource) -> &'static str {
 #[derive(Clone, Copy)]
 enum AnimationPatchExportFormat {
     Vd,
-    Uop,
+    MichelangeloUop,
 }
 
-fn export_selected_mul_animation_patch(
-    client_path: &Path,
-    file_idx: u8,
+fn export_selected_animation_patch(
+    app: &UopInspectorApp,
     body_id: u32,
     format: AnimationPatchExportFormat,
     output: &Path,
 ) -> eyre::Result<usize> {
-    let (idx_path, mul_path) = anim_pair_paths(client_path, file_idx);
-    let patch = export_anim_blocks_from_mul(idx_path, &mul_path, &[body_id as i32], 0, 0)?;
+    let patch = selected_animation_patch(app, body_id)?;
 
     match format {
         AnimationPatchExportFormat::Vd => {
@@ -503,11 +502,100 @@ fn export_selected_mul_animation_patch(
             VdFile::for_anim(entry.index, entry.extra, entry.data)?.save(output)?;
             Ok(1)
         }
-        AnimationPatchExportFormat::Uop => {
+        AnimationPatchExportFormat::MichelangeloUop => {
             let entry_count = patch.entries.len();
             patch.save(output)?;
             Ok(entry_count)
         }
+    }
+}
+
+fn selected_animation_patch(app: &UopInspectorApp, body_id: u32) -> eyre::Result<MichelangeloPatch> {
+    match app.selected_legacy_source {
+        ArtSource::Mul => {
+            let client = app
+                .client_data
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("Classic client path is not loaded"))?;
+            let (idx_path, mul_path) = anim_pair_paths(&client.path, app.selected_anim_file_idx);
+            export_anim_blocks_from_mul(idx_path, &mul_path, &[body_id as i32], 0, 0)
+        }
+        ArtSource::CcUop => {
+            let payload = selected_cc_animationframe_payload(app, body_id)?;
+            Ok(single_payload_patch(body_id as i32, 0, payload))
+        }
+        ArtSource::EcUop => {
+            let payload = selected_ec_animationframe_payload(app, body_id)?;
+            Ok(single_payload_patch(body_id as i32, 0, payload))
+        }
+        ArtSource::Any => Err(eyre::eyre!("Select a concrete animation source before exporting")),
+    }
+}
+
+fn selected_cc_animationframe_payload(app: &UopInspectorApp, body_id: u32) -> eyre::Result<Vec<u8>> {
+    let mut group_ids = vec![app.selected_anim_file_idx.min(5)];
+    for group_id in 0..=5 {
+        if !group_ids.contains(&group_id) {
+            group_ids.push(group_id);
+        }
+    }
+
+    let mut last_error = None;
+    for group_id in group_ids {
+        let internal_path = format!(
+            "build/animationlegacyframe/{:06}/{:02}.bin",
+            body_id, group_id
+        );
+        match animationframe_payload_from_loaded_uops(
+            app,
+            "AnimationFrame",
+            &internal_path,
+        ) {
+            Ok(payload) => return Ok(payload),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| eyre::eyre!("CC AnimationFrame entry not found")))
+}
+
+fn selected_ec_animationframe_payload(app: &UopInspectorApp, body_id: u32) -> eyre::Result<Vec<u8>> {
+    let internal_path = format!("data/animationframe/{:06}.bin", body_id);
+    animationframe_payload_from_loaded_uops(app, "AnimationFrame", &internal_path)
+}
+
+fn animationframe_payload_from_loaded_uops(
+    app: &UopInspectorApp,
+    package_name_part: &str,
+    internal_path: &str,
+) -> eyre::Result<Vec<u8>> {
+    let hash = hash_file_name_single(internal_path);
+    for loaded in &app.uop_cache.loaded_uops {
+        if loaded
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .contains(package_name_part)
+        {
+            if let Some(file) = loaded.package.get_file_by_hash(hash) {
+                return file
+                    .unpack()
+                    .map_err(|error| eyre::eyre!("Failed to unpack {internal_path}: {error}"));
+            }
+        }
+    }
+
+    Err(eyre::eyre!(
+        "AnimationFrame entry '{}' (0x{:016x}) not found in loaded UOPs",
+        internal_path,
+        hash
+    ))
+}
+
+fn single_payload_patch(index: i32, extra: i32, payload: Vec<u8>) -> MichelangeloPatch {
+    MichelangeloPatch {
+        entries: vec![MichelangeloPatchEntry::anim(index, extra, payload)],
     }
 }
 

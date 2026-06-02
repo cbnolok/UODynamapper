@@ -92,7 +92,7 @@ Release packages are expected to ship `dynamapper` and each tool as separate bin
 
 ### UOCF Command-Line Tools
 
-All of these are built by the `uocf-cli` crate:
+Package-manager and legacy conversion tools built by the `uocf-cli` crate:
 
 - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
 - `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
@@ -102,6 +102,7 @@ All of these are built by the `uocf-cli` crate:
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
 - `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
 - `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
+- `uocf-asset-cli`: asset-level exports that are not package file-manager operations, including `.vd` and Michelangelo/UOAnimTool `.uop` animation patch streams.
 
 ### UOCF Graphical Frontends
 
@@ -135,6 +136,14 @@ Included tools:
 - `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
 - `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
 - `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
+
+### `tools/uocf-asset-cli/`
+
+Asset-level Ultima Online tooling built around `uocf`.
+
+Included tools:
+
+- `uocf-asset-cli`: export Classic MUL, Classic Client AnimationFrame UOP, and Enhanced Client AnimationFrame UOP payloads as `.vd` or Michelangelo/UOAnimTool `.uop` animation patch streams.
 
 ## GUI Tools
 
