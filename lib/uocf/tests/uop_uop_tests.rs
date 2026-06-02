@@ -5,6 +5,7 @@ use flate2::Compression;
 use std::io::Write;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_uop_path(test_name: &str) -> PathBuf {
@@ -171,6 +172,50 @@ fn package_lazy_unpack_reads_one_payload_without_materializing_entry() {
         .is_none());
 
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn package_lazy_unpack_arc_reads_one_raw_payload_without_materializing_entry() {
+    let path = temp_uop_path("uop_lazy_unpack_arc_one");
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"raw texture bytes", "build/raw.dds", CompressionFlag::None)
+        .expect("add raw entry");
+    package.finalize_and_save(&path).expect("save package");
+
+    let file_hash = hash_file_name_single("build/raw.dds");
+    let loaded = UopPackage::load_with_mode(&path, LoadMode::Lazy).expect("load package lazily");
+
+    let data = loaded
+        .unpack_file_arc_by_hash(file_hash)
+        .expect("unpack selected raw entry")
+        .expect("selected raw entry");
+    assert_eq!(&*data, b"raw texture bytes");
+    assert!(loaded
+        .get_file_by_hash(file_hash)
+        .expect("lazy file metadata")
+        .data()
+        .is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn unpack_arc_shares_loaded_uncompressed_payload() {
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"raw texture bytes", "build/raw.dds", CompressionFlag::None)
+        .expect("add raw entry");
+
+    let file_hash = hash_file_name_single("build/raw.dds");
+    let file = package
+        .get_file_by_hash(file_hash)
+        .expect("raw entry");
+    let stored = Arc::clone(file.data().expect("stored raw payload"));
+    let unpacked = file.unpack_arc().expect("unpack raw payload");
+
+    assert!(Arc::ptr_eq(&stored, &unpacked));
 }
 
 #[test]

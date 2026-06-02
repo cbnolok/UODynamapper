@@ -17,6 +17,7 @@
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use indexmap::IndexMap;
@@ -417,6 +418,31 @@ impl UopPackage {
         }
 
         file.unpack().map(Some)
+    }
+
+    /// Unpack one file payload by hash into shared bytes without storing the
+    /// payload in this package.
+    ///
+    /// For uncompressed entries this can share the loaded payload bytes directly
+    /// with the caller instead of copying them into a fresh `Vec`.
+    pub fn unpack_file_arc_by_hash(&self, filename_hash: u64) -> io::Result<Option<Arc<[u8]>>> {
+        let Some(file) = self.get_file_by_hash(filename_hash) else {
+            return Ok(None);
+        };
+
+        let mut file = file.clone();
+        if file.data().is_none() && file.has_size() {
+            let package_path = self.package_path.clone().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "package has no backing file path for lazy payload loading",
+                )
+            })?;
+            let mut reader = File::open(package_path)?;
+            file.load_data_from(&mut reader)?;
+        }
+
+        file.unpack_arc().map(Some)
     }
 
     /// Unpack one file payload by hash without storing the payload in this package.

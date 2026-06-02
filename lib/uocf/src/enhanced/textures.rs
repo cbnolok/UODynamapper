@@ -6,7 +6,7 @@
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::enhanced::tileart::{self, ArtData};
 use crate::uop_container::hash::hash_file_name_single;
-use crate::uop_container::package::UopPackage;
+use crate::uop_container::package::{LoadMode, UopPackage};
 use byteorder::{LittleEndian, ReadBytesExt};
 use image::{DynamicImage, ImageBuffer, RgbaImage};
 use std::io::{Cursor, Read};
@@ -215,7 +215,7 @@ impl Textures {
         tileart_path: Option<&Path>,
         string_dictionary_path: Option<&Path>,
     ) -> eyre::Result<Self> {
-        let package = UopPackage::load(path)?;
+        let package = UopPackage::load_with_mode(path, LoadMode::Lazy)?;
         let tileart = if let Some(p) = tileart_path {
             Some(UopPackage::load(p)?)
         } else {
@@ -266,8 +266,7 @@ impl Textures {
         full_tid: Option<&str>,
         format: ECImageFormat,
     ) -> eyre::Result<Option<TextureFile>> {
-        if let Some(file) = self.package.get_file_by_hash(hash) {
-            let data = file.unpack_arc()?;
+        if let Some(data) = self.package.unpack_file_arc_by_hash(hash)? {
             let (metadata, image_data_offset) = if payload_starts_with_raw_image(&data, format) {
                 // The EC texture UOPs typically store the DDS/TGA payload directly.
                 // Treat the whole unpacked file as image data in that common case.
