@@ -247,6 +247,8 @@ Prefer targeted tests over broad test suites.
 
 Run the smallest meaningful test command that validates the change.
 
+Do not override Cargo's target directory. All `cargo test`, `cargo check`, `cargo run`, and benchmark commands must use the `target-dir` configured in `.cargo/config.toml` (currently `/home/claudio/_builds/`). Do not pass `CARGO_TARGET_DIR` or `--target-dir` unless the maintainer explicitly asks for it.
+
 Do not run formatting or linting commands as part of validation.
 
 ---

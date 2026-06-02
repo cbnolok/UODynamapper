@@ -184,6 +184,7 @@ Avoid double gamma correction; Bevy handles gamma automatically.
 1. `cargo build` + `cargo clippy` + `cargo fmt`.
 2. Test all three shader modes (**Classic**, **Enhanced**, **KR-like**).
 3. Use **F3 UI** for real-time uniform testing.
+4. Do **not** override Cargo's target directory. All Cargo validation and benchmark commands must use `.cargo/config.toml`'s configured `target-dir` (currently `/home/claudio/_builds/`). Do not pass `CARGO_TARGET_DIR` or `--target-dir` unless explicitly requested.
 
 ---
 
