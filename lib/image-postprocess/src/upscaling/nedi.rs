@@ -2,6 +2,7 @@
 //!
 //! Reference: https://en.wikipedia.org/wiki/Edge-directed_interpolation
 //! Reference: Li, X., & Orchard, M. T. (2001). New edge-directed interpolation. IEEE Transactions on Image Processing.
+//! Reference: https://github.com/Kirstihly/Edge-Directed_Interpolation
 
 use wide::f32x4;
 

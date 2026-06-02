@@ -1,7 +1,8 @@
 //! LQ2x, LQ3x, LQ4x (Low Quality) upscaling algorithms.
 //!
-//! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c
 //! Original by Derek Liauw Kie Fa.
+//! Reference: https://github.com/daelsepara/PixelScalerWin/
+//! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c
 
 pub fn apply_lq(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, Vec<u8>) {
     let target_width = width * scale;

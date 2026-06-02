@@ -2,14 +2,6 @@
 
 This file is the single source of truth for remaining work.
 
-It supersedes the old split planning files:
-- `TODO_PHASE_1_STATIC_ART.md`
-- `TODO_PHASE_2_STREAMING_AND_EDITING.md`
-- `TODO_PHASE_3_ADVANCED_RENDERING.md`
-- `TODO_PHASE_4_MOBILES_AND_PAPERDOLL.md`
-- `URGENT_TESTS.md`
-- `TODO_CONSOLIDATED.md`
-
 It intentionally excludes work that is already landed or already reduced to completed investigation notes.
 
 ## Targets And Constraints
@@ -37,7 +29,7 @@ Current execution decisions:
 - GPU-driven rendering: CPU submits compact state, shader code performs reconstruction and compositing.
 - Data indirection: immutable geometry plus mutable metadata textures or buffers.
 - Bounded memory: LRU with hysteresis for streamed content.
-- Streaming-first I/O: `mmap` plus async tasks plus upload scheduler.
+- Streaming-first I/O: `mmap` plus async tasks plus upload scheduler for `uddp` files streaming.
 - Format-aware compression: codec chosen by payload type and payload size.
 - EC evidence discipline: original UOP contents are primary, extracted original client shader text is secondary when present, third-party reconstructions are design references only.
 

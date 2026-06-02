@@ -1,6 +1,8 @@
 # Technical Reference - UODynamapper
 
-This document is the authoritative source for technical specifications, data formats, runtime rules, and shared constants used across the UODynamapper project.
+This document is the authoritative source for technical specifications, data formats, runtime rules, and shared constants used across the UODynamapper project.  
+
+It might not yet be updated with the latest and greatest changes.
 
 ---
 

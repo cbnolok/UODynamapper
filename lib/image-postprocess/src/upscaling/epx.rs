@@ -1,7 +1,10 @@
 //! EPX (Eric's Pixel Expansion) / Scale2x upscaling algorithm.
 //!
-//! Reference: https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms#Scale2x
 //! Original by Eric Johnston at LucasArts.
+//! Reference: https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms#Scale2x
+//! Reference: https://github.com/daelsepara/PixelScalerWin
+//! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/epx.c
+
 
 pub fn apply_epx(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, Vec<u8>) {
     match scale {

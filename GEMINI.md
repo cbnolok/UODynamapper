@@ -78,6 +78,7 @@ Correct fixes should trace the affected land ids through `TerrainTranscode.kdl`,
 
 - **Comments**: Do **NOT** remove comments. Code must be thoroughly commented for people not well-versed in graphics programming.
 - **No Magic Numbers**: Use `const` values in both Rust and WGSL code.
+- **No Backwards Compatibility**: It's accepted and required that we do not add code to support "legacy" udd file versions. This project is rapidly evolving and using the most updated files is required.
 - **Preserve Structure**: Maintain existing code organization and naming conventions.
 
 ### Configuration Rules (TOML Settings)

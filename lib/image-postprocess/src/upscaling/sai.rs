@@ -1,9 +1,10 @@
 //! 2xSaI, Super2xSaI, and SuperEagle upscaling algorithms.
 //!
+//! //! Original by Derek Liauw Kie Fa.
+//! Reference: https://github.com/daelsepara/PixelScalerWin/
 //! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/2xsai.c
 //! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/super2xsai.c
 //! Reference: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/supereagle.c
-//! Original by Derek Liauw Kie Fa.
 
 use super::UpscaleFilter;
 
@@ -40,17 +41,17 @@ pub fn apply_sai(
             let b1 = get_pixel(x, y - 1);
             let b2 = get_pixel(x + 1, y - 1);
             let b3 = get_pixel(x + 2, y - 1);
-            
+
             let c4 = get_pixel(x - 1, y);
             let c5 = get_pixel(x, y);
             let c6 = get_pixel(x + 1, y);
             let s2 = get_pixel(x + 2, y);
-            
+
             let c1 = get_pixel(x - 1, y + 1);
             let c2 = get_pixel(x, y + 1);
             let c3 = get_pixel(x + 1, y + 1);
             let s1 = get_pixel(x + 2, y + 1);
-            
+
             let a0 = get_pixel(x - 1, y + 2);
             let a1 = get_pixel(x, y + 2);
             let a2 = get_pixel(x + 1, y + 2);
@@ -210,7 +211,7 @@ fn apply_super2xsai_logic(
         } else {
             product2b = interpolate(color2, color3);
         }
-        
+
         if color6 == color3 && color6 == colorb1 && color5 != colorb2 && color6 != colorb0 {
             product1b = interpolate2(color6, color6, color6, color5);
         } else if color5 == color2 && color5 == colorb2 && colorb1 != color6 && color5 != colorb3 {
@@ -240,8 +241,8 @@ fn apply_super2xsai_logic(
 }
 
 fn apply_supereagle_logic(
-    c_a: u32, c_b: u32, c_c: u32, c_d: u32, 
-    c_e: u32, c_f: u32, c_g: u32, c_h: u32, 
+    c_a: u32, c_b: u32, c_c: u32, c_d: u32,
+    c_e: u32, c_f: u32, c_g: u32, c_h: u32,
     c_k: u32, c_l: u32, c_n: u32, c_o: u32
 ) -> (u32, u32, u32, u32) {
     let color4 = c_g;
@@ -321,7 +322,7 @@ fn apply_supereagle_logic(
         product1a = t1;
         product2b = interpolate2(color3, color3, color3, product2b);
         product1a = interpolate2(color5, color5, color5, product1a);
-        
+
         let t2 = interpolate(color5, color3);
         product2a = t2;
         product1b = t2;

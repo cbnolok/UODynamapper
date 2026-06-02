@@ -1,6 +1,7 @@
 # Enhanced Client Asset Reference
 
-This document explains the EC map/static material pipeline as implemented in
+This document contains informations about Enhanced Client data files and
+explains the EC map/static material pipeline as implemented in
 this repo. It is written for contributors and agents who need to change the
 pipeline without reintroducing the earlier texture-selection bugs.
 
@@ -33,19 +34,27 @@ unless the data becomes a stable package contract.
 
 `facet*.uop`:
 
-- Stores EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.
-- Each decompressed `.bin` is a 64x64 tile chunk in column-major order.
-- Header: facet id byte and file id word.
-- Each cell stores land z, land graphic id, delimiter records, and static
-  records. Static records store graphic id, z, and hue.
-- The decoder converts this to classic-style 8x8 map blocks plus statics. The
-  land graphic id from the facet/map is the terrain query id used by runtime.
-- Runtime static art collection preserves placed static hue ids. Art shaders
-  apply those ids through the preconverted `hues.uddp` lookup texture
-  (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
-  containing the 32 classic hue entries expanded to 8 pixels each.
+- Stores KR/EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.
+- EC:
+  - Each decompressed `.bin` is a 64x64 tile chunk in column-major order.
+  - Header: facet id byte and file id word.
+  - Each cell stores land z, land graphic id, delimiter records, and static
+    records. Static records store graphic id, z, and hue.
+  - The decoder converts this to classic-style 8x8 map blocks plus statics. The
+    land graphic id from the facet/map is the terrain query id used by runtime.
+  - Runtime static art collection preserves placed static hue ids. Art shaders
+    apply those ids through the preconverted `hues.uddp` lookup texture
+    (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
+    containing the 32 classic hue entries expanded to 8 pixels each.
+- KR:
+  - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
+  - Slightly different file format than EC.
+  - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR land/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
+
 
 `TerrainDefinition.uop`:
+
+**TODOC**: outdated! especially about "unk" flags.
 
 - Owns EC terrain/material semantics.
 - Each entry currently decodes:
