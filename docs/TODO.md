@@ -254,7 +254,7 @@ Current execution decisions:
 - Add restrained elevation or distance atmosphere for large terrain views without obscuring tile readability.
 - Add material-class micro-contrast controls so grass, rock, snow, roads, and liquid surfaces can separate without one global sharpening curve.
 - Add normal-map validation views for KR/EC land families: water, lava, swamp, snow, rock, grass, and road. Compare `enable_normal_maps` on/off for channel orientation, BC7/RDO damage, and useful `land_normal_map_strength` ranges.
-- Add material-family wet response beyond generic specular: water gets moving normal/ripple response, lava gets warmer emissive-style color lift, swamp gets low-contrast dark sheen, ice/snow gets cool grazing highlights only.
+- Continue material-family wet response beyond generic specular: first shader pass separates water, lava-like liquid, swamp-like liquid, and ice/snow-like grazing highlights; remaining work is visual validation and metadata-backed material-family classification.
 - Add light-color provenance for static lights so local land/art response uses the same hue/source color as the visible mask instead of the current warm fallback where practical.
 - Add terrain shadow/compression pass for vertical cliffs and high banks: darken near steep height transitions and cliff bases without turning ordinary rolling hills into harsh normal-mapped PBR.
 - Add roof/tree/large-static side falloff: tall art should receive subtle one-sided depth tint and base contact so it reads as part of the KR scene rather than a flat pasted sprite.

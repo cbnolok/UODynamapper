@@ -72,7 +72,7 @@ fn apply_kr_liquid_material_response(color: vec3<f32>,
                                      specular_strength: f32,
                                      enable_water: u32) -> vec3<f32> {
   let is_liquid = tile.is_wet == 1u || (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
-  if (!is_liquid || specular_strength <= 0.0001) {
+  if (specular_strength <= 0.0001) {
     return color;
   }
 
@@ -85,12 +85,28 @@ fn apply_kr_liquid_material_response(color: vec3<f32>,
   let phase_time = select(0.0, globals.time * 1.35, enable_water == 1u);
   let ripple = 0.72 + 0.28 * sin(dot(world_pos.xz, vec2<f32>(1.7, 2.3)) + phase_time);
 
+  let luma = dot(base_albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let max_channel = max(base_albedo.r, max(base_albedo.g, base_albedo.b));
+  let min_channel = min(base_albedo.r, min(base_albedo.g, base_albedo.b));
+  let chroma = max_channel - min_channel;
   let warm_liquid = clamp(base_albedo.r - max(base_albedo.g, base_albedo.b), 0.0, 1.0);
-  let cool_tint = vec3<f32>(0.70, 0.92, 1.04);
-  let warm_tint = vec3<f32>(1.08, 0.58, 0.24);
-  let tint = mix(cool_tint, warm_tint, warm_liquid);
-  let response = (sun_glint * 0.55 + view_glance * 0.18) * ripple;
-  return color + tint * response * clamp(specular_strength, 0.0, 0.25);
+  let lava_like = select(0.0, smoothstep(0.04, 0.22, warm_liquid) * smoothstep(0.18, 0.55, chroma), is_liquid);
+  let swamp_like = select(0.0, smoothstep(0.02, 0.16, base_albedo.g - max(base_albedo.r, base_albedo.b)) * (1.0 - smoothstep(0.32, 0.58, luma)), is_liquid);
+  let water_like = select(0.0, clamp(1.0 - max(lava_like, swamp_like), 0.0, 1.0), is_liquid);
+  let ice_snow_like = (1.0 - select(0.0, 1.0, is_liquid)) * smoothstep(0.52, 0.84, luma) * (1.0 - smoothstep(0.20, 0.46, chroma)) * smoothstep(-0.06, 0.14, base_albedo.b - base_albedo.r);
+  let strength = clamp(specular_strength, 0.0, 0.25);
+
+  let water_response = (sun_glint * 0.52 + view_glance * 0.20) * ripple * water_like;
+  let lava_response = (0.18 + sun_glint * 0.24 + view_glance * 0.08) * lava_like;
+  let swamp_response = (sun_glint * 0.22 + view_glance * 0.08) * ripple * swamp_like;
+  let ice_response = (sun_glint * 0.20 + view_glance * 0.30) * ice_snow_like;
+
+  var out_color = color;
+  out_color += vec3<f32>(0.70, 0.92, 1.04) * water_response * strength;
+  out_color += vec3<f32>(1.16, 0.42, 0.16) * lava_response * strength;
+  out_color += vec3<f32>(0.38, 0.56, 0.44) * swamp_response * strength * 0.55;
+  out_color += vec3<f32>(0.82, 0.96, 1.08) * ice_response * strength * 0.75;
+  return out_color;
 }
 
 fn ec_transition_edge_weight(edge_distance: f32) -> f32 {

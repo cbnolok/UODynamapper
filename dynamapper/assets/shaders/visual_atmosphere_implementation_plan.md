@@ -51,6 +51,10 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 7.  **Preset defaults**
     *   `dynamapper/assets/defaults/shader_presets.toml` has profile/grunge defaults for Classic, EC, and KR slots.
 
+8.  **Material-family surface response**
+    *   KR land shading separates water, lava-like liquids, swamp-like liquids, and ice/snow-like bright surfaces using existing wet/reviewed-liquid flags plus conservative albedo heuristics.
+    *   Remaining work: replace heuristics with metadata-backed material-family classification when the terrain evidence is strong enough.
+
 ### Still Missing
 1.  **Real fullscreen EC/KR post-process pipeline**
     *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.
