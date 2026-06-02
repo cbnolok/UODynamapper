@@ -320,6 +320,8 @@ pub const LAND_STATIC_LIGHT_MAX: usize = 16;
 pub struct LandStaticLightUniform {
     /// xyz = world position, w = radius in world tiles.
     pub lights: [Vec4; LAND_STATIC_LIGHT_MAX],
+    /// rgb = light response color, a reserved.
+    pub colors: [Vec4; LAND_STATIC_LIGHT_MAX],
     /// x = active light count, remaining lanes reserved.
     pub params: UVec4,
 }
@@ -328,6 +330,7 @@ impl Default for LandStaticLightUniform {
     fn default() -> Self {
         Self {
             lights: [Vec4::ZERO; LAND_STATIC_LIGHT_MAX],
+            colors: [Vec4::ZERO; LAND_STATIC_LIGHT_MAX],
             params: UVec4::ZERO,
         }
     }

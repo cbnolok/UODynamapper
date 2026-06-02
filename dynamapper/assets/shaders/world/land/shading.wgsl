@@ -98,17 +98,21 @@ fn apply_static_light_decals(color_in: vec3<f32>,
   }
 
   let static_light_count = min(static_lights.params.x, 16u);
+  var static_light_rgb = vec3<f32>(0.0);
   var static_light_accum = 0.0;
   for (var i = 0u; i < 16u; i = i + 1u) {
     if (i >= static_light_count) {
       break;
     }
     let light = static_lights.lights[i];
+    let light_color = static_lights.colors[i].rgb;
     let delta = world_pos - light.xyz;
     let radius = max(light.w, 0.01);
     let dist = length(vec3<f32>(delta.x, delta.y * 1.8, delta.z));
     let falloff = max(1.0 - dist / radius, 0.0);
-    static_light_accum += falloff * falloff;
+    let contribution = falloff * falloff;
+    static_light_accum += contribution;
+    static_light_rgb += light_color * contribution;
   }
 
   if (static_light_accum <= 0.001) {
@@ -116,8 +120,8 @@ fn apply_static_light_decals(color_in: vec3<f32>,
   }
 
   let local_light = min(static_light_accum, 1.0) * decal_strength;
-  let local_warm = vec3<f32>(1.0, 0.72, 0.42);
-  return color_in + base_albedo_in * local_warm * local_light * 0.32;
+  let local_color = static_light_rgb / max(static_light_accum, 0.001);
+  return color_in + base_albedo_in * local_color * local_light * 0.32;
 }
 
 // ============================================================================

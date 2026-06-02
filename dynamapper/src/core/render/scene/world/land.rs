@@ -362,13 +362,15 @@ fn build_land_static_light_uniform(
     };
 
     let light_count = static_lights.0.len().min(LAND_STATIC_LIGHT_MAX);
-    for (dst, light) in uniform
+    for ((dst, color_dst), light) in uniform
         .lights
         .iter_mut()
+        .zip(uniform.colors.iter_mut())
         .zip(static_lights.0.iter().take(light_count))
     {
         let radius = light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25;
         *dst = Vec4::new(light.world_x, light.world_y, light.world_z, radius);
+        *color_dst = Vec4::new(light.color_rgb[0], light.color_rgb[1], light.color_rgb[2], 0.0);
     }
     uniform.params = UVec4::new(light_count as u32, 0, 0, 0);
     uniform
@@ -382,6 +384,16 @@ fn land_static_light_signature(uniform: &LandStaticLightUniform) -> u64 {
             (light.y * 100.0).round() as i32,
             (light.z * 100.0).round() as i32,
             (light.w * 100.0).round() as i32,
+        ] {
+            signature ^= value as u32 as u64;
+            signature = signature.wrapping_mul(0x100000001b3);
+        }
+    }
+    for color in uniform.colors.iter().take(uniform.params.x as usize) {
+        for value in [
+            (color.x * 255.0).round() as i32,
+            (color.y * 255.0).round() as i32,
+            (color.z * 255.0).round() as i32,
         ] {
             signature ^= value as u32 as u64;
             signature = signature.wrapping_mul(0x100000001b3);

@@ -62,6 +62,7 @@ struct LandLightingUniforms {
 
 struct LandStaticLightUniform {
     lights: array<vec4<f32>, 16>,
+    colors: array<vec4<f32>, 16>,
     params: vec4<u32>,
 };
 

@@ -55,6 +55,11 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   KR land shading separates water, lava-like liquids, swamp-like liquids, and ice/snow-like bright surfaces using existing wet/reviewed-liquid flags plus conservative albedo heuristics.
     *   Remaining work: replace heuristics with metadata-backed material-family classification when the terrain evidence is strong enough.
 
+9.  **Static light color response**
+    *   Static light collection derives a local-response color from known ClassicUO light shader ids and falls back to warm light otherwise.
+    *   Land and art local-light response consume that color instead of a single fixed warm tint.
+    *   Remaining work: package-hue colors and representative sampled-mask colors for light sources without a ClassicUO shader mapping.
+
 ### Still Missing
 1.  **Real fullscreen EC/KR post-process pipeline**
     *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.

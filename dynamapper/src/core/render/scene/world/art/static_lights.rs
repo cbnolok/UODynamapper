@@ -68,6 +68,7 @@ pub struct StaticLightInstance {
     pub key: StaticLightKey,
     pub light_id: u32,
     pub hue_id: u16,
+    pub color_rgb: [f32; 3],
     pub world_x: f32,
     pub world_z: f32,
     pub world_y: f32,
@@ -226,6 +227,7 @@ pub fn sys_collect_visible_static_lights(
                         key,
                         light_id,
                         hue_id: tile.hue,
+                        color_rgb: static_light_response_color(tile.graphic),
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
                         world_y: (tile.z as f32) * 0.1 + STATIC_LIGHT_Y_BIAS,
@@ -493,6 +495,22 @@ fn static_light_decal_alpha(
 
 fn static_light_base_color(alpha: f32) -> Color {
     Color::srgba(1.0, 1.0, 1.0, alpha)
+}
+
+pub fn static_light_response_color(graphic: u16) -> [f32; 3] {
+    let Some(shader_id) = classicuo_light_shader_id(graphic) else {
+        return [1.0, 0.72, 0.42];
+    };
+    if shader_id == 0 {
+        return [1.0, 0.72, 0.42];
+    }
+
+    let color = sample_classicuo_light_shader(shader_id, 248);
+    [
+        f32::from(color[0]) / 255.0,
+        f32::from(color[1]) / 255.0,
+        f32::from(color[2]) / 255.0,
+    ]
 }
 
 fn resolve_static_light_hue_source_kind(
@@ -916,6 +934,12 @@ mod tests {
             static_light_decal_alpha(0.0, 0.5, StaticLightRenderStyle::Kr)
                 < static_light_decal_alpha(0.0, 1.0, StaticLightRenderStyle::Kr)
         );
+    }
+
+    #[test]
+    fn response_color_uses_classicuo_light_shader_when_known() {
+        assert_eq!(static_light_response_color(0x0E31), [1.0, 0.0, 0.0]);
+        assert_eq!(static_light_response_color(0x1234), [1.0, 0.72, 0.42]);
     }
 
     #[test]

@@ -909,6 +909,7 @@ fn static_local_light_rgba(
     world_y: f32,
 ) -> [f32; 4] {
     let mut intensity = 0.0f32;
+    let mut rgb = [0.0f32; 3];
     for light in lights.0.iter().filter(|light| light.key.map_id == map_id) {
         let radius = light.width_world.max(light.height_world).max(1.0) * 0.62 + 1.25;
         let dx = world_x - light.world_x;
@@ -921,14 +922,18 @@ fn static_local_light_rgba(
 
         let falloff = 1.0 - distance / radius;
         let area_scale = (light.width_world * light.height_world).sqrt().clamp(1.0, 5.0) / 5.0;
-        intensity += falloff * falloff * (0.45 + area_scale * 0.55);
+        let contribution = falloff * falloff * (0.45 + area_scale * 0.55);
+        intensity += contribution;
+        rgb[0] += light.color_rgb[0] * contribution;
+        rgb[1] += light.color_rgb[1] * contribution;
+        rgb[2] += light.color_rgb[2] * contribution;
     }
 
     let intensity = intensity.clamp(0.0, 1.0);
     [
-        1.0 * intensity,
-        0.72 * intensity,
-        0.42 * intensity,
+        rgb[0].clamp(0.0, 1.0),
+        rgb[1].clamp(0.0, 1.0),
+        rgb[2].clamp(0.0, 1.0),
         intensity,
     ]
 }
