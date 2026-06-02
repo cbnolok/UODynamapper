@@ -22,6 +22,7 @@ impl UddConvApp {
                                 self.settings.cc_dir.as_deref(),
                             ) {
                                 self.settings.cc_dir = Some(path);
+                                self.persist_settings();
                             }
                         }
                         if let Some(path) = &self.settings.cc_dir {
@@ -41,6 +42,7 @@ impl UddConvApp {
                                 self.settings.ec_dir.as_deref(),
                             ) {
                                 self.settings.ec_dir = Some(path);
+                                self.persist_settings();
                             }
                         }
                         if let Some(path) = &self.settings.ec_dir {
@@ -60,6 +62,7 @@ impl UddConvApp {
                                 self.settings.dynamapper_routing_dir.as_deref(),
                             ) {
                                 self.settings.dynamapper_routing_dir = Some(path);
+                                self.persist_settings();
                             }
                         }
                         if let Some(path) = &self.settings.dynamapper_routing_dir {
@@ -73,11 +76,15 @@ impl UddConvApp {
                         ui.end_row();
 
                         ui.label("EC Mobile Animation KDL:");
-                        ui.checkbox(
+                        if ui.checkbox(
                             &mut self.settings.ec_mobile_anim_allow_missing_kdl,
                             "Allow conversion without EcMobileAnimations.kdl",
                         )
-                        .on_hover_text("Writes empty EC mobile animation item/source-hint metadata when the KDL is unavailable.");
+                        .on_hover_text("Writes empty EC mobile animation item/source-hint metadata when the KDL is unavailable.")
+                        .changed()
+                        {
+                            self.persist_settings();
+                        }
                         ui.label("");
                         ui.end_row();
 
@@ -92,9 +99,15 @@ impl UddConvApp {
                                     if self.settings.link_uddp_dirs {
                                         self.settings.output_uddp_dir = path;
                                     }
+                                    self.persist_settings();
                                 }
                             }
-                            ui.checkbox(&mut self.settings.link_uddp_dirs, "Link to Output");
+                            if ui.checkbox(&mut self.settings.link_uddp_dirs, "Link to Output").changed() {
+                                if self.settings.link_uddp_dirs {
+                                    self.settings.output_uddp_dir = self.settings.input_uddp_dir.clone();
+                                }
+                                self.persist_settings();
+                            }
                         });
                         ui.label(self.settings.input_uddp_dir.to_string_lossy());
                         ui.end_row();
@@ -107,6 +120,7 @@ impl UddConvApp {
                                     Some(&self.settings.output_uddp_dir),
                                 ) {
                                     self.settings.output_uddp_dir = path;
+                                    self.persist_settings();
                                 }
                             }
                         });

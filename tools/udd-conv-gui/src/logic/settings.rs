@@ -126,9 +126,11 @@ mod tests {
         let mut settings = AppSettings::default();
         settings.cc_dir = Some(PathBuf::from("/uo/classic"));
         settings.ec_dir = Some(PathBuf::from("/uo/enhanced"));
+        settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
         settings.input_uddp_dir = PathBuf::from("runtime-assets");
         settings.output_uddp_dir = PathBuf::from("converted");
         settings.include_verdata = true;
+        settings.ec_mobile_anim_allow_missing_kdl = true;
 
         save_settings_to_path(&settings, &path).expect("save settings");
         let loaded = load_settings_from_path(&path).expect("load settings");
@@ -136,9 +138,14 @@ mod tests {
 
         assert_eq!(loaded.cc_dir, Some(PathBuf::from("/uo/classic")));
         assert_eq!(loaded.ec_dir, Some(PathBuf::from("/uo/enhanced")));
+        assert_eq!(
+            loaded.dynamapper_routing_dir,
+            Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"))
+        );
         assert_eq!(loaded.input_uddp_dir, PathBuf::from("runtime-assets"));
         assert_eq!(loaded.output_uddp_dir, PathBuf::from("converted"));
         assert!(loaded.include_verdata);
+        assert!(loaded.ec_mobile_anim_allow_missing_kdl);
     }
 
     #[test]
