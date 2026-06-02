@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
+use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry, read_path_entry_cow};
 use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelFormat};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -140,9 +140,9 @@ impl TexArtEcPackage {
         package: UddpReader,
         options: AtlasCacheOptions,
     ) -> eyre::Result<Self> {
-        let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
+        let page_manifest = read_path_entry_cow(&package, PAGE_MANIFEST_ENTRY_PATH)
             .context("tex_art_ec.uddp missing metadata/pages.bin")?;
-        let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
+        let slot_manifest = read_path_entry_cow(&package, SLOT_MANIFEST_ENTRY_PATH)
             .context("tex_art_ec.uddp missing metadata/slots.bin")?;
 
         let (page_width, page_height, page_gutter, page_packing_mode, pages) =

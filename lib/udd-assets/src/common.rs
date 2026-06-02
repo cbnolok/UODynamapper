@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -31,8 +32,12 @@ impl AtlasCacheOptions {
 }
 
 pub fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
+    read_path_entry_cow(package, path).map(Cow::into_owned)
+}
+
+pub fn read_path_entry_cow<'a>(package: &'a UddpReader, path: &str) -> eyre::Result<Cow<'a, [u8]>> {
     package
-        .read_file_by_path_hash(udd_container::xxh64_virtual_path(path))
+        .read_file_by_path_hash_cow(udd_container::xxh64_virtual_path(path))
         .wrap_err_with(|| format!("read {path}"))
 }
 

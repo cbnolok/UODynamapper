@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, Context};
 use udd_container::UddpReader;
 
-use crate::common::read_path_entry;
+use crate::common::{read_path_entry, read_path_entry_cow};
 
 pub const HUES_METADATA_ENTRY_PATH: &str = "metadata/hues.csv";
 pub const HUES_TEXTURE_ENTRY_PATH: &str = "textures/hues.rgba8888";
@@ -73,7 +73,7 @@ impl HuesPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        let csv_bytes = read_path_entry(&package, HUES_METADATA_ENTRY_PATH)
+        let csv_bytes = read_path_entry_cow(&package, HUES_METADATA_ENTRY_PATH)
             .context("hues.uddp missing metadata/hues.csv")?;
         let slots = parse_hues_csv(&csv_bytes)?;
 

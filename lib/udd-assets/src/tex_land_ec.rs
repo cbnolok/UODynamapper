@@ -4,7 +4,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::{xxh64_virtual_path, UddpReader};
-use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry};
+use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry, read_path_entry_cow};
 use crate::ec_terrain_overrides::{EcTerrainOverrideEntry, EcTerrainOverrides};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
@@ -279,12 +279,12 @@ impl TexLandEcPackage {
         package: UddpReader,
         options: AtlasCacheOptions,
     ) -> eyre::Result<Self> {
-        let page_manifest = read_path_entry(&package, UDDP_PAGE_MANIFEST_ENTRY_VPATH)
+        let page_manifest = read_path_entry_cow(&package, UDDP_PAGE_MANIFEST_ENTRY_VPATH)
             .context("tex_land_ec.uddp missing metadata/pages.bin")?;
-        let slot_manifest = read_path_entry(&package, UDDP_SLOT_MANIFEST_ENTRY_VPATH)
+        let slot_manifest = read_path_entry_cow(&package, UDDP_SLOT_MANIFEST_ENTRY_VPATH)
             .context("tex_land_ec.uddp missing metadata/slots.bin")?;
         let terrain_provenance_manifest =
-            read_path_entry(&package, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH)
+            read_path_entry_cow(&package, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH)
                 .context("tex_land_ec.uddp missing metadata/terrain_provenance.bin")?;
 
         let (page_width, page_height, page_gutter, page_packing_mode, pages) =
@@ -986,8 +986,8 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
 }
 
 fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
-    let bytes = read_path_entry(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
-    let text = String::from_utf8(bytes).ok()?;
+    let bytes = read_path_entry_cow(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
+    let text = std::str::from_utf8(bytes.as_ref()).ok()?;
     if let Ok(transcode) = crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(
         UDDP_TRANSCODE_ENTRY_VPATH,
         &text,
@@ -1017,22 +1017,22 @@ fn parse_legacy_pair_transcode(text: &str) -> Option<HashMap<u32, u32>> {
 fn read_terrain_override_actions_from_package(
     package: &UddpReader,
 ) -> Option<HashMap<u32, TexLandEcTerrainOverrideActions>> {
-    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_actions_metadata(&bytes).ok()
+    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_actions_metadata(bytes.as_ref()).ok()
 }
 
 fn read_terrain_override_texture_refs_from_package(
     package: &UddpReader,
 ) -> Option<HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>> {
-    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_texture_refs_metadata(&bytes).ok()
+    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_texture_refs_metadata(bytes.as_ref()).ok()
 }
 
 fn read_terrain_override_details_from_package(
     package: &UddpReader,
 ) -> Option<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
-    let bytes = read_path_entry(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_details_metadata(&bytes).ok()
+    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
+    parse_terrain_override_details_metadata(bytes.as_ref()).ok()
 }
 
 fn terrain_override_maps_from_entries(

@@ -1,4 +1,4 @@
-use crate::common::{read_path_entry, read_pod_vec};
+use crate::common::{read_path_entry_cow, read_pod_vec};
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
@@ -319,17 +319,19 @@ impl TileMetaPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        let land_bytes = read_path_entry(&package, TILEMETA_LAND_ENTRY_PATH)?;
-        let item_bytes = read_path_entry(&package, TILEMETA_ITEM_ENTRY_PATH)?;
+        let land_bytes = read_path_entry_cow(&package, TILEMETA_LAND_ENTRY_PATH)?;
+        let item_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_ENTRY_PATH)?;
         let item_texture_ref_spans =
             read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)?;
         let item_texture_refs =
             read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
+        let land_tiles = read_pod_vec(land_bytes.as_ref(), TILEMETA_LAND_ENTRY_PATH)?;
+        let item_tiles = read_pod_vec(item_bytes.as_ref(), TILEMETA_ITEM_ENTRY_PATH)?;
 
         Ok(Self {
             package,
-            land_tiles: read_pod_vec(&land_bytes, TILEMETA_LAND_ENTRY_PATH)?,
-            item_tiles: read_pod_vec(&item_bytes, TILEMETA_ITEM_ENTRY_PATH)?,
+            land_tiles,
+            item_tiles,
             item_texture_ref_spans,
             item_texture_refs,
         })
@@ -555,8 +557,8 @@ fn valid_ec_art_texture_identity(
 }
 
 fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
-    match read_path_entry(package, path) {
-        Ok(bytes) => read_pod_vec(&bytes, path),
+    match read_path_entry_cow(package, path) {
+        Ok(bytes) => read_pod_vec(bytes.as_ref(), path),
         Err(_) => Ok(Vec::new()),
     }
 }

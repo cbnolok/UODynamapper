@@ -6,7 +6,7 @@ use color_eyre::eyre::{self, WrapErr};
 use udd_container::UddpReader;
 
 use crate::common::{
-    decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, AtlasCacheOptions,
+    decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow, AtlasCacheOptions,
     AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
@@ -118,15 +118,15 @@ impl MobileAnimCcPackage {
         package: UddpReader,
         options: AtlasCacheOptions,
     ) -> eyre::Result<Self> {
-        let page_manifest = read_path_entry(&package, PAGE_MANIFEST_ENTRY_PATH)
+        let page_manifest = read_path_entry_cow(&package, PAGE_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/pages.bin")?;
-        let animation_manifest = read_path_entry(&package, ANIMATION_MANIFEST_ENTRY_PATH)
+        let animation_manifest = read_path_entry_cow(&package, ANIMATION_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/animations.bin")?;
-        let frame_manifest = read_path_entry(&package, FRAME_MANIFEST_ENTRY_PATH)
+        let frame_manifest = read_path_entry_cow(&package, FRAME_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/frames.bin")?;
-        let body_resolve_manifest = read_path_entry(&package, BODY_RESOLVE_MANIFEST_ENTRY_PATH)
+        let body_resolve_manifest = read_path_entry_cow(&package, BODY_RESOLVE_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/body_resolve.bin")?;
-        let body_type_manifest = read_path_entry(&package, BODY_TYPE_MANIFEST_ENTRY_PATH)
+        let body_type_manifest = read_path_entry_cow(&package, BODY_TYPE_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_cc.uddp missing metadata/body_types.bin")?;
 
         let (page_width, page_height, page_gutter, page_packing_mode, pages) =

@@ -849,6 +849,7 @@ fn decode_ec_gump_rgba(
                     format,
                     props: None,
                     raw_data: data,
+                    image_data_offset: 0,
                 };
                 let image = tex_file.decode_to_rgba()?;
                 let rgba = image.to_rgba8();

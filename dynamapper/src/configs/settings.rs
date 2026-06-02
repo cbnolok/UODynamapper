@@ -773,14 +773,13 @@ impl Plugin for SettingsPlugin {
                 t.pause();
                 t
             }))
+            .add_systems(FixedUpdate, sys_evlisten_switch_wireframe)
             .add_systems(
                 FixedUpdate,
-                (
-                    sys_evlisten_switch_wireframe,
-                    sys_debounced_save,
-                    sys_sync_resources_to_settings,
-                ),
-            );
+                sys_sync_resources_to_settings.before(sys_debounced_save),
+            )
+            .add_systems(FixedUpdate, sys_debounced_save)
+            .add_systems(Last, sys_flush_settings_on_exit);
     }
 }
 
@@ -791,28 +790,76 @@ fn sys_sync_resources_to_settings(
     windows: Query<&Window>,
     player_q: Query<&Player>,
 ) {
-    // Zoom
-    if (settings.session_state.window.zoom - zoom.0).abs() > 0.001 {
-        settings.session_state.window.zoom = zoom.0;
+    sync_runtime_resources_to_settings(
+        &mut settings,
+        Some(zoom.0),
+        first_window_size(&windows),
+        first_player_position(&player_q),
+    );
+}
+
+fn sys_flush_settings_on_exit(
+    mut exits: MessageReader<AppExit>,
+    zoom: Option<Res<RenderZoom>>,
+    mut settings: ResMut<Settings>,
+    windows: Query<&Window>,
+    player_q: Query<&Player>,
+) {
+    if exits.read().next().is_none() {
+        return;
     }
 
-    // Window size
-    if let Some(window) = windows.iter().next() {
-        let res = &window.resolution;
-        if (settings.session_state.window.width - res.width()).abs() > 1.0 {
-            settings.session_state.window.width = res.width();
-        }
-        if (settings.session_state.window.height - res.height()).abs() > 1.0 {
-            settings.session_state.window.height = res.height();
+    sync_runtime_resources_to_settings(
+        &mut settings,
+        zoom.as_ref().map(|zoom| zoom.0),
+        first_window_size(&windows),
+        first_player_position(&player_q),
+    );
+
+    save_app_settings(&settings);
+    save_session_state_settings(&settings);
+    save_graphics_settings(&settings);
+    save_keybindings(&settings);
+    save_core_settings(&settings);
+    save_runtime_assets_settings(&settings);
+    save_world_rendering_settings(&settings);
+}
+
+fn first_window_size(windows: &Query<&Window>) -> Option<(f32, f32)> {
+    windows
+        .iter()
+        .next()
+        .map(|window| (window.resolution.width(), window.resolution.height()))
+}
+
+fn first_player_position(player_q: &Query<&Player>) -> Option<UOVec4> {
+    player_q.iter().next().and_then(|player| player.current_pos)
+}
+
+fn sync_runtime_resources_to_settings(
+    settings: &mut Settings,
+    zoom: Option<f32>,
+    window_size: Option<(f32, f32)>,
+    player_pos: Option<UOVec4>,
+) {
+    if let Some(zoom) = zoom {
+        if (settings.session_state.window.zoom - zoom).abs() > 0.001 {
+            settings.session_state.window.zoom = zoom;
         }
     }
 
-    // Player position
-    if let Some(player) = player_q.iter().next() {
-        if let Some(pos) = player.current_pos {
-            if settings.session_state.world.last_p != pos {
-                settings.session_state.world.last_p = pos;
-            }
+    if let Some((width, height)) = window_size {
+        if (settings.session_state.window.width - width).abs() > 1.0 {
+            settings.session_state.window.width = width;
+        }
+        if (settings.session_state.window.height - height).abs() > 1.0 {
+            settings.session_state.window.height = height;
+        }
+    }
+
+    if let Some(pos) = player_pos {
+        if settings.session_state.world.last_p != pos {
+            settings.session_state.world.last_p = pos;
         }
     }
 }

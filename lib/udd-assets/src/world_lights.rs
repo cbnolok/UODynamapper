@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::read_path_entry;
+use crate::common::{read_path_entry, read_path_entry_cow};
 
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 
@@ -54,7 +54,7 @@ impl WorldLightsPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        let slot_manifest = read_path_entry(&package, SLOT_MANIFEST_ENTRY_PATH)
+        let slot_manifest = read_path_entry_cow(&package, SLOT_MANIFEST_ENTRY_PATH)
             .context("world_lights.uddp missing metadata/slots.bin")?;
 
         let slots = parse_slot_manifest(&slot_manifest)?;

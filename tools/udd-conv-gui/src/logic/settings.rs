@@ -9,34 +9,12 @@ pub fn config_file_path() -> PathBuf {
     if let Some(path) = std::env::var_os(CONFIG_ENV_VAR) {
         return PathBuf::from(path);
     }
-    if let Some(config_dir) = platform_config_dir() {
-        return config_dir.join("UODynamapper").join(CONFIG_FILE_NAME);
-    }
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
             return parent.join(CONFIG_FILE_NAME);
         }
     }
     PathBuf::from(CONFIG_FILE_NAME)
-}
-
-#[cfg(target_os = "windows")]
-fn platform_config_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(PathBuf::from)
-}
-
-#[cfg(target_os = "macos")]
-fn platform_config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join("Library").join("Application Support"))
-}
-
-#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-fn platform_config_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
 }
 
 pub fn load_settings_report() -> (AppSettings, Option<String>) {

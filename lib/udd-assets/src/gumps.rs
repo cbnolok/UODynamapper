@@ -71,10 +71,10 @@ impl GumpsPackage {
             ) {
                 (Some(_), Some(_)) => {
                     let page_manifest = package
-                        .read_file_by_sparse_id(GUMP_ATLAS_PAGE_MANIFEST_ID)
+                        .read_file_by_sparse_id_cow(GUMP_ATLAS_PAGE_MANIFEST_ID)
                         .context("gumps package page manifest could not be read")?;
                     let slot_manifest = package
-                        .read_file_by_sparse_id(GUMP_ATLAS_SLOT_MANIFEST_ID)
+                        .read_file_by_sparse_id_cow(GUMP_ATLAS_SLOT_MANIFEST_ID)
                         .context("gumps package slot manifest could not be read")?;
                     let (page_width, page_height, page_gutter, pages) =
                         parse_page_manifest(&page_manifest)?;
