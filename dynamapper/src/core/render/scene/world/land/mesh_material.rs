@@ -216,8 +216,9 @@ pub struct LandEffectsUniform {
     /// Edge softness for bounds-projected art shadows.
     #[serde(default = "default_art_projected_shadow_softness")]
     pub art_projected_shadow_softness: f32,
-    #[serde(default)]
-    pub _pad_art_shadow0: f32,
+    /// 0 disables KR material-family micro contrast; 1 preserves preset strength.
+    #[serde(default = "default_kr_land_material_contrast_strength")]
+    pub kr_land_material_contrast_strength: f32,
     #[serde(default)]
     pub _pad_art_shadow1: f32,
     #[serde(default)]
@@ -250,6 +251,10 @@ fn default_art_projected_shadow_length() -> f32 {
 
 fn default_art_projected_shadow_softness() -> f32 {
     0.62
+}
+
+fn default_kr_land_material_contrast_strength() -> f32 {
+    0.55
 }
 
 fn default_atmosphere_tint() -> Vec3 {

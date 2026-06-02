@@ -54,6 +54,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 
 8.  **Material-family surface response**
     *   KR land shading separates water, lava-like liquids, swamp-like liquids, and ice/snow-like bright surfaces using existing wet/reviewed-liquid flags plus conservative albedo heuristics.
+    *   KR land material-family micro-contrast is independently tunable through `kr_land_material_contrast_strength`.
     *   Remaining work: replace heuristics with metadata-backed material-family classification when the terrain evidence is strong enough.
 
 9.  **Static light color response**

@@ -721,7 +721,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       base_albedo,
       tile,
       in.world_position.xz,
-      effects.kr_land_shadow_mottle_strength,
+      effects.kr_land_material_contrast_strength,
     );
   }
 
