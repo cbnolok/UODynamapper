@@ -291,4 +291,23 @@ impl UopFile {
             self.compression.as_uop_compression(),
         )
     }
+
+    /// Decompresses the file data and returns shared bytes.
+    ///
+    /// Uncompressed UOP entries already store their final payload in `data`, so this
+    /// can return an `Arc` clone instead of copying bytes into a fresh `Vec`.
+    pub fn unpack_arc(&self) -> Result<Arc<[u8]>, std::io::Error> {
+        let Some(ref data) = self.data else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File data has not been loaded into memory",
+            ));
+        };
+
+        if self.compression == CompressionFlag::None {
+            Ok(Arc::clone(data))
+        } else {
+            self.unpack().map(Arc::from)
+        }
+    }
 }

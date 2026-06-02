@@ -267,7 +267,7 @@ impl Textures {
         format: ECImageFormat,
     ) -> eyre::Result<Option<TextureFile>> {
         if let Some(file) = self.package.get_file_by_hash(hash) {
-            let data: Arc<[u8]> = file.unpack()?.into();
+            let data = file.unpack_arc()?;
             let (metadata, image_data_offset) = if payload_starts_with_raw_image(&data, format) {
                 // The EC texture UOPs typically store the DDS/TGA payload directly.
                 // Treat the whole unpacked file as image data in that common case.
