@@ -696,14 +696,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
     let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
     let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
-    if (visual_profile == 2u) {
+    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u) {
       base_albedo = apply_kr_transition_grime(
         base_albedo,
         tile,
         world_tile,
         uv_in_tile,
         in.world_position.xz,
-        effects.grunge_strength,
+        effects.kr_transition_grime_strength,
       );
     }
     let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;

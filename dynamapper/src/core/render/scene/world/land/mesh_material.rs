@@ -222,8 +222,14 @@ pub struct LandEffectsUniform {
     /// Visible static-light mask opacity independent from local light response.
     #[serde(default = "default_static_light_decal_visibility")]
     pub static_light_decal_visibility: f32,
+    /// 1 = add KR-style edge grime where textured land materials meet.
+    pub enable_kr_transition_grime: u32,
+
+    // --- KR transition grime controls (vec4 slot 8) ---
+    /// Strength of KR material-boundary grime/dirt accumulation.
+    pub kr_transition_grime_strength: f32,
     #[serde(default)]
-    pub _pad_art_shadow2: f32,
+    pub _pad_art_shadow2: Vec3,
 }
 
 fn default_art_shadow_strength() -> f32 {

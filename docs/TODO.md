@@ -240,7 +240,7 @@ Current execution decisions:
 - Add height-aware contact darkening for terrain, statics, tree bases, cliffs, walls, and art feet.
 - Strengthen directional slope shading for land while keeping broad painterly roll-off instead of sharp modern normal-map lighting.
 - Add material-specific wet and highlight response for water, lava, swamp, ice, and snow; avoid global shine on ordinary terrain.
-- Add transition dirt or grime accumulation near material boundaries such as grass-to-road, snow-to-rock, cliff-to-ground, and plaza edges.
+- Continue transition dirt/grime accumulation near material boundaries: first KR pass darkens texture-payload boundaries through `enable_kr_transition_grime` and `kr_transition_grime_strength`; remaining work is metadata-backed material-family tuning for grass-to-road, snow-to-rock, cliff-to-ground, and plaza edges.
 - Improve sprite grounding with soft contact shadows under statics and mobiles plus subtle side darkening for tall art.
 - Replace white blob-like static light emphasis with soft local color influence on nearby art and land, keeping visible decals optional.
 - Add restrained elevation or distance atmosphere for large terrain views without obscuring tile readability.

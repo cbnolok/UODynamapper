@@ -72,11 +72,16 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   KR land shading adds a neighbor-height shadow term for steep local height transitions, controlled by `kr_land_relief_shadow_strength`.
     *   Remaining work: validate against cliff-heavy KR screenshots and tune per terrain family if metadata becomes available.
 
-11. **KR art side falloff**
+11. **KR transition grime**
+    *   KR land shading adds material-boundary dirt/weathering where neighboring EC/KR textured land payloads differ.
+    *   The effect is independently controlled by `enable_kr_transition_grime` and `kr_transition_grime_strength`.
+    *   Remaining work: replace payload-difference heuristics with metadata-backed material-family rules when the terrain evidence is strong enough.
+
+12. **KR art side falloff**
     *   Art fake-normal shading adds a subtle one-sided depth tint for foliage, roofs, and tall non-ground statics.
     *   Remaining work: validate against KR tree, wall, and large-static screenshots and tune depth-class profiles if needed.
 
-12. **KR projected art shadows**
+13. **KR projected art shadows**
     *   Sprite statics have an opt-in bounds-projected shadow material pass controlled by `enable_art_projected_shadows`, `art_projected_shadow_strength`, `art_projected_shadow_length`, and `art_projected_shadow_softness`.
     *   The pass reuses existing sprite batches and instance buffers, projects the sprite bounds opposite the scene light, and samples softened sprite atlas alpha for silhouette-like shadow masks.
     *   Depth-class tuning gives foliage broader broken shadows, roofs weaker/narrower shadows, and regular tall statics moderate silhouettes.
@@ -214,12 +219,16 @@ To allow the user to transition between EC and KR visually, the `LandEffectsUnif
 3.  **`grunge_strength`**: Float `[0.0 - 1.0]`.
     *   Current: controls procedural grunge on terrain/statics.
     *   Future: should control texture-backed `noise.tga`/DDS grunge.
-4.  **`enable_normal_maps`**: Boolean.
+4.  **`enable_kr_transition_grime`**: Boolean. Enables KR material-boundary dirt/weathering.
+5.  **`kr_transition_grime_strength`**: Float `[0.0 - 1.0]`.
+    *   Current: controls payload-boundary grime on KR textured land.
+    *   Future: should use metadata-backed material-family rules instead of payload-difference heuristics.
+6.  **`enable_normal_maps`**: Boolean.
     *   Current: toggles EC land role-3 texture normal-map sampling from the existing UDDP land atlas.
     *   Future: may gain per-material strength or art/static support after visual validation.
-5.  **`light_decal_intensity`**: Float.
+7.  **`light_decal_intensity`**: Float.
     *   Current: scales local land/art light response.
     *   Future: should also scale temporary dynamic 2D local-light response.
-6.  **`static_light_decal_visibility`**: Float.
+8.  **`static_light_decal_visibility`**: Float.
     *   Current: scales visible static-light mask alpha independently from local land/art response.
     *   Future: should also scale temporary dynamic additive 2D light quads.
