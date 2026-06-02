@@ -126,6 +126,12 @@ fn package_load_mode_can_defer_payload_loading() {
     loaded
         .ensure_file_data_loaded_by_hash(file_hash)
         .expect("materialize payload");
+    assert!(loaded
+        .files_by_hash()
+        .get(&file_hash)
+        .expect("indexed lazy file after load")
+        .data()
+        .is_some());
     assert_eq!(
         loaded
             .get_file_by_hash(file_hash)

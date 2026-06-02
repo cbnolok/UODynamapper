@@ -278,8 +278,17 @@ impl UopFile {
 
     /// Decompresses the file data and returns it as a `Vec<u8>`.
     pub fn unpack(&self) -> Result<Vec<u8>, std::io::Error> {
-        let mut buffer = Vec::with_capacity(self.decompressed_size as usize);
-        self.unpack_to(&mut buffer)?;
-        Ok(buffer)
+        let Some(ref data) = self.data else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File data has not been loaded into memory",
+            ));
+        };
+
+        decode_payload(
+            data,
+            self.decompressed_size as usize,
+            self.compression.as_uop_compression(),
+        )
     }
 }

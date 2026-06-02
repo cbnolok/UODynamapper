@@ -44,14 +44,14 @@ pub fn encode_payload(payload: &[u8], compression: UopCompression) -> io::Result
 
 pub fn decode_payload(
     payload: &[u8],
-    _raw_size: usize,
+    raw_size: usize,
     compression: UopCompression,
 ) -> io::Result<Vec<u8>> {
     match compression {
         UopCompression::None => Ok(payload.to_vec()),
         UopCompression::Zlib => {
             let mut decoder = ZlibDecoder::new(payload);
-            let mut decoded = Vec::new();
+            let mut decoded = Vec::with_capacity(raw_size);
             decoder.read_to_end(&mut decoded)?;
             Ok(decoded)
         }

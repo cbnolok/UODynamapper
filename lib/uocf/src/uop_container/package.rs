@@ -247,6 +247,17 @@ impl UopPackage {
         None
     }
 
+    fn file_position_by_hash(&self, filename_hash: u64) -> Option<(usize, usize)> {
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            for (file_index, file) in block.files().iter().enumerate() {
+                if file.filename_hash() == filename_hash {
+                    return Some((block_index, file_index));
+                }
+            }
+        }
+        None
+    }
+
     /// Find a mutable file entry by its normalized filename hash.
     pub fn get_file_by_hash_mut(&mut self, filename_hash: u64) -> Option<&mut UopFile> {
         self.hash_index_dirty = true;
@@ -325,19 +336,24 @@ impl UopPackage {
 
     /// Load one payload into memory when this package was opened lazily.
     pub fn ensure_file_data_loaded_by_hash(&mut self, filename_hash: u64) -> io::Result<()> {
-        let needs_load = self
-            .get_file_by_hash(filename_hash)
-            .map(|file| file.data().is_none() && file.has_size())
+        let (block_index, file_index) = self
+            .file_position_by_hash(filename_hash)
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("file payload for hash {filename_hash:016X} not found"),
                 )
             })?;
+
+        let needs_load = {
+            let file = &self.blocks[block_index].files()[file_index];
+            file.data().is_none() && file.has_size()
+        };
         if !needs_load {
             return Ok(());
         }
 
+        let update_clean_hash_index = !self.hash_index_dirty;
         let package_path = self.package_path.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -345,16 +361,14 @@ impl UopPackage {
             )
         })?;
         let mut reader = File::open(package_path)?;
-        {
-            let file = self.get_file_by_hash_mut(filename_hash).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("file payload for hash {filename_hash:016X} not found"),
-                )
-            })?;
+        let indexed_file = {
+            let file = &mut self.blocks[block_index].files_mut()[file_index];
             file.load_data_from(&mut reader)?;
+            file.clone()
+        };
+        if update_clean_hash_index {
+            self.files_by_hash.insert(filename_hash, indexed_file);
         }
-        self.refresh_hash_index();
 
         Ok(())
     }
