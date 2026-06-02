@@ -27,26 +27,20 @@ pub fn apply_lq(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, 
 }
 
 fn apply_lq2x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
+    let width = width as usize;
+    let height = height as usize;
     let target_width = width * 2;
 
-    let get_pixel = |x: i32, y: i32| -> [u8; 4] {
-        let px = x.clamp(0, width as i32 - 1) as usize;
-        let py = y.clamp(0, height as i32 - 1) as usize;
-        let idx = (py * width as usize + px) * 4;
-        [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
-    };
+    for y in 0..height {
+        let y_next = if y + 1 < height { y + 1 } else { y };
 
-    let mut set_pixel = |tx: u32, ty: u32, color: [u8; 4]| {
-        let idx = (ty * target_width + tx) as usize * 4;
-        out_rgba[idx..idx + 4].copy_from_slice(&color);
-    };
+        for x in 0..width {
+            let x_next = if x + 1 < width { x + 1 } else { x };
 
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let a = get_pixel(x, y);
-            let b = get_pixel(x + 1, y);
-            let c = get_pixel(x, y + 1);
-            let d = get_pixel(x + 1, y + 1);
+            let a = get_pixel(rgba, width, x, y);
+            let b = get_pixel(rgba, width, x_next, y);
+            let c = get_pixel(rgba, width, x, y_next);
+            let d = get_pixel(rgba, width, x_next, y_next);
 
             let p0 = a;
             let p1;
@@ -77,38 +71,35 @@ fn apply_lq2x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
                 p3 = b;
             }
 
-            set_pixel(x as u32 * 2, y as u32 * 2, p0);
-            set_pixel(x as u32 * 2 + 1, y as u32 * 2, p1);
-            set_pixel(x as u32 * 2, y as u32 * 2 + 1, p2);
-            set_pixel(x as u32 * 2 + 1, y as u32 * 2 + 1, p3);
+            let tx = x * 2;
+            let ty = y * 2;
+            set_pixel(out_rgba, target_width, tx, ty, p0);
+            set_pixel(out_rgba, target_width, tx + 1, ty, p1);
+            set_pixel(out_rgba, target_width, tx, ty + 1, p2);
+            set_pixel(out_rgba, target_width, tx + 1, ty + 1, p3);
         }
     }
 }
 
 fn apply_lq3x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
     // Simple 3x expansion with bilinear-like edges
+    let width = width as usize;
+    let height = height as usize;
     let target_width = width * 3;
-    let _target_height = height * 3;
 
-    let get_pixel = |x: i32, y: i32| -> [u8; 4] {
-        let px = x.clamp(0, width as i32 - 1) as usize;
-        let py = y.clamp(0, height as i32 - 1) as usize;
-        let idx = (py * width as usize + px) * 4;
-        [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
-    };
+    for y in 0..height {
+        let y_prev = y.saturating_sub(1);
+        let y_next = if y + 1 < height { y + 1 } else { y };
 
-    let mut set_pixel = |tx: u32, ty: u32, color: [u8; 4]| {
-        let idx = (ty * target_width + tx) as usize * 4;
-        out_rgba[idx..idx + 4].copy_from_slice(&color);
-    };
+        for x in 0..width {
+            let x_prev = x.saturating_sub(1);
+            let x_next = if x + 1 < width { x + 1 } else { x };
 
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let p_e = get_pixel(x, y);
-            let p_b = get_pixel(x, y - 1);
-            let p_d = get_pixel(x - 1, y);
-            let p_f = get_pixel(x + 1, y);
-            let p_h = get_pixel(x, y + 1);
+            let p_e = get_pixel(rgba, width, x, y);
+            let p_b = get_pixel(rgba, width, x, y_prev);
+            let p_d = get_pixel(rgba, width, x_prev, y);
+            let p_f = get_pixel(rgba, width, x_next, y);
+            let p_h = get_pixel(rgba, width, x, y_next);
 
             let mut out = [p_e; 9];
 
@@ -140,12 +131,16 @@ fn apply_lq3x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
                 }
             }
 
+            let base_tx = x * 3;
+            let base_ty = y * 3;
             for ty in 0..3 {
                 for tx in 0..3 {
                     set_pixel(
-                        x as u32 * 3 + tx,
-                        y as u32 * 3 + ty,
-                        out[(ty * 3 + tx) as usize],
+                        out_rgba,
+                        target_width,
+                        base_tx + tx,
+                        base_ty + ty,
+                        out[ty * 3 + tx],
                     );
                 }
             }
@@ -154,9 +149,23 @@ fn apply_lq3x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
 }
 
 fn apply_lq4x(width: u32, height: u32, rgba: &[u8], out_rgba: &mut [u8]) {
-    let (w2, h2, r2) = apply_lq(width, height, rgba, 2);
-    let (_, _, r4) = apply_lq(w2, h2, &r2, 2);
-    out_rgba.copy_from_slice(&r4);
+    let w2 = width * 2;
+    let h2 = height * 2;
+    let mut r2 = vec![0u8; (w2 * h2 * 4) as usize];
+    apply_lq2x(width, height, rgba, &mut r2);
+    apply_lq2x(w2, h2, &r2, out_rgba);
+}
+
+#[inline]
+fn get_pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
+    let idx = (y * width + x) * 4;
+    [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
+}
+
+#[inline]
+fn set_pixel(out_rgba: &mut [u8], target_width: usize, x: usize, y: usize, color: [u8; 4]) {
+    let idx = (y * target_width + x) * 4;
+    out_rgba[idx..idx + 4].copy_from_slice(&color);
 }
 
 fn interpolate(c1: [u8; 4], c2: [u8; 4]) -> [u8; 4] {

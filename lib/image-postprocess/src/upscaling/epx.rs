@@ -17,30 +17,33 @@ fn apply_scale2x(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     let target_height = height * 2;
     let mut out_rgba = vec![0u8; (target_width * target_height * 4) as usize];
 
-    let get_p = |x: i32, y: i32| -> [u8; 4] {
-        let px = x.clamp(0, width as i32 - 1) as usize;
-        let py = y.clamp(0, height as i32 - 1) as usize;
-        let idx = (py * width as usize + px) * 4;
-        [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
-    };
+    let width = width as usize;
+    let height = height as usize;
+    let target_width_usize = target_width as usize;
+    let source_stride = width * 4;
+    let target_stride = target_width_usize * 4;
 
-    let mut set_p = |tx: u32, ty: u32, color: [u8; 4]| {
-        let idx = (ty * target_width + tx) as usize * 4;
-        out_rgba[idx..idx + 4].copy_from_slice(&color);
-    };
+    for y in 0..height {
+        let row = y * source_stride;
+        let row_above = y.saturating_sub(1) * source_stride;
+        let row_below = (y + 1).min(height - 1) * source_stride;
+        let target_row = y * 2 * target_stride;
 
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
+        for x in 0..width {
             /*
                 A B C
                 D E F
                 G H I
             */
-            let p_e = get_p(x, y);
-            let p_b = get_p(x, y - 1);
-            let p_d = get_p(x - 1, y);
-            let p_f = get_p(x + 1, y);
-            let p_h = get_p(x, y + 1);
+            let col = x * 4;
+            let col_left = x.saturating_sub(1) * 4;
+            let col_right = (x + 1).min(width - 1) * 4;
+
+            let p_e = read_pixel(rgba, row + col);
+            let p_b = read_pixel(rgba, row_above + col);
+            let p_d = read_pixel(rgba, row + col_left);
+            let p_f = read_pixel(rgba, row + col_right);
+            let p_h = read_pixel(rgba, row_below + col);
 
             let mut p1 = p_e;
             let mut p2 = p_e;
@@ -62,10 +65,11 @@ fn apply_scale2x(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
                 }
             }
 
-            set_p(x as u32 * 2, y as u32 * 2, p1);
-            set_p(x as u32 * 2 + 1, y as u32 * 2, p2);
-            set_p(x as u32 * 2, y as u32 * 2 + 1, p3);
-            set_p(x as u32 * 2 + 1, y as u32 * 2 + 1, p4);
+            let target_idx = target_row + x * 8;
+            write_pixel(&mut out_rgba, target_idx, p1);
+            write_pixel(&mut out_rgba, target_idx + 4, p2);
+            write_pixel(&mut out_rgba, target_idx + target_stride, p3);
+            write_pixel(&mut out_rgba, target_idx + target_stride + 4, p4);
         }
     }
 
@@ -77,29 +81,32 @@ fn apply_scale3x(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     let target_height = height * 3;
     let mut out_rgba = vec![0u8; (target_width * target_height * 4) as usize];
 
-    let get_p = |x: i32, y: i32| -> [u8; 4] {
-        let px = x.clamp(0, width as i32 - 1) as usize;
-        let py = y.clamp(0, height as i32 - 1) as usize;
-        let idx = (py * width as usize + px) * 4;
-        [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
-    };
+    let width = width as usize;
+    let height = height as usize;
+    let target_width_usize = target_width as usize;
+    let source_stride = width * 4;
+    let target_stride = target_width_usize * 4;
 
-    let mut set_p = |tx: u32, ty: u32, color: [u8; 4]| {
-        let idx = (ty * target_width + tx) as usize * 4;
-        out_rgba[idx..idx + 4].copy_from_slice(&color);
-    };
+    for y in 0..height {
+        let row = y * source_stride;
+        let row_above = y.saturating_sub(1) * source_stride;
+        let row_below = (y + 1).min(height - 1) * source_stride;
+        let target_row = y * 3 * target_stride;
 
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let p_a = get_p(x - 1, y - 1);
-            let p_b = get_p(x, y - 1);
-            let p_c = get_p(x + 1, y - 1);
-            let p_d = get_p(x - 1, y);
-            let p_e = get_p(x, y);
-            let p_f = get_p(x + 1, y);
-            let p_g = get_p(x - 1, y + 1);
-            let p_h = get_p(x, y + 1);
-            let p_i = get_p(x + 1, y + 1);
+        for x in 0..width {
+            let col = x * 4;
+            let col_left = x.saturating_sub(1) * 4;
+            let col_right = (x + 1).min(width - 1) * 4;
+
+            let p_a = read_pixel(rgba, row_above + col_left);
+            let p_b = read_pixel(rgba, row_above + col);
+            let p_c = read_pixel(rgba, row_above + col_right);
+            let p_d = read_pixel(rgba, row + col_left);
+            let p_e = read_pixel(rgba, row + col);
+            let p_f = read_pixel(rgba, row + col_right);
+            let p_g = read_pixel(rgba, row_below + col_left);
+            let p_h = read_pixel(rgba, row_below + col);
+            let p_i = read_pixel(rgba, row_below + col_right);
 
             let mut out = [p_e; 9];
 
@@ -131,15 +138,16 @@ fn apply_scale3x(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
                 }
             }
 
-            for ty in 0..3 {
-                for tx in 0..3 {
-                    set_p(
-                        x as u32 * 3 + tx,
-                        y as u32 * 3 + ty,
-                        out[(ty * 3 + tx) as usize],
-                    );
-                }
-            }
+            let target_idx = target_row + x * 12;
+            write_pixel(&mut out_rgba, target_idx, out[0]);
+            write_pixel(&mut out_rgba, target_idx + 4, out[1]);
+            write_pixel(&mut out_rgba, target_idx + 8, out[2]);
+            write_pixel(&mut out_rgba, target_idx + target_stride, out[3]);
+            write_pixel(&mut out_rgba, target_idx + target_stride + 4, out[4]);
+            write_pixel(&mut out_rgba, target_idx + target_stride + 8, out[5]);
+            write_pixel(&mut out_rgba, target_idx + target_stride * 2, out[6]);
+            write_pixel(&mut out_rgba, target_idx + target_stride * 2 + 4, out[7]);
+            write_pixel(&mut out_rgba, target_idx + target_stride * 2 + 8, out[8]);
         }
     }
 
@@ -150,4 +158,14 @@ fn apply_scale4x(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     // Scale4x is Scale2x applied twice
     let (w2, h2, r2) = apply_scale2x(width, height, rgba);
     apply_scale2x(w2, h2, &r2)
+}
+
+#[inline]
+fn read_pixel(rgba: &[u8], idx: usize) -> [u8; 4] {
+    [rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3]]
+}
+
+#[inline]
+fn write_pixel(rgba: &mut [u8], idx: usize, pixel: [u8; 4]) {
+    rgba[idx..idx + 4].copy_from_slice(&pixel);
 }
