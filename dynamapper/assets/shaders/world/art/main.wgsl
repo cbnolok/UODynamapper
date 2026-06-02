@@ -8,6 +8,7 @@
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
+#import "shaders/world/land/noise.wgsl"::noise_2d
 
 #import "shaders/world/art/art_bindings.wgsl"::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -147,15 +148,24 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         }
         var depth_profile = 0.0;
         if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
-            depth_profile = 1.0;
+            depth_profile = 0.92;
         } else if (in.depth_class == DEPTH_CLASS_ROOF) {
-            depth_profile = 0.16;
+            depth_profile = 0.10;
         } else if (in.depth_class != DEPTH_CLASS_BACKGROUND && in.depth_class != DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_profile = 0.55;
         }
         let caster_height = max(inst.local_max.y - inst.local_min.y, 0.0);
         let height_profile = smoothstep(0.45, 3.2, caster_height);
-        let centered = (uv_in_tile_for_shading - vec2<f32>(0.5, 0.56)) / vec2<f32>(0.54, 0.42);
+        var shadow_center = vec2<f32>(0.5, 0.56);
+        var shadow_radius = vec2<f32>(0.54, 0.42);
+        if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
+            shadow_center = vec2<f32>(0.5, 0.58);
+            shadow_radius = vec2<f32>(0.62, 0.48);
+        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
+            shadow_center = vec2<f32>(0.5, 0.52);
+            shadow_radius = vec2<f32>(0.48, 0.34);
+        }
+        let centered = (uv_in_tile_for_shading - shadow_center) / shadow_radius;
         let ellipse = dot(centered, centered);
         let softness = clamp(effects.art_projected_shadow_softness, 0.05, 1.0);
         let mask = 1.0 - smoothstep(1.0 - softness * 0.48, 1.0, ellipse);
@@ -184,7 +194,14 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
                 textureSample(art_atlas, art_atlas_sampler, alpha_d3, i32(layer)).a
             ) * 0.08;
         let silhouette = smoothstep(0.03, 0.44, blurred_alpha);
-        let alpha = mask * silhouette * height_profile * depth_profile * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
+        var family_breakup = 1.0;
+        if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
+            let leaf_noise = noise_2d(in.world_pos.xz * 1.35 + uv_in_tile_for_shading * 15.0);
+            family_breakup = mix(0.58, 1.10, smoothstep(0.22, 0.92, leaf_noise));
+        } else if (in.depth_class == DEPTH_CLASS_ROOF) {
+            family_breakup = 0.82;
+        }
+        let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
         if (alpha <= 0.001) {
             discard;
         }

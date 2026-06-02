@@ -72,7 +72,8 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 12. **KR projected art shadows**
     *   Sprite statics have an opt-in bounds-projected shadow material pass controlled by `enable_art_projected_shadows`, `art_projected_shadow_strength`, `art_projected_shadow_length`, and `art_projected_shadow_softness`.
     *   The pass reuses existing sprite batches and instance buffers, projects the sprite bounds opposite the scene light, and samples softened sprite atlas alpha for silhouette-like shadow masks.
-    *   Remaining work: validate draw ordering over land/water and tune depth-class/material response against KR screenshots.
+    *   Depth-class tuning gives foliage broader broken shadows, roofs weaker/narrower shadows, and regular tall statics moderate silhouettes.
+    *   Remaining work: validate draw ordering over land/water and tune material response against KR screenshots.
 
 ### Still Missing
 1.  **Real fullscreen EC/KR post-process pipeline**
