@@ -11,6 +11,8 @@ const FOUR_PIXEL_BYTES: usize = 16;
 const EIGHT_PIXEL_BYTES: usize = 32;
 const SIXTEEN_PIXEL_BYTES: usize = 64;
 const AVX2_ALPHA_BYTE_MASK: u32 = 0x8888_8888;
+#[cfg(target_arch = "aarch64")]
+const NEON_ALPHA_SHUFFLE: [u8; 16] = [3, 7, 11, 15, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
 
 pub(crate) fn nonzero_alpha_bounds(
     rgba: &[u8],
@@ -28,7 +30,15 @@ pub(crate) fn count_nonzero_alpha(rgba: &[u8]) -> u64 {
         return unsafe { count_nonzero_alpha_avx2(rgba) };
     }
 
-    count_nonzero_alpha_scalar(rgba)
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { count_nonzero_alpha_neon(rgba) }
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        count_nonzero_alpha_scalar(rgba)
+    }
 }
 
 pub(crate) fn nonzero_alpha_bounds_in_rect(
@@ -221,6 +231,28 @@ unsafe fn avx2_nonzero_alpha_mask_32(ptr: *const u8) -> u32 {
     let zero = _mm256_setzero_si256();
     let zero_mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(bytes, zero)) as u32;
     !zero_mask & AVX2_ALPHA_BYTE_MASK
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn count_nonzero_alpha_neon(rgba: &[u8]) -> u64 {
+    let mut count = 0u64;
+    let mut chunks = rgba.chunks_exact(FOUR_PIXEL_BYTES);
+    for chunk in chunks.by_ref() {
+        count += u64::from(neon_count_nonzero_alpha_16(chunk.as_ptr()));
+    }
+    count + count_nonzero_alpha_scalar(chunks.remainder())
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn neon_count_nonzero_alpha_16(ptr: *const u8) -> u8 {
+    use std::arch::aarch64::*;
+
+    let bytes = vld1q_u8(ptr);
+    let alpha = vqtbl1q_u8(bytes, vld1q_u8(NEON_ALPHA_SHUFFLE.as_ptr()));
+    let nonzero = vmvnq_u8(vceqq_u8(alpha, vdupq_n_u8(0)));
+    vaddvq_u8(vcntq_u8(nonzero)) / 8
 }
 
 #[cfg(test)]
