@@ -282,8 +282,11 @@ pub fn sys_sync_static_light_entities(
         .get_or_insert_with(|| meshes.add(build_static_light_mesh()))
         .clone();
     let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
-    let material_alpha =
-        static_light_alpha_for_global_lighting(uniform_state.global_lighting, render_style);
+    let material_alpha = static_light_decal_alpha(
+        uniform_state.global_lighting,
+        uniform_state.effects.light_decal_intensity,
+        render_style,
+    );
     for instance in &instances.0 {
         let Some(material_handle) = static_light_material(
             instance.key.graphic,
@@ -455,14 +458,14 @@ fn static_light_style_profile(style: StaticLightRenderStyle) -> StaticLightStyle
             mottle_strength: 0.0,
         },
         StaticLightRenderStyle::Kr => StaticLightStyleProfile {
-            max_alpha: 0.42,
+            max_alpha: 0.20,
             daylight_alpha: 0.0,
-            darkness_gamma: 1.35,
-            saturation: 0.70,
-            brightness: 0.82,
-            alpha_gamma: 1.22,
+            darkness_gamma: 1.50,
+            saturation: 0.62,
+            brightness: 0.66,
+            alpha_gamma: 1.70,
             cool_edge_tint: 0.18,
-            mottle_strength: 0.16,
+            mottle_strength: 0.22,
         },
     }
 }
@@ -475,6 +478,17 @@ fn static_light_alpha_for_global_lighting(
     let darkness = (1.0 - global_lighting).clamp(0.0, 1.0);
     (profile.daylight_alpha + darkness.powf(profile.darkness_gamma))
         .clamp(0.0, profile.daylight_alpha + profile.max_alpha)
+}
+
+fn static_light_decal_alpha(
+    global_lighting: f32,
+    light_decal_intensity: f32,
+    style: StaticLightRenderStyle,
+) -> f32 {
+    let profile = static_light_style_profile(style);
+    let interaction = light_decal_intensity.clamp(0.0, 2.0);
+    let alpha = static_light_alpha_for_global_lighting(global_lighting, style) * interaction;
+    alpha.clamp(0.0, (profile.daylight_alpha + profile.max_alpha) * 2.0)
 }
 
 fn static_light_base_color(alpha: f32) -> Color {
@@ -889,6 +903,18 @@ mod tests {
         assert!(
             kr_mid
                 < static_light_alpha_for_global_lighting(0.75, StaticLightRenderStyle::Classic)
+        );
+    }
+
+    #[test]
+    fn decal_intensity_gates_visible_static_light_alpha() {
+        assert_eq!(
+            static_light_decal_alpha(0.0, 0.0, StaticLightRenderStyle::Kr),
+            0.0
+        );
+        assert!(
+            static_light_decal_alpha(0.0, 0.5, StaticLightRenderStyle::Kr)
+                < static_light_decal_alpha(0.0, 1.0, StaticLightRenderStyle::Kr)
         );
     }
 

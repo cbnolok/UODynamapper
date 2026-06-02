@@ -2105,8 +2105,6 @@ fn build_planned_page(
     let mut page_frame_index = 0u16;
     let mut filled_pixel_count = 0u64;
     let upscale_active = has_effective_upscale(&options.upscale_passes);
-    let mut pending_blits = Vec::new();
-    let mut pending_direct_blits = Vec::new();
 
     struct PendingPlannedBlit {
         global_frame_index: u32,
@@ -2156,9 +2154,19 @@ fn build_planned_page(
         content_height: u32,
     }
 
-    let mut planned_extrusions = Vec::new();
-
     let page_frames = planned_page_frames_with_axes(frames, page_size, options)?;
+    let page_frame_capacity = page_frames.len();
+    let mut planned_extrusions = Vec::with_capacity(page_frame_capacity);
+    let mut pending_blits = if upscale_active {
+        Vec::with_capacity(page_frame_capacity)
+    } else {
+        Vec::new()
+    };
+    let mut pending_direct_blits = if upscale_active {
+        Vec::new()
+    } else {
+        Vec::with_capacity(page_frame_capacity)
+    };
 
     for page_frame in page_frames {
         let frame = page_frame.frame;
