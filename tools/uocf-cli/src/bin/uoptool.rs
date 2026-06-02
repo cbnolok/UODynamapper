@@ -1,12 +1,14 @@
 //! A command-line tool for working with Ultima Online UOP files.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, Context};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uocf::classic::michelangelo_uop_codec::export_anim_blocks_from_mul;
+use uocf::classic::vd_codec::VdFile;
 use uocf::uop_container::file::{CompressionFlag, UopFile};
 use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
@@ -107,6 +109,42 @@ enum Commands {
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
     },
+    /// Export Classic animation patch entries as .vd or Michelangelo/UOAnimTool .uop.
+    ExportAnimPatch {
+        /// Source animation index file, for example anim.idx.
+        #[arg(long)]
+        idx: PathBuf,
+
+        /// Source animation data file, for example anim.mul.
+        #[arg(long)]
+        mul: PathBuf,
+
+        /// Raw animation block index to export. Repeat for multi-entry .uop output.
+        #[arg(long, required = true, value_name = "INDEX")]
+        block: Vec<i32>,
+
+        /// Source body id used when remapping exported block indices.
+        #[arg(long, default_value_t = 0)]
+        source_anim: i32,
+
+        /// Target body id used when remapping exported block indices. Defaults to source-anim.
+        #[arg(long)]
+        target_anim: Option<i32>,
+
+        /// Output patch format.
+        #[arg(long, value_enum)]
+        format: AnimPatchExportFormat,
+
+        /// Output .vd or Michelangelo/UOAnimTool .uop path.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum AnimPatchExportFormat {
+    Vd,
+    Uop,
 }
 
 fn main() -> eyre::Result<()> {
@@ -339,9 +377,77 @@ fn main() -> eyre::Result<()> {
                 duplicate_hashes
             );
         }
+        Commands::ExportAnimPatch {
+            idx,
+            mul,
+            block,
+            source_anim,
+            target_anim,
+            format,
+            output,
+        } => {
+            let entry_count = export_anim_patch(
+                idx,
+                mul,
+                block,
+                *source_anim,
+                target_anim.unwrap_or(*source_anim),
+                *format,
+                output,
+            )?;
+            println!(
+                "Exported {} animation patch entr{} to {}.",
+                entry_count,
+                if entry_count == 1 { "y" } else { "ies" },
+                output.display()
+            );
+        }
     }
 
     Ok(())
+}
+
+fn export_anim_patch(
+    idx: &Path,
+    mul: &Path,
+    block_ids: &[i32],
+    source_anim: i32,
+    target_anim: i32,
+    format: AnimPatchExportFormat,
+    output: &Path,
+) -> eyre::Result<usize> {
+    if source_anim < 0 {
+        return Err(eyre::eyre!("source-anim cannot be negative: {source_anim}"));
+    }
+    if target_anim < 0 {
+        return Err(eyre::eyre!("target-anim cannot be negative: {target_anim}"));
+    }
+
+    let patch = export_anim_blocks_from_mul(
+        idx.to_path_buf(),
+        mul,
+        block_ids,
+        source_anim,
+        target_anim,
+    )?;
+    match format {
+        AnimPatchExportFormat::Vd => {
+            if patch.entries.len() != 1 {
+                return Err(eyre::eyre!(
+                    ".vd export requires exactly one animation block, got {}",
+                    patch.entries.len()
+                ));
+            }
+            let entry = patch.entries.into_iter().next().unwrap();
+            VdFile::for_anim(entry.index, entry.extra, entry.data)?.save(output)?;
+            Ok(1)
+        }
+        AnimPatchExportFormat::Uop => {
+            let entry_count = patch.entries.len();
+            patch.save(output)?;
+            Ok(entry_count)
+        }
+    }
 }
 
 fn safe_extract_path(out_dir: &Path, file_name: &str) -> eyre::Result<PathBuf> {

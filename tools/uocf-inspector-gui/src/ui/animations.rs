@@ -2,8 +2,11 @@ use crate::app::{ArtSource, UopInspectorApp};
 use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use color_eyre::eyre;
 use eframe::egui;
+use std::path::{Path, PathBuf};
 use uocf::classic::anim::AnimMap;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
+use uocf::classic::michelangelo_uop_codec::export_anim_blocks_from_mul;
+use uocf::classic::vd_codec::VdFile;
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("anim_controls")
@@ -47,6 +50,92 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.radio_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
                 ui.radio_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP");
             });
+
+            if app.selected_legacy_source == ArtSource::Mul {
+                let export_context = app.client_data.as_ref().map(|client| {
+                    let body_id = client
+                        .anim_defs
+                        .as_ref()
+                        .map(|defs| defs.resolve(app.selected_anim_id))
+                        .unwrap_or(app.selected_anim_id);
+                    (client.path.clone(), body_id)
+                });
+
+                ui.separator();
+                ui.heading("Patch Export");
+                ui.horizontal(|ui| {
+                    let can_export = export_context.is_some();
+                    if ui
+                        .add_enabled(can_export, egui::Button::new("Export VD"))
+                        .clicked()
+                    {
+                        if let Some((client_path, body_id)) = export_context.clone() {
+                            let default_name = format!(
+                                "anim_{}_{}.vd",
+                                app.selected_anim_file_idx, body_id
+                            );
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_file_name(default_name)
+                                .save_file()
+                            {
+                                match export_selected_mul_animation_patch(
+                                    &client_path,
+                                    app.selected_anim_file_idx,
+                                    body_id,
+                                    AnimationPatchExportFormat::Vd,
+                                    &path,
+                                ) {
+                                    Ok(entry_count) => {
+                                        app.status_message = format!(
+                                            "Exported {entry_count} animation patch entry to {}.",
+                                            path.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        app.status_message =
+                                            format!("Failed to export animation .vd: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if ui
+                        .add_enabled(can_export, egui::Button::new("Export UOP"))
+                        .clicked()
+                    {
+                        if let Some((client_path, body_id)) = export_context.clone() {
+                            let default_name = format!(
+                                "anim_{}_{}.uop",
+                                app.selected_anim_file_idx, body_id
+                            );
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_file_name(default_name)
+                                .save_file()
+                            {
+                                match export_selected_mul_animation_patch(
+                                    &client_path,
+                                    app.selected_anim_file_idx,
+                                    body_id,
+                                    AnimationPatchExportFormat::Uop,
+                                    &path,
+                                ) {
+                                    Ok(entry_count) => {
+                                        app.status_message = format!(
+                                            "Exported {entry_count} animation patch entry to {}.",
+                                            path.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        app.status_message =
+                                            format!("Failed to export animation .uop: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
 
             ui.separator();
             ui.heading("Playback");
@@ -386,4 +475,50 @@ fn animation_source_label(source: ArtSource) -> &'static str {
         ArtSource::EcUop => "ec_uop",
         ArtSource::Any => "any",
     }
+}
+
+#[derive(Clone, Copy)]
+enum AnimationPatchExportFormat {
+    Vd,
+    Uop,
+}
+
+fn export_selected_mul_animation_patch(
+    client_path: &Path,
+    file_idx: u8,
+    body_id: u32,
+    format: AnimationPatchExportFormat,
+    output: &Path,
+) -> eyre::Result<usize> {
+    let (idx_path, mul_path) = anim_pair_paths(client_path, file_idx);
+    let patch = export_anim_blocks_from_mul(idx_path, &mul_path, &[body_id as i32], 0, 0)?;
+
+    match format {
+        AnimationPatchExportFormat::Vd => {
+            let entry = patch
+                .entries
+                .into_iter()
+                .next()
+                .ok_or_else(|| eyre::eyre!("animation patch export produced no entries"))?;
+            VdFile::for_anim(entry.index, entry.extra, entry.data)?.save(output)?;
+            Ok(1)
+        }
+        AnimationPatchExportFormat::Uop => {
+            let entry_count = patch.entries.len();
+            patch.save(output)?;
+            Ok(entry_count)
+        }
+    }
+}
+
+fn anim_pair_paths(client_path: &Path, file_idx: u8) -> (PathBuf, PathBuf) {
+    let suffix = if file_idx == 0 {
+        String::new()
+    } else {
+        (file_idx + 1).to_string()
+    };
+    (
+        client_path.join(format!("anim{suffix}.idx")),
+        client_path.join(format!("anim{suffix}.mul")),
+    )
 }

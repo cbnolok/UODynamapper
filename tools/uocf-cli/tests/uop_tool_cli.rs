@@ -7,6 +7,8 @@ use uocf::uop_container::file::CompressionFlag;
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
+use uocf::classic::michelangelo_uop_codec::{MichelangeloPatch, MichelangeloPatchEntry};
+use uocf::classic::vd_codec::{VdFile, VERDATA_FILE_ID_ANIM};
 
 struct TempDir {
     path: PathBuf,
@@ -283,4 +285,135 @@ fn rebuild_rewrites_package_without_fixed_temp_file() {
     let loaded = UopPackage::load(&uop_path).expect("load rebuilt package");
     let file = loaded.get_file_by_hash(hash).expect("find rebuilt file");
     assert_eq!(file.unpack().expect("unpack rebuilt file"), b"payload");
+}
+
+#[test]
+fn export_anim_patch_writes_single_vd_entry() {
+    let temp = TempDir::new("export-anim-vd");
+    let (idx_path, mul_path) = write_anim_pair(temp.path(), &[(7, 77, b"anim payload".to_vec())]);
+    let output_path = temp.path().join("body_7.vd");
+
+    let output = uop_tool()
+        .arg("export-anim-patch")
+        .arg("--idx")
+        .arg(&idx_path)
+        .arg("--mul")
+        .arg(&mul_path)
+        .arg("--block")
+        .arg("7")
+        .arg("--format")
+        .arg("vd")
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .expect("run uop-tool export-anim-patch");
+
+    assert!(output.status.success());
+    let vd = VdFile::load(&output_path).expect("load exported vd");
+    assert_eq!(vd.entry.file_id, VERDATA_FILE_ID_ANIM);
+    assert_eq!(vd.entry.index, 7);
+    assert_eq!(vd.entry.extra, 77);
+    assert_eq!(vd.data, b"anim payload");
+}
+
+#[test]
+fn export_anim_patch_writes_remapped_uop_entries() {
+    let temp = TempDir::new("export-anim-uop");
+    let (idx_path, mul_path) = write_anim_pair(
+        temp.path(),
+        &[
+            (1, 101, vec![2, 12]),
+            (2, 102, vec![3, 13]),
+        ],
+    );
+    let output_path = temp.path().join("patch.uop");
+
+    let output = uop_tool()
+        .arg("export-anim-patch")
+        .arg("--idx")
+        .arg(&idx_path)
+        .arg("--mul")
+        .arg(&mul_path)
+        .arg("--block")
+        .arg("1")
+        .arg("--block")
+        .arg("2")
+        .arg("--source-anim")
+        .arg("0")
+        .arg("--target-anim")
+        .arg("200")
+        .arg("--format")
+        .arg("uop")
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .expect("run uop-tool export-anim-patch");
+
+    assert!(output.status.success());
+    let patch = MichelangeloPatch::load(&output_path).expect("load exported uop patch");
+    assert_eq!(
+        patch.entries,
+        vec![
+            MichelangeloPatchEntry::anim(22_001, 101, vec![2, 12]),
+            MichelangeloPatchEntry::anim(22_002, 102, vec![3, 13]),
+        ]
+    );
+}
+
+#[test]
+fn export_anim_patch_rejects_multi_block_vd() {
+    let temp = TempDir::new("export-anim-vd-multi");
+    let (idx_path, mul_path) = write_anim_pair(
+        temp.path(),
+        &[
+            (1, 101, vec![2, 12]),
+            (2, 102, vec![3, 13]),
+        ],
+    );
+    let output_path = temp.path().join("bad.vd");
+
+    let output = uop_tool()
+        .arg("export-anim-patch")
+        .arg("--idx")
+        .arg(&idx_path)
+        .arg("--mul")
+        .arg(&mul_path)
+        .arg("--block")
+        .arg("1")
+        .arg("--block")
+        .arg("2")
+        .arg("--format")
+        .arg("vd")
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .expect("run uop-tool export-anim-patch");
+
+    assert!(!output.status.success());
+    assert!(!output_path.exists());
+}
+
+fn write_anim_pair(dir: &Path, entries: &[(usize, u32, Vec<u8>)]) -> (PathBuf, PathBuf) {
+    let idx_path = dir.join("anim.idx");
+    let mul_path = dir.join("anim.mul");
+    let count = entries.iter().map(|(index, _, _)| *index).max().unwrap_or(0) + 1;
+    let mut index_entries = vec![(u32::MAX, 0u32, u32::MAX); count];
+    let mut mul = Vec::new();
+
+    for &(index, extra, ref data) in entries {
+        let lookup = mul.len() as u32;
+        mul.extend_from_slice(data);
+        index_entries[index] = (lookup, data.len() as u32, extra);
+    }
+
+    let mut idx = Vec::new();
+    for (lookup, size, extra) in index_entries {
+        idx.extend_from_slice(&lookup.to_le_bytes());
+        idx.extend_from_slice(&size.to_le_bytes());
+        idx.extend_from_slice(&extra.to_le_bytes());
+    }
+
+    fs::write(&idx_path, idx).expect("write anim idx");
+    fs::write(&mul_path, mul).expect("write anim mul");
+    (idx_path, mul_path)
 }
