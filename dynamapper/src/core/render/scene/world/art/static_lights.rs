@@ -142,9 +142,11 @@ pub fn sys_collect_visible_static_lights(
     statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     world_lights_res: Option<Res<WorldLightsPackageRes>>,
+    hues_package_res: Option<Res<HuesPackageRes>>,
     settings: Res<Settings>,
     scene_state: Res<SceneStateData>,
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
+    mut material_cache: ResMut<StaticLightMaterialCache>,
     mut output: ResMut<RenderStaticLightInstances>,
     mut debug_state: ResMut<StaticLightDrawDebugState>,
 ) {
@@ -227,10 +229,13 @@ pub fn sys_collect_visible_static_lights(
                         key,
                         light_id,
                         hue_id: tile.hue,
-                        color_rgb: static_light_response_color_from_mask(
+                        color_rgb: static_light_response_color_from_sources(
                             tile.graphic,
+                            tile.hue,
                             light_id,
                             &world_lights.0,
+                            hues_package_res.as_deref(),
+                            &mut material_cache,
                         ),
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
@@ -517,13 +522,20 @@ pub fn static_light_response_color(graphic: u16) -> [f32; 3] {
     ]
 }
 
-fn static_light_response_color_from_mask(
+fn static_light_response_color_from_sources(
     graphic: u16,
+    hue_id: u16,
     light_id: u32,
     world_lights: &udd_assets::world_lights::WorldLightsPackage,
+    hues_package: Option<&HuesPackageRes>,
+    material_cache: &mut StaticLightMaterialCache,
 ) -> [f32; 3] {
-    if classicuo_light_shader_id(graphic).is_some() {
+    if classicuo_light_shader_id(graphic).is_some_and(|shader_id| shader_id != 0) {
         return static_light_response_color(graphic);
+    }
+
+    if let Some(color) = package_hue_response_color(hue_id, hues_package, material_cache) {
+        return color;
     }
 
     world_lights
@@ -531,6 +543,40 @@ fn static_light_response_color_from_mask(
         .ok()
         .and_then(|rgba| sampled_static_light_mask_color(&rgba))
         .unwrap_or([1.0, 0.72, 0.42])
+}
+
+fn package_hue_response_color(
+    hue_id: u16,
+    hues_package: Option<&HuesPackageRes>,
+    material_cache: &mut StaticLightMaterialCache,
+) -> Option<[f32; 3]> {
+    let StaticLightHueSource::Package {
+        hue_id,
+        texture_bytes,
+    } = package_hue_source(hue_id, hues_package, material_cache)?
+    else {
+        return None;
+    };
+
+    let color = sample_hue_lookup(texture_bytes, hue_id, 248)?;
+    normalized_response_color_from_rgba(color)
+}
+
+fn normalized_response_color_from_rgba(color: [u8; 4]) -> Option<[f32; 3]> {
+    let mut rgb = [
+        f32::from(color[0]) / 255.0,
+        f32::from(color[1]) / 255.0,
+        f32::from(color[2]) / 255.0,
+    ];
+    let max_channel = rgb[0].max(rgb[1]).max(rgb[2]);
+    if max_channel <= 0.001 {
+        return None;
+    }
+
+    rgb[0] /= max_channel;
+    rgb[1] /= max_channel;
+    rgb[2] /= max_channel;
+    Some(rgb)
 }
 
 fn sampled_static_light_mask_color(rgba: &[u8]) -> Option<[f32; 3]> {
@@ -1019,6 +1065,21 @@ mod tests {
         ];
 
         assert_eq!(sampled_static_light_mask_color(&rgba), None);
+    }
+
+    #[test]
+    fn package_hue_response_color_normalizes_sampled_hue() {
+        let color = normalized_response_color_from_rgba([64, 128, 32, 255])
+            .expect("normalized hue response");
+
+        assert_eq!(color[0], 0.5);
+        assert_eq!(color[1], 1.0);
+        assert_eq!(color[2], 0.25);
+    }
+
+    #[test]
+    fn package_hue_response_color_rejects_black_sample() {
+        assert_eq!(normalized_response_color_from_rgba([0, 0, 0, 255]), None);
     }
 
     #[test]
