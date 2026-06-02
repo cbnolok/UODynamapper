@@ -144,7 +144,7 @@ EC land material records can reference multiple texture roles. Current runtime r
 | `2` | mask/alpha |
 | `3` | normal/normal_map |
 
-Normal maps remain land-owned material support data when they are reached through `TerrainDefinition` material roles. They should not be reclassified as art or effect textures only because the physical DDS came from a shared source pool. Known KR normal maps can be DXT1 RGB DDS files, so the renderer must preserve and sample their RGB channels rather than assuming a special normal-map compression format.
+Normal maps remain land-owned material support data when they are reached through `TerrainDefinition` material roles. They should not be reclassified as art or effect textures only because the physical DDS came from a shared source pool. Known KR normal maps can be DXT1 RGB DDS files, but that is source evidence rather than runtime storage. UDDP land packages repack the decoded pixels as RGBA8888 or BC7/BC7-RDO atlas pages, and the renderer samples the repacked RGB channels rather than assuming a special normal-map compression format.
 
 Recommended near-term KR model:
 

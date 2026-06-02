@@ -115,7 +115,7 @@ Current EC packing semantics:
 
 Normal-map format note:
 
-- EC/KR normal maps are currently decoded as RGB tangent-space textures from the stored DDS payload, not as a special two-channel normal format. A known KR sample, `/home/claudio/test/unpacks/kr_squared/01000013.dds`, is `256x256` DXT1. Runtime shader decode maps RGB from `[0, 1]` to `[-1, 1]`, uses blue as the up component, and may need a green-channel flip only if visual validation shows inverted relief.
+- Original EC/KR DDS normal maps are source evidence for channel layout, not the runtime storage format. A known KR source sample, `/home/claudio/test/unpacks/kr_squared/01000013.dds`, is `256x256` DXT1, which implies RGB tangent-space normals rather than a special two-channel normal format. UDDP packages repack those pixels into the land page atlas as RGBA8888 or BC7/BC7-RDO payloads. Runtime shader decode samples the UDDP atlas RGB, maps it from `[0, 1]` to `[-1, 1]`, uses blue as the up component, and may need a green-channel flip only if visual validation shows inverted relief.
 
 **Virtual Files:**
 

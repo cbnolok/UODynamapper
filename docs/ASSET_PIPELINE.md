@@ -97,7 +97,7 @@ EC land materials are role-based, not single-texture records. The runtime lookup
 | `2` | mask/alpha | blend mask for role `1` |
 | `3` | normal/normal_map | optional texture normal for lighting and liquid UV perturbation |
 
-Normal maps are stored in the same page-atlas infrastructure as visible EC land textures. Do not assume a separate normal-map atlas exists at runtime. Known KR/EC normal-map inputs can be ordinary DXT1 DDS files, for example `01000013.dds` from a KR unpack is `256x256` DXT1, so the renderer treats normal maps as RGB tangent-space data rather than BC5/ATI2 two-channel normals.
+Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate normal-map atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` from a KR unpack is `256x256` DXT1, which shows the source normal map is RGB tangent-space data rather than BC5/ATI2 two-channel data. The renderer samples the repacked UDDP atlas and decodes its RGB channels as the normal.
 
 ### `tilemeta.uddp`
 

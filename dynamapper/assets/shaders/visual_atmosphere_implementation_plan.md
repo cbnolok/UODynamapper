@@ -45,7 +45,8 @@ By breaking the visual styles down into specific "atmospheric components," we ca
         *   Visual Profile: `Neutral / EC / KR`
         *   Grunge / Weathering
         *   Grunge Strength
-    *   `light_decal_intensity` and `enable_normal_maps` are reserved in the uniform but not active.
+    *   `light_decal_intensity` scales static-light decal and local-light response.
+    *   `enable_normal_maps` toggles EC land role-3 normal-map sampling.
 
 7.  **Preset defaults**
     *   `dynamapper/assets/defaults/shader_presets.toml` has profile/grunge defaults for Classic, EC, and KR slots.
@@ -64,16 +65,14 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   A future implementation should add a shared grunge texture binding and replace or blend with the procedural fallback.
 
 3.  **Dynamic additive light decals**
-    *   `light_decal_intensity` exists as a reserved uniform field.
-    *   There is no extraction/spawn system for `world_lights.uddp`.
-    *   There is no light decal mesh/material/draw path.
-    *   There is no ordering guarantee that additive lights render before fullscreen tonemap/bloom.
+    *   Static light-source tiles now collect visible light masks and local-light influence.
+    *   `light_decal_intensity` scales the visible decal material and land/art light response.
+    *   Remaining work: support mobile/spell/temporary lights, stronger color provenance, and ordering guarantees before fullscreen tonemap/bloom.
 
 4.  **Texture normal maps**
-    *   `enable_normal_maps` exists as a reserved uniform field.
-    *   There is no normal-map atlas or material binding.
-    *   `sampling.wgsl` does not yet provide `sample_tile_normal()`.
-    *   Land shading still uses geometric/bicubic terrain normals, not tangent-space texture normals.
+    *   `enable_normal_maps` toggles EC land role-3 texture normals.
+    *   The runtime samples the existing `tex_land_ec` page atlas; source DDS files are decoded/repacked into UDDP RGBA8888 or BC7/BC7-RDO payloads before shader sampling.
+    *   Remaining work: validate channel orientation, add strength tuning if needed, and decide whether any art/static classes should consume texture normals.
 
 5.  **Post-process settings resource**
     *   There is not yet a dedicated `PostProcessSettings` resource/uniform for fullscreen profile constants.
@@ -183,8 +182,8 @@ To allow the user to transition between EC and KR visually, the `LandEffectsUnif
     *   Current: controls procedural grunge on terrain/statics.
     *   Future: should control texture-backed `noise.tga`/DDS grunge.
 4.  **`enable_normal_maps`**: Boolean.
-    *   Current: reserved.
-    *   Future: toggles texture normal-map sampling once normal atlas bindings exist.
+    *   Current: toggles EC land role-3 texture normal-map sampling from the existing UDDP land atlas.
+    *   Future: may gain per-material strength or art/static support after visual validation.
 5.  **`light_decal_intensity`**: Float.
-    *   Current: reserved.
-    *   Future: scales the alpha/intensity multiplier of additive 2D light quads.
+    *   Current: scales static-light visible decal alpha and local land/art light response.
+    *   Future: should also scale temporary dynamic additive 2D light quads.
