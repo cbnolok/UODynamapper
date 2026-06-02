@@ -266,8 +266,8 @@ pub fn parse_entry(
     uop_file: &UopFile,
     string_dictionary: Option<&UoStringDictionary>,
 ) -> eyre::Result<TerrainDefinitionEntry> {
-    let bytes = uop_file.unpack()?;
-    let mut reader = Cursor::new(bytes.as_slice());
+    let bytes = uop_file.unpack_arc()?;
+    let mut reader = Cursor::new(bytes.as_ref());
 
     let name_id = reader.read_i32::<LittleEndian>()?;
     let id = reader.read_u32::<LittleEndian>()?;
