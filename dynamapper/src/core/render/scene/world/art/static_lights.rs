@@ -227,7 +227,11 @@ pub fn sys_collect_visible_static_lights(
                         key,
                         light_id,
                         hue_id: tile.hue,
-                        color_rgb: static_light_response_color(tile.graphic),
+                        color_rgb: static_light_response_color_from_mask(
+                            tile.graphic,
+                            light_id,
+                            &world_lights.0,
+                        ),
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
                         world_y: (tile.z as f32) * 0.1 + STATIC_LIGHT_Y_BIAS,
@@ -511,6 +515,56 @@ pub fn static_light_response_color(graphic: u16) -> [f32; 3] {
         f32::from(color[1]) / 255.0,
         f32::from(color[2]) / 255.0,
     ]
+}
+
+fn static_light_response_color_from_mask(
+    graphic: u16,
+    light_id: u32,
+    world_lights: &udd_assets::world_lights::WorldLightsPackage,
+) -> [f32; 3] {
+    if classicuo_light_shader_id(graphic).is_some() {
+        return static_light_response_color(graphic);
+    }
+
+    world_lights
+        .read_light_bytes(light_id)
+        .ok()
+        .and_then(|rgba| sampled_static_light_mask_color(&rgba))
+        .unwrap_or([1.0, 0.72, 0.42])
+}
+
+fn sampled_static_light_mask_color(rgba: &[u8]) -> Option<[f32; 3]> {
+    let mut weighted_rgb = [0.0; 3];
+    let mut alpha_sum = 0.0;
+    for pixel in rgba.chunks_exact(4) {
+        let alpha = f32::from(pixel[3]) / 255.0;
+        if alpha <= 0.0 {
+            continue;
+        }
+        weighted_rgb[0] += f32::from(pixel[0]) / 255.0 * alpha;
+        weighted_rgb[1] += f32::from(pixel[1]) / 255.0 * alpha;
+        weighted_rgb[2] += f32::from(pixel[2]) / 255.0 * alpha;
+        alpha_sum += alpha;
+    }
+    if alpha_sum <= 0.001 {
+        return None;
+    }
+
+    let mut color = [
+        weighted_rgb[0] / alpha_sum,
+        weighted_rgb[1] / alpha_sum,
+        weighted_rgb[2] / alpha_sum,
+    ];
+    let max_channel = color[0].max(color[1]).max(color[2]);
+    let min_channel = color[0].min(color[1]).min(color[2]);
+    if max_channel <= 0.001 || max_channel - min_channel < 0.08 {
+        return None;
+    }
+
+    color[0] /= max_channel;
+    color[1] /= max_channel;
+    color[2] /= max_channel;
+    Some(color)
 }
 
 fn resolve_static_light_hue_source_kind(
@@ -940,6 +994,31 @@ mod tests {
     fn response_color_uses_classicuo_light_shader_when_known() {
         assert_eq!(static_light_response_color(0x0E31), [1.0, 0.0, 0.0]);
         assert_eq!(static_light_response_color(0x1234), [1.0, 0.72, 0.42]);
+    }
+
+    #[test]
+    fn sampled_mask_response_color_uses_colored_alpha_weighted_pixels() {
+        let rgba = vec![
+            255, 64, 0, 255,
+            0, 255, 0, 0,
+            192, 32, 0, 128,
+        ];
+
+        let color = sampled_static_light_mask_color(&rgba).expect("colored mask response");
+
+        assert_eq!(color[0], 1.0);
+        assert!(color[1] > 0.17 && color[1] < 0.24);
+        assert_eq!(color[2], 0.0);
+    }
+
+    #[test]
+    fn sampled_mask_response_color_rejects_grayscale_masks() {
+        let rgba = vec![
+            220, 220, 220, 255,
+            64, 64, 64, 128,
+        ];
+
+        assert_eq!(sampled_static_light_mask_color(&rgba), None);
     }
 
     #[test]

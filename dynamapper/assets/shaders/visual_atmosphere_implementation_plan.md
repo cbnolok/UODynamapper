@@ -59,8 +59,9 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 
 9.  **Static light color response**
     *   Static light collection derives a local-response color from known ClassicUO light shader ids and falls back to warm light otherwise.
+    *   Light masks without a known ClassicUO shader derive local-response color from alpha-weighted colored mask pixels when the mask has meaningful chroma.
     *   Land and art local-light response consume that color instead of a single fixed warm tint.
-    *   Remaining work: package-hue colors and representative sampled-mask colors for light sources without a ClassicUO shader mapping.
+    *   Remaining work: package-hue colors for light sources whose placed hue should tint local response.
 
 10. **KR cliff/high-bank compression**
     *   KR land shading adds a neighbor-height shadow term for steep local height transitions, controlled by `kr_land_relief_shadow_strength`.
