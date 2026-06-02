@@ -205,6 +205,20 @@ struct PagePackCandidate<Key> {
     alloc_area: u32,
 }
 
+struct DecodedPageFrame {
+    frame: DecodedMobileAnimFrame,
+    width_axis: crate::PackingAxis,
+    height_axis: crate::PackingAxis,
+    alloc_area: u32,
+}
+
+struct PlannedPageFrame {
+    frame: PlannedMobileAnimFrame,
+    width_axis: crate::PackingAxis,
+    height_axis: crate::PackingAxis,
+    alloc_area: u32,
+}
+
 struct CachedPlannedAnimation {
     frames: Arc<Vec<AnimFrame>>,
     last_used: u64,
@@ -1977,7 +1991,7 @@ fn page_pack_candidates_fit<Key: Ord + Copy>(
 fn build_page(
     page_index: u32,
     page_size: AtlasPageSize,
-    mut frames: Vec<DecodedMobileAnimFrame>,
+    frames: Vec<DecodedMobileAnimFrame>,
     frame_records: &mut [MobileAnimCcFrameRecord],
     options: &MobileAnimCcAtlasOptions,
     pixels: &mut Vec<u8>,
@@ -1995,10 +2009,12 @@ fn build_page(
     let mut page_frame_index = 0u16;
     let mut filled_pixel_count = 0u64;
 
-    sort_frames_within_page(&mut frames, page_size, options);
+    let page_frames = decoded_page_frames_with_axes(frames, page_size, options)?;
 
-    for frame in frames {
-        let (width_axis, height_axis) = packing_axes(&frame, page_size, options)?;
+    for page_frame in page_frames {
+        let frame = page_frame.frame;
+        let width_axis = page_frame.width_axis;
+        let height_axis = page_frame.height_axis;
         if let Some(allocation) = allocator.allocate(size2(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
@@ -2071,7 +2087,7 @@ fn build_page(
 fn build_planned_page(
     page_index: u32,
     page_size: AtlasPageSize,
-    mut frames: Vec<PlannedMobileAnimFrame>,
+    frames: Vec<PlannedMobileAnimFrame>,
     frame_records: &mut [MobileAnimCcFrameRecord],
     anim_map: &AnimMap,
     options: &MobileAnimCcAtlasOptions,
@@ -2142,10 +2158,12 @@ fn build_planned_page(
 
     let mut planned_extrusions = Vec::new();
 
-    sort_planned_frames_within_page(&mut frames, page_size, options);
+    let page_frames = planned_page_frames_with_axes(frames, page_size, options)?;
 
-    for frame in frames {
-        let (width_axis, height_axis) = planned_packing_axes(&frame, page_size, options)?;
+    for page_frame in page_frames {
+        let frame = page_frame.frame;
+        let width_axis = page_frame.width_axis;
+        let height_axis = page_frame.height_axis;
         if let Some(allocation) = allocator.allocate(size2(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
@@ -2423,44 +2441,52 @@ fn packing_axes_for_dimensions(
     }
 }
 
-fn sort_frames_within_page(
-    frames: &mut [DecodedMobileAnimFrame],
+fn decoded_page_frames_with_axes(
+    frames: Vec<DecodedMobileAnimFrame>,
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
-) {
-    frames.sort_by_cached_key(|frame| {
-        (Reverse(sort_area(frame, page_size, options)), frame.global_frame_index)
+) -> eyre::Result<Vec<DecodedPageFrame>> {
+    let mut page_frames = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let (width_axis, height_axis) = packing_axes(&frame, page_size, options)?;
+        page_frames.push(DecodedPageFrame {
+            alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
+            frame,
+            width_axis,
+            height_axis,
+        });
+    }
+    page_frames.sort_by_key(|page_frame| {
+        (
+            Reverse(page_frame.alloc_area),
+            page_frame.frame.global_frame_index,
+        )
     });
+    Ok(page_frames)
 }
 
-fn sort_planned_frames_within_page(
-    frames: &mut [PlannedMobileAnimFrame],
+fn planned_page_frames_with_axes(
+    frames: Vec<PlannedMobileAnimFrame>,
     page_size: AtlasPageSize,
     options: &MobileAnimCcAtlasOptions,
-) {
-    frames.sort_by_cached_key(|frame| {
-        (Reverse(planned_sort_area(frame, page_size, options)), frame.global_frame_index)
+) -> eyre::Result<Vec<PlannedPageFrame>> {
+    let mut page_frames = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let (width_axis, height_axis) = planned_packing_axes(&frame, page_size, options)?;
+        page_frames.push(PlannedPageFrame {
+            alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
+            frame,
+            width_axis,
+            height_axis,
+        });
+    }
+    page_frames.sort_by_key(|page_frame| {
+        (
+            Reverse(page_frame.alloc_area),
+            page_frame.frame.global_frame_index,
+        )
     });
-}
-
-fn sort_area(
-    frame: &DecodedMobileAnimFrame,
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> u32 {
-    let (width_axis, height_axis) =
-        packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
-    width_axis.alloc_extent * height_axis.alloc_extent
-}
-
-fn planned_sort_area(
-    frame: &PlannedMobileAnimFrame,
-    page_size: AtlasPageSize,
-    options: &MobileAnimCcAtlasOptions,
-) -> u32 {
-    let (width_axis, height_axis) =
-        planned_packing_axes(frame, page_size, options).unwrap_or_else(|_| unreachable!("validated before placement"));
-    width_axis.alloc_extent * height_axis.alloc_extent
+    Ok(page_frames)
 }
 
 fn prepare_decoded_frames(
