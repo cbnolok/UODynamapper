@@ -219,8 +219,9 @@ pub struct LandEffectsUniform {
     /// 0 disables KR material-family micro contrast; 1 preserves preset strength.
     #[serde(default = "default_kr_land_material_contrast_strength")]
     pub kr_land_material_contrast_strength: f32,
-    #[serde(default)]
-    pub _pad_art_shadow1: f32,
+    /// Visible static-light mask opacity independent from local light response.
+    #[serde(default = "default_static_light_decal_visibility")]
+    pub static_light_decal_visibility: f32,
     #[serde(default)]
     pub _pad_art_shadow2: f32,
 }
@@ -255,6 +256,10 @@ fn default_art_projected_shadow_softness() -> f32 {
 
 fn default_kr_land_material_contrast_strength() -> f32 {
     0.55
+}
+
+fn default_static_light_decal_visibility() -> f32 {
+    1.0
 }
 
 fn default_atmosphere_tint() -> Vec3 {

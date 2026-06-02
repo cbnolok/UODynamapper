@@ -46,7 +46,8 @@ By breaking the visual styles down into specific "atmospheric components," we ca
         *   Visual Profile: `Neutral / EC / KR`
         *   Grunge / Weathering
         *   Grunge Strength
-    *   `light_decal_intensity` scales static-light decal and local-light response.
+    *   `light_decal_intensity` scales local land/art light response.
+    *   `static_light_decal_visibility` scales visible static-light masks independently.
     *   `enable_normal_maps` toggles EC land role-3 normal-map sampling.
 
 7.  **Preset defaults**
@@ -64,6 +65,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   Land and art local-light response consume that color instead of a single fixed warm tint.
     *   Land local-light uniforms select the visible strongest/nearest lights with stable ordering instead of taking the first visible chunk-order entries.
     *   Static art local-light response samples sprite and ground-art bounds so wide/tall art can catch nearby lights outside the tile origin.
+    *   Visible static-light decals are controlled independently from local light interaction through `static_light_decal_visibility`.
     *   Remaining work: validate hue precedence against known light-source scenes.
 
 10. **KR cliff/high-bank compression**
@@ -95,7 +97,7 @@ By breaking the visual styles down into specific "atmospheric components," we ca
 
 3.  **Dynamic additive light decals**
     *   Static light-source tiles now collect visible light masks and local-light influence.
-    *   `light_decal_intensity` scales the visible decal material and land/art light response.
+    *   `light_decal_intensity` scales land/art light response; `static_light_decal_visibility` scales the visible decal material.
     *   Remaining work: support mobile/spell/temporary lights and ordering guarantees before fullscreen tonemap/bloom.
 
 4.  **Texture normal maps**
@@ -161,7 +163,7 @@ Because full 3D normal-mapped point lights are expensive, both clients use 2D gl
 1.  **TODO:** Use the `world_lights.uddp` package to spawn light entities at their correct world coordinates.
 2.  **TODO:** Instead of standard Bevy `PointLight` components (which are true 3D lights), spawn 2D quads/billboards flat against or slightly above the terrain.
 3.  **TODO:** Add a dedicated light decal material and draw path.
-4.  **TODO:** Feed `light_decal_intensity` into that material once the draw path exists.
+4.  **TODO:** Feed `static_light_decal_visibility` into that material once the draw path exists.
 5.  **TODO:** Material setup:
     *   Assign the extracted light PNGs (starburst, soft radial, directional beams) to the quads.
     *   Set the material `blend_mode` to **Additive** (`BlendState::ADDITIVE`).
@@ -215,5 +217,8 @@ To allow the user to transition between EC and KR visually, the `LandEffectsUnif
     *   Current: toggles EC land role-3 texture normal-map sampling from the existing UDDP land atlas.
     *   Future: may gain per-material strength or art/static support after visual validation.
 5.  **`light_decal_intensity`**: Float.
-    *   Current: scales static-light visible decal alpha and local land/art light response.
+    *   Current: scales local land/art light response.
+    *   Future: should also scale temporary dynamic 2D local-light response.
+6.  **`static_light_decal_visibility`**: Float.
+    *   Current: scales visible static-light mask alpha independently from local land/art response.
     *   Future: should also scale temporary dynamic additive 2D light quads.

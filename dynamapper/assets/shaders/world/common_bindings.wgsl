@@ -47,7 +47,7 @@ struct LandEffectsUniform {
     art_projected_shadow_length: f32,
     art_projected_shadow_softness: f32,
     kr_land_material_contrast_strength: f32,
-    _pad_art_shadow1: f32,
+    static_light_decal_visibility: f32,
     _pad_art_shadow2: f32,
 }
 

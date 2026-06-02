@@ -167,6 +167,7 @@ pub fn land_ui_system(
 
                 changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+                changed |= slider_s(ui, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0);
 
                 if changed {
                     u.dirty = true;
@@ -555,6 +556,7 @@ pub fn land_ui_system(
                 changed |= toggle_u32(ui, "Texture Normal Maps", &mut u.effects.enable_normal_maps);
                 changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+                changed |= slider_s(ui, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0);
                 changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5);

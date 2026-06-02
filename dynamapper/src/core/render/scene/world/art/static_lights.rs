@@ -295,7 +295,7 @@ pub fn sys_sync_static_light_entities(
     let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
     let material_alpha = static_light_decal_alpha(
         uniform_state.global_lighting,
-        uniform_state.effects.light_decal_intensity,
+        uniform_state.effects.static_light_decal_visibility,
         render_style,
     );
     for instance in &instances.0 {
@@ -493,11 +493,11 @@ fn static_light_alpha_for_global_lighting(
 
 fn static_light_decal_alpha(
     global_lighting: f32,
-    light_decal_intensity: f32,
+    decal_visibility: f32,
     style: StaticLightRenderStyle,
 ) -> f32 {
     let profile = static_light_style_profile(style);
-    let interaction = light_decal_intensity.clamp(0.0, 2.0);
+    let interaction = decal_visibility.clamp(0.0, 2.0);
     let alpha = static_light_alpha_for_global_lighting(global_lighting, style) * interaction;
     alpha.clamp(0.0, (profile.daylight_alpha + profile.max_alpha) * 2.0)
 }
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn decal_intensity_gates_visible_static_light_alpha() {
+    fn decal_visibility_gates_visible_static_light_alpha() {
         assert_eq!(
             static_light_decal_alpha(0.0, 0.0, StaticLightRenderStyle::Kr),
             0.0
