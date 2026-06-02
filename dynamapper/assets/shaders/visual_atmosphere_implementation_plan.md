@@ -64,6 +64,10 @@ By breaking the visual styles down into specific "atmospheric components," we ca
     *   KR land shading adds a neighbor-height shadow term for steep local height transitions, controlled by `kr_land_relief_shadow_strength`.
     *   Remaining work: validate against cliff-heavy KR screenshots and tune per terrain family if metadata becomes available.
 
+11. **KR art side falloff**
+    *   Art fake-normal shading adds a subtle one-sided depth tint for foliage, roofs, and tall non-ground statics.
+    *   Remaining work: validate against KR tree, wall, and large-static screenshots and tune depth-class profiles if needed.
+
 ### Still Missing
 1.  **Real fullscreen EC/KR post-process pipeline**
     *   Current tonemapping is still applied in material shaders, not as a single fullscreen post-process after the whole scene is composed.

@@ -140,6 +140,7 @@ fn apply_art_surface_shading(
         var plane_catch_profile = 1.0;
         var foot_contact_profile = 1.0;
         var edge_profile = 0.0;
+        var side_falloff_profile = 0.0;
         let side_plane = smoothstep(0.18, 0.5, abs(uv_in_tile.x - 0.5));
         let dapple = 1.0 + (noise_2d(world_pos.xz * 1.7 + uv_in_tile * 17.0) - 0.5) * mottle_strength;
         if (depth_class == ART_DEPTH_CLASS_FOLIAGE) {
@@ -151,6 +152,7 @@ fn apply_art_surface_shading(
             plane_catch_profile = dapple;
             foot_contact_profile = 1.18;
             edge_profile = side_plane;
+            side_falloff_profile = 0.75;
         } else if (depth_class == ART_DEPTH_CLASS_ROOF) {
             depth_scale = 0.92;
             contact_scale = 0.70;
@@ -160,6 +162,7 @@ fn apply_art_surface_shading(
             plane_catch_profile = 0.72;
             foot_contact_profile = 0.50;
             edge_profile = side_plane * 0.25;
+            side_falloff_profile = 0.22;
         } else if (depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
             depth_scale = 0.78;
             contact_scale = 0.55;
@@ -173,6 +176,7 @@ fn apply_art_surface_shading(
             shadow_profile = 1.04;
             plane_catch_profile = 1.0;
             edge_profile = side_plane * 0.08;
+            side_falloff_profile = 0.52;
         } else {
             foot_contact_profile = 0.55;
             edge_profile = side_plane * 0.35;
@@ -201,6 +205,11 @@ fn apply_art_surface_shading(
         out_rgb = mix(out_rgb, vec3<f32>(shaded_luma), shade_mask * shadow_strength * 0.14 * art_temperature_strength);
         out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(0.84, 0.91, 1.08), shade_mask * 0.18 * art_temperature_strength);
         out_rgb *= mix(vec3<f32>(1.0), vec3<f32>(1.07, 1.02, 0.93), sun_mask * highlight_strength * 0.12 * art_temperature_strength);
+        let light_opposed_side = select(uv_in_tile.x, 1.0 - uv_in_tile.x, L.x >= 0.0);
+        let side_height_mask = smoothstep(0.12, 0.94, uv_in_tile.y) * (1.0 - top_catch * 0.55);
+        let side_falloff = smoothstep(0.42, 0.96, light_opposed_side) * side_height_mask * side_falloff_profile;
+        let side_falloff_strength = clamp(side_falloff * tint_strength * (0.055 + 0.055 * contact_strength) * art_temperature_strength, 0.0, 0.16);
+        out_rgb = mix(out_rgb, out_rgb * vec3<f32>(0.90, 0.94, 1.04), side_falloff_strength);
         out_rgb = mix(out_rgb, art_saturate(out_rgb, saturation_profile), clamp(contact * shadow_strength * 0.35, 0.0, 1.0));
     }
 

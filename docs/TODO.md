@@ -257,7 +257,7 @@ Current execution decisions:
 - Continue material-family wet response beyond generic specular: first shader pass separates water, lava-like liquid, swamp-like liquid, and ice/snow-like grazing highlights; remaining work is visual validation and metadata-backed material-family classification.
 - Continue light-color provenance for static lights: first pass feeds ClassicUO light-shader colors into land/art local response, with warm fallback; remaining work is package-hue and sampled-mask color provenance.
 - Continue terrain shadow/compression for vertical cliffs and high banks: first KR pass darkens steep neighbor-height transitions through `kr_land_relief_shadow_strength`; remaining work is screenshot validation and metadata-aware cliff family tuning.
-- Add roof/tree/large-static side falloff: tall art should receive subtle one-sided depth tint and base contact so it reads as part of the KR scene rather than a flat pasted sprite.
+- Continue roof/tree/large-static side falloff: first KR shader pass adds subtle one-sided depth tint for foliage, roofs, and tall non-ground statics; remaining work is screenshot validation and family-specific tuning.
 - Add optional texture-backed grunge/noise once the relevant KR/EC support texture is identified; keep procedural grunge as fallback and avoid applying the same noise scale uniformly to every material.
 - Keep these effects modular and independently tunable in shader settings; each effect must be disableable for regression comparison.
 - Preserve original UO/KR stylistic intent: no heavy bloom, screen-space outlines, modern PBR material treatment, or procedural noise pasted uniformly over every surface.
