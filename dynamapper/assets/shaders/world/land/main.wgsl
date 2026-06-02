@@ -645,7 +645,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let animate_normal_map = enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && ec_liquid_normal;
     let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map);
     if (normal_map.w > 0.5) {
-      let normal_map_strength = select(0.45, 0.58, animate_normal_map);
+      let base_normal_map_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
+      let normal_map_strength = select(base_normal_map_strength, min(base_normal_map_strength * 1.28, 1.0), animate_normal_map);
       Nw = normalize(mix(Nw, normal_map.xyz, normal_map_strength));
     }
   }

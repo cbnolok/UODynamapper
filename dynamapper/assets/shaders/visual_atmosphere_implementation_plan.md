@@ -156,8 +156,9 @@ We have confirmed that the assets contain tangent-space normal maps (the purplis
 4.  **Validity:** Role-3 samples with an implausibly low blue/up channel are rejected so unresolved or misrouted non-normal textures do not corrupt terrain lighting.
 5.  **Current scope:** The first implementation is EC land only and excludes Classic shading mode. Art/static normal maps are not active yet.
 6.  **TODO:** Validate channel orientation on water, stone, snow, and grass material families using side-by-side screenshots with `enable_normal_maps` toggled.
-7.  **TODO:** Add a tunable strength if visual validation shows the fixed blend is too strong or too weak across material families.
-8.  **Target directional lighting:** In the main fragment shader, calculate basic N dot L lighting:
+7.  **Current:** `land_normal_map_strength` controls the base EC land texture-normal blend. Liquid normal response derives from the same strength with a bounded boost.
+8.  **TODO:** Validate useful strength ranges per material family and decide whether channel-flip diagnostics are needed.
+9.  **Target directional lighting:** In the main fragment shader, calculate basic N dot L lighting:
     ```wgsl
     let normal_sample = sample_tile_normal(uv);
     let world_normal = normalize(normal_sample.xyz * 2.0 - 1.0); // Convert from [0,1] to [-1,1]

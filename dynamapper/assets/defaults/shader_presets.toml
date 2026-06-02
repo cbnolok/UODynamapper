@@ -81,6 +81,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -137,6 +138,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -193,6 +195,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [classic.night.lighting]
 enable_fog = 0
@@ -249,6 +252,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -310,6 +314,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -365,6 +370,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -420,6 +426,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -475,6 +482,7 @@ kr_land_temperature_strength = 0.0
 kr_land_relief_shadow_strength = 0.0
 kr_land_shadow_mottle_strength = 0.0
 kr_art_temperature_strength = 0.0
+land_normal_map_strength = 0.45
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -539,6 +547,7 @@ kr_land_temperature_strength = 0.75
 kr_land_relief_shadow_strength = 0.70
 kr_land_shadow_mottle_strength = 0.60
 kr_art_temperature_strength = 0.75
+land_normal_map_strength = 0.45
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -597,6 +606,7 @@ kr_land_temperature_strength = 0.75
 kr_land_relief_shadow_strength = 0.70
 kr_land_shadow_mottle_strength = 0.60
 kr_art_temperature_strength = 0.75
+land_normal_map_strength = 0.45
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -655,6 +665,7 @@ kr_land_temperature_strength = 0.70
 kr_land_relief_shadow_strength = 0.62
 kr_land_shadow_mottle_strength = 0.52
 kr_art_temperature_strength = 0.70
+land_normal_map_strength = 0.45
 
 [kr.night.lighting]
 enable_fog = 1
@@ -713,6 +724,7 @@ kr_land_temperature_strength = 0.65
 kr_land_relief_shadow_strength = 0.58
 kr_land_shadow_mottle_strength = 0.48
 kr_art_temperature_strength = 0.65
+land_normal_map_strength = 0.45
 
 [kr.cave.lighting]
 enable_fog = 1

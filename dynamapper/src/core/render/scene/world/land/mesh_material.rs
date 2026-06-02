@@ -193,6 +193,11 @@ pub struct LandEffectsUniform {
     pub kr_land_shadow_mottle_strength: f32,
     /// 0 disables KR art warm/cool split; 1 preserves the preset strength.
     pub kr_art_temperature_strength: f32,
+
+    // --- Texture normal controls (vec4 slot 6, tail padded by uniform layout) ---
+    /// Strength for EC land role-3 texture normal contribution.
+    #[serde(default = "default_land_normal_map_strength")]
+    pub land_normal_map_strength: f32,
 }
 
 fn default_art_shadow_strength() -> f32 {
@@ -205,6 +210,10 @@ fn default_art_highlight_strength() -> f32 {
 
 fn default_art_depth_tint_strength() -> f32 {
     0.10
+}
+
+fn default_land_normal_map_strength() -> f32 {
+    0.45
 }
 
 fn default_atmosphere_tint() -> Vec3 {
