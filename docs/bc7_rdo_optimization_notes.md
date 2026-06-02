@@ -716,6 +716,82 @@ Practical guidance:
 - The current `Option` check appears cheap enough relative to the surrounding decode/search work.
 - If progress overhead is revisited, measure full-page progress-enabled builds instead of optimizing the no-callback path speculatively.
 
+### Mode 6 wide bounded decoder batches
+
+Attempt:
+- Kept the first Mode 6 bounded-decoder pixel scalar for early rejection.
+- Replaced pixels 1..12 with three `wide::i32x4` four-pixel batches and left pixels 13..15 scalar.
+- Preserved checksums and focused bounded-error tests.
+
+Why it looked promising:
+- Mode 6 is significant in mixed-atlas RDO stats.
+- Four-pixel interpolation/error math maps directly to packed `i32x4` lanes without changing final `Some(error)`/`None` outcomes.
+
+Why it was reverted:
+- Same-command quick benchmark comparison showed a regression on all default RDO fixtures.
+- Parent/patched RDO throughput was 6371.95 vs 6159.18 blk/s on opaque, 4777.96 vs 4626.22 blk/s on alpha/mobile, and 15791.86 vs 14160.62 blk/s on mixed.
+- Batching preserved the final bounded result but delayed post-pixel-0 early exits and added lane construction/reduction overhead.
+
+Practical guidance:
+- Do not batch Mode 6 bounded decode pixels with `wide::i32x4` in this shape.
+- If revisiting Mode 6 SIMD for RDO, preserve per-pixel early rejection or first prove that most trials survive deep enough for batching to pay.
+
+### Fixed-path REP0/continuation hoist
+
+Attempt:
+- Hoisted `continuation_possible` and `rep0_possible` out of the fixed-offset length loop because they appear to depend only on the previous block.
+
+Why it looked promising:
+- The checks are repeated for every match length for the same previous block.
+- Removing repeated comparisons looked like a low-risk fixed-path branch reduction.
+
+Why it was reverted:
+- The stable RDO fixture checksum changed before benchmarking.
+- `prev_cont_window_ofs` and `prev_rep0_dist` can be updated while scanning candidates for the current block, so later lengths intentionally observe updated state.
+
+Practical guidance:
+- Do not hoist REP0/continuation eligibility above the fixed-path length loop.
+- Treat these variables as candidate-scan state, not only previous-block state.
+
+### Fixed normal XOR segment patch
+
+Attempt:
+- In `reduce_fixed_normal_len`, reused the original destination segment from the original-block skip check.
+- Replaced clear/or segment copy with `orig_bits ^ ((orig_segment ^ prev_segment) << shift)` for differing segments.
+- Kept candidate order, hash behavior, checksums, and RDO stats stable.
+
+Why it looked promising:
+- The original segment had already been computed.
+- XOR patching avoids constructing a shifted destination mask and clearing/replacing the segment.
+
+Why it was reverted:
+- Same-state quick benchmark comparison regressed default RDO throughput on all fixtures.
+- Baseline/patched throughput was 6301.58 vs 6053.46 blk/s on opaque, 4704.93 vs 4683.63 blk/s on alpha/mobile, and 15840.31 vs 15438.56 blk/s on mixed.
+- The altered expression likely worsened codegen or register pressure despite fewer source-level operations.
+
+Practical guidance:
+- Keep the current clear/or `bc7_copy_segment_bits_from_segment` helper for fixed normal candidates.
+- Do not assume XOR patching is faster for `u128` segment replacement without assembly evidence.
+
+### Delayed ultrasmooth scale allocation
+
+Attempt:
+- Delayed allocation/fill of the `block_mse_scales` vector until after the ultrasmooth seed-count exits.
+- Returned directly allocated all-`-1.0` or all-ultrasmooth vectors for the early-return cases.
+
+Why it looked promising:
+- The scale vector is not read during seed counting.
+- Delaying allocation avoids writing `-1.0` before immediately filling all entries with the ultrasmooth scale on all-seed pages.
+
+Why it was reverted:
+- Focused RDO tests passed, but same-state quick benchmark comparison regressed the alpha/mobile fixture and did not improve the others.
+- Baseline/patched throughput was 6301.58 vs 6278.78 blk/s on opaque, 4704.93 vs 4527.64 blk/s on alpha/mobile, and 15840.31 vs 15745.22 blk/s on mixed.
+- The original early allocation/fill appears friendlier to the current benchmark path, likely because most fixtures do not hit the all-seed shortcut.
+
+Practical guidance:
+- Keep `block_mse_scales` allocation at the start of `compute_block_mse_scales`.
+- Revisit only with real pages that frequently hit the all-ultrasmooth or below-threshold seed exits.
+
 ## Benchmark Context
 
 Commands used for these decisions:
