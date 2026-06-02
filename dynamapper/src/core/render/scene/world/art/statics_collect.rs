@@ -890,9 +890,13 @@ fn static_light_signature(
             light.key.tile_x,
             light.key.tile_y,
             light.light_id,
+            light.hue_id as u32,
             (light.world_y * 100.0).round().max(0.0) as u32,
             (light.width_world * 100.0).round().max(0.0) as u32,
             (light.height_world * 100.0).round().max(0.0) as u32,
+            (light.color_rgb[0].clamp(0.0, 1.0) * 255.0).round() as u32,
+            (light.color_rgb[1].clamp(0.0, 1.0) * 255.0).round() as u32,
+            (light.color_rgb[2].clamp(0.0, 1.0) * 255.0).round() as u32,
         ] {
             signature ^= value as u64;
             signature = signature.wrapping_mul(0x100000001b3);
@@ -2293,6 +2297,55 @@ mod tests {
         });
 
         assert!(cache.chunks.is_empty());
+    }
+
+    fn test_static_light(
+        hue_id: u16,
+        color_rgb: [f32; 3],
+    ) -> super::super::static_lights::StaticLightInstance {
+        super::super::static_lights::StaticLightInstance {
+            key: super::super::static_lights::StaticLightKey {
+                map_id: 1,
+                tile_x: 10,
+                tile_y: 20,
+                z: 0,
+                graphic: 100,
+                light_id: 5,
+                hue_id,
+            },
+            light_id: 5,
+            hue_id,
+            color_rgb,
+            world_x: 10.5,
+            world_z: 20.5,
+            world_y: 0.0,
+            width_world: 2.0,
+            height_world: 2.0,
+        }
+    }
+
+    #[test]
+    fn static_light_signature_changes_when_light_color_changes() {
+        let warm = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light(0, [1.0, 0.72, 0.42]),
+        ]);
+        let blue = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light(0, [0.25, 0.5, 1.0]),
+        ]);
+
+        assert_ne!(static_light_signature(&warm, 1), static_light_signature(&blue, 1));
+    }
+
+    #[test]
+    fn static_light_signature_changes_when_light_hue_changes() {
+        let first = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light(10, [1.0, 0.72, 0.42]),
+        ]);
+        let second = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light(11, [1.0, 0.72, 0.42]),
+        ]);
+
+        assert_ne!(static_light_signature(&first, 1), static_light_signature(&second, 1));
     }
 
     #[test]
