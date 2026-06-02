@@ -17,6 +17,8 @@
 //!   can query without needing to understand any of the original EC source files.
 
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -225,10 +227,17 @@ pub struct CanonicalTileKey {
     pub window: Option<SourceClipRect>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RenderedTileKey {
     pub width: u16,
     pub height: u16,
+    pub rgba_len: usize,
+    pub rgba_hash: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedTileCanonical {
+    pub art_id: u32,
     pub rgba: Vec<u8>,
 }
 
@@ -776,7 +785,7 @@ fn decode_present_tiles(
     let mut decoded_tiles = Vec::new();
     let mut aliases = Vec::new();
     let mut canonical_by_source: HashMap<CanonicalTileKey, usize> = HashMap::new();
-    let mut canonical_by_rendered_tile = HashMap::new();
+    let mut canonical_by_rendered_tile = HashMap::with_capacity(art_definition.definitions.len());
     let mut crop_adjustments = HashMap::new();
     let mut texture_files_by_source = HashMap::<TextureSourceKey, Option<Arc<TextureFile>>>::new();
 
@@ -1103,19 +1112,36 @@ pub fn register_rendered_tile_alias(
     width: u16,
     height: u16,
     rgba: &[u8],
-    canonical_by_rendered_tile: &mut HashMap<RenderedTileKey, u32>,
+    canonical_by_rendered_tile: &mut HashMap<RenderedTileKey, Vec<RenderedTileCanonical>>,
 ) -> Option<u32> {
+    let mut hasher = DefaultHasher::new();
+    rgba.hash(&mut hasher);
     let key = RenderedTileKey {
         width,
         height,
-        rgba: rgba.to_vec(),
+        rgba_len: rgba.len(),
+        rgba_hash: hasher.finish(),
     };
-    if let Some(&canonical_art_id) = canonical_by_rendered_tile.get(&key) {
-        Some(canonical_art_id)
-    } else {
-        canonical_by_rendered_tile.insert(key, art_id);
-        None
+
+    if let Some(canonicals) = canonical_by_rendered_tile.get_mut(&key) {
+        if let Some(canonical) = canonicals.iter().find(|canonical| canonical.rgba == rgba) {
+            return Some(canonical.art_id);
+        }
+        canonicals.push(RenderedTileCanonical {
+            art_id,
+            rgba: rgba.to_vec(),
+        });
+        return None;
     }
+
+    canonical_by_rendered_tile.insert(
+        key,
+        vec![RenderedTileCanonical {
+            art_id,
+            rgba: rgba.to_vec(),
+        }],
+    );
+    None
 }
 
 pub fn normalized_source_clip_rect(
