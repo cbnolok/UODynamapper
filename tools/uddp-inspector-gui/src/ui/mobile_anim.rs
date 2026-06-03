@@ -4,7 +4,7 @@ use eframe::egui;
 use udd_assets::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 use udd_container::{Codec, DataType};
 
-use crate::app::InspectorApp;
+use crate::app::{InspectorApp, MobileAnimTreeOrder};
 use crate::models::EntryInfo;
 use crate::utils::format_size;
 
@@ -42,11 +42,35 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             ui.separator();
             ui.label("Filter:");
             ui.text_edit_singleline(&mut app.filter);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("mobile_anim_cc_tree_order")
+                    .selected_text(match app.mobile_anim_tree_order {
+                        MobileAnimTreeOrder::BodyType => "Body Type",
+                        MobileAnimTreeOrder::BodyId => "Body ID",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.mobile_anim_tree_order,
+                            MobileAnimTreeOrder::BodyType,
+                            "Body Type",
+                        );
+                        ui.selectable_value(
+                            &mut app.mobile_anim_tree_order,
+                            MobileAnimTreeOrder::BodyId,
+                            "Body ID",
+                        );
+                    });
+                if ui.button("Collapse All").clicked() {
+                    app.mobile_anim_tree_collapse_revision =
+                        app.mobile_anim_tree_collapse_revision.wrapping_add(1);
+                }
+            });
             ui.separator();
 
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let mut tree = BTreeMap::<Option<u8>, BTreeMap<u16, BTreeMap<u16, Vec<usize>>>>::new();
+                let mut body_tree = BTreeMap::<u16, (Option<u8>, BTreeMap<u16, Vec<usize>>)>::new();
                 for (index, animation) in animations.iter().enumerate() {
                     let frames = package.animation_frames(animation);
                     let visible_count = displayable_frame_count(
@@ -75,48 +99,70 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                         .entry(animation.action_id)
                         .or_default()
                         .push(index);
+                    body_tree
+                        .entry(animation.body_id)
+                        .or_insert_with(|| (body_type, BTreeMap::new()))
+                        .1
+                        .entry(animation.action_id)
+                        .or_default()
+                        .push(index);
                 }
-                if tree.is_empty() {
-                    ui.label("No animations match the filter.");
-                }
-                let default_open = !query.is_empty();
-                for (body_type, bodies) in tree {
-                    egui::CollapsingHeader::new(body_type_label(body_type))
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for (body_id, actions) in bodies {
-                                egui::CollapsingHeader::new(format!("Body {}", body_id))
-                                    .default_open(default_open)
-                                    .show(ui, |ui| {
-                                        for (action_id, indexes) in actions {
-                                            egui::CollapsingHeader::new(format!("Action {}", action_id))
-                                                .default_open(default_open)
-                                                .show(ui, |ui| {
-                                                    for index in indexes {
-                                                        let animation = &animations[index];
-                                                        let frames = package.animation_frames(animation);
-                                                        let visible_count = displayable_frame_count(
-                                                            frames,
-                                                            udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
-                                                            |frame| (frame.page_index, frame.width, frame.height),
-                                                        );
-                                                        let label = cc_animation_label(animation, visible_count, frames.len());
-                                                        if ui
-                                                            .selectable_label(
-                                                                app.selected_mobile_anim_index == index,
-                                                                label,
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            select_mobile_animation(app, ctx, index);
-                                                        }
-                                                    }
-                                                });
-                                        }
-                                    });
-                            }
-                        });
+                let allow_default_open = app.mobile_anim_tree_collapse_revision == 0;
+                let default_open = allow_default_open && !query.is_empty();
+                match app.mobile_anim_tree_order {
+                    MobileAnimTreeOrder::BodyType => {
+                        if tree.is_empty() {
+                            ui.label("No animations match the filter.");
+                        }
+                        for (body_type, bodies) in tree {
+                            egui::CollapsingHeader::new(body_type_label(body_type))
+                                .id_salt((
+                                    "mobile_anim_cc_type",
+                                    app.mobile_anim_tree_collapse_revision,
+                                    body_type,
+                                ))
+                                .default_open(allow_default_open)
+                                .show(ui, |ui| {
+                                    for (body_id, actions) in bodies {
+                                        show_cc_body_tree(
+                                            app,
+                                            ctx,
+                                            ui,
+                                            &package,
+                                            animations,
+                                            body_id,
+                                            actions,
+                                            default_open,
+                                        );
+                                    }
+                                });
+                        }
                     }
+                    MobileAnimTreeOrder::BodyId => {
+                        if body_tree.is_empty() {
+                            ui.label("No animations match the filter.");
+                        }
+                        for (body_id, (body_type, actions)) in body_tree {
+                            egui::CollapsingHeader::new(format!(
+                                "Body {} ({})",
+                                body_id,
+                                body_type_label(body_type)
+                            ))
+                            .id_salt((
+                                "mobile_anim_cc_body_order",
+                                app.mobile_anim_tree_collapse_revision,
+                                body_id,
+                            ))
+                            .default_open(default_open)
+                            .show(ui, |ui| {
+                                show_cc_action_tree(
+                                    app, ctx, ui, &package, animations, body_id, actions,
+                                    default_open,
+                                );
+                            });
+                        }
+                    }
+                }
             });
         });
 
@@ -193,6 +239,70 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     }
 }
 
+fn show_cc_body_tree(
+    app: &mut InspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    package: &udd_assets::MobileAnimCcPackage,
+    animations: &[udd_assets::mobile_anim_cc::MobileAnimCcAnimationRecord],
+    body_id: u16,
+    actions: BTreeMap<u16, Vec<usize>>,
+    default_open: bool,
+) {
+    egui::CollapsingHeader::new(format!("Body {}", body_id))
+        .id_salt((
+            "mobile_anim_cc_body",
+            app.mobile_anim_tree_collapse_revision,
+            body_id,
+        ))
+        .default_open(default_open)
+        .show(ui, |ui| {
+            show_cc_action_tree(
+                app, ctx, ui, package, animations, body_id, actions, default_open,
+            );
+        });
+}
+
+fn show_cc_action_tree(
+    app: &mut InspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    package: &udd_assets::MobileAnimCcPackage,
+    animations: &[udd_assets::mobile_anim_cc::MobileAnimCcAnimationRecord],
+    body_id: u16,
+    actions: BTreeMap<u16, Vec<usize>>,
+    default_open: bool,
+) {
+    for (action_id, indexes) in actions {
+        egui::CollapsingHeader::new(format!("Action {}", action_id))
+            .id_salt((
+                "mobile_anim_cc_action",
+                app.mobile_anim_tree_collapse_revision,
+                body_id,
+                action_id,
+            ))
+            .default_open(default_open)
+            .show(ui, |ui| {
+                for index in indexes {
+                    let animation = &animations[index];
+                    let frames = package.animation_frames(animation);
+                    let visible_count = displayable_frame_count(
+                        frames,
+                        udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
+                        |frame| (frame.page_index, frame.width, frame.height),
+                    );
+                    let label = cc_animation_label(animation, visible_count, frames.len());
+                    if ui
+                        .selectable_label(app.selected_mobile_anim_index == index, label)
+                        .clicked()
+                    {
+                        select_mobile_animation(app, ctx, index);
+                    }
+                }
+            });
+    }
+}
+
 pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.mobile_anim_ec_package.clone() else {
         ui.centered_and_justified(|ui| {
@@ -218,11 +328,35 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             ui.separator();
             ui.label("Filter:");
             ui.text_edit_singleline(&mut app.filter);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("mobile_anim_ec_tree_order")
+                    .selected_text(match app.mobile_anim_tree_order {
+                        MobileAnimTreeOrder::BodyType => "Body Type",
+                        MobileAnimTreeOrder::BodyId => "Body ID",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.mobile_anim_tree_order,
+                            MobileAnimTreeOrder::BodyType,
+                            "Body Type",
+                        );
+                        ui.selectable_value(
+                            &mut app.mobile_anim_tree_order,
+                            MobileAnimTreeOrder::BodyId,
+                            "Body ID",
+                        );
+                    });
+                if ui.button("Collapse All").clicked() {
+                    app.mobile_anim_tree_collapse_revision =
+                        app.mobile_anim_tree_collapse_revision.wrapping_add(1);
+                }
+            });
             ui.separator();
 
             let query = app.filter.to_ascii_lowercase();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let mut tree = BTreeMap::<Option<i16>, BTreeMap<u32, BTreeMap<u16, Vec<usize>>>>::new();
+                let mut body_tree = BTreeMap::<u32, (Option<i16>, BTreeMap<u16, Vec<usize>>)>::new();
                 for (index, animation) in animations.iter().enumerate() {
                     let frames = package.animation_frames(animation);
                     let visible_count = displayable_frame_count(
@@ -248,47 +382,69 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                         .entry(animation.action_id)
                         .or_default()
                         .push(index);
+                    body_tree
+                        .entry(animation.body_id)
+                        .or_insert_with(|| (body_type, BTreeMap::new()))
+                        .1
+                        .entry(animation.action_id)
+                        .or_default()
+                        .push(index);
                 }
-                if tree.is_empty() {
-                    ui.label("No animations match the filter.");
-                }
-                let default_open = !query.is_empty();
-                for (body_type, bodies) in tree {
-                    egui::CollapsingHeader::new(ec_body_type_label(body_type))
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for (body_id, actions) in bodies {
-                                egui::CollapsingHeader::new(format!("Body {}", body_id))
-                                    .default_open(default_open)
-                                    .show(ui, |ui| {
-                                        for (action_id, indexes) in actions {
-                                            egui::CollapsingHeader::new(format!("Action {}", action_id))
-                                                .default_open(default_open)
-                                                .show(ui, |ui| {
-                                                    for index in indexes {
-                                                        let animation = &animations[index];
-                                                        let frames = package.animation_frames(animation);
-                                                        let visible_count = displayable_frame_count(
-                                                            frames,
-                                                            udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
-                                                            |frame| (frame.page_index, frame.width, frame.height),
-                                                        );
-                                                        let label = ec_animation_label(animation, visible_count, frames.len());
-                                                        if ui
-                                                            .selectable_label(
-                                                                app.selected_mobile_anim_index == index,
-                                                                label,
-                                                            )
-                                                            .clicked()
-                                                        {
-                                                            select_mobile_animation(app, ctx, index);
-                                                        }
-                                                    }
-                                                });
-                                        }
-                                    });
-                            }
-                        });
+                let allow_default_open = app.mobile_anim_tree_collapse_revision == 0;
+                let default_open = allow_default_open && !query.is_empty();
+                match app.mobile_anim_tree_order {
+                    MobileAnimTreeOrder::BodyType => {
+                        if tree.is_empty() {
+                            ui.label("No animations match the filter.");
+                        }
+                        for (body_type, bodies) in tree {
+                            egui::CollapsingHeader::new(ec_body_type_label(body_type))
+                                .id_salt((
+                                    "mobile_anim_ec_type",
+                                    app.mobile_anim_tree_collapse_revision,
+                                    body_type,
+                                ))
+                                .default_open(allow_default_open)
+                                .show(ui, |ui| {
+                                    for (body_id, actions) in bodies {
+                                        show_ec_body_tree(
+                                            app,
+                                            ctx,
+                                            ui,
+                                            &package,
+                                            animations,
+                                            body_id,
+                                            actions,
+                                            default_open,
+                                        );
+                                    }
+                                });
+                        }
+                    }
+                    MobileAnimTreeOrder::BodyId => {
+                        if body_tree.is_empty() {
+                            ui.label("No animations match the filter.");
+                        }
+                        for (body_id, (body_type, actions)) in body_tree {
+                            egui::CollapsingHeader::new(format!(
+                                "Body {} ({})",
+                                body_id,
+                                ec_body_type_label(body_type)
+                            ))
+                            .id_salt((
+                                "mobile_anim_ec_body_order",
+                                app.mobile_anim_tree_collapse_revision,
+                                body_id,
+                            ))
+                            .default_open(default_open)
+                            .show(ui, |ui| {
+                                show_ec_action_tree(
+                                    app, ctx, ui, &package, animations, body_id, actions,
+                                    default_open,
+                                );
+                            });
+                        }
+                    }
                 }
             });
         });
@@ -357,6 +513,70 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     show_playback_controls(ctx, ui, app, frames.len());
     if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
         show_ec_frame(ui, ctx, app, &package, frame);
+    }
+}
+
+fn show_ec_body_tree(
+    app: &mut InspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    package: &udd_assets::MobileAnimEcPackage,
+    animations: &[udd_assets::mobile_anim_ec::MobileAnimEcAnimationRecord],
+    body_id: u32,
+    actions: BTreeMap<u16, Vec<usize>>,
+    default_open: bool,
+) {
+    egui::CollapsingHeader::new(format!("Body {}", body_id))
+        .id_salt((
+            "mobile_anim_ec_body",
+            app.mobile_anim_tree_collapse_revision,
+            body_id,
+        ))
+        .default_open(default_open)
+        .show(ui, |ui| {
+            show_ec_action_tree(
+                app, ctx, ui, package, animations, body_id, actions, default_open,
+            );
+        });
+}
+
+fn show_ec_action_tree(
+    app: &mut InspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    package: &udd_assets::MobileAnimEcPackage,
+    animations: &[udd_assets::mobile_anim_ec::MobileAnimEcAnimationRecord],
+    body_id: u32,
+    actions: BTreeMap<u16, Vec<usize>>,
+    default_open: bool,
+) {
+    for (action_id, indexes) in actions {
+        egui::CollapsingHeader::new(format!("Action {}", action_id))
+            .id_salt((
+                "mobile_anim_ec_action",
+                app.mobile_anim_tree_collapse_revision,
+                body_id,
+                action_id,
+            ))
+            .default_open(default_open)
+            .show(ui, |ui| {
+                for index in indexes {
+                    let animation = &animations[index];
+                    let frames = package.animation_frames(animation);
+                    let visible_count = displayable_frame_count(
+                        frames,
+                        udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
+                        |frame| (frame.page_index, frame.width, frame.height),
+                    );
+                    let label = ec_animation_label(animation, visible_count, frames.len());
+                    if ui
+                        .selectable_label(app.selected_mobile_anim_index == index, label)
+                        .clicked()
+                    {
+                        select_mobile_animation(app, ctx, index);
+                    }
+                }
+            });
     }
 }
 

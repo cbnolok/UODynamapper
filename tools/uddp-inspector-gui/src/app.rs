@@ -29,6 +29,12 @@ pub const DATA_TYPE_MAP: u8 = 3;
 pub const DATA_TYPE_STATIC: u8 = 14;
 const MISSING_TEXTURE_ID: u32 = u32::MAX;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobileAnimTreeOrder {
+    BodyType,
+    BodyId,
+}
+
 fn terrain_definition_path(material_id: u32) -> String {
     format!("build/terraindefinition/{material_id:08}.bin")
 }
@@ -49,6 +55,8 @@ pub struct InspectorApp {
     pub mobile_anim_playback_speed: f32,
     pub mobile_anim_loop: bool,
     pub mobile_anim_frame_reset_pending: bool,
+    pub mobile_anim_tree_order: MobileAnimTreeOrder,
+    pub mobile_anim_tree_collapse_revision: u64,
 
     // Virtual View state
     pub view_mode: ViewMode,
@@ -92,6 +100,8 @@ impl InspectorApp {
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
             mobile_anim_frame_reset_pending: true,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -424,6 +434,8 @@ impl InspectorApp {
                 self.mobile_anim_is_playing = false;
                 self.mobile_anim_last_frame_time = 0.0;
                 self.mobile_anim_frame_reset_pending = true;
+                self.mobile_anim_tree_order = MobileAnimTreeOrder::BodyType;
+                self.mobile_anim_tree_collapse_revision = 0;
                 self.detect_virtual_entries(&reader);
 
                 self.package = Some(reader);
@@ -1237,6 +1249,8 @@ mod tests {
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
             mobile_anim_frame_reset_pending: false,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1318,6 +1332,8 @@ mod tests {
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
             mobile_anim_frame_reset_pending: false,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
@@ -1380,6 +1396,8 @@ mod tests {
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
             mobile_anim_frame_reset_pending: false,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
             view_mode: ViewMode::Virtual,
             virtual_entries: vec![
                 VirtualEntry {
@@ -1503,6 +1521,8 @@ mod tests {
             mobile_anim_playback_speed: 1.0,
             mobile_anim_loop: true,
             mobile_anim_frame_reset_pending: false,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
             view_mode: ViewMode::Package,
             virtual_entries: Vec::new(),
             virtual_material_entries: Vec::new(),
