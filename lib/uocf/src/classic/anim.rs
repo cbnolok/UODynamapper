@@ -38,6 +38,16 @@ pub struct AnimFrameInfo {
     pub center_y: i16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassicAnimationIdentity {
+    pub body_id: u16,
+    pub action_id: u16,
+    pub direction: u8,
+    pub flags: u16,
+}
+
+pub const CLASSIC_ANIMATION_IDENTITY_UNMAPPED_SOURCE_INDEX: u16 = 0x0001;
+
 /// Manages multiple animation MUL sources.
 pub struct AnimMap {
     sources: Vec<Option<AnimSource>>,
@@ -182,6 +192,125 @@ impl AnimMap {
 
         decode(&source.mul[lookup..end])
     }
+}
+
+pub fn classic_animation_identity_from_source_index(
+    file_index: u8,
+    source_index: u32,
+) -> ClassicAnimationIdentity {
+    if let Some((body_id, action_id, direction)) =
+        classic_animation_layout_from_source_index(file_index, source_index)
+    {
+        return ClassicAnimationIdentity {
+            body_id,
+            action_id,
+            direction,
+            flags: 0,
+        };
+    }
+
+    ClassicAnimationIdentity {
+        body_id: (source_index & 0xFFFF) as u16,
+        action_id: (source_index >> 16) as u16,
+        direction: file_index,
+        flags: CLASSIC_ANIMATION_IDENTITY_UNMAPPED_SOURCE_INDEX,
+    }
+}
+
+pub fn classic_animation_source_index_from_identity(
+    file_index: u8,
+    body_id: u16,
+    action_id: u16,
+    direction: u8,
+) -> Option<u32> {
+    if direction >= 5 {
+        return None;
+    }
+
+    for &(body_start, body_end, source_start, action_count) in
+        classic_animation_layout_groups(file_index)
+    {
+        if body_id < body_start || body_id >= body_end || action_id >= action_count {
+            continue;
+        }
+        let body_offset = u32::from(body_id - body_start);
+        let stride = u32::from(action_count) * 5;
+        return Some(
+            source_start
+                + body_offset * stride
+                + u32::from(action_id) * 5
+                + u32::from(direction),
+        );
+    }
+
+    None
+}
+
+fn classic_animation_layout_from_source_index(
+    file_index: u8,
+    source_index: u32,
+) -> Option<(u16, u16, u8)> {
+    for &(body_start, body_end, source_start, action_count) in
+        classic_animation_layout_groups(file_index)
+    {
+        if let Some(layout) = classic_animation_layout_from_group(
+            source_index,
+            body_start,
+            body_end,
+            source_start,
+            action_count,
+        ) {
+            return Some(layout);
+        }
+    }
+    None
+}
+
+fn classic_animation_layout_groups(file_index: u8) -> &'static [(u16, u16, u32, u16)] {
+    match file_index {
+        0 => &[
+            (0, 200, 0, 22),
+            (200, 400, 22000, 13),
+            (400, u16::MAX, 35000, 35),
+        ],
+        1 => &[
+            (0, 200, 0, 22),
+            (200, u16::MAX, 22000, 13),
+        ],
+        2 => &[
+            (0, 300, 0, 13),
+            (300, 400, 33000, 22),
+            (400, u16::MAX, 35000, 35),
+        ],
+        _ => &[
+            (0, 200, 0, 22),
+            (200, 400, 22000, 13),
+            (400, u16::MAX, 35000, 35),
+        ],
+    }
+}
+
+fn classic_animation_layout_from_group(
+    source_index: u32,
+    body_start: u16,
+    body_end: u16,
+    source_start: u32,
+    action_count: u16,
+) -> Option<(u16, u16, u8)> {
+    if source_index < source_start || body_end <= body_start {
+        return None;
+    }
+    let stride = u32::from(action_count) * 5;
+    let body_count = u32::from(body_end - body_start);
+    let rel = source_index - source_start;
+    if rel >= body_count * stride {
+        return None;
+    }
+    let body = u32::from(body_start) + rel / stride;
+    let within_body = rel % stride;
+    let action = within_body / 5;
+    let direction = within_body % 5;
+    Some((body as u16, action as u16, direction as u8))
 }
 
 fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<AnimFrame>> {
@@ -570,5 +699,42 @@ mod tests {
         assert_eq!(metadata[0].height, frames[0].height);
         assert_eq!(metadata[0].center_x, frames[0].center_x);
         assert_eq!(metadata[0].center_y, frames[0].center_y);
+    }
+
+    #[test]
+    fn classic_animation_identity_maps_body_action_direction_to_source_index() {
+        assert_eq!(classic_animation_source_index_from_identity(0, 0, 0, 0), Some(0));
+        assert_eq!(classic_animation_source_index_from_identity(0, 0, 0, 4), Some(4));
+        assert_eq!(classic_animation_source_index_from_identity(0, 0, 1, 0), Some(5));
+        assert_eq!(classic_animation_source_index_from_identity(0, 200, 0, 0), Some(22000));
+        assert_eq!(classic_animation_source_index_from_identity(0, 400, 0, 0), Some(35000));
+        assert_eq!(classic_animation_source_index_from_identity(0, 0, 22, 0), None);
+        assert_eq!(classic_animation_source_index_from_identity(0, 0, 0, 5), None);
+    }
+
+    #[test]
+    fn classic_animation_identity_roundtrips_known_layout_indices() {
+        for (file_index, source_index, body_id, action_id, direction) in [
+            (0, 0, 0, 0, 0),
+            (0, 22000, 200, 0, 0),
+            (0, 35000, 400, 0, 0),
+            (1, 22000, 200, 0, 0),
+            (2, 33000, 300, 0, 0),
+        ] {
+            let identity = classic_animation_identity_from_source_index(file_index, source_index);
+            assert_eq!(identity.body_id, body_id);
+            assert_eq!(identity.action_id, action_id);
+            assert_eq!(identity.direction, direction);
+            assert_eq!(identity.flags, 0);
+            assert_eq!(
+                classic_animation_source_index_from_identity(
+                    file_index,
+                    body_id,
+                    action_id,
+                    direction,
+                ),
+                Some(source_index)
+            );
+        }
     }
 }
