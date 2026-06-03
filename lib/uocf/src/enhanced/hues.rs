@@ -171,9 +171,76 @@ pub fn parse_huenames_csv(bytes: &[u8]) -> BTreeMap<u16, String> {
 }
 
 pub fn decode_hue_image_to_rgba(bytes: &[u8]) -> eyre::Result<(u32, u32, Vec<u8>)> {
+    if let Some(decoded) = decode_ec_hue_bmp32_to_rgba(bytes) {
+        return Ok(decoded);
+    }
+
     let image = image::load_from_memory(bytes).wrap_err("failed to decode hue image")?;
     let rgba = image.to_rgba8();
     Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+}
+
+fn decode_ec_hue_bmp32_to_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.len() < 54 || &bytes[0..2] != b"BM" {
+        return None;
+    }
+
+    let read_u16 = |offset: usize| -> Option<u16> {
+        let bytes = bytes.get(offset..offset + 2)?;
+        Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+    };
+    let read_u32 = |offset: usize| -> Option<u32> {
+        let bytes = bytes.get(offset..offset + 4)?;
+        Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let read_i32 = |offset: usize| -> Option<i32> {
+        let bytes = bytes.get(offset..offset + 4)?;
+        Some(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+
+    let data_offset = read_u32(10)? as usize;
+    let dib_header_size = read_u32(14)?;
+    if dib_header_size < 40 {
+        return None;
+    }
+    let width = read_i32(18)?;
+    let height = read_i32(22)?;
+    let planes = read_u16(26)?;
+    let bits_per_pixel = read_u16(28)?;
+    let compression = read_u32(30)?;
+
+    if width <= 0 || height == 0 || planes != 1 || bits_per_pixel != 32 || compression != 0 {
+        return None;
+    }
+
+    let width = width as u32;
+    let height_abs = height.unsigned_abs();
+    let row_bytes = width as usize * 4;
+    let data_bytes = row_bytes.checked_mul(height_abs as usize)?;
+    if bytes.len() < data_offset.checked_add(data_bytes)? {
+        return None;
+    }
+
+    let mut rgba = vec![0u8; data_bytes];
+    for y in 0..height_abs as usize {
+        let src_y = if height > 0 {
+            height_abs as usize - 1 - y
+        } else {
+            y
+        };
+        let src_row = data_offset + src_y * row_bytes;
+        let dst_row = y * row_bytes;
+        for x in 0..width as usize {
+            let src = src_row + x * 4;
+            let dst = dst_row + x * 4;
+            rgba[dst] = bytes[src + 2];
+            rgba[dst + 1] = bytes[src + 1];
+            rgba[dst + 2] = bytes[src];
+            rgba[dst + 3] = bytes[src + 3];
+        }
+    }
+
+    Some((width, height_abs, rgba))
 }
 
 #[cfg(test)]
@@ -241,5 +308,38 @@ mod tests {
         assert_eq!(names.get(&3).map(String::as_str), Some("blue,with comma"));
         assert!(!names.contains_key(&3001));
         assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn ec_hue_bmp_decoder_ignores_client_size_field() {
+        let mut bytes = vec![0u8; 54];
+        bytes[0..2].copy_from_slice(b"BM");
+        bytes[2..6].copy_from_slice(&13u32.to_le_bytes());
+        bytes[10..14].copy_from_slice(&54u32.to_le_bytes());
+        bytes[14..18].copy_from_slice(&40u32.to_le_bytes());
+        bytes[18..22].copy_from_slice(&2i32.to_le_bytes());
+        bytes[22..26].copy_from_slice(&2i32.to_le_bytes());
+        bytes[26..28].copy_from_slice(&1u16.to_le_bytes());
+        bytes[28..30].copy_from_slice(&32u16.to_le_bytes());
+        bytes[30..34].copy_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&[
+            1, 2, 3, 4,
+            5, 6, 7, 8,
+            9, 10, 11, 12,
+            13, 14, 15, 16,
+        ]);
+
+        let (width, height, rgba) = decode_hue_image_to_rgba(&bytes).expect("decode EC hue BMP");
+
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(
+            rgba,
+            vec![
+                11, 10, 9, 12,
+                15, 14, 13, 16,
+                3, 2, 1, 4,
+                7, 6, 5, 8,
+            ]
+        );
     }
 }
