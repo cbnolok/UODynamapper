@@ -544,6 +544,18 @@ pub enum CliUpscaleFilter {
     Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
+    Vibrance20,
+    Vibrance30,
+    Vibrance40,
+    Saturation115,
+    Saturation125,
+    Saturation130,
+    SelectiveWarm20,
+    SelectiveWarm30,
+    SelectiveWarm40,
+    SelectiveGreen20,
+    SelectiveGreen30,
+    SelectiveGreen40,
     ScaleFxSmartDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
@@ -617,6 +629,18 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::Jinc2Sharpest4x => UpscaleFilter::Jinc2Sharpest4x,
             CliUpscaleFilter::Mmpx2x => UpscaleFilter::Mmpx2x,
             CliUpscaleFilter::Mmpx4x => UpscaleFilter::Mmpx4x,
+            CliUpscaleFilter::Vibrance20 => UpscaleFilter::Vibrance20,
+            CliUpscaleFilter::Vibrance30 => UpscaleFilter::Vibrance30,
+            CliUpscaleFilter::Vibrance40 => UpscaleFilter::Vibrance40,
+            CliUpscaleFilter::Saturation115 => UpscaleFilter::Saturation115,
+            CliUpscaleFilter::Saturation125 => UpscaleFilter::Saturation125,
+            CliUpscaleFilter::Saturation130 => UpscaleFilter::Saturation130,
+            CliUpscaleFilter::SelectiveWarm20 => UpscaleFilter::SelectiveWarm20,
+            CliUpscaleFilter::SelectiveWarm30 => UpscaleFilter::SelectiveWarm30,
+            CliUpscaleFilter::SelectiveWarm40 => UpscaleFilter::SelectiveWarm40,
+            CliUpscaleFilter::SelectiveGreen20 => UpscaleFilter::SelectiveGreen20,
+            CliUpscaleFilter::SelectiveGreen30 => UpscaleFilter::SelectiveGreen30,
+            CliUpscaleFilter::SelectiveGreen40 => UpscaleFilter::SelectiveGreen40,
             CliUpscaleFilter::ScaleFxSmartDeblur => UpscaleFilter::ScaleFxSmartDeblur,
             CliUpscaleFilter::UnsharpMaskSmall => UpscaleFilter::UnsharpMaskSmall,
             CliUpscaleFilter::HighPassSharpen => UpscaleFilter::HighPassSharpen,
@@ -2493,6 +2517,31 @@ mod tests {
                 assert_eq!(
                     upscale_passes,
                     vec![CliUpscaleFilter::Hq3xTrue, CliUpscaleFilter::FsrEasuRcas2x]
+                );
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_color_boost_upscale_passes() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-mobile-anims",
+            "--ccdir",
+            "/cc",
+            "--upscale-pass",
+            "vibrance30",
+            "--upscale-pass",
+            "selective-warm30",
+        ])
+        .expect("parse color boost upscale passes");
+
+        match cli.command {
+            Commands::PackMobileAnims { upscale_passes, .. } => {
+                assert_eq!(
+                    upscale_passes,
+                    vec![CliUpscaleFilter::Vibrance30, CliUpscaleFilter::SelectiveWarm30]
                 );
             }
             _ => panic!("unexpected command parsed"),

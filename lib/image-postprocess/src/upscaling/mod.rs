@@ -104,6 +104,18 @@ pub enum UpscaleFilter {
     Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
+    Vibrance20,
+    Vibrance30,
+    Vibrance40,
+    Saturation115,
+    Saturation125,
+    Saturation130,
+    SelectiveWarm20,
+    SelectiveWarm30,
+    SelectiveWarm40,
+    SelectiveGreen20,
+    SelectiveGreen30,
+    SelectiveGreen40,
     ScaleFxSmartDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
@@ -160,7 +172,19 @@ impl UpscaleFilter {
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
-            Self::ScaleFxSmartDeblur
+            Self::Vibrance20
+            | Self::Vibrance30
+            | Self::Vibrance40
+            | Self::Saturation115
+            | Self::Saturation125
+            | Self::Saturation130
+            | Self::SelectiveWarm20
+            | Self::SelectiveWarm30
+            | Self::SelectiveWarm40
+            | Self::SelectiveGreen20
+            | Self::SelectiveGreen30
+            | Self::SelectiveGreen40
+            | Self::ScaleFxSmartDeblur
             | Self::UnsharpMaskSmall
             | Self::HighPassSharpen => 1,
         }
@@ -187,12 +211,20 @@ impl UpscaleFilter {
         target_width: u32,
         target_height: u32,
     ) -> Vec<u8> {
-        if matches!(self, Self::None) || rgba.is_empty() {
+        if rgba.is_empty() {
             return rgba.to_vec();
+        }
+
+        if let Some(pixels) = self.apply_color_boost(rgba) {
+            return pixels;
         }
 
         if let Some(pixels) = self.apply_post_upscale_sharpen(width, height, rgba) {
             return pixels;
+        }
+
+        if matches!(self, Self::None) {
+            return rgba.to_vec();
         }
 
         if width == target_width && height == target_height {
@@ -318,7 +350,39 @@ impl UpscaleFilter {
                 rgba,
                 sharpen::HighPassSharpenParams::default(),
             ).2,
+            Self::Vibrance20
+            | Self::Vibrance30
+            | Self::Vibrance40
+            | Self::Saturation115
+            | Self::Saturation125
+            | Self::Saturation130
+            | Self::SelectiveWarm20
+            | Self::SelectiveWarm30
+            | Self::SelectiveWarm40
+            | Self::SelectiveGreen20
+            | Self::SelectiveGreen30
+            | Self::SelectiveGreen40 => rgba.to_vec(),
         }
+    }
+
+    fn apply_color_boost(&self, rgba: &[u8]) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(rgba.len());
+        match self {
+            Self::Vibrance20 => apply_vibrance(rgba, &mut out, 0.20),
+            Self::Vibrance30 => apply_vibrance(rgba, &mut out, 0.30),
+            Self::Vibrance40 => apply_vibrance(rgba, &mut out, 0.40),
+            Self::Saturation115 => apply_saturation(rgba, &mut out, 1.15),
+            Self::Saturation125 => apply_saturation(rgba, &mut out, 1.25),
+            Self::Saturation130 => apply_saturation(rgba, &mut out, 1.30),
+            Self::SelectiveWarm20 => apply_selective_hue_boost(rgba, &mut out, 0.20, HueBoostRange::Warm),
+            Self::SelectiveWarm30 => apply_selective_hue_boost(rgba, &mut out, 0.30, HueBoostRange::Warm),
+            Self::SelectiveWarm40 => apply_selective_hue_boost(rgba, &mut out, 0.40, HueBoostRange::Warm),
+            Self::SelectiveGreen20 => apply_selective_hue_boost(rgba, &mut out, 0.20, HueBoostRange::Green),
+            Self::SelectiveGreen30 => apply_selective_hue_boost(rgba, &mut out, 0.30, HueBoostRange::Green),
+            Self::SelectiveGreen40 => apply_selective_hue_boost(rgba, &mut out, 0.40, HueBoostRange::Green),
+            _ => return None,
+        }
+        Some(out)
     }
 
     fn apply_post_upscale_sharpen(&self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
@@ -344,6 +408,101 @@ impl UpscaleFilter {
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum HueBoostRange {
+    Warm,
+    Green,
+}
+
+fn apply_vibrance(rgba: &[u8], out: &mut Vec<u8>, factor: f32) {
+    for pixel in rgba.chunks_exact(4) {
+        let r = pixel[0] as f32 / 255.0;
+        let g = pixel[1] as f32 / 255.0;
+        let b = pixel[2] as f32 / 255.0;
+        let gray = luma(r, g, b);
+        let vibrance = 1.0 - r.max(g).max(b);
+        let amount = 1.0 + vibrance.clamp(0.0, 1.0) * factor;
+        push_rgb_with_alpha(out, gray + (r - gray) * amount, gray + (g - gray) * amount, gray + (b - gray) * amount, pixel[3]);
+    }
+}
+
+fn apply_saturation(rgba: &[u8], out: &mut Vec<u8>, factor: f32) {
+    for pixel in rgba.chunks_exact(4) {
+        let r = pixel[0] as f32 / 255.0;
+        let g = pixel[1] as f32 / 255.0;
+        let b = pixel[2] as f32 / 255.0;
+        let gray = luma(r, g, b);
+        push_rgb_with_alpha(out, gray + (r - gray) * factor, gray + (g - gray) * factor, gray + (b - gray) * factor, pixel[3]);
+    }
+}
+
+fn apply_selective_hue_boost(rgba: &[u8], out: &mut Vec<u8>, factor: f32, range: HueBoostRange) {
+    for pixel in rgba.chunks_exact(4) {
+        let r = pixel[0] as f32 / 255.0;
+        let g = pixel[1] as f32 / 255.0;
+        let b = pixel[2] as f32 / 255.0;
+        let Some(hue) = hue_degrees(r, g, b) else {
+            out.extend_from_slice(pixel);
+            continue;
+        };
+        let weight = hue_range_weight(hue, range);
+        if weight <= 0.0 {
+            out.extend_from_slice(pixel);
+            continue;
+        }
+
+        let gray = luma(r, g, b);
+        let amount = 1.0 + factor * weight;
+        push_rgb_with_alpha(out, gray + (r - gray) * amount, gray + (g - gray) * amount, gray + (b - gray) * amount, pixel[3]);
+    }
+}
+
+fn luma(r: f32, g: f32, b: f32) -> f32 {
+    r * 0.30 + g * 0.59 + b * 0.11
+}
+
+fn hue_degrees(r: f32, g: f32, b: f32) -> Option<f32> {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    if delta <= f32::EPSILON {
+        return None;
+    }
+
+    let hue = if (max - r).abs() <= f32::EPSILON {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() <= f32::EPSILON {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    Some(hue)
+}
+
+fn hue_range_weight(hue: f32, range: HueBoostRange) -> f32 {
+    match range {
+        HueBoostRange::Warm => circular_range_weight(hue, 20.0, 55.0),
+        HueBoostRange::Green => linear_range_weight(hue, 120.0, 55.0),
+    }
+}
+
+fn circular_range_weight(hue: f32, center: f32, half_width: f32) -> f32 {
+    let distance = (hue - center).abs().min(360.0 - (hue - center).abs());
+    (1.0 - distance / half_width).clamp(0.0, 1.0)
+}
+
+fn linear_range_weight(hue: f32, center: f32, half_width: f32) -> f32 {
+    let distance = (hue - center).abs();
+    (1.0 - distance / half_width).clamp(0.0, 1.0)
+}
+
+fn push_rgb_with_alpha(out: &mut Vec<u8>, r: f32, g: f32, b: f32, a: u8) {
+    out.push((r.clamp(0.0, 1.0) * 255.0).round() as u8);
+    out.push((g.clamp(0.0, 1.0) * 255.0).round() as u8);
+    out.push((b.clamp(0.0, 1.0) * 255.0).round() as u8);
+    out.push(a);
 }
 
 pub fn apply_filter_passes(
@@ -377,4 +536,56 @@ pub fn apply_filter_passes_owned(
     }
 
     (width, height, rgba, scale_factor, last_filter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_filter_passes, UpscaleFilter};
+
+    #[test]
+    fn vibrance_boost_preserves_dimensions_and_alpha() {
+        let rgba = [128, 96, 96, 77];
+        let (width, height, pixels, scale, last_filter) =
+            apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Vibrance30]);
+
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(scale, 1);
+        assert_eq!(last_filter, UpscaleFilter::Vibrance30);
+        assert_eq!(pixels[3], 77);
+        assert!(pixels[0] > rgba[0]);
+        assert!(pixels[1] < rgba[1]);
+        assert!(pixels[2] < rgba[2]);
+    }
+
+    #[test]
+    fn saturation_boost_keeps_neutral_gray_neutral() {
+        let rgba = [80, 80, 80, 255];
+        let (_, _, pixels, _, _) =
+            apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Saturation125]);
+
+        assert_eq!(pixels, rgba);
+    }
+
+    #[test]
+    fn selective_warm_boost_leaves_blue_unchanged() {
+        let rgba = [120, 80, 60, 255, 80, 80, 160, 128];
+        let (_, _, pixels, scale, _) =
+            apply_filter_passes(2, 1, &rgba, &[UpscaleFilter::SelectiveWarm30]);
+
+        assert_eq!(scale, 1);
+        assert!(pixels[0] > rgba[0]);
+        assert!(pixels[1] < rgba[1]);
+        assert_eq!(&pixels[4..8], &rgba[4..8]);
+    }
+
+    #[test]
+    fn selective_green_boost_targets_green_hues() {
+        let rgba = [70, 130, 80, 255, 120, 80, 60, 255];
+        let (_, _, pixels, _, _) =
+            apply_filter_passes(2, 1, &rgba, &[UpscaleFilter::SelectiveGreen30]);
+
+        assert!(pixels[1] > rgba[1]);
+        assert!(pixels[0] < rgba[0]);
+        assert_eq!(&pixels[4..8], &rgba[4..8]);
+    }
 }

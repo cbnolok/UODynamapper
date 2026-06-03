@@ -36,6 +36,7 @@ uocf-inspector-gui
 
 - Configure client paths in the application settings panel.
 - Upscale preview is available for art tiles using the image-postprocess
-  upscaling algorithms.
+  upscaling algorithms, including color-only vibrance, saturation, and
+  selective red/orange or green boost passes.
 - Audio playback is supported in the Sounds view.
 - See [lib/uocf](../../lib/uocf/README.md) for the underlying parser library.
