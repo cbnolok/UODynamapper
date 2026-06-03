@@ -1,4 +1,4 @@
-use crate::app::{MultisSource, UopInspectorApp};
+use crate::app::{ArtSource, MultisSource, UopInspectorApp};
 use eframe::egui;
 
 #[derive(Clone)]
@@ -361,7 +361,6 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
         });
 
         for part in sorted_parts {
-            let art_id = part.item_id as u32 + 0x4000;
             let info = part_render_info(app, part.item_id);
             let x = (part.x - min_x) as f32;
             let y = (part.y - min_y) as f32;
@@ -369,11 +368,11 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
             let base_y = 80.0 + (y * tile_h) + (x * tile_h) + info.width_delta as f32 + 64.0
                 + info.height_delta as f32 - (part.original_z as f32 * 4.0);
 
-            if let Some(handle) = app.get_tex_art_cc_texture(ctx, art_id) {
+            if let Some(handle) = get_multi_part_texture(app, ctx, part.item_id) {
                 let size = handle.size_vec2();
                 let draw_pos = rect.min + egui::vec2(
                     base_x + info.offset_x as f32,
-                    base_y + info.offset_y as f32,
+                    base_y + info.offset_y as f32 + (min_z as f32 * 4.0),
                 );
                 let part_rect = egui::Rect::from_min_size(draw_pos, size);
                 painter.image(
@@ -383,7 +382,7 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                     egui::Color32::WHITE,
                 );
             } else {
-                let fallback_pos = rect.min + egui::vec2(base_x, base_y);
+                let fallback_pos = rect.min + egui::vec2(base_x, base_y + (min_z as f32 * 4.0));
                 let part_rect = egui::Rect::from_center_size(
                     fallback_pos,
                     egui::vec2(14.0, 14.0),
@@ -392,6 +391,50 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
             }
         }
     });
+}
+
+fn get_multi_part_texture(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    item_id: u16,
+) -> Option<egui::TextureHandle> {
+    let classic_art_id = item_id as u32 + 0x4000;
+    let ec_art_id = item_id as u32;
+    let candidates = match app.selected_legacy_source {
+        ArtSource::Mul => [
+            (ArtSource::Mul, classic_art_id),
+            (ArtSource::Any, classic_art_id),
+            (ArtSource::EcUop, ec_art_id),
+        ],
+        ArtSource::CcUop => [
+            (ArtSource::CcUop, classic_art_id),
+            (ArtSource::Any, classic_art_id),
+            (ArtSource::EcUop, ec_art_id),
+        ],
+        ArtSource::EcUop => [
+            (ArtSource::EcUop, ec_art_id),
+            (ArtSource::EcUop, classic_art_id),
+            (ArtSource::Any, classic_art_id),
+        ],
+        ArtSource::Any => [
+            (ArtSource::Any, classic_art_id),
+            (ArtSource::EcUop, ec_art_id),
+            (ArtSource::CcUop, classic_art_id),
+        ],
+    };
+
+    let mut attempted = Vec::with_capacity(candidates.len());
+    for (source, art_id) in candidates {
+        if attempted.iter().any(|candidate| *candidate == (source, art_id)) {
+            continue;
+        }
+        attempted.push((source, art_id));
+        if let Some(handle) = app.get_tex_art_texture_from_source(ctx, art_id, source) {
+            return Some(handle);
+        }
+    }
+
+    None
 }
 
 fn part_render_info(app: &UopInspectorApp, item_id: u16) -> PartRenderInfo {
