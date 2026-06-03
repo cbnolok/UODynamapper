@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ddsfile::{D3DFormat, Dds, NewD3dParams};
 use uocf::classic::multimap_rle::{self, BLACK_PIXEL, MultimapRleImage, WHITE_PIXEL};
 use uocf::classic::sound::{SOUND_NAME_BYTES, WAV_HEADER_BYTES};
 use uocf::uop_container::file::CompressionFlag;
@@ -98,6 +99,55 @@ fn multimap_tool_roundtrips_rle_through_png() {
 }
 
 #[test]
+fn multimap_tool_converts_dds_to_rle_with_crop() {
+    let temp = TempDir::new("multimap-dds-rle");
+    let dds_path = temp.path().join("facet.dds");
+    let rle_path = temp.path().join("multimap.rle");
+    write_rgba_dds(
+        &dds_path,
+        4,
+        4,
+        &[
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ],
+    );
+
+    let output = multimap_tool()
+        .arg("dds-to-rle")
+        .arg("--input")
+        .arg(&dds_path)
+        .arg("--output")
+        .arg(&rle_path)
+        .arg("--source-width")
+        .arg("4")
+        .arg("--source-height")
+        .arg("4")
+        .arg("--output-width")
+        .arg("4")
+        .arg("--output-height")
+        .arg("4")
+        .arg("--edge-threshold")
+        .arg("1")
+        .output()
+        .expect("run multimap dds-to-rle");
+
+    assert!(output.status.success());
+    let image = multimap_rle::load_rle(&rle_path).expect("read output rle");
+    assert_eq!(image.width, 4);
+    assert_eq!(image.height, 4);
+    let black_pixels = image
+        .pixels
+        .iter()
+        .filter(|&&pixel| pixel == BLACK_PIXEL)
+        .count();
+    assert!(black_pixels > 0);
+    assert!(black_pixels < image.pixels.len());
+}
+
+#[test]
 fn sound_tool_exports_slot_to_wav() {
     let temp = TempDir::new("sound-cli");
     let ccdir = temp.path();
@@ -130,6 +180,21 @@ fn sound_tool_exports_slot_to_wav() {
     assert_eq!(&wav[0..4], b"RIFF");
     assert_eq!(&wav[8..12], b"WAVE");
     assert_eq!(&wav[WAV_HEADER_BYTES..], &[1u8, 2, 3, 4]);
+}
+
+fn write_rgba_dds(path: &Path, width: u32, height: u32, rgba: &[u8]) {
+    let params = NewD3dParams {
+        height,
+        width,
+        depth: None,
+        format: D3DFormat::A8R8G8B8,
+        mipmap_levels: None,
+        caps2: None,
+    };
+    let mut dds = Dds::new_d3d(params).expect("create dds");
+    dds.data = rgba.to_vec();
+    let mut file = fs::File::create(path).expect("create dds file");
+    dds.write(&mut file).expect("write dds");
 }
 
 #[test]
