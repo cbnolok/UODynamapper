@@ -133,7 +133,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 } else {
                     format!("sound_{:04}_{}.wav", sound.slot_id, sanitize_file_stem(&sound.name))
                 };
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file_dialog()
                     .add_filter("Wave Audio", &["wav"])
                     .set_file_name(default_name)
                     .save_file()

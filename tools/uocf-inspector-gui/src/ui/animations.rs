@@ -77,7 +77,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 "anim_{}_{}.vd",
                                 app.selected_anim_file_idx, body_id
                             );
-                            if let Some(path) = rfd::FileDialog::new()
+                            if let Some(path) = crate::dialog::file_dialog()
                                 .set_file_name(default_name)
                                 .save_file()
                             {
@@ -111,7 +111,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 "anim_{}_{}.uop",
                                 app.selected_anim_file_idx, body_id
                             );
-                            if let Some(path) = rfd::FileDialog::new()
+                            if let Some(path) = crate::dialog::file_dialog()
                                 .set_file_name(default_name)
                                 .save_file()
                             {

@@ -14,7 +14,7 @@ eframe = { version = "0.31.1", default-features = false, features = [
 ] }
 egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["image"] }
-rfd = "0.14"
+rfd = { version = "0.15", features = ["xdg-portal"] }
 color-eyre = "0.6.5"
 libc = "0.2"
 log = "0.4.29"

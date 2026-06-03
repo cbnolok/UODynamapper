@@ -1,4 +1,5 @@
 mod app;
+mod dialog;
 mod logic;
 mod ui;
 
@@ -6,6 +7,7 @@ use app::UopInspectorApp;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    dialog::normalize_linux_portal_env_before_threads();
     let _ = udd_logging::install_paris_logger();
     
     let native_options = eframe::NativeOptions {

@@ -110,7 +110,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                             ui.label("None");
                         }
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            if let Some(path) = crate::dialog::pick_folder() {
                                 app.settings.cc_path = Some(path);
                                 app.trigger_reload();
                             }
@@ -126,7 +126,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                             ui.label("None");
                         }
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            if let Some(path) = crate::dialog::pick_folder() {
                                 app.settings.ec_path = Some(path);
                                 app.trigger_reload();
                             }
@@ -142,7 +142,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                             ui.label("None");
                         }
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                            if let Some(path) = crate::dialog::file_dialog()
                                 .add_filter("DIC Dictionary", &["dic"])
                                 .pick_file()
                             {

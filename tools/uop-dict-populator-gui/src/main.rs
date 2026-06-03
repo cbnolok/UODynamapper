@@ -1,10 +1,12 @@
 mod app;
 mod core;
+mod dialog;
 
 use app::UopPopulatorApp;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    dialog::normalize_linux_portal_env_before_threads();
     let _ = udd_logging::install_paris_logger();
     
     let native_options = eframe::NativeOptions {

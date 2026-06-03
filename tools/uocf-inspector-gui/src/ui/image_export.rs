@@ -6,7 +6,7 @@ pub fn export_rgba_png(
     height: u32,
     rgba: &[u8],
 ) -> Result<Option<String>, String> {
-    let Some(path) = rfd::FileDialog::new()
+    let Some(path) = crate::dialog::file_dialog()
         .add_filter("PNG Image", &["png"])
         .set_file_name(default_name)
         .save_file()

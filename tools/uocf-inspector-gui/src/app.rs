@@ -1317,7 +1317,7 @@ impl UopInspectorApp {
     }
 
     pub fn open_uop(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = crate::dialog::file_dialog()
             .add_filter("UOP Packages", &["uop"])
             .pick_file()
         {
@@ -1401,7 +1401,7 @@ impl UopInspectorApp {
         if let Some(uop_idx) = self.selected_uop_idx {
             let loaded = &self.uop_cache.loaded_uops[uop_idx];
             if loaded.package.get_file_by_hash(hash).is_some() {
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file_dialog()
                     .set_file_name(name)
                     .set_title("Extract Entry")
                     .save_file()
