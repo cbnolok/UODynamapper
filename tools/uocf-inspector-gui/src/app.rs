@@ -1,6 +1,10 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
 use eframe::egui;
-use image_postprocess::upscaling::{apply_filter_passes_owned, UpscaleFilter};
+use image_postprocess::palette::{
+    palette_safe_upscale, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
+    TransparencyPolicy,
+};
+use image_postprocess::upscaling::UpscaleFilter;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -103,6 +107,9 @@ pub enum UpscalePreviewAlgorithm {
     Jinc2Sharper,
     Jinc2Sharpest,
     Mmpx,
+    PaletteSnapStrict,
+    PaletteSnapRampAware,
+    PaletteSnapExpanded,
 }
 
 impl Default for UpscalePreviewAlgorithm {
@@ -142,6 +149,9 @@ impl UpscalePreviewAlgorithm {
             Self::Jinc2Sharper,
             Self::Jinc2Sharpest,
             Self::Mmpx,
+            Self::PaletteSnapStrict,
+            Self::PaletteSnapRampAware,
+            Self::PaletteSnapExpanded,
         ]
     }
 
@@ -175,6 +185,9 @@ impl UpscalePreviewAlgorithm {
             Self::Jinc2Sharper => "Jinc2 Sharper",
             Self::Jinc2Sharpest => "Jinc2 Sharpest",
             Self::Mmpx => "MMPX",
+            Self::PaletteSnapStrict => "Palette Snap Strict",
+            Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
+            Self::PaletteSnapExpanded => "Palette Snap Expanded",
         }
     }
 
@@ -184,8 +197,39 @@ impl UpscalePreviewAlgorithm {
             Self::SuperSai | Self::Nedi | Self::TwoSai | Self::SuperEagle => &[2],
             Self::SuperXbr | Self::Cut1 | Self::Cut2 | Self::Cut3 => &[2],
             Self::Mmpx => &[2, 4],
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware => &[1],
+            Self::PaletteSnapExpanded => &[8, 16, 32],
             _ => &[2, 3, 4],
         }
+    }
+
+    pub fn scale_value_label(self, value: u32) -> String {
+        match self {
+            Self::PaletteSnapStrict => "strict".to_string(),
+            Self::PaletteSnapRampAware => "ramp".to_string(),
+            Self::PaletteSnapExpanded => format!("{value} colors"),
+            _ => format!("{value}x"),
+        }
+    }
+
+    pub fn is_palette_snap(self) -> bool {
+        matches!(
+            self,
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteSnapExpanded
+        )
+    }
+
+    pub fn palette_config(self, scale: u32) -> Option<PaletteUpscaleConfig> {
+        let mut config = PaletteUpscaleConfig::default();
+        config.snap_mode = match self {
+            Self::PaletteSnapStrict => SnapMode::StrictSnap,
+            Self::PaletteSnapRampAware => SnapMode::RampAwareSnap,
+            Self::PaletteSnapExpanded => SnapMode::ExpandedPalette {
+                max_derived_colors: scale as usize,
+            },
+            _ => return None,
+        };
+        Some(config)
     }
 
     pub fn to_filter(self, scale: u32) -> UpscaleFilter {
@@ -261,6 +305,12 @@ impl UpscalePreviewAlgorithm {
             (Self::Jinc2Sharpest, _) => UpscaleFilter::Jinc2Sharpest4x,
             (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
             (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
+            (
+                Self::PaletteSnapStrict
+                | Self::PaletteSnapRampAware
+                | Self::PaletteSnapExpanded,
+                _,
+            ) => UpscaleFilter::None,
         }
     }
 }
@@ -290,15 +340,28 @@ impl UpscalePreviewPass {
     pub fn filter(self) -> UpscaleFilter {
         self.algorithm.to_filter(self.scale)
     }
+
+    pub fn palette_config(self) -> Option<PaletteUpscaleConfig> {
+        self.algorithm.palette_config(self.scale)
+    }
+
+    pub fn display_value(self) -> String {
+        if self.algorithm.is_palette_snap() {
+            self.algorithm.scale_value_label(self.scale)
+        } else {
+            format!("{:?}", self.filter())
+        }
+    }
 }
 
 pub struct UpscalePreviewResult {
     pub source_key: u64,
-    pub filters: Vec<UpscaleFilter>,
+    pub passes: Vec<UpscalePreviewPass>,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
     pub elapsed_ms: u128,
+    pub palette_status: String,
 }
 
 pub struct UopEntryLabel {
@@ -375,6 +438,131 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
     }
+}
+
+pub fn upscale_pass_cli_value(pass: UpscalePreviewPass) -> String {
+    if pass.algorithm.is_palette_snap() {
+        match pass.algorithm {
+            UpscalePreviewAlgorithm::PaletteSnapStrict => "palette-snap-strict".to_string(),
+            UpscalePreviewAlgorithm::PaletteSnapRampAware => {
+                "palette-snap-ramp-aware".to_string()
+            }
+            UpscalePreviewAlgorithm::PaletteSnapExpanded => {
+                format!("palette-snap-expanded-{}", pass.scale)
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        upscale_filter_cli_value(pass.filter()).to_string()
+    }
+}
+
+fn apply_upscale_preview_passes(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    passes: &[UpscalePreviewPass],
+) -> (u32, u32, Vec<u8>, String) {
+    let transparency = TransparencyPolicy::default();
+    let source_palette = PaletteModel::from_rgba(width, height, &rgba, &transparency).ok();
+    let mut width = width;
+    let mut height = height;
+    let mut rgba = rgba;
+    let mut palette_status = String::new();
+    let mut index = 0usize;
+
+    while index < passes.len() {
+        let pass = passes[index];
+        if pass.algorithm.is_palette_snap() {
+            if let Some(config) = pass.palette_config() {
+                match apply_palette_snap_pass(
+                    width,
+                    height,
+                    &rgba,
+                    source_palette.as_ref(),
+                    &config,
+                    UpscaleFilter::None,
+                ) {
+                    Ok((next_width, next_height, next_rgba, status)) => {
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                    Err(status) => palette_status = status,
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        let filter = pass.filter();
+        if let Some(next_pass) = passes.get(index + 1).copied() {
+            if let Some(config) = next_pass.palette_config() {
+                match apply_palette_snap_pass(
+                    width,
+                    height,
+                    &rgba,
+                    source_palette.as_ref(),
+                    &config,
+                    filter,
+                ) {
+                    Ok((next_width, next_height, next_rgba, status)) => {
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                    Err(status) => {
+                        let (next_width, next_height, next_rgba) =
+                            filter.apply(width, height, &rgba);
+                        width = next_width;
+                        height = next_height;
+                        rgba = next_rgba;
+                        palette_status = status;
+                    }
+                }
+                index += 2;
+                continue;
+            }
+        }
+
+        let (next_width, next_height, next_rgba) = filter.apply(width, height, &rgba);
+        width = next_width;
+        height = next_height;
+        rgba = next_rgba;
+        index += 1;
+    }
+
+    (width, height, rgba, palette_status)
+}
+
+fn apply_palette_snap_pass(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    source_palette: Option<&PaletteModel>,
+    config: &PaletteUpscaleConfig,
+    filter: UpscaleFilter,
+) -> Result<(u32, u32, Vec<u8>, String), String> {
+    let scaler = RgbaFilterScaler::new(filter);
+    let result = palette_safe_upscale(width, height, rgba, source_palette, &scaler, config)
+        .map_err(|error| format!("Palette snap failed: {error:?}"))?;
+    let status = format!(
+        "Palette snap: {} off-palette candidates, {} source colors, {} final colors",
+        result.diagnostics.off_palette_candidates,
+        result
+            .diagnostics
+            .stages
+            .first()
+            .map_or(0, |stage| stage.distinct_opaque_colors),
+        result
+            .diagnostics
+            .stages
+            .last()
+            .map_or(0, |stage| stage.distinct_opaque_colors)
+    );
+    Ok((result.width, result.height, result.rgba, status))
 }
 
 #[derive(Clone, Debug)]
@@ -1073,8 +1261,8 @@ pub struct UopInspectorApp {
     pub upscale_original_texture: Option<egui::TextureHandle>,
     pub upscale_original_texture_key: Option<u64>,
     pub upscale_preview_texture: Option<egui::TextureHandle>,
-    pub upscale_preview_texture_key: Option<(u64, Vec<UpscaleFilter>)>,
-    pub upscale_preview_worker_key: Option<(u64, Vec<UpscaleFilter>)>,
+    pub upscale_preview_texture_key: Option<(u64, Vec<UpscalePreviewPass>)>,
+    pub upscale_preview_worker_key: Option<(u64, Vec<UpscalePreviewPass>)>,
     pub upscale_preview_worker_rx: Option<mpsc::Receiver<UpscalePreviewResult>>,
     pub upscale_preview_size: [u32; 2],
     pub upscale_preview_elapsed_ms: Option<u128>,
@@ -1826,11 +2014,8 @@ impl UopInspectorApp {
             .and_then(|key| self.image_preview_sources.get(&key))
     }
 
-    pub fn current_upscale_filters(&self) -> Vec<UpscaleFilter> {
-        self.upscale_preview_passes
-            .iter()
-            .map(|pass| pass.filter())
-            .collect()
+    pub fn current_upscale_preview_passes(&self) -> Vec<UpscalePreviewPass> {
+        self.upscale_preview_passes.clone()
     }
 
     pub fn clamp_upscale_preview_passes(&mut self) {
@@ -1872,8 +2057,8 @@ impl UopInspectorApp {
             self.upscale_original_texture_key = Some(source.key);
         }
 
-        let filters = self.current_upscale_filters();
-        let texture_key = (source.key, filters.clone());
+        let passes = self.current_upscale_preview_passes();
+        let texture_key = (source.key, passes.clone());
         if self.upscale_preview_texture_key == Some(texture_key.clone())
             || self.upscale_preview_worker_key == Some(texture_key.clone())
         {
@@ -1890,23 +2075,24 @@ impl UopInspectorApp {
         let source_width = source.width;
         let source_height = source.height;
         let source_rgba = Arc::clone(&source.rgba);
-        let worker_filters = filters.clone();
+        let worker_passes = passes.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let started = Instant::now();
-            let (width, height, rgba, _, _) = apply_filter_passes_owned(
+            let (width, height, rgba, palette_status) = apply_upscale_preview_passes(
                 source_width,
                 source_height,
                 source_rgba.to_vec(),
-                &worker_filters,
+                &worker_passes,
             );
             let _ = tx.send(UpscalePreviewResult {
                 source_key,
-                filters: worker_filters,
+                passes: worker_passes,
                 width,
                 height,
                 rgba,
                 elapsed_ms: started.elapsed().as_millis(),
+                palette_status,
             });
         });
 
@@ -1930,7 +2116,7 @@ impl UopInspectorApp {
         let Some(result) = result else {
             return;
         };
-        let texture_key = (result.source_key, result.filters.clone());
+        let texture_key = (result.source_key, result.passes.clone());
         self.upscale_preview_worker_rx = None;
         self.upscale_preview_worker_key = None;
         if self.current_image_preview_key == Some(result.source_key) {
@@ -1939,14 +2125,14 @@ impl UopInspectorApp {
                 &result.rgba,
             );
             self.upscale_preview_texture = Some(ctx.load_texture(
-                format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.filters),
+                format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.passes),
                 color_image,
                 egui::TextureOptions::NEAREST,
             ));
             self.upscale_preview_texture_key = Some(texture_key);
             self.upscale_preview_size = [result.width, result.height];
             self.upscale_preview_elapsed_ms = Some(result.elapsed_ms);
-            self.upscale_preview_status.clear();
+            self.upscale_preview_status = result.palette_status;
             ctx.request_repaint();
         }
     }
@@ -2730,6 +2916,48 @@ mod tests {
         app.log("hello test");
         assert_eq!(app.logs.len(), 1);
         assert_eq!(app.logs[0], "hello test");
+    }
+
+    #[test]
+    fn palette_snap_preview_pass_restricts_bilinear_output_to_source_colors() {
+        let rgba = vec![
+            255, 0, 0, 255, 0, 0, 255, 255,
+            0, 0, 255, 255, 255, 0, 0, 255,
+        ];
+        let passes = [
+            UpscalePreviewPass {
+                algorithm: UpscalePreviewAlgorithm::Bilinear,
+                scale: 2,
+            },
+            UpscalePreviewPass {
+                algorithm: UpscalePreviewAlgorithm::PaletteSnapStrict,
+                scale: 1,
+            },
+        ];
+
+        let (width, height, pixels, status) = apply_upscale_preview_passes(2, 2, rgba, &passes);
+
+        assert_eq!((width, height), (4, 4));
+        assert!(status.contains("Palette snap"));
+        for pixel in pixels.chunks_exact(4) {
+            assert!(pixel == [255, 0, 0, 255] || pixel == [0, 0, 255, 255]);
+        }
+    }
+
+    #[test]
+    fn palette_snap_preview_pass_is_part_of_pass_identity() {
+        let strict = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteSnapStrict,
+            scale: 1,
+        };
+        let expanded = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteSnapExpanded,
+            scale: 16,
+        };
+
+        assert_ne!(strict, expanded);
+        assert_eq!(upscale_pass_cli_value(strict), "palette-snap-strict");
+        assert_eq!(upscale_pass_cli_value(expanded), "palette-snap-expanded-16");
     }
 
     #[test]

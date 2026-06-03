@@ -1,5 +1,5 @@
 use crate::app::{
-    upscale_filter_cli_value, UopInspectorApp, UpscalePreviewAlgorithm, UpscalePreviewPass,
+    upscale_pass_cli_value, UopInspectorApp, UpscalePreviewAlgorithm, UpscalePreviewPass,
 };
 use eframe::egui;
 use image_postprocess::upscaling::UpscaleFilter;
@@ -43,6 +43,9 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
                 }
                 if let Some(elapsed_ms) = elapsed_ms {
                     ui.label(format!("{} ms", elapsed_ms));
+                    if !status.is_empty() {
+                        ui.label(status.as_str());
+                    }
                 } else if is_computing {
                     ui.label("Computing...");
                 } else if !status.is_empty() {
@@ -54,8 +57,8 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
             passes_changed |= pass_controls(ui, &mut passes);
 
             let filters = filters_for_passes(&passes);
-            let enum_values = enum_pass_values(&filters);
-            let cli_values = cli_pass_values(&filters);
+            let enum_values = enum_pass_values(&passes);
+            let cli_values = cli_pass_values(&passes);
             ui.horizontal(|ui| {
                 ui.label("Passes:");
                 ui.monospace(enum_values.as_str());
@@ -175,7 +178,7 @@ fn pass_controls(ui: &mut egui::Ui, passes: &mut Vec<UpscalePreviewPass>) -> boo
         .show(ui, |ui| {
             ui.label("#");
             ui.label("Algorithm");
-            ui.label("Scale");
+            ui.label("Scale/Tune");
             ui.label("Filter");
             ui.label("Order");
             ui.label("");
@@ -191,8 +194,8 @@ fn pass_controls(ui: &mut egui::Ui, passes: &mut Vec<UpscalePreviewPass>) -> boo
                     pass.clamp_scale();
                     changed = true;
                 }
-                changed |= scale_combo(ui, index, pass.algorithm, &mut pass.scale);
-                ui.monospace(format!("{:?}", pass.filter()));
+                changed |= tunable_combo(ui, index, pass.algorithm, &mut pass.scale);
+                ui.monospace(pass.display_value());
 
                 ui.horizontal(|ui| {
                     if ui
@@ -256,7 +259,7 @@ fn algorithm_combo(
     changed
 }
 
-fn scale_combo(
+fn tunable_combo(
     ui: &mut egui::Ui,
     index: usize,
     algorithm: UpscalePreviewAlgorithm,
@@ -270,12 +273,12 @@ fn scale_combo(
     let mut changed = false;
     ui.add_enabled_ui(options.len() > 1, |ui| {
         egui::ComboBox::from_id_salt(format!("uocf_upscale_preview_scale_{index}"))
-            .selected_text(format!("{}x", *scale))
+            .selected_text(algorithm.scale_value_label(*scale))
             .width(70.0)
             .show_ui(ui, |ui| {
                 for candidate in options {
                     if ui
-                        .selectable_value(scale, *candidate, format!("{candidate}x"))
+                        .selectable_value(scale, *candidate, algorithm.scale_value_label(*candidate))
                         .changed()
                     {
                         changed = true;
@@ -290,12 +293,18 @@ fn filters_for_passes(passes: &[UpscalePreviewPass]) -> Vec<UpscaleFilter> {
     passes.iter().map(|pass| pass.filter()).collect()
 }
 
-fn enum_pass_values(filters: &[UpscaleFilter]) -> String {
-    let values = filters
+fn enum_pass_values(passes: &[UpscalePreviewPass]) -> String {
+    let values = passes
         .iter()
         .copied()
-        .filter(|filter| !matches!(filter, UpscaleFilter::None))
-        .map(|filter| format!("{:?}", filter))
+        .filter(|pass| !matches!(pass.filter(), UpscaleFilter::None) || pass.algorithm.is_palette_snap())
+        .map(|pass| {
+            if pass.algorithm.is_palette_snap() {
+                format!("{:?}", pass.algorithm)
+            } else {
+                format!("{:?}", pass.filter())
+            }
+        })
         .collect::<Vec<_>>();
     if values.is_empty() {
         "None".to_string()
@@ -304,12 +313,12 @@ fn enum_pass_values(filters: &[UpscaleFilter]) -> String {
     }
 }
 
-fn cli_pass_values(filters: &[UpscaleFilter]) -> String {
-    let values = filters
+fn cli_pass_values(passes: &[UpscalePreviewPass]) -> String {
+    let values = passes
         .iter()
         .copied()
-        .filter(|filter| !matches!(filter, UpscaleFilter::None))
-        .map(upscale_filter_cli_value)
+        .filter(|pass| !matches!(pass.filter(), UpscaleFilter::None) || pass.algorithm.is_palette_snap())
+        .map(upscale_pass_cli_value)
         .collect::<Vec<_>>();
     if values.is_empty() {
         "none".to_string()
