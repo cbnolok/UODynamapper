@@ -45,10 +45,13 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.separator();
             
             if let Some(client) = &app.client_data {
+                let source = app.selected_legacy_source;
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.collapsing("Land Tiles", |ui| {
                         for id in 0..0x4000 {
-                            if !client.art.has_id(id) && !client.tiledata.land_tiles().get(id as usize).is_some() { continue; }
+                            let has_art = client.art.has_id_from_source(id, source);
+                            let has_metadata = client.tiledata.land_tiles().get(id as usize).is_some();
+                            if !art_row_should_show(source, has_art, has_metadata) { continue; }
                             
                             let tile_name = client.tiledata.land_tiles().get(id as usize).map(|t| t.name_ascii()).unwrap_or_default();
                             if !app.search_query.is_empty() && !id.to_string().contains(&app.search_query) && !tile_name.to_lowercase().contains(&app.search_query.to_lowercase()) {
@@ -63,10 +66,12 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     });
 
                     ui.collapsing("Static Tiles", |ui| {
-                        let max_id = client.art.max_id().max(0x4000 + 32768);
+                        let max_id = client.art.max_id_for_source(source).max(0x4000 + 32768);
                         for id in 0x4000..max_id {
                             let item_id = id - 0x4000;
-                            if !client.art.has_id(id) && !client.tiledata.item_tiles().get(item_id as usize).is_some() { continue; }
+                            let has_art = client.art.has_id_from_source(id, source);
+                            let has_metadata = client.tiledata.item_tiles().get(item_id as usize).is_some();
+                            if !art_row_should_show(source, has_art, has_metadata) { continue; }
                             
                             let tile_name = client.tiledata.item_tiles().get(item_id as usize).map(|t| t.name_ascii()).unwrap_or_default();
                             if !app.search_query.is_empty() && !id.to_string().contains(&app.search_query) && !tile_name.to_lowercase().contains(&app.search_query.to_lowercase()) {
@@ -146,6 +151,13 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.centered_and_justified(|ui| { ui.label("Select a tile from the sidebar to inspect"); });
         }
     });
+}
+
+fn art_row_should_show(source: ArtSource, has_art: bool, has_metadata: bool) -> bool {
+    match source {
+        ArtSource::CcUop | ArtSource::EcUop => has_art,
+        ArtSource::Mul | ArtSource::Any => has_art || has_metadata,
+    }
 }
 
 fn ui_cc_tiledata(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
