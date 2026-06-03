@@ -43,7 +43,8 @@ Other overrides use the asset id as `id`.
 [art_items]
 passes = [
   { filter = "bilinear2x" },
-  { filter = "palette-snap-strict" },
+  { filter = "vibrance30", factor = 0.35 },
+  { filter = "unity-contrast-enhance35", intensity = 0.4, threshold = 0.08, blur_spread = 2.5 },
 ]
 
 [[overrides]]
@@ -55,12 +56,12 @@ passes = [{ filter = "nearest2x" }]
 ```kdl
 cc_mobile_animation_frames {
     pass "xbr2x"
-    pass "palette-snap-ramp-aware"
+    pass "local-laplacian-clarity25" radius=3 amount=0.25
 }
 
 override type="cc_mobile_animation_frames" family=42 id=3 {
     pass "nearest2x"
-    pass "palette-snap-expanded-16"
+    pass "adaptive-log-contrast80" radius=3 gamma=0.8
 }
 ```
 

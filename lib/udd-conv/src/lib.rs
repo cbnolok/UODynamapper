@@ -33,6 +33,7 @@ pub mod upscale {
 	};
 	pub use image_postprocess::upscaling::{
 		apply_filter_passes, apply_filter_passes_owned, UpscaleConfig, UpscaleFilter,
+		UpscalePass as FilterUpscalePass, UpscalePassParams,
 	};
 }
 

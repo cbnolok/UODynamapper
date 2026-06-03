@@ -137,6 +137,162 @@ pub struct UpscaleConfig {
     pub filter: UpscaleFilter,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UpscalePass {
+    pub filter: UpscaleFilter,
+    pub params: UpscalePassParams,
+}
+
+impl UpscalePass {
+    pub fn new(filter: UpscaleFilter) -> Self {
+        Self {
+            filter,
+            params: UpscalePassParams::Default,
+        }
+    }
+
+    pub fn scale_factor(self) -> u32 {
+        self.filter.scale_factor()
+    }
+
+    pub fn apply(self, width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
+        if let Some(pixels) = self.apply_custom(width, height, rgba) {
+            return (width, height, pixels);
+        }
+        self.filter.apply(width, height, rgba)
+    }
+
+    pub fn apply_owned(self, width: u32, height: u32, rgba: Vec<u8>) -> (u32, u32, Vec<u8>) {
+        if let Some(pixels) = self.apply_custom(width, height, &rgba) {
+            return (width, height, pixels);
+        }
+        self.filter.apply(width, height, &rgba)
+    }
+
+    fn apply_custom(self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+        match self.params {
+            UpscalePassParams::Default => None,
+            UpscalePassParams::ColorFactor { factor } => {
+                let mut out = Vec::with_capacity(rgba.len());
+                match self.filter {
+                    UpscaleFilter::Vibrance20 | UpscaleFilter::Vibrance30 | UpscaleFilter::Vibrance40 => {
+                        apply_vibrance(rgba, &mut out, factor);
+                    }
+                    UpscaleFilter::Saturation115 | UpscaleFilter::Saturation125 | UpscaleFilter::Saturation130 => {
+                        apply_saturation(rgba, &mut out, factor);
+                    }
+                    UpscaleFilter::SelectiveWarm20 | UpscaleFilter::SelectiveWarm30 | UpscaleFilter::SelectiveWarm40 => {
+                        apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Warm);
+                    }
+                    UpscaleFilter::SelectiveGreen20 | UpscaleFilter::SelectiveGreen30 | UpscaleFilter::SelectiveGreen40 => {
+                        apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Green);
+                    }
+                    _ => return None,
+                }
+                Some(out)
+            }
+            UpscalePassParams::LocalLaplacianClarity { radius, amount } => {
+                Some(sharpen::apply_local_laplacian_clarity(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::LocalLaplacianClarityParams { radius, amount },
+                ).2)
+            }
+            UpscalePassParams::ContrastEnhance { intensity, threshold, blur_spread } => {
+                Some(sharpen::apply_contrast_enhance(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::ContrastEnhanceParams { intensity, threshold, blur_spread },
+                ).2)
+            }
+            UpscalePassParams::AdaptiveLogContrast { radius, gamma } => {
+                Some(sharpen::apply_adaptive_log_contrast(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::AdaptiveLogContrastParams { radius, gamma },
+                ).2)
+            }
+            UpscalePassParams::UnsharpMask { radius, amount } => {
+                Some(sharpen::apply_unsharp_mask(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::UnsharpMaskParams { radius, amount },
+                ).2)
+            }
+            UpscalePassParams::HighPassSharpen { radius, strength } => {
+                Some(sharpen::apply_high_pass_sharpen(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::HighPassSharpenParams { radius, strength },
+                ).2)
+            }
+            UpscalePassParams::ScaleFxSmartDeblur { deblur_offset, deblur_strength, smart_deblur } => {
+                Some(sharpen::apply_scalefx_smart_deblur(
+                    width,
+                    height,
+                    rgba,
+                    sharpen::ScaleFxSmartDeblurParams {
+                        deblur_offset,
+                        deblur_strength,
+                        smart_deblur,
+                    },
+                ).2)
+            }
+        }
+    }
+}
+
+impl From<UpscaleFilter> for UpscalePass {
+    fn from(filter: UpscaleFilter) -> Self {
+        Self::new(filter)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum UpscalePassParams {
+    Default,
+    ColorFactor {
+        factor: f32,
+    },
+    LocalLaplacianClarity {
+        radius: u32,
+        amount: f32,
+    },
+    ContrastEnhance {
+        intensity: f32,
+        threshold: f32,
+        blur_spread: f32,
+    },
+    AdaptiveLogContrast {
+        radius: f32,
+        gamma: f32,
+    },
+    UnsharpMask {
+        radius: f32,
+        amount: f32,
+    },
+    HighPassSharpen {
+        radius: f32,
+        strength: f32,
+    },
+    ScaleFxSmartDeblur {
+        deblur_offset: f32,
+        deblur_strength: f32,
+        smart_deblur: f32,
+    },
+}
+
+impl Default for UpscalePassParams {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
 impl UpscaleFilter {
     pub fn scale_factor(self) -> u32 {
         match self {
@@ -637,7 +793,8 @@ pub fn apply_filter_passes(
     rgba: &[u8],
     passes: &[UpscaleFilter],
 ) -> (u32, u32, Vec<u8>, u32, UpscaleFilter) {
-    apply_filter_passes_owned(width, height, rgba.to_vec(), passes)
+    let passes = passes.iter().copied().map(UpscalePass::from).collect::<Vec<_>>();
+    apply_upscale_passes_owned(width, height, rgba.to_vec(), &passes)
 }
 
 pub fn apply_filter_passes_owned(
@@ -646,19 +803,38 @@ pub fn apply_filter_passes_owned(
     rgba: Vec<u8>,
     passes: &[UpscaleFilter],
 ) -> (u32, u32, Vec<u8>, u32, UpscaleFilter) {
+    let passes = passes.iter().copied().map(UpscalePass::from).collect::<Vec<_>>();
+    apply_upscale_passes_owned(width, height, rgba, &passes)
+}
+
+pub fn apply_upscale_passes(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    passes: &[UpscalePass],
+) -> (u32, u32, Vec<u8>, u32, UpscaleFilter) {
+    apply_upscale_passes_owned(width, height, rgba.to_vec(), passes)
+}
+
+pub fn apply_upscale_passes_owned(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    passes: &[UpscalePass],
+) -> (u32, u32, Vec<u8>, u32, UpscaleFilter) {
     let mut width = width;
     let mut height = height;
     let mut rgba = rgba;
     let mut scale_factor = 1u32;
     let mut last_filter = UpscaleFilter::None;
 
-    for filter in passes.iter().copied().filter(|filter| !matches!(filter, UpscaleFilter::None)) {
-        let (next_width, next_height, next_rgba) = filter.apply(width, height, &rgba);
+    for pass in passes.iter().copied().filter(|pass| !matches!(pass.filter, UpscaleFilter::None)) {
+        let (next_width, next_height, next_rgba) = pass.apply_owned(width, height, rgba);
         width = next_width;
         height = next_height;
         rgba = next_rgba;
-        scale_factor = scale_factor.saturating_mul(filter.scale_factor());
-        last_filter = filter;
+        scale_factor = scale_factor.saturating_mul(pass.scale_factor());
+        last_filter = pass.filter;
     }
 
     (width, height, rgba, scale_factor, last_filter)
@@ -666,7 +842,7 @@ pub fn apply_filter_passes_owned(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_filter_passes, UpscaleFilter};
+    use super::{apply_filter_passes, apply_upscale_passes, UpscaleFilter, UpscalePass, UpscalePassParams};
 
     #[test]
     fn vibrance_boost_preserves_dimensions_and_alpha() {
@@ -732,5 +908,19 @@ mod tests {
             assert_eq!(pixels.len(), rgba.len());
             assert_eq!(pixels.chunks_exact(4).map(|pixel| pixel[3]).collect::<Vec<_>>(), vec![11, 22, 33, 44]);
         }
+    }
+
+    #[test]
+    fn parameterized_pass_uses_custom_values() {
+        let rgba = [128, 96, 96, 77];
+        let pass = UpscalePass {
+            filter: UpscaleFilter::Vibrance30,
+            params: UpscalePassParams::ColorFactor { factor: 0.05 },
+        };
+        let (_, _, custom, _, _) = apply_upscale_passes(1, 1, &rgba, &[pass]);
+        let (_, _, preset, _, _) = apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Vibrance30]);
+
+        assert_eq!(custom[3], 77);
+        assert_ne!(custom, preset);
     }
 }

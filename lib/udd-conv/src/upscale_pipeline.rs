@@ -2,11 +2,13 @@ use image_postprocess::palette::{
     palette_safe_upscale, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
-use image_postprocess::upscaling::UpscaleFilter;
+use image_postprocess::upscaling::{
+    UpscaleFilter, UpscalePass as FilterUpscalePass, UpscalePassParams,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UpscalePass {
-    Filter(UpscaleFilter),
+    Filter(FilterUpscalePass),
     PaletteSnapStrict,
     PaletteSnapRampAware,
     PaletteSnapExpanded { max_derived_colors: usize },
@@ -14,14 +16,18 @@ pub enum UpscalePass {
 
 impl From<UpscaleFilter> for UpscalePass {
     fn from(value: UpscaleFilter) -> Self {
-        Self::Filter(value)
+        Self::Filter(FilterUpscalePass::from(value))
     }
 }
 
 impl UpscalePass {
+    pub fn parameterized_filter(filter: UpscaleFilter, params: UpscalePassParams) -> Self {
+        Self::Filter(FilterUpscalePass { filter, params })
+    }
+
     pub fn filter(self) -> Option<UpscaleFilter> {
         match self {
-            Self::Filter(filter) => Some(filter),
+            Self::Filter(pass) => Some(pass.filter),
             Self::PaletteSnapStrict
             | Self::PaletteSnapRampAware
             | Self::PaletteSnapExpanded { .. } => None,
@@ -106,7 +112,12 @@ pub fn apply_upscale_passes_owned(
             }
         }
 
-        let (next_width, next_height, next_rgba) = filter.apply(width, height, &rgba);
+        let (next_width, next_height, next_rgba) = match pass {
+            UpscalePass::Filter(pass) => pass.apply_owned(width, height, rgba),
+            UpscalePass::PaletteSnapStrict
+            | UpscalePass::PaletteSnapRampAware
+            | UpscalePass::PaletteSnapExpanded { .. } => unreachable!(),
+        };
         width = next_width;
         height = next_height;
         rgba = next_rgba;
