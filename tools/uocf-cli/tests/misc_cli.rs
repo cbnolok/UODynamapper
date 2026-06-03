@@ -131,6 +131,8 @@ fn multimap_tool_converts_dds_to_rle_with_crop() {
         .arg("4")
         .arg("--edge-threshold")
         .arg("1")
+        .arg("--style")
+        .arg("edge")
         .output()
         .expect("run multimap dds-to-rle");
 
@@ -138,6 +140,63 @@ fn multimap_tool_converts_dds_to_rle_with_crop() {
     let image = multimap_rle::load_rle(&rle_path).expect("read output rle");
     assert_eq!(image.width, 4);
     assert_eq!(image.height, 4);
+    let black_pixels = image
+        .pixels
+        .iter()
+        .filter(|&&pixel| pixel == BLACK_PIXEL)
+        .count();
+    assert!(black_pixels > 0);
+    assert!(black_pixels < image.pixels.len());
+}
+
+#[test]
+fn multimap_tool_converts_dds_to_classic_style_rle() {
+    let temp = TempDir::new("multimap-dds-classic-rle");
+    let dds_path = temp.path().join("facet.dds");
+    let rle_path = temp.path().join("multimap.rle");
+    write_rgba_dds(
+        &dds_path,
+        6,
+        6,
+        &[
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 80, 120, 70, 255, 80, 120,
+            70, 255, 80, 120, 70, 255,
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 80, 120, 70, 255, 80, 120,
+            70, 255, 80, 120, 70, 255,
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 80, 120, 70, 255, 80, 120,
+            70, 255, 80, 120, 70, 255,
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 120, 110, 100, 255, 120, 110,
+            100, 255, 120, 110, 100, 255,
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 120, 110, 100, 255, 120, 110,
+            100, 255, 120, 110, 100, 255,
+            20, 60, 120, 255, 20, 60, 120, 255, 20, 60, 120, 255, 120, 110, 100, 255, 120, 110,
+            100, 255, 120, 110, 100, 255,
+        ],
+    );
+
+    let output = multimap_tool()
+        .arg("dds-to-rle")
+        .arg("--input")
+        .arg(&dds_path)
+        .arg("--output")
+        .arg(&rle_path)
+        .arg("--source-width")
+        .arg("6")
+        .arg("--source-height")
+        .arg("6")
+        .arg("--output-width")
+        .arg("6")
+        .arg("--output-height")
+        .arg("6")
+        .arg("--edge-threshold")
+        .arg("1")
+        .output()
+        .expect("run multimap classic dds-to-rle");
+
+    assert!(output.status.success());
+    let image = multimap_rle::load_rle(&rle_path).expect("read output rle");
+    assert_eq!(image.width, 6);
+    assert_eq!(image.height, 6);
     let black_pixels = image
         .pixels
         .iter()

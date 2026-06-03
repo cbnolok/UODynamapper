@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use uocf::classic::multimap_rle;
 
@@ -66,7 +66,18 @@ enum Commands {
         /// Extra ink dilation radius in output pixels.
         #[arg(long, default_value_t = 0)]
         line_radius: u32,
+        /// Rendering style used to turn the aerial image into monochrome ink.
+        #[arg(long, value_enum, default_value_t = MultimapStyle::Classic)]
+        style: MultimapStyle,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MultimapStyle {
+    /// First-pass edge extraction from the aerial render.
+    Edge,
+    /// Symbolic hand-drawn style closer to Classic Client multimap.rle.
+    Classic,
 }
 
 fn main() -> eyre::Result<()> {
@@ -107,6 +118,7 @@ fn main() -> eyre::Result<()> {
             output_height,
             edge_threshold,
             line_radius,
+            style,
         } => {
             let decoded = load_dds_rgba(&input)?;
             let crop = multimap_default_rect(
@@ -120,17 +132,26 @@ fn main() -> eyre::Result<()> {
                 output_height,
             )?;
             let samples = resample_rgb(&decoded, crop, output_width, output_height)?;
-            let pixels = sketch_multimap_pixels(
-                &samples,
-                output_width,
-                output_height,
-                edge_threshold,
-                line_radius,
-            )?;
+            let pixels = match style {
+                MultimapStyle::Edge => edge_multimap_pixels(
+                    &samples,
+                    output_width,
+                    output_height,
+                    edge_threshold,
+                    line_radius,
+                )?,
+                MultimapStyle::Classic => classic_multimap_pixels(
+                    &samples,
+                    output_width,
+                    output_height,
+                    edge_threshold,
+                    line_radius,
+                )?,
+            };
             let image = multimap_rle::MultimapRleImage::new(output_width, output_height, pixels)?;
             multimap_rle::save_rle(&output, &image)?;
             println!(
-                "Converted DDS '{}' crop {}x{}+{},{} to {}x{} multimap RLE '{}'.",
+                "Converted DDS '{}' crop {}x{}+{},{} to {}x{} {:?} multimap RLE '{}'.",
                 input.display(),
                 crop.width,
                 crop.height,
@@ -138,6 +159,7 @@ fn main() -> eyre::Result<()> {
                 crop.y,
                 output_width,
                 output_height,
+                style,
                 output.display()
             );
         }
@@ -293,7 +315,7 @@ fn average_rgba(image: &DecodedRgba, x0: u32, y0: u32, x1: u32, y1: u32) -> [u8;
     ]
 }
 
-fn sketch_multimap_pixels(
+fn edge_multimap_pixels(
     samples: &[[u8; 3]],
     width: u32,
     height: u32,
@@ -337,6 +359,210 @@ fn sketch_multimap_pixels(
         }
     }
     Ok(pixels)
+}
+
+fn classic_multimap_pixels(
+    samples: &[[u8; 3]],
+    width: u32,
+    height: u32,
+    edge_threshold: u16,
+    line_radius: u32,
+) -> eyre::Result<Vec<u8>> {
+    let pixel_count = output_len(width, height)?;
+    if samples.len() != pixel_count {
+        eyre::bail!(
+            "sample buffer has {} pixels, expected {} for {}x{}",
+            samples.len(),
+            pixel_count,
+            width,
+            height
+        );
+    }
+
+    let mut water = vec![false; pixel_count];
+    for (index, &rgb) in samples.iter().enumerate() {
+        water[index] = is_water(rgb);
+    }
+
+    let mut coast = vec![false; pixel_count];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let here_water = water[index];
+            let min_x = x.saturating_sub(1);
+            let max_x = (x + 1).min(width - 1);
+            let min_y = y.saturating_sub(1);
+            let max_y = (y + 1).min(height - 1);
+            for ny in min_y..=max_y {
+                for nx in min_x..=max_x {
+                    if nx == x && ny == y {
+                        continue;
+                    }
+                    if water[(ny * width + nx) as usize] != here_water {
+                        coast[index] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut pixels = vec![multimap_rle::WHITE_PIXEL; pixel_count];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let rgb = samples[index];
+            let edge = edge_strength(samples, width, height, x, y);
+
+            if coast[index] {
+                ink(&mut pixels, width, height, x, y, line_radius);
+                continue;
+            }
+
+            if water[index] {
+                if near_coast(&coast, width, height, x, y, 3) && hash2(x, y, 0x71) % 7 == 0 {
+                    ink(&mut pixels, width, height, x, y, 0);
+                }
+                continue;
+            }
+
+            if edge >= edge_threshold.saturating_mul(2) && hash2(x, y, 0x19) % 3 != 0 {
+                ink(&mut pixels, width, height, x, y, 0);
+                continue;
+            } else if edge >= edge_threshold && hash2(x, y, 0x41) % 4 == 0 {
+                ink(&mut pixels, width, height, x, y, 0);
+                continue;
+            }
+
+            match terrain_mark(rgb) {
+                TerrainMark::Mountain => {
+                    if mountain_hatch(x, y) && edge >= edge_threshold / 2 {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    } else if hash2(x, y, 0x53) % 89 == 0 {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    }
+                }
+                TerrainMark::Forest => {
+                    if forest_dot(x, y) {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    }
+                }
+                TerrainMark::Dry => {
+                    if dry_dash(x, y) {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    }
+                }
+                TerrainMark::Open => {
+                    if edge >= edge_threshold && hash2(x, y, 0x2d) % 5 == 0 {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    } else if hash2(x, y, 0x3b) % 137 == 0 {
+                        ink(&mut pixels, width, height, x, y, 0);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(pixels)
+}
+
+#[derive(Clone, Copy)]
+enum TerrainMark {
+    Open,
+    Mountain,
+    Forest,
+    Dry,
+}
+
+fn is_water(rgb: [u8; 3]) -> bool {
+    let [r, g, b] = rgb;
+    let blue_dominant = u16::from(b) > u16::from(r) + 12 && u16::from(b) > u16::from(g) + 6;
+    let dark_blue = b > 40 && r < 95 && g < 120 && b >= g;
+    blue_dominant || dark_blue
+}
+
+fn terrain_mark(rgb: [u8; 3]) -> TerrainMark {
+    let [r, g, b] = rgb;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let saturation = max - min;
+    let brightness = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
+
+    if saturation < 30 && brightness < 142 {
+        TerrainMark::Mountain
+    } else if g > r.saturating_add(7) && g > b.saturating_add(5) && brightness < 170 {
+        TerrainMark::Forest
+    } else if r > b.saturating_add(16) && g > b.saturating_add(10) && brightness > 92 {
+        TerrainMark::Dry
+    } else {
+        TerrainMark::Open
+    }
+}
+
+fn mountain_hatch(x: u32, y: u32) -> bool {
+    let cell_x = x / 8;
+    let cell_y = y / 7;
+    let local_x = x % 8;
+    let local_y = y % 7;
+    if hash2(cell_x, cell_y, 0xa5) % 4 == 0 {
+        return false;
+    }
+    let offset = hash2(cell_x, cell_y, 0xb3) % 2;
+    local_y == local_x / 2 + offset || local_y == (7 - local_x) / 2 + offset
+}
+
+fn forest_dot(x: u32, y: u32) -> bool {
+    let cell_x = x / 3;
+    let cell_y = y / 3;
+    let local_x = x % 3;
+    let local_y = y % 3;
+    hash2(cell_x, cell_y, 0xc7) % 9 == 0 && (local_x == 1 || local_y == 1)
+}
+
+fn dry_dash(x: u32, y: u32) -> bool {
+    let cell_x = x / 5;
+    let cell_y = y / 4;
+    let local_x = x % 5;
+    let local_y = y % 4;
+    hash2(cell_x, cell_y, 0xdd) % 13 == 0 && local_y == 1 && local_x <= 2
+}
+
+fn near_coast(coast: &[bool], width: u32, height: u32, x: u32, y: u32, radius: u32) -> bool {
+    let min_x = x.saturating_sub(radius);
+    let max_x = (x + radius).min(width - 1);
+    let min_y = y.saturating_sub(radius);
+    let max_y = (y + radius).min(height - 1);
+    for ny in min_y..=max_y {
+        for nx in min_x..=max_x {
+            if coast[(ny * width + nx) as usize] {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn ink(pixels: &mut [u8], width: u32, height: u32, x: u32, y: u32, radius: u32) {
+    let min_x = x.saturating_sub(radius);
+    let max_x = (x + radius).min(width - 1);
+    let min_y = y.saturating_sub(radius);
+    let max_y = (y + radius).min(height - 1);
+    for ink_y in min_y..=max_y {
+        for ink_x in min_x..=max_x {
+            pixels[(ink_y * width + ink_x) as usize] = multimap_rle::BLACK_PIXEL;
+        }
+    }
+}
+
+fn hash2(x: u32, y: u32, seed: u32) -> u32 {
+    let mut value = x
+        .wrapping_mul(0x9e37_79b1)
+        .wrapping_add(y.wrapping_mul(0x85eb_ca6b))
+        .wrapping_add(seed.wrapping_mul(0xc2b2_ae35));
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^ (value >> 16)
 }
 
 fn edge_strength(samples: &[[u8; 3]], width: u32, height: u32, x: u32, y: u32) -> u16 {
