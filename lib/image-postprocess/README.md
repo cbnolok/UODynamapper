@@ -13,6 +13,7 @@ textures are encoded and packed into `.uddp` packages. It is consumed by
 | CatmullRom | Catmull-Rom bicubic. |
 | Lanczos3 | Lanczos with radius 3. |
 | xBRZ | Pixel-art upscaler (via `xbrz-rs`). |
+| Super-xBR | Hyllian Super-xBR 2x pixel-art upscaler. |
 | lqx | lq2x-style pixel-art upscaler. |
 | hqx | hq2x/hq3x/hq4x (via C++ translation). |
 | epx | EPX / Scale2x. |

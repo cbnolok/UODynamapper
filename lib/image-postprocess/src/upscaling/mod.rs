@@ -4,6 +4,7 @@
 //! - Kopf-Lischinski: https://github.com/vvanirudh/Pixel-Art
 //! - HQx: https://github.com/brunexgeek/hqx
 //! - xBRZ: https://docs.rs/xbrz-rs/latest/xbrz/
+//! - Super-xBR: https://github.com/hansonw/super-xbr
 //! - SaI/SuperSaI/SuperEagle: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/2xsai.c
 //! - LQ2x: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c
 //! - EPX/Scale2x: https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms#Scale2x
@@ -18,6 +19,7 @@ pub mod epx;
 pub mod nedi;
 pub mod lq;
 pub mod mmpx;
+pub mod super_xbr;
 
 use image::imageops::{self, FilterType};
 use image::{ImageBuffer, Rgba};
@@ -69,6 +71,7 @@ pub enum UpscaleFilter {
     Xbr2x,
     Xbr3x,
     Xbr4x,
+    SuperXbr2x,
     Mmpx2x,
     Mmpx4x,
 }
@@ -108,6 +111,7 @@ impl UpscaleFilter {
             Self::Xbr2x => 2,
             Self::Xbr3x => 3,
             Self::Xbr4x => 4,
+            Self::SuperXbr2x => 2,
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
@@ -217,6 +221,7 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 xbr::apply_xbr(width, height, rgba, scale).2
             }
+            Self::SuperXbr2x => super_xbr::apply_super_xbr(width, height, rgba).2,
             Self::Nedi2x => nedi::apply_nedi(width, height, rgba).2,
             Self::Mmpx2x | Self::Mmpx4x => {
                 let scale = (target_width / width).max(1);

@@ -92,6 +92,7 @@ pub enum UpscalePreviewAlgorithm {
     HqTrue,
     Epx,
     Xbr,
+    SuperXbr,
     Mmpx,
 }
 
@@ -121,6 +122,7 @@ impl UpscalePreviewAlgorithm {
             Self::HqTrue,
             Self::Epx,
             Self::Xbr,
+            Self::SuperXbr,
             Self::Mmpx,
         ]
     }
@@ -144,6 +146,7 @@ impl UpscalePreviewAlgorithm {
             Self::HqTrue => "hqx true",
             Self::Epx => "EPX",
             Self::Xbr => "xBR",
+            Self::SuperXbr => "Super-xBR",
             Self::Mmpx => "MMPX",
         }
     }
@@ -152,6 +155,7 @@ impl UpscalePreviewAlgorithm {
         match self {
             Self::None => &[1],
             Self::SuperSai | Self::Nedi | Self::TwoSai | Self::SuperEagle => &[2],
+            Self::SuperXbr => &[2],
             Self::Mmpx => &[2, 4],
             _ => &[2, 3, 4],
         }
@@ -206,6 +210,7 @@ impl UpscalePreviewAlgorithm {
             (Self::Xbr, 2) => UpscaleFilter::Xbr2x,
             (Self::Xbr, 3) => UpscaleFilter::Xbr3x,
             (Self::Xbr, _) => UpscaleFilter::Xbr4x,
+            (Self::SuperXbr, _) => UpscaleFilter::SuperXbr2x,
             (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
             (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
         }
@@ -297,6 +302,7 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Xbr2x => "xbr2x",
         UpscaleFilter::Xbr3x => "xbr3x",
         UpscaleFilter::Xbr4x => "xbr4x",
+        UpscaleFilter::SuperXbr2x => "super-xbr2x",
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
     }

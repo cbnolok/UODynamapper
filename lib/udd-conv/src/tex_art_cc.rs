@@ -248,6 +248,7 @@ pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
         UpscaleFilter::Epx2x | UpscaleFilter::Epx3x | UpscaleFilter::Epx4x => 15,
         UpscaleFilter::Xbr2x | UpscaleFilter::Xbr3x | UpscaleFilter::Xbr4x => 16,
         UpscaleFilter::Mmpx2x | UpscaleFilter::Mmpx4x => 17,
+        UpscaleFilter::SuperXbr2x => 18,
     }
 }
 
