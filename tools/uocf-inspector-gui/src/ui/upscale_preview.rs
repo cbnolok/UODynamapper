@@ -50,71 +50,77 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
             });
 
             ui.separator();
-            passes_changed |= pass_controls(ui, &mut passes);
-
-            let filters = filters_for_passes(&passes);
-            let enum_values = enum_pass_values(&filters);
-            let cli_values = cli_pass_values(&filters);
             ui.horizontal(|ui| {
-                ui.label("Passes:");
-                ui.monospace(enum_values.as_str());
-                if ui.button("Copy Enums").clicked() {
-                    ui.ctx().copy_text(enum_values.clone());
-                }
-                if ui.button("Copy CLI Values").clicked() {
-                    ui.ctx().copy_text(cli_values.clone());
-                }
-                ui.label(format!("Total {}x", total_scale(&filters)));
-            });
+                ui.vertical(|ui| {
+                    passes_changed |= pass_controls(ui, &mut passes);
 
-            ui.horizontal(|ui| {
-                ui.label("CLI:");
-                ui.monospace(cli_values.as_str());
-            });
-
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Reset Zoom").clicked() {
-                        zoom = 1.0;
-                    }
-                    ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
-                    if ui.button("+").clicked() {
-                        zoom = (zoom * 1.2).min(20.0);
-                    }
-                    if ui.button("-").clicked() {
-                        zoom = (zoom / 1.2).max(0.1);
-                    }
-                    ui.label(format!("{:.1}x", zoom));
-                });
-            });
-
-            egui::ScrollArea::both().show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(texture) = &original_texture {
-                        ui.vertical(|ui| {
-                            ui.label("Original");
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                source.width as f32 * zoom,
-                                source.height as f32 * zoom,
-                            )));
-                        });
-                    }
-
-                    ui.add_space(20.0);
-
-                    ui.vertical(|ui| {
-                        ui.label("Upscaled");
-                        if let Some(texture) = &upscaled_texture {
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                upscaled_size[0] as f32 * zoom,
-                                upscaled_size[1] as f32 * zoom,
-                            )));
-                        } else if is_computing {
-                            ui.label("Computing...");
+                    let filters = filters_for_passes(&passes);
+                    let enum_values = enum_pass_values(&filters);
+                    let cli_values = cli_pass_values(&filters);
+                    ui.horizontal(|ui| {
+                        ui.label("Passes:");
+                        ui.monospace(enum_values.as_str());
+                        if ui.button("Copy Enums").clicked() {
+                            ui.ctx().copy_text(enum_values.clone());
                         }
+                        if ui.button("Copy CLI Values").clicked() {
+                            ui.ctx().copy_text(cli_values.clone());
+                        }
+                        ui.label(format!("Total {}x", total_scale(&filters)));
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("CLI:");
+                        ui.monospace(cli_values.as_str());
+                    });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("-").clicked() {
+                            zoom = (zoom / 1.2).max(0.1);
+                        }
+                        if ui.button("+").clicked() {
+                            zoom = (zoom * 1.2).min(20.0);
+                        }
+                        ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
+                        if ui.button("Reset Zoom").clicked() {
+                            zoom = 1.0;
+                        }
+                        ui.label(format!("{:.1}x", zoom));
                     });
                 });
+
+                ui.separator();
+
+                egui::ScrollArea::both()
+                    .id_salt("uocf_upscale_preview_images")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if let Some(texture) = &original_texture {
+                                ui.vertical(|ui| {
+                                    ui.label("Original");
+                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                        source.width as f32 * zoom,
+                                        source.height as f32 * zoom,
+                                    )));
+                                });
+                            }
+
+                            ui.add_space(20.0);
+
+                            ui.vertical(|ui| {
+                                ui.label("Upscaled");
+                                if let Some(texture) = &upscaled_texture {
+                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                        upscaled_size[0] as f32 * zoom,
+                                        upscaled_size[1] as f32 * zoom,
+                                    )));
+                                } else if is_computing {
+                                    ui.label("Computing...");
+                                }
+                            });
+                        });
+                    });
             });
         });
 
