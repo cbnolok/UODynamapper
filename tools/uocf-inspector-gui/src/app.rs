@@ -448,6 +448,31 @@ fn load_optional_gumps_package(
     }
 }
 
+fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
+    let direct_path = base_path.join(file_name);
+    if direct_path.exists() {
+        return Some(direct_path);
+    }
+
+    let entries = std::fs::read_dir(base_path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case(file_name))
+            .unwrap_or(false)
+        {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
 pub struct UopInspectorApp {
     pub settings: AppSettings,
     pub logs: Vec<String>,
@@ -927,8 +952,9 @@ impl UopInspectorApp {
                 }
             }
 
-            let hues_path = ec_base_path.join("hues.uop");
-            if hues_path.exists() {
+            if let Some(hues_path) =
+                find_client_file_case_insensitive(&ec_base_path, "hues.uop")
+            {
                 self.log(format!("Parsing hues.uop from {}", hues_path.display()));
                 match EcHuePackage::load(&hues_path) {
                     Ok(hues) => {
@@ -992,8 +1018,17 @@ impl UopInspectorApp {
                 "waypoint.uop",
             ];
             for uop_name in ec_uops {
-                let uop_path = ec_base_path.join(uop_name);
-                if uop_path.exists() {
+                if let Some(uop_path) =
+                    find_client_file_case_insensitive(&ec_base_path, uop_name)
+                {
+                    if self
+                        .uop_cache
+                        .loaded_uops
+                        .iter()
+                        .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                    {
+                        continue;
+                    }
                     self.log(format!("Loading {} into cache", uop_name));
                     let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop") {
                         LoadMode::Lazy
@@ -2173,6 +2208,28 @@ mod tests {
         assert_eq!(app.selected_uop_idx, None);
         assert_eq!(app.selected_file_hash, None);
         assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn find_client_file_case_insensitive_accepts_ec_hues_casing() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "uocf_inspector_hues_case_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("Hues.uop");
+        std::fs::write(&path, []).unwrap();
+
+        assert_eq!(
+            find_client_file_case_insensitive(&dir, "hues.uop").as_deref(),
+            Some(path.as_path())
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
