@@ -34,6 +34,94 @@ All algorithms are translated to Rust and use SIMD where available via the
 
 - The `apply_filter_passes_owned` function is the main entry point, taking an
   image and a sequence of `UpscaleFilter` passes.
+- The `palette` module provides the palette-safe sprite pipeline. It decodes
+  source RGBA into indexed semantics, normalizes through a canonical palette,
+  runs a scaler with explicit transparency rules, and restricts the final
+  raster through `StrictSnap`, `RampAwareSnap`, `ExpandedPalette`, or `NoSnap`.
 - Upscale preview is available in `uocf-inspector-gui` for visual comparison.
 - Algorithm implementations are adapted from the sources listed in the main
   [README.md](../../README.md) (Algorithms section).
+
+## Palette-safe sprite pipeline
+
+Ultima Online art is treated as palette-constrained even when decoded as RGBA.
+The safe pipeline keeps four concepts separate:
+
+- source palette colors: stable `ColorId`s backed by canonical display colors;
+- transparency topology: alpha and color-key state, never a color to average;
+- working colors: temporary RGBA produced by an upscaler;
+- final palette restriction: deterministic snapping and diagnostics.
+
+Pipeline pseudocode:
+
+```text
+palette = source_palette or build_canonical_palette(decoded_rgba)
+indexed = decode_rgba_to_indexed_pixels(decoded_rgba, palette, transparency_policy)
+indexed = normalize(indexed, remap/collapse/dither/ramp options)
+working_rgba = scaler.scale(indexed, palette_context)
+if output_alpha == SourceNearest:
+    restore transparency topology from nearest source pixels
+if snap_mode != NoSnap:
+    snap each opaque candidate to strict, ramp-aware, or expanded palette
+    clean isolated illegal pixels near edges
+diagnostics = stage color counts, off-palette candidates, snap histogram,
+              alpha-edge pixels, dither cells, ramp/forbidden violations,
+              per-algorithm timings
+```
+
+Palette restriction happens in three places. Before upscaling, decoded colors
+are remapped to canonical palette entries so equivalent RGB values share stable
+ids. During scaling, algorithms that consume `PaletteSemanticContext` should use
+palette-aware equivalence, ramp, transition, and transparency checks for edge
+classification instead of naive RGBA comparisons. After scaling, every opaque
+working color is restricted by the selected snap policy unless `NoSnap` is used
+for debugging.
+
+Default transparency handling sanitizes hidden RGB in transparent pixels and
+projects output alpha from nearest source topology. This prevents border halo
+colors from transparent texels participating in interpolation. Blending across
+transparency should only be enabled by an explicit policy because it changes the
+sprite silhouette.
+
+Dithering policy is explicit. `Off` treats the image normally. `DetectOnly`
+emits diagnostics without modifying pixels. `CollapseToRamp` is for assets where
+checkerboard shading should become a smoother ramp before scaling. `PreserveButConstrain`
+keeps dither structure while forcing generated colors back into the relevant
+palette/ramp. Dither detection is intentionally local and deterministic.
+
+Algorithm guidance:
+
+- EPX / Scale2x / Eagle: best fit for strict palette output because they mostly
+  copy source colors. Use `ImmediateSnap` or `StrictSnap`; compare by `ColorId`
+  and transparency state, not RGBA.
+- HQx: edge masks benefit from perceptual palette distance. Use
+  `HybridSnap`: snap near hard edges immediately, defer smooth interiors, then
+  final snap.
+- xBR / xBRZ: strong edge classifiers but can produce blended colors. Use
+  ramp-aware comparisons and final `RampAwareSnap`; strict mode is useful for
+  silhouettes but may flatten ramps.
+- NEDI: fundamentally interpolation-heavy. Keep it contained behind
+  `DeferredSnap` or `NoSnap` comparison runs; strict palette output can look
+  unstable unless ramp metadata is strong.
+- Kopf-Lischinski depixelization: vector/region reconstruction conflicts with
+  strict palette preservation when it optimizes smooth boundaries. Use it for
+  comparison, or constrain generated fills to region source colors and snap
+  boundaries at the end.
+
+Recommended defaults:
+
+| Asset class | Snap | Intermediate | Dither |
+| ----------- | ---- | ------------ | ------ |
+| Tiny humanoid sprites | `StrictSnap` or `RampAwareSnap` | `HybridSnap` | `PreserveButConstrain` |
+| Terrain / ground tiles | `ExpandedPalette` with a small bound | `DeferredSnap` | `CollapseToRamp` when ramps are known |
+| UI art / icons | `StrictSnap` | `ImmediateSnap` | `Off` or `DetectOnly` |
+| Heavily dithered assets | `RampAwareSnap` | `HybridSnap` | `PreserveButConstrain` |
+
+Validation should include unit tests for strict output palette membership,
+transparent-border topology, deterministic expanded palette generation, and
+diagnostic counters. Property tests should generate small indexed images and
+assert deterministic output, no off-palette opaque pixels under strict/ramp
+policies, no hidden RGB in transparent output, and no increase in forbidden
+transitions after cleanup. Benchmarks should cover representative 36x36,
+48x86, and terrain tile inputs and record total pipeline time plus per-scaler
+timings from `PaletteDiagnostics`.
