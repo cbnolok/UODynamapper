@@ -21,12 +21,13 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
     let mut passes = app.upscale_preview_passes.clone();
     let mut zoom = app.upscale_preview_zoom;
     let mut open = true;
+    let mut frame_open = true;
     let mut passes_changed = false;
 
     egui::Window::new("Upscale Preview")
         .open(&mut open)
         .resizable(true)
-        .default_size([1100.0, 780.0])
+        .default_size([760.0, 320.0])
         .show(ctx, |ui| {
             let Some(source) = source.as_ref() else {
                 ui.label("No image selected.");
@@ -50,48 +51,50 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
             });
 
             ui.separator();
+            passes_changed |= pass_controls(ui, &mut passes);
+
+            let filters = filters_for_passes(&passes);
+            let enum_values = enum_pass_values(&filters);
+            let cli_values = cli_pass_values(&filters);
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    passes_changed |= pass_controls(ui, &mut passes);
+                ui.label("Passes:");
+                ui.monospace(enum_values.as_str());
+                if ui.button("Copy Enums").clicked() {
+                    ui.ctx().copy_text(enum_values.clone());
+                }
+                if ui.button("Copy CLI Values").clicked() {
+                    ui.ctx().copy_text(cli_values.clone());
+                }
+                ui.label(format!("Total {}x", total_scale(&filters)));
+            });
 
-                    let filters = filters_for_passes(&passes);
-                    let enum_values = enum_pass_values(&filters);
-                    let cli_values = cli_pass_values(&filters);
-                    ui.horizontal(|ui| {
-                        ui.label("Passes:");
-                        ui.monospace(enum_values.as_str());
-                        if ui.button("Copy Enums").clicked() {
-                            ui.ctx().copy_text(enum_values.clone());
-                        }
-                        if ui.button("Copy CLI Values").clicked() {
-                            ui.ctx().copy_text(cli_values.clone());
-                        }
-                        ui.label(format!("Total {}x", total_scale(&filters)));
-                    });
+            ui.horizontal(|ui| {
+                ui.label("CLI:");
+                ui.monospace(cli_values.as_str());
+            });
 
-                    ui.horizontal(|ui| {
-                        ui.label("CLI:");
-                        ui.monospace(cli_values.as_str());
-                    });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("-").clicked() {
+                    zoom = (zoom / 1.2).max(0.1);
+                }
+                if ui.button("+").clicked() {
+                    zoom = (zoom * 1.2).min(20.0);
+                }
+                ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
+                if ui.button("Reset Zoom").clicked() {
+                    zoom = 1.0;
+                }
+                ui.label(format!("{:.1}x", zoom));
+            });
+        });
 
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("-").clicked() {
-                            zoom = (zoom / 1.2).max(0.1);
-                        }
-                        if ui.button("+").clicked() {
-                            zoom = (zoom * 1.2).min(20.0);
-                        }
-                        ui.add(egui::Slider::new(&mut zoom, 0.1..=20.0).logarithmic(true));
-                        if ui.button("Reset Zoom").clicked() {
-                            zoom = 1.0;
-                        }
-                        ui.label(format!("{:.1}x", zoom));
-                    });
-                });
-
-                ui.separator();
-
+    if let Some(source) = source.as_ref() {
+        egui::Window::new("Upscale Preview Frame")
+            .open(&mut frame_open)
+            .resizable(true)
+            .default_size([900.0, 700.0])
+            .show(ctx, |ui| {
                 egui::ScrollArea::both()
                     .id_salt("uocf_upscale_preview_images")
                     .show(ui, |ui| {
@@ -122,9 +125,9 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
                         });
                     });
             });
-        });
+    }
 
-    if !open {
+    if !open || !frame_open {
         app.show_upscale_preview = false;
     }
 
