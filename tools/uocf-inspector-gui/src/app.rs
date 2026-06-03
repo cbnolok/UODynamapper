@@ -17,7 +17,7 @@ use uocf::enhanced::localized_strings::LocalizedStringsPackage;
 use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
-use uocf::enhanced::tileart::TileArtEntry;
+use uocf::enhanced::tileart::{PropertyKey, TaeAnimationAppearance, TaeSittingAnimation, TileArtEntry};
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
@@ -372,6 +372,32 @@ pub struct TileArtFileEntry {
     pub entry: TileArtEntry,
 }
 
+#[derive(Clone)]
+pub struct CcTileDataRow {
+    pub id: String,
+    pub kind: &'static str,
+    pub name: String,
+    pub flags: String,
+    pub height_or_texture: String,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct TileArtDisplayRow {
+    pub filename_hash: u64,
+    pub tile_id: String,
+    pub old_id: String,
+    pub type_name: &'static str,
+    pub height: String,
+    pub flags: String,
+    pub ec_rect: String,
+    pub cc_rect: String,
+    pub texture_summary: String,
+    pub sitting_summary: String,
+    pub appearance_summary: String,
+    pub search_text: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct SoundListEntry {
     pub slot_id: u32,
@@ -463,6 +489,197 @@ fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
         }
     }
     entries
+}
+
+fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
+    let mut rows = Vec::with_capacity(tiledata.land_tiles().len() + tiledata.item_tiles().len());
+
+    for tile in tiledata.land_tiles() {
+        let id = tile.tile_id.to_string();
+        let name = tile.name_ascii().to_string();
+        let flags = format!("{:08X}", tile.flags.internal_flags);
+        let height_or_texture = tile.texture_id.to_string();
+        let search_text = format!(
+            "{} land {} {} {}",
+            id,
+            name.to_lowercase(),
+            flags.to_lowercase(),
+            height_or_texture
+        );
+        rows.push(CcTileDataRow {
+            id,
+            kind: "Land",
+            name,
+            flags,
+            height_or_texture,
+            search_text,
+        });
+    }
+
+    for tile in tiledata.item_tiles() {
+        let id = tile.tile_id.to_string();
+        let name = tile.name_ascii().to_string();
+        let flags = format!("{:08X}", tile.flags.internal_flags);
+        let height_or_texture = tile.height_raw().to_string();
+        let search_text = format!(
+            "{} item {} {} {}",
+            id,
+            name.to_lowercase(),
+            flags.to_lowercase(),
+            height_or_texture
+        );
+        rows.push(CcTileDataRow {
+            id,
+            kind: "Item",
+            name,
+            flags,
+            height_or_texture,
+            search_text,
+        });
+    }
+
+    rows
+}
+
+fn collect_tileart_display_rows(
+    entries: &[TileArtFileEntry],
+    string_dictionary: Option<&UoStringDictionary>,
+) -> Vec<TileArtDisplayRow> {
+    entries
+        .iter()
+        .map(|file| {
+            let entry = &file.entry;
+            let tile_id = entry.tile_id.to_string();
+            let old_id = entry.old_id.to_string();
+            let type_name = tileart_type_name(entry.type_val);
+            let height = tileart_property(entry, PropertyKey::Height).unwrap_or(0).to_string();
+            let flags = format!("{:016X}", entry.flags1.bits());
+            let ec_rect = format!(
+                "{},{} -> {},{} off {},{}",
+                entry.ec_img_offset.x_start,
+                entry.ec_img_offset.y_start,
+                entry.ec_img_offset.x_end,
+                entry.ec_img_offset.y_end,
+                entry.ec_img_offset.x_off,
+                entry.ec_img_offset.y_off
+            );
+            let cc_rect = format!(
+                "{},{} -> {},{} off {},{}",
+                entry.cc_img_offset.x_start,
+                entry.cc_img_offset.y_start,
+                entry.cc_img_offset.x_end,
+                entry.cc_img_offset.y_end,
+                entry.cc_img_offset.x_off,
+                entry.cc_img_offset.y_off
+            );
+            let texture_summary = tileart_texture_summary(entry, string_dictionary);
+            let sitting_summary = tileart_sitting_summary(entry.sitting.as_ref());
+            let appearance_summary = tileart_appearance_summary(&entry.appearance_vector);
+            let search_text = format!(
+                "{} {} {} {} {} {} {}",
+                tile_id,
+                old_id,
+                type_name.to_lowercase(),
+                height,
+                flags.to_lowercase(),
+                texture_summary.to_lowercase(),
+                appearance_summary.to_lowercase()
+            );
+            TileArtDisplayRow {
+                filename_hash: file.filename_hash,
+                tile_id,
+                old_id,
+                type_name,
+                height,
+                flags,
+                ec_rect,
+                cc_rect,
+                texture_summary,
+                sitting_summary,
+                appearance_summary,
+                search_text,
+            }
+        })
+        .collect()
+}
+
+fn tileart_type_name(type_val: i32) -> &'static str {
+    match type_val {
+        0 => "Static",
+        1 => "Solid",
+        2 => "Liquid",
+        _ => "Unknown",
+    }
+}
+
+fn tileart_property(entry: &TileArtEntry, key: PropertyKey) -> Option<u32> {
+    entry
+        .prop_vector1
+        .iter()
+        .chain(entry.prop_vector2.iter())
+        .find(|prop| prop.id == key as u8)
+        .map(|prop| prop.val)
+}
+
+fn tileart_texture_summary(
+    entry: &TileArtEntry,
+    string_dictionary: Option<&UoStringDictionary>,
+) -> String {
+    if let Some(dict) = string_dictionary {
+        let art_data = entry.process(dict);
+        let mut parts = Vec::new();
+        for block in art_data.texture_items {
+            for item in block {
+                parts.push(format!("{}:{:?}:{}", item.id, item.texture_type, item.path));
+            }
+        }
+        if !parts.is_empty() {
+            return parts.join(" | ");
+        }
+    }
+
+    let mut parts = Vec::new();
+    for (block_index, block) in entry.texture_vector.iter().enumerate() {
+        if block.has_texture == 1 {
+            parts.push(format!("block {}: {} refs", block_index, block.texture_items_count));
+        }
+    }
+    parts.join(" | ")
+}
+
+fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
+    if let Some(sitting) = sitting {
+        format!(
+            "yes ({}, {}, {}, {})",
+            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+        )
+    } else {
+        "no".to_string()
+    }
+}
+
+fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
+    if appearance.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut counts = [0usize; 2];
+    let mut other = 0usize;
+    for item in appearance {
+        match item.sub_type {
+            0 => counts[0] += 1,
+            1 => counts[1] += 1,
+            _ => other += 1,
+        }
+    }
+
+    format!(
+        "{} records (type0 {}, type1 {}, other {})",
+        appearance.len(),
+        counts[0],
+        counts[1],
+        other
+    )
 }
 
 fn load_optional_gumps_package(
@@ -586,6 +803,7 @@ pub struct UopInspectorApp {
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
+    pub cc_tiledata_rows: Option<Arc<Vec<CcTileDataRow>>>,
     pub cc_gumps_package: Option<Arc<GumpsPackage>>,
     pub ec_gumps_package: Option<Arc<GumpsPackage>>,
     pub cc_gumps: Option<Arc<GumpMap>>,
@@ -674,6 +892,7 @@ pub struct UopInspectorApp {
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
     pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
+    pub ec_tileart_rows: Option<Arc<Vec<TileArtDisplayRow>>>,
     pub ec_hues: Option<Arc<EcHuePackage>>,
     pub multi_collection: Option<Arc<MultiCollection>>,
 }
@@ -701,6 +920,7 @@ impl UopInspectorApp {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_tiledata_rows: None,
             cc_gumps_package: None,
             ec_gumps_package: None,
             cc_gumps: None,
@@ -731,6 +951,7 @@ impl UopInspectorApp {
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
+            ec_tileart_rows: None,
             ec_hues: None,
             multi_collection: None,
             texture_previews: HashMap::new(),
@@ -807,6 +1028,11 @@ impl UopInspectorApp {
     pub fn trigger_reload(&mut self) {
         self.log("Starting asset reload...");
         self.ec_hues = None;
+        self.client_data = None;
+        self.cc_tiledata = None;
+        self.cc_tiledata_rows = None;
+        self.ec_tileart_entries = None;
+        self.ec_tileart_rows = None;
         self.selected_ec_hue_hash = None;
         self.cliloc = None;
         self.cliloc_files.clear();
@@ -886,12 +1112,14 @@ impl UopInspectorApp {
             let loaded_tiledata = match td_res {
                 Ok(td) => {
                     let td = Arc::new(td);
+                    self.cc_tiledata_rows = Some(Arc::new(collect_cc_tiledata_rows(&td)));
                     self.cc_tiledata = Some(Arc::clone(&td));
                     Some(td)
                 }
                 Err(e) => {
                     self.log(format!("tiledata.mul unavailable: {}", e));
                     self.cc_tiledata = None;
+                    self.cc_tiledata_rows = None;
                     None
                 }
             };
@@ -1179,8 +1407,13 @@ impl UopInspectorApp {
                             }
                         }
                         entries.sort_by_key(|file| file.entry.tile_id);
+                        let rows = collect_tileart_display_rows(
+                            &entries,
+                            self.uo_string_dictionary.as_deref(),
+                        );
                         let count = entries.len();
                         self.ec_tileart_entries = Some(Arc::new(entries));
+                        self.ec_tileart_rows = Some(Arc::new(rows));
                         self.log(format!(
                             "Parsed {} tileart.uop entries ({} skipped).",
                             count, failed
@@ -2180,6 +2413,7 @@ mod tests {
             uop_cache: UopCache::new(),
             client_data: None,
             cc_tiledata: None,
+            cc_tiledata_rows: None,
             cc_gumps_package: None,
             ec_gumps_package: None,
             cc_gumps: None,
@@ -2257,6 +2491,7 @@ mod tests {
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
+            ec_tileart_rows: None,
             ec_hues: None,
             multi_collection: None,
         }

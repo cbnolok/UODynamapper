@@ -1,6 +1,7 @@
 use eframe::egui;
-use crate::app::{UopInspectorApp, ArtSource, TileMetadataSource, ViewMode};
-use uocf::enhanced::tileart::{PropertyKey, TaeAnimationAppearance, TaeSittingAnimation, TileArtEntry};
+use egui_extras::{Column, TableBuilder};
+use crate::app::{ArtSource, TileMetadataSource, UopInspectorApp, ViewMode};
+use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("tex_art_cc_list")
@@ -213,47 +214,65 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
 
 fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     ui.heading("CC TileData Inspector");
-    if let Some(tiledata) = &app.cc_tiledata {
-        let query = app.search_query.to_lowercase();
+    if let (Some(tiledata), Some(rows)) = (&app.cc_tiledata, app.cc_tiledata_rows.clone()) {
+        let query = app.search_query.trim();
+        let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
+        let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
+        let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         ui.label(format!(
             "{} land tiles, {} item tiles",
             tiledata.land_tiles().len(),
             tiledata.item_tiles().len()
         ));
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("tiledata_grid").striped(true).show(ui, |ui| {
-                ui.label("ID");
-                ui.label("Type");
-                ui.label("Name");
-                ui.label("Flags");
-                ui.label("Height/Tex");
-                ui.end_row();
-                
-                for tile in tiledata.land_tiles() {
-                    if !tiledata_row_matches(&query, tile.tile_id, tile.name_ascii()) {
-                        continue;
-                    }
-                    ui.label(tile.tile_id.to_string());
-                    ui.label("Land");
-                    ui.label(tile.name_ascii());
-                    ui.label(format!("{:08X}", tile.flags.internal_flags));
-                    ui.label(tile.texture_id.to_string());
-                    ui.end_row();
-                }
-
-                for tile in tiledata.item_tiles() {
-                    if !tiledata_row_matches(&query, tile.tile_id, tile.name_ascii()) {
-                        continue;
-                    }
-                    ui.label(tile.tile_id.to_string());
-                    ui.label("Item");
-                    ui.label(tile.name_ascii());
-                    ui.label(format!("{:08X}", tile.flags.internal_flags));
-                    ui.label(tile.height_raw().to_string());
-                    ui.end_row();
-                }
+        TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(60.0))
+            .column(Column::remainder())
+            .column(Column::auto().at_least(100.0))
+            .column(Column::auto().at_least(90.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("ID");
+                });
+                header.col(|ui| {
+                    ui.strong("Type");
+                });
+                header.col(|ui| {
+                    ui.strong("Name");
+                });
+                header.col(|ui| {
+                    ui.strong("Flags");
+                });
+                header.col(|ui| {
+                    ui.strong("Height/Tex");
+                });
+            })
+            .body(|body| {
+                body.rows(text_height, row_count, |mut row| {
+                    let idx = filtered_indices
+                        .as_ref()
+                        .map_or(row.index(), |indices| indices[row.index()]);
+                    let item = &rows[idx];
+                    row.col(|ui| {
+                        ui.label(&item.id);
+                    });
+                    row.col(|ui| {
+                        ui.label(item.kind);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.name);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.flags);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.height_or_texture);
+                    });
+                });
             });
-        });
     } else {
         ui.label("Select a Classic Client path containing tiledata.mul.");
     }
@@ -261,68 +280,104 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
 
 fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     ui.heading("EC TileArt Inspector");
-    if let Some(entries) = app.ec_tileart_entries.clone() {
-        let query = app.search_query.to_lowercase();
+    if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
+        let query = app.search_query.trim();
+        let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
+        let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
+        let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         ui.label(format!("{} tileart.uop entries", entries.len()));
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("tileart_grid").striped(true).show(ui, |ui| {
-                ui.label("ID");
-                ui.label("Old ID");
-                ui.label("Type");
-                ui.label("Height");
-                ui.label("Flags");
-                ui.label("EC Rect");
-                ui.label("CC Rect");
-                ui.label("Textures");
-                ui.label("Sitting");
-                ui.label("Appearance");
-                ui.end_row();
-
-                for file in entries.iter() {
-                    let entry = &file.entry;
-                    if !tileart_row_matches(&query, entry) {
-                        continue;
-                    }
-
-                    let texture_summary = tileart_texture_summary(app, entry);
-                    if ui
-                        .selectable_label(
-                            app.selected_tileart_hash == Some(file.filename_hash),
-                            entry.tile_id.to_string(),
-                        )
-                        .clicked()
-                    {
-                        app.selected_tileart_hash = Some(file.filename_hash);
-                    }
-                    ui.label(entry.old_id.to_string());
-                    ui.label(tileart_type_name(entry.type_val));
-                    ui.label(tileart_property(entry, PropertyKey::Height).unwrap_or(0).to_string());
-                    ui.label(format!("{:016X}", entry.flags1.bits()));
-                    ui.label(format!(
-                        "{},{} -> {},{} off {},{}",
-                        entry.ec_img_offset.x_start,
-                        entry.ec_img_offset.y_start,
-                        entry.ec_img_offset.x_end,
-                        entry.ec_img_offset.y_end,
-                        entry.ec_img_offset.x_off,
-                        entry.ec_img_offset.y_off
-                    ));
-                    ui.label(format!(
-                        "{},{} -> {},{} off {},{}",
-                        entry.cc_img_offset.x_start,
-                        entry.cc_img_offset.y_start,
-                        entry.cc_img_offset.x_end,
-                        entry.cc_img_offset.y_end,
-                        entry.cc_img_offset.x_off,
-                        entry.cc_img_offset.y_off
-                    ));
-                    ui.label(texture_summary);
-                    ui.label(tileart_sitting_summary(entry.sitting.as_ref()));
-                    ui.label(tileart_appearance_summary(&entry.appearance_vector));
-                    ui.end_row();
-                }
+        TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(60.0))
+            .column(Column::auto().at_least(130.0))
+            .column(Column::auto().at_least(150.0))
+            .column(Column::auto().at_least(150.0))
+            .column(Column::remainder().at_least(180.0))
+            .column(Column::auto().at_least(90.0))
+            .column(Column::auto().at_least(170.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("ID");
+                });
+                header.col(|ui| {
+                    ui.strong("Old ID");
+                });
+                header.col(|ui| {
+                    ui.strong("Type");
+                });
+                header.col(|ui| {
+                    ui.strong("Height");
+                });
+                header.col(|ui| {
+                    ui.strong("Flags");
+                });
+                header.col(|ui| {
+                    ui.strong("EC Rect");
+                });
+                header.col(|ui| {
+                    ui.strong("CC Rect");
+                });
+                header.col(|ui| {
+                    ui.strong("Textures");
+                });
+                header.col(|ui| {
+                    ui.strong("Sitting");
+                });
+                header.col(|ui| {
+                    ui.strong("Appearance");
+                });
+            })
+            .body(|body| {
+                body.rows(text_height, row_count, |mut row| {
+                    let idx = filtered_indices
+                        .as_ref()
+                        .map_or(row.index(), |indices| indices[row.index()]);
+                    let item = &rows[idx];
+                    row.col(|ui| {
+                        if ui
+                            .selectable_label(
+                                app.selected_tileart_hash == Some(item.filename_hash),
+                                &item.tile_id,
+                            )
+                            .clicked()
+                        {
+                            app.selected_tileart_hash = Some(item.filename_hash);
+                        }
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.old_id);
+                    });
+                    row.col(|ui| {
+                        ui.label(item.type_name);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.height);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.flags);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.ec_rect);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.cc_rect);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.texture_summary);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.sitting_summary);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.appearance_summary);
+                    });
+                });
             });
-        });
 
         ui.separator();
         if let Some(selected_hash) = app.selected_tileart_hash {
@@ -356,57 +411,22 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
 }
 
-fn tiledata_row_matches(query: &str, id: i32, name: &str) -> bool {
-    query.is_empty() || id.to_string().contains(query) || name.to_lowercase().contains(query)
-}
-
-fn tileart_row_matches(query: &str, entry: &TileArtEntry) -> bool {
-    query.is_empty()
-        || entry.tile_id.to_string().contains(query)
-        || entry.old_id.to_string().contains(query)
-        || tileart_type_name(entry.type_val).to_lowercase().contains(query)
-        || format!("{:016X}", entry.flags1.bits()).to_lowercase().contains(query)
-}
-
-fn tileart_type_name(type_val: i32) -> &'static str {
-    match type_val {
-        0 => "Static",
-        1 => "Solid",
-        2 => "Liquid",
-        _ => "Unknown",
-    }
-}
-
-fn tileart_property(entry: &TileArtEntry, key: PropertyKey) -> Option<u32> {
-    entry
-        .prop_vector1
-        .iter()
-        .chain(entry.prop_vector2.iter())
-        .find(|prop| prop.id == key as u8)
-        .map(|prop| prop.val)
-}
-
-fn tileart_texture_summary(app: &UopInspectorApp, entry: &TileArtEntry) -> String {
-    if let Some(dict) = app.uo_string_dictionary.as_ref() {
-        let art_data = entry.process(dict);
-        let mut parts = Vec::new();
-        for block in art_data.texture_items {
-            for item in block {
-                parts.push(format!("{}:{:?}:{}", item.id, item.texture_type, item.path));
-            }
-        }
-        if !parts.is_empty() {
-            return parts.join(" | ");
-        }
+fn filtered_metadata_indices<T>(
+    rows: &[T],
+    query: &str,
+    search_text: impl Fn(&T) -> &str,
+) -> Option<Vec<usize>> {
+    if query.is_empty() {
+        return None;
     }
 
-    let mut parts = Vec::new();
-    for (block_index, block) in entry.texture_vector.iter().enumerate() {
-        if block.has_texture == 1 {
-            parts.push(format!("block {}: {} refs", block_index, block.texture_items_count));
-        }
-    }
-    parts.join(" | ")
+    let query = query.to_lowercase();
+    Some(
+        rows.iter()
+            .enumerate()
+            .filter_map(|(index, row)| search_text(row).contains(&query).then_some(index))
+            .collect()
+    )
 }
 
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
