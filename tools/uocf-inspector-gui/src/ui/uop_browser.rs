@@ -6,6 +6,13 @@ use uocf::enhanced::waypoints::{
     KNOWN_WAYPOINTS_PAYLOAD_HASH, WAYPOINTS_PAYLOAD_PATH,
 };
 
+pub fn has_visible_uop_explorer_package(app: &UopInspectorApp) -> bool {
+    app.uop_cache
+        .loaded_uops
+        .iter()
+        .any(|loaded| !package_has_specialized_viewer(loaded.path.file_name().and_then(|name| name.to_str())))
+}
+
 pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("package_panel")
         .resizable(true)
@@ -15,6 +22,9 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, loaded) in app.uop_cache.loaded_uops.iter().enumerate() {
                     let name = loaded.path.file_name().unwrap_or_default().to_string_lossy();
+                    if package_has_specialized_viewer(Some(name.as_ref())) && app.selected_uop_idx != Some(i) {
+                        continue;
+                    }
                     if ui.selectable_label(app.selected_uop_idx == Some(i), name).clicked() {
                         app.selected_uop_idx = Some(i);
                         app.selected_file_hash = None;
@@ -95,6 +105,24 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.centered_and_justified(|ui| { ui.label("Select a package and an entry"); });
         }
     });
+}
+
+fn package_has_specialized_viewer(file_name: Option<&str>) -> bool {
+    let Some(file_name) = file_name else {
+        return false;
+    };
+    matches!(
+        file_name.to_ascii_lowercase().as_str(),
+        "artlegacymul.uop"
+            | "gumpartlegacymul.uop"
+            | "hues.uop"
+            | "localizedstrings.uop"
+            | "legacytexture.uop"
+            | "multicollection.uop"
+            | "string_dictionary.uop"
+            | "terraindefinition.uop"
+            | "tileart.uop"
+    )
 }
 
 fn is_waypoint_payload(hash: u64, resolved_name: &str) -> bool {

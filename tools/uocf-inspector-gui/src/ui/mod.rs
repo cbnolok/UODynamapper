@@ -41,7 +41,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.separator();
             
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Home, "Home");
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
+            if uop_browser::has_visible_uop_explorer_package(app) {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
+            }
             if app.client_data.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
             }
@@ -155,6 +157,13 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 });
             });
         app.show_search_paths = show_search_paths;
+    }
+
+    if app.view_mode == crate::app::ViewMode::UopExplorer
+        && app.selected_uop_idx.is_none()
+        && !uop_browser::has_visible_uop_explorer_package(app)
+    {
+        app.view_mode = crate::app::ViewMode::Home;
     }
 
     match app.view_mode {
