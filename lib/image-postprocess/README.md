@@ -14,6 +14,7 @@ textures are encoded and packed into `.uddp` packages. It is consumed by
 | Lanczos3 | Lanczos with radius 3. |
 | xBRZ | Pixel-art upscaler (via `xbrz-rs`). |
 | Super-xBR | Hyllian Super-xBR 2x pixel-art upscaler. |
+| CUT1 / CUT2 / CUT3 | Cheap Upscaling Triangulation 2x filters. |
 | lqx | lq2x-style pixel-art upscaler. |
 | hqx | hq2x/hq3x/hq4x (via C++ translation). |
 | epx | EPX / Scale2x. |

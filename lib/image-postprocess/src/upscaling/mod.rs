@@ -5,6 +5,7 @@
 //! - HQx: https://github.com/brunexgeek/hqx
 //! - xBRZ: https://docs.rs/xbrz-rs/latest/xbrz/
 //! - Super-xBR: https://github.com/hansonw/super-xbr
+//! - Cheap Upscaling Triangulation: https://github.com/Swordfish90/cheap-upscaling-triangulation
 //! - SaI/SuperSaI/SuperEagle: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/2xsai.c
 //! - LQ2x: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c
 //! - EPX/Scale2x: https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms#Scale2x
@@ -20,6 +21,7 @@ pub mod nedi;
 pub mod lq;
 pub mod mmpx;
 pub mod super_xbr;
+pub mod cut;
 
 use image::imageops::{self, FilterType};
 use image::{ImageBuffer, Rgba};
@@ -72,6 +74,9 @@ pub enum UpscaleFilter {
     Xbr3x,
     Xbr4x,
     SuperXbr2x,
+    Cut1_2x,
+    Cut2_2x,
+    Cut3_2x,
     Mmpx2x,
     Mmpx4x,
 }
@@ -112,6 +117,9 @@ impl UpscaleFilter {
             Self::Xbr3x => 3,
             Self::Xbr4x => 4,
             Self::SuperXbr2x => 2,
+            Self::Cut1_2x => 2,
+            Self::Cut2_2x => 2,
+            Self::Cut3_2x => 2,
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
@@ -222,6 +230,9 @@ impl UpscaleFilter {
                 xbr::apply_xbr(width, height, rgba, scale).2
             }
             Self::SuperXbr2x => super_xbr::apply_super_xbr(width, height, rgba).2,
+            Self::Cut1_2x => cut::apply_cut(width, height, rgba, cut::CutMode::Cut1).2,
+            Self::Cut2_2x => cut::apply_cut(width, height, rgba, cut::CutMode::Cut2).2,
+            Self::Cut3_2x => cut::apply_cut(width, height, rgba, cut::CutMode::Cut3).2,
             Self::Nedi2x => nedi::apply_nedi(width, height, rgba).2,
             Self::Mmpx2x | Self::Mmpx4x => {
                 let scale = (target_width / width).max(1);

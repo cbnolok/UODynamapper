@@ -186,7 +186,8 @@ the conversion pipeline. Covers:
 - [`image-postprocess`](lib/image-postprocess/README.md): image scaling and filtering used before packaging.
   Supported upscalers: Nearest, Bilinear, CatmullRom, Lanczos3, xBRZ, lqx,
   hqx, epx, 2xSaI, Super2xSaI, SuperEagle, MMPX, Super-xBR,
-  Kopf-Lischinski depixelizer, NEDI, and AMD FSR (EASU or EASU+RCAS).
+  CUT1/CUT2/CUT3, Kopf-Lischinski depixelizer, NEDI, and AMD FSR
+  (EASU or EASU+RCAS).
 
 ## Workspace
 
@@ -247,6 +248,7 @@ Used as sources for Rust translation, which has been incrementally optimized fur
   - AMD FidelityFX 1.1 (ESAU - - and RCAS - - passes): [Official C implementation](https://github.com/GPUOpen-Effects/FidelityFX-FSR).
   - xBRZ: [Rust crate](https://docs.rs/xbrz-rs/latest/xbrz/)
   - Super-xBR: [hansonw/super-xbr](https://github.com/hansonw/super-xbr)
+  - Cheap Upscaling Triangulation: [Swordfish90/cheap-upscaling-triangulation](https://github.com/Swordfish90/cheap-upscaling-triangulation)
   - lqx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c)
   - hqx: [C++ implementation](https://github.com/brunexgeek/hqx)
   - epx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/epx.c)

@@ -617,6 +617,9 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
                 UpscaleFilter::Xbr3x,
                 UpscaleFilter::Xbr4x,
                 UpscaleFilter::SuperXbr2x,
+                UpscaleFilter::Cut1_2x,
+                UpscaleFilter::Cut2_2x,
+                UpscaleFilter::Cut3_2x,
             ];
             for f in filters {
                 let label = if matches!(f, UpscaleFilter::None) {

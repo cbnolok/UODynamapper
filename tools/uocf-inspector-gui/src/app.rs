@@ -93,6 +93,9 @@ pub enum UpscalePreviewAlgorithm {
     Epx,
     Xbr,
     SuperXbr,
+    Cut1,
+    Cut2,
+    Cut3,
     Mmpx,
 }
 
@@ -123,6 +126,9 @@ impl UpscalePreviewAlgorithm {
             Self::Epx,
             Self::Xbr,
             Self::SuperXbr,
+            Self::Cut1,
+            Self::Cut2,
+            Self::Cut3,
             Self::Mmpx,
         ]
     }
@@ -147,6 +153,9 @@ impl UpscalePreviewAlgorithm {
             Self::Epx => "EPX",
             Self::Xbr => "xBR",
             Self::SuperXbr => "Super-xBR",
+            Self::Cut1 => "CUT1",
+            Self::Cut2 => "CUT2",
+            Self::Cut3 => "CUT3",
             Self::Mmpx => "MMPX",
         }
     }
@@ -155,7 +164,7 @@ impl UpscalePreviewAlgorithm {
         match self {
             Self::None => &[1],
             Self::SuperSai | Self::Nedi | Self::TwoSai | Self::SuperEagle => &[2],
-            Self::SuperXbr => &[2],
+            Self::SuperXbr | Self::Cut1 | Self::Cut2 | Self::Cut3 => &[2],
             Self::Mmpx => &[2, 4],
             _ => &[2, 3, 4],
         }
@@ -211,6 +220,9 @@ impl UpscalePreviewAlgorithm {
             (Self::Xbr, 3) => UpscaleFilter::Xbr3x,
             (Self::Xbr, _) => UpscaleFilter::Xbr4x,
             (Self::SuperXbr, _) => UpscaleFilter::SuperXbr2x,
+            (Self::Cut1, _) => UpscaleFilter::Cut1_2x,
+            (Self::Cut2, _) => UpscaleFilter::Cut2_2x,
+            (Self::Cut3, _) => UpscaleFilter::Cut3_2x,
             (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
             (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
         }
@@ -303,6 +315,9 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Xbr3x => "xbr3x",
         UpscaleFilter::Xbr4x => "xbr4x",
         UpscaleFilter::SuperXbr2x => "super-xbr2x",
+        UpscaleFilter::Cut1_2x => "cut1-2x",
+        UpscaleFilter::Cut2_2x => "cut2-2x",
+        UpscaleFilter::Cut3_2x => "cut3-2x",
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
     }
