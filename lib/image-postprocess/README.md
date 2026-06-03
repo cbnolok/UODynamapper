@@ -15,6 +15,7 @@ textures are encoded and packed into `.uddp` packages. It is consumed by
 | xBRZ | Pixel-art upscaler (via `xbrz-rs`). |
 | Super-xBR | Hyllian Super-xBR 2x pixel-art upscaler. |
 | ScaleFX | ScaleFX pixel-art upscaler; native 3x output with 2x/4x wrappers. |
+| OmniScale | Pattern-based pixel-art upscaler. |
 | CUT1 / CUT2 / CUT3 | Cheap Upscaling Triangulation 2x filters. |
 | lqx | lq2x-style pixel-art upscaler. |
 | hqx | hq2x/hq3x/hq4x (via C++ translation). |

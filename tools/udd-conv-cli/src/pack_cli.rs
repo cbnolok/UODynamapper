@@ -527,6 +527,9 @@ pub enum CliUpscaleFilter {
     ScaleFx2x,
     ScaleFx3x,
     ScaleFx4x,
+    OmniScale2x,
+    OmniScale3x,
+    OmniScale4x,
     Mmpx2x,
     Mmpx4x,
 }
@@ -582,6 +585,9 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::ScaleFx2x => UpscaleFilter::ScaleFx2x,
             CliUpscaleFilter::ScaleFx3x => UpscaleFilter::ScaleFx3x,
             CliUpscaleFilter::ScaleFx4x => UpscaleFilter::ScaleFx4x,
+            CliUpscaleFilter::OmniScale2x => UpscaleFilter::OmniScale2x,
+            CliUpscaleFilter::OmniScale3x => UpscaleFilter::OmniScale3x,
+            CliUpscaleFilter::OmniScale4x => UpscaleFilter::OmniScale4x,
             CliUpscaleFilter::Mmpx2x => UpscaleFilter::Mmpx2x,
             CliUpscaleFilter::Mmpx4x => UpscaleFilter::Mmpx4x,
         }

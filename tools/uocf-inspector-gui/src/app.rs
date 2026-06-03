@@ -97,6 +97,7 @@ pub enum UpscalePreviewAlgorithm {
     Cut2,
     Cut3,
     ScaleFx,
+    OmniScale,
     Mmpx,
 }
 
@@ -131,6 +132,7 @@ impl UpscalePreviewAlgorithm {
             Self::Cut2,
             Self::Cut3,
             Self::ScaleFx,
+            Self::OmniScale,
             Self::Mmpx,
         ]
     }
@@ -159,6 +161,7 @@ impl UpscalePreviewAlgorithm {
             Self::Cut2 => "CUT2",
             Self::Cut3 => "CUT3",
             Self::ScaleFx => "ScaleFX",
+            Self::OmniScale => "OmniScale",
             Self::Mmpx => "MMPX",
         }
     }
@@ -229,6 +232,9 @@ impl UpscalePreviewAlgorithm {
             (Self::ScaleFx, 2) => UpscaleFilter::ScaleFx2x,
             (Self::ScaleFx, 3) => UpscaleFilter::ScaleFx3x,
             (Self::ScaleFx, _) => UpscaleFilter::ScaleFx4x,
+            (Self::OmniScale, 2) => UpscaleFilter::OmniScale2x,
+            (Self::OmniScale, 3) => UpscaleFilter::OmniScale3x,
+            (Self::OmniScale, _) => UpscaleFilter::OmniScale4x,
             (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
             (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
         }
@@ -327,6 +333,9 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::ScaleFx2x => "scalefx2x",
         UpscaleFilter::ScaleFx3x => "scalefx3x",
         UpscaleFilter::ScaleFx4x => "scalefx4x",
+        UpscaleFilter::OmniScale2x => "omniscale2x",
+        UpscaleFilter::OmniScale3x => "omniscale3x",
+        UpscaleFilter::OmniScale4x => "omniscale4x",
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
     }
