@@ -5,6 +5,11 @@ use uocf::enhanced::localized_strings::LocalizedStringEntry;
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let has_cliloc = app.cliloc.is_some();
     let has_localized = app.localized_strings.is_some();
+    let cliloc_tab_label = app
+        .selected_cliloc_file_idx
+        .and_then(|index| app.cliloc_files.get(index))
+        .map(|entry| entry.label.as_str())
+        .unwrap_or("Cliloc");
 
     if app.localized_strings_source == LocalizedStringsSource::Cliloc && !has_cliloc && has_localized {
         app.localized_strings_source = LocalizedStringsSource::LocalizedStringsUop;
@@ -21,7 +26,7 @@ pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.selectable_value(
                     &mut app.localized_strings_source,
                     LocalizedStringsSource::Cliloc,
-                    "Cliloc.enu",
+                    cliloc_tab_label,
                 );
             }
             if has_localized {
@@ -50,7 +55,13 @@ fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .resizable(true)
         .default_width(320.0)
         .show(ctx, |ui| {
-            ui.heading(format!("Cliloc.enu ({})", entries.len()));
+            let heading = app
+                .selected_cliloc_file_idx
+                .and_then(|index| app.cliloc_files.get(index))
+                .map(|entry| entry.label.as_str())
+                .unwrap_or("Cliloc");
+            ui.heading(format!("{heading} ({})", entries.len()));
+            cliloc_translation_selector(app, ui);
             ui.separator();
             search_box(app, ui);
             ui.separator();
@@ -68,6 +79,45 @@ fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Select a cliloc entry from the left panel.");
         }
     });
+}
+
+fn cliloc_translation_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    if app.cliloc_files.len() <= 1 {
+        if let Some(index) = app.selected_cliloc_file_idx {
+            if let Some(entry) = app.cliloc_files.get(index) {
+                ui.small(entry.path.display().to_string());
+            }
+        }
+        return;
+    }
+
+    let selected_label = app
+        .selected_cliloc_file_idx
+        .and_then(|index| app.cliloc_files.get(index))
+        .map(|entry| entry.label.clone())
+        .unwrap_or_else(|| "Select cliloc".to_string());
+    let choices = app
+        .cliloc_files
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (index, entry.label.clone(), entry.path.display().to_string()))
+        .collect::<Vec<_>>();
+    let mut selected_index = app.selected_cliloc_file_idx;
+
+    egui::ComboBox::from_label("Translation")
+        .selected_text(selected_label)
+        .show_ui(ui, |ui| {
+            for (index, label, path) in &choices {
+                let response = ui.selectable_value(&mut selected_index, Some(*index), label);
+                response.on_hover_text(path);
+            }
+        });
+
+    if selected_index != app.selected_cliloc_file_idx {
+        if let Some(index) = selected_index {
+            app.select_cliloc_file(index);
+        }
+    }
 }
 
 fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {

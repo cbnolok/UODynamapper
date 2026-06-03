@@ -362,6 +362,13 @@ pub struct SoundListEntry {
     pub duration_seconds: f64,
 }
 
+#[derive(Clone)]
+pub struct ClilocFileEntry {
+    pub label: String,
+    pub path: PathBuf,
+    pub cliloc: Arc<Cliloc>,
+}
+
 pub struct SoundPlayer {
     _stream: rodio::OutputStream,
     handle: rodio::OutputStreamHandle,
@@ -463,6 +470,65 @@ fn load_optional_gumps_package(
     }
 }
 
+fn load_cliloc_files(base_path: &Path, mut log: impl FnMut(String)) -> Vec<ClilocFileEntry> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(base_path) else {
+        return Vec::new();
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_cliloc_file_name(name) {
+            continue;
+        }
+        candidates.push(path);
+    }
+
+    candidates.sort_by_key(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_ascii_lowercase())
+            .unwrap_or_default()
+    });
+
+    let mut clilocs = Vec::new();
+    for path in candidates {
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path.display().to_string());
+        match Cliloc::load(&path) {
+            Ok(cliloc) => clilocs.push(ClilocFileEntry {
+                label,
+                path,
+                cliloc: Arc::new(cliloc),
+            }),
+            Err(error) => log(format!("Failed to load {label}: {error}")),
+        }
+    }
+
+    clilocs
+}
+
+fn is_cliloc_file_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("cliloc.") && lower.len() > "cliloc.".len()
+}
+
+fn default_cliloc_file_index(clilocs: &[ClilocFileEntry]) -> Option<usize> {
+    clilocs
+        .iter()
+        .position(|entry| entry.label.eq_ignore_ascii_case("cliloc.enu"))
+        .or_else(|| clilocs.first().map(|_| 0))
+}
+
 fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
     let direct_path = base_path.join(file_name);
     if direct_path.exists() {
@@ -496,6 +562,7 @@ pub struct UopInspectorApp {
     pub dictionary: Dictionary,
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
     pub cliloc: Option<Arc<Cliloc>>,
+    pub cliloc_files: Vec<ClilocFileEntry>,
     pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
     pub string_dictionary_raw_hash: Option<u64>,
     pub uop_cache: UopCache,
@@ -518,6 +585,7 @@ pub struct UopInspectorApp {
     pub selected_ec_hue_hash: Option<u64>,
     pub selected_multi_uop_hash: Option<u64>,
     pub selected_localized_file_hash: Option<u64>,
+    pub selected_cliloc_file_idx: Option<usize>,
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
@@ -609,6 +677,7 @@ impl UopInspectorApp {
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
             cliloc: None,
+            cliloc_files: Vec::new(),
             localized_strings: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
@@ -630,6 +699,7 @@ impl UopInspectorApp {
             selected_ec_hue_hash: None,
             selected_multi_uop_hash: None,
             selected_localized_file_hash: None,
+            selected_cliloc_file_idx: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
@@ -709,11 +779,20 @@ impl UopInspectorApp {
         self.logs.push(msg);
     }
 
+    pub fn select_cliloc_file(&mut self, index: usize) {
+        if let Some(entry) = self.cliloc_files.get(index) {
+            self.selected_cliloc_file_idx = Some(index);
+            self.cliloc = Some(Arc::clone(&entry.cliloc));
+        }
+    }
+
     pub fn trigger_reload(&mut self) {
         self.log("Starting asset reload...");
         self.ec_hues = None;
         self.selected_ec_hue_hash = None;
         self.cliloc = None;
+        self.cliloc_files.clear();
+        self.selected_cliloc_file_idx = None;
         self.localized_strings = None;
         self.multi_collection = None;
         self.selected_multi_uop_hash = None;
@@ -805,11 +884,11 @@ impl UopInspectorApp {
                     let multis = uocf::classic::multi::MultiMap::load(&path)
                         .ok()
                         .map(Arc::new);
-                    let cliloc = uocf::classic::cliloc::Cliloc::load(path.join("Cliloc.enu"))
-                        .or_else(|_| uocf::classic::cliloc::Cliloc::load(path.join("cliloc.enu")))
-                        .ok()
-                        .map(Arc::new);
-                    self.cliloc = cliloc.clone();
+                    let cliloc_files = load_cliloc_files(&path, |msg| self.log(msg));
+                    self.cliloc_files = cliloc_files;
+                    if let Some(index) = default_cliloc_file_index(&self.cliloc_files) {
+                        self.select_cliloc_file(index);
+                    }
                     let hues = uocf::classic::hues::load_hues(&path.join("hues.mul"))
                         .ok()
                         .map(Arc::new);
@@ -2058,6 +2137,17 @@ impl eframe::App for UopInspectorApp {
 mod tests {
     use super::*;
 
+    fn test_cliloc_payload(text: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+        bytes.extend_from_slice(&2_i16.to_le_bytes());
+        bytes.extend_from_slice(&100_i32.to_le_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&(text.len() as i16).to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
     fn test_app() -> UopInspectorApp {
         UopInspectorApp {
             settings: AppSettings::default(),
@@ -2066,6 +2156,7 @@ mod tests {
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
             cliloc: None,
+            cliloc_files: Vec::new(),
             localized_strings: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
@@ -2087,6 +2178,7 @@ mod tests {
             selected_ec_hue_hash: None,
             selected_multi_uop_hash: None,
             selected_localized_file_hash: None,
+            selected_cliloc_file_idx: None,
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
@@ -2160,6 +2252,34 @@ mod tests {
         app.log("hello test");
         assert_eq!(app.logs.len(), 1);
         assert_eq!(app.logs[0], "hello test");
+    }
+
+    #[test]
+    fn load_cliloc_files_discovers_translations_and_prefers_enu() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "uocf_inspector_cliloc_translations_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("Cliloc.deu"), test_cliloc_payload("bank")).unwrap();
+        std::fs::write(dir.join("Cliloc.enu"), test_cliloc_payload("bank")).unwrap();
+        std::fs::write(dir.join("tiledata.mul"), []).unwrap();
+
+        let mut logs = Vec::new();
+        let clilocs = load_cliloc_files(&dir, |msg| logs.push(msg));
+
+        assert!(logs.is_empty());
+        assert_eq!(clilocs.len(), 2);
+        assert_eq!(clilocs[0].label, "Cliloc.deu");
+        assert_eq!(clilocs[1].label, "Cliloc.enu");
+        assert_eq!(default_cliloc_file_index(&clilocs), Some(1));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
