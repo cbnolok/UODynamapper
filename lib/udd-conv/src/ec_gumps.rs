@@ -16,7 +16,8 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::source_path_label_from_dirs;
-use crate::upscale::{apply_filter_passes, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 pub const GUMPS_EC_DEFAULT_OUTPUT: &str = "gumps_ec.uddp";
 pub const EC_GUMP_DEFAULT_MAX_ID: u32 = 99_999;
@@ -25,8 +26,9 @@ pub struct EcGumpsOptions {
     pub max_id: u32,
     pub compression: CompressionFlag,
     pub atlas_compression: CompressionFlag,
-    pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
-    pub single_upscale_passes: Vec<UpscaleFilter>,
+    pub paperdoll_upscale_passes: Vec<UpscalePass>,
+    pub single_upscale_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
 }
 
 impl Default for EcGumpsOptions {
@@ -37,8 +39,22 @@ impl Default for EcGumpsOptions {
             atlas_compression: CompressionFlag::ZstdNoDict,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
+            upscale_profile: None,
         }
     }
+}
+
+fn gump_upscale_passes_for(
+    options: &EcGumpsOptions,
+    image_type: UpscaleImageType,
+    gump_id: u32,
+    fallback: &[UpscalePass],
+) -> Vec<UpscalePass> {
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| profile.passes_for(UpscaleTarget::new(image_type, gump_id), fallback))
+        .unwrap_or_else(|| fallback.to_vec())
 }
 
 pub struct EcGumpsBuildSummary {
@@ -131,12 +147,21 @@ fn convert_ec_gumps_from_interface_uop(
         match decode_ec_gump_payload(gump_id, format, &payload) {
             Ok(decoded) => {
                 if is_paperdoll_equipment_gump_id(gump_id) {
-                    atlas_gumps.push(upscale_decoded_gump(
-                        decoded,
+                    let passes = gump_upscale_passes_for(
+                        options,
+                        UpscaleImageType::GumpsEquip,
+                        gump_id,
                         &options.paperdoll_upscale_passes,
-                    ));
+                    );
+                    atlas_gumps.push(upscale_decoded_gump(decoded, &passes));
                 } else {
-                    let decoded = upscale_decoded_gump(decoded, &options.single_upscale_passes);
+                    let passes = gump_upscale_passes_for(
+                        options,
+                        UpscaleImageType::GumpsNonEquip,
+                        gump_id,
+                        &options.single_upscale_passes,
+                    );
+                    let decoded = upscale_decoded_gump(decoded, &passes);
                     add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
                     single_gump_count += 1;
                 }
@@ -204,12 +229,21 @@ fn convert_ec_gumps_from_extracted_dir(
         match decode_ec_gump_payload(gump_id, format, &payload) {
             Ok(decoded) => {
                 if is_paperdoll_equipment_gump_id(gump_id) {
-                    atlas_gumps.push(upscale_decoded_gump(
-                        decoded,
+                    let passes = gump_upscale_passes_for(
+                        options,
+                        UpscaleImageType::GumpsEquip,
+                        gump_id,
                         &options.paperdoll_upscale_passes,
-                    ));
+                    );
+                    atlas_gumps.push(upscale_decoded_gump(decoded, &passes));
                 } else {
-                    let decoded = upscale_decoded_gump(decoded, &options.single_upscale_passes);
+                    let passes = gump_upscale_passes_for(
+                        options,
+                        UpscaleImageType::GumpsNonEquip,
+                        gump_id,
+                        &options.single_upscale_passes,
+                    );
+                    let decoded = upscale_decoded_gump(decoded, &passes);
                     add_single_decoded_ec_gump(&mut builder, &decoded, options.compression)?;
                     single_gump_count += 1;
                 }
@@ -283,8 +317,8 @@ fn add_single_decoded_ec_gump(
     Ok(())
 }
 
-fn upscale_decoded_gump(mut decoded: DecodedGump, passes: &[UpscaleFilter]) -> DecodedGump {
-    let (width, height, rgba, upscale_factor, _) = apply_filter_passes(
+fn upscale_decoded_gump(mut decoded: DecodedGump, passes: &[UpscalePass]) -> DecodedGump {
+    let (width, height, rgba, upscale_factor, _) = apply_upscale_passes(
         u32::from(decoded.width),
         u32::from(decoded.height),
         &decoded.rgba,

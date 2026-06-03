@@ -27,6 +27,43 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-gumps-ec` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
 
+### Upscale profiles
+
+Image packers that support upscale passes also accept `--upscale-profile
+<file.toml|file.kdl>`. A profile can set ordered pass chains per image type and
+override them for a specific type/family/id target.
+
+Supported image types are `art_land`, `art_items`, `gumps_equip`,
+`gumps_non_equip`, `cc_mobile_animation_frames`,
+`ec_mobile_animation_frames`, `cc_land_textures`, and `ec_land_textures`.
+Mobile animation overrides use `family = body_id` and `id = source_frame_index`.
+Other overrides use the asset id as `id`.
+
+```toml
+[art_items]
+passes = [
+  { filter = "bilinear2x" },
+  { filter = "palette-snap-strict" },
+]
+
+[[overrides]]
+image_type = "art_items"
+id = 4000
+passes = [{ filter = "nearest2x" }]
+```
+
+```kdl
+cc_mobile_animation_frames {
+    pass "xbr2x"
+    pass "palette-snap-ramp-aware"
+}
+
+override type="cc_mobile_animation_frames" family=42 id=3 {
+    pass "nearest2x"
+    pass "palette-snap-expanded-16"
+}
+```
+
 ### EC material audit commands
 
 Development commands for auditing and validating EC material routing before

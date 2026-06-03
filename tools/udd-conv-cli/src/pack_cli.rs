@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::ec_material_audit::{
     audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
@@ -8,6 +9,7 @@ use crate::ec_material_audit::{
     write_ec_material_baseline_report, write_ec_terrain_override_candidates,
     write_ec_terrain_practical_review,
 };
+use crate::upscale_profile_config::load_upscale_profile;
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use color_eyre::eyre;
 use serde::Serialize;
@@ -69,7 +71,7 @@ use udd_conv::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
     },
-    upscale::UpscaleFilter,
+    upscale::{UpscaleFilter, UpscalePass},
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
     CompressionFlag, PagePixelFormat,
 };
@@ -480,6 +482,16 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
 pub enum CliUpscaleFilter {
     #[default]
     None,
+    #[value(name = "palette-snap-strict")]
+    PaletteSnapStrict,
+    #[value(name = "palette-snap-ramp-aware")]
+    PaletteSnapRampAware,
+    #[value(name = "palette-snap-expanded-8")]
+    PaletteSnapExpanded8,
+    #[value(name = "palette-snap-expanded-16")]
+    PaletteSnapExpanded16,
+    #[value(name = "palette-snap-expanded-32")]
+    PaletteSnapExpanded32,
     Nearest2x,
     Nearest3x,
     Nearest4x,
@@ -574,6 +586,11 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
     fn from(val: CliUpscaleFilter) -> Self {
         match val {
             CliUpscaleFilter::None => UpscaleFilter::None,
+            CliUpscaleFilter::PaletteSnapStrict
+            | CliUpscaleFilter::PaletteSnapRampAware
+            | CliUpscaleFilter::PaletteSnapExpanded8
+            | CliUpscaleFilter::PaletteSnapExpanded16
+            | CliUpscaleFilter::PaletteSnapExpanded32 => UpscaleFilter::None,
             CliUpscaleFilter::Nearest2x => UpscaleFilter::Nearest2x,
             CliUpscaleFilter::Nearest3x => UpscaleFilter::Nearest3x,
             CliUpscaleFilter::Nearest4x => UpscaleFilter::Nearest4x,
@@ -666,8 +683,32 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
     }
 }
 
-fn convert_upscale_passes(passes: Vec<CliUpscaleFilter>) -> Vec<UpscaleFilter> {
-    passes.into_iter().map(UpscaleFilter::from).collect()
+impl CliUpscaleFilter {
+    pub(crate) fn into_pass(self) -> UpscalePass {
+        match self {
+            Self::PaletteSnapStrict => UpscalePass::PaletteSnapStrict,
+            Self::PaletteSnapRampAware => UpscalePass::PaletteSnapRampAware,
+            Self::PaletteSnapExpanded8 => UpscalePass::PaletteSnapExpanded {
+                max_derived_colors: 8,
+            },
+            Self::PaletteSnapExpanded16 => UpscalePass::PaletteSnapExpanded {
+                max_derived_colors: 16,
+            },
+            Self::PaletteSnapExpanded32 => UpscalePass::PaletteSnapExpanded {
+                max_derived_colors: 32,
+            },
+            filter => UpscalePass::from(UpscaleFilter::from(filter)),
+        }
+    }
+}
+
+fn convert_upscale_passes(passes: Vec<CliUpscaleFilter>) -> Vec<UpscalePass> {
+    passes.into_iter().map(CliUpscaleFilter::into_pass).collect()
+}
+
+fn load_optional_upscale_profile(path: Option<PathBuf>) -> eyre::Result<Option<Arc<udd_conv::upscale_profile::UpscaleProfile>>> {
+    path.map(|path| load_upscale_profile(&path).map(Arc::new))
+        .transpose()
 }
 
 #[derive(Subcommand)]
@@ -721,6 +762,8 @@ enum Commands {
         upscale: CliUpscaleFilter,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Packs Classic texmaps.mul into tex_land_cc.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -759,6 +802,8 @@ enum Commands {
         upscale_64_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-128-pass", value_enum, help = "Add a 128x128 texmap upscale pass. Repeat to chain filters.")]
         upscale_128_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Packs classic anim*.mul/anim*.idx mobile animations into mobile_anim_cc.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -793,6 +838,8 @@ enum Commands {
         bc7_rdo_lookback_blocks: usize,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Packs EC AnimationFrame.uop mobile animations into mobile_anim_ec.uddp atlas pages.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -831,6 +878,8 @@ enum Commands {
         ec_mobile_animations_kdl: Option<PathBuf>,
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass before atlas encoding. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Packs EC art and land in one shared source pass into tex_art_ec.uddp and tex_land_ec.uddp.
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
@@ -935,6 +984,8 @@ enum Commands {
         upscale_256_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "upscale-512-pass", value_enum, help = "Add a 512x512 EC land upscale pass. Repeat to chain filters.")]
         upscale_512_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Audits direct EC material texture references from tileart.uop and TerrainDefinition.uop.
     AuditEcMaterialRefs {
@@ -1185,6 +1236,8 @@ enum Commands {
         paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
         single_upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
     /// Packs EC interface.uop gumpart into gumps_ec.uddp.
     PackEcGumps {
@@ -1206,6 +1259,8 @@ enum Commands {
         paperdoll_upscale_passes: Vec<CliUpscaleFilter>,
         #[arg(long = "single-upscale-pass", value_enum, help = "Add a non-paperdoll gump upscale pass. Repeat to chain filters.")]
         single_upscale_passes: Vec<CliUpscaleFilter>,
+        #[arg(long = "upscale-profile", help = "TOML or KDL file with per-image-type upscale passes and per-id overrides.")]
+        upscale_profile: Option<PathBuf>,
     },
 }
 
@@ -1238,6 +1293,7 @@ pub fn run() -> eyre::Result<()> {
             mul,
             upscale,
             upscale_passes,
+            upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1251,6 +1307,7 @@ pub fn run() -> eyre::Result<()> {
                 bc7_rdo_lambda,
                 bc7_rdo_lookback_blocks,
             )?;
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
@@ -1261,6 +1318,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: output_format.compression,
                     upscale: upscale.into(),
                     upscale_passes: convert_upscale_passes(upscale_passes),
+                    upscale_profile,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
@@ -1299,6 +1357,7 @@ pub fn run() -> eyre::Result<()> {
             upscale,
             upscale_64_passes,
             upscale_128_passes,
+            upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1312,6 +1371,7 @@ pub fn run() -> eyre::Result<()> {
                 bc7_rdo_lambda,
                 bc7_rdo_lookback_blocks,
             )?;
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_texmaps_mul_to_tex_land_cc_uddp_with_patches(
                 &paths[0], // Use the first source dir (usually ccdir)
                 &out_file,
@@ -1330,6 +1390,7 @@ pub fn run() -> eyre::Result<()> {
                     },
                     upscale_64_passes: convert_upscale_passes(upscale_64_passes),
                     upscale_128_passes: convert_upscale_passes(upscale_128_passes),
+                    upscale_profile,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
@@ -1361,6 +1422,7 @@ pub fn run() -> eyre::Result<()> {
             bc7_rdo_lambda,
             bc7_rdo_lookback_blocks,
             upscale_passes,
+            upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1375,6 +1437,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_anim_mul_to_mobile_anim_cc_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -1388,6 +1451,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
+                    upscale_profile,
                 },
             )?;
             println!(
@@ -1427,6 +1491,7 @@ pub fn run() -> eyre::Result<()> {
             tables,
             ec_mobile_animations_kdl,
             upscale_passes,
+            upscale_profile,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
@@ -1441,6 +1506,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks,
                 )?;
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -1454,6 +1520,7 @@ pub fn run() -> eyre::Result<()> {
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
                     upscale_passes: convert_upscale_passes(upscale_passes),
+                    upscale_profile,
                     metadata_path: ec_mobile_animations_kdl,
                     tables_dir: tables,
                     allow_missing_metadata: false,
@@ -1532,6 +1599,7 @@ pub fn run() -> eyre::Result<()> {
             upscale_128_passes,
             upscale_256_passes,
             upscale_512_passes,
+            upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
@@ -1544,6 +1612,7 @@ pub fn run() -> eyre::Result<()> {
                 eyre::bail!("--tilemeta-output requires --ccdir for tiledata.mul");
             }
             let shared_sources = load_tex_art_ec_sources(&ec_paths)?;
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let upscale_filter = UpscaleFilter::from(upscale);
             let shared_output_format = TextureOutputFormatArgs {
                 raw,
@@ -1588,6 +1657,7 @@ pub fn run() -> eyre::Result<()> {
                     compression: art_output_format.compression,
                     upscale: upscale_filter,
                     upscale_passes: convert_upscale_passes(art_upscale_passes),
+                    upscale_profile: upscale_profile.clone(),
                     pixel_format: art_output_format.pixel_format,
                     bc7_rdo_lambda: art_output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: art_output_format.bc7_rdo_lookback_blocks,
@@ -1636,6 +1706,7 @@ pub fn run() -> eyre::Result<()> {
                     upscale_128_passes: convert_upscale_passes(upscale_128_passes),
                     upscale_256_passes: convert_upscale_passes(upscale_256_passes),
                     upscale_512_passes: convert_upscale_passes(upscale_512_passes),
+                    upscale_profile,
                     pixel_format: land_output_format.pixel_format,
                     bc7_rdo_lambda: land_output_format.bc7_rdo_lambda,
                     bc7_rdo_lookback_blocks: land_output_format.bc7_rdo_lookback_blocks,
@@ -2073,9 +2144,11 @@ pub fn run() -> eyre::Result<()> {
             uop,
             paperdoll_upscale_passes,
             single_upscale_passes,
+            upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &paths,
                 &out_file,
@@ -2096,6 +2169,7 @@ pub fn run() -> eyre::Result<()> {
                     },
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
+                    upscale_profile,
                     source_preference: if uop {
                         SourceFormatPreference::Uop
                     } else {
@@ -2121,9 +2195,11 @@ pub fn run() -> eyre::Result<()> {
             zstd,
             paperdoll_upscale_passes,
             single_upscale_passes,
+            upscale_profile,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
+            let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_ec_gumps_to_uddp_from_sources(
                 &paths,
                 &out_file,
@@ -2144,6 +2220,7 @@ pub fn run() -> eyre::Result<()> {
                     },
                     paperdoll_upscale_passes: convert_upscale_passes(paperdoll_upscale_passes),
                     single_upscale_passes: convert_upscale_passes(single_upscale_passes),
+                    upscale_profile,
                 },
             )?;
             println!(
@@ -2542,6 +2619,56 @@ mod tests {
     }
 
     #[test]
+    fn cli_parses_palette_snap_upscale_passes() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-mobile-anims",
+            "--ccdir",
+            "/cc",
+            "--upscale-pass",
+            "bilinear2x",
+            "--upscale-pass",
+            "palette-snap-strict",
+            "--upscale-pass",
+            "palette-snap-expanded-16",
+        ])
+        .expect("parse palette snap upscale passes");
+
+        match cli.command {
+            Commands::PackMobileAnims { upscale_passes, .. } => {
+                assert_eq!(
+                    upscale_passes,
+                    vec![
+                        CliUpscaleFilter::Bilinear2x,
+                        CliUpscaleFilter::PaletteSnapStrict,
+                        CliUpscaleFilter::PaletteSnapExpanded16,
+                    ]
+                );
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_converts_palette_snap_upscale_passes() {
+        let passes = convert_upscale_passes(vec![
+            CliUpscaleFilter::Bilinear2x,
+            CliUpscaleFilter::PaletteSnapRampAware,
+            CliUpscaleFilter::PaletteSnapExpanded16,
+        ]);
+
+        assert_eq!(passes.len(), 3);
+        assert_eq!(passes[0].filter(), Some(UpscaleFilter::Bilinear2x));
+        assert!(matches!(passes[1], UpscalePass::PaletteSnapRampAware));
+        assert!(matches!(
+            passes[2],
+            UpscalePass::PaletteSnapExpanded {
+                max_derived_colors: 16
+            }
+        ));
+    }
+
+    #[test]
     fn cli_parses_color_boost_upscale_passes() {
         let cli = Cli::try_parse_from([
             "uddpack",
@@ -2592,6 +2719,26 @@ mod tests {
                         CliUpscaleFilter::AdaptiveLogContrast80,
                     ]
                 );
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_upscale_profile_path() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-mobile-anims",
+            "--ccdir",
+            "/cc",
+            "--upscale-profile",
+            "/tmp/upscale-profile.toml",
+        ])
+        .expect("parse upscale profile path");
+
+        match cli.command {
+            Commands::PackMobileAnims { upscale_profile, .. } => {
+                assert_eq!(upscale_profile, Some(PathBuf::from("/tmp/upscale-profile.toml")));
             }
             _ => panic!("unexpected command parsed"),
         }

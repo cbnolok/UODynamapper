@@ -31,7 +31,8 @@ use crate::package_progress::{
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
-use crate::upscale::{apply_filter_passes_owned, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes_owned, UpscaleFilter, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
@@ -97,7 +98,8 @@ pub struct MobileAnimEcAtlasOptions {
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
-    pub upscale_passes: Vec<UpscaleFilter>,
+    pub upscale_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub metadata_path: Option<PathBuf>,
     pub tables_dir: Option<PathBuf>,
     pub allow_missing_metadata: bool,
@@ -115,6 +117,7 @@ impl Default for MobileAnimEcAtlasOptions {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -763,22 +766,23 @@ fn apply_planned_upscale(
     planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<()> {
-    if options.upscale_passes.is_empty() {
-        return Ok(());
-    }
-
-    let scale = options
-        .upscale_passes
-        .iter()
-        .copied()
-        .filter(|filter| !matches!(filter, UpscaleFilter::None))
-        .fold(1u32, |scale, filter| scale.saturating_mul(filter.scale_factor()));
-    if scale == 1 {
+    if options.upscale_passes.is_empty() && options.upscale_profile.is_none() {
         return Ok(());
     }
 
     for frames in planned_by_body.values_mut() {
         for frame in frames {
+            let scale = mobile_upscale_passes_for(
+                options,
+                frame.body_id,
+                u32::from(frame.source_frame_index),
+            )
+            .iter()
+            .copied()
+            .fold(1u32, |scale, pass| scale.saturating_mul(pass.scale_factor()));
+            if scale == 1 {
+                continue;
+            }
             frame.width = scale_u16(frame.width, scale, "EC mobile animation frame width")?;
             frame.height = scale_u16(frame.height, scale, "EC mobile animation frame height")?;
             frame.center_x = scale_i16(frame.center_x, scale, "EC mobile animation frame center_x")?;
@@ -861,8 +865,27 @@ fn apply_planned_transparent_trim(
     Ok(())
 }
 
-fn has_effective_upscale(passes: &[UpscaleFilter]) -> bool {
-    passes.iter().any(|filter| !matches!(filter, UpscaleFilter::None))
+fn has_effective_upscale(passes: &[UpscalePass]) -> bool {
+    passes
+        .iter()
+        .any(|pass| !matches!(pass.filter(), Some(UpscaleFilter::None)))
+}
+
+fn mobile_upscale_passes_for(
+    options: &MobileAnimEcAtlasOptions,
+    body_id: u32,
+    frame_id: u32,
+) -> Vec<UpscalePass> {
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| {
+            profile.passes_for(
+                UpscaleTarget::with_family(UpscaleImageType::EcMobileAnimationFrames, body_id, frame_id),
+                &options.upscale_passes,
+            )
+        })
+        .unwrap_or_else(|| options.upscale_passes.clone())
 }
 
 fn scale_u16(value: u16, scale: u32, label: &str) -> eyre::Result<u16> {
@@ -1761,7 +1784,7 @@ fn build_planned_page(
     let mut used_height = 0u32;
     let mut page_frame_index = 0u16;
     let mut filled_pixel_count = 0u64;
-    let upscale_active = has_effective_upscale(&options.upscale_passes);
+    let upscale_active = has_effective_upscale(&options.upscale_passes) || options.upscale_profile.is_some();
 
     struct PendingPlannedBlit {
         body_id: u32,
@@ -1885,11 +1908,16 @@ fn build_planned_page(
                     u32::from(pending.source_crop_width),
                     u32::from(pending.source_crop_height),
                 )?;
-                let (width, height, rgba, _, _) = apply_filter_passes_owned(
+                let passes = mobile_upscale_passes_for(
+                    options,
+                    pending.body_id,
+                    u32::from(pending.source_frame_index),
+                );
+                let (width, height, rgba, _, _) = apply_upscale_passes_owned(
                     pending.source_crop_width as u32,
                     pending.source_crop_height as u32,
                     rgba,
-                    &options.upscale_passes,
+                    &passes,
                 );
                 if width as u16 != pending.expected_width || height as u16 != pending.expected_height {
                     eyre::bail!(
@@ -2562,6 +2590,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -2590,6 +2619,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -2623,6 +2653,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -2652,6 +2683,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -2677,6 +2709,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,
@@ -2770,6 +2803,7 @@ mod tests {
             bc7_rdo_lambda: 0.0,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             metadata_path: None,
             tables_dir: None,
             allow_missing_metadata: false,

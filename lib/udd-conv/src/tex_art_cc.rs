@@ -22,6 +22,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -48,12 +49,13 @@ use crate::package_progress::{
     build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use udd_container::xxh64_virtual_path;
 use uocf::classic::art::{ArtMap, ArtSource};
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::tile_database::ArtDefinition;
 
-use crate::upscale::{apply_filter_passes, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscaleFilter, UpscalePass};
 
 use udd_assets::tex_art_cc::{
     page_entry_path, TexArtCcPageRecord, TexArtCcSlotRecord, PagePixelFormat, MISSING_PAGE_INDEX,
@@ -127,7 +129,8 @@ pub struct TexArtCcAtlasOptions {
     pub gutter: u16,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
-    pub upscale_passes: Vec<UpscaleFilter>,
+    pub upscale_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -143,6 +146,7 @@ impl Default for TexArtCcAtlasOptions {
             compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -268,15 +272,29 @@ pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
         UpscaleFilter::LocalLaplacianClarity15 | UpscaleFilter::LocalLaplacianClarity25 | UpscaleFilter::LocalLaplacianClarity30 => 35,
         UpscaleFilter::UnityContrastEnhance20 | UpscaleFilter::UnityContrastEnhance35 | UpscaleFilter::UnityContrastEnhance50 => 36,
         UpscaleFilter::AdaptiveLogContrast75 | UpscaleFilter::AdaptiveLogContrast80 | UpscaleFilter::AdaptiveLogContrast90 => 37,
+        _ => 0,
     }
 }
 
-fn art_upscale_passes(options: &TexArtCcAtlasOptions) -> Vec<UpscaleFilter> {
+fn art_upscale_passes(options: &TexArtCcAtlasOptions) -> Vec<UpscalePass> {
     if options.upscale_passes.is_empty() {
-        vec![options.upscale]
+        vec![UpscalePass::from(options.upscale)]
     } else {
         options.upscale_passes.clone()
     }
+}
+
+fn art_upscale_passes_for(
+    options: &TexArtCcAtlasOptions,
+    image_type: UpscaleImageType,
+    art_id: u32,
+) -> Vec<UpscalePass> {
+    let fallback = art_upscale_passes(options);
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| profile.passes_for(UpscaleTarget::new(image_type, art_id), &fallback))
+        .unwrap_or(fallback)
 }
 
 pub fn convert_art_mul_to_tex_art_cc_uddp(
@@ -725,9 +743,10 @@ fn decode_present_tiles(
                         &mut rgba,
                     ) {
                         Ok(()) => {
-                            let upscale_passes = art_upscale_passes(options);
+                            let upscale_passes =
+                                art_upscale_passes_for(options, UpscaleImageType::ArtLand, art_id as u32);
                             let (w, h, rgba, upscale_factor, upscale_filter) =
-                                apply_filter_passes(44, 44, &rgba, &upscale_passes);
+                                apply_upscale_passes(44, 44, &rgba, &upscale_passes);
                             DecodeOutcome::Decoded(DecodedArtTile {
                                 art_id,
                                 kind,
@@ -763,9 +782,13 @@ fn decode_present_tiles(
                         };
                         match draw_offsets {
                             Ok((draw_offset_x, draw_offset_y)) => {
-                                let upscale_passes = art_upscale_passes(options);
+                                let upscale_passes = art_upscale_passes_for(
+                                    options,
+                                    UpscaleImageType::ArtItems,
+                                    art_id as u32,
+                                );
                                 let (w, h, rgba, upscale_factor, upscale_filter) =
-                                    apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
+                                    apply_upscale_passes(width as u32, height as u32, &rgba, &upscale_passes);
                                 DecodeOutcome::Decoded(DecodedArtTile {
                                     art_id,
                                     kind,
@@ -1445,6 +1468,7 @@ pub fn encode_slot_manifest(
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -1496,6 +1520,7 @@ mod tests {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -1551,6 +1576,7 @@ mod tests {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -1578,6 +1604,7 @@ mod tests {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,

@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -163,7 +164,8 @@ struct TerrainIgnoreMetadata {
     code: Option<String>,
 }
 
-use crate::upscale::{apply_filter_passes, UpscaleConfig, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscaleConfig, UpscaleFilter, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 pub struct TexLandEcAtlasOptions {
     pub atlas_width: u32,
@@ -174,10 +176,11 @@ pub struct TexLandEcAtlasOptions {
     pub upscale_128: UpscaleConfig,
     pub upscale_256: UpscaleConfig,
     pub upscale_512: UpscaleConfig,
-    pub upscale_64_passes: Vec<UpscaleFilter>,
-    pub upscale_128_passes: Vec<UpscaleFilter>,
-    pub upscale_256_passes: Vec<UpscaleFilter>,
-    pub upscale_512_passes: Vec<UpscaleFilter>,
+    pub upscale_64_passes: Vec<UpscalePass>,
+    pub upscale_128_passes: Vec<UpscalePass>,
+    pub upscale_256_passes: Vec<UpscalePass>,
+    pub upscale_512_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -199,12 +202,26 @@ impl Default for TexLandEcAtlasOptions {
             upscale_128_passes: Vec::new(),
             upscale_256_passes: Vec::new(),
             upscale_512_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
             transcode_kdl_path: None,
         }
     }
+}
+
+fn land_upscale_passes_for(options: &TexLandEcAtlasOptions, texture_id: u32, fallback: &[UpscalePass]) -> Vec<UpscalePass> {
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| {
+            profile.passes_for(
+                UpscaleTarget::new(UpscaleImageType::EcLandTextures, texture_id),
+                fallback,
+            )
+        })
+        .unwrap_or_else(|| fallback.to_vec())
 }
 
 fn packing_mode_repr(mode: AtlasPackingMode) -> u8 {
@@ -1290,9 +1307,10 @@ fn decode_present_tiles(
         };
 
         if let Some((cfg, passes)) = upscale_config {
+            let passes = land_upscale_passes_for(options, texture_id, passes);
             if !passes.is_empty() {
                 let (width, height, rgba, _, _) =
-                    apply_filter_passes(decoded.width, decoded.height, &decoded.rgba, passes);
+                    apply_upscale_passes(decoded.width, decoded.height, &decoded.rgba, &passes);
                 decoded.width = width;
                 decoded.height = height;
                 decoded.rgba = rgba;
@@ -1849,6 +1867,7 @@ pub fn encode_slot_manifest(
             upscale_128_passes: Vec::new(),
             upscale_256_passes: Vec::new(),
             upscale_512_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -1921,6 +1940,7 @@ mod tests {
             upscale_128_passes: Vec::new(),
             upscale_256_passes: Vec::new(),
             upscale_512_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,

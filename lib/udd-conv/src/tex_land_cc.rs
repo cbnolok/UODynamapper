@@ -11,6 +11,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -47,7 +48,8 @@ use udd_container::{
 };
 use uocf::classic::land_texture::TexMap;
 
-use crate::upscale::{apply_filter_passes, UpscaleConfig, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscaleConfig, UpscaleFilter, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"CTXP";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"CTXS";
@@ -64,8 +66,9 @@ pub struct TexLandCcAtlasOptions {
     pub compression: CompressionFlag,
     pub upscale_64: UpscaleConfig,
     pub upscale_128: UpscaleConfig,
-    pub upscale_64_passes: Vec<UpscaleFilter>,
-    pub upscale_128_passes: Vec<UpscaleFilter>,
+    pub upscale_64_passes: Vec<UpscalePass>,
+    pub upscale_128_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -82,6 +85,7 @@ impl Default for TexLandCcAtlasOptions {
             upscale_128: UpscaleConfig::default(),
             upscale_64_passes: Vec::new(),
             upscale_128_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -450,20 +454,22 @@ fn decode_present_tiles(
             let (orig_w, orig_h) = element.size().dimensions();
 
             let (w, h, rgba) = if orig_w == 64 && orig_h == 64 {
+                let passes = land_upscale_passes_for(options, id as u32, &options.upscale_64_passes);
                 apply_upscale_config(
                     orig_w as u32,
                     orig_h as u32,
                     &rgba_arc,
                     options.upscale_64,
-                    &options.upscale_64_passes,
+                    &passes,
                 )
             } else if orig_w == 128 && orig_h == 128 {
+                let passes = land_upscale_passes_for(options, id as u32, &options.upscale_128_passes);
                 apply_upscale_config(
                     orig_w as u32,
                     orig_h as u32,
                     &rgba_arc,
                     options.upscale_128,
-                    &options.upscale_128_passes,
+                    &passes,
                 )
             } else {
                 (orig_w as u32, orig_h as u32, rgba_arc.to_vec())
@@ -499,10 +505,10 @@ fn apply_upscale_config(
     height: u32,
     rgba: &[u8],
     config: UpscaleConfig,
-    passes: &[UpscaleFilter],
+    passes: &[UpscalePass],
 ) -> (u32, u32, Vec<u8>) {
     if !passes.is_empty() {
-        let (width, height, rgba, _, _) = apply_filter_passes(width, height, rgba, passes);
+        let (width, height, rgba, _, _) = apply_upscale_passes(width, height, rgba, passes);
         return (width, height, rgba);
     }
 
@@ -522,6 +528,19 @@ fn apply_upscale_config(
             .filter
             .apply_to_size(width, height, rgba, target, target),
     )
+}
+
+fn land_upscale_passes_for(options: &TexLandCcAtlasOptions, texture_id: u32, fallback: &[UpscalePass]) -> Vec<UpscalePass> {
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| {
+            profile.passes_for(
+                UpscaleTarget::new(UpscaleImageType::CcLandTextures, texture_id),
+                fallback,
+            )
+        })
+        .unwrap_or_else(|| fallback.to_vec())
 }
 
 fn pack_tiles_into_pages(
@@ -892,6 +911,7 @@ mod tests {
             upscale_128: UpscaleConfig::default(),
             upscale_64_passes: Vec::new(),
             upscale_128_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,

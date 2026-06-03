@@ -4,6 +4,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uocf::classic::gump::GumpMap;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
@@ -14,7 +15,8 @@ use crate::gump_atlas::{
 };
 use crate::package_progress::build_and_write_package;
 use crate::source_paths::source_path_label;
-use crate::upscale::{apply_filter_passes, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 
 pub const GUMPS_CC_DEFAULT_OUTPUT: &str = "gumps_cc.uddp";
 
@@ -27,8 +29,9 @@ pub struct CcGumpsBuildSummary {
 pub struct CcGumpsOptions {
     pub compression: CompressionFlag,
     pub atlas_compression: CompressionFlag,
-    pub paperdoll_upscale_passes: Vec<UpscaleFilter>,
-    pub single_upscale_passes: Vec<UpscaleFilter>,
+    pub paperdoll_upscale_passes: Vec<UpscalePass>,
+    pub single_upscale_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub source_preference: SourceFormatPreference,
 }
 
@@ -39,9 +42,23 @@ impl Default for CcGumpsOptions {
             atlas_compression: CompressionFlag::ZstdNoDict,
             paperdoll_upscale_passes: Vec::new(),
             single_upscale_passes: Vec::new(),
+            upscale_profile: None,
             source_preference: SourceFormatPreference::Mul,
         }
     }
+}
+
+fn gump_upscale_passes_for(
+    options: &CcGumpsOptions,
+    image_type: UpscaleImageType,
+    gump_id: u32,
+    fallback: &[UpscalePass],
+) -> Vec<UpscalePass> {
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| profile.passes_for(UpscaleTarget::new(image_type, gump_id), fallback))
+        .unwrap_or_else(|| fallback.to_vec())
 }
 
 pub fn convert_gumps_to_uddp_from_sources_with_patches(
@@ -112,11 +129,17 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
         };
 
         if is_paperdoll_equipment_gump_id(gump_id) {
-            let (width, height, rgba, upscale_factor, _) = apply_filter_passes(
+            let passes = gump_upscale_passes_for(
+                options,
+                UpscaleImageType::GumpsEquip,
+                gump_id,
+                &options.paperdoll_upscale_passes,
+            );
+            let (width, height, rgba, upscale_factor, _) = apply_upscale_passes(
                 u32::from(width),
                 u32::from(height),
                 &rgba,
-                &options.paperdoll_upscale_passes,
+                &passes,
             );
             atlas_gumps.push(DecodedGump {
                 gump_id,
@@ -126,11 +149,17 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 rgba,
             });
         } else {
-            let (width, height, rgba, _, _) = apply_filter_passes(
+            let passes = gump_upscale_passes_for(
+                options,
+                UpscaleImageType::GumpsNonEquip,
+                gump_id,
+                &options.single_upscale_passes,
+            );
+            let (width, height, rgba, _, _) = apply_upscale_passes(
                 u32::from(width),
                 u32::from(height),
                 &rgba,
-                &options.single_upscale_passes,
+                &passes,
             );
             add_single_gump(
                 &mut builder,

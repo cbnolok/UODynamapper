@@ -64,7 +64,8 @@ use uocf::enhanced::{
     tileart::{ArtData, ArtTexture, TaeFlag, TileType},
 };
 
-use crate::upscale::{apply_filter_passes, UpscaleFilter};
+use crate::upscale::{apply_upscale_passes, UpscaleFilter, UpscalePass};
+use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::tex_art_cc::upscale_algorithm_code;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
@@ -86,7 +87,8 @@ pub struct TexArtEcAtlasOptions {
     pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
-    pub upscale_passes: Vec<UpscaleFilter>,
+    pub upscale_passes: Vec<UpscalePass>,
+    pub upscale_profile: Option<Arc<UpscaleProfile>>,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
     pub bc7_rdo_lookback_blocks: usize,
@@ -102,6 +104,7 @@ impl Default for TexArtEcAtlasOptions {
             compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -109,12 +112,21 @@ impl Default for TexArtEcAtlasOptions {
     }
 }
 
-fn art_upscale_passes(options: &TexArtEcAtlasOptions) -> Vec<UpscaleFilter> {
+fn art_upscale_passes(options: &TexArtEcAtlasOptions) -> Vec<UpscalePass> {
     if options.upscale_passes.is_empty() {
-        vec![options.upscale]
+        vec![UpscalePass::from(options.upscale)]
     } else {
         options.upscale_passes.clone()
     }
+}
+
+fn art_upscale_passes_for(options: &TexArtEcAtlasOptions, image_type: UpscaleImageType, art_id: u32) -> Vec<UpscalePass> {
+    let fallback = art_upscale_passes(options);
+    options
+        .upscale_profile
+        .as_ref()
+        .map(|profile| profile.passes_for(UpscaleTarget::new(image_type, art_id), &fallback))
+        .unwrap_or(fallback)
 }
 
 fn packing_mode_repr(mode: AtlasPackingMode) -> u8 {
@@ -981,9 +993,13 @@ fn decode_present_tiles(
                 alias_art_ids.push((alias_art_id, alias_offset_x, alias_offset_y));
             }
 
-            let upscale_passes = art_upscale_passes(options);
+            let image_type = match group.kind {
+                ArtTileKind::Land => UpscaleImageType::ArtLand,
+                ArtTileKind::Static => UpscaleImageType::ArtItems,
+            };
+            let upscale_passes = art_upscale_passes_for(options, image_type, group.canonical_art_id);
             let (width, height, rgba, upscale_factor, upscale_filter) =
-                apply_filter_passes(width as u32, height as u32, &rgba, &upscale_passes);
+                apply_upscale_passes(width as u32, height as u32, &rgba, &upscale_passes);
 
             decode_pb.inc(1);
             let completed = decode_completed
@@ -1969,6 +1985,7 @@ pub fn encode_slot_manifest(
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
@@ -2016,6 +2033,7 @@ mod tests {
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),
+            upscale_profile: None,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: crate::bc7::DEFAULT_BC7_RDO_LAMBDA,
             bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,

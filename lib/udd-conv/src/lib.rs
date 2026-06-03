@@ -19,13 +19,22 @@ pub mod tex_land_ec;
 pub mod package_progress;
 pub mod source_paths;
 pub mod tilemeta;
-pub use image_postprocess::upscaling;
+pub mod upscale_pipeline;
+pub mod upscale_profile;
 pub mod world_lights;
 pub mod hues;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
 mod rgba_bounds;
-pub use upscaling as upscale;
+pub use image_postprocess::upscaling;
+pub mod upscale {
+	pub use crate::upscale_pipeline::{
+		apply_upscale_passes, apply_upscale_passes_owned, UpscalePass,
+	};
+	pub use image_postprocess::upscaling::{
+		apply_filter_passes, apply_filter_passes_owned, UpscaleConfig, UpscaleFilter,
+	};
+}
 
 pub use udd_container::CompressionFlag as CompressionFlag;
 pub use udd_container::{BuildProgress, BuildProgressPhase};
