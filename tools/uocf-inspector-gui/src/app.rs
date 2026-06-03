@@ -248,6 +248,12 @@ pub struct UpscalePreviewResult {
     pub elapsed_ms: u128,
 }
 
+pub struct UopEntryLabel {
+    pub hash: u64,
+    pub display_name: String,
+    pub search_name: String,
+}
+
 pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
     match filter {
         UpscaleFilter::None => "none",
@@ -481,6 +487,8 @@ pub struct UopInspectorApp {
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
     pub ec_texture_preview_source_keys: HashMap<u32, u64>,
+    pub uop_entry_labels: HashMap<usize, Arc<Vec<UopEntryLabel>>>,
+    pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
@@ -594,6 +602,8 @@ impl UopInspectorApp {
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
+            uop_entry_labels: HashMap::new(),
+            uop_entry_payloads: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -667,10 +677,15 @@ impl UopInspectorApp {
         self.cc_gumps_package = None;
         self.ec_gumps_package = None;
         self.cc_gumps = None;
+        self.uop_cache.loaded_uops.clear();
+        self.selected_uop_idx = None;
+        self.selected_file_hash = None;
         self.cc_multimap = None;
         self.cc_multimap_path = None;
         self.texture_previews.clear();
         self.ec_texture_previews.clear();
+        self.uop_entry_labels.clear();
+        self.uop_entry_payloads.clear();
         self.multimap_texture = None;
         self.paperdoll_preview = None;
         self.image_preview_sources.clear();
@@ -755,6 +770,13 @@ impl UopInspectorApp {
                     let animdata = uocf::classic::animdata::AnimData::load(path.join("animdata.mul"))
                         .ok()
                         .map(Arc::new);
+                    let anim_map = match uocf::classic::anim::AnimMap::load(&path) {
+                        Ok(anim_map) => Some(Arc::new(anim_map)),
+                        Err(e) => {
+                            self.log(format!("Classic animation MUL sources unavailable: {}", e));
+                            None
+                        }
+                    };
                     let mut anim_defs = None;
                     let anim_def_path = path.join("AnimationDefinition.uop");
                     if anim_def_path.exists() {
@@ -782,6 +804,7 @@ impl UopInspectorApp {
                         _ec_multis: None,
                         hues,
                         animdata,
+                        anim_map,
                         anim_defs,
                     });
                     self.log("Successfully loaded CC assets.");
@@ -886,6 +909,7 @@ impl UopInspectorApp {
                                 _ec_multis: None,
                                 hues: None,
                                 animdata: None,
+                                anim_map: None,
                                 anim_defs: None,
                             });
                             self.log("Loaded standalone Legacy Art UOP from EC folder.");
@@ -1395,6 +1419,51 @@ impl UopInspectorApp {
             }
             Err(_) => None,
         }
+    }
+
+    pub fn get_uop_entry_labels(&mut self, uop_idx: usize) -> Arc<Vec<UopEntryLabel>> {
+        if let Some(labels) = self.uop_entry_labels.get(&uop_idx).cloned() {
+            return labels;
+        }
+
+        let Some(loaded) = self.uop_cache.loaded_uops.get(uop_idx).cloned() else {
+            return Arc::new(Vec::new());
+        };
+
+        let labels = loaded
+            .package
+            .iter_files()
+            .map(|file| {
+                let hash = file.filename_hash();
+                let display_name = self
+                    .dictionary
+                    .resolve(hash)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("{:016X}", hash));
+                let search_name = display_name.to_lowercase();
+                UopEntryLabel {
+                    hash,
+                    display_name,
+                    search_name,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let labels = Arc::new(labels);
+        self.uop_entry_labels.insert(uop_idx, Arc::clone(&labels));
+        labels
+    }
+
+    pub fn get_uop_entry_payload(&mut self, uop_idx: usize, hash: u64) -> Option<Arc<[u8]>> {
+        let key = (uop_idx, hash);
+        if let Some(payload) = self.uop_entry_payloads.get(&key).cloned() {
+            return Some(payload);
+        }
+
+        let loaded = self.uop_cache.loaded_uops.get(uop_idx)?.clone();
+        let payload = loaded.package.unpack_file_arc_by_hash(hash).ok()??;
+        self.uop_entry_payloads.insert(key, Arc::clone(&payload));
+        Some(payload)
     }
 
     pub fn save_entry(&mut self, hash: u64, name: &str) {
@@ -1974,6 +2043,8 @@ mod tests {
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
+            uop_entry_labels: HashMap::new(),
+            uop_entry_payloads: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,

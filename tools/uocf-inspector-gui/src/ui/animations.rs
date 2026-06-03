@@ -3,7 +3,6 @@ use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use color_eyre::eyre;
 use eframe::egui;
 use std::path::{Path, PathBuf};
-use uocf::classic::anim::AnimMap;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
@@ -238,9 +237,13 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
             let frames_res: eyre::Result<Vec<uocf::classic::anim::AnimFrame>> = match app
                 .selected_legacy_source
             {
-                ArtSource::Mul => AnimMap::load(client.path.clone()).and_then(|anim_map| {
-                    anim_map.decode_animation(app.selected_anim_file_idx, body_id)
-                }),
+                ArtSource::Mul => client
+                    .anim_map
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("Classic animation MUL sources are not loaded"))
+                    .and_then(|anim_map| {
+                        anim_map.decode_animation(app.selected_anim_file_idx, body_id)
+                    }),
                 ArtSource::CcUop => {
                     let mut found_frames = Err(eyre::eyre!("Animation not found in UOPs"));
                     for loaded in &app.uop_cache.loaded_uops {

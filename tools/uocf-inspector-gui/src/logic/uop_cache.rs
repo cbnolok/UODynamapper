@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use uocf::classic::anim::AnimMap;
 use uocf::classic::art::ArtMap;
 use uocf::classic::tiledata::TileData;
 // use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -34,6 +35,7 @@ pub struct ClientData {
     pub _ec_multis: Option<Arc<uocf::enhanced::multis::MultiCollection>>,
     pub hues: Option<Arc<Vec<uocf::classic::hues::HueEntry>>>,
     pub animdata: Option<Arc<uocf::classic::animdata::AnimData>>,
+    pub anim_map: Option<Arc<AnimMap>>,
     pub anim_defs: Option<Arc<uocf::classic::anim::AnimationDefinition>>,
 }
 

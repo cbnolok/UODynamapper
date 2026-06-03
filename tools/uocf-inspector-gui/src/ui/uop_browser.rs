@@ -24,7 +24,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
 
     if let Some(uop_idx) = app.selected_uop_idx {
-        let loaded_uop = app.uop_cache.loaded_uops[uop_idx].clone();
+        let entry_labels = app.get_uop_entry_labels(uop_idx);
         
         egui::SidePanel::left("entry_panel")
             .resizable(true)
@@ -45,21 +45,15 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     }
                 });
                 
+                let query = app.search_query.to_lowercase();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for file in loaded_uop.package.iter_files() {
-                        let hash = file.filename_hash();
-                        let resolved_name = app.dictionary.resolve(hash);
-                        let display_name = match resolved_name {
-                            Some(name) => name.to_string(),
-                            None => format!("{:016X}", hash),
-                        };
-
-                        if !app.search_query.is_empty() && !display_name.to_lowercase().contains(&app.search_query.to_lowercase()) {
+                    for file in entry_labels.iter() {
+                        if !query.is_empty() && !file.search_name.contains(&query) {
                             continue;
                         }
 
-                        if ui.selectable_label(app.selected_file_hash == Some(hash), display_name).clicked() {
-                            app.selected_file_hash = Some(hash);
+                        if ui.selectable_label(app.selected_file_hash == Some(file.hash), &file.display_name).clicked() {
+                            app.selected_file_hash = Some(file.hash);
                         }
                     }
                 });
@@ -94,7 +88,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 } else if resolved_name.contains("terraindefinition") && resolved_name.ends_with(".bin") {
                     ui_integrated_terrain_view(app, ctx, ui, file);
                 } else {
-                    ui_generic_preview(app, ctx, ui, &loaded_uop.package, hash, &resolved_name);
+                    ui_generic_preview(app, ctx, ui, uop_idx, hash, &resolved_name);
                 }
             }
         } else {
@@ -287,12 +281,14 @@ fn ui_generic_preview(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     ui: &mut egui::Ui,
-    package: &uocf::uop_container::package::UopPackage,
+    uop_idx: usize,
     hash: u64,
     name: &str,
 ) {
-    if let Ok(Some(data)) = package.unpack_file_by_hash(hash) {
-        if name.to_lowercase().ends_with(".dds") || name.to_lowercase().ends_with(".tga") || name.to_lowercase().ends_with(".bmp") {
+    if let Some(data) = app.get_uop_entry_payload(uop_idx, hash) {
+        let data = data.as_ref();
+        let lower_name = name.to_lowercase();
+        if lower_name.ends_with(".dds") || lower_name.ends_with(".tga") || lower_name.ends_with(".bmp") {
             if let Some(handle) = app.get_uop_texture(ctx, hash, &data, name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
@@ -300,8 +296,8 @@ fn ui_generic_preview(
                 });
             }
         } else if data.starts_with(b"<?xml") || name.ends_with(".xml") || name.ends_with(".def") {
-            if let Ok(text) = String::from_utf8(data.clone()) {
-                let mut text_ref = text.as_str();
+            if let Ok(text) = std::str::from_utf8(data) {
+                let mut text_ref = text;
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.add(egui::TextEdit::multiline(&mut text_ref)
                         .font(egui::TextStyle::Monospace)
