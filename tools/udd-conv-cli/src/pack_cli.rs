@@ -556,6 +556,15 @@ pub enum CliUpscaleFilter {
     SelectiveGreen20,
     SelectiveGreen30,
     SelectiveGreen40,
+    LocalLaplacianClarity15,
+    LocalLaplacianClarity25,
+    LocalLaplacianClarity30,
+    UnityContrastEnhance20,
+    UnityContrastEnhance35,
+    UnityContrastEnhance50,
+    AdaptiveLogContrast75,
+    AdaptiveLogContrast80,
+    AdaptiveLogContrast90,
     ScaleFxSmartDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
@@ -641,6 +650,15 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::SelectiveGreen20 => UpscaleFilter::SelectiveGreen20,
             CliUpscaleFilter::SelectiveGreen30 => UpscaleFilter::SelectiveGreen30,
             CliUpscaleFilter::SelectiveGreen40 => UpscaleFilter::SelectiveGreen40,
+            CliUpscaleFilter::LocalLaplacianClarity15 => UpscaleFilter::LocalLaplacianClarity15,
+            CliUpscaleFilter::LocalLaplacianClarity25 => UpscaleFilter::LocalLaplacianClarity25,
+            CliUpscaleFilter::LocalLaplacianClarity30 => UpscaleFilter::LocalLaplacianClarity30,
+            CliUpscaleFilter::UnityContrastEnhance20 => UpscaleFilter::UnityContrastEnhance20,
+            CliUpscaleFilter::UnityContrastEnhance35 => UpscaleFilter::UnityContrastEnhance35,
+            CliUpscaleFilter::UnityContrastEnhance50 => UpscaleFilter::UnityContrastEnhance50,
+            CliUpscaleFilter::AdaptiveLogContrast75 => UpscaleFilter::AdaptiveLogContrast75,
+            CliUpscaleFilter::AdaptiveLogContrast80 => UpscaleFilter::AdaptiveLogContrast80,
+            CliUpscaleFilter::AdaptiveLogContrast90 => UpscaleFilter::AdaptiveLogContrast90,
             CliUpscaleFilter::ScaleFxSmartDeblur => UpscaleFilter::ScaleFxSmartDeblur,
             CliUpscaleFilter::UnsharpMaskSmall => UpscaleFilter::UnsharpMaskSmall,
             CliUpscaleFilter::HighPassSharpen => UpscaleFilter::HighPassSharpen,
@@ -2542,6 +2560,37 @@ mod tests {
                 assert_eq!(
                     upscale_passes,
                     vec![CliUpscaleFilter::Vibrance30, CliUpscaleFilter::SelectiveWarm30]
+                );
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_local_contrast_upscale_passes() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-mobile-anims",
+            "--ccdir",
+            "/cc",
+            "--upscale-pass",
+            "local-laplacian-clarity25",
+            "--upscale-pass",
+            "unity-contrast-enhance35",
+            "--upscale-pass",
+            "adaptive-log-contrast80",
+        ])
+        .expect("parse local contrast upscale passes");
+
+        match cli.command {
+            Commands::PackMobileAnims { upscale_passes, .. } => {
+                assert_eq!(
+                    upscale_passes,
+                    vec![
+                        CliUpscaleFilter::LocalLaplacianClarity25,
+                        CliUpscaleFilter::UnityContrastEnhance35,
+                        CliUpscaleFilter::AdaptiveLogContrast80,
+                    ]
                 );
             }
             _ => panic!("unexpected command parsed"),

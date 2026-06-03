@@ -116,6 +116,15 @@ pub enum UpscaleFilter {
     SelectiveGreen20,
     SelectiveGreen30,
     SelectiveGreen40,
+    LocalLaplacianClarity15,
+    LocalLaplacianClarity25,
+    LocalLaplacianClarity30,
+    UnityContrastEnhance20,
+    UnityContrastEnhance35,
+    UnityContrastEnhance50,
+    AdaptiveLogContrast75,
+    AdaptiveLogContrast80,
+    AdaptiveLogContrast90,
     ScaleFxSmartDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
@@ -184,6 +193,15 @@ impl UpscaleFilter {
             | Self::SelectiveGreen20
             | Self::SelectiveGreen30
             | Self::SelectiveGreen40
+            | Self::LocalLaplacianClarity15
+            | Self::LocalLaplacianClarity25
+            | Self::LocalLaplacianClarity30
+            | Self::UnityContrastEnhance20
+            | Self::UnityContrastEnhance35
+            | Self::UnityContrastEnhance50
+            | Self::AdaptiveLogContrast75
+            | Self::AdaptiveLogContrast80
+            | Self::AdaptiveLogContrast90
             | Self::ScaleFxSmartDeblur
             | Self::UnsharpMaskSmall
             | Self::HighPassSharpen => 1,
@@ -332,6 +350,60 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 mmpx::apply_mmpx(width, height, rgba, scale).2
             }
+            Self::LocalLaplacianClarity15 => sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams { radius: 2, amount: 0.15 },
+            ).2,
+            Self::LocalLaplacianClarity25 => sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams::default(),
+            ).2,
+            Self::LocalLaplacianClarity30 => sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams { radius: 4, amount: 0.30 },
+            ).2,
+            Self::UnityContrastEnhance20 => sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams { intensity: 0.20, threshold: 0.05, blur_spread: 2.0 },
+            ).2,
+            Self::UnityContrastEnhance35 => sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams::default(),
+            ).2,
+            Self::UnityContrastEnhance50 => sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams { intensity: 0.50, threshold: 0.15, blur_spread: 3.0 },
+            ).2,
+            Self::AdaptiveLogContrast75 => sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.75 },
+            ).2,
+            Self::AdaptiveLogContrast80 => sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams::default(),
+            ).2,
+            Self::AdaptiveLogContrast90 => sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.90 },
+            ).2,
             Self::ScaleFxSmartDeblur => sharpen::apply_scalefx_smart_deblur(
                 width,
                 height,
@@ -387,6 +459,60 @@ impl UpscaleFilter {
 
     fn apply_post_upscale_sharpen(&self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
         match self {
+            Self::LocalLaplacianClarity15 => Some(sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams { radius: 2, amount: 0.15 },
+            ).2),
+            Self::LocalLaplacianClarity25 => Some(sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams::default(),
+            ).2),
+            Self::LocalLaplacianClarity30 => Some(sharpen::apply_local_laplacian_clarity(
+                width,
+                height,
+                rgba,
+                sharpen::LocalLaplacianClarityParams { radius: 4, amount: 0.30 },
+            ).2),
+            Self::UnityContrastEnhance20 => Some(sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams { intensity: 0.20, threshold: 0.05, blur_spread: 2.0 },
+            ).2),
+            Self::UnityContrastEnhance35 => Some(sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams::default(),
+            ).2),
+            Self::UnityContrastEnhance50 => Some(sharpen::apply_contrast_enhance(
+                width,
+                height,
+                rgba,
+                sharpen::ContrastEnhanceParams { intensity: 0.50, threshold: 0.15, blur_spread: 3.0 },
+            ).2),
+            Self::AdaptiveLogContrast75 => Some(sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.75 },
+            ).2),
+            Self::AdaptiveLogContrast80 => Some(sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams::default(),
+            ).2),
+            Self::AdaptiveLogContrast90 => Some(sharpen::apply_adaptive_log_contrast(
+                width,
+                height,
+                rgba,
+                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.90 },
+            ).2),
             Self::ScaleFxSmartDeblur => Some(sharpen::apply_scalefx_smart_deblur(
                 width,
                 height,
@@ -587,5 +713,24 @@ mod tests {
         assert!(pixels[1] > rgba[1]);
         assert!(pixels[0] < rgba[0]);
         assert_eq!(&pixels[4..8], &rgba[4..8]);
+    }
+
+    #[test]
+    fn local_contrast_passes_preserve_dimensions_and_alpha() {
+        let rgba = [40, 40, 40, 11, 80, 80, 80, 22, 120, 120, 120, 33, 160, 160, 160, 44];
+        for filter in [
+            UpscaleFilter::LocalLaplacianClarity25,
+            UpscaleFilter::UnityContrastEnhance35,
+            UpscaleFilter::AdaptiveLogContrast80,
+        ] {
+            let (width, height, pixels, scale, last_filter) =
+                apply_filter_passes(4, 1, &rgba, &[filter]);
+
+            assert_eq!((width, height), (4, 1));
+            assert_eq!(scale, 1);
+            assert_eq!(last_filter, filter);
+            assert_eq!(pixels.len(), rgba.len());
+            assert_eq!(pixels.chunks_exact(4).map(|pixel| pixel[3]).collect::<Vec<_>>(), vec![11, 22, 33, 44]);
+        }
     }
 }

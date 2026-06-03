@@ -265,6 +265,9 @@ pub(crate) fn upscale_algorithm_code(filter: UpscaleFilter) -> u16 {
         UpscaleFilter::ScaleFxSmartDeblur => 32,
         UpscaleFilter::UnsharpMaskSmall => 33,
         UpscaleFilter::HighPassSharpen => 34,
+        UpscaleFilter::LocalLaplacianClarity15 | UpscaleFilter::LocalLaplacianClarity25 | UpscaleFilter::LocalLaplacianClarity30 => 35,
+        UpscaleFilter::UnityContrastEnhance20 | UpscaleFilter::UnityContrastEnhance35 | UpscaleFilter::UnityContrastEnhance50 => 36,
+        UpscaleFilter::AdaptiveLogContrast75 | UpscaleFilter::AdaptiveLogContrast80 | UpscaleFilter::AdaptiveLogContrast90 => 37,
     }
 }
 

@@ -160,6 +160,9 @@ pub fn upscale_algorithm_name(code: u16) -> &'static str {
         32 => "ScaleFxSmartDeblur",
         33 => "UnsharpMaskSmall",
         34 => "HighPassSharpen",
+        35 => "LocalLaplacianClarity",
+        36 => "UnityContrastEnhance",
+        37 => "AdaptiveLogContrast",
         _ => "Unknown",
     }
 }

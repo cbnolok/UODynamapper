@@ -111,6 +111,9 @@ pub enum UpscalePreviewAlgorithm {
     Saturation,
     SelectiveWarm,
     SelectiveGreen,
+    LocalLaplacianClarity,
+    UnityContrastEnhance,
+    AdaptiveLogContrast,
     PaletteSnapStrict,
     PaletteSnapRampAware,
     PaletteSnapExpanded,
@@ -160,6 +163,9 @@ impl UpscalePreviewAlgorithm {
             Self::Saturation,
             Self::SelectiveWarm,
             Self::SelectiveGreen,
+            Self::LocalLaplacianClarity,
+            Self::UnityContrastEnhance,
+            Self::AdaptiveLogContrast,
             Self::PaletteSnapStrict,
             Self::PaletteSnapRampAware,
             Self::PaletteSnapExpanded,
@@ -203,6 +209,9 @@ impl UpscalePreviewAlgorithm {
             Self::Saturation => "Saturation Boost",
             Self::SelectiveWarm => "Selective Red/Orange Boost",
             Self::SelectiveGreen => "Selective Green Boost",
+            Self::LocalLaplacianClarity => "Local Laplacian Clarity",
+            Self::UnityContrastEnhance => "Unity Contrast Enhance",
+            Self::AdaptiveLogContrast => "Adaptive Log Contrast",
             Self::PaletteSnapStrict => "Palette Snap Strict",
             Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
             Self::PaletteSnapExpanded => "Palette Snap Expanded",
@@ -221,6 +230,9 @@ impl UpscalePreviewAlgorithm {
             Self::Vibrance => &[20, 30, 40],
             Self::Saturation => &[115, 125, 130],
             Self::SelectiveWarm | Self::SelectiveGreen => &[20, 30, 40],
+            Self::LocalLaplacianClarity => &[15, 25, 30],
+            Self::UnityContrastEnhance => &[20, 35, 50],
+            Self::AdaptiveLogContrast => &[75, 80, 90],
             Self::PaletteSnapStrict | Self::PaletteSnapRampAware => &[1],
             Self::PaletteSnapExpanded => &[8, 16, 32],
             Self::ScaleFxSmartDeblur | Self::UnsharpMaskSmall | Self::HighPassSharpen => &[1],
@@ -230,8 +242,13 @@ impl UpscalePreviewAlgorithm {
 
     pub fn scale_value_label(self, value: u32) -> String {
         match self {
-            Self::Vibrance | Self::SelectiveWarm | Self::SelectiveGreen => format!("{value}%"),
+            Self::Vibrance
+            | Self::SelectiveWarm
+            | Self::SelectiveGreen
+            | Self::LocalLaplacianClarity
+            | Self::UnityContrastEnhance => format!("{value}%"),
             Self::Saturation => format!("{:.2}x", value as f32 / 100.0),
+            Self::AdaptiveLogContrast => format!("{:.2} gamma", value as f32 / 100.0),
             Self::PaletteSnapStrict => "strict".to_string(),
             Self::PaletteSnapRampAware => "ramp".to_string(),
             Self::PaletteSnapExpanded => format!("{value} colors"),
@@ -344,6 +361,15 @@ impl UpscalePreviewAlgorithm {
             (Self::SelectiveGreen, 20) => UpscaleFilter::SelectiveGreen20,
             (Self::SelectiveGreen, 30) => UpscaleFilter::SelectiveGreen30,
             (Self::SelectiveGreen, _) => UpscaleFilter::SelectiveGreen40,
+            (Self::LocalLaplacianClarity, 15) => UpscaleFilter::LocalLaplacianClarity15,
+            (Self::LocalLaplacianClarity, 25) => UpscaleFilter::LocalLaplacianClarity25,
+            (Self::LocalLaplacianClarity, _) => UpscaleFilter::LocalLaplacianClarity30,
+            (Self::UnityContrastEnhance, 20) => UpscaleFilter::UnityContrastEnhance20,
+            (Self::UnityContrastEnhance, 35) => UpscaleFilter::UnityContrastEnhance35,
+            (Self::UnityContrastEnhance, _) => UpscaleFilter::UnityContrastEnhance50,
+            (Self::AdaptiveLogContrast, 75) => UpscaleFilter::AdaptiveLogContrast75,
+            (Self::AdaptiveLogContrast, 80) => UpscaleFilter::AdaptiveLogContrast80,
+            (Self::AdaptiveLogContrast, _) => UpscaleFilter::AdaptiveLogContrast90,
             (
                 Self::PaletteSnapStrict
                 | Self::PaletteSnapRampAware
