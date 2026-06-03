@@ -211,6 +211,7 @@ fn upscale_algorithm_name(code: u16) -> &'static str {
         19 => "Cut1",
         20 => "Cut2",
         21 => "Cut3",
+        22 => "ScaleFx",
         _ => "Unknown",
     }
 }
