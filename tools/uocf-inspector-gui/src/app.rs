@@ -17,7 +17,7 @@ use uocf::enhanced::localized_strings::LocalizedStringsPackage;
 use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
-use uocf::enhanced::tileart::{PropertyKey, TaeAnimationAppearance, TaeSittingAnimation, TileArtEntry};
+use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeFlag, TaeSittingAnimation, TileArtEntry};
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
@@ -410,11 +410,21 @@ pub struct TileArtFileEntry {
 
 #[derive(Clone)]
 pub struct CcTileDataRow {
+    pub art_id: u32,
     pub id: String,
     pub kind: &'static str,
     pub name: String,
-    pub flags: String,
-    pub height_or_texture: String,
+    pub flags_raw: String,
+    pub flags_summary: String,
+    pub texture_id: String,
+    pub height: String,
+    pub weight: String,
+    pub quality: String,
+    pub quantity: String,
+    pub anim_id: String,
+    pub hue_extra: String,
+    pub stacking_offset: String,
+    pub value: String,
     pub search_text: String,
 }
 
@@ -424,10 +434,13 @@ pub struct TileArtDisplayRow {
     pub tile_id: String,
     pub old_id: String,
     pub type_name: &'static str,
-    pub height: String,
-    pub flags: String,
-    pub ec_rect: String,
-    pub cc_rect: String,
+    pub properties_summary: String,
+    pub flags_raw: String,
+    pub flags_summary: String,
+    pub ec_window: String,
+    pub ec_offset: String,
+    pub cc_window: String,
+    pub cc_offset: String,
     pub texture_summary: String,
     pub sitting_summary: String,
     pub appearance_summary: String,
@@ -531,45 +544,85 @@ fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
     let mut rows = Vec::with_capacity(tiledata.land_tiles().len() + tiledata.item_tiles().len());
 
     for tile in tiledata.land_tiles() {
+        let art_id = tile.tile_id as u32;
         let id = tile.tile_id.to_string();
         let name = tile.name_ascii().to_string();
-        let flags = format!("{:08X}", tile.flags.internal_flags);
-        let height_or_texture = tile.texture_id.to_string();
+        let flags_raw = format!("0x{:08X}", tile.flags.internal_flags);
+        let flags_summary = classic_tile_flags_summary(tile.flags);
+        let texture_id = tile.texture_id.to_string();
         let search_text = format!(
-            "{} land {} {} {}",
+            "{} land {} {} {} {}",
             id,
             name.to_lowercase(),
-            flags.to_lowercase(),
-            height_or_texture
+            flags_raw.to_lowercase(),
+            flags_summary.to_lowercase(),
+            texture_id
         );
         rows.push(CcTileDataRow {
+            art_id,
             id,
             kind: "Land",
             name,
-            flags,
-            height_or_texture,
+            flags_raw,
+            flags_summary,
+            texture_id,
+            height: String::new(),
+            weight: String::new(),
+            quality: String::new(),
+            quantity: String::new(),
+            anim_id: String::new(),
+            hue_extra: String::new(),
+            stacking_offset: String::new(),
+            value: String::new(),
             search_text,
         });
     }
 
     for tile in tiledata.item_tiles() {
+        let art_id = tile.tile_id as u32 + 0x4000;
         let id = tile.tile_id.to_string();
         let name = tile.name_ascii().to_string();
-        let flags = format!("{:08X}", tile.flags.internal_flags);
-        let height_or_texture = tile.height_raw().to_string();
+        let flags_raw = format!("0x{:08X}", tile.flags.internal_flags);
+        let flags_summary = classic_tile_flags_summary(tile.flags);
+        let height = tile.height_raw().to_string();
+        let weight = tile.weight.to_string();
+        let quality = tile.quality.to_string();
+        let quantity = tile.quantity.to_string();
+        let anim_id = tile.anim_id.to_string();
+        let hue_extra = tile.hue_extra.to_string();
+        let stacking_offset = tile.stacking_offset.to_string();
+        let value = tile.value.to_string();
         let search_text = format!(
-            "{} item {} {} {}",
+            "{} item {} {} {} height {} weight {} quality {} quantity {} anim {} hue {} stack {} value {}",
             id,
             name.to_lowercase(),
-            flags.to_lowercase(),
-            height_or_texture
+            flags_raw.to_lowercase(),
+            flags_summary.to_lowercase(),
+            height,
+            weight,
+            quality,
+            quantity,
+            anim_id,
+            hue_extra,
+            stacking_offset,
+            value
         );
         rows.push(CcTileDataRow {
+            art_id,
             id,
             kind: "Item",
             name,
-            flags,
-            height_or_texture,
+            flags_raw,
+            flags_summary,
+            texture_id: String::new(),
+            height,
+            weight,
+            quality,
+            quantity,
+            anim_id,
+            hue_extra,
+            stacking_offset,
+            value,
             search_text,
         });
     }
@@ -588,23 +641,30 @@ fn collect_tileart_display_rows(
             let tile_id = entry.tile_id.to_string();
             let old_id = entry.old_id.to_string();
             let type_name = tileart_type_name(entry.type_val);
-            let height = tileart_property(entry, PropertyKey::Height).unwrap_or(0).to_string();
-            let flags = format!("{:016X}", entry.flags1.bits());
-            let ec_rect = format!(
-                "{},{} -> {},{} off {},{}",
+            let properties_summary = tileart_properties_summary(entry);
+            let flags_raw = format!("0x{:016X}", entry.flags1.bits());
+            let flags_summary = tileart_flags_summary(entry.flags1);
+            let ec_window = format!(
+                "{},{} -> {},{}",
                 entry.ec_img_offset.x_start,
                 entry.ec_img_offset.y_start,
                 entry.ec_img_offset.x_end,
-                entry.ec_img_offset.y_end,
+                entry.ec_img_offset.y_end
+            );
+            let ec_offset = format!(
+                "{},{}",
                 entry.ec_img_offset.x_off,
                 entry.ec_img_offset.y_off
             );
-            let cc_rect = format!(
-                "{},{} -> {},{} off {},{}",
+            let cc_window = format!(
+                "{},{} -> {},{}",
                 entry.cc_img_offset.x_start,
                 entry.cc_img_offset.y_start,
                 entry.cc_img_offset.x_end,
-                entry.cc_img_offset.y_end,
+                entry.cc_img_offset.y_end
+            );
+            let cc_offset = format!(
+                "{},{}",
                 entry.cc_img_offset.x_off,
                 entry.cc_img_offset.y_off
             );
@@ -612,12 +672,13 @@ fn collect_tileart_display_rows(
             let sitting_summary = tileart_sitting_summary(entry.sitting.as_ref());
             let appearance_summary = tileart_appearance_summary(&entry.appearance_vector);
             let search_text = format!(
-                "{} {} {} {} {} {} {}",
+                "{} {} {} {} {} {} {} {}",
                 tile_id,
                 old_id,
                 type_name.to_lowercase(),
-                height,
-                flags.to_lowercase(),
+                properties_summary.to_lowercase(),
+                flags_raw.to_lowercase(),
+                flags_summary.to_lowercase(),
                 texture_summary.to_lowercase(),
                 appearance_summary.to_lowercase()
             );
@@ -626,10 +687,13 @@ fn collect_tileart_display_rows(
                 tile_id,
                 old_id,
                 type_name,
-                height,
-                flags,
-                ec_rect,
-                cc_rect,
+                properties_summary,
+                flags_raw,
+                flags_summary,
+                ec_window,
+                ec_offset,
+                cc_window,
+                cc_offset,
                 texture_summary,
                 sitting_summary,
                 appearance_summary,
@@ -639,7 +703,54 @@ fn collect_tileart_display_rows(
         .collect()
 }
 
-fn tileart_type_name(type_val: i32) -> &'static str {
+fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
+    let labels = [
+        (flags.background(), "Background"),
+        (flags.weapon(), "Weapon"),
+        (flags.transparent(), "Transparent"),
+        (flags.translucent(), "Translucent"),
+        (flags.wall(), "Wall"),
+        (flags.damaging(), "Damaging"),
+        (flags.impassable(), "Impassable"),
+        (flags.wet(), "Wet"),
+        (flags.internal_flags & 0x0000_0100 != 0, "Unknown08"),
+        (flags.surface(), "Surface"),
+        (flags.bridge(), "Bridge"),
+        (flags.generic(), "Generic/Stackable"),
+        (flags.window(), "Window"),
+        (flags.noshoot(), "NoShoot"),
+        (flags.prefixa(), "ArticleA"),
+        (flags.prefixan(), "ArticleAn"),
+        (flags.internal(), "Internal"),
+        (flags.foliage(), "Foliage"),
+        (flags.partialhue(), "PartialHue"),
+        (flags.internal_flags & 0x0008_0000 != 0, "Unknown19"),
+        (flags.map(), "Map"),
+        (flags.container(), "Container"),
+        (flags.wearable(), "Wearable"),
+        (flags.lightsource(), "LightSource"),
+        (flags.animated(), "Animated"),
+        (flags.nodiagonal(), "NoDiagonal"),
+        (flags.internal_flags & 0x0400_0000 != 0, "Unknown26"),
+        (flags.armor(), "Armor"),
+        (flags.roof(), "Roof"),
+        (flags.door(), "Door"),
+        (flags.stairback(), "StairBack"),
+        (flags.stairright(), "StairRight"),
+    ];
+
+    let active = labels
+        .iter()
+        .filter_map(|(active, label)| active.then_some(*label))
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        "none".to_string()
+    } else {
+        active.join(", ")
+    }
+}
+
+pub(crate) fn tileart_type_name(type_val: i32) -> &'static str {
     match type_val {
         0 => "Static",
         1 => "Solid",
@@ -648,13 +759,91 @@ fn tileart_type_name(type_val: i32) -> &'static str {
     }
 }
 
-fn tileart_property(entry: &TileArtEntry, key: PropertyKey) -> Option<u32> {
-    entry
-        .prop_vector1
+pub(crate) fn tileart_property_name(id: u8) -> &'static str {
+    match id {
+        0 => "Weight",
+        1 => "Quality",
+        2 => "Quantity",
+        3 => "Height",
+        4 => "Value",
+        5 => "AC/VC",
+        6 => "Slot",
+        7 => "OffC8",
+        8 => "Appearance",
+        9 => "Race",
+        10 => "Gender",
+        11 => "Paperdoll",
+        _ => "Unknown",
+    }
+}
+
+fn tileart_properties_summary(entry: &TileArtEntry) -> String {
+    let mut parts = Vec::new();
+    for prop in entry.prop_vector1.iter().chain(entry.prop_vector2.iter()) {
+        parts.push(format!("{}={}", tileart_property_name(prop.id), prop.val));
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+pub(crate) fn tileart_flags_summary(flags: TaeFlag) -> String {
+    let labels = [
+        (TaeFlag::Background, "Background"),
+        (TaeFlag::Weapon, "Weapon"),
+        (TaeFlag::Transparent, "Transparent"),
+        (TaeFlag::Translucent, "Translucent"),
+        (TaeFlag::Wall, "Wall"),
+        (TaeFlag::Damaging, "Damaging"),
+        (TaeFlag::Impassable, "Impassable"),
+        (TaeFlag::Wet, "Wet"),
+        (TaeFlag::Ignored, "Ignored"),
+        (TaeFlag::Surface, "Surface"),
+        (TaeFlag::Bridge, "Bridge"),
+        (TaeFlag::Generic, "Generic"),
+        (TaeFlag::Window, "Window"),
+        (TaeFlag::NoShoot, "NoShoot"),
+        (TaeFlag::ArticleA, "ArticleA"),
+        (TaeFlag::ArticleAn, "ArticleAn"),
+        (TaeFlag::Mongen, "Mongen"),
+        (TaeFlag::Foliage, "Foliage"),
+        (TaeFlag::PartialHue, "PartialHue"),
+        (TaeFlag::UseNewArt, "UseNewArt"),
+        (TaeFlag::Map, "Map"),
+        (TaeFlag::Container, "Container"),
+        (TaeFlag::Wearable, "Wearable"),
+        (TaeFlag::LightSource, "LightSource"),
+        (TaeFlag::Animation, "Animation"),
+        (TaeFlag::HoverOver, "HoverOver"),
+        (TaeFlag::ArtUsed, "ArtUsed"),
+        (TaeFlag::Armor, "Armor"),
+        (TaeFlag::Roof, "Roof"),
+        (TaeFlag::Door, "Door"),
+        (TaeFlag::StairBack, "StairBack"),
+        (TaeFlag::StairRight, "StairRight"),
+        (TaeFlag::NoHouse, "NoHouse"),
+        (TaeFlag::NoDraw, "NoDraw"),
+        (TaeFlag::Unused1, "Unused1"),
+        (TaeFlag::AlphaBlend, "AlphaBlend"),
+        (TaeFlag::NoShadow, "NoShadow"),
+        (TaeFlag::PixelBleed, "PixelBleed"),
+        (TaeFlag::Unused2, "Unused2"),
+        (TaeFlag::PlayAnimOnce, "PlayAnimOnce"),
+        (TaeFlag::MultiMovable, "MultiMovable"),
+    ];
+
+    let active = labels
         .iter()
-        .chain(entry.prop_vector2.iter())
-        .find(|prop| prop.id == key as u8)
-        .map(|prop| prop.val)
+        .filter_map(|(flag, label)| flags.contains(*flag).then_some(*label))
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        "none".to_string()
+    } else {
+        active.join(", ")
+    }
 }
 
 fn tileart_texture_summary(

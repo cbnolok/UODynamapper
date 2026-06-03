@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{ArtSource, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -230,9 +230,15 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::auto().at_least(70.0))
             .column(Column::auto().at_least(60.0))
-            .column(Column::remainder())
-            .column(Column::auto().at_least(100.0))
-            .column(Column::auto().at_least(90.0))
+            .column(Column::auto().at_least(160.0))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(60.0))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(80.0))
+            .column(Column::auto().at_least(60.0))
+            .column(Column::auto().at_least(70.0))
+            .column(Column::auto().at_least(60.0))
+            .column(Column::remainder().at_least(220.0))
             .header(20.0, |mut header| {
                 header.col(|ui| {
                     ui.strong("ID");
@@ -244,10 +250,28 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                     ui.strong("Name");
                 });
                 header.col(|ui| {
-                    ui.strong("Flags");
+                    ui.strong("Texture");
                 });
                 header.col(|ui| {
-                    ui.strong("Height/Tex");
+                    ui.strong("Height");
+                });
+                header.col(|ui| {
+                    ui.strong("Weight");
+                });
+                header.col(|ui| {
+                    ui.strong("Layer/Light");
+                });
+                header.col(|ui| {
+                    ui.strong("Qty");
+                });
+                header.col(|ui| {
+                    ui.strong("Anim");
+                });
+                header.col(|ui| {
+                    ui.strong("Value");
+                });
+                header.col(|ui| {
+                    ui.strong("Flags");
                 });
             })
             .body(|body| {
@@ -257,7 +281,12 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                         .map_or(row.index(), |indices| indices[row.index()]);
                     let item = &rows[idx];
                     row.col(|ui| {
-                        ui.label(&item.id);
+                        if ui
+                            .selectable_label(app.selected_tex_art_cc_id == Some(item.art_id), &item.id)
+                            .clicked()
+                        {
+                            app.selected_tex_art_cc_id = Some(item.art_id);
+                        }
                     });
                     row.col(|ui| {
                         ui.label(item.kind);
@@ -266,13 +295,33 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                         ui.label(&item.name);
                     });
                     row.col(|ui| {
-                        ui.label(&item.flags);
+                        ui.label(&item.texture_id);
                     });
                     row.col(|ui| {
-                        ui.label(&item.height_or_texture);
+                        ui.label(&item.height);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.weight);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.quality);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.quantity);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.anim_id);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.value);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
                     });
                 });
             });
+
+        ui_selected_tiledata_details(app, ui);
     } else {
         ui.label("Select a Classic Client path containing tiledata.mul.");
     }
@@ -293,10 +342,12 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             .column(Column::auto().at_least(70.0))
             .column(Column::auto().at_least(70.0))
             .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::auto().at_least(130.0))
-            .column(Column::auto().at_least(150.0))
-            .column(Column::auto().at_least(150.0))
+            .column(Column::auto().at_least(180.0))
+            .column(Column::auto().at_least(220.0))
+            .column(Column::auto().at_least(120.0))
+            .column(Column::auto().at_least(80.0))
+            .column(Column::auto().at_least(120.0))
+            .column(Column::auto().at_least(80.0))
             .column(Column::remainder().at_least(180.0))
             .column(Column::auto().at_least(90.0))
             .column(Column::auto().at_least(170.0))
@@ -311,16 +362,22 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                     ui.strong("Type");
                 });
                 header.col(|ui| {
-                    ui.strong("Height");
+                    ui.strong("Properties");
                 });
                 header.col(|ui| {
                     ui.strong("Flags");
                 });
                 header.col(|ui| {
-                    ui.strong("EC Rect");
+                    ui.strong("EC Window");
                 });
                 header.col(|ui| {
-                    ui.strong("CC Rect");
+                    ui.strong("EC Offset");
+                });
+                header.col(|ui| {
+                    ui.strong("CC Window");
+                });
+                header.col(|ui| {
+                    ui.strong("CC Offset");
                 });
                 header.col(|ui| {
                     ui.strong("Textures");
@@ -356,16 +413,22 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                         ui.label(item.type_name);
                     });
                     row.col(|ui| {
-                        ui.label(&item.height);
+                        ui.label(&item.properties_summary);
                     });
                     row.col(|ui| {
-                        ui.label(&item.flags);
+                        ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
                     });
                     row.col(|ui| {
-                        ui.label(&item.ec_rect);
+                        ui.label(&item.ec_window);
                     });
                     row.col(|ui| {
-                        ui.label(&item.cc_rect);
+                        ui.label(&item.ec_offset);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.cc_window);
+                    });
+                    row.col(|ui| {
+                        ui.label(&item.cc_offset);
                     });
                     row.col(|ui| {
                         ui.label(&item.texture_summary);
@@ -383,32 +446,269 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         if let Some(selected_hash) = app.selected_tileart_hash {
             if let Some(file) = entries.iter().find(|file| file.filename_hash == selected_hash) {
                 ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
-                egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
-                    ui.label("Sitting");
-                    ui.label(tileart_sitting_summary(file.entry.sitting.as_ref()));
-                    ui.end_row();
-                    ui.label("Appearance");
-                    ui.label(tileart_appearance_summary(&file.entry.appearance_vector));
-                    ui.end_row();
-                    if let Some(sitting) = &file.entry.sitting {
-                        ui.label("Sitting Values");
-                        ui.monospace(format!(
-                            "{}, {}, {}, {}",
-                            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
-                        ));
-                        ui.end_row();
-                    }
-                    for (index, appearance) in file.entry.appearance_vector.iter().enumerate() {
-                        ui.label(format!("Appearance {}", index));
-                        ui.label(tileart_appearance_detail(appearance));
-                        ui.end_row();
-                    }
-                });
+                ui_selected_tileart_details(app, ui, file);
             }
         }
     } else {
         ui.label("Select an Enhanced Client path containing tileart.uop.");
     }
+}
+
+fn ui_selected_tiledata_details(app: &UopInspectorApp, ui: &mut egui::Ui) {
+    let Some(selected_id) = app.selected_tex_art_cc_id else {
+        return;
+    };
+    let Some(rows) = app.cc_tiledata_rows.as_ref() else {
+        return;
+    };
+    let Some(row) = rows.iter().find(|row| row.art_id == selected_id) else {
+        return;
+    };
+
+    ui.separator();
+    ui.heading(format!("Selected TileData {} {}", row.kind, row.id));
+    egui::Grid::new("tiledata_selected_details").striped(true).show(ui, |ui| {
+        ui.label("Name");
+        ui.label(&row.name);
+        ui.end_row();
+        ui.label("Flags Raw");
+        ui.monospace(&row.flags_raw);
+        ui.end_row();
+        ui.label("Flags Decoded");
+        ui.label(&row.flags_summary);
+        ui.end_row();
+        if row.kind == "Land" {
+            ui.label("Texture ID");
+            ui.label(&row.texture_id);
+            ui.end_row();
+        } else {
+            ui.label("Height");
+            ui.label(&row.height);
+            ui.end_row();
+            ui.label("Weight");
+            ui.label(&row.weight);
+            ui.end_row();
+            ui.label("Quality / Layer / Light");
+            ui.label(&row.quality);
+            ui.end_row();
+            ui.label("Quantity");
+            ui.label(&row.quantity);
+            ui.end_row();
+            ui.label("Animation ID");
+            ui.label(&row.anim_id);
+            ui.end_row();
+            ui.label("Hue Extra");
+            ui.label(&row.hue_extra);
+            ui.end_row();
+            ui.label("Stacking Offset");
+            ui.label(&row.stacking_offset);
+            ui.end_row();
+            ui.label("Value");
+            ui.label(&row.value);
+            ui.end_row();
+        }
+    });
+}
+
+fn ui_selected_tileart_details(app: &UopInspectorApp, ui: &mut egui::Ui, file: &TileArtFileEntry) {
+    let entry = &file.entry;
+
+    ui.collapsing("Core", |ui| {
+        egui::Grid::new("tileart_core_details").striped(true).show(ui, |ui| {
+            ui.label("Filename Hash");
+            ui.monospace(format!("0x{:016X}", file.filename_hash));
+            ui.end_row();
+            ui.label("Version");
+            ui.label(entry.version.to_string());
+            ui.end_row();
+            ui.label("String Dict Offset");
+            ui.label(entry.string_dict_off.to_string());
+            ui.end_row();
+            ui.label("Old ID");
+            ui.label(entry.old_id.to_string());
+            ui.end_row();
+            ui.label("Type");
+            ui.label(format!("{} ({})", tileart_type_name(entry.type_val), entry.type_val));
+            ui.end_row();
+            ui.label("Facing");
+            ui.label(entry.facing.to_string());
+            ui.end_row();
+            ui.label("Light");
+            ui.label(format!("{}, {}", entry.light1, entry.light2));
+            ui.end_row();
+            ui.label("Radar RGBA");
+            ui.label(format!(
+                "{}, {}, {}, {}",
+                entry.radarcol.r,
+                entry.radarcol.g,
+                entry.radarcol.b,
+                entry.radarcol.a
+            ));
+            ui.end_row();
+        });
+    });
+
+    ui.collapsing("Flags", |ui| {
+        egui::Grid::new("tileart_flags_details").striped(true).show(ui, |ui| {
+            ui.label("Flags1 Raw");
+            ui.monospace(format!("0x{:016X}", entry.flags1.bits()));
+            ui.end_row();
+            ui.label("Flags1 Decoded");
+            ui.label(tileart_flags_summary(entry.flags1));
+            ui.end_row();
+            ui.label("Flags2 Raw");
+            ui.monospace(format!("0x{:016X}", entry.flags2.bits()));
+            ui.end_row();
+            ui.label("Flags2 Decoded");
+            ui.label(tileart_flags_summary(entry.flags2));
+            ui.end_row();
+        });
+    });
+
+    ui.collapsing("Image Windows", |ui| {
+        egui::Grid::new("tileart_image_window_details").striped(true).show(ui, |ui| {
+            ui.label("EC Window");
+            ui.label(format!(
+                "{},{} -> {},{}",
+                entry.ec_img_offset.x_start,
+                entry.ec_img_offset.y_start,
+                entry.ec_img_offset.x_end,
+                entry.ec_img_offset.y_end
+            ));
+            ui.end_row();
+            ui.label("EC Offset");
+            ui.label(format!("{},{}", entry.ec_img_offset.x_off, entry.ec_img_offset.y_off));
+            ui.end_row();
+            ui.label("CC Window");
+            ui.label(format!(
+                "{},{} -> {},{}",
+                entry.cc_img_offset.x_start,
+                entry.cc_img_offset.y_start,
+                entry.cc_img_offset.x_end,
+                entry.cc_img_offset.y_end
+            ));
+            ui.end_row();
+            ui.label("CC Offset");
+            ui.label(format!("{},{}", entry.cc_img_offset.x_off, entry.cc_img_offset.y_off));
+            ui.end_row();
+        });
+    });
+
+    ui.collapsing("Properties", |ui| {
+        egui::Grid::new("tileart_property_details").striped(true).show(ui, |ui| {
+            ui.label("Vector");
+            ui.label("Key");
+            ui.label("Value");
+            ui.end_row();
+            for (vector_name, props) in [
+                ("prop_vector1", entry.prop_vector1.as_slice()),
+                ("prop_vector2", entry.prop_vector2.as_slice()),
+            ] {
+                for prop in props {
+                    ui.label(vector_name);
+                    ui.label(format!("{} ({})", tileart_property_name(prop.id), prop.id));
+                    ui.label(prop.val.to_string());
+                    ui.end_row();
+                }
+            }
+        });
+    });
+
+    ui.collapsing("Stack Aliases", |ui| {
+        if entry.stack_alias_vector.is_empty() {
+            ui.label("none");
+            return;
+        }
+        egui::Grid::new("tileart_stack_alias_details").striped(true).show(ui, |ui| {
+            ui.label("Amount");
+            ui.label("Amount ID");
+            ui.end_row();
+            for alias in &entry.stack_alias_vector {
+                ui.label(alias.amount.to_string());
+                ui.label(alias.amount_id.to_string());
+                ui.end_row();
+            }
+        });
+    });
+
+    ui.collapsing("Textures", |ui| {
+        egui::Grid::new("tileart_texture_block_details").striped(true).show(ui, |ui| {
+            ui.label("Block");
+            ui.label("Has");
+            ui.label("Type Offset");
+            ui.label("Items");
+            ui.label("Vectors");
+            ui.end_row();
+            for (block_index, block) in entry.texture_vector.iter().enumerate() {
+                ui.label(block_index.to_string());
+                ui.label(block.has_texture.to_string());
+                ui.label(block.type_string_off.to_string());
+                ui.label(block.texture_items_count.to_string());
+                ui.label(format!(
+                    "unk8 {} / unk9 {}",
+                    block.unk8_count,
+                    block.unk9_count
+                ));
+                ui.end_row();
+                for (item_index, item) in block.texture_items.iter().enumerate() {
+                    ui.label(format!("{}.{}", block_index, item_index));
+                    ui.label(format!("name off {}", item.name_string_off));
+                    ui.label(format!("stretch {}", item.texture_stretch));
+                    ui.label(format!("unk4 {}", item.unk4));
+                    ui.label(format!("unk6 {} / unk7 {}", item.unk6, item.unk7));
+                    ui.end_row();
+                }
+            }
+        });
+
+        if let Some(dict) = app.uo_string_dictionary.as_ref() {
+            let art_data = entry.process(dict);
+            ui.separator();
+            ui.label("Resolved texture items");
+            egui::Grid::new("tileart_resolved_texture_details").striped(true).show(ui, |ui| {
+                ui.label("Block.Item");
+                ui.label("Type");
+                ui.label("ID");
+                ui.label("Stretch");
+                ui.label("Path");
+                ui.end_row();
+                for block in art_data.texture_items {
+                    for item in block {
+                        ui.label(format!("{}.{}", item.block_index, item.item_index));
+                        ui.label(format!("{:?}", item.texture_type));
+                        ui.label(item.id.to_string());
+                        ui.label(item.texture_stretch.to_string());
+                        ui.label(item.path);
+                        ui.end_row();
+                    }
+                }
+            });
+        }
+    });
+
+    ui.collapsing("Sitting And Appearance", |ui| {
+        egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
+            ui.label("Sitting");
+            ui.label(tileart_sitting_summary(entry.sitting.as_ref()));
+            ui.end_row();
+            ui.label("Appearance");
+            ui.label(tileart_appearance_summary(&entry.appearance_vector));
+            ui.end_row();
+            if let Some(sitting) = &entry.sitting {
+                ui.label("Sitting Values");
+                ui.monospace(format!(
+                    "{}, {}, {}, {}",
+                    sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+                ));
+                ui.end_row();
+            }
+            for (index, appearance) in entry.appearance_vector.iter().enumerate() {
+                ui.label(format!("Appearance {}", index));
+                ui.label(tileart_appearance_detail(appearance));
+                ui.end_row();
+            }
+        });
+    });
 }
 
 fn filtered_metadata_indices<T>(
