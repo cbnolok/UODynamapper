@@ -7,6 +7,7 @@
 //! - Super-xBR: https://github.com/hansonw/super-xbr
 //! - ScaleFX: https://github.com/Themaister/slang-shaders/tree/master/scalefx
 //! - OmniScale: https://github.com/Themaister/slang-shaders/tree/master/omniscale
+//! - Jinc2: /home/claudio/Scaricati/jinc2*.glsl
 //! - Cheap Upscaling Triangulation: https://github.com/Swordfish90/cheap-upscaling-triangulation
 //! - SaI/SuperSaI/SuperEagle: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/2xsai.c
 //! - LQ2x: https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c
@@ -26,6 +27,7 @@ pub mod super_xbr;
 pub mod cut;
 pub mod scalefx;
 pub mod omniscale;
+pub mod jinc2;
 
 use image::imageops::{self, FilterType};
 use image::{ImageBuffer, Rgba};
@@ -87,6 +89,18 @@ pub enum UpscaleFilter {
     OmniScale2x,
     OmniScale3x,
     OmniScale4x,
+    Jinc2_2x,
+    Jinc2_3x,
+    Jinc2_4x,
+    Jinc2Sharp2x,
+    Jinc2Sharp3x,
+    Jinc2Sharp4x,
+    Jinc2Sharper2x,
+    Jinc2Sharper3x,
+    Jinc2Sharper4x,
+    Jinc2Sharpest2x,
+    Jinc2Sharpest3x,
+    Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
 }
@@ -136,6 +150,9 @@ impl UpscaleFilter {
             Self::OmniScale2x => 2,
             Self::OmniScale3x => 3,
             Self::OmniScale4x => 4,
+            Self::Jinc2_2x | Self::Jinc2Sharp2x | Self::Jinc2Sharper2x | Self::Jinc2Sharpest2x => 2,
+            Self::Jinc2_3x | Self::Jinc2Sharp3x | Self::Jinc2Sharper3x | Self::Jinc2Sharpest3x => 3,
+            Self::Jinc2_4x | Self::Jinc2Sharp4x | Self::Jinc2Sharper4x | Self::Jinc2Sharpest4x => 4,
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
@@ -255,6 +272,18 @@ impl UpscaleFilter {
             Self::OmniScale2x => omniscale::apply_omniscale(width, height, rgba, omniscale::OmniScaleMode::Scale2x).2,
             Self::OmniScale3x => omniscale::apply_omniscale(width, height, rgba, omniscale::OmniScaleMode::Scale3x).2,
             Self::OmniScale4x => omniscale::apply_omniscale(width, height, rgba, omniscale::OmniScaleMode::Scale4x).2,
+            Self::Jinc2_2x | Self::Jinc2_3x | Self::Jinc2_4x => {
+                jinc2::apply_jinc2(width, height, rgba, target_width, target_height, jinc2::Jinc2Mode::Jinc2).2
+            }
+            Self::Jinc2Sharp2x | Self::Jinc2Sharp3x | Self::Jinc2Sharp4x => {
+                jinc2::apply_jinc2(width, height, rgba, target_width, target_height, jinc2::Jinc2Mode::Sharp).2
+            }
+            Self::Jinc2Sharper2x | Self::Jinc2Sharper3x | Self::Jinc2Sharper4x => {
+                jinc2::apply_jinc2(width, height, rgba, target_width, target_height, jinc2::Jinc2Mode::Sharper).2
+            }
+            Self::Jinc2Sharpest2x | Self::Jinc2Sharpest3x | Self::Jinc2Sharpest4x => {
+                jinc2::apply_jinc2(width, height, rgba, target_width, target_height, jinc2::Jinc2Mode::Sharpest).2
+            }
             Self::Nedi2x => nedi::apply_nedi(width, height, rgba).2,
             Self::Mmpx2x | Self::Mmpx4x => {
                 let scale = (target_width / width).max(1);

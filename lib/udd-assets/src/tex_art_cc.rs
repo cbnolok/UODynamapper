@@ -153,6 +153,10 @@ pub fn upscale_algorithm_name(code: u16) -> &'static str {
         21 => "Cut3",
         22 => "ScaleFx",
         23 => "OmniScale",
+        24 => "Jinc2",
+        25 => "Jinc2Sharp",
+        26 => "Jinc2Sharper",
+        27 => "Jinc2Sharpest",
         _ => "Unknown",
     }
 }

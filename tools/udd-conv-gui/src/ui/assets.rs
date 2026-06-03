@@ -626,6 +626,18 @@ fn draw_upscale_filter(ui: &mut egui::Ui, id: String, up_val: &mut UpscaleFilter
                 UpscaleFilter::OmniScale2x,
                 UpscaleFilter::OmniScale3x,
                 UpscaleFilter::OmniScale4x,
+                UpscaleFilter::Jinc2_2x,
+                UpscaleFilter::Jinc2_3x,
+                UpscaleFilter::Jinc2_4x,
+                UpscaleFilter::Jinc2Sharp2x,
+                UpscaleFilter::Jinc2Sharp3x,
+                UpscaleFilter::Jinc2Sharp4x,
+                UpscaleFilter::Jinc2Sharper2x,
+                UpscaleFilter::Jinc2Sharper3x,
+                UpscaleFilter::Jinc2Sharper4x,
+                UpscaleFilter::Jinc2Sharpest2x,
+                UpscaleFilter::Jinc2Sharpest3x,
+                UpscaleFilter::Jinc2Sharpest4x,
             ];
             for f in filters {
                 let label = if matches!(f, UpscaleFilter::None) {
