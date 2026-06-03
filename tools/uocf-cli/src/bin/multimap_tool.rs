@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
+use image::{ColorType, ImageFormat};
 use uocf::classic::multimap_rle;
 
 /// Classic Client multimap.rle converter.
@@ -34,6 +35,33 @@ enum Commands {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Decode a DDS image to a lossless BMP or PNG image.
+    DdsToImage {
+        /// Input .dds file.
+        #[arg(long)]
+        input: PathBuf,
+        /// Output .bmp or .png file.
+        #[arg(long)]
+        output: PathBuf,
+        /// Source crop X coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_x: u32,
+        /// Source crop Y coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_y: u32,
+        /// Source crop width. Defaults to the remaining source width.
+        #[arg(long)]
+        source_width: Option<u32>,
+        /// Source crop height. Defaults to the remaining source height.
+        #[arg(long)]
+        source_height: Option<u32>,
+        /// Output image width. Defaults to the source crop width.
+        #[arg(long)]
+        output_width: Option<u32>,
+        /// Output image height. Defaults to the source crop height.
+        #[arg(long)]
+        output_height: Option<u32>,
+    },
     /// Convert a DDS world/facet render to treasure-map style multimap.rle.
     DdsToRle {
         /// Input .dds file.
@@ -52,6 +80,69 @@ enum Commands {
         #[arg(long)]
         source_width: Option<u32>,
         /// Source crop height. Defaults to output-height * 2, clamped to the DDS.
+        #[arg(long)]
+        source_height: Option<u32>,
+        /// Output multimap width.
+        #[arg(long, default_value_t = multimap_rle::DEFAULT_WIDTH)]
+        output_width: u32,
+        /// Output multimap height.
+        #[arg(long, default_value_t = multimap_rle::DEFAULT_HEIGHT)]
+        output_height: u32,
+        /// Minimum edge strength that becomes black ink.
+        #[arg(long, default_value_t = 28)]
+        edge_threshold: u16,
+        /// Extra ink dilation radius in output pixels.
+        #[arg(long, default_value_t = 0)]
+        line_radius: u32,
+        /// Rendering style used to turn the aerial image into monochrome ink.
+        #[arg(long, value_enum, default_value_t = MultimapStyle::Classic)]
+        style: MultimapStyle,
+    },
+    /// Decode a BC7+Zstd KTX2 image to a lossless BMP or PNG image.
+    Ktx2ToImage {
+        /// Input .ktx2 file.
+        #[arg(long)]
+        input: PathBuf,
+        /// Output .bmp or .png file.
+        #[arg(long)]
+        output: PathBuf,
+        /// Source crop X coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_x: u32,
+        /// Source crop Y coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_y: u32,
+        /// Source crop width. Defaults to the remaining source width.
+        #[arg(long)]
+        source_width: Option<u32>,
+        /// Source crop height. Defaults to the remaining source height.
+        #[arg(long)]
+        source_height: Option<u32>,
+        /// Output image width. Defaults to the source crop width.
+        #[arg(long)]
+        output_width: Option<u32>,
+        /// Output image height. Defaults to the source crop height.
+        #[arg(long)]
+        output_height: Option<u32>,
+    },
+    /// Convert a BC7+Zstd KTX2 world/facet render to treasure-map style multimap.rle.
+    Ktx2ToRle {
+        /// Input .ktx2 file.
+        #[arg(long)]
+        input: PathBuf,
+        /// Output multimap.rle file.
+        #[arg(long)]
+        output: PathBuf,
+        /// Source crop X coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_x: u32,
+        /// Source crop Y coordinate.
+        #[arg(long, default_value_t = 0)]
+        source_y: u32,
+        /// Source crop width. Defaults to output-width * 2, clamped to the source.
+        #[arg(long)]
+        source_width: Option<u32>,
+        /// Source crop height. Defaults to output-height * 2, clamped to the source.
         #[arg(long)]
         source_height: Option<u32>,
         /// Output multimap width.
@@ -107,6 +198,30 @@ fn main() -> eyre::Result<()> {
                 output.display()
             );
         }
+        Commands::DdsToImage {
+            input,
+            output,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+            output_width,
+            output_height,
+        } => {
+            let decoded = load_dds_rgba(&input)?;
+            convert_source_to_image(
+                "DDS",
+                &input,
+                &output,
+                decoded,
+                source_x,
+                source_y,
+                source_width,
+                source_height,
+                output_width,
+                output_height,
+            )?;
+        }
         Commands::DdsToRle {
             input,
             output,
@@ -121,9 +236,38 @@ fn main() -> eyre::Result<()> {
             style,
         } => {
             let decoded = load_dds_rgba(&input)?;
-            let crop = multimap_default_rect(
-                decoded.width,
-                decoded.height,
+            convert_source_to_rle(
+                "DDS",
+                &input,
+                &output,
+                decoded,
+                source_x,
+                source_y,
+                source_width,
+                source_height,
+                output_width,
+                output_height,
+                edge_threshold,
+                line_radius,
+                style,
+            )?;
+        }
+        Commands::Ktx2ToImage {
+            input,
+            output,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+            output_width,
+            output_height,
+        } => {
+            let decoded = load_ktx2_rgba(&input)?;
+            convert_source_to_image(
+                "KTX2",
+                &input,
+                &output,
+                decoded,
                 source_x,
                 source_y,
                 source_width,
@@ -131,37 +275,36 @@ fn main() -> eyre::Result<()> {
                 output_width,
                 output_height,
             )?;
-            let samples = resample_rgb(&decoded, crop, output_width, output_height)?;
-            let pixels = match style {
-                MultimapStyle::Edge => edge_multimap_pixels(
-                    &samples,
-                    output_width,
-                    output_height,
-                    edge_threshold,
-                    line_radius,
-                )?,
-                MultimapStyle::Classic => classic_multimap_pixels(
-                    &samples,
-                    output_width,
-                    output_height,
-                    edge_threshold,
-                    line_radius,
-                )?,
-            };
-            let image = multimap_rle::MultimapRleImage::new(output_width, output_height, pixels)?;
-            multimap_rle::save_rle(&output, &image)?;
-            println!(
-                "Converted DDS '{}' crop {}x{}+{},{} to {}x{} {:?} multimap RLE '{}'.",
-                input.display(),
-                crop.width,
-                crop.height,
-                crop.x,
-                crop.y,
+        }
+        Commands::Ktx2ToRle {
+            input,
+            output,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+            output_width,
+            output_height,
+            edge_threshold,
+            line_radius,
+            style,
+        } => {
+            let decoded = load_ktx2_rgba(&input)?;
+            convert_source_to_rle(
+                "KTX2",
+                &input,
+                &output,
+                decoded,
+                source_x,
+                source_y,
+                source_width,
+                source_height,
                 output_width,
                 output_height,
+                edge_threshold,
+                line_radius,
                 style,
-                output.display()
-            );
+            )?;
         }
     }
 
@@ -198,6 +341,138 @@ fn load_dds_rgba(path: &Path) -> eyre::Result<DecodedRgba> {
         height: size.height,
         rgba,
     })
+}
+
+fn load_ktx2_rgba(path: &Path) -> eyre::Result<DecodedRgba> {
+    let (width, height, rgba) = udd_image_codecs::ktx2::decode_ktx2_bc7_zstd_to_rgba8888(path)?;
+    Ok(DecodedRgba {
+        width,
+        height,
+        rgba,
+    })
+}
+
+fn convert_source_to_image(
+    label: &str,
+    input: &Path,
+    output: &Path,
+    decoded: DecodedRgba,
+    source_x: u32,
+    source_y: u32,
+    source_width: Option<u32>,
+    source_height: Option<u32>,
+    output_width: Option<u32>,
+    output_height: Option<u32>,
+) -> eyre::Result<()> {
+    let crop = explicit_or_remaining_rect(
+        decoded.width,
+        decoded.height,
+        source_x,
+        source_y,
+        source_width,
+        source_height,
+    )?;
+    let output_width = output_width.unwrap_or(crop.width);
+    let output_height = output_height.unwrap_or(crop.height);
+    let rgba = resample_rgba(&decoded, crop, output_width, output_height)?;
+    save_rgba_image(output, output_width, output_height, &rgba)?;
+    println!(
+        "Decoded {} '{}' crop {}x{}+{},{} to {}x{} image '{}'.",
+        label,
+        input.display(),
+        crop.width,
+        crop.height,
+        crop.x,
+        crop.y,
+        output_width,
+        output_height,
+        output.display()
+    );
+    Ok(())
+}
+
+fn convert_source_to_rle(
+    label: &str,
+    input: &Path,
+    output: &Path,
+    decoded: DecodedRgba,
+    source_x: u32,
+    source_y: u32,
+    source_width: Option<u32>,
+    source_height: Option<u32>,
+    output_width: u32,
+    output_height: u32,
+    edge_threshold: u16,
+    line_radius: u32,
+    style: MultimapStyle,
+) -> eyre::Result<()> {
+    let crop = multimap_default_rect(
+        decoded.width,
+        decoded.height,
+        source_x,
+        source_y,
+        source_width,
+        source_height,
+        output_width,
+        output_height,
+    )?;
+    let samples = resample_rgb(&decoded, crop, output_width, output_height)?;
+    let pixels = match style {
+        MultimapStyle::Edge => edge_multimap_pixels(
+            &samples,
+            output_width,
+            output_height,
+            edge_threshold,
+            line_radius,
+        )?,
+        MultimapStyle::Classic => classic_multimap_pixels(
+            &samples,
+            output_width,
+            output_height,
+            edge_threshold,
+            line_radius,
+        )?,
+    };
+    let image = multimap_rle::MultimapRleImage::new(output_width, output_height, pixels)?;
+    multimap_rle::save_rle(output, &image)?;
+    println!(
+        "Converted {} '{}' crop {}x{}+{},{} to {}x{} {:?} multimap RLE '{}'.",
+        label,
+        input.display(),
+        crop.width,
+        crop.height,
+        crop.x,
+        crop.y,
+        output_width,
+        output_height,
+        style,
+        output.display()
+    );
+    Ok(())
+}
+
+fn explicit_or_remaining_rect(
+    image_width: u32,
+    image_height: u32,
+    x: u32,
+    y: u32,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> eyre::Result<SourceRect> {
+    let remaining_width = image_width
+        .checked_sub(x)
+        .ok_or_else(|| eyre::eyre!("source-x {} is outside source width {}", x, image_width))?;
+    let remaining_height = image_height
+        .checked_sub(y)
+        .ok_or_else(|| eyre::eyre!("source-y {} is outside source height {}", y, image_height))?;
+    checked_rect(
+        image_width,
+        image_height,
+        x,
+        y,
+        width.unwrap_or(remaining_width),
+        height.unwrap_or(remaining_height),
+    )
 }
 
 fn multimap_default_rect(
@@ -262,6 +537,29 @@ fn checked_rect(
         width,
         height,
     })
+}
+
+fn resample_rgba(
+    image: &DecodedRgba,
+    rect: SourceRect,
+    output_width: u32,
+    output_height: u32,
+) -> eyre::Result<Vec<u8>> {
+    let output_pixels = output_len(output_width, output_height)?;
+    let mut output = vec![0u8; output_pixels * 4];
+    for y in 0..output_height {
+        let (source_y0, source_y1) = source_span(rect.y, rect.height, y, output_height);
+        for x in 0..output_width {
+            let (source_x0, source_x1) = source_span(rect.x, rect.width, x, output_width);
+            let [r, g, b, a] = average_rgba(image, source_x0, source_y0, source_x1, source_y1);
+            let index = ((y * output_width + x) as usize) * 4;
+            output[index] = r;
+            output[index + 1] = g;
+            output[index + 2] = b;
+            output[index + 3] = a;
+        }
+    }
+    Ok(output)
 }
 
 fn resample_rgb(
@@ -617,4 +915,23 @@ fn output_len(width: u32, height: u32) -> eyre::Result<usize> {
         .checked_mul(height)
         .and_then(|pixels| usize::try_from(pixels).ok())
         .ok_or_else(|| eyre::eyre!("output dimensions are too large: {}x{}", width, height))
+}
+
+fn save_rgba_image(path: &Path, width: u32, height: u32, rgba: &[u8]) -> eyre::Result<()> {
+    let format = output_format(path)?;
+    image::save_buffer_with_format(path, rgba, width, height, ColorType::Rgba8, format)
+        .wrap_err_with(|| format!("Failed to write image {}", path.display()))
+}
+
+fn output_format(path: &Path) -> eyre::Result<ImageFormat> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("bmp") => Ok(ImageFormat::Bmp),
+        Some("png") => Ok(ImageFormat::Png),
+        _ => eyre::bail!("output image extension must be .bmp or .png: {}", path.display()),
+    }
 }

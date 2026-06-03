@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use dds::{ColorFormat, CompressionQuality, EncodeOptions, Format, ImageView, Size};
 use ddsfile::{D3DFormat, Dds, NewD3dParams};
+use udd_image_codecs::bc7::{Bc7TextureData, ImageExtent};
 use uocf::classic::multimap_rle::{self, BLACK_PIXEL, MultimapRleImage, WHITE_PIXEL};
 use uocf::classic::sound::{SOUND_NAME_BYTES, WAV_HEADER_BYTES};
 use uocf::uop_container::file::CompressionFlag;
@@ -99,6 +101,41 @@ fn multimap_tool_roundtrips_rle_through_png() {
 }
 
 #[test]
+fn multimap_tool_decodes_dds_to_png() {
+    let temp = TempDir::new("multimap-dds-png");
+    let dds_path = temp.path().join("facet.dds");
+    let png_path = temp.path().join("facet.png");
+    write_rgba_dds(
+        &dds_path,
+        2,
+        2,
+        &[
+            255, 0, 0, 255,
+            0, 255, 0, 255,
+            0, 0, 255, 255,
+            255, 255, 255, 255,
+        ],
+    );
+
+    let output = multimap_tool()
+        .arg("dds-to-image")
+        .arg("--input")
+        .arg(&dds_path)
+        .arg("--output")
+        .arg(&png_path)
+        .output()
+        .expect("run multimap dds-to-image");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let png = fs::read(png_path).expect("read output png");
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
 fn multimap_tool_converts_dds_to_rle_with_crop() {
     let temp = TempDir::new("multimap-dds-rle");
     let dds_path = temp.path().join("facet.dds");
@@ -135,6 +172,96 @@ fn multimap_tool_converts_dds_to_rle_with_crop() {
         .arg("edge")
         .output()
         .expect("run multimap dds-to-rle");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let image = multimap_rle::load_rle(&rle_path).expect("read output rle");
+    assert_eq!(image.width, 4);
+    assert_eq!(image.height, 4);
+    let black_pixels = image
+        .pixels
+        .iter()
+        .filter(|&&pixel| pixel == BLACK_PIXEL)
+        .count();
+    assert!(black_pixels > 0);
+    assert!(black_pixels < image.pixels.len());
+}
+
+#[test]
+fn multimap_tool_decodes_ktx2_to_png() {
+    let temp = TempDir::new("multimap-ktx2-png");
+    let ktx2_path = temp.path().join("facet.ktx2");
+    let png_path = temp.path().join("facet.png");
+    write_bc7_ktx2(
+        &ktx2_path,
+        4,
+        4,
+        &[
+            255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ],
+    );
+
+    let output = multimap_tool()
+        .arg("ktx2-to-image")
+        .arg("--input")
+        .arg(&ktx2_path)
+        .arg("--output")
+        .arg(&png_path)
+        .output()
+        .expect("run multimap ktx2-to-image");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let png = fs::read(png_path).expect("read output png");
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[test]
+fn multimap_tool_converts_ktx2_to_rle_with_crop() {
+    let temp = TempDir::new("multimap-ktx2-rle");
+    let ktx2_path = temp.path().join("facet.ktx2");
+    let rle_path = temp.path().join("multimap.rle");
+    write_bc7_ktx2(
+        &ktx2_path,
+        4,
+        4,
+        &[
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ],
+    );
+
+    let output = multimap_tool()
+        .arg("ktx2-to-rle")
+        .arg("--input")
+        .arg(&ktx2_path)
+        .arg("--output")
+        .arg(&rle_path)
+        .arg("--source-width")
+        .arg("4")
+        .arg("--source-height")
+        .arg("4")
+        .arg("--output-width")
+        .arg("4")
+        .arg("--output-height")
+        .arg("4")
+        .arg("--edge-threshold")
+        .arg("1")
+        .arg("--style")
+        .arg("edge")
+        .output()
+        .expect("run multimap ktx2-to-rle");
 
     assert!(output.status.success());
     let image = multimap_rle::load_rle(&rle_path).expect("read output rle");
@@ -254,6 +381,18 @@ fn write_rgba_dds(path: &Path, width: u32, height: u32, rgba: &[u8]) {
     dds.data = rgba.to_vec();
     let mut file = fs::File::create(path).expect("create dds file");
     dds.write(&mut file).expect("write dds");
+}
+
+fn write_bc7_ktx2(path: &Path, width: u32, height: u32, rgba: &[u8]) {
+    let mut blocks = Vec::new();
+    let image = ImageView::new(rgba, Size::new(width, height), ColorFormat::RGBA_U8)
+        .expect("create image view");
+    let mut options = EncodeOptions::default();
+    options.quality = CompressionQuality::Normal;
+    dds::encode(&mut blocks, image, Format::BC7_UNORM, None, &options).expect("encode bc7");
+    let extent = ImageExtent::new(width, height).expect("create extent");
+    let bc7 = Bc7TextureData::new(extent, blocks).expect("create bc7 texture");
+    udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7, path, 0).expect("write ktx2");
 }
 
 #[test]
