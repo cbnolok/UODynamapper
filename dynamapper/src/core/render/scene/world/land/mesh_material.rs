@@ -228,8 +228,12 @@ pub struct LandEffectsUniform {
     // --- KR transition grime controls (vec4 slot 8) ---
     /// Strength of KR material-boundary grime/dirt accumulation.
     pub kr_transition_grime_strength: f32,
-    #[serde(default)]
-    pub _pad_art_shadow2: Vec3,
+    /// 1 = add low-frequency KR-style uneven color wash over land and art.
+    pub enable_kr_color_wash: u32,
+    /// Strength of KR low-frequency painted tint/illumination variation.
+    pub kr_color_wash_strength: f32,
+    /// World-tile wavelength for the broad KR color wash.
+    pub kr_color_wash_scale: f32,
 }
 
 fn default_art_shadow_strength() -> f32 {

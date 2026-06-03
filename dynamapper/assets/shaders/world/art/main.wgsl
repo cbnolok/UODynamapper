@@ -7,6 +7,7 @@
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
+#import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/noise.wgsl"::noise_2d
 
@@ -259,6 +260,23 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
+    let color_wash_shadow = clamp(
+        smoothstep(0.42, 1.0, uv_in_tile_for_shading.y) * 0.40
+        + select(0.0, 0.14, in.depth_class == DEPTH_CLASS_FOLIAGE)
+        + select(0.0, 0.10, in.depth_class == DEPTH_CLASS_ROOF),
+        0.0,
+        1.0,
+    );
+    shaded = vec4<f32>(apply_kr_color_wash(
+        shaded.rgb,
+        in.world_pos.xz,
+        color_wash_shadow,
+        inst.local_light_rgba.a,
+        effects.enable_kr_color_wash,
+        effects.kr_color_wash_strength,
+        effects.kr_color_wash_scale,
+        effects.post_process_profile,
+    ), shaded.a);
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
     shaded = vec4<f32>(apply_art_atmosphere_depth(

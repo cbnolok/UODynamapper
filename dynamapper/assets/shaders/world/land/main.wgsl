@@ -33,6 +33,7 @@
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_texture_shadow_aware_land_grunge, visual_grunge_uv}
+#import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/sampling.wgsl"::{
   ec_world_uv,
@@ -727,6 +728,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   // ---- Shade ----
   var hdr_rgb = vec3<f32>(0.0);
+  var kr_color_wash_shadow = 0.0;
   if (shading_mode == 0u) {
     hdr_rgb = shade_mode0_classic_vertex(base_albedo, in.uv_b.x, ambient_strength, diffuse_strength);
   } else if (shading_mode == 1u) {
@@ -754,6 +756,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       effects.kr_land_relief_shadow_strength,
     );
     hdr_rgb *= 1.0 - contact_shadow * 0.10 - bank_shadow * 0.08;
+    let ndotl_shadow = 1.0 - smoothstep(0.18, 0.76, max(dot(normalize(Nw), normalize(L)), 0.0));
+    let slope_shadow = clamp(1.0 - normalize(Nw).y, 0.0, 1.0);
+    kr_color_wash_shadow = clamp(ndotl_shadow * 0.58 + slope_shadow * 0.22 + contact_shadow * 0.32 + bank_shadow * 0.42, 0.0, 1.0);
     hdr_rgb = apply_kr_liquid_material_response(
       hdr_rgb,
       base_albedo,
@@ -767,6 +772,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     );
   }
   hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
+  hdr_rgb = apply_kr_color_wash(
+    hdr_rgb,
+    in.world_position.xz,
+    kr_color_wash_shadow,
+    0.0,
+    effects.enable_kr_color_wash,
+    effects.kr_color_wash_strength,
+    effects.kr_color_wash_scale,
+    visual_profile,
+  );
 
   hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
   hdr_rgb = apply_kr_land_atmosphere_depth(

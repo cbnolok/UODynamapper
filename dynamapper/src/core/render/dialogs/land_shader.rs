@@ -153,6 +153,8 @@ pub fn land_ui_system(
                 changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+                changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
                 changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Projected Shadows", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0);
@@ -164,6 +166,7 @@ pub fn land_ui_system(
                     changed |= toggle_u32(ui, "Normal Maps", &mut u.effects.enable_normal_maps);
                     changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
                     changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
+                    changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
                     changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
                 });
 
@@ -570,6 +573,9 @@ pub fn land_ui_system(
                 changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
                 changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
                 changed |= slider_s(ui, "KR Transition Grime Strength", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+                changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
+                changed |= slider_s(ui, "KR Color Wash Strength", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
                 changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
                 changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
