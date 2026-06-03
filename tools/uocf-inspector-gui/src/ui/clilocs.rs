@@ -150,13 +150,29 @@ fn cliloc_list(
     ui: &mut egui::Ui,
     entries: &[uocf::classic::cliloc::ClilocEntry],
 ) {
-    let query = app.search_query.to_lowercase();
+    let query = app.search_query.trim();
+    let row_height = ui.spacing().interact_size.y;
+
+    if query.is_empty() {
+        egui::ScrollArea::vertical().show_rows(ui, row_height, entries.len(), |ui, row_range| {
+            for row in row_range {
+                let entry = &entries[row];
+                let label = format!("{}: {}", entry.number, entry.text);
+                if ui
+                    .selectable_label(app.selected_cliloc_number == entry.number, label)
+                    .clicked()
+                {
+                    app.selected_cliloc_number = entry.number;
+                }
+            }
+        });
+        return;
+    }
+
+    let query = query.to_lowercase();
     egui::ScrollArea::vertical().show(ui, |ui| {
         for entry in entries {
-            if !query.is_empty()
-                && !entry.number.to_string().contains(&query)
-                && !entry.text.to_lowercase().contains(&query)
-            {
+            if !cliloc_entry_matches_query(entry, &query) {
                 continue;
             }
             let label = format!("{}: {}", entry.number, entry.text);
@@ -168,6 +184,10 @@ fn cliloc_list(
             }
         }
     });
+}
+
+fn cliloc_entry_matches_query(entry: &uocf::classic::cliloc::ClilocEntry, query: &str) -> bool {
+    entry.number.to_string().contains(query) || entry.text.to_lowercase().contains(query)
 }
 
 fn localized_strings_table(
@@ -196,4 +216,23 @@ fn localized_strings_table(
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cliloc_entry_query_matches_number_or_text_case_insensitively() {
+        let entry = uocf::classic::cliloc::ClilocEntry {
+            number: 3001234,
+            flag: 0,
+            text: "Bank Balance".to_string(),
+        };
+
+        assert!(cliloc_entry_matches_query(&entry, "1234"));
+        assert!(cliloc_entry_matches_query(&entry, "balance"));
+        assert!(cliloc_entry_matches_query(&entry, "bank"));
+        assert!(!cliloc_entry_matches_query(&entry, "vendor"));
+    }
 }
