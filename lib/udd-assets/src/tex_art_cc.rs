@@ -157,6 +157,9 @@ pub fn upscale_algorithm_name(code: u16) -> &'static str {
         25 => "Jinc2Sharp",
         26 => "Jinc2Sharper",
         27 => "Jinc2Sharpest",
+        32 => "ScaleFxSmartDeblur",
+        33 => "UnsharpMaskSmall",
+        34 => "HighPassSharpen",
         _ => "Unknown",
     }
 }

@@ -544,6 +544,9 @@ pub enum CliUpscaleFilter {
     Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
+    ScaleFxSmartDeblur,
+    UnsharpMaskSmall,
+    HighPassSharpen,
 }
 
 impl From<CliUpscaleFilter> for UpscaleFilter {
@@ -614,6 +617,9 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::Jinc2Sharpest4x => UpscaleFilter::Jinc2Sharpest4x,
             CliUpscaleFilter::Mmpx2x => UpscaleFilter::Mmpx2x,
             CliUpscaleFilter::Mmpx4x => UpscaleFilter::Mmpx4x,
+            CliUpscaleFilter::ScaleFxSmartDeblur => UpscaleFilter::ScaleFxSmartDeblur,
+            CliUpscaleFilter::UnsharpMaskSmall => UpscaleFilter::UnsharpMaskSmall,
+            CliUpscaleFilter::HighPassSharpen => UpscaleFilter::HighPassSharpen,
         }
     }
 }

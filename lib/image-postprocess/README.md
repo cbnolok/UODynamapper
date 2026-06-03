@@ -26,9 +26,17 @@ textures are encoded and packed into `.uddp` packages. It is consumed by
 | Kopf-Lischinski | Depixelizer algorithm. |
 | NEDI | New Edge-Directed Interpolation. |
 | AMD FSR | FidelityFX Super Resolution: EASU pass, or EASU + RCAS sharpening pass. |
+| ScaleFX Smart Deblur | Edge-aware post-upscale crispening pass using ScaleFX-style tuned defaults. |
+| Unsharp Mask Small | Small-radius post-upscale unsharp mask for controlled edge contrast. |
+| High-pass Sharpen | Small-radius high-pass post-upscale sharpening pass. |
 
 All algorithms are translated to Rust and use SIMD where available via the
 `wide` crate.
+
+Runtime pixel-art seam filters for fractional-scale rendering live in
+`dynamapper/assets/shaders/world/pixel_art_filters.wgsl`. IQ is wired into the
+linear sprite and terrain sample paths; BGolus AA-linear/AA-smoothstep, Klems,
+and fat-pixel UV remaps are available there for later tuning.
 
 ## Notes
 

@@ -26,6 +26,7 @@ pub mod mmpx;
 pub mod super_xbr;
 pub mod cut;
 pub mod scalefx;
+pub mod sharpen;
 pub mod omniscale;
 pub mod jinc2;
 
@@ -103,6 +104,9 @@ pub enum UpscaleFilter {
     Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
+    ScaleFxSmartDeblur,
+    UnsharpMaskSmall,
+    HighPassSharpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -156,6 +160,9 @@ impl UpscaleFilter {
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
+            Self::ScaleFxSmartDeblur
+            | Self::UnsharpMaskSmall
+            | Self::HighPassSharpen => 1,
         }
     }
 
@@ -182,6 +189,10 @@ impl UpscaleFilter {
     ) -> Vec<u8> {
         if matches!(self, Self::None) || rgba.is_empty() {
             return rgba.to_vec();
+        }
+
+        if let Some(pixels) = self.apply_post_upscale_sharpen(width, height, rgba) {
+            return pixels;
         }
 
         if width == target_width && height == target_height {
@@ -289,6 +300,48 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 mmpx::apply_mmpx(width, height, rgba, scale).2
             }
+            Self::ScaleFxSmartDeblur => sharpen::apply_scalefx_smart_deblur(
+                width,
+                height,
+                rgba,
+                sharpen::ScaleFxSmartDeblurParams::default(),
+            ).2,
+            Self::UnsharpMaskSmall => sharpen::apply_unsharp_mask(
+                width,
+                height,
+                rgba,
+                sharpen::UnsharpMaskParams::default(),
+            ).2,
+            Self::HighPassSharpen => sharpen::apply_high_pass_sharpen(
+                width,
+                height,
+                rgba,
+                sharpen::HighPassSharpenParams::default(),
+            ).2,
+        }
+    }
+
+    fn apply_post_upscale_sharpen(&self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::ScaleFxSmartDeblur => Some(sharpen::apply_scalefx_smart_deblur(
+                width,
+                height,
+                rgba,
+                sharpen::ScaleFxSmartDeblurParams::default(),
+            ).2),
+            Self::UnsharpMaskSmall => Some(sharpen::apply_unsharp_mask(
+                width,
+                height,
+                rgba,
+                sharpen::UnsharpMaskParams::default(),
+            ).2),
+            Self::HighPassSharpen => Some(sharpen::apply_high_pass_sharpen(
+                width,
+                height,
+                rgba,
+                sharpen::HighPassSharpenParams::default(),
+            ).2),
+            _ => None,
         }
     }
 }

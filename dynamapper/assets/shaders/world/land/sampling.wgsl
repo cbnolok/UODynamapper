@@ -30,6 +30,7 @@
 
 #import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
 #import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects}
+#import "shaders/world/pixel_art_filters.wgsl"::pixel_art_uv_iq
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
@@ -104,7 +105,8 @@ fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> 
 
   if (use_linear) {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-    let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+    let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+    let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
     let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
     return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer);
   }
@@ -215,7 +217,8 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
     if (use_linear) {
       // Sub-pixel bias keeps samples inside the texture's atlas region.
-      let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+      let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
       return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
     } else {
@@ -227,7 +230,8 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
 
   if (tile.texture_size == 1u) {
     if (use_linear) {
-      return textureSample(tex_big, tex_small_sampler, uv, layer).rgb;
+      let dims = vec2<f32>(textureDimensions(tex_big));
+      return textureSample(tex_big, tex_small_sampler, pixel_art_uv_iq(uv, dims), layer).rgb;
     } else {
       let dims = vec2<f32>(textureDimensions(tex_big));
       let iuv = vec2<i32>(uv * dims);
@@ -235,7 +239,8 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
     }
   } else {
     if (use_linear) {
-      return textureSample(tex_small, tex_small_sampler, uv, layer).rgb;
+      let dims = vec2<f32>(textureDimensions(tex_small));
+      return textureSample(tex_small, tex_small_sampler, pixel_art_uv_iq(uv, dims), layer).rgb;
     } else {
       let dims = vec2<f32>(textureDimensions(tex_small));
       let iuv = vec2<i32>(uv * dims);
@@ -259,7 +264,8 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
     let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
     if (use_linear) {
       let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-      let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+      let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
       let atlas_ddx = ddx_uv * (tile_dims / atlas_dims);
       let atlas_ddy = ddy_uv * (tile_dims / atlas_dims);
@@ -273,7 +279,8 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
 
   if (tile.texture_size == 1u) {
     if (use_linear) {
-      return textureSampleGrad(tex_big,   tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+      let dims = vec2<f32>(textureDimensions(tex_big));
+      return textureSampleGrad(tex_big,   tex_small_sampler, pixel_art_uv_iq(uv, dims), layer, ddx_uv, ddy_uv).rgb;
     } else {
       let dims = vec2<f32>(textureDimensions(tex_big));
       let iuv = vec2<i32>(uv * dims);
@@ -281,7 +288,8 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
     }
   } else {
     if (use_linear) {
-      return textureSampleGrad(tex_small, tex_small_sampler, uv, layer, ddx_uv, ddy_uv).rgb;
+      let dims = vec2<f32>(textureDimensions(tex_small));
+      return textureSampleGrad(tex_small, tex_small_sampler, pixel_art_uv_iq(uv, dims), layer, ddx_uv, ddy_uv).rgb;
     } else {
       let dims = vec2<f32>(textureDimensions(tex_small));
       let iuv = vec2<i32>(uv * dims);

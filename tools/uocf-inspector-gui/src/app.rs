@@ -110,6 +110,9 @@ pub enum UpscalePreviewAlgorithm {
     PaletteSnapStrict,
     PaletteSnapRampAware,
     PaletteSnapExpanded,
+    ScaleFxSmartDeblur,
+    UnsharpMaskSmall,
+    HighPassSharpen,
 }
 
 impl Default for UpscalePreviewAlgorithm {
@@ -152,6 +155,9 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapStrict,
             Self::PaletteSnapRampAware,
             Self::PaletteSnapExpanded,
+            Self::ScaleFxSmartDeblur,
+            Self::UnsharpMaskSmall,
+            Self::HighPassSharpen,
         ]
     }
 
@@ -188,6 +194,9 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapStrict => "Palette Snap Strict",
             Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
             Self::PaletteSnapExpanded => "Palette Snap Expanded",
+            Self::ScaleFxSmartDeblur => "ScaleFX Smart Deblur",
+            Self::UnsharpMaskSmall => "Unsharp Mask Small",
+            Self::HighPassSharpen => "High-pass Sharpen",
         }
     }
 
@@ -199,6 +208,7 @@ impl UpscalePreviewAlgorithm {
             Self::Mmpx => &[2, 4],
             Self::PaletteSnapStrict | Self::PaletteSnapRampAware => &[1],
             Self::PaletteSnapExpanded => &[8, 16, 32],
+            Self::ScaleFxSmartDeblur | Self::UnsharpMaskSmall | Self::HighPassSharpen => &[1],
             _ => &[2, 3, 4],
         }
     }
@@ -311,6 +321,9 @@ impl UpscalePreviewAlgorithm {
                 | Self::PaletteSnapExpanded,
                 _,
             ) => UpscaleFilter::None,
+            (Self::ScaleFxSmartDeblur, _) => UpscaleFilter::ScaleFxSmartDeblur,
+            (Self::UnsharpMaskSmall, _) => UpscaleFilter::UnsharpMaskSmall,
+            (Self::HighPassSharpen, _) => UpscaleFilter::HighPassSharpen,
         }
     }
 }
@@ -437,6 +450,9 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Jinc2Sharpest4x => "jinc2-sharpest4x",
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
+        UpscaleFilter::ScaleFxSmartDeblur => "scalefx-smart-deblur",
+        UpscaleFilter::UnsharpMaskSmall => "unsharp-mask-small",
+        UpscaleFilter::HighPassSharpen => "high-pass-sharpen",
     }
 }
 

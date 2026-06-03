@@ -186,8 +186,8 @@ the conversion pipeline. Covers:
 - [`image-postprocess`](lib/image-postprocess/README.md): image scaling and filtering used before packaging.
   Supported upscalers: Nearest, Bilinear, CatmullRom, Lanczos3, xBRZ, lqx,
   hqx, epx, 2xSaI, Super2xSaI, SuperEagle, MMPX, Super-xBR, ScaleFX,
-  OmniScale, Jinc2, CUT1/CUT2/CUT3, Kopf-Lischinski depixelizer, NEDI, and AMD FSR
-  (EASU or EASU+RCAS).
+  OmniScale, Jinc2, CUT1/CUT2/CUT3, Kopf-Lischinski depixelizer, NEDI, AMD FSR
+  (EASU or EASU+RCAS), and post-upscale crispening passes.
 
 ## Workspace
 

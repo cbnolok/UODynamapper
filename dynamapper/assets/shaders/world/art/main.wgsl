@@ -10,6 +10,7 @@
 #import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/noise.wgsl"::noise_2d
+#import "shaders/world/pixel_art_filters.wgsl"::pixel_art_atlas_uv_iq
 
 #import "shaders/world/art/art_bindings.wgsl"::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -214,7 +215,9 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
-    let color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
+    let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
+    let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
+    let color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
             discard;

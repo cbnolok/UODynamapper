@@ -9,6 +9,7 @@
 #import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
 #import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
+#import "shaders/world/pixel_art_filters.wgsl"::{pixel_art_atlas_uv_iq, pixel_art_uv_iq}
 
 #import "shaders/world/art/art_ground_bindings.wgsl"::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -92,7 +93,8 @@ fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> 
 
     if (use_linear) {
         let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-        let local_px = clamp(uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+        let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+        let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
         let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
         return textureSample(land_page_atlas, art_atlas_sampler, atlas_uv, layer);
     }
@@ -203,7 +205,9 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
             uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
         }
         let uv = inst.uv_min + uv_in_tile * atlas_extent;
-        color = textureSample(art_atlas, art_atlas_sampler, uv, i32(layer));
+        let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
+        let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
+        color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
     }
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
