@@ -226,13 +226,6 @@ fn print_tilemeta(tilemeta: &TileMetaPackage, art_id: u32) {
                 item.cc_start_x,
                 item.cc_start_y
             );
-            println!(
-                "  tilemeta.ec_offset=({}, {}) cc_offset=({}, {})",
-                item.ec_offset_x,
-                item.ec_offset_y,
-                item.cc_offset_x,
-                item.cc_offset_y
-            );
             match tilemeta.main_ec_texture_id_with_reason(art_id) {
                 Some((texture_id, reason)) => println!(
                     "  tilemeta.main_ec_texture_id={} reason={}",

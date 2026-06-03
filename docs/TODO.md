@@ -242,7 +242,7 @@ Current execution decisions:
 - Add material-specific wet and highlight response for water, lava, swamp, ice, and snow; avoid global shine on ordinary terrain.
 - Continue transition dirt/grime accumulation near material boundaries: first KR pass darkens texture-payload boundaries through `enable_kr_transition_grime` and `kr_transition_grime_strength`; remaining work is metadata-backed material-family tuning for grass-to-road, snow-to-rock, cliff-to-ground, and plaza edges.
 - Improve sprite grounding with soft contact shadows under statics and mobiles plus subtle side darkening for tall art.
-- Replace white blob-like static light emphasis with soft local color influence on nearby art and land, keeping visible decals optional.
+- Continue soft local color and broad KR color-wash influence on nearby art and land: first shader pass adds bounded low-frequency warm/cool wash through `enable_kr_color_wash`, `kr_color_wash_strength`, and `kr_color_wash_scale`; remaining work is screenshot tuning and real additive dynamic light decals.
 - Add restrained elevation or distance atmosphere for large terrain views without obscuring tile readability.
 - Add material-class micro-contrast controls so grass, rock, snow, roads, and liquid surfaces can separate without one global sharpening curve.
 - Add normal-map validation views for KR/EC land families: water, lava, swamp, snow, rock, grass, and road. Compare `enable_normal_maps` on/off for channel orientation, BC7/RDO damage, and useful `land_normal_map_strength` ranges.

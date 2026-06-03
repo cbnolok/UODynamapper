@@ -95,10 +95,6 @@ fn print_tilemeta(item: &TileMetaItemTile) {
     println!("  tilemeta.ec_texture_id={}", item.ec_texture_id);
     println!("  tilemeta.cc_texture_id={}", item.cc_texture_id);
     println!(
-        "  tilemeta.ec_offsets=({}, {}) cc_offsets=({}, {})",
-        item.ec_offset_x, item.ec_offset_y, item.cc_offset_x, item.cc_offset_y
-    );
-    println!(
         "  tilemeta.ec_start=({}, {}) cc_start=({}, {})",
         item.ec_start_x, item.ec_start_y, item.cc_start_x, item.cc_start_y
     );

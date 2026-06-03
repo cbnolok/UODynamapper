@@ -53,12 +53,12 @@ Runtime packages are produced with the conversion tools and then placed in, or l
 
 - `tilemeta.uddp`
 - `tex_art_cc.uddp`
-- `tex_art_ec.uddp`
+- `tex_art_ec.uddp` (optional)
 - `tex_land_cc.uddp`
-- `tex_land_ec.uddp`
+- `tex_land_ec.uddp` (optional)
 - map and statics packages for the facets you want to inspect (i.e.: `map0.uddp`, `statics0.uddp`).
 
-For conversion commands and package details, see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md).
+For conversion commands and package details, see [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md).
 
 ## Controls
 
@@ -66,63 +66,127 @@ Keybindings are configurable. See [docs/keybindings.md](docs/keybindings.md) for
 
 ## Provided Tools
 
-Release builds should expose these binaries as separate executables.
+Release builds expose these binaries as separate executables.
 
-- Standalone renderer
-  - `dynamapper`: interactive map renderer.
-- UDD package management
-  - `udd-conv-gui`: graphical frontend for building UODynamapper runtime packages.
-  - `udd-conv-cli`: CLI crate; generated executables are `udd-pack` for building `.uddp` packages and `udd-tool` for inspecting, extracting, diffing, editing, and rebuilding them.
-  - `uddp-inspector-gui`: graphical inspector for `.uddp` package contents, atlas pages, and metadata slots.
-- UOCF end-user command-line tools
-  - `uop-tool`: hash, inspect, replace, crack candidate paths for, and rebuild `.uop` packages.
-  - `cc-uop-mul-converter`: convert between Classic Client `.mul`/`.idx` files and modern `.uop` packages.
-  - `sound-tool`: inspect or convert supported UO sound data.
-  - `multimap-tool`: convert Classic Client `multimap.rle` files to and from BMP or PNG.
-- UOCF discovery and development command-line tools
-  - These are still built by the `uocf-cli` crate, but their entrypoints live under `tools/uocf-cli/src/bin/dev-tools/` because they support package research, evidence gathering, and asset-pipeline maintenance rather than common user workflows.
-  - For end-users (CLI - command line tools):
-    - `uop-dict-populator-cli`: build and expand UOP hash dictionaries without the GUI.
-  - For end-users (GUI - UOCF graphical frontends):
-    - `uocf-inspector-gui`: graphical inspector for supported Ultima Online source formats.
-    - `uop-dict-populator-gui`: graphical tool for building and expanding UOP hash dictionaries.
-  - For Dynamapper development:
-    - `texture-scanner`: identify and isolate land candidates from UO texture pools.
-    - `facet-evidence-tool`: gather facet evidence for EC/KR land and map analysis.
-    - `kr-ec-terrain-diff-tool`: compare KR and EC land evidence.
-- UOCF (UO Client Files) library
-  - Shared package support:
-    - `.uop` package reading, writing, compression handling, path hashing, hash dictionaries, and brute-force path discovery (hash "cracking").
-    - `tools/_shared_assets/Dictionary.dic` is a MPE (Mythic Package Editor)-compatible UOP virtual path string/hash dictionary used to map 64-bit UOP path hashes back to virtual file names. The UOCF inspector can load `.dic` files for its UOP browser, `uop-dict-populator-cli` / `uop-dict-populator-gui` expand them from templates or brute-force searches, and `uop-tool merge-dic` can merge multiple `.dic` files.
-  - Classic Client support:
-    - map and statics files, art and land textures, tiledata, hues, lights, gumps, fonts, sounds, multis, radarmap colors, animation metadata, `body.def` / `bodyconv.def`, `verdata.mul`, map/statics DIFs, `multimap.rle`, and related `.mul` / `.idx` layouts.
-  - Kingdom Reborn support:
-    - Facet encoder/decoder.
-    - Many Enhanced Client files share their format with the older KR ones.
-  - Enhanced Client support:
-    - EC world maps and statics are also stored as compressed facet sectors inside `facet*.uop`, but with a slightly different format than KR one.
-    - `TerrainDefinition.uop` is parsed as the land/material ownership source: material ids, aliases, selected texture refs, shader names, repetition values, and preserved unknown fields. In this context, a material is a semantic land definition, not just an image: it groups land ids or aliases with the texture references, shader hints, repetition/stretch values, and other metadata the client uses to render that land family.
-    - `tileart.uop` is parsed as the item/static ownership source: tile records, art windows, offsets, flags, shader/type hints, lighting fields, surface-like/liquid-like classification evidence, and linked texture refs.
-    - Supporting EC data includes texture package access, string dictionaries, localized strings, hues, multis, land config, tile database data, animation frames, waypoints, and classic-to-EC tile mapping helpers.
-    - As with KR, this is parser and conversion support. Dynamapper currently uses only the converted runtime packages and still has open work for full EC material routing, support textures, and static-art behavior.
-  - Compatibility and custom-format work:
-    - Michelangelo-style `.uop` handling, `.vd` codec support, and shared helpers used by inspectors and converters.
-- Custom support libraries
-  - `udd-container`: low-level UDDP/UDDF container infrastructure.
-  - `udd-assets`: runtime readers and package access helpers for converted assets.
-  - `udd-conv`: conversion and packaging logic shared by frontends and CLIs.
-  - `udd-image-codecs`: GPU texture codec support for the conversion pipeline, including KTX2 writing, BC7 SIMD-assisted analytical decoding/encoding (inspired by basis-universal implementation) and the BC7 RDO pass used to improve outer compression (Rate Distortion Optimization: alters BC7 blocks data to make it highly repetitive and easier to further compress).
-  - `image-postprocess`: image scaling and filtering support used before packaging.
-    - Upscaling algorithms:
-      - Nearest, Bilinear, CatmullRom, Lanczos3
-      - xBRZ
-      - lqx, hqx
-      - epx
-      - 2xSaI, Super2xSaI, and SuperEagle
-      - MMPX-style
-      - Kopf-Lischinski depixelizer
-      - NEDI (New Edge-Directed Interpolation)
-      - AMD FSR (single EASU pass or EASU+RCAS)
+### dynamapper
+
+Interactive map renderer. The main application described throughout this README.
+
+### udd-conv-gui
+
+[`udd-conv-gui`](tools/udd-conv-gui/README.md) — graphical frontend for building UODynamapper runtime `.uddp` packages from
+Classic Client or Enhanced Client source installations. Wraps the `udd-pack`
+conversion commands in an egui interface with path pickers, job selection, and
+live progress reporting.
+
+### udd-conv-cli
+
+[`udd-conv-cli`](tools/udd-conv-cli/README.md) — CLI crate that provides two binaries:
+
+- `udd-pack`: converts Classic Client and Enhanced Client source assets into
+  `.uddp` runtime packages (land textures, art textures, maps, statics,
+  tilemeta, hues, gumps, animations, and more). Also includes EC material audit
+  and validation commands used during development.
+- `udd-tool`: inspects, extracts, hashes, replaces, rebuilds, diffs, and
+  exports/imports CSV metadata for `.uddp` and `.uddpi` package files.
+
+### uddp-inspector-gui
+
+[`uddp-inspector-gui`](tools/uddp-inspector-gui/README.md) — graphical inspector for `.uddp` package contents. Browse raw
+entries and their compression metadata, inspect atlas pages, preview decoded
+textures, and play back mobile animation sequences from `mobile_anim_cc.uddp`
+or `mobile_anim_ec.uddp`.
+
+### uocf-cli
+
+[`uocf-cli`](tools/uocf-cli/README.md) — CLI crate for Ultima Online file tooling built on top of the `uocf`
+library. End-user binaries:
+
+- `uop-tool`: hash UOP virtual paths, brute-force unknown hashes, extract,
+  replace, and rebuild `.uop` packages, and merge `.dic` hash dictionaries.
+- `cc-uop-mul-converter`: convert supported Classic Client `.mul`/`.idx` files
+  to and from modern `.uop` packages.
+- `sound-tool`: inspect or export Classic Client sound entries.
+- `multimap-tool`: convert Classic Client `multimap.rle` to and from BMP or PNG.
+
+Discovery and development binaries (under `src/bin/dev-tools/`; support asset
+research and pipeline maintenance rather than common user workflows):
+
+- `uop-dict-populator-cli`: populate `.dic` hash dictionaries from TOML
+  templates without the GUI.
+- `texture-scanner`: scan unpacked DDS texture trees and write a CSV inventory.
+- `facet-evidence-tool`: extract EC/KR facet land evidence into KDL.
+- `kr-ec-terrain-diff-tool`: compare KR land routing against EC evidence.
+
+### uocf-asset-cli
+
+[`uocf-asset-cli`](tools/uocf-asset-cli/README.md) — CLI crate for asset-level tooling built on top of `uocf`. Binary:
+
+- `export-anim-patch`: export animation payloads from Classic Client
+  `anim*.mul`/`anim*.idx`, CC `AnimationFrame*.uop`, or EC
+  `AnimationFrame*.uop` as single-entry `.vd` files or Michelangelo/UOAnimTool
+  `.uop` patch streams.
+
+### uocf-inspector-gui
+
+[`uocf-inspector-gui`](tools/uocf-inspector-gui/README.md) — graphical inspector for Ultima Online source formats. Reads
+directly from client installation files without requiring prior conversion.
+Views: UOP package explorer (with optional `.dic` dictionary resolution), CC
+art tiles, CC/EC tiledata and tileart metadata, CC and EC mobile animations,
+anim sequence tables, CC/EC gumps, multis, hues, clilocs, EC TerrainDefinition,
+EC string dictionary, and CC sounds. Most views support switching between
+Classic Client and Enhanced Client sources.
+
+### uop-dict-populator-gui
+
+[`uop-dict-populator-gui`](tools/uop-dict-populator-gui/README.md) — graphical tool for building and expanding UOP hash
+dictionaries (`.dic` files). Load an existing dictionary, point the tool at a
+directory of `.uop` packages, define candidate path templates in TOML, and run
+a background hash-expansion search. Saves results as a `.dic` file compatible
+with MPE (Mythic Package Editor) and `uocf-inspector-gui`.
+
+The shared starting-point dictionary lives at
+`tools/_shared_assets/Dictionary.dic`. `uop-tool merge-dic` can merge multiple
+`.dic` files.
+
+### uocf library
+
+[`uocf`](lib/uocf/README.md) — the core Ultima Online client format parser library used by all tools and
+the conversion pipeline. Covers:
+
+- **`.uop` container**: reading, writing, compression dispatch (zlib/deflate,
+  zlib-bwt, raw), path hashing, brute-force hash cracking, and hash dictionary
+  management.
+- **Classic Client** (`.mul` / `.idx` and their `.uop` equivalents): map and
+  statics, art and land textures, tiledata, animations, gumps, fonts, hues,
+  sounds, multis, radar map RLE, lights, radar colors, verdata patches,
+  clilocs, body definition files, and DIF patch handling. Several CC file types
+  have been re-released or supplemented in `.uop` format (e.g.
+  `artLegacyMUL.uop`, `gumpartLegacyMUL.uop`, `soundLegacyMUL.uop`,
+  `AnimationFrame*.uop`); these wrap data with the same logical layout as their
+  `.mul` counterparts and are parsed by the same `classic` module.
+- **Kingdom Reborn / Enhanced Client**: facet encoder/decoder, EC
+  `TerrainDefinition.uop`, `tileart.uop`, texture packages, animation frames,
+  hues, multis, localized strings, string dictionary, land config, tile
+  database, waypoints, and CC-to-EC tile mapping helpers.
+- **Compatibility formats**: `.vd` animation patch stream codec,
+  Michelangelo-style animation `.uop` codec.
+
+### Custom support libraries
+
+- [`udd-container`](lib/udd-container/README.md): low-level `.uddp` / `.uddf` container I/O, compression
+  (zstd, JPEG XL), and xxHash-64 path addressing.
+- [`udd-assets`](lib/udd-assets/README.md): typed runtime readers for converted `.uddp` packages; used by
+  `dynamapper` at runtime and by tools for inspection and validation.
+- [`udd-conv`](lib/udd-conv/README.md): conversion and atlas-packing logic shared by `udd-conv-cli` and
+  `udd-conv-gui`.
+- [`udd-image-codecs`](lib/udd-image-codecs/README.md): GPU texture codec support — BC7 SIMD-assisted analytical
+  encoder/decoder (inspired by basis-universal), BC7 RDO pass for improved
+  outer compression, and KTX2 container writing for supercompressed BC7 + zstd textures.
+- [`image-postprocess`](lib/image-postprocess/README.md): image scaling and filtering used before packaging.
+  Supported upscalers: Nearest, Bilinear, CatmullRom, Lanczos3, xBRZ, lqx,
+  hqx, epx, 2xSaI, Super2xSaI, SuperEagle, MMPX, Kopf-Lischinski depixelizer,
+  NEDI, and AMD FSR (EASU or EASU+RCAS).
 
 ## Workspace
 
@@ -133,27 +197,28 @@ The repository is a Cargo workspace. The important top-level groups are:
 - `lib/udd-container/`, `lib/udd-assets/`, `lib/udd-conv/`, `lib/udd-image-codecs/`, `lib/image-postprocess/`: package infrastructure, runtime readers, conversion logic, GPU texture codecs, and image postprocessing.
 - `tools/`: CLI and GUI tools for conversion, inspection, package editing, and UOP-related workflows.
 
-Detailed crate and tool responsibilities live in [docs/WORKSPACE_COMPONENTS.md](docs/WORKSPACE_COMPONENTS.md).
+Detailed crate and tool responsibilities live in [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md).
 
 ## Documentation
 
 | Document | Purpose |
 | -------- | ------- |
-| [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) | Contributor-oriented project summary and current status |
-| [docs/WORKSPACE_COMPONENTS.md](docs/WORKSPACE_COMPONENTS.md) | Workspace crates, tools, and responsibilities |
-| [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) | Conversion commands, package notes, and CSV editing rules |
-| [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) | Runtime code flow and system interactions |
-| [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) | Data formats, rendering constants, and technical rules |
-| [docs/UDDP_FORMATS.md](docs/UDDP_FORMATS.md) | `.uddp` and `.uddf` package formats |
-| [docs/LAND_TEXTURES_AND_TRANSITIONS.md](docs/LAND_TEXTURES_AND_TRANSITIONS.md) | EC land/art classification and transition work |
-| [docs/CONTRIBUTORS_GUIDE.md](docs/CONTRIBUTORS_GUIDE.md) | Quick file reference and contributor workflows |
+| [docs/dev_wiki/PROJECT_OVERVIEW.md](docs/dev_wiki/PROJECT_OVERVIEW.md) | Contributor-oriented project summary and current status |
+| [docs/dev_wiki/WORKSPACE_COMPONENTS.md](docs/dev_wiki/WORKSPACE_COMPONENTS.md) | Workspace crates, tools, and responsibilities |
+| [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) | Conversion commands, package notes, and CSV editing rules |
+| [docs/dev_wiki/CODE_OVERVIEW.md](docs/dev_wiki/CODE_OVERVIEW.md) | Runtime code flow and system interactions |
+| [docs/dev_wiki/TECHNICAL_REFERENCE.md](docs/dev_wiki/TECHNICAL_REFERENCE.md) | Data formats, rendering constants, and technical rules |
+| [docs/dev_wiki/UDDP_FORMATS.md](docs/dev_wiki/UDDP_FORMATS.md) | `.uddp` and `.uddf` package formats |
+| [docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md](docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md) | EC land/art classification and transition work |
+| [docs/dev_wiki/CONTRIBUTORS_GUIDE.md](docs/dev_wiki/CONTRIBUTORS_GUIDE.md) | Quick file reference and contributor workflows |
+
 
 Recommended reading:
 
 1. Start with this README to understand the project shape.
-2. Read [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) for current implementation status.
-3. Use [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) when building packages.
-4. Use [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) and [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) when changing runtime behavior.
+2. Read [docs/dev_wiki/PROJECT_OVERVIEW.md](docs/dev_wiki/PROJECT_OVERVIEW.md) for current implementation status.
+3. Use [docs/dev_wiki/ASSET_PIPELINE.md](docs/dev_wiki/ASSET_PIPELINE.md) when building packages.
+4. Use [docs/dev_wiki/CODE_OVERVIEW.md](docs/dev_wiki/CODE_OVERVIEW.md) and [docs/dev_wiki/TECHNICAL_REFERENCE.md](docs/dev_wiki/TECHNICAL_REFERENCE.md) when changing runtime behavior.
 
 ## License, credits and references
 
