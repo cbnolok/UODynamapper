@@ -14,6 +14,7 @@ use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
 use uocf::classic::gump::GumpMap;
+use uocf::classic::multimap_render::SourceRect;
 use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
@@ -39,6 +40,7 @@ pub enum ViewMode {
     AnimData,
     Gumps,
     Multis,
+    Multimap,
     Hues,
     Clilocs,
     TerrainDefinition,
@@ -81,6 +83,103 @@ pub enum LocalizedStringsSource {
 pub enum GumpSource {
     Classic,
     Enhanced,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultimapPreviewSelection {
+    Loaded,
+    Plain,
+    Artistic,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultimapConversionSource {
+    Ktx2,
+    ClientRadar,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultimapMapSourcePreference {
+    Mul,
+    Uop,
+}
+
+impl MultimapMapSourcePreference {
+    pub fn to_udd_conv(self) -> udd_conv::classic_sources::SourceFormatPreference {
+        match self {
+            Self::Mul => udd_conv::classic_sources::SourceFormatPreference::Mul,
+            Self::Uop => udd_conv::classic_sources::SourceFormatPreference::Uop,
+        }
+    }
+}
+
+pub struct MultimapConverterState {
+    pub source: MultimapConversionSource,
+    pub ktx2_path: String,
+    pub tilemeta_path: String,
+    pub map_id: u32,
+    pub map_source_preference: MultimapMapSourcePreference,
+    pub use_ec_radarcol: bool,
+    pub include_verdata: bool,
+    pub include_map_difs: bool,
+    pub include_static_difs: bool,
+    pub source_x: u32,
+    pub source_y: u32,
+    pub source_width_enabled: bool,
+    pub source_height_enabled: bool,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub output_width: u32,
+    pub output_height: u32,
+    pub edge_threshold: u16,
+    pub line_radius: u32,
+    pub status: String,
+}
+
+impl Default for MultimapConverterState {
+    fn default() -> Self {
+        Self {
+            source: MultimapConversionSource::Ktx2,
+            ktx2_path: String::new(),
+            tilemeta_path: String::new(),
+            map_id: 0,
+            map_source_preference: MultimapMapSourcePreference::Mul,
+            use_ec_radarcol: false,
+            include_verdata: false,
+            include_map_difs: false,
+            include_static_difs: false,
+            source_x: 0,
+            source_y: 0,
+            source_width_enabled: false,
+            source_height_enabled: false,
+            source_width: uocf::classic::multimap_rle::DEFAULT_WIDTH.saturating_mul(2),
+            source_height: uocf::classic::multimap_rle::DEFAULT_HEIGHT.saturating_mul(2),
+            output_width: uocf::classic::multimap_rle::DEFAULT_WIDTH,
+            output_height: uocf::classic::multimap_rle::DEFAULT_HEIGHT,
+            edge_threshold: 28,
+            line_radius: 0,
+            status: String::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GeneratedMultimapPreview {
+    pub label: String,
+    pub source_label: String,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub crop: SourceRect,
+    pub image: MultimapRleImage,
+}
+
+pub struct MultimapConversionOutput {
+    pub plain: GeneratedMultimapPreview,
+    pub artistic: GeneratedMultimapPreview,
+}
+
+pub struct MultimapWorkerResult {
+    pub result: Result<MultimapConversionOutput, String>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1313,6 +1412,8 @@ pub struct UopInspectorApp {
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
     pub cc_multimap: Option<Arc<MultimapRleImage>>,
     pub cc_multimap_path: Option<PathBuf>,
+    pub generated_multimap_plain: Option<GeneratedMultimapPreview>,
+    pub generated_multimap_artistic: Option<GeneratedMultimapPreview>,
     pub sound_player: Option<SoundPlayer>,
 
     pub selected_uop_idx: Option<usize>,
@@ -1335,6 +1436,10 @@ pub struct UopInspectorApp {
     pub hues_source: HuesSource,
     pub multis_source: MultisSource,
     pub localized_strings_source: LocalizedStringsSource,
+    pub multimap_preview_selection: MultimapPreviewSelection,
+    pub multimap_converter: MultimapConverterState,
+    pub multimap_worker_rx: Option<mpsc::Receiver<MultimapWorkerResult>>,
+    pub multimap_worker_active: bool,
 
     pub texture_previews: HashMap<u64, egui::TextureHandle>,
     pub ec_texture_previews: HashMap<u32, egui::TextureHandle>,
@@ -1432,6 +1537,8 @@ impl UopInspectorApp {
             cc_sound_entries: None,
             cc_multimap: None,
             cc_multimap_path: None,
+            generated_multimap_plain: None,
+            generated_multimap_artistic: None,
             sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
@@ -1452,6 +1559,10 @@ impl UopInspectorApp {
             hues_source: HuesSource::CcMul,
             multis_source: MultisSource::ClassicMul,
             localized_strings_source: LocalizedStringsSource::Cliloc,
+            multimap_preview_selection: MultimapPreviewSelection::Loaded,
+            multimap_converter: MultimapConverterState::default(),
+            multimap_worker_rx: None,
+            multimap_worker_active: false,
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,
@@ -1559,6 +1670,11 @@ impl UopInspectorApp {
         self.selected_file_hash = None;
         self.cc_multimap = None;
         self.cc_multimap_path = None;
+        self.generated_multimap_plain = None;
+        self.generated_multimap_artistic = None;
+        self.multimap_preview_selection = MultimapPreviewSelection::Loaded;
+        self.multimap_worker_rx = None;
+        self.multimap_worker_active = false;
         self.texture_previews.clear();
         self.ec_texture_previews.clear();
         self.uop_entry_labels.clear();
@@ -2905,6 +3021,46 @@ impl UopInspectorApp {
         Some(handle)
     }
 
+    pub fn get_generated_multimap_texture(
+        &mut self,
+        ctx: &egui::Context,
+        selection: MultimapPreviewSelection,
+    ) -> Option<egui::TextureHandle> {
+        let (key, texture_name, preview) = match selection {
+            MultimapPreviewSelection::Plain => (
+                0x6F00000000000001,
+                "generated_multimap_plain",
+                self.generated_multimap_plain.as_ref()?,
+            ),
+            MultimapPreviewSelection::Artistic => (
+                0x6F00000000000002,
+                "generated_multimap_artistic",
+                self.generated_multimap_artistic.as_ref()?,
+            ),
+            MultimapPreviewSelection::Loaded => return self.get_multimap_texture(ctx),
+        };
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let rgba = preview.image.to_rgba8();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [preview.image.width as usize, preview.image.height as usize],
+            &rgba,
+        );
+        let handle = ctx.load_texture(texture_name, image, Default::default());
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            preview.label.clone(),
+            preview.image.width,
+            preview.image.height,
+            &rgba,
+        );
+        Some(handle)
+    }
+
     pub fn select_raw_uop_entry(&mut self, package_name: &str, file_hash: u64) -> bool {
         let package_name = package_name.to_ascii_lowercase();
         let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
@@ -3228,6 +3384,8 @@ mod tests {
             cc_sound_entries: None,
             cc_multimap: None,
             cc_multimap_path: None,
+            generated_multimap_plain: None,
+            generated_multimap_artistic: None,
             sound_player: None,
             selected_uop_idx: None,
             selected_file_hash: None,
@@ -3247,6 +3405,10 @@ mod tests {
             hues_source: HuesSource::CcMul,
             multis_source: MultisSource::ClassicMul,
             localized_strings_source: LocalizedStringsSource::Cliloc,
+            multimap_preview_selection: MultimapPreviewSelection::Loaded,
+            multimap_converter: MultimapConverterState::default(),
+            multimap_worker_rx: None,
+            multimap_worker_active: false,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),

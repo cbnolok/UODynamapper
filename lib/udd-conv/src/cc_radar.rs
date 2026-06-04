@@ -249,6 +249,36 @@ fn build_radar_rgba_pixels(
     Ok((width_tiles, height_tiles, rgba_pixels))
 }
 
+pub fn build_facet_radar_rgba(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+) -> eyre::Result<(u32, u32, Vec<u8>)> {
+    build_facet_radar_rgba_with_options(
+        source_dirs,
+        tilemeta_path,
+        map_id,
+        SourceFormatPreference::Mul,
+        &ClassicPatchOptions::NONE,
+    )
+}
+
+pub fn build_facet_radar_rgba_with_options(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    map_id: u32,
+    map_source_preference: SourceFormatPreference,
+    patch_options: &ClassicPatchOptions,
+) -> eyre::Result<(u32, u32, Vec<u8>)> {
+    build_radar_rgba_pixels(
+        source_dirs,
+        tilemeta_path,
+        map_id,
+        map_source_preference,
+        patch_options,
+    )
+}
+
 pub fn build_facet_radar_bc7(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,

@@ -16,7 +16,9 @@ egui = { version = "0.31.1", features = [ "bytemuck" ] }
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-postprocess = { path = "../../lib/image-postprocess" }
+udd-conv = { path = "../../lib/udd-conv" }
 udd-assets = { path = "../../lib/udd-assets" }
+udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 rfd = { version = "0.15", features = ["xdg-portal"] }
 udd-logging = { path = "../../lib/udd-logging" }

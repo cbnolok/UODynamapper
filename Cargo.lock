@@ -8016,6 +8016,8 @@ dependencies = [
  "rodio",
  "serde",
  "udd-assets",
+ "udd-conv",
+ "udd-image-codecs",
  "udd-logging",
  "uocf",
 ]

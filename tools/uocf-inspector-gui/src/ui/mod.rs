@@ -6,6 +6,7 @@ pub mod animdata;
 pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
+pub mod multimap;
 pub mod hues;
 pub mod image_export;
 pub mod gumps;
@@ -89,6 +90,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }
+            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
             if app.client_data.is_some() || app.ec_hues.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
             }
@@ -236,6 +238,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         }
         crate::app::ViewMode::Multis => {
             multis::ui_multis(app, ctx);
+        }
+        crate::app::ViewMode::Multimap => {
+            multimap::ui_multimap(app, ctx);
         }
         crate::app::ViewMode::Hues => {
             hues::ui_hues(app, ctx);
