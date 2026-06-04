@@ -15,6 +15,42 @@ pub mod string_dictionary;
 pub mod sounds;
 pub mod upscale_preview;
 
+pub(super) fn arrow_delta(ui: &egui::Ui, disabled: bool) -> Option<isize> {
+    if disabled {
+        return None;
+    }
+
+    if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+        Some(1)
+    } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+        Some(-1)
+    } else {
+        None
+    }
+}
+
+pub(super) fn move_selection<T: Copy + Eq>(
+    visible: &[T],
+    selected: Option<T>,
+    delta: isize,
+) -> Option<T> {
+    if visible.is_empty() {
+        return selected;
+    }
+
+    let current = selected
+        .and_then(|selected| visible.iter().position(|value| *value == selected));
+    let next = match (current, delta) {
+        (Some(index), delta) if delta < 0 => index.saturating_sub(1),
+        (Some(index), delta) if delta > 0 => (index + 1).min(visible.len() - 1),
+        (Some(index), _) => index,
+        (None, delta) if delta < 0 => visible.len() - 1,
+        (None, _) => 0,
+    };
+
+    Some(visible[next])
+}
+
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {

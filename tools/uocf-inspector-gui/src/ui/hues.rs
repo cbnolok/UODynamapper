@@ -1,5 +1,6 @@
 use crate::app::{ArtSource, HuesSource, UopInspectorApp};
 use eframe::egui;
+use super::{arrow_delta, move_selection};
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, hue_bitmap_path, HUE_STRIP_WIDTH, HUES_ATLAS_HEIGHT, HUES_ATLAS_PATH,
     HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES,
@@ -46,6 +47,18 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
             if let Some(client) = &app.client_data {
                 if let Some(hues) = &client.hues {
+                    let visible_hues: Vec<u16> = (1..=hues.len() as u16).collect();
+                    let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
+                        if let Some(hue_id) =
+                            move_selection(&visible_hues, Some(app.selected_hue_id), delta)
+                        {
+                            app.selected_hue_id = hue_id;
+                        }
+                        true
+                    } else {
+                        false
+                    };
+
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for (i, hue) in hues.iter().enumerate() {
                             let hue_id = (i + 1) as u16;
@@ -56,7 +69,12 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 format!("Hue {}: {}", hue_id, name)
                             };
 
-                            if ui.selectable_label(app.selected_hue_id == hue_id, label).clicked() {
+                            let selected = app.selected_hue_id == hue_id;
+                            let response = ui.selectable_label(selected, label);
+                            if keyboard_moved && selected {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if response.clicked() {
                                 app.selected_hue_id = hue_id;
                             }
                         }
@@ -251,13 +269,36 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.heading(format!("hues.uop Entries ({})", ec_hues.bitmaps.len()));
             ui.separator();
 
+            let mut text_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                ui.text_edit_singleline(&mut app.search_query);
+                let res = ui.text_edit_singleline(&mut app.search_query);
+                text_has_focus |= res.has_focus();
             });
             ui.separator();
 
             let query = app.search_query.to_lowercase();
+            let visible_hues: Vec<u16> = (1..=MAX_EC_HUES)
+                .filter(|hue_id| {
+                    let name = ec_hues.hue_name(*hue_id).unwrap_or("");
+                    let path = hue_bitmap_path(*hue_id);
+                    query.is_empty()
+                        || hue_id.to_string().contains(&query)
+                        || name.to_lowercase().contains(&query)
+                        || path.to_lowercase().contains(&query)
+                })
+                .collect();
+            let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
+                if let Some(hue_id) = move_selection(&visible_hues, Some(app.selected_ec_hue_id), delta) {
+                    app.selected_ec_hue_id = hue_id;
+                    app.selected_ec_hue_hash =
+                        ec_hues.bitmap_for_hue(hue_id).map(|entry| entry.filename_hash);
+                }
+                true
+            } else {
+                false
+            };
+
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for hue_id in 1..=MAX_EC_HUES {
                     let name = ec_hues.hue_name(hue_id).unwrap_or("");
@@ -276,10 +317,12 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         format!("Hue {}: {}", hue_id, name)
                     };
 
-                    if ui
-                        .selectable_label(app.selected_ec_hue_id == hue_id, label)
-                        .clicked()
-                    {
+                    let selected = app.selected_ec_hue_id == hue_id;
+                    let response = ui.selectable_label(selected, label);
+                    if keyboard_moved && selected {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
                         app.selected_ec_hue_id = hue_id;
                         app.selected_ec_hue_hash =
                             ec_hues.bitmap_for_hue(hue_id).map(|entry| entry.filename_hash);

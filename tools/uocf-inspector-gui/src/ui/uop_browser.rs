@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::app::UopInspectorApp;
+use super::{arrow_delta, move_selection};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -41,13 +42,16 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             .default_width(350.0)
             .show(ctx, |ui| {
                 ui.heading("Entries");
+                let mut text_has_focus = false;
                 ui.horizontal(|ui| {
                     ui.label("Filter:");
-                    ui.text_edit_singleline(&mut app.search_query);
+                    let res = ui.text_edit_singleline(&mut app.search_query);
+                    text_has_focus |= res.has_focus();
                 });
                 ui.horizontal(|ui| {
                     ui.label("Find Hash:");
                     let res = ui.text_edit_singleline(&mut app.find_hash_query);
+                    text_has_focus |= res.has_focus();
                     if res.changed() || ui.button("Find").clicked() {
                        if let Ok(h) = u64::from_str_radix(app.find_hash_query.trim_start_matches("0x"), 16) {
                            app.selected_file_hash = Some(h);
@@ -56,13 +60,30 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 });
                 
                 let query = app.search_query.to_lowercase();
+                let visible_hashes: Vec<u64> = entry_labels
+                    .iter()
+                    .filter(|file| query.is_empty() || file.search_name.contains(&query))
+                    .map(|file| file.hash)
+                    .collect();
+                let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
+                    app.selected_file_hash = move_selection(&visible_hashes, app.selected_file_hash, delta);
+                    true
+                } else {
+                    false
+                };
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for file in entry_labels.iter() {
                         if !query.is_empty() && !file.search_name.contains(&query) {
                             continue;
                         }
 
-                        if ui.selectable_label(app.selected_file_hash == Some(file.hash), &file.display_name).clicked() {
+                        let selected = app.selected_file_hash == Some(file.hash);
+                        let response = ui.selectable_label(selected, &file.display_name);
+                        if keyboard_moved && selected {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if response.clicked() {
                             app.selected_file_hash = Some(file.hash);
                         }
                     }
