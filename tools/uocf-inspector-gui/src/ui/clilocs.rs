@@ -1,7 +1,6 @@
-use crate::app::{LocalizedStringsSource, UopInspectorApp};
+use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp};
 use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
-use uocf::enhanced::localized_strings::LocalizedStringEntry;
 
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let has_cliloc = app.cliloc.is_some();
@@ -125,6 +124,14 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(package) = app.localized_strings.clone() else {
         return;
     };
+    let Some(row_files) = app.localized_string_rows.clone() else {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.centered_and_justified(|ui| {
+                ui.label("Reload assets to rebuild the localized strings row cache.");
+            });
+        });
+        return;
+    };
     if app.selected_localized_file_hash.is_none() {
         app.selected_localized_file_hash = package.files.first().map(|file| file.filename_hash);
     }
@@ -174,6 +181,10 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Selected localized strings file is missing.");
             return;
         };
+        let Some(row_file) = row_files.iter().find(|file| file.filename_hash == file_hash) else {
+            ui.label("Selected localized strings row cache is missing.");
+            return;
+        };
 
         ui.horizontal(|ui| {
             ui.heading(format!("0x{:016X}", file.filename_hash));
@@ -185,7 +196,7 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
         search_box(app, ui);
         ui.separator();
-        localized_strings_table(app, ui, &file.strings.entries);
+        localized_strings_table(app, ui, &file.strings.entries, &row_file.rows);
     });
 }
 
@@ -278,29 +289,49 @@ fn cliloc_entry_matches_query(entry: &uocf::classic::cliloc::ClilocEntry, query:
 fn localized_strings_table(
     app: &mut UopInspectorApp,
     ui: &mut egui::Ui,
-    entries: &[LocalizedStringEntry],
+    entries: &[uocf::enhanced::localized_strings::LocalizedStringEntry],
+    rows: &[LocalizedStringDisplayRow],
 ) {
     let query = app.search_query.to_lowercase();
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("localized_strings_grid").striped(true).show(ui, |ui| {
-            ui.label("ID");
-            ui.label("unk");
-            ui.label("String value");
-            ui.end_row();
-            for entry in entries {
-                if !query.is_empty()
-                    && !entry.id.to_string().contains(&query)
-                    && !entry.text.to_lowercase().contains(&query)
-                {
-                    continue;
-                }
-                ui.label(entry.id.to_string());
-                ui.label(format!("0x{:02X}", entry.unk));
-                ui.label(&entry.text);
-                ui.end_row();
-            }
-        });
+    let matching_rows: Option<Vec<usize>> = if query.is_empty() {
+        None
+    } else {
+        Some(rows
+            .iter()
+            .enumerate()
+            .filter_map(|(row_index, row)| row.search_text.contains(&query).then_some(row_index))
+            .collect())
+    };
+    let row_count = matching_rows.as_ref().map_or(rows.len(), Vec::len);
+
+    egui::Grid::new("localized_strings_header").striped(true).show(ui, |ui| {
+        ui.label("ID");
+        ui.label("unk");
+        ui.label("String value");
+        ui.end_row();
     });
+    egui::ScrollArea::vertical()
+        .id_salt("localized_strings_rows")
+        .show_rows(ui, 20.0, row_count, |ui, row_range| {
+            egui::Grid::new("localized_strings_visible_rows")
+                .striped(true)
+                .show(ui, |ui| {
+                    for row_index in row_range {
+                        let source_row_index = matching_rows
+                            .as_ref()
+                            .map_or(row_index, |matches| matches[row_index]);
+                        let row = &rows[source_row_index];
+                        let text = entries
+                            .get(row.entry_index)
+                            .map(|entry| entry.text.as_str())
+                            .unwrap_or("");
+                        ui.label(&row.id);
+                        ui.label(&row.unk);
+                        ui.label(text);
+                        ui.end_row();
+                    }
+                });
+        });
 }
 
 #[cfg(test)]

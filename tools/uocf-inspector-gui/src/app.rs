@@ -18,7 +18,7 @@ use uocf::classic::multimap_render::SourceRect;
 use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
-use uocf::enhanced::localized_strings::LocalizedStringsPackage;
+use uocf::enhanced::localized_strings::{LocalizedStringsPackage, LOCALIZED_STRINGS_UOP_NAME};
 use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -823,6 +823,20 @@ pub struct TileArtDisplayRow {
     pub search_text: String,
 }
 
+#[derive(Clone)]
+pub struct LocalizedStringDisplayFile {
+    pub filename_hash: u64,
+    pub rows: Vec<LocalizedStringDisplayRow>,
+}
+
+#[derive(Clone)]
+pub struct LocalizedStringDisplayRow {
+    pub entry_index: usize,
+    pub id: String,
+    pub unk: String,
+    pub search_text: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct SoundListEntry {
     pub slot_id: u32,
@@ -1283,6 +1297,30 @@ fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
     )
 }
 
+fn collect_localized_string_rows(
+    package: &LocalizedStringsPackage,
+) -> Vec<LocalizedStringDisplayFile> {
+    package
+        .files
+        .iter()
+        .map(|file| LocalizedStringDisplayFile {
+            filename_hash: file.filename_hash,
+            rows: file
+                .strings
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(entry_index, entry)| LocalizedStringDisplayRow {
+                    entry_index,
+                    id: entry.id.to_string(),
+                    unk: format!("0x{:02X}", entry.unk),
+                    search_text: format!("{} {}", entry.id, entry.text.to_lowercase()),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 fn load_optional_gumps_package(
     base_path: &Path,
     file_name: &str,
@@ -1365,6 +1403,10 @@ fn default_cliloc_file_index(clilocs: &[ClilocFileEntry]) -> Option<usize> {
         .or_else(|| clilocs.first().map(|_| 0))
 }
 
+fn find_localized_strings_uop(base_path: &Path) -> Option<PathBuf> {
+    find_client_file_case_insensitive(base_path, LOCALIZED_STRINGS_UOP_NAME)
+}
+
 fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
     let direct_path = base_path.join(file_name);
     if direct_path.exists() {
@@ -1400,6 +1442,7 @@ pub struct UopInspectorApp {
     pub cliloc: Option<Arc<Cliloc>>,
     pub cliloc_files: Vec<ClilocFileEntry>,
     pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
+    pub localized_string_rows: Option<Arc<Vec<LocalizedStringDisplayFile>>>,
     pub string_dictionary_raw_hash: Option<u64>,
     pub uop_cache: UopCache,
     pub client_data: Option<ClientData>,
@@ -1525,6 +1568,7 @@ impl UopInspectorApp {
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,
+            localized_string_rows: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
@@ -1655,6 +1699,7 @@ impl UopInspectorApp {
         self.cliloc_files.clear();
         self.selected_cliloc_file_idx = None;
         self.localized_strings = None;
+        self.localized_string_rows = None;
         self.multi_collection = None;
         self.multi_collection_source = None;
         self.multi_collection_path = None;
@@ -1985,19 +2030,21 @@ impl UopInspectorApp {
                 }
             }
 
-            for uop_name in ["localizedstrings.uop", "LocalizedStrings.uop"] {
-                let uop_path = ec_base_path.join(uop_name);
-                if uop_path.exists() {
-                    self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
-                    match LocalizedStringsPackage::load(&uop_path) {
-                        Ok(strings) => {
-                            let count = strings.len();
-                            self.localized_strings = Some(Arc::new(strings));
-                            self.log(format!("Parsed {} localized string entries.", count));
-                        }
-                        Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
+            if let Some(uop_path) = find_localized_strings_uop(&ec_base_path) {
+                let uop_name = uop_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(LOCALIZED_STRINGS_UOP_NAME);
+                self.log(format!("Parsing {} from {}", uop_name, uop_path.display()));
+                match LocalizedStringsPackage::load(&uop_path) {
+                    Ok(strings) => {
+                        let count = strings.len();
+                        let rows = collect_localized_string_rows(&strings);
+                        self.localized_strings = Some(Arc::new(strings));
+                        self.localized_string_rows = Some(Arc::new(rows));
+                        self.log(format!("Parsed {} localized string entries.", count));
                     }
-                    break;
+                    Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
                 }
             }
 
@@ -3383,6 +3430,7 @@ mod tests {
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,
+            localized_string_rows: None,
             string_dictionary_raw_hash: None,
             uop_cache: UopCache::new(),
             client_data: None,
@@ -3642,6 +3690,55 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn find_localized_strings_uop_accepts_ec_casing() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "uocf_inspector_localized_strings_case_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("LocalizedStrings.UOP");
+        std::fs::write(&path, []).unwrap();
+
+        assert_eq!(find_localized_strings_uop(&dir).as_deref(), Some(path.as_path()));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn collect_localized_string_rows_caches_display_and_search_text() {
+        let package = LocalizedStringsPackage {
+            files: vec![uocf::enhanced::localized_strings::LocalizedStringsFile {
+                filename_hash: 0x1234,
+                byte_len: 0,
+                strings: uocf::enhanced::localized_strings::LocalizedStringTable {
+                    header1: 0,
+                    header2: 0,
+                    entries: vec![uocf::enhanced::localized_strings::LocalizedStringEntry {
+                        id: 500052,
+                        unk: 0xAB,
+                        text: "Bank Balance".to_string(),
+                    }],
+                },
+            }],
+        };
+
+        let rows = collect_localized_string_rows(&package);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].filename_hash, 0x1234);
+        assert_eq!(rows[0].rows.len(), 1);
+        assert_eq!(rows[0].rows[0].entry_index, 0);
+        assert_eq!(rows[0].rows[0].id, "500052");
+        assert_eq!(rows[0].rows[0].unk, "0xAB");
+        assert!(rows[0].rows[0].search_text.contains("500052"));
+        assert!(rows[0].rows[0].search_text.contains("bank balance"));
     }
 
     #[test]
