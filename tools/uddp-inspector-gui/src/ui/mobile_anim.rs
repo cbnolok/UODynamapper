@@ -176,33 +176,30 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     );
 
     ui.heading("mobile_anim_cc.uddp");
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("Atlas: {}x{} gutter {}", package.atlas_width(), package.atlas_height(), package.gutter()));
-        ui.separator();
-        ui.label(format!("Atlas packing: {}", packing_mode_name(package.packing_mode())));
-        ui.separator();
-        ui.label(format!("Page format: {}", page_format_summary(package.pages().iter().map(|page| page.pixel_format))));
-        ui.separator();
-        ui.label("Upscale: not stored");
-        ui.separator();
-        ui.label(format!("Texture compression: {}", codec_summary(&app.entries, DataType::Texture as u8)));
-        ui.separator();
-        ui.label(format!("Metadata compression: {}", codec_summary(&app.entries, DataType::Metadata as u8)));
-        ui.separator();
-        ui.label(format!("Pages: {}", package.pages().len()));
-        ui.separator();
-        ui.label(format!("Page buckets: {}", page_bucket_summary(package.pages().iter().map(|page| {
+    show_mobile_anim_overview(
+        ui,
+        [
+            ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
+            ("Gutter", package.gutter().to_string()),
+            ("Packing", packing_mode_name(package.packing_mode()).to_string()),
+            ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
+            ("Upscale", "not stored".to_string()),
+        ],
+        [
+            ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
+            ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
+        ],
+        [
+            ("Pages", package.pages().len().to_string()),
+            ("Animations", package.animations().len().to_string()),
+            ("Frames", package.frames().len().to_string()),
+            ("Body maps", package.body_resolve().len().to_string()),
+            ("Body types", package.body_types().len().to_string()),
+        ],
+        package.pages().iter().map(|page| {
             (page.atlas_width, page.atlas_height, page.frame_count)
-        }))));
-        ui.separator();
-        ui.label(format!("Animations: {}", package.animations().len()));
-        ui.separator();
-        ui.label(format!("Frames: {}", package.frames().len()));
-        ui.separator();
-        ui.label(format!("Body maps: {}", package.body_resolve().len()));
-        ui.separator();
-        ui.label(format!("Body types: {}", package.body_types().len()));
-    });
+        }),
+    );
     ui.separator();
 
     egui::Grid::new("mobile_anim_cc_selected_animation")
@@ -459,33 +456,30 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
     );
 
     ui.heading("mobile_anim_ec.uddp");
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("Atlas: {}x{} gutter {}", package.atlas_width(), package.atlas_height(), package.gutter()));
-        ui.separator();
-        ui.label(format!("Atlas packing: {}", packing_mode_name(package.packing_mode())));
-        ui.separator();
-        ui.label(format!("Page format: {}", page_format_summary(package.pages().iter().map(|page| page.pixel_format))));
-        ui.separator();
-        ui.label("Upscale: not stored");
-        ui.separator();
-        ui.label(format!("Texture compression: {}", codec_summary(&app.entries, DataType::Texture as u8)));
-        ui.separator();
-        ui.label(format!("Metadata compression: {}", codec_summary(&app.entries, DataType::Metadata as u8)));
-        ui.separator();
-        ui.label(format!("Pages: {}", package.pages().len()));
-        ui.separator();
-        ui.label(format!("Page buckets: {}", page_bucket_summary(package.pages().iter().map(|page| {
+    show_mobile_anim_overview(
+        ui,
+        [
+            ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
+            ("Gutter", package.gutter().to_string()),
+            ("Packing", packing_mode_name(package.packing_mode()).to_string()),
+            ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
+            ("Upscale", "not stored".to_string()),
+        ],
+        [
+            ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
+            ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
+        ],
+        [
+            ("Pages", package.pages().len().to_string()),
+            ("Animations", package.animations().len().to_string()),
+            ("Frames", package.frames().len().to_string()),
+            ("Items", package.items().len().to_string()),
+            ("Source hints", package.source_hints().len().to_string()),
+        ],
+        package.pages().iter().map(|page| {
             (page.atlas_width, page.atlas_height, page.frame_count)
-        }))));
-        ui.separator();
-        ui.label(format!("Animations: {}", package.animations().len()));
-        ui.separator();
-        ui.label(format!("Frames: {}", package.frames().len()));
-        ui.separator();
-        ui.label(format!("Items: {}", package.items().len()));
-        ui.separator();
-        ui.label(format!("Source hints: {}", package.source_hints().len()));
-    });
+        }),
+    );
     ui.separator();
 
     egui::Grid::new("mobile_anim_ec_selected_animation")
@@ -787,6 +781,85 @@ fn ec_body_type_label(body_type: Option<i16>) -> String {
     }
 }
 
+fn show_mobile_anim_overview(
+    ui: &mut egui::Ui,
+    atlas_rows: impl IntoIterator<Item = (&'static str, String)>,
+    storage_rows: impl IntoIterator<Item = (&'static str, String)>,
+    content_rows: impl IntoIterator<Item = (&'static str, String)>,
+    pages: impl Iterator<Item = (u32, u32, u32)>,
+) {
+    let page_buckets = page_bucket_rows(pages);
+    ui.horizontal_wrapped(|ui| {
+        show_metadata_section(ui, "mobile_anim_overview_atlas", "Atlas", atlas_rows);
+        show_metadata_section(ui, "mobile_anim_overview_storage", "Storage", storage_rows);
+        show_metadata_section(ui, "mobile_anim_overview_content", "Content", content_rows);
+        show_page_bucket_section(ui, &page_buckets);
+    });
+}
+
+fn show_metadata_section(
+    ui: &mut egui::Ui,
+    id: &'static str,
+    title: &'static str,
+    rows: impl IntoIterator<Item = (&'static str, String)>,
+) {
+    ui.group(|ui| {
+        ui.set_min_width(190.0);
+        ui.strong(title);
+        ui.add_space(4.0);
+        egui::Grid::new(id)
+            .num_columns(2)
+            .spacing([12.0, 4.0])
+            .show(ui, |ui| {
+                for (label, value) in rows {
+                    ui.label(egui::RichText::new(label).weak());
+                    ui.label(value);
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn show_page_bucket_section(ui: &mut egui::Ui, rows: &[(String, String)]) {
+    ui.group(|ui| {
+        ui.set_min_width(210.0);
+        ui.strong("Page Buckets");
+        ui.add_space(4.0);
+        if rows.is_empty() {
+            ui.label("none");
+            return;
+        }
+        egui::Grid::new("mobile_anim_overview_page_buckets")
+            .num_columns(2)
+            .spacing([12.0, 4.0])
+            .show(ui, |ui| {
+                for (size, summary) in rows {
+                    ui.label(egui::RichText::new(size).weak());
+                    ui.label(summary);
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn page_bucket_rows(pages: impl Iterator<Item = (u32, u32, u32)>) -> Vec<(String, String)> {
+    let mut buckets = BTreeMap::<(u32, u32), (u32, u32)>::new();
+    for (width, height, frame_count) in pages {
+        let entry = buckets.entry((width, height)).or_default();
+        entry.0 += 1;
+        entry.1 += frame_count;
+    }
+    buckets
+        .into_iter()
+        .map(|((width, height), (page_count, frame_count))| {
+            (
+                format!("{width}x{height}"),
+                format!("{page_count} pages / {frame_count} frames"),
+            )
+        })
+        .collect()
+}
+
 fn packing_mode_name(mode: AtlasPackingMode) -> &'static str {
     match mode {
         AtlasPackingMode::MaximumPacking => "maximum packing",
@@ -945,6 +1018,7 @@ fn show_ec_frame(
     );
 }
 
+#[cfg(test)]
 fn page_bucket_summary(pages: impl Iterator<Item = (u32, u32, u32)>) -> String {
     let mut buckets = BTreeMap::<(u32, u32), (u32, u32)>::new();
     for (width, height, frame_count) in pages {
