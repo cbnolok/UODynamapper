@@ -37,7 +37,7 @@ use udd_conv::package_progress::{AssetTaskProgress, AssetTaskProgressStage};
 use udd_conv_cli::{
     package_info::get_package_info_string,
     extract::extract_package,
-    tool_cli::{diff_paths_report, DiffKind},
+    tool_cli::{diff_paths_report, export_csv_auto_report, hash_path_report, DiffKind},
     upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
 use crate::app::UddConvApp;
@@ -901,6 +901,29 @@ impl UddConvApp {
             extract_package(&file, None)?;
             Ok(format!("Extracted to sidecar folder next to {}", file.display()))
         });
+    }
+
+    pub fn tool_export_csv(&self) {
+        let Some(file) = self.tool_file_1.clone() else {
+            self.push_log("Select a package before exporting CSV metadata.", LogLevel::Error);
+            return;
+        };
+        let file_name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.display().to_string());
+        self.spawn_task(format!("Export CSV: {}", file_name), move || {
+            export_csv_auto_report(&file, None)
+        });
+    }
+
+    pub fn tool_hash_path(&self) {
+        let value = self.tool_hash_value.trim();
+        if value.is_empty() {
+            self.push_log("Enter a virtual path before hashing.", LogLevel::Error);
+            return;
+        }
+        self.push_log(hash_path_report(value), LogLevel::Info);
     }
 
     pub fn tool_diff(&self) {

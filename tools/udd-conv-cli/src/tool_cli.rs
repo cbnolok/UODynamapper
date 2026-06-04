@@ -110,6 +110,23 @@ pub enum DiffKind {
     Package,
 }
 
+pub fn hash_path_report(value: &str) -> String {
+    format!(
+        "Path hash for \"{value}\": 0x{:016x}",
+        xxh64_virtual_path(value)
+    )
+}
+
+pub fn export_csv_auto_report(file: &Path, output: Option<&Path>) -> eyre::Result<String> {
+    let output_path = default_csv_export_output(file, output);
+    export_csv_auto(file, output)?;
+    Ok(format!(
+        "Exported CSV metadata from '{}' to '{}'.",
+        file.display(),
+        output_path.display()
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SlotKind {
     Land,
@@ -160,10 +177,7 @@ pub fn run() -> eyre::Result<()> {
         Commands::Info { file } => package_info::print_package_info(&file)?,
         Commands::Extract { file, output } => extract::extract_package(&file, output.as_deref())?,
         Commands::HashPath { value } => {
-            println!(
-                "Path hash for \"{value}\": 0x{:016x}",
-                xxh64_virtual_path(&value)
-            );
+            println!("{}", hash_path_report(&value));
         }
         Commands::Replace {
             file,
@@ -222,6 +236,21 @@ fn import_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre::Resu
         CsvKind::TerrainProvenance => import_terrain_provenance_csv(file, csv, output),
         CsvKind::Slots | CsvKind::Auto => import_slots_csv_auto(file, csv, output),
     }
+}
+
+fn default_csv_export_output(file: &Path, output: Option<&Path>) -> PathBuf {
+    if let Some(output) = output {
+        return output.to_path_buf();
+    }
+    if TexLandEcPackage::load(file).is_ok() {
+        return file.with_file_name(format!(
+            "{}.terrain_provenance.csv",
+            file.file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("tex_land_ec")
+        ));
+    }
+    default_slots_output(file)
 }
 
 fn export_terrain_provenance_csv(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
@@ -1545,6 +1574,14 @@ mod tests {
             .expect("system time is after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("uddtool_diff_{}_{}.csv", name, nanos))
+    }
+
+    #[test]
+    fn hash_path_report_formats_virtual_path_hash() {
+        let report = hash_path_report("build/tex_art_cc/slots.bin");
+
+        assert!(report.contains("build/tex_art_cc/slots.bin"));
+        assert!(report.contains("0x"));
     }
 
     #[test]

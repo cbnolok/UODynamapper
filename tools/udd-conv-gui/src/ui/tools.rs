@@ -46,7 +46,29 @@ impl UddConvApp {
                         if ui.button("📦 Extract Contents").clicked() {
                             self.tool_extract();
                         }
+                        if ui.button("🧾 Export CSV Metadata").clicked() {
+                            self.tool_export_csv();
+                        }
                     });
+                });
+            });
+
+            ui.add_space(15.0);
+
+            ui.group(|ui| {
+                ui.set_width(ui.available_width());
+                ui.heading("Virtual Path Hash");
+                ui.add_space(5.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(&mut self.tool_hash_value);
+                    if ui
+                        .add_enabled(!self.tool_hash_value.trim().is_empty(), egui::Button::new("Compute Hash"))
+                        .clicked()
+                    {
+                        self.tool_hash_path();
+                    }
                 });
             });
 

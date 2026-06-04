@@ -17,6 +17,7 @@ pub struct UddConvApp {
     // Tool state
     pub tool_file_1: Option<PathBuf>,
     pub tool_file_2: Option<PathBuf>,
+    pub tool_hash_value: String,
     pub preview_path: Option<PathBuf>,
     pub preview_texture: Option<egui::TextureHandle>,
     pub upscale_preview: Option<crate::models::UpscalePreviewState>,
@@ -53,6 +54,7 @@ impl UddConvApp {
             current_tab: Tab::Sources,
             tool_file_1: None,
             tool_file_2: None,
+            tool_hash_value: String::new(),
             preview_path: None,
             preview_texture: None,
             upscale_preview: None,

@@ -64,10 +64,10 @@ filter controls remain the fallback for unmatched targets.
 | Package info | Yes | Yes |
 | Extract package | Yes | Yes |
 | Diff packages or metadata | Yes | Yes |
-| Hash virtual path | CLI only | Yes |
+| Hash virtual path | Yes | Yes |
 | Replace package entry | CLI only | Yes |
 | Rebuild package | CLI only | Yes |
-| Export CSV metadata | CLI only | Yes |
+| Export CSV metadata | Yes | Yes |
 | Import CSV metadata | CLI only | Yes |
 
 ## Binary
