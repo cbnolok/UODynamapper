@@ -2551,7 +2551,29 @@ impl UopInspectorApp {
             image_data_offset: 0,
         };
         let img = tex_file.decode_to_rgba().ok()?;
-        let rgba = img.to_rgba8();
+        let mut rgba = img.to_rgba8();
+        if art_id >= 0x4000 && self.selected_hue_id > 0 {
+            if let Some(hue) = self
+                .client_data
+                .as_ref()
+                .and_then(|client| client.hues.as_ref())
+                .and_then(|hues| hues.get((self.selected_hue_id as usize).saturating_sub(1)))
+            {
+                for pixel in rgba.as_mut().chunks_exact_mut(4) {
+                    let r = pixel[0] as u32;
+                    let g = pixel[1] as u32;
+                    let b = pixel[2] as u32;
+                    let a = pixel[3] as u32;
+                    let color = (a << 24) | (r << 16) | (g << 8) | b;
+                    let hued = hue.apply_to_color32(color, false);
+
+                    pixel[0] = ((hued >> 16) & 0xFF) as u8;
+                    pixel[1] = ((hued >> 8) & 0xFF) as u8;
+                    pixel[2] = (hued & 0xFF) as u8;
+                    pixel[3] = ((hued >> 24) & 0xFF) as u8;
+                }
+            }
+        }
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [rgba.width() as usize, rgba.height() as usize],
             rgba.as_raw(),
@@ -2650,8 +2672,7 @@ impl UopInspectorApp {
                                     let a = pixels[i + 3] as u32;
                                     let color = (a << 24) | (r << 16) | (g << 8) | b;
 
-                                    // UO Hues are usually applied with partial_hue = true for statics?
-                                    let hued = hue.apply_to_color32(color, true);
+                                    let hued = hue.apply_to_color32(color, false);
 
                                     pixels[i] = ((hued >> 16) & 0xFF) as u8;
                                     pixels[i + 1] = ((hued >> 8) & 0xFF) as u8;
