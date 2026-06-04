@@ -17,6 +17,13 @@ struct MulAnimationTreeEntry {
     source_index: u32,
 }
 
+#[derive(Clone, Copy)]
+struct UopAnimationFrameTreeEntry {
+    body_id: u32,
+    group_id: Option<u8>,
+    frame_count: usize,
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum AnimationTreeOrder {
     BodyId,
@@ -25,6 +32,7 @@ enum AnimationTreeOrder {
 
 static ANIMATION_TREE_ORDER: AtomicU8 = AtomicU8::new(0);
 static ANIMATION_TREE_COLLAPSE_REVISION: AtomicU64 = AtomicU64::new(0);
+const UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT: u32 = 4096;
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("anim_controls")
@@ -86,117 +94,6 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
             show_animation_navigation(app, ctx, ui);
 
-            if app.selected_legacy_source != ArtSource::Any {
-                let export_context = app.client_data.as_ref().map(|client| {
-                    let body_id = client
-                        .anim_defs
-                        .as_ref()
-                        .map(|defs| defs.resolve(app.selected_anim_id))
-                        .unwrap_or(app.selected_anim_id);
-                    body_id
-                });
-
-                ui.separator();
-                ui.heading("Patch Export");
-                ui.horizontal(|ui| {
-                    let can_export = export_context.is_some();
-                    if ui
-                        .add_enabled(can_export, egui::Button::new("Export VD"))
-                        .clicked()
-                    {
-                        if let Some(body_id) = export_context {
-                            let default_name = format!(
-                                "anim_{}_{}.vd",
-                                app.selected_anim_file_idx, body_id
-                            );
-                            if let Some(path) = crate::dialog::file_dialog()
-                                .set_file_name(default_name)
-                                .save_file()
-                            {
-                                match export_selected_animation_patch(
-                                    app,
-                                    body_id,
-                                    AnimationPatchExportFormat::Vd,
-                                    &path,
-                                ) {
-                                    Ok(entry_count) => {
-                                        app.status_message = format!(
-                                            "Exported {entry_count} animation patch entry to {}.",
-                                            path.display()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        app.status_message =
-                                            format!("Failed to export animation .vd: {e}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if ui
-                        .add_enabled(can_export, egui::Button::new("Export Michelangelo UOP"))
-                        .clicked()
-                    {
-                        if let Some(body_id) = export_context {
-                            let default_name = format!(
-                                "anim_{}_{}.uop",
-                                app.selected_anim_file_idx, body_id
-                            );
-                            if let Some(path) = crate::dialog::file_dialog()
-                                .set_file_name(default_name)
-                                .save_file()
-                            {
-                                match export_selected_animation_patch(
-                                    app,
-                                    body_id,
-                                    AnimationPatchExportFormat::MichelangeloUop,
-                                    &path,
-                                ) {
-                                    Ok(entry_count) => {
-                                        app.status_message = format!(
-                                            "Exported {entry_count} animation patch entry to {}.",
-                                            path.display()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        app.status_message =
-                                            format!("Failed to export animation .uop: {e}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-
-            ui.separator();
-            ui.heading("Playback");
-            ui.horizontal(|ui| {
-                if ui
-                    .button(if app.is_playing {
-                        "⏸ Stop"
-                    } else {
-                        "▶ Play"
-                    })
-                    .clicked()
-                {
-                    app.is_playing = !app.is_playing;
-                }
-                if ui.button("⏮").clicked() {
-                    app.current_frame_idx = 0;
-                }
-                if ui.button("⬅").clicked() {
-                    app.current_frame_idx = app.current_frame_idx.saturating_sub(1);
-                }
-                if ui.button("➡").clicked() {
-                    app.current_frame_idx += 1;
-                }
-            });
-
-            ui.add(egui::Slider::new(&mut app.playback_speed, 0.1..=5.0).text("Speed"));
-            ui.checkbox(&mut app.loop_animation, "Loop Animation");
-
             if let Some(seq) = &app.selected_anim_sequence {
                 ui.separator();
                 ui.heading("Logical Sequence");
@@ -229,6 +126,13 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         ui.end_row();
                     });
             }
+        });
+
+    egui::SidePanel::right("anim_actions")
+        .resizable(true)
+        .default_width(260.0)
+        .show(ctx, |ui| {
+            show_animation_action_column(app, ui);
         });
 
     egui::CentralPanel::default().show(ctx, |ui| {
@@ -517,6 +421,114 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
+fn show_animation_action_column(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    ui.heading("Animation Actions");
+    ui.separator();
+
+    if app.selected_legacy_source != ArtSource::Any {
+        let export_context = app.client_data.as_ref().map(|client| {
+            client
+                .anim_defs
+                .as_ref()
+                .map(|defs| defs.resolve(app.selected_anim_id))
+                .unwrap_or(app.selected_anim_id)
+        });
+
+        ui.heading("Patch Export");
+        let can_export = export_context.is_some();
+        ui.vertical(|ui| {
+            if ui
+                .add_enabled(can_export, egui::Button::new("Export VD"))
+                .clicked()
+            {
+                if let Some(body_id) = export_context {
+                    let default_name =
+                        format!("anim_{}_{}.vd", app.selected_anim_file_idx, body_id);
+                    if let Some(path) = crate::dialog::file_dialog()
+                        .set_file_name(default_name)
+                        .save_file()
+                    {
+                        match export_selected_animation_patch(
+                            app,
+                            body_id,
+                            AnimationPatchExportFormat::Vd,
+                            &path,
+                        ) {
+                            Ok(entry_count) => {
+                                app.status_message = format!(
+                                    "Exported {entry_count} animation patch entry to {}.",
+                                    path.display()
+                                );
+                            }
+                            Err(e) => {
+                                app.status_message =
+                                    format!("Failed to export animation .vd: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ui
+                .add_enabled(can_export, egui::Button::new("Export Michelangelo UOP"))
+                .clicked()
+            {
+                if let Some(body_id) = export_context {
+                    let default_name =
+                        format!("anim_{}_{}.uop", app.selected_anim_file_idx, body_id);
+                    if let Some(path) = crate::dialog::file_dialog()
+                        .set_file_name(default_name)
+                        .save_file()
+                    {
+                        match export_selected_animation_patch(
+                            app,
+                            body_id,
+                            AnimationPatchExportFormat::MichelangeloUop,
+                            &path,
+                        ) {
+                            Ok(entry_count) => {
+                                app.status_message = format!(
+                                    "Exported {entry_count} animation patch entry to {}.",
+                                    path.display()
+                                );
+                            }
+                            Err(e) => {
+                                app.status_message =
+                                    format!("Failed to export animation .uop: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } else {
+        ui.label("Select an animation source before exporting patches.");
+    }
+
+    ui.separator();
+    ui.heading("Playback");
+    ui.horizontal(|ui| {
+        if ui
+            .button(if app.is_playing { "⏸ Stop" } else { "▶ Play" })
+            .clicked()
+        {
+            app.is_playing = !app.is_playing;
+        }
+        if ui.button("⏮").clicked() {
+            app.current_frame_idx = 0;
+        }
+        if ui.button("⬅").clicked() {
+            app.current_frame_idx = app.current_frame_idx.saturating_sub(1);
+        }
+        if ui.button("➡").clicked() {
+            app.current_frame_idx += 1;
+        }
+    });
+
+    ui.add(egui::Slider::new(&mut app.playback_speed, 0.1..=5.0).text("Speed"));
+    ui.checkbox(&mut app.loop_animation, "Loop Animation");
+}
+
 fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.separator();
     ui.heading("Animation Tree");
@@ -550,7 +562,12 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
 
     match app.selected_legacy_source {
         ArtSource::Mul => show_mul_animation_tree(app, ctx, ui, tree_order, collapse_revision),
-        ArtSource::CcUop | ArtSource::EcUop => show_sequence_animation_tree(app, ctx, ui, collapse_revision),
+        ArtSource::CcUop | ArtSource::EcUop => {
+            show_uop_animationframe_tree(app, ctx, ui, collapse_revision);
+            ui.separator();
+            ui.heading("Animation Sequence");
+            show_sequence_animation_tree(app, ctx, ui, collapse_revision);
+        }
         ArtSource::Any => {
             ui.label("Select an animation source to browse.");
         }
@@ -827,6 +844,163 @@ fn show_mul_frame_list(
             ui.label(format!("Unable to read frames: {error}"));
         }
     }
+}
+
+fn show_uop_animationframe_tree(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    collapse_revision: u64,
+) {
+    ui.label("Filter:");
+    ui.text_edit_singleline(&mut app.search_query);
+    let query = app.search_query.to_ascii_lowercase();
+    let entries = collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query);
+
+    egui::ScrollArea::vertical()
+        .id_salt(match app.selected_legacy_source {
+            ArtSource::CcUop => "cc_animationframe_tree",
+            ArtSource::EcUop => "ec_animationframe_tree",
+            _ => "animationframe_tree",
+        })
+        .max_height(260.0)
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.label("No AnimationFrame entries match the current source/filter.");
+                return;
+            }
+
+            for (body_id, body_entries) in entries {
+                let selected_body = app.selected_anim_id == body_id;
+                egui::CollapsingHeader::new(format!("Body {}", body_id))
+                    .id_salt((
+                        "uocf_animationframe_body",
+                        collapse_revision,
+                        app.selected_legacy_source as u8,
+                        body_id,
+                    ))
+                    .default_open(collapse_revision == 0 && selected_body)
+                    .show(ui, |ui| {
+                        if ui.selectable_label(selected_body, "Select body").clicked() {
+                            app.selected_anim_id = body_id;
+                            app.current_frame_idx = 0;
+                            app.last_frame_time = ctx.input(|input| input.time);
+                        }
+
+                        for entry in body_entries {
+                            let selected = app.selected_anim_id == entry.body_id
+                                && entry
+                                    .group_id
+                                    .map_or(true, |group_id| app.selected_anim_file_idx == group_id);
+                            let label = match entry.group_id {
+                                Some(group_id) => {
+                                    format!("Group {group_id:02}: {} frames", entry.frame_count)
+                                }
+                                None => format!("AnimationFrame: {} frames", entry.frame_count),
+                            };
+                            if ui.selectable_label(selected, label).clicked() {
+                                app.selected_anim_id = entry.body_id;
+                                if let Some(group_id) = entry.group_id {
+                                    app.selected_anim_file_idx = group_id;
+                                }
+                                app.current_frame_idx = 0;
+                                app.last_frame_time = ctx.input(|input| input.time);
+                            }
+                        }
+                    });
+            }
+        });
+}
+
+fn collect_uop_animationframe_tree_entries(
+    app: &UopInspectorApp,
+    source: ArtSource,
+    query: &str,
+) -> BTreeMap<u32, Vec<UopAnimationFrameTreeEntry>> {
+    let mut body_ids = (0..UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT).collect::<Vec<_>>();
+    if app.selected_anim_id >= UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT {
+        body_ids.push(app.selected_anim_id);
+    }
+
+    let mut entries = BTreeMap::<u32, Vec<UopAnimationFrameTreeEntry>>::new();
+    for body_id in body_ids {
+        if !query.is_empty() && !format!("body {body_id}").contains(query) {
+            continue;
+        }
+
+        match source {
+            ArtSource::CcUop => {
+                for group_id in 0..=5 {
+                    let internal_path = format!(
+                        "build/animationlegacyframe/{:06}/{:02}.bin",
+                        body_id, group_id
+                    );
+                    if let Some(frame_count) =
+                        uop_animationframe_frame_count(app, "AnimationFrame", &internal_path, source)
+                    {
+                        entries.entry(body_id).or_default().push(UopAnimationFrameTreeEntry {
+                            body_id,
+                            group_id: Some(group_id),
+                            frame_count,
+                        });
+                    }
+                }
+            }
+            ArtSource::EcUop => {
+                let internal_path = format!("data/animationframe/{:06}.bin", body_id);
+                if let Some(frame_count) =
+                    uop_animationframe_frame_count(app, "AnimationFrame", &internal_path, source)
+                {
+                    entries.entry(body_id).or_default().push(UopAnimationFrameTreeEntry {
+                        body_id,
+                        group_id: None,
+                        frame_count,
+                    });
+                }
+            }
+            ArtSource::Mul | ArtSource::Any => {}
+        }
+    }
+    entries
+}
+
+fn uop_animationframe_frame_count(
+    app: &UopInspectorApp,
+    package_name_part: &str,
+    internal_path: &str,
+    source: ArtSource,
+) -> Option<usize> {
+    let hash = hash_file_name_single(internal_path);
+    for loaded in &app.uop_cache.loaded_uops {
+        if !loaded
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .contains(package_name_part)
+        {
+            continue;
+        }
+        let Some(file) = loaded.package.get_file_by_hash(hash) else {
+            continue;
+        };
+        let Ok(data) = file.unpack() else {
+            continue;
+        };
+        let frame_count = match source {
+            ArtSource::CcUop => AnimationFrameCc::parse_metadata(&data)
+                .ok()
+                .map(|metadata| metadata.frame_count as usize),
+            ArtSource::EcUop => uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
+                .ok()
+                .map(|metadata| metadata.frames_count as usize),
+            ArtSource::Mul | ArtSource::Any => None,
+        };
+        if frame_count.is_some() {
+            return frame_count;
+        }
+    }
+    None
 }
 
 fn show_sequence_animation_tree(
