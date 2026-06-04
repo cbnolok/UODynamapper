@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use super::{arrow_delta, move_selection};
 use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
@@ -203,25 +204,42 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         }
     });
 
+    let mut text_has_focus = false;
     ui.horizontal(|ui| {
         ui.label("Search:");
-        ui.text_edit_singleline(&mut app.search_query);
+        let response = ui.text_edit_singleline(&mut app.search_query);
+        text_has_focus |= response.has_focus();
     });
     ui.separator();
 
     match app.tile_metadata_source {
-        TileMetadataSource::CcTileData => ui_cc_tiledata_table(app, ui),
-        TileMetadataSource::EcTileArt => ui_ec_tileart_table(app, ui),
+        TileMetadataSource::CcTileData => ui_cc_tiledata_table(app, ui, text_has_focus),
+        TileMetadataSource::EcTileArt => ui_ec_tileart_table(app, ui, text_has_focus),
     }
 }
 
-fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_focus: bool) {
     ui.heading("CC TileData Inspector");
     if let (Some(tiledata), Some(rows)) = (&app.cc_tiledata, app.cc_tiledata_rows.clone()) {
         let query = app.search_query.trim();
         let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
         let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+        let visible_ids = filtered_indices
+            .as_ref()
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|index| rows[*index].art_id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| rows.iter().map(|row| row.art_id).collect());
+        let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
+            app.selected_tex_art_cc_id = move_selection(&visible_ids, app.selected_tex_art_cc_id, delta);
+            true
+        } else {
+            false
+        };
         ui.label(format!(
             "{} land tiles, {} item tiles",
             tiledata.land_tiles().len(),
@@ -286,11 +304,15 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                             .map_or(row.index(), |indices| indices[row.index()]);
                         let item = &rows[idx];
                         row.col(|ui| {
+                            let selected = app.selected_tex_art_cc_id == Some(item.art_id);
                             if ui
-                                .selectable_label(app.selected_tex_art_cc_id == Some(item.art_id), &item.id)
+                                .selectable_label(selected, &item.id)
                                 .clicked()
                             {
                                 app.selected_tex_art_cc_id = Some(item.art_id);
+                            }
+                            if keyboard_moved && selected {
+                                ui.scroll_to_cursor(Some(egui::Align::Center));
                             }
                         });
                         row.col(|ui| {
@@ -333,13 +355,28 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
 }
 
-fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_focus: bool) {
     ui.heading("EC TileArt Inspector");
     if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
         let query = app.search_query.trim();
         let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
         let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+        let visible_hashes = filtered_indices
+            .as_ref()
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|index| rows[*index].filename_hash)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| rows.iter().map(|row| row.filename_hash).collect());
+        let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
+            app.selected_tileart_hash = move_selection(&visible_hashes, app.selected_tileart_hash, delta);
+            true
+        } else {
+            false
+        };
         ui.label(format!("{} tileart.uop entries", entries.len()));
         egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
             ui.set_min_width(TILEART_TABLE_MIN_WIDTH);
@@ -404,14 +441,18 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
                             .map_or(row.index(), |indices| indices[row.index()]);
                         let item = &rows[idx];
                         row.col(|ui| {
+                            let selected = app.selected_tileart_hash == Some(item.filename_hash);
                             if ui
                                 .selectable_label(
-                                    app.selected_tileart_hash == Some(item.filename_hash),
+                                    selected,
                                     &item.tile_id,
                                 )
                                 .clicked()
                             {
                                 app.selected_tileart_hash = Some(item.filename_hash);
+                            }
+                            if keyboard_moved && selected {
+                                ui.scroll_to_cursor(Some(egui::Align::Center));
                             }
                         });
                         row.col(|ui| {
